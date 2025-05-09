@@ -1,0 +1,76 @@
+use serde::{Serialize, Deserialize};
+use std::path::PathBuf;
+use crate::domain::models::user_directory::UserDirectory;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserDirectoryDto {
+    pub handle: String,
+    pub root: String,
+    pub thumbnails: String,
+    pub thumbnails_bg: String,
+    pub thumbnails_avatar: String,
+    pub worlds: String,
+    pub user: String,
+    pub avatars: String,
+    pub user_images: String,
+    pub groups: String,
+    pub group_chats: String,
+    pub chats: String,
+    pub characters: String,
+    pub backgrounds: String,
+    pub novel_ai_settings: String,
+    pub kobold_ai_settings: String,
+    pub openai_settings: String,
+    pub textgen_settings: String,
+    pub themes: String,
+    pub moving_ui: String,
+    pub extensions: String,
+    pub instruct: String,
+    pub context: String,
+    pub quick_replies: String,
+    pub assets: String,
+    pub comfy_workflows: String,
+    pub files: String,
+    pub vectors: String,
+    pub backups: String,
+    pub sysprompt: String,
+    pub reasoning: String,
+}
+
+impl From<UserDirectory> for UserDirectoryDto {
+    fn from(directory: UserDirectory) -> Self {
+        Self {
+            handle: directory.handle,
+            root: directory.root.to_string_lossy().to_string(),
+            thumbnails: directory.thumbnails.to_string_lossy().to_string(),
+            thumbnails_bg: directory.thumbnails_bg.to_string_lossy().to_string(),
+            thumbnails_avatar: directory.thumbnails_avatar.to_string_lossy().to_string(),
+            worlds: directory.worlds.to_string_lossy().to_string(),
+            user: directory.user.to_string_lossy().to_string(),
+            avatars: directory.avatars.to_string_lossy().to_string(),
+            user_images: directory.user_images.to_string_lossy().to_string(),
+            groups: directory.groups.to_string_lossy().to_string(),
+            group_chats: directory.group_chats.to_string_lossy().to_string(),
+            chats: directory.chats.to_string_lossy().to_string(),
+            characters: directory.characters.to_string_lossy().to_string(),
+            backgrounds: directory.backgrounds.to_string_lossy().to_string(),
+            novel_ai_settings: directory.novel_ai_settings.to_string_lossy().to_string(),
+            kobold_ai_settings: directory.kobold_ai_settings.to_string_lossy().to_string(),
+            openai_settings: directory.openai_settings.to_string_lossy().to_string(),
+            textgen_settings: directory.textgen_settings.to_string_lossy().to_string(),
+            themes: directory.themes.to_string_lossy().to_string(),
+            moving_ui: directory.moving_ui.to_string_lossy().to_string(),
+            extensions: directory.extensions.to_string_lossy().to_string(),
+            instruct: directory.instruct.to_string_lossy().to_string(),
+            context: directory.context.to_string_lossy().to_string(),
+            quick_replies: directory.quick_replies.to_string_lossy().to_string(),
+            assets: directory.assets.to_string_lossy().to_string(),
+            comfy_workflows: directory.comfy_workflows.to_string_lossy().to_string(),
+            files: directory.files.to_string_lossy().to_string(),
+            vectors: directory.vectors.to_string_lossy().to_string(),
+            backups: directory.backups.to_string_lossy().to_string(),
+            sysprompt: directory.sysprompt.to_string_lossy().to_string(),
+            reasoning: directory.reasoning.to_string_lossy().to_string(),
+        }
+    }
+}

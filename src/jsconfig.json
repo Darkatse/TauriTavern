@@ -1,0 +1,23 @@
+{
+    "compilerOptions": {
+        "checkJs": true,
+        "target": "ESNext",
+        "module": "ESNext",
+        "moduleResolution": "node",
+        "allowUmdGlobalAccess": true,
+        "allowSyntheticDefaultImports": true,
+        "strictBindCallApply": true
+    },
+    "exclude": [
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/.git/**",
+        "lib/**",
+        "**/*.min.js",
+        "scripts/extensions/quick-reply/lib/**",
+        "scripts/extensions/tts/lib/**"
+    ],
+    "typeAcquisition": {
+        "include": []
+    }
+}

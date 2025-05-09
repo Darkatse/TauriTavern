@@ -1,0 +1,22 @@
+{
+    "input_sequence": "",
+    "output_sequence": "",
+    "last_output_sequence": "\n### Response:",
+    "system_sequence": "",
+    "stop_sequence": "",
+    "wrap": true,
+    "macro": true,
+    "names_behavior": "always",
+    "activation_regex": "",
+    "system_sequence_prefix": "",
+    "system_sequence_suffix": "",
+    "first_output_sequence": "",
+    "skip_examples": false,
+    "output_suffix": "",
+    "input_suffix": "",
+    "system_suffix": "",
+    "user_alignment_message": "",
+    "system_same_as_user": false,
+    "last_system_sequence": "",
+    "name": "Libra-32B"
+}

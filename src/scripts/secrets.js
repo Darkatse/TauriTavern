@@ -1,0 +1,356 @@
+import { DOMPurify } from '../lib.js';
+import { callPopup, getRequestHeaders } from '../script.js';
+import { t } from './i18n.js';
+
+// Check if we're running in a Tauri environment
+const isTauri = window.__TAURI_INTERNALS__ !== undefined;
+
+// Import Tauri API if available
+let tauriSecretsAPI = null;
+if (isTauri) {
+    // Dynamically import the Tauri API
+    import('./tauri/secrets-api.js').then(module => {
+        tauriSecretsAPI = module;
+        console.log('Tauri Secrets API loaded');
+    }).catch(error => {
+        console.error('Failed to load Tauri Secrets API:', error);
+    });
+}
+
+export const SECRET_KEYS = {
+    HORDE: 'api_key_horde',
+    MANCER: 'api_key_mancer',
+    VLLM: 'api_key_vllm',
+    APHRODITE: 'api_key_aphrodite',
+    TABBY: 'api_key_tabby',
+    OPENAI: 'api_key_openai',
+    NOVEL: 'api_key_novel',
+    CLAUDE: 'api_key_claude',
+    OPENROUTER: 'api_key_openrouter',
+    SCALE: 'api_key_scale',
+    AI21: 'api_key_ai21',
+    SCALE_COOKIE: 'scale_cookie',
+    MAKERSUITE: 'api_key_makersuite',
+    SERPAPI: 'api_key_serpapi',
+    MISTRALAI: 'api_key_mistralai',
+    TOGETHERAI: 'api_key_togetherai',
+    INFERMATICAI: 'api_key_infermaticai',
+    DREAMGEN: 'api_key_dreamgen',
+    CUSTOM: 'api_key_custom',
+    OOBA: 'api_key_ooba',
+    NOMICAI: 'api_key_nomicai',
+    KOBOLDCPP: 'api_key_koboldcpp',
+    LLAMACPP: 'api_key_llamacpp',
+    COHERE: 'api_key_cohere',
+    PERPLEXITY: 'api_key_perplexity',
+    GROQ: 'api_key_groq',
+    AZURE_TTS: 'api_key_azure_tts',
+    FEATHERLESS: 'api_key_featherless',
+    ZEROONEAI: 'api_key_01ai',
+    HUGGINGFACE: 'api_key_huggingface',
+    STABILITY: 'api_key_stability',
+    CUSTOM_OPENAI_TTS: 'api_key_custom_openai_tts',
+    NANOGPT: 'api_key_nanogpt',
+    TAVILY: 'api_key_tavily',
+    BFL: 'api_key_bfl',
+    GENERIC: 'api_key_generic',
+    DEEPSEEK: 'api_key_deepseek',
+    SERPER: 'api_key_serper',
+    FALAI: 'api_key_falai',
+    XAI: 'api_key_xai',
+};
+
+const INPUT_MAP = {
+    [SECRET_KEYS.HORDE]: '#horde_api_key',
+    [SECRET_KEYS.MANCER]: '#api_key_mancer',
+    [SECRET_KEYS.OPENAI]: '#api_key_openai',
+    [SECRET_KEYS.NOVEL]: '#api_key_novel',
+    [SECRET_KEYS.CLAUDE]: '#api_key_claude',
+    [SECRET_KEYS.OPENROUTER]: '.api_key_openrouter',
+    [SECRET_KEYS.SCALE]: '#api_key_scale',
+    [SECRET_KEYS.AI21]: '#api_key_ai21',
+    [SECRET_KEYS.SCALE_COOKIE]: '#scale_cookie',
+    [SECRET_KEYS.MAKERSUITE]: '#api_key_makersuite',
+    [SECRET_KEYS.VLLM]: '#api_key_vllm',
+    [SECRET_KEYS.APHRODITE]: '#api_key_aphrodite',
+    [SECRET_KEYS.TABBY]: '#api_key_tabby',
+    [SECRET_KEYS.MISTRALAI]: '#api_key_mistralai',
+    [SECRET_KEYS.CUSTOM]: '#api_key_custom',
+    [SECRET_KEYS.TOGETHERAI]: '#api_key_togetherai',
+    [SECRET_KEYS.OOBA]: '#api_key_ooba',
+    [SECRET_KEYS.INFERMATICAI]: '#api_key_infermaticai',
+    [SECRET_KEYS.DREAMGEN]: '#api_key_dreamgen',
+    [SECRET_KEYS.NOMICAI]: '#api_key_nomicai',
+    [SECRET_KEYS.KOBOLDCPP]: '#api_key_koboldcpp',
+    [SECRET_KEYS.LLAMACPP]: '#api_key_llamacpp',
+    [SECRET_KEYS.COHERE]: '#api_key_cohere',
+    [SECRET_KEYS.PERPLEXITY]: '#api_key_perplexity',
+    [SECRET_KEYS.GROQ]: '#api_key_groq',
+    [SECRET_KEYS.FEATHERLESS]: '#api_key_featherless',
+    [SECRET_KEYS.ZEROONEAI]: '#api_key_01ai',
+    [SECRET_KEYS.HUGGINGFACE]: '#api_key_huggingface',
+    [SECRET_KEYS.NANOGPT]: '#api_key_nanogpt',
+    [SECRET_KEYS.GENERIC]: '#api_key_generic',
+    [SECRET_KEYS.DEEPSEEK]: '#api_key_deepseek',
+    [SECRET_KEYS.XAI]: '#api_key_xai',
+};
+
+async function clearSecret() {
+    const key = $(this).data('key');
+    await writeSecret(key, '');
+    secret_state[key] = false;
+    updateSecretDisplay();
+    $(INPUT_MAP[key]).val('').trigger('input');
+    $('#main_api').trigger('change');
+}
+
+export function updateSecretDisplay() {
+    for (const [secret_key, input_selector] of Object.entries(INPUT_MAP)) {
+        // 确保 secret_state 存在且包含该密钥，如果不存在则默认为 false
+        const validSecret = secret_state && secret_state[secret_key] === true;
+
+        const placeholder = $('#viewSecrets').attr(validSecret ? 'key_saved_text' : 'missing_key_text');
+        $(input_selector).attr('placeholder', placeholder);
+    }
+}
+
+async function viewSecrets() {
+    let data;
+
+    if (isTauri && tauriSecretsAPI) {
+        // Use Tauri API
+        try {
+            data = await tauriSecretsAPI.viewSecrets();
+        } catch (error) {
+            if (error.toString().includes('Permission denied')) {
+                callPopup('<h3>' + t`Forbidden` + '</h3><p>' + t`To view your API keys here, set the value of allowKeysExposure to true in the Tauri configuration.` + '</p>', 'text');
+                return;
+            }
+            console.error('Could not view secrets from Tauri backend:', error);
+            return;
+        }
+    } else {
+        // Use standard API
+        const response = await fetch('/api/secrets/view', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+        });
+
+        if (response.status == 403) {
+            callPopup('<h3>' + t`Forbidden` + '</h3><p>' + t`To view your API keys here, set the value of allowKeysExposure to true in config.yaml file and restart the SillyTavern server.` + '</p>', 'text');
+            return;
+        }
+
+        if (!response.ok) {
+            return;
+        }
+
+        data = await response.json();
+    }
+
+    $('#dialogue_popup').addClass('wide_dialogue_popup');
+    const table = document.createElement('table');
+    table.classList.add('responsiveTable');
+    $(table).append('<thead><th>Key</th><th>Value</th></thead>');
+
+    for (const [key, value] of Object.entries(data)) {
+        $(table).append(`<tr><td>${DOMPurify.sanitize(key)}</td><td>${DOMPurify.sanitize(value)}</td></tr>`);
+    }
+
+    callPopup(table.outerHTML, 'text');
+}
+
+export let secret_state = {};
+
+export async function writeSecret(key, value) {
+    try {
+        if (isTauri && tauriSecretsAPI) {
+            // Use Tauri API
+            const result = await tauriSecretsAPI.writeSecret(key, value);
+
+            if (result === 'ok') {
+                secret_state[key] = !!value;
+                updateSecretDisplay();
+            }
+        } else {
+            // Use standard API
+            const response = await fetch('/api/secrets/write', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ key, value }),
+            });
+
+            if (response.ok) {
+                const text = await response.text();
+
+                if (text == 'ok') {
+                    secret_state[key] = !!value;
+                    updateSecretDisplay();
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Could not write secret value: ', key, error);
+    }
+}
+
+export async function readSecretState() {
+    try {
+        if (isTauri && tauriSecretsAPI) {
+            // Use Tauri API
+            try {
+                // 获取密钥状态
+                const states = await tauriSecretsAPI.readSecretState();
+
+                // 确保 secret_state 是一个对象
+                if (!secret_state) {
+                    secret_state = {};
+                }
+
+                // 将获取的状态合并到 secret_state 中
+                if (states) {
+                    Object.assign(secret_state, states);
+                }
+
+                // 确保所有 SECRET_KEYS 都有对应的状态
+                for (const key in SECRET_KEYS) {
+                    const secretKey = SECRET_KEYS[key];
+                    if (secret_state[secretKey] === undefined) {
+                        secret_state[secretKey] = false;
+                    }
+                }
+
+                updateSecretDisplay();
+                await checkOpenRouterAuth();
+            } catch (error) {
+                console.error('Could not read secrets from Tauri backend:', error);
+                // 确保即使出错也有一个有效的 secret_state 对象
+                if (!secret_state) {
+                    secret_state = {};
+                }
+                updateSecretDisplay();
+            }
+        } else {
+            // Use standard API
+            const response = await fetch('/api/secrets/read', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+            });
+
+            if (response.ok) {
+                const states = await response.json();
+
+                // 确保 secret_state 是一个对象
+                if (!secret_state) {
+                    secret_state = {};
+                }
+
+                // 将获取的状态合并到 secret_state 中
+                if (states) {
+                    Object.assign(secret_state, states);
+                }
+
+                updateSecretDisplay();
+                await checkOpenRouterAuth();
+            }
+        }
+    } catch (error) {
+        console.error('Could not read secrets file', error);
+        // 确保即使出错也有一个有效的 secret_state 对象
+        if (!secret_state) {
+            secret_state = {};
+        }
+        updateSecretDisplay();
+    }
+}
+
+/**
+ * Finds a secret value by key.
+ * @param {string} key Secret key
+ * @returns {Promise<string | undefined>} Secret value, or undefined if keys are not exposed
+ */
+export async function findSecret(key) {
+    try {
+        if (isTauri && tauriSecretsAPI) {
+            // Use Tauri API
+            try {
+                return await tauriSecretsAPI.findSecret(key);
+            } catch (error) {
+                console.error('Could not find secret value from Tauri backend: ', key, error);
+                return undefined;
+            }
+        } else {
+            // Use standard API
+            const response = await fetch('/api/secrets/find', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ key }),
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                return data.value;
+            }
+        }
+    } catch (error) {
+        console.error('Could not find secret value: ', key, error);
+    }
+    return undefined;
+}
+
+function authorizeOpenRouter() {
+    const redirectUrl = new URL('/callback/openrouter', window.location.origin);
+    const openRouterUrl = `https://openrouter.ai/auth?callback_url=${encodeURIComponent(redirectUrl.toString())}`;
+    location.href = openRouterUrl;
+}
+
+async function checkOpenRouterAuth() {
+    const params = new URLSearchParams(location.search);
+    const source = params.get('source');
+    if (source === 'openrouter') {
+        const query = new URLSearchParams(params.get('query'));
+        const code = query.get('code');
+        try {
+            const response = await fetch('https://openrouter.ai/api/v1/auth/keys', {
+                method: 'POST',
+                body: JSON.stringify({ code }),
+            });
+
+            if (!response.ok) {
+                throw new Error('OpenRouter exchange error');
+            }
+
+            const data = await response.json();
+            if (!data || !data.key) {
+                throw new Error('OpenRouter invalid response');
+            }
+
+            await writeSecret(SECRET_KEYS.OPENROUTER, data.key);
+
+            if (secret_state[SECRET_KEYS.OPENROUTER]) {
+                toastr.success('OpenRouter token saved');
+                // Remove the code from the URL
+                const currentUrl = window.location.href;
+                const urlWithoutSearchParams = currentUrl.split('?')[0];
+                window.history.pushState({}, '', urlWithoutSearchParams);
+            } else {
+                throw new Error('OpenRouter token not saved');
+            }
+        } catch (err) {
+            toastr.error('Could not verify OpenRouter token. Please try again.');
+            return;
+        }
+    }
+}
+
+jQuery(async () => {
+    $('#viewSecrets').on('click', viewSecrets);
+    $(document).on('click', '.clear-api-key', clearSecret);
+    $(document).on('input', Object.values(INPUT_MAP).join(','), function () {
+        const id = $(this).attr('id');
+        const value = $(this).val();
+        const warningElement = $(`[data-for="${id}"]`);
+        warningElement.toggle(value.length > 0);
+    });
+    $('.openrouter_authorize').on('click', authorizeOpenRouter);
+});

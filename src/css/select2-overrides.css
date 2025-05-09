@@ -1,0 +1,284 @@
+/* Customize the Select2 container */
+.select2-container {
+    color: var(--SmartThemeBodyColor);
+}
+
+/* Customize the dropdown */
+.select2-dropdown {
+    background-color: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--SmartThemeBorderColor) !important;
+    border-radius: 10px;
+    box-shadow: 0 0 5px black;
+    text-shadow: 0px 0px calc(var(--shadowWidth) * 1px) var(--SmartThemeShadowColor);
+    backdrop-filter: blur(calc(var(--SmartThemeBlurStrength)*2));
+    color: var(--SmartThemeBodyColor);
+    z-index: 40000;
+    user-select: none;
+}
+
+.select2-container .select2-selection .select2-selection__clear {
+    color: var(--SmartThemeBodyColor);
+    font-size: 20px;
+    padding: 0;
+    position: absolute;
+    right: 5px;
+    top: 0;
+}
+
+.select2-container .select2-search__field {
+    opacity: 0.8;
+}
+
+.select2-selection--single .select2-selection__placeholder {
+    color: var(--SmartThemeEmColor);
+}
+
+.select2-container--classic .select2-selection--single .select2-selection__placeholder {
+    color: var(--SmartThemeEmColor);
+}
+
+.select2-container .select2-selection--single .select2-selection__rendered {
+    color: var(--SmartThemeBodyColor);
+    line-height: revert;
+    padding-left: unset;
+}
+
+.select2-container .select2-results>.select2-results__options {
+    max-height: 300px;
+}
+
+.select2-container .select2-selection--multiple .select2-selection__choice__remove {
+    padding: revert;
+    border-right: 1px solid var(--SmartThemeBorderColor);
+    font-size: 1.1em;
+    line-height: 1;
+}
+
+.select2-container .select2-selection--multiple .select2-selection__choice__display {
+    padding-left: 5px;
+}
+
+/* Customize the search input */
+.select2-search__field {
+    background-color: var(--black30a);
+    color: var(--SmartThemeBodyColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 7px;
+    font-family: var(--mainFontFamily);
+    padding: 3px 5px;
+}
+
+/* Customize the selected option */
+.select2-selection--single {
+    border: 1px solid var(--SmartThemeShadowColor);
+    border-radius: 4px;
+    background-color: var(--SmartThemeBlurTintColor);
+}
+
+/* Customize the selected option text */
+.select2-selection__rendered {
+    color: var(--SmartThemeBodyColor);
+}
+
+/* Customize the option list item */
+.select2-results__option {
+    color: var(--SmartThemeBodyColor);
+    background-color: var(--SmartThemeBodyColor);
+}
+
+.select2-container .select2-selection--multiple,
+.select2-container .select2-selection--single {
+    background-color: var(--black30a);
+    color: var(--SmartThemeBodyColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 7px;
+    font-family: var(--mainFontFamily);
+    padding: 3px 5px;
+}
+
+.select2-container.select2-container--focus .select2-selection--multiple,
+.select2-container.select2-container--focus .select2-selection--single {
+    border: 1px solid var(--SmartThemeBorderColor);
+}
+
+.select2-container .select2-results .select2-results__option--disabled {
+    color: inherit;
+    background-color: inherit;
+    cursor: not-allowed;
+    filter: brightness(0.5);
+}
+
+.select2-container .select2-selection--multiple .select2-selection__choice,
+.select2-container .select2-selection--single .select2-selection__choice {
+    border-radius: 5px;
+    border-style: solid;
+    border-width: 1px;
+    box-sizing: border-box;
+    color: var(--SmartThemeBodyColor);
+    background-color: var(--black30a);
+    border-color: var(--SmartThemeBorderColor);
+    font-size: calc(var(--mainFontSize) - 5%);
+    text-shadow: none !important;
+}
+
+.select2-results .select2-results__option--selectable {
+    background-color: unset;
+    color: var(--SmartThemeBodyColor);
+    opacity: 0.5;
+    transition: opacity 200ms ease-in-out;
+    position: relative;
+}
+
+.select2-results .select2-results__option--group {
+    color: var(--SmartThemeBodyColor);
+    background-color: var(--SmartThemeBlurTintColor);
+    position: relative;
+}
+
+/* Customize the hovered option list item */
+.select2-results .select2-results__option--highlighted.select2-results__option--selectable {
+    color: var(--SmartThemeBodyColor);
+    background-color: unset;
+    opacity: 1;
+}
+
+.select2-results__option.select2-results__option--group::before {
+    display: none;
+}
+
+/* Customize the option list item */
+.select2-results__option {
+    padding-left: 30px;
+    /* Add some padding to make room for the checkbox */
+}
+
+.select2-results .select2-results__option--group .select2-results__options--nested .select2-results__option {
+    padding-left: 2em;
+}
+
+/* Add the custom checkbox */
+.select2-results__option::before {
+    content: '';
+    display: inline-block;
+    position: absolute;
+    left: 6px;
+    top: 50%;
+    margin-top: -7px;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    background-color: var(--SmartThemeBlurTintColor);
+    border-radius: 2px;
+}
+
+.select2-container .select2-selection--multiple .select2-selection__choice__remove,
+.select2-container .select2-selection--single .select2-selection__choice__remove {
+    color: var(--SmartThemeBodyColor);
+}
+
+/* Add the custom checkbox checkmark */
+.select2-results__option--selected.select2-results__option::before {
+    content: '\2713';
+    font-weight: bold;
+    color: var(--SmartThemeBodyColor);
+    background-color: var(--SmartThemeBlurTintColor);
+    text-align: center;
+    line-height: 14px;
+}
+
+.select2-results__option.select2-results__message {
+    background-color: inherit;
+}
+
+.select2-results__option.select2-results__message::before {
+    display: none;
+}
+
+.select2-selection__choice__display {
+    /* Fix weird alignment of the inside block */
+    margin-left: 3px;
+    margin-right: 1px;
+}
+
+/* Styling for choice remove icon */
+span.select2.select2-container .select2-selection__choice__remove {
+    cursor: pointer;
+    transition: background-color 0.3s;
+    color: var(--SmartThemeBodyColor);
+    background-color: var(--black50a);
+}
+
+span.select2.select2-container .select2-selection__choice__remove:hover {
+    color: var(--SmartThemeBodyColor);
+    background-color: var(--white30a);
+}
+
+/* Custom class to support styling to show clickable choice options */
+.select2_choice_clickable+span.select2-container .select2-selection__choice__display {
+    cursor: pointer;
+}
+
+.select2_choice_clickable_buttonstyle+span.select2-container .select2-selection__choice__display {
+    cursor: pointer;
+    transition: background-color 0.3s;
+    color: var(--SmartThemeBodyColor);
+    background-color: var(--black50a);
+    white-space: break-spaces;
+    word-break: break-all;
+}
+
+.select2_choice_clickable_buttonstyle+span.select2-container .select2-selection__choice__display:hover {
+    background-color: var(--white30a);
+}
+
+/* Custom class to support same line multi inputs of select2 controls */
+.select2_multi_sameline+span.select2-container .select2-selection--multiple {
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.select2_multi_sameline+span.select2-container .select2-selection--multiple .select2-search--inline {
+    /* Allow search placeholder to take up all space if needed */
+    flex-grow: 1;
+}
+
+.select2_multi_sameline+span.select2-container .select2-selection--multiple .select2-selection__rendered {
+    /* Fix weird styling choice or huge margin around selected options */
+    margin-block-start: 2px;
+    margin-block-end: 2px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    row-gap: 5px;
+}
+
+.select2_multi_sameline+span.select2-container .select2-selection--multiple .select2-selection__choice {
+    margin-top: 0px;
+}
+
+.select2_multi_sameline+span.select2-container .select2-selection--multiple .select2-search__field {
+    /* Min height to reserve spacing */
+    min-height: calc(var(--mainFontSize) + 13px);
+    /* Min width to be clickable */
+    min-width: 4em;
+    align-content: center;
+    /* Fix search textarea alignment issue with UL elements */
+    margin-top: 0px;
+    height: unset;
+    /* Prevent height from jumping around when input is focused */
+    line-height: 1;
+}
+
+.select2_multi_sameline+span.select2-container .select2-selection--multiple .select2-selection__rendered {
+    /* Min height to reserve spacing */
+    min-height: calc(var(--mainFontSize) + 13px);
+}
+
+/* Make search bar invisible unless the select2 is active, to save space */
+.select2_multi_sameline+span.select2-container .select2-selection--multiple .select2-search--inline {
+    height: 1px;
+}
+
+.select2_multi_sameline+span.select2-container.select2-container--focus .select2-selection--multiple .select2-search--inline {
+    height: unset;
+}

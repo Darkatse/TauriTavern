@@ -1,0 +1,12 @@
+// Repository interfaces
+pub mod character_repository;
+pub mod chat_repository;
+pub mod user_repository;
+pub mod settings_repository;
+pub mod user_directory_repository;
+pub mod secret_repository;
+pub mod content_repository;
+pub mod extension_repository;
+pub mod avatar_repository;
+pub mod group_repository;
+pub mod background_repository;
