@@ -207,6 +207,7 @@ import { initializeCharactersAdapter } from './tauri/characters-adapter.js';
 import { initializeChatsAdapter } from './tauri/chats-adapter.js';
 import { initializeGroupsAdapter } from './tauri/groups-adapter.js';
 import { initializeBackgroundsAdapter } from './tauri/backgrounds-adapter.js';
+import { initializeThemesAdapter } from './tauri/themes-adapter.js';
 
 // Initialize the bridge when the script is loaded
 initializeBridge().then(() => {
@@ -219,6 +220,7 @@ initializeBridge().then(() => {
         initializeChatsAdapter();
         initializeGroupsAdapter();
         initializeBackgroundsAdapter();
+        initializeThemesAdapter();
     }
 }).catch(error => {
     console.error('Failed to initialize Tauri bridge:', error);

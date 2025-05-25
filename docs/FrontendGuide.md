@@ -68,9 +68,23 @@ src/
 | `scripts/tauri/secrets-api.js` | 密钥管理API适配器 |
 | `scripts/tauri/extensions-api.js` | 扩展管理API适配器 |
 | `scripts/tauri/templates-api.js` | 模板系统API适配器 |
+| `scripts/tauri/characters-api.js` | 角色管理API适配器 |
+| `scripts/tauri/chats-api.js` | 聊天管理API适配器 |
+| `scripts/tauri/groups-api.js` | 群组管理API适配器 |
+| `scripts/tauri/backgrounds-api.js` | 背景壁纸API适配器 |
+| `scripts/tauri/themes-api.js` | 主题管理API适配器 |
+| `scripts/tauri/avatars-api.js` | 头像管理API适配器 |
+| `scripts/tauri/settings-api.js` | 设置管理API适配器 |
 | `tauri/` | Tauri适配器初始化目录 |
 | `tauri/extensions-adapter.js` | 扩展系统适配器初始化 |
 | `tauri/templates-adapter.js` | 模板系统适配器初始化 |
+| `tauri/characters-adapter.js` | 角色管理适配器初始化 |
+| `tauri/chats-adapter.js` | 聊天管理适配器初始化 |
+| `tauri/groups-adapter.js` | 群组管理适配器初始化 |
+| `tauri/backgrounds-adapter.js` | 背景壁纸适配器初始化 |
+| `tauri/themes-adapter.js` | 主题管理适配器初始化 |
+| `tauri/avatars-adapter.js` | 头像管理适配器初始化 |
+| `tauri/settings-adapter.js` | 设置管理适配器初始化 |
 
 ## 4. Tauri集成
 

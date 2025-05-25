@@ -10,3 +10,4 @@ pub mod extension_repository;
 pub mod avatar_repository;
 pub mod group_repository;
 pub mod background_repository;
+pub mod theme_repository;

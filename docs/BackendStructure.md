@@ -599,32 +599,69 @@ TauriTavern的后端API通过Tauri命令暴露给前端。以下是主要API类�
 
 | 命令 | 描述 | 参数 | 返回值 |
 |------|------|------|--------|
-| `get_characters` | 获取所有角色 | 无 | `Vec<CharacterResponseDto>` |
-| `get_character` | 获取单个角色 | `id: String` | `Option<CharacterResponseDto>` |
-| `create_character` | 创建新角色 | `CreateCharacterDto` | `CharacterResponseDto` |
-| `update_character` | 更新角色 | `id: String, UpdateCharacterDto` | `CharacterResponseDto` |
-| `delete_character` | 删除角色 | `id: String` | `()` |
+| `get_characters` | 获取所有角色 | `shallow: bool` | `Vec<CharacterDto>` |
+| `get_character` | 获取单个角色 | `name: String` | `CharacterDto` |
+| `create_character` | 创建新角色 | `CreateCharacterDto` | `CharacterDto` |
+| `update_character` | 更新角色 | `name: String, UpdateCharacterDto` | `CharacterDto` |
+| `delete_character` | 删除角色 | `DeleteCharacterDto` | `()` |
+| `import_character` | 导入角色 | `ImportCharacterDto` | `CharacterDto` |
+| `export_character` | 导出角色 | `ExportCharacterDto` | `()` |
+| `create_with_avatar` | 创建带头像的角色 | `CreateWithAvatarDto` | `CharacterDto` |
+| `update_avatar` | 更新角色头像 | `UpdateAvatarDto` | `()` |
+| `rename_character` | 重命名角色 | `RenameCharacterDto` | `CharacterDto` |
 
 ### 5.2 聊天管理API
 
 | 命令 | 描述 | 参数 | 返回值 |
 |------|------|------|--------|
-| `get_chats` | 获取所有聊天 | 无 | `Vec<ChatResponseDto>` |
-| `get_chat` | 获取单个聊天 | `id: String` | `Option<ChatResponseDto>` |
-| `create_chat` | 创建新聊天 | `CreateChatDto` | `ChatResponseDto` |
-| `update_chat` | 更新聊天 | `id: String, UpdateChatDto` | `ChatResponseDto` |
-| `delete_chat` | 删除聊天 | `id: String` | `()` |
-| `send_message` | 发送消息 | `chat_id: String, SendMessageDto` | `MessageResponseDto` |
+| `get_all_chats` | 获取所有聊天 | 无 | `Vec<ChatDto>` |
+| `get_character_chats` | 获取角色的聊天 | `character_name: String` | `Vec<ChatDto>` |
+| `get_chat` | 获取单个聊天 | `character_name: String, file_name: String` | `ChatDto` |
+| `create_chat` | 创建新聊天 | `CreateChatDto` | `ChatDto` |
+| `delete_chat` | 删除聊天 | `character_name: String, file_name: String` | `()` |
+| `add_message` | 添加消息 | `AddMessageDto` | `ChatDto` |
+| `rename_chat` | 重命名聊天 | `RenameChatDto` | `()` |
+| `search_chats` | 搜索聊天 | `query: String, character_filter: Option<String>` | `Vec<ChatSearchResultDto>` |
+| `import_chat` | 导入聊天 | `ImportChatDto` | `ChatDto` |
+| `export_chat` | 导出聊天 | `ExportChatDto` | `()` |
 
-### 5.3 用户设置API
+### 5.3 群组管理API
 
 | 命令 | 描述 | 参数 | 返回值 |
 |------|------|------|--------|
-| `get_settings` | 获取设置 | 无 | `SettingsResponseDto` |
-| `update_settings` | 更新设置 | `UpdateSettingsDto` | `SettingsResponseDto` |
-| `reset_settings` | 重置设置 | 无 | `SettingsResponseDto` |
+| `get_all_groups` | 获取所有群组 | 无 | `Vec<GroupDto>` |
+| `get_group` | 获取单个群组 | `id: String` | `GroupDto` |
+| `create_group` | 创建新群组 | `CreateGroupDto` | `GroupDto` |
+| `update_group` | 更新群组 | `id: String, UpdateGroupDto` | `GroupDto` |
+| `delete_group` | 删除群组 | `id: String` | `()` |
 
-### 5.4 密钥管理API
+### 5.4 背景壁纸API
+
+| 命令 | 描述 | 参数 | 返回值 |
+|------|------|------|--------|
+| `get_all_backgrounds` | 获取所有背景 | 无 | `Vec<String>` |
+| `delete_background` | 删除背景 | `DeleteBackgroundDto` | `()` |
+| `rename_background` | 重命名背景 | `RenameBackgroundDto` | `()` |
+| `upload_background` | 上传背景 | `filename: String, data: Vec<u8>` | `String` |
+
+### 5.5 主题管理API
+
+| 命令 | 描述 | 参数 | 返回值 |
+|------|------|------|--------|
+| `save_theme` | 保存主题 | `SaveThemeDto` | `()` |
+| `delete_theme` | 删除主题 | `DeleteThemeDto` | `()` |
+| `get_all_themes` | 获取所有主题 | 无 | `Vec<ThemeDto>` |
+| `get_theme` | 获取单个主题 | `name: String` | `ThemeDto` |
+
+### 5.6 设置API
+
+| 命令 | 描述 | 参数 | 返回值 |
+|------|------|------|--------|
+| `get_settings` | 获取设置 | 无 | `SettingsDto` |
+| `update_settings` | 更新设置 | `UpdateSettingsDto` | `SettingsDto` |
+| `reset_settings` | 重置设置 | 无 | `SettingsDto` |
+
+### 5.7 密钥管理API
 
 | 命令 | 描述 | 参数 | 返回值 |
 |------|------|------|--------|
@@ -633,7 +670,7 @@ TauriTavern的后端API通过Tauri命令暴露给前端。以下是主要API类�
 | `view_secrets` | 查看所有密钥 | 无 | `HashMap<String, String>` |
 | `find_secret` | 查找特定密钥 | `FindSecretDto` | `SecretValueDto` |
 
-### 5.5 系统API
+### 5.8 系统API
 
 | 命令 | 描述 | 参数 | 返回值 |
 |------|------|------|--------|

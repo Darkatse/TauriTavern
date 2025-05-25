@@ -10,3 +10,4 @@ pub mod file_extension_repository;
 pub mod file_avatar_repository;
 pub mod file_group_repository;
 pub mod file_background_repository;
+pub mod file_theme_repository;

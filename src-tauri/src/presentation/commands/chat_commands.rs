@@ -12,11 +12,11 @@ use crate::infrastructure::logging::logger;
 /// Get all chats
 #[tauri::command]
 pub async fn get_all_chats(
-    chat_service: State<'_, Arc<ChatService>>,
+    app_state: State<'_, Arc<crate::app::AppState>>,
 ) -> Result<Vec<ChatDto>, CommandError> {
     logger::debug("Command: get_all_chats");
 
-    chat_service.get_all_chats().await
+    app_state.chat_service.get_all_chats().await
         .map_err(|e| {
             logger::error(&format!("Failed to get all chats: {}", e));
             e.into()
@@ -28,11 +28,11 @@ pub async fn get_all_chats(
 pub async fn get_chat(
     character_name: String,
     file_name: String,
-    chat_service: State<'_, Arc<ChatService>>,
+    app_state: State<'_, Arc<crate::app::AppState>>,
 ) -> Result<ChatDto, CommandError> {
     logger::debug(&format!("Command: get_chat {}/{}", character_name, file_name));
 
-    chat_service.get_chat(&character_name, &file_name).await
+    app_state.chat_service.get_chat(&character_name, &file_name).await
         .map_err(|e| {
             logger::error(&format!("Failed to get chat {}/{}: {}", character_name, file_name, e));
             e.into()
@@ -43,11 +43,11 @@ pub async fn get_chat(
 #[tauri::command]
 pub async fn get_character_chats(
     character_name: String,
-    chat_service: State<'_, Arc<ChatService>>,
+    app_state: State<'_, Arc<crate::app::AppState>>,
 ) -> Result<Vec<ChatDto>, CommandError> {
     logger::debug(&format!("Command: get_character_chats {}", character_name));
 
-    chat_service.get_character_chats(&character_name).await
+    app_state.chat_service.get_character_chats(&character_name).await
         .map_err(|e| {
             logger::error(&format!("Failed to get chats for character {}: {}", character_name, e));
             e.into()
@@ -58,11 +58,11 @@ pub async fn get_character_chats(
 #[tauri::command]
 pub async fn create_chat(
     dto: CreateChatDto,
-    chat_service: State<'_, Arc<ChatService>>,
+    app_state: State<'_, Arc<crate::app::AppState>>,
 ) -> Result<ChatDto, CommandError> {
     logger::debug(&format!("Command: create_chat for character {}", dto.character_name));
 
-    chat_service.create_chat(dto).await
+    app_state.chat_service.create_chat(dto).await
         .map_err(|e| {
             logger::error(&format!("Failed to create chat: {}", e));
             e.into()
@@ -73,11 +73,11 @@ pub async fn create_chat(
 #[tauri::command]
 pub async fn add_message(
     dto: AddMessageDto,
-    chat_service: State<'_, Arc<ChatService>>,
+    app_state: State<'_, Arc<crate::app::AppState>>,
 ) -> Result<ChatDto, CommandError> {
     logger::debug(&format!("Command: add_message to chat {}/{}", dto.character_name, dto.file_name));
 
-    chat_service.add_message(dto).await
+    app_state.chat_service.add_message(dto).await
         .map_err(|e| {
             logger::error(&format!("Failed to add message to chat: {}", e));
             e.into()
@@ -88,12 +88,12 @@ pub async fn add_message(
 #[tauri::command]
 pub async fn rename_chat(
     dto: RenameChatDto,
-    chat_service: State<'_, Arc<ChatService>>,
+    app_state: State<'_, Arc<crate::app::AppState>>,
 ) -> Result<(), CommandError> {
     logger::debug(&format!("Command: rename_chat {}/{} -> {}/{}",
         dto.character_name, dto.old_file_name, dto.character_name, dto.new_file_name));
 
-    chat_service.rename_chat(dto).await
+    app_state.chat_service.rename_chat(dto).await
         .map_err(|e| {
             logger::error(&format!("Failed to rename chat: {}", e));
             e.into()
@@ -105,11 +105,11 @@ pub async fn rename_chat(
 pub async fn delete_chat(
     character_name: String,
     file_name: String,
-    chat_service: State<'_, Arc<ChatService>>,
+    app_state: State<'_, Arc<crate::app::AppState>>,
 ) -> Result<(), CommandError> {
     logger::debug(&format!("Command: delete_chat {}/{}", character_name, file_name));
 
-    chat_service.delete_chat(&character_name, &file_name).await
+    app_state.chat_service.delete_chat(&character_name, &file_name).await
         .map_err(|e| {
             logger::error(&format!("Failed to delete chat {}/{}: {}", character_name, file_name, e));
             e.into()
@@ -121,13 +121,13 @@ pub async fn delete_chat(
 pub async fn search_chats(
     query: String,
     character_filter: Option<String>,
-    chat_service: State<'_, Arc<ChatService>>,
+    app_state: State<'_, Arc<crate::app::AppState>>,
 ) -> Result<Vec<ChatSearchResultDto>, CommandError> {
     logger::debug(&format!("Command: search_chats {}", query));
 
     let character_filter_ref = character_filter.as_deref();
 
-    chat_service.search_chats(&query, character_filter_ref).await
+    app_state.chat_service.search_chats(&query, character_filter_ref).await
         .map_err(|e| {
             logger::error(&format!("Failed to search chats: {}", e));
             e.into()
@@ -138,11 +138,11 @@ pub async fn search_chats(
 #[tauri::command]
 pub async fn import_chat(
     dto: ImportChatDto,
-    chat_service: State<'_, Arc<ChatService>>,
+    app_state: State<'_, Arc<crate::app::AppState>>,
 ) -> Result<ChatDto, CommandError> {
     logger::debug(&format!("Command: import_chat for character {} from {}", dto.character_name, dto.file_path));
 
-    chat_service.import_chat(dto).await
+    app_state.chat_service.import_chat(dto).await
         .map_err(|e| {
             logger::error(&format!("Failed to import chat: {}", e));
             e.into()
@@ -153,11 +153,11 @@ pub async fn import_chat(
 #[tauri::command]
 pub async fn export_chat(
     dto: ExportChatDto,
-    chat_service: State<'_, Arc<ChatService>>,
+    app_state: State<'_, Arc<crate::app::AppState>>,
 ) -> Result<(), CommandError> {
     logger::debug(&format!("Command: export_chat {}/{} to {}", dto.character_name, dto.file_name, dto.target_path));
 
-    chat_service.export_chat(dto).await
+    app_state.chat_service.export_chat(dto).await
         .map_err(|e| {
             logger::error(&format!("Failed to export chat: {}", e));
             e.into()
@@ -169,11 +169,11 @@ pub async fn export_chat(
 pub async fn backup_chat(
     character_name: String,
     file_name: String,
-    chat_service: State<'_, Arc<ChatService>>,
+    app_state: State<'_, Arc<crate::app::AppState>>,
 ) -> Result<(), CommandError> {
     logger::debug(&format!("Command: backup_chat {}/{}", character_name, file_name));
 
-    chat_service.backup_chat(&character_name, &file_name).await
+    app_state.chat_service.backup_chat(&character_name, &file_name).await
         .map_err(|e| {
             logger::error(&format!("Failed to backup chat {}/{}: {}", character_name, file_name, e));
             e.into()
@@ -183,11 +183,11 @@ pub async fn backup_chat(
 /// Clear the chat cache
 #[tauri::command]
 pub async fn clear_chat_cache(
-    chat_service: State<'_, Arc<ChatService>>,
+    app_state: State<'_, Arc<crate::app::AppState>>,
 ) -> Result<(), CommandError> {
     logger::debug("Command: clear_chat_cache");
 
-    chat_service.clear_cache().await
+    app_state.chat_service.clear_cache().await
         .map_err(|e| {
             logger::error(&format!("Failed to clear chat cache: {}", e));
             e.into()

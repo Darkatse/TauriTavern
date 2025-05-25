@@ -774,7 +774,7 @@ async function getClientVersion() {
         if (isTauri) {
             console.log('Getting client version in Tauri environment');
             // Import the Tauri API module dynamically
-            const TauriAPI = await import('./tauri-api.js');
+            const TauriAPI = await import('./tauri-bridge.js');
             data = await TauriAPI.getClientVersion();
 
             // If Tauri API returned null, fall back to HTTP API
@@ -1786,10 +1786,10 @@ export async function getOneCharacter(avatarUrl) {
     if (isTauri) {
         try {
             // Import the Tauri API module dynamically
-            const TauriAPI = await import('./tauri-api.js');
+            const tauriCharactersAPI = await import('./scripts/tauri/characters-api.js');
 
             // Get character from Tauri backend
-            const tauriCharacter = await TauriAPI.getCharacter(avatarUrl);
+            const tauriCharacter = await tauriCharactersAPI.getCharacter(avatarUrl);
 
             if (tauriCharacter) {
                 getData = tauriCharacter;
@@ -1903,10 +1903,10 @@ export async function getCharacters() {
     if (isTauri) {
         try {
             // Import the Tauri API module dynamically
-            const TauriAPI = await import('./tauri-api.js');
+            const tauriCharactersAPI = await import('./scripts/tauri/characters-api.js');
 
             // Get characters from Tauri backend
-            const tauriCharacters = await TauriAPI.getCharacters();
+            const tauriCharacters = await tauriCharactersAPI.getAllCharacters();
 
             if (tauriCharacters) {
                 getData = tauriCharacters;
@@ -7279,11 +7279,11 @@ export async function getChat() {
 
         if (isTauri) {
             try {
-                // Import the Tauri Chat module dynamically
-                const TauriChat = await import('./tauri-chat.js');
+                // Import the Tauri Chats API module dynamically
+                const tauriChatsAPI = await import('./scripts/tauri/chats-api.js');
 
                 // Get chat from Tauri backend
-                const tauriChat = await TauriChat.getChat(characters[this_chid].chat);
+                const tauriChat = await tauriChatsAPI.getChat(characters[this_chid].name, characters[this_chid].chat);
 
                 if (tauriChat) {
                     chatData = tauriChat;

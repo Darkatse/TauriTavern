@@ -80,21 +80,6 @@ export function patchFetch() {
                 };
             }
 
-            if (path === '/api/characters/all' || path === '/getcharacters') {
-                const characters = await TauriBridge.getAllCharacters();
-                return {
-                    json: async () => characters
-                };
-            }
-
-            if (path.startsWith('/api/characters/get') || path.startsWith('/getonecharacter')) {
-                const id = new URL(path, window.location.origin).searchParams.get('id');
-                const character = await TauriBridge.getCharacter(id);
-                return {
-                    json: async () => character
-                };
-            }
-
             // For other endpoints, use the original fetch for now
             return originalFetch(url, options);
         } catch (error) {
@@ -187,31 +172,6 @@ export async function initialize() {
         // Patch fetch and XHR
         patchFetch();
         patchXHR();
-
-        // Add event listeners for Tauri events
-        TauriBridge.addEventListener('CharacterCreated', (data) => {
-            console.log('Character created:', data);
-            // Refresh character list if needed
-            // We check if the function exists in the global scope
-            // @ts-ignore - TypeScript doesn't know about global functions
-            if (typeof window.getCharacters === 'function') {
-                // @ts-ignore - TypeScript doesn't know about global functions
-                window.getCharacters();
-            }
-        });
-
-        TauriBridge.addEventListener('CharacterUpdated', (data) => {
-            console.log('Character updated:', data);
-            // Refresh character if it's the current one
-            // We check if the function exists in the global scope
-            // @ts-ignore - TypeScript doesn't know about global functions
-            if (typeof window.getCurrentCharacter === 'function' &&
-                // @ts-ignore - TypeScript doesn't know about global functions
-                data.id === window.getCurrentCharacter()?.id) {
-                // @ts-ignore - TypeScript doesn't know about global functions
-                window.reloadCurrentChat();
-            }
-        });
 
         return true;
     }

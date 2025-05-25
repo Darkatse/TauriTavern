@@ -4,18 +4,8 @@
 import * as ChatsAPI from '../scripts/tauri/chats-api.js';
 import { isTauri } from '../tauri-bridge.js';
 
-// Original functions to patch
-let originalGetAllChats = null;
-let originalGetChat = null;
-let originalGetCharacterChats = null;
-let originalCreateChat = null;
-let originalAddMessage = null;
-let originalRenameChat = null;
-let originalDeleteChat = null;
-let originalSearchChats = null;
-let originalImportChat = null;
-let originalExportChat = null;
-let originalBackupChat = null;
+// Store original fetch function
+let originalFetch = null;
 
 /**
  * Initialize the chats adapter
@@ -29,135 +19,196 @@ export function initializeChatsAdapter() {
     console.log('Initializing Tauri chats adapter');
 
     try {
-        // Get the chats module
-        const chatsModule = window.chat;
-        if (!chatsModule) {
-            console.error('Chats module not found');
-            return;
+        // We'll use a different approach that doesn't rely on window.chat
+        // Instead, we'll intercept API calls directly
+
+        // Store original fetch function if not already stored
+        if (!originalFetch) {
+            originalFetch = window.fetch;
         }
 
-        // Save original functions
-        originalGetAllChats = chatsModule.getAllChats;
-        originalGetChat = chatsModule.getChat;
-        originalGetCharacterChats = chatsModule.getCharacterChats;
-        originalCreateChat = chatsModule.createChat;
-        originalAddMessage = chatsModule.addMessage;
-        originalRenameChat = chatsModule.renameChat;
-        originalDeleteChat = chatsModule.deleteChat;
-        originalSearchChats = chatsModule.searchChats;
-        originalImportChat = chatsModule.importChat;
-        originalExportChat = chatsModule.exportChat;
-        originalBackupChat = chatsModule.backupChat;
+        // Override fetch for chat-related API calls
+        window.fetch = async function(url, options = {}) {
+            // Only intercept chat-related API calls
+            if (typeof url === 'string') {
+                // Handle chat API calls
+                if (url === '/api/chats/all' && options.method === 'POST') {
+                    console.debug('Intercepting chats/all API call');
+                    try {
+                        const chats = await ChatsAPI.getAllChats();
+                        return {
+                            ok: true,
+                            json: async () => chats,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri getAllChats, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
 
-        // Patch the functions
-        chatsModule.getAllChats = async function() {
-            try {
-                console.log('Using Tauri backend for getAllChats');
-                return await ChatsAPI.getAllChats();
-            } catch (error) {
-                console.error('Error in Tauri getAllChats, falling back to original:', error);
-                return originalGetAllChats.apply(this, arguments);
-            }
-        };
+                if (url === '/api/chats/get' && options.method === 'POST') {
+                    console.debug('Intercepting chats/get API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const body = JSON.parse(bodyText);
+                        const chat = await ChatsAPI.getChat(body.character_name, body.file_name);
+                        return {
+                            ok: true,
+                            json: async () => chat,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri getChat, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
 
-        chatsModule.getChat = async function(characterName, fileName) {
-            try {
-                console.log(`Using Tauri backend for getChat: ${characterName}/${fileName}`);
-                return await ChatsAPI.getChat(characterName, fileName);
-            } catch (error) {
-                console.error('Error in Tauri getChat, falling back to original:', error);
-                return originalGetChat.apply(this, arguments);
-            }
-        };
+                if (url === '/api/chats/character' && options.method === 'POST') {
+                    console.debug('Intercepting chats/character API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const body = JSON.parse(bodyText);
+                        const chats = await ChatsAPI.getCharacterChats(body.character_name);
+                        return {
+                            ok: true,
+                            json: async () => chats,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri getCharacterChats, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
 
-        chatsModule.getCharacterChats = async function(characterName) {
-            try {
-                console.log(`Using Tauri backend for getCharacterChats: ${characterName}`);
-                return await ChatsAPI.getCharacterChats(characterName);
-            } catch (error) {
-                console.error('Error in Tauri getCharacterChats, falling back to original:', error);
-                return originalGetCharacterChats.apply(this, arguments);
-            }
-        };
+                if (url === '/api/chats/create' && options.method === 'POST') {
+                    console.debug('Intercepting chats/create API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const chatData = JSON.parse(bodyText);
+                        const result = await ChatsAPI.createChat(chatData);
+                        return {
+                            ok: true,
+                            json: async () => result,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri createChat, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
 
-        chatsModule.createChat = async function(chatData) {
-            try {
-                console.log('Using Tauri backend for createChat');
-                return await ChatsAPI.createChat(chatData);
-            } catch (error) {
-                console.error('Error in Tauri createChat, falling back to original:', error);
-                return originalCreateChat.apply(this, arguments);
-            }
-        };
+                if (url === '/api/chats/message' && options.method === 'POST') {
+                    console.debug('Intercepting chats/message API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const messageData = JSON.parse(bodyText);
+                        const result = await ChatsAPI.addMessage(messageData);
+                        return {
+                            ok: true,
+                            json: async () => result,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri addMessage, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
 
-        chatsModule.addMessage = async function(messageData) {
-            try {
-                console.log('Using Tauri backend for addMessage');
-                return await ChatsAPI.addMessage(messageData);
-            } catch (error) {
-                console.error('Error in Tauri addMessage, falling back to original:', error);
-                return originalAddMessage.apply(this, arguments);
-            }
-        };
+                if (url === '/api/chats/rename' && options.method === 'POST') {
+                    console.debug('Intercepting chats/rename API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const dto = JSON.parse(bodyText);
+                        const result = await ChatsAPI.renameChat(dto);
+                        return {
+                            ok: true,
+                            json: async () => result,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri renameChat, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
 
-        chatsModule.renameChat = async function(dto) {
-            try {
-                console.log(`Using Tauri backend for renameChat: ${dto.character_name}/${dto.old_file_name} -> ${dto.new_file_name}`);
-                return await ChatsAPI.renameChat(dto);
-            } catch (error) {
-                console.error('Error in Tauri renameChat, falling back to original:', error);
-                return originalRenameChat.apply(this, arguments);
-            }
-        };
+                if (url === '/api/chats/delete' && options.method === 'POST') {
+                    console.debug('Intercepting chats/delete API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const body = JSON.parse(bodyText);
+                        const result = await ChatsAPI.deleteChat(body.character_name, body.file_name);
+                        return {
+                            ok: true,
+                            json: async () => result,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri deleteChat, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
 
-        chatsModule.deleteChat = async function(characterName, fileName) {
-            try {
-                console.log(`Using Tauri backend for deleteChat: ${characterName}/${fileName}`);
-                return await ChatsAPI.deleteChat(characterName, fileName);
-            } catch (error) {
-                console.error('Error in Tauri deleteChat, falling back to original:', error);
-                return originalDeleteChat.apply(this, arguments);
-            }
-        };
+                if (url === '/api/chats/search' && options.method === 'POST') {
+                    console.debug('Intercepting chats/search API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const body = JSON.parse(bodyText);
+                        const results = await ChatsAPI.searchChats(body.query, body.character_filter);
+                        return {
+                            ok: true,
+                            json: async () => results,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri searchChats, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
 
-        chatsModule.searchChats = async function(query, characterFilter) {
-            try {
-                console.log(`Using Tauri backend for searchChats: ${query}`);
-                return await ChatsAPI.searchChats(query, characterFilter);
-            } catch (error) {
-                console.error('Error in Tauri searchChats, falling back to original:', error);
-                return originalSearchChats.apply(this, arguments);
-            }
-        };
+                if (url === '/api/chats/import' && options.method === 'POST') {
+                    console.debug('Intercepting chats/import API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const dto = JSON.parse(bodyText);
+                        const result = await ChatsAPI.importChat(dto);
+                        return {
+                            ok: true,
+                            json: async () => result,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri importChat, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
 
-        chatsModule.importChat = async function(dto) {
-            try {
-                console.log('Using Tauri backend for importChat');
-                return await ChatsAPI.importChat(dto);
-            } catch (error) {
-                console.error('Error in Tauri importChat, falling back to original:', error);
-                return originalImportChat.apply(this, arguments);
-            }
-        };
+                if (url === '/api/chats/export' && options.method === 'POST') {
+                    console.debug('Intercepting chats/export API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const dto = JSON.parse(bodyText);
+                        const result = await ChatsAPI.exportChat(dto);
+                        return {
+                            ok: true,
+                            json: async () => result,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri exportChat, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
 
-        chatsModule.exportChat = async function(dto) {
-            try {
-                console.log(`Using Tauri backend for exportChat: ${dto.character_name}/${dto.file_name}`);
-                return await ChatsAPI.exportChat(dto);
-            } catch (error) {
-                console.error('Error in Tauri exportChat, falling back to original:', error);
-                return originalExportChat.apply(this, arguments);
+                if (url === '/api/chats/backup' && options.method === 'POST') {
+                    console.debug('Intercepting chats/backup API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const body = JSON.parse(bodyText);
+                        const result = await ChatsAPI.backupChat(body.character_name, body.file_name);
+                        return {
+                            ok: true,
+                            json: async () => result,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri backupChat, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
             }
-        };
 
-        chatsModule.backupChat = async function(characterName, fileName) {
-            try {
-                console.log(`Using Tauri backend for backupChat: ${characterName}/${fileName}`);
-                return await ChatsAPI.backupChat(characterName, fileName);
-            } catch (error) {
-                console.error('Error in Tauri backupChat, falling back to original:', error);
-                return originalBackupChat.apply(this, arguments);
-            }
+            // Call original fetch for non-chat API calls
+            return originalFetch(url, options);
         };
 
         console.log('Tauri chats adapter initialized successfully');

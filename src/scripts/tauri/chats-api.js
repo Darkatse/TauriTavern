@@ -30,7 +30,7 @@ export async function getAllChats() {
  */
 export async function getChat(characterName, fileName) {
     try {
-        return await chatsClient.call('get', { character_name: characterName, file_name: fileName }, {
+        return await chatsClient.call('get', { characterName: characterName, fileName: fileName }, {
             path: 'get',
             commandName: 'get_chat'
         });
@@ -116,7 +116,7 @@ export async function renameChat(dto) {
  */
 export async function deleteChat(characterName, fileName) {
     try {
-        return await chatsClient.call('delete', { character_name: characterName, file_name: fileName }, {
+        return await chatsClient.call('delete', { characterName: characterName, fileName: fileName }, {
             path: 'delete',
             commandName: 'delete_chat'
         });
@@ -134,7 +134,7 @@ export async function deleteChat(characterName, fileName) {
  */
 export async function searchChats(query, characterFilter = null) {
     try {
-        return await chatsClient.call('search', { query, character_filter: characterFilter }, {
+        return await chatsClient.call('search', { query, characterFilter: characterFilter }, {
             path: 'search',
             commandName: 'search_chats'
         });
@@ -173,7 +173,7 @@ export async function exportChat(dto) {
             commandName: 'export_chat'
         });
     } catch (error) {
-        console.error(`Error exporting chat ${dto.character_name}/${dto.file_name}:`, error);
+        console.error(`Error exporting chat ${dto.characterName}/${dto.fileName}:`, error);
         throw error;
     }
 }
@@ -186,7 +186,7 @@ export async function exportChat(dto) {
  */
 export async function backupChat(characterName, fileName) {
     try {
-        return await chatsClient.call('backup', { character_name: characterName, file_name: fileName }, {
+        return await chatsClient.call('backup', { characterName: characterName, fileName: fileName }, {
             path: 'backup',
             commandName: 'backup_chat'
         });

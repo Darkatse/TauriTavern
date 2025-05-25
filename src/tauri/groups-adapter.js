@@ -4,11 +4,8 @@
 import * as GroupsAPI from '../scripts/tauri/groups-api.js';
 import { isTauri } from '../tauri-bridge.js';
 
-// Original functions to patch
-let originalGetGroups = null;
-let originalCreateGroup = null;
-let originalEditGroup = null;
-let originalDeleteGroup = null;
+// Store original fetch function
+let originalFetch = null;
 
 /**
  * Initialize the groups adapter
@@ -22,62 +19,86 @@ export function initializeGroupsAdapter() {
     console.log('Initializing Tauri groups adapter');
 
     try {
-        // Get the group-chats module
-        const groupChatsModule = window.groupChatsModule;
-        if (!groupChatsModule) {
-            console.error('Group chats module not found');
-            return;
+        // We'll use a different approach that doesn't rely on window.groupChatsModule
+        // Instead, we'll intercept API calls directly
+
+        // Store original fetch function if not already stored
+        if (!originalFetch) {
+            originalFetch = window.fetch;
         }
 
-        // Save original functions
-        originalGetGroups = groupChatsModule.getGroups;
-        originalCreateGroup = groupChatsModule.createGroup;
-        originalEditGroup = groupChatsModule._save; // This is the internal function used for editing groups
-        originalDeleteGroup = groupChatsModule.deleteGroup;
-
-        // Patch the functions
-        groupChatsModule.getGroups = async function() {
-            try {
-                console.log('Using Tauri backend for getGroups');
-                return await GroupsAPI.getAllGroups();
-            } catch (error) {
-                console.error('Error in Tauri getGroups, falling back to original:', error);
-                return originalGetGroups.apply(this, arguments);
-            }
-        };
-
-        groupChatsModule.createGroup = async function(groupData) {
-            try {
-                console.log('Using Tauri backend for createGroup');
-                return await GroupsAPI.createGroup(groupData);
-            } catch (error) {
-                console.error('Error in Tauri createGroup, falling back to original:', error);
-                return originalCreateGroup.apply(this, arguments);
-            }
-        };
-
-        groupChatsModule._save = async function(group, reload = true) {
-            try {
-                console.log(`Using Tauri backend for editGroup: ${group.id}`);
-                await GroupsAPI.updateGroup(group);
-                if (reload) {
-                    await getCharacters();
+        // Override fetch for group-related API calls
+        window.fetch = async function(url, options = {}) {
+            // Only intercept group-related API calls
+            if (typeof url === 'string') {
+                // Handle group API calls
+                if (url === '/api/groups/all' && options.method === 'POST') {
+                    console.debug('Intercepting groups/all API call');
+                    try {
+                        const groups = await GroupsAPI.getAllGroups();
+                        return {
+                            ok: true,
+                            json: async () => groups,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri getAllGroups, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
                 }
-            } catch (error) {
-                console.error('Error in Tauri editGroup, falling back to original:', error);
-                return originalEditGroup.apply(this, arguments);
-            }
-        };
 
-        groupChatsModule.deleteGroup = async function(id) {
-            try {
-                console.log(`Using Tauri backend for deleteGroup: ${id}`);
-                await GroupsAPI.deleteGroup(id);
-                return true;
-            } catch (error) {
-                console.error('Error in Tauri deleteGroup, falling back to original:', error);
-                return originalDeleteGroup.apply(this, arguments);
+                if (url === '/api/groups/create' && options.method === 'POST') {
+                    console.debug('Intercepting groups/create API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const groupData = JSON.parse(bodyText);
+                        const result = await GroupsAPI.createGroup(groupData);
+                        return {
+                            ok: true,
+                            json: async () => result,
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri createGroup, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
+
+                if (url === '/api/groups/edit' && options.method === 'POST') {
+                    console.debug('Intercepting groups/edit API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const group = JSON.parse(bodyText);
+                        await GroupsAPI.updateGroup(group);
+                        return {
+                            ok: true,
+                            json: async () => ({ result: 'ok' }),
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri updateGroup, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
+
+                if (url === '/api/groups/delete' && options.method === 'POST') {
+                    console.debug('Intercepting groups/delete API call');
+                    try {
+                        const bodyText = await new Response(options.body).text();
+                        const body = JSON.parse(bodyText);
+                        await GroupsAPI.deleteGroup(body.id);
+                        return {
+                            ok: true,
+                            json: async () => ({ result: 'ok' }),
+                        };
+                    } catch (error) {
+                        console.error('Error in Tauri deleteGroup, falling back to original:', error);
+                        return originalFetch(url, options);
+                    }
+                }
+
+                // Add more group API endpoints as needed
             }
+
+            // Call original fetch for non-group API calls
+            return originalFetch(url, options);
         };
 
         console.log('Tauri groups adapter initialized successfully');

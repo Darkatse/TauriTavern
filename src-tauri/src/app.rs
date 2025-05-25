@@ -14,6 +14,7 @@ use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::domain::repositories::avatar_repository::AvatarRepository;
 use crate::domain::repositories::group_repository::GroupRepository;
 use crate::domain::repositories::background_repository::BackgroundRepository;
+use crate::domain::repositories::theme_repository::ThemeRepository;
 
 use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
 use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
@@ -26,6 +27,7 @@ use crate::infrastructure::repositories::file_extension_repository::FileExtensio
 use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
 use crate::infrastructure::repositories::file_group_repository::FileGroupRepository;
 use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
+use crate::infrastructure::repositories::file_theme_repository::FileThemeRepository;
 
 use crate::application::services::character_service::CharacterService;
 use crate::application::services::chat_service::ChatService;
@@ -38,6 +40,7 @@ use crate::application::services::extension_service::ExtensionService;
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::background_service::BackgroundService;
+use crate::application::services::theme_service::ThemeService;
 
 use crate::infrastructure::persistence::file_system::DataDirectory;
 use crate::infrastructure::logging::logger;
@@ -57,6 +60,7 @@ pub struct AppState {
     pub avatar_service: Arc<AvatarService>,
     pub group_service: Arc<GroupService>,
     pub background_service: Arc<BackgroundService>,
+    pub theme_service: Arc<ThemeService>,
 }
 
 impl AppState {
@@ -134,6 +138,11 @@ impl AppState {
             )
         );
 
+        // 创建主题仓库
+        let theme_repository: Arc<dyn ThemeRepository> = Arc::new(
+            FileThemeRepository::new(app_handle.clone())
+        );
+
         // 创建内容服务
         let content_service = Arc::new(
             ContentService::new(content_repository.clone())
@@ -157,6 +166,11 @@ impl AppState {
         // 创建背景服务
         let background_service = Arc::new(
             BackgroundService::new(background_repository.clone())
+        );
+
+        // 创建主题服务
+        let theme_service = Arc::new(
+            ThemeService::new(theme_repository.clone())
         );
 
         // Create services
@@ -200,6 +214,7 @@ impl AppState {
             avatar_service,
             group_service,
             background_service,
+            theme_service,
         })
     }
 }

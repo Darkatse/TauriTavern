@@ -23,53 +23,6 @@ async function initializeTauri() {
             // Expose the bridge to the global scope for debugging
             window.TauriBridge = TauriBridge;
             
-            // Add event listeners for Tauri events
-            TauriBridge.addEventListener('CharacterCreated', (data) => {
-                console.log('Character created:', data);
-                // Refresh character list if needed
-                if (typeof getCharacters === 'function') {
-                    getCharacters();
-                }
-            });
-            
-            TauriBridge.addEventListener('CharacterUpdated', (data) => {
-                console.log('Character updated:', data);
-                // Refresh character if it's the current one
-                if (typeof getCurrentCharacter === 'function' && 
-                    data.id === getCurrentCharacter()?.id) {
-                    reloadCurrentChat();
-                }
-            });
-            
-            TauriBridge.addEventListener('CharacterDeleted', (data) => {
-                console.log('Character deleted:', data);
-                // Refresh character list
-                if (typeof getCharacters === 'function') {
-                    getCharacters();
-                }
-            });
-            
-            TauriBridge.addEventListener('ChatCreated', (data) => {
-                console.log('Chat created:', data);
-            });
-            
-            TauriBridge.addEventListener('ChatUpdated', (data) => {
-                console.log('Chat updated:', data);
-            });
-            
-            TauriBridge.addEventListener('ChatDeleted', (data) => {
-                console.log('Chat deleted:', data);
-            });
-            
-            TauriBridge.addEventListener('MessageAdded', (data) => {
-                console.log('Message added:', data);
-                // Refresh chat if it's the current one
-                if (typeof getCurrentChatId === 'function' && 
-                    data.chat_id === getCurrentChatId()) {
-                    reloadCurrentChat();
-                }
-            });
-            
             TauriBridge.addEventListener('Error', (data) => {
                 console.error('Tauri backend error:', data);
                 // Show error to user

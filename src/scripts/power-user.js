@@ -1,5 +1,20 @@
 import { Fuse, Handlebars } from '../lib.js';
 
+// Check if we're running in a Tauri environment
+const isTauri = window.__TAURI_INTERNALS__ !== undefined;
+
+// Import Tauri API if available
+let tauriThemesAPI = null;
+if (isTauri) {
+    // Dynamically import the Tauri API
+    import('./tauri/themes-api.js').then(module => {
+        tauriThemesAPI = module;
+        console.log('Tauri Themes API loaded');
+    }).catch(error => {
+        console.error('Failed to load Tauri Themes API:', error);
+    });
+}
+
 import {
     saveSettingsDebounced,
     scrollChatToBottom,
@@ -2161,28 +2176,38 @@ async function deleteTheme() {
         return;
     }
 
-    const response = await fetch('/api/themes/delete', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ name: themeName }),
-    });
+    try {
+        if (isTauri && tauriThemesAPI) {
+            // Use Tauri API
+            await tauriThemesAPI.deleteTheme(themeName);
+        } else {
+            // Use original fetch API
+            const response = await fetch('/api/themes/delete', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ name: themeName }),
+            });
 
-    if (!response.ok) {
-        toastr.error('Failed to delete theme. Check the console for more information.');
-        return;
-    }
-
-    const themeIndex = themes.findIndex(x => x.name == themeName);
-
-    if (themeIndex !== -1) {
-        themes.splice(themeIndex, 1);
-        $(`#themes option[value="${themeName}"]`).remove();
-        power_user.theme = themes[0]?.name;
-        saveSettingsDebounced();
-        if (power_user.theme) {
-            applyTheme(power_user.theme);
+            if (!response.ok) {
+                throw new Error('Failed to delete theme');
+            }
         }
-        toastr.success('Theme deleted.');
+
+        const themeIndex = themes.findIndex(x => x.name == themeName);
+
+        if (themeIndex !== -1) {
+            themes.splice(themeIndex, 1);
+            $(`#themes option[value="${themeName}"]`).remove();
+            power_user.theme = themes[0]?.name;
+            saveSettingsDebounced();
+            if (power_user.theme) {
+                applyTheme(power_user.theme);
+            }
+            toastr.success('Theme deleted.');
+        }
+    } catch (error) {
+        console.error('Error deleting theme:', error);
+        toastr.error('Failed to delete theme. Check the console for more information.');
     }
 }
 
@@ -2256,16 +2281,26 @@ async function saveTheme(name = undefined, theme = undefined) {
         theme = getThemeObject(name);
     }
 
-    const response = await fetch('/api/themes/save', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify(theme),
-    });
+    try {
+        if (isTauri && tauriThemesAPI) {
+            // Use Tauri API
+            await tauriThemesAPI.saveTheme(name, theme);
+        } else {
+            // Use original fetch API
+            const response = await fetch('/api/themes/save', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify(theme),
+            });
 
-    if (!response.ok) {
+            if (!response.ok) {
+                throw new Error('Theme could not be saved');
+            }
+        }
+    } catch (error) {
         toastr.error('Check the server connection and reload the page to prevent data loss.', 'Theme could not be saved');
-        console.error('Theme could not be saved', response);
-        throw new Error('Theme could not be saved');
+        console.error('Theme could not be saved', error);
+        throw error;
     }
 
     const themeIndex = themes.findIndex(x => x.name == name);
@@ -2280,7 +2315,7 @@ async function saveTheme(name = undefined, theme = undefined) {
     }
     else {
         themes[themeIndex] = theme;
-        $(`#themes option[value="${name}"]`).attr('selected', true);
+        $(`#themes option[value="${name}"]`).prop('selected', true);
     }
 
     power_user.theme = name;
@@ -2385,7 +2420,7 @@ async function saveMovingUI() {
         }
         else {
             movingUIPresets[movingUIPresetIndex] = movingUIPreset;
-            $(`#movingUIPresets option[value="${name}"]`).attr('selected', true);
+            $(`#movingUIPresets option[value="${name}"]`).prop('selected', true);
         }
 
         power_user.movingUIPreset = name;

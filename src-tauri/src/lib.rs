@@ -31,6 +31,7 @@ use presentation::commands::extension_commands::*;
 use presentation::commands::avatar_commands::*;
 use presentation::commands::group_commands::*;
 use presentation::commands::background_commands::*;
+use presentation::commands::theme_commands::*;
 use presentation::commands::bridge::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -205,6 +206,10 @@ pub async fn run() {
             delete_background,
             rename_background,
             upload_background,
+
+            // Theme commands
+            save_theme,
+            delete_theme,
 
             // Bridge commands
             emit_event,
