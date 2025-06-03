@@ -11,4 +11,5 @@ pub mod avatar_commands;
 pub mod group_commands;
 pub mod background_commands;
 pub mod theme_commands;
+pub mod preset_commands;
 pub mod bridge;

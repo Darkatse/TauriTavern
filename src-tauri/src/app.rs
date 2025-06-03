@@ -15,6 +15,7 @@ use crate::domain::repositories::avatar_repository::AvatarRepository;
 use crate::domain::repositories::group_repository::GroupRepository;
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::domain::repositories::theme_repository::ThemeRepository;
+use crate::domain::repositories::preset_repository::PresetRepository;
 
 use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
 use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
@@ -28,6 +29,7 @@ use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepos
 use crate::infrastructure::repositories::file_group_repository::FileGroupRepository;
 use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
 use crate::infrastructure::repositories::file_theme_repository::FileThemeRepository;
+use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
 
 use crate::application::services::character_service::CharacterService;
 use crate::application::services::chat_service::ChatService;
@@ -41,6 +43,7 @@ use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::background_service::BackgroundService;
 use crate::application::services::theme_service::ThemeService;
+use crate::application::services::preset_service::PresetService;
 
 use crate::infrastructure::persistence::file_system::DataDirectory;
 use crate::infrastructure::logging::logger;
@@ -61,6 +64,7 @@ pub struct AppState {
     pub group_service: Arc<GroupService>,
     pub background_service: Arc<BackgroundService>,
     pub theme_service: Arc<ThemeService>,
+    pub preset_service: Arc<PresetService>,
 }
 
 impl AppState {
@@ -143,6 +147,15 @@ impl AppState {
             FileThemeRepository::new(app_handle.clone())
         );
 
+        // 创建预设仓库
+        let preset_repository: Arc<dyn PresetRepository> = Arc::new(
+            FilePresetRepository::new(
+                app_handle.clone(),
+                data_directory.default_user().to_path_buf(),
+                content_repository.clone()
+            )
+        );
+
         // 创建内容服务
         let content_service = Arc::new(
             ContentService::new(content_repository.clone())
@@ -171,6 +184,11 @@ impl AppState {
         // 创建主题服务
         let theme_service = Arc::new(
             ThemeService::new(theme_repository.clone())
+        );
+
+        // 创建预设服务
+        let preset_service = Arc::new(
+            PresetService::new(preset_repository.clone())
         );
 
         // Create services
@@ -215,6 +233,7 @@ impl AppState {
             group_service,
             background_service,
             theme_service,
+            preset_service,
         })
     }
 }

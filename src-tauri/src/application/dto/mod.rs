@@ -8,3 +8,4 @@ pub mod secret_dto;
 pub mod group_dto;
 pub mod background_dto;
 pub mod theme_dto;
+pub mod preset_dto;

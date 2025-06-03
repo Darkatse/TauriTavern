@@ -72,7 +72,7 @@ src-tauri/
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/tauritavern.git
+   git clone https://github.com/Darkatse/tauritavern.git
    cd tauritavern
    ```
 

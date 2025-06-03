@@ -1,6 +1,7 @@
 use serde::Serialize;
 use thiserror::Error;
 use crate::application::errors::ApplicationError;
+use crate::domain::errors::DomainError;
 
 #[derive(Error, Debug, Serialize)]
 pub enum CommandError {
@@ -27,6 +28,18 @@ impl From<ApplicationError> for CommandError {
             ApplicationError::DomainError(msg) => CommandError::InternalServerError(msg),
             ApplicationError::InternalError(msg) => CommandError::InternalServerError(msg),
             ApplicationError::ServiceError(msg) => CommandError::InternalServerError(msg),
+        }
+    }
+}
+
+impl From<DomainError> for CommandError {
+    fn from(error: DomainError) -> Self {
+        match error {
+            DomainError::NotFound(msg) => CommandError::NotFound(msg),
+            DomainError::InvalidData(msg) => CommandError::BadRequest(msg),
+            DomainError::PermissionDenied(msg) => CommandError::Unauthorized(msg),
+            DomainError::AuthenticationError(msg) => CommandError::Unauthorized(msg),
+            DomainError::InternalError(msg) => CommandError::InternalServerError(msg),
         }
     }
 }

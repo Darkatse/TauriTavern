@@ -11,3 +11,4 @@ pub mod avatar_service;
 pub mod group_service;
 pub mod background_service;
 pub mod theme_service;
+pub mod preset_service;

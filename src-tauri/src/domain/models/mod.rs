@@ -10,3 +10,4 @@ pub mod group;
 pub mod extension;
 pub mod avatar;
 pub mod theme;
+pub mod preset;

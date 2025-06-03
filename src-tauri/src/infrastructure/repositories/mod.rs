@@ -11,3 +11,4 @@ pub mod file_avatar_repository;
 pub mod file_group_repository;
 pub mod file_background_repository;
 pub mod file_theme_repository;
+pub mod file_preset_repository;
