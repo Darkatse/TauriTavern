@@ -1,6 +1,6 @@
-use async_trait::async_trait;
 use crate::domain::errors::DomainError;
-use crate::domain::models::preset::{Preset, PresetType, DefaultPreset};
+use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
+use async_trait::async_trait;
 
 /// Repository interface for preset management
 #[async_trait]
@@ -38,7 +38,11 @@ pub trait PresetRepository: Send + Sync {
     /// # Returns
     ///
     /// * `Result<bool, DomainError>` - True if preset exists, false otherwise
-    async fn preset_exists(&self, name: &str, preset_type: &PresetType) -> Result<bool, DomainError>;
+    async fn preset_exists(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<bool, DomainError>;
 
     /// Get a preset by name and type
     ///
@@ -50,7 +54,11 @@ pub trait PresetRepository: Send + Sync {
     /// # Returns
     ///
     /// * `Result<Option<Preset>, DomainError>` - The preset if found, None otherwise
-    async fn get_preset(&self, name: &str, preset_type: &PresetType) -> Result<Option<Preset>, DomainError>;
+    async fn get_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<Option<Preset>, DomainError>;
 
     /// List all presets of a specific type
     ///
@@ -73,7 +81,11 @@ pub trait PresetRepository: Send + Sync {
     /// # Returns
     ///
     /// * `Result<Option<DefaultPreset>, DomainError>` - The default preset if found, None otherwise
-    async fn get_default_preset(&self, name: &str, preset_type: &PresetType) -> Result<Option<DefaultPreset>, DomainError>;
+    async fn get_default_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<Option<DefaultPreset>, DomainError>;
 
     /// List all available default presets of a specific type
     ///
@@ -84,5 +96,8 @@ pub trait PresetRepository: Send + Sync {
     /// # Returns
     ///
     /// * `Result<Vec<DefaultPreset>, DomainError>` - List of default presets
-    async fn list_default_presets(&self, preset_type: &PresetType) -> Result<Vec<DefaultPreset>, DomainError>;
+    async fn list_default_presets(
+        &self,
+        preset_type: &PresetType,
+    ) -> Result<Vec<DefaultPreset>, DomainError>;
 }

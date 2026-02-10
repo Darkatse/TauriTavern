@@ -80,12 +80,13 @@ TauriTavern使用Tauri v2的通信API实现前后端通信，主要包括：
 
 2. **模块化加载**：
    - 实现了`lib-bundle.js`：导入并打包所有库
-   - 实现了`lib-loader.js`：动态加载库bundle
-   - 实现了`lib.js`：从全局作用域获取库并导出
+   - 实现了`lib.js`：直接导入`src/dist/lib.bundle.js`并统一导出
+   - 在`init.js`中按顺序加载`lib.js -> tauri-main.js -> script.js`
 
 3. **构建优化**：
    - 配置了生产环境优化
-   - 实现了资源复制和管理机制
+   - webpack直接输出到`src/dist`，避免二次复制
+   - 启用了webpack filesystem cache，提升增量构建速度
 
 ## 文件结构
 
@@ -103,8 +104,9 @@ src-tauri/          # Rust后端代码
 
 src/                # 前端代码
   ├── lib-bundle.js # 库打包文件
-  ├── lib-loader.js # 库加载器
   ├── lib.js        # 库导出模块
+  ├── init.js       # 应用初始化入口
+  └── dist/         # webpack输出目录
   └── types.d.ts    # TypeScript类型定义
 ```
 

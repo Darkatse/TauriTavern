@@ -1,7 +1,7 @@
+use crate::domain::errors::DomainError;
+use crate::domain::models::character::Character;
 use async_trait::async_trait;
 use std::path::Path;
-use crate::domain::models::character::Character;
-use crate::domain::errors::DomainError;
 
 /// Repository interface for character management
 #[async_trait]
@@ -25,19 +25,37 @@ pub trait CharacterRepository: Send + Sync {
     async fn rename(&self, old_name: &str, new_name: &str) -> Result<Character, DomainError>;
 
     /// Import a character from a file
-    async fn import_character(&self, file_path: &Path, preserve_file_name: Option<String>) -> Result<Character, DomainError>;
+    async fn import_character(
+        &self,
+        file_path: &Path,
+        preserve_file_name: Option<String>,
+    ) -> Result<Character, DomainError>;
 
     /// Export a character to a file
     async fn export_character(&self, name: &str, target_path: &Path) -> Result<(), DomainError>;
 
     /// Create a character with an avatar image
-    async fn create_with_avatar(&self, character: &Character, avatar_path: Option<&Path>, crop: Option<ImageCrop>) -> Result<Character, DomainError>;
+    async fn create_with_avatar(
+        &self,
+        character: &Character,
+        avatar_path: Option<&Path>,
+        crop: Option<ImageCrop>,
+    ) -> Result<Character, DomainError>;
 
     /// Update a character's avatar
-    async fn update_avatar(&self, name: &str, avatar_path: &Path, crop: Option<ImageCrop>) -> Result<(), DomainError>;
+    async fn update_avatar(
+        &self,
+        name: &str,
+        avatar_path: &Path,
+        crop: Option<ImageCrop>,
+    ) -> Result<(), DomainError>;
 
     /// Get character chats
-    async fn get_character_chats(&self, name: &str, simple: bool) -> Result<Vec<CharacterChat>, DomainError>;
+    async fn get_character_chats(
+        &self,
+        name: &str,
+        simple: bool,
+    ) -> Result<Vec<CharacterChat>, DomainError>;
 
     /// Clear the character cache
     async fn clear_cache(&self) -> Result<(), DomainError>;

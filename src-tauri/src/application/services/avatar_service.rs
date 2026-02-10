@@ -21,7 +21,7 @@ impl AvatarService {
     pub async fn get_avatars(&self) -> Result<Vec<String>, DomainError> {
         logger::debug("Getting all avatars");
         let avatars = self.avatar_repository.get_avatars().await?;
-        
+
         // Return only the avatar names
         let avatar_names = avatars.into_iter().map(|a| a.name).collect();
         Ok(avatar_names)

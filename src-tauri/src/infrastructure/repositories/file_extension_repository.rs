@@ -72,9 +72,12 @@ impl FileExtensionRepository {
         let system_extensions_dir = data_root.join("extensions");
 
         // Create directories if they don't exist
-        fs::create_dir_all(&user_extensions_dir).expect("Failed to create user extensions directory");
-        fs::create_dir_all(&global_extensions_dir).expect("Failed to create global extensions directory");
-        fs::create_dir_all(&system_extensions_dir).expect("Failed to create system extensions directory");
+        fs::create_dir_all(&user_extensions_dir)
+            .expect("Failed to create user extensions directory");
+        fs::create_dir_all(&global_extensions_dir)
+            .expect("Failed to create global extensions directory");
+        fs::create_dir_all(&system_extensions_dir)
+            .expect("Failed to create system extensions directory");
 
         Self {
             app_handle,
@@ -163,7 +166,10 @@ impl FileExtensionRepository {
     ) -> Result<(), DomainError> {
         tracing::info!(
             "Downloading GitHub repository {}/{} (branch: {}) to {:?}",
-            owner, repo, branch, destination
+            owner,
+            repo,
+            branch,
+            destination
         );
 
         // Create destination directory if it doesn't exist
@@ -173,7 +179,10 @@ impl FileExtensionRepository {
         })?;
 
         // Download zip file
-        let zip_url = format!("https://github.com/{}/{}/archive/{}.zip", owner, repo, branch);
+        let zip_url = format!(
+            "https://github.com/{}/{}/archive/{}.zip",
+            owner, repo, branch
+        );
         let temp_dir = self.app_handle.path().app_cache_dir().map_err(|e| {
             logger::error(&format!("Failed to get app cache directory: {}", e));
             DomainError::InternalError(format!("Failed to get app cache directory: {}", e))
@@ -210,7 +219,9 @@ impl FileExtensionRepository {
             }
 
             // Remove the top-level directory from the path
-            let relative_path = file_path.strip_prefix(&format!("{}/", prefix)).unwrap_or(file_path);
+            let relative_path = file_path
+                .strip_prefix(&format!("{}/", prefix))
+                .unwrap_or(file_path);
             let output_path = destination.join(relative_path);
 
             if file.is_dir() {
@@ -222,7 +233,10 @@ impl FileExtensionRepository {
                 if let Some(parent) = output_path.parent() {
                     fs::create_dir_all(parent).map_err(|e| {
                         logger::error(&format!("Failed to create parent directory: {}", e));
-                        DomainError::InternalError(format!("Failed to create parent directory: {}", e))
+                        DomainError::InternalError(format!(
+                            "Failed to create parent directory: {}",
+                            e
+                        ))
                     })?;
                 }
 
@@ -292,10 +306,7 @@ impl FileExtensionRepository {
 
     /// Get the default branch for a GitHub repository
     async fn get_default_branch(&self, owner: &str, repo: &str) -> Result<String, DomainError> {
-        logger::debug(&format!(
-            "Getting default branch for {}/{}",
-            owner, repo
-        ));
+        logger::debug(&format!("Getting default branch for {}/{}", owner, repo));
 
         let client = Client::new();
         let url = format!("https://api.github.com/repos/{}/{}/branches", owner, repo);
@@ -365,7 +376,9 @@ impl FileExtensionRepository {
 
     /// Get the extension type based on the path
     fn get_extension_type(&self, path: &Path) -> ExtensionType {
-        if path.starts_with(&self.system_extensions_dir) && !path.starts_with(&self.global_extensions_dir) {
+        if path.starts_with(&self.system_extensions_dir)
+            && !path.starts_with(&self.global_extensions_dir)
+        {
             ExtensionType::System
         } else if path.starts_with(&self.global_extensions_dir) {
             ExtensionType::Global
@@ -414,8 +427,14 @@ impl ExtensionRepository for FileExtensionRepository {
         // Get built-in extensions (excluding third-party)
         if self.system_extensions_dir.exists() {
             let entries = fs::read_dir(&self.system_extensions_dir).map_err(|e| {
-                logger::error(&format!("Failed to read system extensions directory: {}", e));
-                DomainError::InternalError(format!("Failed to read system extensions directory: {}", e))
+                logger::error(&format!(
+                    "Failed to read system extensions directory: {}",
+                    e
+                ));
+                DomainError::InternalError(format!(
+                    "Failed to read system extensions directory: {}",
+                    e
+                ))
             })?;
 
             for entry in entries {
@@ -447,7 +466,10 @@ impl ExtensionRepository for FileExtensionRepository {
         if self.user_extensions_dir.exists() {
             let entries = fs::read_dir(&self.user_extensions_dir).map_err(|e| {
                 logger::error(&format!("Failed to read user extensions directory: {}", e));
-                DomainError::InternalError(format!("Failed to read user extensions directory: {}", e))
+                DomainError::InternalError(format!(
+                    "Failed to read user extensions directory: {}",
+                    e
+                ))
             })?;
 
             for entry in entries {
@@ -478,8 +500,14 @@ impl ExtensionRepository for FileExtensionRepository {
         // Get global extensions
         if self.global_extensions_dir.exists() {
             let entries = fs::read_dir(&self.global_extensions_dir).map_err(|e| {
-                logger::error(&format!("Failed to read global extensions directory: {}", e));
-                DomainError::InternalError(format!("Failed to read global extensions directory: {}", e))
+                logger::error(&format!(
+                    "Failed to read global extensions directory: {}",
+                    e
+                ));
+                DomainError::InternalError(format!(
+                    "Failed to read global extensions directory: {}",
+                    e
+                ))
             })?;
 
             for entry in entries {
@@ -494,7 +522,10 @@ impl ExtensionRepository for FileExtensionRepository {
                     let manifest = self.get_manifest(&path).await.ok().flatten();
 
                     // Skip if the extension is already in the user directory
-                    if extensions.iter().any(|e| e.name == format!("third-party/{}", name)) {
+                    if extensions
+                        .iter()
+                        .any(|e| e.name == format!("third-party/{}", name))
+                    {
                         continue;
                     }
 
@@ -516,7 +547,10 @@ impl ExtensionRepository for FileExtensionRepository {
         Ok(extensions)
     }
 
-    async fn get_manifest(&self, extension_path: &Path) -> Result<Option<ExtensionManifest>, DomainError> {
+    async fn get_manifest(
+        &self,
+        extension_path: &Path,
+    ) -> Result<Option<ExtensionManifest>, DomainError> {
         let manifest_path = extension_path.join("manifest.json");
 
         if !manifest_path.exists() {
@@ -527,7 +561,11 @@ impl ExtensionRepository for FileExtensionRepository {
         Ok(Some(manifest))
     }
 
-    async fn install_extension(&self, url: &str, global: bool) -> Result<ExtensionInstallResult, DomainError> {
+    async fn install_extension(
+        &self,
+        url: &str,
+        global: bool,
+    ) -> Result<ExtensionInstallResult, DomainError> {
         tracing::info!("Installing extension from {}", url);
 
         // Extract repository owner and name
@@ -556,17 +594,23 @@ impl ExtensionRepository for FileExtensionRepository {
         let branch = self.get_default_branch(&owner, &repo).await?;
 
         // Download the repository
-        self.download_github_repo(&owner, &repo, &branch, &extension_path).await?;
+        self.download_github_repo(&owner, &repo, &branch, &extension_path)
+            .await?;
 
         // Get the manifest
         let manifest = match self.get_manifest(&extension_path).await? {
             Some(manifest) => manifest,
             None => {
                 // Clean up if manifest is not found
-                tokio_fs::remove_dir_all(&extension_path).await.map_err(|e| {
-                    logger::error(&format!("Failed to remove extension directory: {}", e));
-                    DomainError::InternalError(format!("Failed to remove extension directory: {}", e))
-                })?;
+                tokio_fs::remove_dir_all(&extension_path)
+                    .await
+                    .map_err(|e| {
+                        logger::error(&format!("Failed to remove extension directory: {}", e));
+                        DomainError::InternalError(format!(
+                            "Failed to remove extension directory: {}",
+                            e
+                        ))
+                    })?;
 
                 return Err(DomainError::InvalidData(
                     "Extension manifest not found".to_string(),
@@ -576,7 +620,9 @@ impl ExtensionRepository for FileExtensionRepository {
 
         tracing::info!(
             "Extension installed: {} v{} by {}",
-            manifest.display_name, manifest.version, manifest.author
+            manifest.display_name,
+            manifest.version,
+            manifest.author
         );
 
         Ok(ExtensionInstallResult {
@@ -587,7 +633,11 @@ impl ExtensionRepository for FileExtensionRepository {
         })
     }
 
-    async fn update_extension(&self, extension_name: &str, global: bool) -> Result<ExtensionUpdateResult, DomainError> {
+    async fn update_extension(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<ExtensionUpdateResult, DomainError> {
         tracing::info!("Updating extension: {}", extension_name);
 
         // Get the extension path
@@ -637,11 +687,13 @@ impl ExtensionRepository for FileExtensionRepository {
         let remote_url = self.get_remote_url(&owner, &repo);
 
         // Download the repository
-        self.download_github_repo(&owner, &repo, &branch, &extension_path).await?;
+        self.download_github_repo(&owner, &repo, &branch, &extension_path)
+            .await?;
 
         tracing::info!(
             "Extension updated: {} to commit {}",
-            extension_name, short_commit_hash
+            extension_name,
+            short_commit_hash
         );
 
         Ok(ExtensionUpdateResult {
@@ -652,7 +704,11 @@ impl ExtensionRepository for FileExtensionRepository {
         })
     }
 
-    async fn delete_extension(&self, extension_name: &str, global: bool) -> Result<(), DomainError> {
+    async fn delete_extension(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<(), DomainError> {
         tracing::info!("Deleting extension: {}", extension_name);
 
         // Get the extension path
@@ -666,16 +722,22 @@ impl ExtensionRepository for FileExtensionRepository {
         }
 
         // Delete the extension directory
-        tokio_fs::remove_dir_all(&extension_path).await.map_err(|e| {
-            tracing::error!("Failed to remove extension directory: {}", e);
-            DomainError::InternalError(format!("Failed to remove extension directory: {}", e))
-        })?;
+        tokio_fs::remove_dir_all(&extension_path)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to remove extension directory: {}", e);
+                DomainError::InternalError(format!("Failed to remove extension directory: {}", e))
+            })?;
 
         tracing::info!("Extension deleted: {}", extension_name);
         Ok(())
     }
 
-    async fn get_extension_version(&self, extension_name: &str, global: bool) -> Result<ExtensionVersion, DomainError> {
+    async fn get_extension_version(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<ExtensionVersion, DomainError> {
         tracing::info!("Getting extension version: {}", extension_name);
 
         // Get the extension path
@@ -718,13 +780,15 @@ impl ExtensionRepository for FileExtensionRepository {
         let current_commit_hash = self.get_latest_commit_hash(&owner, &repo, &branch).await?;
 
         // Check if the repository is up to date
-        let is_up_to_date = self.check_if_repo_is_up_to_date(
-            &extension_path,
-            &owner,
-            &repo,
-            &branch,
-            &current_commit_hash,
-        ).await?;
+        let is_up_to_date = self
+            .check_if_repo_is_up_to_date(
+                &extension_path,
+                &owner,
+                &repo,
+                &branch,
+                &current_commit_hash,
+            )
+            .await?;
 
         // Get the remote URL
         let remote_url = self.get_remote_url(&owner, &repo);
@@ -742,23 +806,40 @@ impl ExtensionRepository for FileExtensionRepository {
         })
     }
 
-    async fn move_extension(&self, extension_name: &str, source: &str, destination: &str) -> Result<(), DomainError> {
+    async fn move_extension(
+        &self,
+        extension_name: &str,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), DomainError> {
         tracing::info!(
             "Moving extension: {} from {} to {}",
-            extension_name, source, destination
+            extension_name,
+            source,
+            destination
         );
 
         // Get the source and destination directories
         let source_dir = match source {
             "global" => &self.global_extensions_dir,
             "local" => &self.user_extensions_dir,
-            _ => return Err(DomainError::InvalidData(format!("Invalid source: {}", source))),
+            _ => {
+                return Err(DomainError::InvalidData(format!(
+                    "Invalid source: {}",
+                    source
+                )))
+            }
         };
 
         let destination_dir = match destination {
             "global" => &self.global_extensions_dir,
             "local" => &self.user_extensions_dir,
-            _ => return Err(DomainError::InvalidData(format!("Invalid destination: {}", destination))),
+            _ => {
+                return Err(DomainError::InvalidData(format!(
+                    "Invalid destination: {}",
+                    destination
+                )))
+            }
         };
 
         // Get the source and destination paths
@@ -799,7 +880,9 @@ impl ExtensionRepository for FileExtensionRepository {
 
         tracing::info!(
             "Extension moved: {} from {} to {}",
-            extension_name, source, destination
+            extension_name,
+            source,
+            destination
         );
 
         Ok(())

@@ -4,9 +4,11 @@ import {
     characters,
     getRequestHeaders,
     event_types,
+    animation_duration,
+    animation_easing,
 } from '../../../script.js';
 import { groups, selected_group } from '../../group-chats.js';
-import { loadFileToDocument, delay, getBase64Async, getSanitizedFilename } from '../../utils.js';
+import { loadFileToDocument, delay, getBase64Async, getSanitizedFilename, saveBase64AsFile, getFileExtension, getVideoThumbnail, clamp } from '../../utils.js';
 import { loadMovingUIState } from '../../power-user.js';
 import { dragElement } from '../../RossAscends-mods.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
@@ -15,22 +17,30 @@ import { ARGUMENT_TYPE, SlashCommandNamedArgument } from '../../slash-commands/S
 import { DragAndDropHandler } from '../../dragdrop.js';
 import { commonEnumProviders } from '../../slash-commands/SlashCommandCommonEnumsProvider.js';
 import { t, translate } from '../../i18n.js';
+import { Popup } from '../../popup.js';
+import { deleteMediaFromServer } from '../../chats.js';
+import { MEDIA_REQUEST_TYPE, VIDEO_EXTENSIONS } from '../../constants.js';
 
+const isVideo = (/** @type {string} */ url) => VIDEO_EXTENSIONS.some(ext => new RegExp(`.${ext}$`, 'i').test(url));
 const extensionName = 'gallery';
 const extensionFolderPath = `scripts/extensions/${extensionName}/`;
 let firstTime = true;
+let deleteModeActive = false;
 
-// Exposed defaults for future tweaking
-let thumbnailHeight = 150;
-let paginationVisiblePages = 10;
-let paginationMaxLinesPerPage = 2;
-let galleryMaxRows = 3;
 
 // Remove all draggables associated with the gallery
 $('#movingDivs').on('click', '.dragClose', function () {
     const relatedId = $(this).data('related-id');
     if (!relatedId) return;
-    $(`#movingDivs > .draggable[id="${relatedId}"]`).remove();
+    const relatedElement = $(`#movingDivs > .draggable[id="${relatedId}"]`);
+    relatedElement.transition({
+        opacity: 0,
+        duration: animation_duration,
+        easing: animation_easing,
+        complete: () => {
+            relatedElement.remove();
+        },
+    });
 });
 
 const CUSTOM_GALLERY_REMOVED_EVENT = 'galleryRemoved';
@@ -51,10 +61,10 @@ mutationObserver.observe(document.body, {
 });
 
 const SORT = Object.freeze({
-    NAME_ASC: { value: 'nameAsc', field: 'name', order: 'asc', label: t`Sort By: Name (A-Z)` },
-    NAME_DESC: { value: 'nameDesc', field: 'name', order: 'desc', label: t`Sort By: Name (Z-A)` },
-    DATE_ASC: { value: 'dateAsc', field: 'date', order: 'asc', label: t`Sort By: Date (Oldest First)` },
-    DATE_DESC: { value: 'dateDesc', field: 'date', order: 'desc', label: t`Sort By: Date (Newest First)` },
+    NAME_ASC: { value: 'nameAsc', field: 'name', order: 'asc', label: t`Name (A-Z)` },
+    NAME_DESC: { value: 'nameDesc', field: 'name', order: 'desc', label: t`Name (Z-A)` },
+    DATE_DESC: { value: 'dateDesc', field: 'date', order: 'desc', label: t`Newest` },
+    DATE_ASC: { value: 'dateAsc', field: 'date', order: 'asc', label: t`Oldest` },
 });
 
 const defaultSettings = Object.freeze({
@@ -85,7 +95,7 @@ function initSettings() {
 
 /**
  * Retrieves the gallery folder for a given character.
- * @param {import('../../char-data.js').v1CharData} char Character data
+ * @param {Character} char Character data
  * @returns {string} The gallery folder for the character
  */
 function getGalleryFolder(char) {
@@ -109,17 +119,34 @@ async function getGalleryItems(url) {
             folder: url,
             sortField: sortObj.field,
             sortOrder: sortObj.order,
+            type: MEDIA_REQUEST_TYPE.IMAGE | MEDIA_REQUEST_TYPE.VIDEO,
         }),
     });
 
     url = await getSanitizedFilename(url);
 
     const data = await response.json();
-    const items = data.map((file) => ({
-        src: `user/images/${url}/${file}`,
-        srct: `user/images/${url}/${file}`,
-        title: '', // Optional title for each item
-    }));
+    const items = [];
+
+    for (const file of data) {
+        const item = {
+            src: `user/images/${url}/${file}`,
+            srct: `user/images/${url}/${file}`,
+            title: '', // Optional title for each item
+        };
+
+        if (isVideo(file)) {
+            try {
+                // 150px of max height with some allowance for various aspect ratios
+                const maxSide = Math.round(150 * 1.5);
+                item.srct = await getVideoThumbnail(item.src, maxSide, maxSide);
+            } catch (error) {
+                console.error('Failed to generate video thumbnail for gallery:', error);
+            }
+        }
+
+        items.push(item);
+    }
 
     return items;
 }
@@ -132,7 +159,7 @@ async function getGalleryFolders() {
     try {
         const response = await fetch('/api/images/folders', {
             method: 'POST',
-            headers: getRequestHeaders(),
+            headers: getRequestHeaders({ omitContentType: true }),
         });
 
         if (!response.ok) {
@@ -143,6 +170,17 @@ async function getGalleryFolders() {
     } catch (error) {
         console.error('Failed to fetch gallery folders:', error);
         return [];
+    }
+}
+
+/**
+ * Deletes a gallery item based on the provided URL.
+ * @param {string} url - The URL of the image to be deleted.
+ */
+async function deleteGalleryItem(url) {
+    const isDeleted = await deleteMediaFromServer(url, false);
+    if (isDeleted) {
+        toastr.success(t`Image deleted successfully.`);
     }
 }
 
@@ -174,6 +212,12 @@ function getSortOrder() {
  * @returns {Promise<void>} - Promise representing the completion of the gallery initialization.
  */
 async function initGallery(items, url) {
+    // Exposed defaults for future tweaking
+    const thumbnailHeight = 150;
+    const paginationVisiblePages = 5;
+    const paginationMaxLinesPerPage = 2;
+    const galleryMaxRows = clamp(Math.floor((window.innerHeight * 0.9 - 75) / thumbnailHeight), 1, 10);
+
     const nonce = `nonce-${Math.random().toString(36).substring(2, 15)}`;
     const gallery = $('#dragGallery');
     gallery.addClass(nonce);
@@ -186,6 +230,7 @@ async function initGallery(items, url) {
         galleryMaxRows: galleryMaxRows,
         galleryPaginationTopButtons: false,
         galleryNavigationOverlayButtons: true,
+        galleryPaginationMode: 'rectangles',
         galleryTheme: {
             navigationBar: { background: 'none', borderTop: '', borderBottom: '', borderRight: '', borderLeft: '' },
             navigationBreadcrumb: { background: '#111', color: '#fff', colorHover: '#ccc', borderRadius: '4px' },
@@ -260,7 +305,7 @@ async function initGallery(items, url) {
  *
  * @returns {Promise<void>} - Promise representing the completion of the gallery display process.
  */
-async function showCharGallery() {
+async function showCharGallery(deleteModeState = false) {
     // Load necessary files if it's the first time calling the function
     if (firstTime) {
         await loadFileToDocument(
@@ -276,6 +321,7 @@ async function showCharGallery() {
     }
 
     try {
+        deleteModeActive = deleteModeState;
         let url = selected_group || this_chid;
         if (!selected_group && this_chid !== undefined) {
             url = getGalleryFolder(characters[this_chid]);
@@ -288,7 +334,6 @@ async function showCharGallery() {
         await delay(100);
         await initGallery(items, url);
     } catch (err) {
-        console.trace();
         console.error(err);
     }
 }
@@ -305,27 +350,12 @@ async function showCharGallery() {
 async function uploadFile(file, url) {
     try {
         // Convert the file to a base64 string
-        const base64Data = await getBase64Async(file);
+        const fileBase64 = await getBase64Async(file);
+        const base64Data = fileBase64.split(',')[1];
+        const extension = getFileExtension(file);
+        const path = await saveBase64AsFile(base64Data, url, '', extension);
 
-        // Create the payload
-        const payload = {
-            image: base64Data,
-            ch_name: url,
-        };
-
-        const response = await fetch('/api/images/upload', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify(payload),
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! Status: ${response.status}`);
-        }
-
-        const result = await response.json();
-
-        toastr.success(t`File uploaded successfully. Saved at: ${result.path}`);
+        toastr.success(t`File uploaded successfully. Saved at: ${path}`);
     } catch (error) {
         console.error('There was an issue uploading the file:', error);
 
@@ -347,7 +377,7 @@ async function makeMovable(url) {
     const id = 'gallery';
     const template = $('#generic_draggable_template').html();
     const newElement = $(template);
-    newElement.css('background-color', 'var(--SmartThemeBlurTintColor)');
+    newElement.css({ 'background-color': 'var(--SmartThemeBlurTintColor)', 'opacity': 0 });
     newElement.attr('forChar', id);
     newElement.attr('id', id);
     newElement.find('.drag-grabber').attr('id', `${id}header`);
@@ -356,6 +386,11 @@ async function makeMovable(url) {
     const titleText = document.createElement('span');
     titleText.textContent = t`Image Gallery`;
     dragTitle.append(titleText);
+
+    // Create a container for the controls
+    const controlsContainer = document.createElement('div');
+    controlsContainer.classList.add('flex-container', 'alignItemsCenter');
+
     const sortSelect = document.createElement('select');
     sortSelect.classList.add('gallery-sort-select');
 
@@ -374,7 +409,42 @@ async function makeMovable(url) {
     });
 
     sortSelect.value = getSortOrder();
-    dragTitle.append(sortSelect);
+    controlsContainer.appendChild(sortSelect);
+
+    // Create the "Add Image" button
+    const addImageButton = document.createElement('div');
+    addImageButton.classList.add('menu_button', 'menu_button_icon', 'interactable');
+    addImageButton.title = 'Add Image';
+    addImageButton.innerHTML = '<i class="fa-solid fa-plus fa-fw"></i><div>Add Image</div>';
+
+    // Create a hidden file input
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/*,video/*';
+    fileInput.multiple = true;
+    fileInput.style.display = 'none';
+
+    // Trigger file input when the button is clicked
+    addImageButton.addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    // Handle file selection
+    fileInput.addEventListener('change', async () => {
+        const files = fileInput.files;
+        if (files.length > 0) {
+            for (const file of files) {
+                await uploadFile(file, url);
+            }
+            // Refresh the gallery
+            closeButton.trigger('click');
+            await showCharGallery();
+        }
+    });
+
+    controlsContainer.appendChild(addImageButton);
+    dragTitle.append(controlsContainer);
+    newElement.append(fileInput); // Append hidden file input to the main element
 
     // add no-scrollbar class to this element
     newElement.addClass('no-scrollbar');
@@ -429,6 +499,18 @@ async function makeMovable(url) {
     galleryFolderAccept.title = t`Change gallery folder`;
     galleryFolderAccept.addEventListener('click', onChangeFolder);
 
+    const galleryDeleteMode = document.createElement('div');
+    galleryDeleteMode.classList.add('right_menu_button', 'fa-solid', 'fa-trash', 'fa-fw');
+    galleryDeleteMode.classList.toggle('warning', deleteModeActive);
+    galleryDeleteMode.title = t`Delete mode`;
+    galleryDeleteMode.addEventListener('click', () => {
+        deleteModeActive = !deleteModeActive;
+        galleryDeleteMode.classList.toggle('warning', deleteModeActive);
+        if (deleteModeActive) {
+            toastr.info(t`Delete mode is ON. Click on images you want to delete.`);
+        }
+    });
+
     const galleryFolderRestore = document.createElement('div');
     galleryFolderRestore.classList.add('right_menu_button', 'fa-solid', 'fa-recycle', 'fa-fw');
     galleryFolderRestore.title = t`Restore gallery folder`;
@@ -436,6 +518,7 @@ async function makeMovable(url) {
 
     topBarElement.appendChild(galleryFolderInput);
     topBarElement.appendChild(galleryFolderAccept);
+    topBarElement.appendChild(galleryDeleteMode);
     topBarElement.appendChild(galleryFolderRestore);
     newElement.append(topBarElement);
 
@@ -466,6 +549,11 @@ async function makeMovable(url) {
     loadMovingUIState();
     $(`.draggable[forChar="${id}"]`).css('display', 'block');
     dragElement(newElement);
+    newElement.transition({
+        opacity: 1,
+        duration: animation_duration,
+        easing: animation_easing,
+    });
 
     $(`.draggable[forChar="${id}"] img`).on('dragstart', (e) => {
         console.log('saw drag on avatar!');
@@ -550,12 +638,19 @@ function makeDragImg(id, url) {
     const newElement = document.importNode(template.content, true);
 
     // Step 2: Append the given image
-    const imgElem = document.createElement('img');
-    imgElem.src = url;
+    const mediaElement = isVideo(url)
+        ? document.createElement('video')
+        : document.createElement('img');
+    mediaElement.src = url;
+    if (mediaElement instanceof HTMLVideoElement) {
+        mediaElement.controls = true;
+        mediaElement.autoplay = true;
+    }
+
     let uniqueId = `draggable_${id}`;
     const draggableElem = /** @type {HTMLElement} */ (newElement.querySelector('.draggable'));
     if (draggableElem) {
-        draggableElem.appendChild(imgElem);
+        draggableElem.appendChild(mediaElement);
 
         // Find a unique id for the draggable element
 
@@ -565,6 +660,9 @@ function makeDragImg(id, url) {
             counter++;
         }
         draggableElem.id = uniqueId;
+
+        // Add the galleryImageDraggable to have unique class
+        draggableElem.classList.add('galleryImageDraggable');
 
         // Ensure that the newly added element is displayed as block
         draggableElem.style.display = 'block';
@@ -635,9 +733,19 @@ function sanitizeHTMLId(id) {
 function viewWithDragbox(items) {
     if (items && items.length > 0) {
         const url = items[0].responsiveURL(); // Get the URL of the clicked image/video
-        // ID should just be the last part of the URL, removing the extension
-        const id = sanitizeHTMLId(url.substring(url.lastIndexOf('/') + 1, url.lastIndexOf('.')));
-        makeDragImg(id, url);
+        if (deleteModeActive) {
+            Popup.show.confirm(t`Are you sure you want to delete this image?`, url)
+                .then(async (confirmed) => {
+                    if (!confirmed) {
+                        return;
+                    }
+                    deleteGalleryItem(url).then(() => showCharGallery(deleteModeActive));
+                });
+        } else {
+            // ID should just be the last part of the URL, removing the extension
+            const id = sanitizeHTMLId(url.substring(url.lastIndexOf('/') + 1, url.lastIndexOf('.')));
+            makeDragImg(id, url);
+        }
     }
 }
 
@@ -685,7 +793,6 @@ async function listGalleryCommand(args) {
         return JSON.stringify(items.map(it => it.src));
 
     } catch (err) {
-        console.trace();
         console.error(err);
     }
     return JSON.stringify([]);
@@ -710,7 +817,7 @@ async function listGalleryCommand(args) {
         delete context.extensionSettings.gallery.folders[avatar];
         context.saveSettingsDebounced();
     });
-    eventSource.on('charManagementDropdown', (selectedOptionId) => {
+    eventSource.on(event_types.CHARACTER_MANAGEMENT_DROPDOWN, (selectedOptionId) => {
         if (selectedOptionId === 'show_char_gallery') {
             showCharGallery();
         }

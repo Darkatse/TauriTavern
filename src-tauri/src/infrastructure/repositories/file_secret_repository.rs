@@ -1,11 +1,11 @@
-use std::path::{Path, PathBuf};
-use std::collections::HashMap;
-use std::sync::Arc;
 use async_trait::async_trait;
-use tokio::fs;
-use tokio::sync::Mutex;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::Manager;
+use tokio::fs;
+use tokio::sync::Mutex;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::secret::Secrets;
@@ -21,13 +21,21 @@ pub struct FileSecretRepository {
 impl FileSecretRepository {
     pub fn new(app_handle: AppHandle) -> Self {
         // 使用 Tauri 的 app_data_dir 获取应用数据目录
-        let app_data_dir = app_handle.path().app_data_dir()
+        let app_data_dir = app_handle
+            .path()
+            .app_data_dir()
             .expect("Failed to get app data directory");
 
         // 构建 secrets.json 文件路径
-        let secrets_file = app_data_dir.join("data").join("default-user").join("secrets.json");
+        let secrets_file = app_data_dir
+            .join("data")
+            .join("default-user")
+            .join("secrets.json");
 
-        tracing::info!("Secret repository initialized with secrets file: {:?}", secrets_file);
+        tracing::info!(
+            "Secret repository initialized with secrets file: {:?}",
+            secrets_file
+        );
 
         Self {
             secrets_file,
@@ -43,7 +51,10 @@ impl FileSecretRepository {
             if let Some(parent) = self.secrets_file.parent() {
                 if !parent.exists() {
                     fs::create_dir_all(parent).await.map_err(|e| {
-                        tracing::error!("Failed to create parent directory for secrets file: {}", e);
+                        tracing::error!(
+                            "Failed to create parent directory for secrets file: {}",
+                            e
+                        );
                         DomainError::InternalError(format!("Failed to create directory: {}", e))
                     })?;
                 }

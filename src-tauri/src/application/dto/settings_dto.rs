@@ -1,6 +1,9 @@
-use serde::{Serialize, Deserialize};
+use crate::domain::models::settings::{
+    AppSettings, InterfaceSettings, SecuritySettings, ServerSettings, SettingsSnapshot,
+    UserSettings,
+};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::domain::models::settings::{AppSettings, ServerSettings, InterfaceSettings, SecuritySettings, UserSettings, SettingsSnapshot};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettingsDto {
@@ -86,9 +89,7 @@ impl From<UserSettings> for UserSettingsDto {
 
 impl From<UserSettingsDto> for UserSettings {
     fn from(dto: UserSettingsDto) -> Self {
-        Self {
-            data: dto.data,
-        }
+        Self { data: dto.data }
     }
 }
 

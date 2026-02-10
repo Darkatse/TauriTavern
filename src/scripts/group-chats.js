@@ -13,22 +13,13 @@ import {
     getBase64Async,
     resetScrollHeight,
     initScrollHeight,
+    localizePagination,
+    renderPaginationDropdown,
+    paginationDropdownChangeHandler,
+    waitUntilCondition,
+    uuidv4,
+    humanFileSize,
 } from './utils.js';
-
-// Check if we're running in a Tauri environment
-const isTauri = window.__TAURI_INTERNALS__ !== undefined;
-
-// Import Tauri API if available
-let tauriGroupsAPI = null;
-if (isTauri) {
-    // Dynamically import the Tauri API
-    import('./tauri/groups-api.js').then(module => {
-        tauriGroupsAPI = module;
-        console.log('Tauri Groups API loaded');
-    }).catch(error => {
-        console.error('Failed to load Tauri Groups API:', error);
-    });
-}
 import { RA_CountCharTokens, humanizedDateTime, dragElement, favsToHotswap, getMessageTimeStamp } from './RossAscends-mods.js';
 import { power_user, loadMovingUIState, sortEntitiesList } from './power-user.js';
 import { debounce_timeout } from './constants.js';
@@ -48,7 +39,6 @@ import {
     setCharacterName,
     setEditedMessageId,
     is_send_press,
-    name1,
     resetChatState,
     setSendButtonState,
     getCharacters,
@@ -76,17 +66,20 @@ import {
     eventSource,
     event_types,
     getCurrentChatId,
-    setScenarioOverride,
+    setCharacterSettingsOverrides,
     system_avatar,
     isChatSaving,
     setExternalAbortController,
     baseChatReplace,
+    createLazyFields,
     depth_prompt_depth_default,
     loadItemizedPrompts,
     animation_duration,
     depth_prompt_role_default,
     shouldAutoContinue,
     unshallowCharacter,
+    chatElement,
+    ensureMessageMediaIsArray,
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
@@ -116,8 +109,10 @@ export {
 
 let is_group_generating = false; // Group generation flag
 let is_group_automode_enabled = false;
-let hideMutedSprites = true;
+let hideMutedSprites = false;
+/** @type {Group[]} */
 let groups = [];
+/** @type {string|null} */
 let selected_group = null;
 let group_generation_id = null;
 let fav_grp_checked = false;
@@ -137,7 +132,7 @@ export const group_generation_mode = {
     APPEND_DISABLED: 2,
 };
 
-const DEFAULT_AUTO_MODE_DELAY = 5;
+export const DEFAULT_AUTO_MODE_DELAY = 5;
 
 export const groupCandidatesFilter = new FilterHelper(debounce(printGroupCandidates, debounce_timeout.quick));
 let autoModeWorker = null;
@@ -151,30 +146,17 @@ function setAutoModeWorker() {
     autoModeWorker = setInterval(groupChatAutoModeWorker, autoModeDelay * 1000);
 }
 
+/**
+ * Saves a group to the server.
+ * @param {Group} group Group object to save
+ * @param {boolean} reload Whether to reload characters after saving
+ */
 async function _save(group, reload = true) {
-    if (isTauri && tauriGroupsAPI) {
-        // Use Tauri API
-        try {
-            console.log(`Using Tauri backend for updateGroup: ${group.id}`);
-            await tauriGroupsAPI.updateGroup(group);
-        } catch (error) {
-            console.error(`Error updating group ${group.id} from Tauri backend, falling back to server API:`, error);
-            // Fall back to server API
-            await fetch('/api/groups/edit', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify(group),
-            });
-        }
-    } else {
-        // Use server API
-        await fetch('/api/groups/edit', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify(group),
-        });
-    }
-
+    await fetch('/api/groups/edit', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify(group),
+    });
     if (reload) {
         await getCharacters();
     }
@@ -205,6 +187,11 @@ async function regenerateGroup() {
     generateGroupWrapper(false, 'normal', { signal: abortController.signal });
 }
 
+/**
+ * Loads group chat messages from the server.
+ * @param {string} chatId Chat ID
+ * @returns {Promise<ChatFile>} Array of chat messages
+ */
 async function loadGroupChat(chatId) {
     const response = await fetch('/api/chats/group/get', {
         method: 'POST',
@@ -214,12 +201,20 @@ async function loadGroupChat(chatId) {
 
     if (response.ok) {
         const data = await response.json();
+        if (!Array.isArray(data)) {
+            return [];
+        }
         return data;
     }
 
     return [];
 }
 
+/**
+ * Validates a group by checking if all members exist and removing duplicates.
+ * @param {Group} group Group to validate
+ * @returns {Promise<void>}
+ */
 async function validateGroup(group) {
     if (!group) return;
 
@@ -236,11 +231,27 @@ async function validateGroup(group) {
         return character;
     });
 
+    // Remove duplicate chat ids
+    if (Array.isArray(group.chats)) {
+        const lengthBefore = group.chats.length;
+        group.chats = group.chats.filter(onlyUnique);
+        const lengthAfter = group.chats.length;
+        if (lengthBefore !== lengthAfter) {
+            dirty = true;
+        }
+    }
+
     if (dirty) {
         await editGroup(group.id, true, false);
     }
 }
 
+/**
+ * Loads the chat messages for a specific group.
+ * @param {string} groupId - The ID of the group to load chat messages for.
+ * @param {boolean} reload - Whether to reload the group chat after loading.
+ * @returns {Promise<void>} A promise that resolves when the chat messages have been loaded.
+ */
 export async function getGroupChat(groupId, reload = false) {
     const group = groups.find((x) => x.id === groupId);
     if (!group) {
@@ -249,45 +260,55 @@ export async function getGroupChat(groupId, reload = false) {
     }
 
     // Run validation before any loading
-    validateGroup(group);
+    await validateGroup(group);
     await unshallowGroupMembers(groupId);
 
     const chat_id = group.chat_id;
     const data = await loadGroupChat(chat_id);
-    let freshChat = false;
+    const metadata = data?.[0]?.chat_metadata ?? {};
+    const freshChat = !metadata.tainted && (!Array.isArray(data) || !data.length);
+
+    // Remove chat file header if present
+    if (Array.isArray(data) && data.length && Object.hasOwn(data[0], 'chat_metadata')) {
+        data.shift();
+    }
+
+    // Add integrity slug if missing
+    if (!metadata['integrity']) {
+        metadata['integrity'] = uuidv4();
+    }
 
     await loadItemizedPrompts(getCurrentChatId());
 
-    if (Array.isArray(data) && data.length) {
-        data[0].is_group = true;
-        chat.splice(0, chat.length, ...data);
-        await printMessages();
-    } else {
-        if (group && Array.isArray(group.members)) {
-            for (let member of group.members) {
-                const character = characters.find(x => x.avatar === member || x.name === member);
-                if (!character) {
-                    continue;
-                }
-
-                const mes = await getFirstCharacterMessage(character);
-
-                // No first message
-                if (!(mes?.mes)) {
-                    continue;
-                }
-
-                chat.push(mes);
-                await eventSource.emit(event_types.MESSAGE_RECEIVED, (chat.length - 1), 'first_message');
-                addOneMessage(mes);
-                await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1), 'first_message');
+    if (group && Array.isArray(group.members) && freshChat) {
+        chat.splice(0, chat.length);
+        chatElement.find('.mes').remove();
+        for (let member of group.members) {
+            const character = characters.find(x => x.avatar === member || x.name === member);
+            if (!character) {
+                continue;
             }
+
+            const mes = await getFirstCharacterMessage(character);
+
+            // No first message
+            if (!(mes?.mes)) {
+                continue;
+            }
+
+            chat.push(mes);
+            await eventSource.emit(event_types.MESSAGE_RECEIVED, (chat.length - 1), 'first_message');
+            addOneMessage(mes);
+            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1), 'first_message');
         }
         await saveGroupChat(groupId, false);
-        freshChat = true;
+    } else if (Array.isArray(data) && data.length) {
+        chat.splice(0, chat.length, ...data);
+        chat.forEach(ensureMessageMediaIsArray);
+        chatElement.find('.mes').remove();
+        await printMessages();
     }
 
-    let metadata = group.chat_metadata ?? {};
     updateChatMetadata(metadata, true);
 
     if (reload) {
@@ -302,7 +323,7 @@ export async function getGroupChat(groupId, reload = false) {
  * Retrieves the members of a group
  *
  * @param {string} [groupId=selected_group] - The ID of the group to retrieve members from. Defaults to the currently selected group.
- * @returns {import('../script.js').Character[]} An array of character objects representing the members of the group. If the group is not found, an empty array is returned.
+ * @returns {Character[]} An array of character objects representing the members of the group. If the group is not found, an empty array is returned.
  */
 export function getGroupMembers(groupId = selected_group) {
     const group = groups.find((x) => x.id === groupId);
@@ -330,7 +351,7 @@ export function getGroupNames() {
  * @returns {number|Object} 0-based character ID or key-value object if full is true
  */
 export function findGroupMemberId(arg, full = false) {
-    arg = arg?.trim();
+    arg = arg?.toString()?.trim();
 
     if (!arg) {
         console.warn('WARN: No argument provided for findGroupMemberId');
@@ -436,7 +457,7 @@ export function getGroupDepthPrompts(groupId, characterId) {
             continue;
         }
 
-        const depthPromptText = baseChatReplace(character.data?.extensions?.depth_prompt?.prompt?.trim(), name1, character.name) || '';
+        const depthPromptText = baseChatReplace(character.data?.extensions?.depth_prompt?.prompt?.trim(), null, character.name) || '';
         const depthPromptDepth = character.data?.extensions?.depth_prompt?.depth ?? depth_prompt_depth_default;
         const depthPromptRole = character.data?.extensions?.depth_prompt?.role ?? depth_prompt_role_default;
 
@@ -455,30 +476,46 @@ export function getGroupDepthPrompts(groupId, characterId) {
  * @returns {{description: string, personality: string, scenario: string, mesExamples: string}} Group character cards combined
  */
 export function getGroupCharacterCards(groupId, characterId) {
-    console.debug('getGroupCharacterCards entered for group: ', groupId);
+    const lazy = getGroupCharacterCardsLazy(groupId, characterId);
+    if (!lazy) return null;
+
+    // Resolve all lazy fields into a plain object
+    return {
+        description: lazy.description,
+        personality: lazy.personality,
+        scenario: lazy.scenario,
+        mesExamples: lazy.mesExamples,
+    };
+}
+
+/**
+ * Returns group character cards with lazy evaluation.
+ * Each field is only processed when first accessed.
+ * @param {string} groupId Group ID
+ * @param {number} characterId Current Character ID
+ * @returns {{description: string, personality: string, scenario: string, mesExamples: string}} Group character cards with lazy getters
+ */
+export function getGroupCharacterCardsLazy(groupId, characterId) {
     const group = groups.find(x => x.id === groupId);
 
+    // If no group cards should be generated, return null so caller knows to fall back
     if (!group || !group?.generation_mode || !Array.isArray(group.members) || !group.members.length) {
         return null;
     }
 
     /**
-     * Runs the macro engine on a text, with custom <FIELDNAME> replace
+     * Runs baseChatReplace on a text, with custom <FIELDNAME> replace
      * @param {string} value Value to replace
      * @param {string} fieldName Name of the field
      * @param {string} characterName Name of the character
      * @param {boolean} trim Whether to trim the value
      * @returns {string} Replaced text
-     * */
-    function customBaseChatReplace(value, fieldName, characterName, trim) {
-        if (!value) {
-            return '';
-        }
-
-        // We should do the custom field name replacement first, and then run it through the normal macro engine with provided names
+     */
+    function customTransform(value, fieldName, characterName, trim) {
+        if (!value) return '';
         value = value.replace(/<FIELDNAME>/gi, fieldName);
         value = trim ? value.trim() : value;
-        return baseChatReplace(value, name1, characterName);
+        return baseChatReplace(value, null, characterName);
     }
 
     /**
@@ -488,62 +525,57 @@ export function getGroupCharacterCards(groupId, characterId) {
      * @param {string} fieldName Name of the field
      * @param {function(string): string} [preprocess] Preprocess function
      * @returns {string} Prepared text
-     * */
+     */
     function replaceAndPrepareForJoin(value, characterName, fieldName, preprocess = null) {
-        value = value.trim();
-        if (!value) {
-            return '';
-        }
-
-        // Run preprocess function
+        value = value?.trim() ?? '';
+        if (!value) return '';
         if (typeof preprocess === 'function') {
             value = preprocess(value);
         }
-
-        // Prepare and replace prefixes
-        const prefix = customBaseChatReplace(group.generation_mode_join_prefix, fieldName, characterName, false);
-        const suffix = customBaseChatReplace(group.generation_mode_join_suffix, fieldName, characterName, false);
-        // Also run the macro replacement on the actual content
-        value = customBaseChatReplace(value, fieldName, characterName, true);
-
+        const prefix = customTransform(group.generation_mode_join_prefix, fieldName, characterName, false);
+        const suffix = customTransform(group.generation_mode_join_suffix, fieldName, characterName, false);
+        value = customTransform(value, fieldName, characterName, true);
         return `${prefix}${value}${suffix}`;
     }
 
-    const scenarioOverride = chat_metadata['scenario'];
-
-    let descriptions = [];
-    let personalities = [];
-    let scenarios = [];
-    let mesExamplesArray = [];
-
-    for (const member of group.members) {
-        const index = characters.findIndex(x => x.avatar === member);
-        const character = characters[index];
-
-        if (index === -1 || !character) {
-            console.debug(`Skipping missing member: ${member}`);
-            continue;
+    /**
+     * Collects and joins field values from all group members
+     * @param {string} fieldName Display name of the field
+     * @param {function(Character): string} getter Function to get field value from character
+     * @param {function(string): string} [preprocess] Optional preprocess function
+     * @returns {string} Combined field values
+     */
+    function collectField(fieldName, getter, preprocess = null) {
+        const values = [];
+        for (const member of group.members) {
+            const index = characters.findIndex(x => x.avatar === member);
+            const character = characters[index];
+            if (index === -1 || !character) continue;
+            if (group.disabled_members.includes(member) && characterId !== index && group.generation_mode !== group_generation_mode.APPEND_DISABLED) {
+                continue;
+            }
+            values.push(replaceAndPrepareForJoin(getter(character), character.name, fieldName, preprocess));
         }
-
-        if (group.disabled_members.includes(member) && characterId !== index && group.generation_mode !== group_generation_mode.APPEND_DISABLED) {
-            console.debug(`Skipping disabled group member: ${member}`);
-            continue;
-        }
-
-        descriptions.push(replaceAndPrepareForJoin(character.description, character.name, 'Description'));
-        personalities.push(replaceAndPrepareForJoin(character.personality, character.name, 'Personality'));
-        scenarios.push(replaceAndPrepareForJoin(character.scenario, character.name, 'Scenario'));
-        mesExamplesArray.push(replaceAndPrepareForJoin(character.mes_example, character.name, 'Example Messages', (x) => !x.startsWith('<START>') ? `<START>\n${x}` : x));
+        return values.filter(x => x.length).join('\n');
     }
 
-    const description = descriptions.filter(x => x.length).join('\n');
-    const personality = personalities.filter(x => x.length).join('\n');
-    const scenario = scenarioOverride?.trim() || scenarios.filter(x => x.length).join('\n');
-    const mesExamples = mesExamplesArray.filter(x => x.length).join('\n');
+    const scenarioOverride = String(chat_metadata['scenario'] || '');
+    const mesExamplesOverride = String(chat_metadata['mes_example'] || '');
 
-    return { description, personality, scenario, mesExamples };
+    return createLazyFields({
+        description: () => collectField('Description', c => c.description),
+        personality: () => collectField('Personality', c => c.personality),
+        scenario: () => baseChatReplace(scenarioOverride?.trim()) || collectField('Scenario', c => c.scenario),
+        mesExamples: () => baseChatReplace(mesExamplesOverride?.trim()) ||
+            collectField('Example Messages', c => c.mes_example, x => !x.startsWith('<START>') ? `<START>\n${x}` : x),
+    });
 }
 
+/**
+ * Gets the first message for a character.
+ * @param {Character} character Character object
+ * @returns {Promise<ChatMessage>} First message object
+ */
 async function getFirstCharacterMessage(character) {
     let messageText = character.first_mes;
 
@@ -568,7 +600,7 @@ async function getFirstCharacterMessage(character) {
     mes['original_avatar'] = character.avatar;
     mes['extra'] = { 'gen_id': Date.now() * Math.random() * 1000000 };
     mes['mes'] = messageText
-        ? substituteParams(messageText.trim(), name1, character.name)
+        ? substituteParams(messageText.trim(), { name2Override: character.name })
         : '';
     mes['force_avatar'] =
         character.avatar != 'none'
@@ -582,20 +614,59 @@ function resetSelectedGroup() {
     is_group_generating = false;
 }
 
-async function saveGroupChat(groupId, shouldSaveGroup) {
+/**
+ * Saves a group chat to the server.
+ * @param {string} groupId Group ID
+ * @param {boolean} shouldSaveGroup Whether to save the group after saving the chat
+ * @param {boolean} force Force the saving on integrity error
+ * @returns {Promise<void>} A promise that resolves when the group chat has been saved.
+ */
+async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
     const group = groups.find(x => x.id == groupId);
-    const chat_id = group.chat_id;
+    if (!group) {
+        console.warn('Group not found', groupId);
+        return;
+    }
+    const chatId = group.chat_id;
     group['date_last_chat'] = Date.now();
+    /** @type {ChatHeader} */
+    const chatHeader = {
+        chat_metadata: { ...chat_metadata },
+        user_name: 'unused',
+        character_name: 'unused',
+    };
     const response = await fetch('/api/chats/group/save', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chat_id, chat: [...chat] }),
+        body: JSON.stringify({ id: chatId, chat: [chatHeader, ...chat], force: force }),
     });
 
     if (!response.ok) {
-        toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group Chat could not be saved`);
-        console.error('Group chat could not be saved', response);
-        return;
+        const errorData = await response.json();
+        const isIntegrityError = errorData?.error === 'integrity' && !force;
+        if (!isIntegrityError) {
+            toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group Chat could not be saved`);
+            console.error('Group chat could not be saved', response);
+            return;
+        }
+
+        const popupResult = await Popup.show.input(
+            t`ERROR: Chat integrity check failed while saving the file.`,
+            t`<p>After you click OK, the page will be reloaded to prevent data corruption.</p>
+              <p>To confirm an overwrite (and potentially <b>LOSE YOUR DATA</b>), enter <code>OVERWRITE</code> (in all caps) in the box below before clicking OK.</p>`,
+            '',
+            { okButton: 'OK', cancelButton: false },
+        );
+
+        const forceSaveConfirmed = popupResult === 'OVERWRITE';
+
+        if (!forceSaveConfirmed) {
+            console.warn('Chat integrity check failed, and user did not confirm the overwrite. Reloading the page.');
+            window.location.reload();
+            return;
+        }
+
+        await saveGroupChat(groupId, shouldSaveGroup, true);
     }
 
     if (shouldSaveGroup) {
@@ -603,6 +674,12 @@ async function saveGroupChat(groupId, shouldSaveGroup) {
     }
 }
 
+/**
+ * Renames a group member across all groups and their chats.
+ * @param {string} oldAvatar Old avatar name
+ * @param {string} newAvatar New avatar name
+ * @param {string} newName New character name
+ */
 export async function renameGroupMember(oldAvatar, newAvatar, newName) {
     // Scan every group for our renamed character
     for (const group of groups) {
@@ -630,6 +707,11 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
                 if (Array.isArray(messages) && messages.length) {
                     // Iterate over every chat message
                     for (const message of messages) {
+                        // Skip the chat header
+                        if (Object.hasOwn(message, 'chat_metadata')) {
+                            continue;
+                        }
+
                         // Only look at character messages
                         if (message.is_user || message.is_system) {
                             continue;
@@ -646,6 +728,8 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
                     }
 
                     if (hadChanges) {
+                        await eventSource.emit(event_types.CHARACTER_RENAMED_IN_PAST_CHAT, messages, oldAvatar, newAvatar);
+
                         const saveChatResponse = await fetch('/api/chats/group/save', {
                             method: 'POST',
                             headers: getRequestHeaders(),
@@ -668,40 +752,19 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
     }
 }
 
+/**
+ * Fetches all groups from the server and processes them.
+ */
 async function getGroups() {
-    let data = [];
+    const response = await fetch('/api/groups/all', {
+        method: 'POST',
+        headers: getRequestHeaders({ omitContentType: true }),
+    });
 
-    if (isTauri && tauriGroupsAPI) {
-        // Use Tauri API
-        try {
-            console.log('Using Tauri backend for getGroups');
-            data = await tauriGroupsAPI.getAllGroups();
-        } catch (error) {
-            console.error('Error getting groups from Tauri backend, falling back to server API:', error);
-            // Fall back to server API
-            const response = await fetch('/api/groups/all', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-            });
-
-            if (response.ok) {
-                data = await response.json();
-            }
-        }
-    } else {
-        // Use server API
-        const response = await fetch('/api/groups/all', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-        });
-
-        if (response.ok) {
-            data = await response.json();
-        }
-    }
-
-    if (data.length > 0) {
-        groups = data.sort((a, b) => a.id - b.id);
+    if (response.ok) {
+        /** @type {Group[]} */
+        const data = await response.json();
+        groups = data.slice();
 
         // Convert groups to new format
         for (const group of groups) {
@@ -719,9 +782,6 @@ async function getGroups() {
                     .filter(x => x)
                     .filter(onlyUnique);
             }
-            if (group.past_metadata == undefined) {
-                group.past_metadata = {};
-            }
             if (typeof group.chat_id === 'number') {
                 group.chat_id = String(group.chat_id);
             }
@@ -732,6 +792,11 @@ async function getGroups() {
     }
 }
 
+/**
+ * Gets a group UI block for the list.
+ * @param {Group} group Group object
+ * @returns {JQuery<HTMLElement>} jQuery element representing the group block
+ */
 export function getGroupBlock(group) {
     let count = 0;
     let namesList = [];
@@ -753,13 +818,13 @@ export function getGroupBlock(group) {
     template.find('.ch_name').text(group.name).attr('title', `[Group] ${group.name}`);
     template.find('.group_fav_icon').css('display', 'none');
     template.addClass(group.fav ? 'is_fav' : '');
-    template.find('.ch_fav').val(group.fav);
+    template.find('.ch_fav').val(String(group.fav));
     template.find('.group_select_counter').text(count + ' ' + (count != 1 ? t`characters` : t`character`));
     template.find('.group_select_block_list').text(namesList.join(', '));
 
     // Display inline tags
     const tagsElement = template.find('.tags');
-    printTagList(tagsElement, { forEntityOrKey: group.id });
+    printTagList(tagsElement, { forEntityOrKey: group.id, tagOptions: { isCharacterList: true } });
 
     const avatar = getGroupAvatar(group);
     if (avatar) {
@@ -769,6 +834,10 @@ export function getGroupBlock(group) {
     return template;
 }
 
+/**
+ * Updates the avatar display for a given group.
+ * @param {Group} group Group object
+ */
 function updateGroupAvatar(group) {
     $('#group_avatar_preview').empty().append(getGroupAvatar(group));
 
@@ -781,7 +850,11 @@ function updateGroupAvatar(group) {
     favsToHotswap();
 }
 
-// check if isDataURLor if it's a valid local file url
+/**
+ * Checks if a URL is a valid image URL.
+ * @param {string} url URL to check
+ * @returns {boolean} True if valid, false otherwise
+ */
 function isValidImageUrl(url) {
     // check if empty dict
     if (Object.keys(url).length === 0) {
@@ -790,6 +863,11 @@ function isValidImageUrl(url) {
     return isDataURL(url) || (url && (url.startsWith('user') || url.startsWith('/user')));
 }
 
+/**
+ * Gets a group avatar element.
+ * @param {Group} group Group object
+ * @returns {JQuery<HTMLElement>} Group avatar element
+ */
 function getGroupAvatar(group) {
     if (!group) {
         return $(`<div class="avatar"><img src="${default_avatar}"></div>`);
@@ -838,6 +916,11 @@ function getGroupAvatar(group) {
     return groupAvatar;
 }
 
+/**
+ * Gets chat IDs for a group.
+ * @param {string} groupId Group ID
+ * @returns {string[]} Array of chat IDs
+ */
 function getGroupChatNames(groupId) {
     const group = groups.find(x => x.id === groupId);
 
@@ -852,7 +935,14 @@ function getGroupChatNames(groupId) {
     return names;
 }
 
-async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
+/**
+ * Generates text for the group chat by queueing members according to the activation strategy.
+ * @param {boolean} byAutoMode If the generation was triggered by the auto mode.
+ * @param {string?} type Generation type
+ * @param {object} params Additional Generate parameters
+ * @returns {Promise<string|void>} Generated text or nothing if no generation occurred
+ */
+async function generateGroupWrapper(byAutoMode, type = null, params = {}) {
     function throwIfAborted() {
         if (params.signal instanceof AbortSignal && params.signal.aborted) {
             throw new Error('AbortSignal was fired. Group generation stopped');
@@ -871,7 +961,7 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
 
     // Auto-navigate back to group menu
     if (menu_type !== 'group_edit') {
-        select_group_chats(selected_group);
+        select_group_chats(selected_group, false);
         await delay(1);
     }
 
@@ -900,7 +990,7 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         let activationText = '';
         let isUserInput = false;
 
-        if (userInput?.length && !by_auto_mode) {
+        if (userInput?.length && !byAutoMode) {
             isUserInput = true;
             activationText = userInput;
         } else {
@@ -916,14 +1006,14 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         if (params && typeof params.force_chid == 'number') {
             activatedMembers = [params.force_chid];
         } else if (type === 'quiet') {
-            activatedMembers = activateSwipe(group.members);
+            activatedMembers = activateSwipe(group.members, { allowSystem: true }).slice(0, 1);
 
             if (activatedMembers.length === 0) {
                 activatedMembers = activateListOrder(group.members.slice(0, 1));
             }
         }
         else if (type === 'swipe' || type === 'continue') {
-            activatedMembers = activateSwipe(group.members);
+            activatedMembers = activateSwipe(group.members, { allowSystem: false });
 
             if (activatedMembers.length === 0) {
                 toastr.warning(t`Deleted group member swiped. To get a reply, add them back to the group.`);
@@ -967,7 +1057,6 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         for (const chId of activatedMembers) {
             throwIfAborted();
             deactivateSendButtons();
-            const generateType = type == 'swipe' || type == 'impersonate' || type == 'quiet' || type == 'continue' ? type : 'group_chat';
             setCharacterId(chId);
             setCharacterName(characters[chId].name);
             if (power_user.show_group_chat_queue) {
@@ -976,12 +1065,13 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
             await eventSource.emit(event_types.GROUP_MEMBER_DRAFTED, chId);
 
             // Wait for generation to finish
-            textResult = await Generate(generateType, { automatic_trigger: by_auto_mode, ...(params || {}) });
+            const generateType = ['swipe', 'impersonate', 'quiet', 'continue'].includes(type) ? type : 'normal';
+            textResult = await Generate(generateType, { automatic_trigger: byAutoMode, ...(params || {}) });
             let messageChunk = textResult?.messageChunk;
 
             if (messageChunk) {
                 while (shouldAutoContinue(messageChunk, type === 'impersonate')) {
-                    textResult = await Generate('continue', { automatic_trigger: by_auto_mode, ...(params || {}) });
+                    textResult = await Generate('continue', { automatic_trigger: byAutoMode, ...(params || {}) });
                     messageChunk = textResult?.messageChunk;
                 }
             }
@@ -1001,12 +1091,16 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         setCharacterName('');
         activateSendButtons();
         showSwipeButtons();
-        await eventSource.emit(event_types.GROUP_WRAPPER_FINISHED,  { selected_group, type });
+        await eventSource.emit(event_types.GROUP_WRAPPER_FINISHED, { selected_group, type });
     }
 
     return Promise.resolve(textResult);
 }
 
+/**
+ * Gets the generation ID of the last chat message.
+ * @returns {number|null} Generation ID or null
+ */
 function getLastMessageGenerationId() {
     let generationId = null;
     if (chat.length > 0) {
@@ -1018,6 +1112,11 @@ function getLastMessageGenerationId() {
     return generationId;
 }
 
+/**
+ * Activate group chat members for 'impersonate' generation type.
+ * @param {string[]} members Array of group member avatar ids
+ * @returns {number[]} Array of character ids
+ */
 function activateImpersonate(members) {
     const randomIndex = Math.floor(Math.random() * members.length);
     const activatedMembers = [members[randomIndex]];
@@ -1030,15 +1129,21 @@ function activateImpersonate(members) {
 /**
  * Activates a group member based on the last message.
  * @param {string[]} members Array of group member avatar ids
+ * @param {Object} [options] Options object
+ * @param {boolean} [options.allowSystem] Whether to allow system messages
  * @returns {number[]} Array of character ids
  */
-function activateSwipe(members) {
+function activateSwipe(members, { allowSystem = false } = {}) {
     let activatedNames = [];
     const lastMessage = chat[chat.length - 1];
 
-    if (lastMessage.is_user || lastMessage.is_system || lastMessage.extra?.type === system_message_types.NARRATOR) {
+    if (!lastMessage) {
+        return [];
+    }
+
+    if (lastMessage.is_user || (!allowSystem && lastMessage.is_system) || lastMessage.extra?.type === system_message_types.NARRATOR) {
         for (const message of chat.slice().reverse()) {
-            if (message.is_user || message.is_system || message.extra?.type === system_message_types.NARRATOR) {
+            if (message.is_user || (!allowSystem && message.is_system) || message.extra?.type === system_message_types.NARRATOR) {
                 continue;
             }
 
@@ -1074,6 +1179,11 @@ function activateSwipe(members) {
     return memberIds;
 }
 
+/**
+ * Activate group members for the list activation order.
+ * @param {string[]} members Array of group member avatar ids
+ * @returns {number[]} Array of character ids
+ */
 function activateListOrder(members) {
     let activatedMembers = members.filter(onlyUnique);
 
@@ -1127,6 +1237,15 @@ function activatePooledOrder(members, lastMessage, isUserInput) {
     return memberId !== -1 ? [memberId] : [];
 }
 
+/**
+ * Activate group members for the natural activation order.
+ * @param {string[]} members Array of group member avatar ids
+ * @param {string} input User input that triggered the generation
+ * @param {ChatMessage} lastMessage Last message in the chat
+ * @param {boolean} allowSelfResponses If the group allows self-responses
+ * @param {boolean} isUserInput If the generation was triggered by user input
+ * @returns {number[]} Array of character ids
+ */
 function activateNaturalOrder(members, input, lastMessage, allowSelfResponses, isUserInput) {
     let activatedMembers = [];
 
@@ -1203,35 +1322,19 @@ function activateNaturalOrder(members, input, lastMessage, allowSelfResponses, i
     return memberIds;
 }
 
+/**
+ * Deletes a group from the server by ID.
+ * @param {string} id Group ID to delete
+ * @returns {Promise<void>} Promise that resolves when the group is deleted
+ */
 async function deleteGroup(id) {
     const group = groups.find((x) => x.id === id);
-    let success = false;
 
-    if (isTauri && tauriGroupsAPI) {
-        // Use Tauri API
-        try {
-            console.log(`Using Tauri backend for deleteGroup: ${id}`);
-            await tauriGroupsAPI.deleteGroup(id);
-            success = true;
-        } catch (error) {
-            console.error(`Error deleting group ${id} from Tauri backend, falling back to server API:`, error);
-            // Fall back to server API
-            const response = await fetch('/api/groups/delete', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({ id: id }),
-            });
-            success = response.ok;
-        }
-    } else {
-        // Use server API
-        const response = await fetch('/api/groups/delete', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ id: id }),
-        });
-        success = response.ok;
-    }
+    const response = await fetch('/api/groups/delete', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ id: id }),
+    });
 
     if (group && Array.isArray(group.chats)) {
         for (const chatId of group.chats) {
@@ -1239,7 +1342,7 @@ async function deleteGroup(id) {
         }
     }
 
-    if (success) {
+    if (response.ok) {
         await clearChat();
         selected_group = null;
         delete tag_map[id];
@@ -1253,14 +1356,19 @@ async function deleteGroup(id) {
     }
 }
 
+/**
+ * Edits a group by ID.
+ * @param {string} id Group ID to edit
+ * @param {boolean} immediately Whether to save immediately
+ * @param {boolean} reload Whether to reload the groups after saving
+ * @returns {Promise<void>} Promise that resolves when the group is edited
+ */
 export async function editGroup(id, immediately, reload = true) {
     let group = groups.find((x) => x.id === id);
 
     if (!group) {
         return;
     }
-
-    group['chat_metadata'] = chat_metadata;
 
     if (immediately) {
         return await _save(group, reload);
@@ -1313,6 +1421,12 @@ async function groupChatAutoModeWorker() {
     await generateGroupWrapper(true, 'auto', { signal: groupAutoModeAbortController.signal });
 }
 
+/**
+ * Modifies a group member by adding or removing them.
+ * @param {string} groupId Group ID
+ * @param {JQuery<HTMLElement>} groupMember Group member element
+ * @param {boolean} isDelete If true, removes the member; otherwise adds the member
+ */
 async function modifyGroupMember(groupId, groupMember, isDelete) {
     const id = groupMember.data('id');
     const thisGroup = groups.find((x) => x.id == groupId);
@@ -1340,9 +1454,16 @@ async function modifyGroupMember(groupId, groupMember, isDelete) {
     $('#rm_group_submit').prop('disabled', !groupHasMembers);
 }
 
-async function reorderGroupMember(chat_id, groupMember, direction) {
+/**
+ * Reorders a group member up or down.
+ * @param {string} groupId Group ID
+ * @param {JQuery<HTMLElement>} groupMember Group member element
+ * @param {string} direction Direction to move the member ('up' or 'down')
+ * @returns {Promise<void>} Promise that resolves when the member has been reordered
+ */
+async function reorderGroupMember(groupId, groupMember, direction) {
     const id = groupMember.data('id');
-    const thisGroup = groups.find((x) => x.id == chat_id);
+    const thisGroup = groups.find((x) => x.id == groupId);
     const memberArray = thisGroup?.members ?? newGroupMembers;
 
     const indexOf = memberArray.indexOf(id);
@@ -1365,7 +1486,7 @@ async function reorderGroupMember(chat_id, groupMember, direction) {
 
     // Existing groups need to modify members list
     if (openGroupId) {
-        await editGroup(chat_id, false, false);
+        await editGroup(groupId, false, false);
         updateGroupAvatar(thisGroup);
     }
 }
@@ -1411,10 +1532,16 @@ async function onGroupNameInput() {
         let _thisGroup = groups.find((x) => x.id == openGroupId);
         _thisGroup.name = $(this).val();
         $('#rm_button_selected_ch').children('h2').text(_thisGroup.name);
-        await editGroup(openGroupId);
+        await editGroup(openGroupId, false);
     }
 }
 
+/**
+ * Checks if a character with the given avatar ID is a member of the group.
+ * @param {Group} group Group object
+ * @param {string} avatarId Avatar ID to check
+ * @returns {boolean} True if the avatar is a member of the group, false otherwise
+ */
 function isGroupMember(group, avatarId) {
     if (group && Array.isArray(group.members)) {
         return group.members.includes(avatarId);
@@ -1423,7 +1550,14 @@ function isGroupMember(group, avatarId) {
     }
 }
 
-function getGroupCharacters({ doFilter, onlyMembers } = {}) {
+/**
+ * Gets group characters based on filters.
+ * @param {object} param
+ * @param {boolean} [param.doFilter=false] Whether to apply filters
+ * @param {boolean} [param.onlyMembers=false] Whether to include only group members
+ * @returns {Array<{item: Character, id: number, type: string}>} Array of group character objects
+ */
+function getGroupCharacters({ doFilter = false, onlyMembers = false } = {}) {
     function sortMembersFn(a, b) {
         const membersArray = thisGroup?.members ?? newGroupMembers;
         const aIndex = membersArray.indexOf(a.item.avatar);
@@ -1453,6 +1587,8 @@ function getGroupCharacters({ doFilter, onlyMembers } = {}) {
 
 function printGroupCandidates() {
     const storageKey = 'GroupCandidates_PerPage';
+    const pageSize = Number(accountStorage.getItem(storageKey)) || 5;
+    const sizeChangerOptions = [5, 10, 25, 50, 100, 200, 500, 1000];
     $('#rm_group_add_members_pagination').pagination({
         dataSource: getGroupCharacters({ doFilter: true, onlyMembers: false }),
         pageRange: 1,
@@ -1461,18 +1597,20 @@ function printGroupCandidates() {
         prevText: '<',
         nextText: '>',
         formatNavigator: PAGINATION_TEMPLATE,
+        formatSizeChanger: renderPaginationDropdown(pageSize, sizeChangerOptions),
         showNavigator: true,
         showSizeChanger: true,
-        pageSize: Number(accountStorage.getItem(storageKey)) || 5,
-        sizeChangerOptions: [5, 10, 25, 50, 100, 200, 500, 1000],
-        afterSizeSelectorChange: function (e) {
+        pageSize,
+        afterSizeSelectorChange: function (e, size) {
             accountStorage.setItem(storageKey, e.target.value);
+            paginationDropdownChangeHandler(e, size);
         },
         callback: function (data) {
             $('#rm_group_add_members').empty();
             for (const i of data) {
                 $('#rm_group_add_members').append(getGroupCharacterBlock(i.item));
             }
+            localizePagination($('#rm_group_add_members_pagination'));
         },
     });
 }
@@ -1480,6 +1618,9 @@ function printGroupCandidates() {
 function printGroupMembers() {
     const storageKey = 'GroupMembers_PerPage';
     $('.rm_group_members_pagination').each(function () {
+        let that = this;
+        const pageSize = Number(accountStorage.getItem(storageKey)) || 5;
+        const sizeChangerOptions = [5, 10, 25, 50, 100, 200, 500, 1000];
         $(this).pagination({
             dataSource: getGroupCharacters({ doFilter: false, onlyMembers: true }),
             pageRange: 1,
@@ -1490,30 +1631,37 @@ function printGroupMembers() {
             formatNavigator: PAGINATION_TEMPLATE,
             showNavigator: true,
             showSizeChanger: true,
-            pageSize: Number(accountStorage.getItem(storageKey)) || 5,
-            sizeChangerOptions: [5, 10, 25, 50, 100, 200, 500, 1000],
-            afterSizeSelectorChange: function (e) {
+            formatSizeChanger: renderPaginationDropdown(pageSize, sizeChangerOptions),
+            pageSize,
+            afterSizeSelectorChange: function (e, size) {
                 accountStorage.setItem(storageKey, e.target.value);
+                paginationDropdownChangeHandler(e, size);
             },
             callback: function (data) {
                 $('.rm_group_members').empty();
                 for (const i of data) {
                     $('.rm_group_members').append(getGroupCharacterBlock(i.item));
                 }
+                localizePagination($(that));
             },
         });
     });
 }
 
+/**
+ * Creates a jQuery element representing a group character block.
+ * @param {Character} character Character object
+ * @returns {JQuery<HTMLElement>} jQuery element representing the group character block
+ */
 function getGroupCharacterBlock(character) {
     const avatar = getThumbnailUrl('avatar', character.avatar);
     const template = $('#group_member_template .group_member').clone();
-    const isFav = character.fav || character.fav == 'true';
+    const isFav = !!character.fav || character.fav == 'true';
     template.data('id', character.avatar);
     template.find('.avatar img').attr({ 'src': avatar, 'title': character.avatar });
     template.find('.ch_name').text(character.name);
     template.attr('data-chid', characters.indexOf(character));
-    template.find('.ch_fav').val(isFav);
+    template.find('.ch_fav').val(String(isFav));
     template.toggleClass('is_fav', isFav);
 
     const auxFieldName = power_user.aux_field || 'character_version';
@@ -1536,7 +1684,7 @@ function getGroupCharacterBlock(character) {
 
     // Display inline tags
     const tagsElement = template.find('.tags');
-    printTagList(tagsElement, { forEntityOrKey: characters.indexOf(character) });
+    printTagList(tagsElement, { forEntityOrKey: characters.indexOf(character), tagOptions: { isCharacterList: true } });
 
     if (!openGroupId) {
         template.find('[data-action="speak"]').hide();
@@ -1547,6 +1695,11 @@ function getGroupCharacterBlock(character) {
     return template;
 }
 
+/**
+ * Checks if a group member is disabled.
+ * @param {string} avatarId Avatar ID of the group member
+ * @returns {boolean} True if the group member is disabled, false otherwise
+ */
 function isGroupMemberDisabled(avatarId) {
     const thisGroup = openGroupId && groups.find((x) => x.id == openGroupId);
     return Boolean(thisGroup && thisGroup.disabled_members.includes(avatarId));
@@ -1593,9 +1746,15 @@ async function onHideMutedSpritesClick(value) {
         _thisGroup.hideMutedSprites = value;
         console.log(`_thisGroup.hideMutedSprites = ${_thisGroup.hideMutedSprites}`);
         await editGroup(openGroupId, false, false);
+        await eventSource.emit(event_types.GROUP_UPDATED);
     }
 }
 
+/**
+ * Toggles the visibility of hidden controls based on the group's generation mode.
+ * @param {Group} group Group object
+ * @param {number|null} generationMode Generation mode, or null to use the group's current generation mode
+ */
 function toggleHiddenControls(group, generationMode = null) {
     const isJoin = [group_generation_mode.APPEND, group_generation_mode.APPEND_DISABLED].includes(generationMode ?? group?.generation_mode);
     $('#rm_group_generation_mode_join_prefix').parent().toggle(isJoin);
@@ -1607,6 +1766,11 @@ function toggleHiddenControls(group, generationMode = null) {
     }
 }
 
+/**
+ * Opens a group creation/editing right menu.
+ * @param {string|null} groupId ID of the group to select or null if creating a new group
+ * @param {boolean} skipAnimation If true, skips the animation when selecting the group
+ */
 function select_group_chats(groupId, skipAnimation) {
     openGroupId = groupId;
     newGroupMembers = [];
@@ -1685,6 +1849,9 @@ function select_group_chats(groupId, skipAnimation) {
             resetScrollHeight(element);
         });
     }
+
+    hideMutedSprites = group?.hideMutedSprites ?? false;
+    $('#rm_group_hidemutedsprites').prop('checked', hideMutedSprites);
 
     eventSource.emit('groupSelected', { detail: { id: openGroupId, group: group } });
 }
@@ -1809,11 +1976,16 @@ async function onGroupActionClick(event) {
 
 function updateFavButtonState(state) {
     fav_grp_checked = state;
-    $('#rm_group_fav').val(fav_grp_checked);
+    $('#rm_group_fav').val(String(fav_grp_checked));
     $('#group_favorite_button').toggleClass('fav_on', fav_grp_checked);
     $('#group_favorite_button').toggleClass('fav_off', !fav_grp_checked);
 }
 
+/**
+ * Opens a group chat by its ID and updates the UI accordingly.
+ * @param {string} groupId ID of the group to open
+ * @returns {Promise<boolean>} Whether the group was opened
+ */
 export async function openGroupById(groupId) {
     if (isChatSaving) {
         toastr.info(t`Please wait until the chat is saved before switching characters.`, t`Your chat is still saving...`);
@@ -1826,7 +1998,7 @@ export async function openGroupById(groupId) {
     }
 
     if (!is_send_press && !is_group_generating) {
-        select_group_chats(groupId);
+        select_group_chats(groupId, false);
 
         if (selected_group !== groupId) {
             groupChatQueueOrder = new Map();
@@ -1846,6 +2018,11 @@ export async function openGroupById(groupId) {
     return false;
 }
 
+/**
+ * Peeks the character definition from a group member element.
+ * @param {JQuery<HTMLElement>} characterSelect Character select element
+ * @returns {Promise<void>}
+ */
 async function openCharacterDefinition(characterSelect) {
     if (is_group_generating) {
         toastr.warning(t`Can't peek a character while group reply is being generated`);
@@ -1874,7 +2051,7 @@ function filterGroupMembers() {
 }
 
 async function createGroup() {
-    let name = $('#rm_group_chat_name').val();
+    let name = $('#rm_group_chat_name').val().toString();
     let allowSelfResponses = !!$('#rm_group_allow_self_responses').prop('checked');
     let activationStrategy = Number($('#rm_group_activation_strategy').find(':selected').val()) ?? group_activation_strategy.NATURAL;
     let generationMode = Number($('#rm_group_generation_mode').find(':selected').val()) ?? group_generation_mode.SWAP;
@@ -1883,32 +2060,33 @@ async function createGroup() {
     const memberNames = characters.filter(x => members.includes(x.avatar)).map(x => x.name).join(', ');
 
     if (!name) {
-        name = `Group: ${memberNames}`;
+        name = t`Group: ${memberNames}`;
     }
 
-    const avatar_url = $('#group_avatar_preview img').attr('src');
-
+    const avatarUrl = $('#group_avatar_preview img').attr('src');
     const chatName = humanizedDateTime();
     const chats = [chatName];
+
+    /** @type {Omit<Group, 'id'>} */
+    const groupCreateModel = {
+        name: name,
+        members: members,
+        avatar_url: isValidImageUrl(avatarUrl) ? avatarUrl : default_avatar,
+        allow_self_responses: allowSelfResponses,
+        hideMutedSprites: hideMutedSprites,
+        activation_strategy: activationStrategy,
+        generation_mode: generationMode,
+        disabled_members: [],
+        fav: fav_grp_checked,
+        chat_id: chatName,
+        chats: chats,
+        auto_mode_delay: autoModeDelay,
+    };
 
     const createGroupResponse = await fetch('/api/groups/create', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({
-            name: name,
-            members: members,
-            avatar_url: isValidImageUrl(avatar_url) ? avatar_url : default_avatar,
-            allow_self_responses: allowSelfResponses,
-            hideMutedSprites: hideMutedSprites,
-            activation_strategy: activationStrategy,
-            generation_mode: generationMode,
-            disabled_members: [],
-            chat_metadata: {},
-            fav: fav_grp_checked,
-            chat_id: chatName,
-            chats: chats,
-            auto_mode_delay: autoModeDelay,
-        }),
+        body: JSON.stringify(groupCreateModel),
     });
 
     if (createGroupResponse.ok) {
@@ -1920,6 +2098,11 @@ async function createGroup() {
     }
 }
 
+/**
+ * Creates a new group chat within the specified group.
+ * @param {string} groupId Group ID
+ * @returns {Promise<void>} Promise that resolves when the new group chat is created
+ */
 export async function createNewGroupChat(groupId) {
     const group = groups.find(x => x.id === groupId);
 
@@ -1927,27 +2110,22 @@ export async function createNewGroupChat(groupId) {
         return;
     }
 
-    const oldChatName = group.chat_id;
-    const newChatName = humanizedDateTime();
-
-    if (typeof group.past_metadata !== 'object') {
-        group.past_metadata = {};
-    }
-
     await clearChat();
     chat.length = 0;
-    if (oldChatName) {
-        group.past_metadata[oldChatName] = Object.assign({}, chat_metadata);
-    }
+    const newChatName = humanizedDateTime();
     group.chats.push(newChatName);
     group.chat_id = newChatName;
-    group.chat_metadata = {};
-    updateChatMetadata(group.chat_metadata, true);
+    updateChatMetadata({}, true);
 
     await editGroup(group.id, true, false);
     await getGroupChat(group.id);
 }
 
+/**
+ * Retrieves past chats for a specified group.
+ * @param {string} groupId Group ID
+ * @returns {Promise<Array>} Array of past chats
+ */
 export async function getGroupPastChats(groupId) {
     const group = groups.find(x => x.id === groupId);
 
@@ -1960,16 +2138,22 @@ export async function getGroupPastChats(groupId) {
     try {
         for (const chatId of group.chats) {
             const messages = await loadGroupChat(chatId);
-            let this_chat_file_size = (JSON.stringify(messages).length / 1024).toFixed(2) + 'kb';
-            let chat_items = messages.length;
+            if (!Array.isArray(messages)) {
+                continue;
+            }
+            const fileSize = humanFileSize(JSON.stringify(messages).length);
+            if (messages.length > 0 && Object.hasOwn(messages[0], 'chat_metadata')) {
+                messages.shift();
+            }
+            const chatItems = messages.length;
             const lastMessage = messages.length ? messages[messages.length - 1].mes : '[The chat is empty]';
             const lastMessageDate = messages.length ? (messages[messages.length - 1].send_date || Date.now()) : Date.now();
             chats.push({
                 'file_name': chatId,
                 'mes': lastMessage,
                 'last_mes': lastMessageDate,
-                'file_size': this_chat_file_size,
-                'chat_items': chat_items,
+                'file_size': fileSize,
+                'chat_items': chatItems,
             });
         }
     } catch (err) {
@@ -1978,7 +2162,14 @@ export async function getGroupPastChats(groupId) {
     return chats;
 }
 
+/**
+ * Opens a specific group chat for the specified group by its ID.
+ * @param {string} groupId Group ID
+ * @param {string} chatId Chat ID
+ * @returns {Promise<void>}
+ */
 export async function openGroupChat(groupId, chatId) {
+    await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
     const group = groups.find(x => x.id === groupId);
 
     if (!group || !group.chats.includes(chatId)) {
@@ -1987,17 +2178,21 @@ export async function openGroupChat(groupId, chatId) {
 
     await clearChat();
     chat.length = 0;
-    const previousChat = group.chat_id;
-    group.past_metadata[previousChat] = Object.assign({}, chat_metadata);
     group.chat_id = chatId;
-    group.chat_metadata = group.past_metadata[chatId] || {};
     group['date_last_chat'] = Date.now();
-    updateChatMetadata(group.chat_metadata, true);
+    updateChatMetadata({}, true);
 
     await editGroup(groupId, true, false);
     await getGroupChat(groupId);
 }
 
+/**
+ * Renames a group chat within the specified group.
+ * @param {string} groupId Group ID
+ * @param {string} oldChatId Old chat ID
+ * @param {string} newChatId New chat ID
+ * @returns {Promise<void>} Promise that resolves when the group chat is renamed
+ */
 export async function renameGroupChat(groupId, oldChatId, newChatId) {
     const group = groups.find(x => x.id === groupId);
 
@@ -2011,13 +2206,54 @@ export async function renameGroupChat(groupId, oldChatId, newChatId) {
 
     group.chats.splice(group.chats.indexOf(oldChatId), 1);
     group.chats.push(newChatId);
-    group.past_metadata[newChatId] = (group.past_metadata[oldChatId] || {});
-    delete group.past_metadata[oldChatId];
 
     await editGroup(groupId, true, true);
 }
 
-export async function deleteGroupChat(groupId, chatId) {
+/**
+ * Deletes a group chat by its name. Doesn't affect displayed chat.
+ * @param {string} groupId Group ID
+ * @param {string} chatName Name of the chat to delete
+ * @returns {Promise<void>}
+ */
+export async function deleteGroupChatByName(groupId, chatName) {
+    const group = groups.find(x => x.id === groupId);
+    if (!group || !group.chats.includes(chatName)) {
+        return;
+    }
+
+    group.chats.splice(group.chats.indexOf(chatName), 1);
+
+    const response = await fetch('/api/chats/group/delete', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ id: chatName }),
+    });
+
+    if (!response.ok) {
+        toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be deleted`);
+        console.error('Group chat could not be deleted');
+        return;
+    }
+
+    // If the deleted chat was the current chat, switch to the last chat in the group
+    if (group.chat_id === chatName) {
+        const newChatName = group.chats.length ? group.chats[group.chats.length - 1] : humanizedDateTime();
+        group.chat_id = newChatName;
+    }
+
+    await editGroup(groupId, true, true);
+    await eventSource.emit(event_types.GROUP_CHAT_DELETED, chatName);
+}
+
+/**
+ * Deletes a group chat by name.
+ * @param {string} groupId The ID of the group containing the chat to delete.
+ * @param {string} chatId The id/name of the chat to delete.
+ * @param {object} [options={}] Options for the deletion.
+ * @param {boolean} [options.jumpToNewChat=true] Whether to jump to a new chat after deletion (existing one, or create a new one if none exists)
+ */
+export async function deleteGroupChat(groupId, chatId, { jumpToNewChat = true } = {}) {
     const group = groups.find(x => x.id === groupId);
 
     if (!group || !group.chats.includes(chatId)) {
@@ -2025,10 +2261,11 @@ export async function deleteGroupChat(groupId, chatId) {
     }
 
     group.chats.splice(group.chats.indexOf(chatId), 1);
-    group.chat_metadata = {};
-    group.chat_id = '';
-    delete group.past_metadata[chatId];
-    updateChatMetadata(group.chat_metadata, true);
+
+    if (group.chat_id === chatId) {
+        group.chat_id = '';
+        updateChatMetadata({}, true);
+    }
 
     const response = await fetch('/api/chats/group/delete', {
         method: 'POST',
@@ -2037,10 +2274,12 @@ export async function deleteGroupChat(groupId, chatId) {
     });
 
     if (response.ok) {
-        if (group.chats.length) {
-            await openGroupChat(groupId, group.chats[group.chats.length - 1]);
-        } else {
-            await createNewGroupChat(groupId);
+        if (jumpToNewChat) {
+            if (group.chats.length) {
+                await openGroupChat(groupId, group.chats[group.chats.length - 1]);
+            } else {
+                await createNewGroupChat(groupId);
+            }
         }
 
         await eventSource.emit(event_types.GROUP_CHAT_DELETED, chatId);
@@ -2050,14 +2289,14 @@ export async function deleteGroupChat(groupId, chatId) {
 /**
  * Imports a group chat from a file and adds it to the group.
  * @param {FormData} formData Form data to send to the server
- * @param {EventTarget} eventTarget Element that triggered the import
+ * @param {object} [options={}] Options for the import
+ * @param {boolean} [options.refresh] Whether to refresh the group chat list after import
+ * @returns {Promise<string[]>} List of imported file names
  */
-export async function importGroupChat(formData, eventTarget) {
-    const headers = getRequestHeaders();
-    delete headers['Content-Type'];
+export async function importGroupChat(formData, { refresh = true } = {}) {
     const fetchResult = await fetch('/api/chats/group/import', {
         method: 'POST',
-        headers: headers,
+        headers: getRequestHeaders({ omitContentType: true }),
         body: formData,
         cache: 'no-cache',
     });
@@ -2071,16 +2310,28 @@ export async function importGroupChat(formData, eventTarget) {
             if (group) {
                 group.chats.push(chatId);
                 await editGroup(selected_group, true, true);
-                await displayPastChats();
+                if (refresh) {
+                    await displayPastChats();
+                }
             }
+
+            return [data.res];
         }
+
+        return data?.fileNames || [];
     }
 
-    if (eventTarget instanceof HTMLInputElement) {
-        eventTarget.value = '';
-    }
+    return [];
 }
 
+/**
+ * Saves the current group chat as a bookmark chat.
+ * @param {string} groupId Group ID
+ * @param {string} name Name of the chat to save
+ * @param {ChatMetadata?} metadata New metadata to save with the chat
+ * @param {number|undefined} mesId Optional message ID to trim the chat up to
+ * @returns {Promise<void>} Promise that resolves when the group chat is saved
+ */
 export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
     const group = groups.find(x => x.id === groupId);
 
@@ -2088,11 +2339,18 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
         return;
     }
 
-    group.past_metadata[name] = { ...chat_metadata, ...(metadata || {}) };
     group.chats.push(name);
 
-    const trimmed_chat = (mesId !== undefined && mesId >= 0 && mesId < chat.length)
-        ? chat.slice(0, parseInt(mesId) + 1)
+    /** @type {ChatHeader} */
+    const chatHeader = {
+        chat_metadata: { ...chat_metadata, ...(metadata || {}) },
+        user_name: 'unused',
+        character_name: 'unused',
+    };
+
+    /** @type {ChatMessage[]} */
+    const trimmedChat = (mesId !== undefined && mesId >= 0 && mesId < chat.length)
+        ? chat.slice(0, Number(mesId) + 1)
         : chat;
 
     await editGroup(groupId, true, false);
@@ -2100,7 +2358,7 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
     const response = await fetch('/api/chats/group/save', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ id: name, chat: [...trimmed_chat] }),
+        body: JSON.stringify({ id: name, chat: [chatHeader, ...trimmedChat] }),
     });
 
     if (!response.ok) {
@@ -2148,7 +2406,7 @@ function doCurMemberListPopout() {
         // Remove pagination from popout
         newElement.find('.group_pagination').empty();
 
-        $('body').append(newElement);
+        $('#movingDivs').append(newElement);
         loadMovingUIState();
         $('#groupMemberListPopout').fadeIn(animation_duration);
         dragElement(newElement);
@@ -2177,7 +2435,7 @@ jQuery(() => {
     });
     $('#rm_group_filter').on('input', filterGroupMembers);
     $('#rm_group_submit').on('click', createGroup);
-    $('#rm_group_scenario').on('click', setScenarioOverride);
+    $('#rm_group_scenario').on('click', setCharacterSettingsOverrides);
     $('#rm_group_automode').on('input', function () {
         const value = $(this).prop('checked');
         is_group_automode_enabled = value;

@@ -7,32 +7,23 @@ const __dirname = path.dirname(__filename);
 
 export default {
   mode: 'production',
+  target: ['web', 'es2020'],
+  cache: {
+    type: 'filesystem',
+    cacheDirectory: path.resolve(__dirname, '.cache/webpack'),
+  },
   entry: {
     lib: './src/lib-bundle.js'
   },
   output: {
     filename: '[name].bundle.js',
-    path: path.resolve(__dirname, 'dist'),
+    path: path.resolve(__dirname, 'src/dist'),
     library: {
       type: 'module'
     }
   },
   experiments: {
     outputModule: true,
-  },
-  module: {
-    rules: [
-      {
-        test: /\.js$/,
-        exclude: /node_modules/,
-        use: {
-          loader: 'babel-loader',
-          options: {
-            presets: ['@babel/preset-env']
-          }
-        }
-      }
-    ]
   },
   resolve: {
     extensions: ['.js'],
@@ -47,8 +38,8 @@ export default {
       "os": false
     }
   },
-  // Prevent bundling of certain imported packages and instead retrieve these external dependencies at runtime
-  externals: {
-    // Add any libraries that should be loaded from CDN or global scope
-  }
+  optimization: {
+    moduleIds: 'deterministic',
+    chunkIds: 'deterministic',
+  },
 };

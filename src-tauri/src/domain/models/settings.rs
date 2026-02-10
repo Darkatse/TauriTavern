@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use serde::{Serialize, Deserialize};
-use serde_json::Value;
 
 /// 应用程序设置
 #[derive(Debug, Clone, Serialize, Deserialize)]

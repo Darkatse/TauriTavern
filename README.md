@@ -1,121 +1,97 @@
 # TauriTavern
 
-TauriTavern is a rebuild of SillyTavern's backend using Tauri v2 and Rust, while preserving the original frontend. This project aims to provide a more efficient, native, and cross-platform experience for SillyTavern users.
+TauriTavern ports SillyTavern into a native desktop app with Tauri v2 + Rust backend while keeping the upstream frontend experience. The frontend is now synced to SillyTavern 1.15.0 and integrated through a modular Tauri injection layer.
 
-## Features
+## Highlights
 
-- **Native Application**: Built with Tauri v2, providing a native application experience on Windows, macOS, and Linux.
-- **Efficient Backend**: Rust-based backend for improved performance and resource usage.
-- **Clean Architecture**: Modular, low-coupling design with clear separation of concerns.
-- **Familiar Frontend**: Preserves the original SillyTavern frontend experience.
-- **Detailed Logging**: Comprehensive logging system for easier debugging and troubleshooting.
+- Native desktop runtime on Windows, macOS, Linux (Tauri v2)
+- Rust backend with clean architecture layering
+- Frontend compatibility with SillyTavern 1.15.0
+- Modular request injection pipeline (`src/tauri/main/*`) replacing the previous monolithic `tauri-main.js`
+- Unified frontend bootstrap pipeline without runtime loader indirection
 
 ## Architecture
 
-TauriTavern follows a clean architecture approach with the following layers:
+### Backend (`src-tauri`)
 
-1. **Presentation Layer** (Tauri Commands)
-   - Handles communication with the frontend
-   - Exposes API endpoints via Tauri commands
+- `presentation`: Tauri commands and API boundary
+- `application`: use cases/services and DTO orchestration
+- `domain`: core models, contracts, errors
+- `infrastructure`: file persistence, repositories, logging
 
-2. **Application Layer**
-   - Contains use cases and business logic
-   - Orchestrates data flow between presentation and domain layers
+### Frontend (`src`)
 
-3. **Domain Layer**
-   - Core business entities and logic
-   - Domain models and interfaces
+- Upstream SillyTavern frontend code (HTML/CSS/JS)
+- Tauri bridge and interception layer for replacing HTTP endpoints with local Tauri command calls
 
-4. **Infrastructure Layer**
-   - Implements interfaces defined in the domain layer
-   - Handles file system operations, data persistence, etc.
+Frontend startup flow:
 
-## Project Structure
+1. `src/init.js` loads `lib.js` -> `tauri-main.js` -> `script.js`
+2. `src/lib.js` statically imports `src/dist/lib.bundle.js` and re-exports a stable ESM library surface
+3. `src/tauri-main.js` delegates to `bootstrapTauriMain()`
+4. `src/tauri/main/bootstrap.js` creates context/router/interceptors, then initializes bridge and runtime helpers
 
-```
-src-tauri/
-├── src/
-│   ├── domain/              # Domain layer
-│   │   ├── models/          # Domain entities
-│   │   ├── repositories/    # Repository interfaces
-│   │   └── errors.rs        # Domain-specific errors
-│   ├── application/         # Application layer
-│   │   ├── services/        # Application services
-│   │   ├── dto/             # Data Transfer Objects
-│   │   └── errors.rs        # Application-specific errors
-│   ├── infrastructure/      # Infrastructure layer
-│   │   ├── repositories/    # Repository implementations
-│   │   ├── persistence/     # Data persistence utilities
-│   │   └── logging/         # Logging utilities
-│   ├── presentation/        # Presentation layer
-│   │   ├── commands/        # Tauri commands
-│   │   └── errors.rs        # Presentation-specific errors
-│   ├── app.rs               # Application setup
-│   ├── lib.rs               # Library entry point
-│   └── main.rs              # Application entry point
-└── Cargo.toml               # Rust dependencies
+## Frontend Integration Layout
+
+```text
+src/
+├── tauri-bridge.js              # low-level Tauri bridge (invoke/listen/convertFileSrc)
+├── tauri-main.js                # thin bootstrap entry
+├── init.js                      # startup orchestrator
+├── lib.js                       # library facade (ESM exports)
+├── dist/lib.bundle.js           # webpack-built vendor bundle
+└── tauri/main/
+    ├── bootstrap.js             # composition root
+    ├── context.js               # shared state + domain helpers
+    ├── http-utils.js            # request/response parsing helpers
+    ├── interceptors.js          # fetch/jQuery ajax patching
+    ├── router.js                # lightweight route registry
+    └── routes/
+        ├── system-routes.js
+        ├── settings-routes.js
+        ├── extensions-routes.js
+        ├── resource-routes.js
+        ├── character-routes.js
+        └── chat-routes.js
 ```
 
 ## Development
 
-### Prerequisites
+Prerequisites:
 
-- Rust (latest stable version)
-- Node.js (v16 or later)
+- Rust stable
+- Node.js 18+
+- pnpm
 - Tauri CLI
 
-### Recommended IDE Setup
+Setup:
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
-
-### Setup
-
-1. Clone the repository:
-   ```
-   git clone https://github.com/Darkatse/tauritavern.git
-   cd tauritavern
-   ```
-
-2. Install dependencies:
-   ```
-   npm install
-   ```
-
-3. Build the frontend:
-   ```
-   npm run build
-   ```
-
-4. Run in development mode:
-   ```
-   npm run tauri:dev
-   ```
-
-### Development Workflow
-
-1. Make changes to the frontend code
-2. Run `npm run build` to bundle the libraries
-3. Run `npm run tauri:dev` to start the application
-
-### Building
-
-To build the application for production:
-
-```
-npm run tauri:build
+```bash
+git clone https://github.com/Darkatse/tauritavern.git
+cd tauritavern
+pnpm install
 ```
 
-This will create platform-specific installers in the `src-tauri/target/release/bundle` directory.
+Common commands:
 
-## Contributing
+```bash
+pnpm run build       # build frontend bundles
+pnpm run tauri:dev   # run desktop app in dev mode
+pnpm run tauri:build # build release installers
+```
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+## Documentation
+
+- `docs/FrontendGuide.md`: frontend architecture and extension guide
+- `docs/BackendStructure.md`: backend architecture details
+- `docs/TechStack.md`: stack and integration choices
+- `docs/ImplementationPlan.md`: roadmap and milestones
 
 ## License
 
-This project is licensed under the same license as SillyTavern - AGPL-3.0.
+AGPL-3.0 (same license family as SillyTavern).
 
 ## Acknowledgements
 
-- [SillyTavern](https://github.com/SillyTavern/SillyTavern) - The original project that this is based on.
-- [Tauri](https://tauri.app/) - The framework used to build the native application.
+- [SillyTavern](https://github.com/SillyTavern/SillyTavern)
+- [Tauri](https://tauri.app/)

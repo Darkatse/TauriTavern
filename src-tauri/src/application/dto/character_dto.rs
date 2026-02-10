@@ -1,6 +1,6 @@
-use serde::{Serialize, Deserialize};
 use crate::domain::models::character::Character;
 use crate::domain::repositories::character_repository::{CharacterChat, ImageCrop};
+use serde::{Deserialize, Serialize};
 
 /// Character response DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,7 +167,9 @@ impl From<Character> for CharacterDto {
             alternate_greetings: character.data.alternate_greetings.clone(),
             system_prompt: character.data.system_prompt.clone(),
             post_history_instructions: character.data.post_history_instructions.clone(),
-            extensions: Some(serde_json::to_value(&character.data.extensions).unwrap_or(serde_json::Value::Null)),
+            extensions: Some(
+                serde_json::to_value(&character.data.extensions).unwrap_or(serde_json::Value::Null),
+            ),
         }
     }
 }
@@ -175,12 +177,8 @@ impl From<Character> for CharacterDto {
 /// Convert from DTO to domain model
 impl From<CreateCharacterDto> for Character {
     fn from(dto: CreateCharacterDto) -> Self {
-        let mut character = Character::new(
-            dto.name,
-            dto.description,
-            dto.personality,
-            dto.first_mes,
-        );
+        let mut character =
+            Character::new(dto.name, dto.description, dto.personality, dto.first_mes);
 
         character.scenario = dto.scenario;
         character.mes_example = dto.mes_example;
@@ -200,13 +198,16 @@ impl From<CreateCharacterDto> for Character {
         character.data.tags = character.tags.clone();
         character.data.alternate_greetings = dto.alternate_greetings.unwrap_or_default();
         character.data.system_prompt = dto.system_prompt.unwrap_or_default();
-        character.data.post_history_instructions = dto.post_history_instructions.unwrap_or_default();
+        character.data.post_history_instructions =
+            dto.post_history_instructions.unwrap_or_default();
         character.data.extensions.talkativeness = character.talkativeness;
         character.data.extensions.fav = character.fav;
 
         // Set extensions if provided
         if let Some(extensions) = dto.extensions {
-            if let Ok(ext_map) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(extensions) {
+            if let Ok(ext_map) =
+                serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(extensions)
+            {
                 for (key, value) in ext_map {
                     character.data.extensions.additional.insert(key, value);
                 }

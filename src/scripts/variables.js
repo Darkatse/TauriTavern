@@ -133,7 +133,7 @@ export function setGlobalVariable(name, value, args = {}) {
     return value;
 }
 
-function addLocalVariable(name, value) {
+export function addLocalVariable(name, value) {
     const currentValue = getLocalVariable(name) || 0;
     try {
         const parsedValue = JSON.parse(currentValue);
@@ -163,7 +163,7 @@ function addLocalVariable(name, value) {
     return newValue;
 }
 
-function addGlobalVariable(name, value) {
+export function addGlobalVariable(name, value) {
     const currentValue = getGlobalVariable(name) || 0;
     try {
         const parsedValue = JSON.parse(currentValue);
@@ -193,19 +193,19 @@ function addGlobalVariable(name, value) {
     return newValue;
 }
 
-function incrementLocalVariable(name) {
+export function incrementLocalVariable(name) {
     return addLocalVariable(name, 1);
 }
 
-function incrementGlobalVariable(name) {
+export function incrementGlobalVariable(name) {
     return addGlobalVariable(name, 1);
 }
 
-function decrementLocalVariable(name) {
+export function decrementLocalVariable(name) {
     return addLocalVariable(name, -1);
 }
 
-function decrementGlobalVariable(name) {
+export function decrementGlobalVariable(name) {
     return addGlobalVariable(name, -1);
 }
 
@@ -238,7 +238,7 @@ export function resolveVariable(name, scope = null) {
 export function getVariableMacros() {
     return [
         // Replace {{setvar::name::value}} with empty string and set the variable name to value
-        { regex: /{{setvar::([^:]+)::([^}]+)}}/gi, replace: (_, name, value) => { setLocalVariable(name.trim(), value); return ''; } },
+        { regex: /{{setvar::([^:]+)::([^}]*)}}/gi, replace: (_, name, value) => { setLocalVariable(name.trim(), value); return ''; } },
         // Replace {{addvar::name::value}} with empty string and add value to the variable value
         { regex: /{{addvar::([^:]+)::([^}]+)}}/gi, replace: (_, name, value) => { addLocalVariable(name.trim(), value); return ''; } },
         // Replace {{incvar::name}} with empty string and increment the variable name by 1
@@ -248,7 +248,7 @@ export function getVariableMacros() {
         // Replace {{getvar::name}} with the value of the variable name
         { regex: /{{getvar::([^}]+)}}/gi, replace: (_, name) => getLocalVariable(name.trim()) },
         // Replace {{setglobalvar::name::value}} with empty string and set the global variable name to value
-        { regex: /{{setglobalvar::([^:]+)::([^}]+)}}/gi, replace: (_, name, value) => { setGlobalVariable(name.trim(), value); return ''; } },
+        { regex: /{{setglobalvar::([^:]+)::([^}]*)}}/gi, replace: (_, name, value) => { setGlobalVariable(name.trim(), value); return ''; } },
         // Replace {{addglobalvar::name::value}} with empty string and add value to the global variable value
         { regex: /{{addglobalvar::([^:]+)::([^}]+)}}/gi, replace: (_, name, value) => { addGlobalVariable(name.trim(), value); return ''; } },
         // Replace {{incglobalvar::name}} with empty string and increment the global variable name by 1
@@ -321,7 +321,7 @@ async function listVariablesCallback(args) {
  */
 async function whileCallback(args, value) {
     if (args.guard instanceof SlashCommandClosure) throw new Error('argument \'guard\' cannot be a closure for command /while');
-    const isGuardOff = isFalseBoolean(args.guard);
+    const isGuardOff = isFalseBoolean(args.guard?.toString());
     const iterations = isGuardOff ? Number.MAX_SAFE_INTEGER : MAX_LOOPS;
     /**@type {string|SlashCommandClosure} */
     let command;
@@ -380,7 +380,7 @@ async function timesCallback(args, value) {
         [repeats, ...command] = /**@type {string}*/(value).split(' ');
         command = command.join(' ');
     }
-    const isGuardOff = isFalseBoolean(args.guard);
+    const isGuardOff = isFalseBoolean(args.guard?.toString());
     const iterations = Math.min(Number(repeats), isGuardOff ? Number.MAX_SAFE_INTEGER : MAX_LOOPS);
     let result;
     for (let i = 0; i < iterations; i++) {
@@ -408,7 +408,7 @@ async function ifCallback(args, value) {
     const { a, b, rule } = parseBooleanOperands(args);
     const result = evalBoolean(rule, a, b);
 
-    /**@type {string|SlashCommandClosure} */
+    /** @type {string|SlashCommandClosure} */
     let command;
     if (value) {
         if (value[0] instanceof SlashCommandClosure) {
@@ -469,8 +469,8 @@ export function parseBooleanOperands(args) {
             return '';
         }
 
-        // parseFloat will return NaN for spaces.
-        const operandNumber = parseFloat(operand);
+        // Number parses spaces as 0, and parseFloat is weird
+        const operandNumber = typeof operand === 'string' && operand.trim().length ? Number(operand) : NaN;
 
         if (!isNaN(operandNumber)) {
             return operandNumber;
@@ -575,7 +575,7 @@ export function evalBoolean(rule, a, b) {
         case 'neq':
             return aString !== bString;
         default:
-            throw new Error(`Unknown boolean comparison rule for type number. Accepted: in, nin, eq, neq. Provided: ${rule}`);
+            throw new Error(`Unknown boolean comparison rule for type string. Accepted: in, nin, eq, neq. Provided: ${rule}`);
     }
 }
 
@@ -608,7 +608,7 @@ async function executeSubCommands(command, scope = null, parserFlags = null, abo
  * @param {string} name Variable name to delete
  * @returns {string} Empty string
  */
-function deleteLocalVariable(name) {
+export function deleteLocalVariable(name) {
     if (!existsLocalVariable(name)) {
         console.warn(`The local variable "${name}" does not exist.`);
         return '';
@@ -624,7 +624,7 @@ function deleteLocalVariable(name) {
  * @param {string} name Variable name to delete
  * @returns {string} Empty string
  */
-function deleteGlobalVariable(name) {
+export function deleteGlobalVariable(name) {
     if (!existsGlobalVariable(name)) {
         console.warn(`The global variable "${name}" does not exist.`);
         return '';

@@ -1,5 +1,7 @@
-use serde::{Serialize, Deserialize};
-use crate::domain::models::user::{User, UserSettings, UserInterfaceSettings, UserGenerationSettings};
+use crate::domain::models::user::{
+    User, UserGenerationSettings, UserInterfaceSettings, UserSettings,
+};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserDto {

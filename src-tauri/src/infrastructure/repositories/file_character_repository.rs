@@ -1,18 +1,25 @@
+use async_trait::async_trait;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::collections::HashMap;
-use std::time::{Instant, Duration};
-use async_trait::async_trait;
+use std::time::{Duration, Instant};
 use tokio::fs;
-use tokio::sync::Mutex;
 use tokio::io::AsyncReadExt;
+use tokio::sync::Mutex;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::character::{Character, sanitize_filename};
-use crate::domain::repositories::character_repository::{CharacterRepository, ImageCrop, CharacterChat};
+use crate::domain::models::character::{sanitize_filename, Character};
+use crate::domain::repositories::character_repository::{
+    CharacterChat, CharacterRepository, ImageCrop,
+};
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file, list_files_with_extension, delete_file};
-use crate::infrastructure::persistence::png_utils::{read_character_data_from_png, write_character_data_to_png, process_avatar_image, parse_character_from_png, write_character_to_png};
+use crate::infrastructure::persistence::file_system::{
+    delete_file, list_files_with_extension, read_json_file, write_json_file,
+};
+use crate::infrastructure::persistence::png_utils::{
+    parse_character_from_png, process_avatar_image, read_character_data_from_png,
+    write_character_data_to_png, write_character_to_png,
+};
 
 /// Memory cache for character data
 struct MemoryCache {
@@ -45,8 +52,11 @@ impl MemoryCache {
     fn set(&mut self, name: String, character: Character) {
         // If we're at capacity, remove the oldest entry
         if self.characters.len() >= self.capacity && !self.characters.contains_key(&name) {
-            if let Some((oldest_key, _)) = self.characters.iter()
-                .min_by_key(|(_, (_, timestamp))| timestamp.elapsed()) {
+            if let Some((oldest_key, _)) = self
+                .characters
+                .iter()
+                .min_by_key(|(_, (_, timestamp))| timestamp.elapsed())
+            {
                 let oldest_key = oldest_key.clone();
                 self.characters.remove(&oldest_key);
             }
@@ -78,9 +88,10 @@ impl FileCharacterRepository {
     /// Create a new FileCharacterRepository
     pub fn new(characters_dir: PathBuf, chats_dir: PathBuf, default_avatar_path: PathBuf) -> Self {
         // Create a memory cache with 100 character capacity and 30 minute TTL
-        let memory_cache = Arc::new(Mutex::new(
-            MemoryCache::new(100, Duration::from_secs(30 * 60))
-        ));
+        let memory_cache = Arc::new(Mutex::new(MemoryCache::new(
+            100,
+            Duration::from_secs(30 * 60),
+        )));
 
         Self {
             characters_dir,
@@ -94,10 +105,15 @@ impl FileCharacterRepository {
     async fn ensure_directory_exists(&self) -> Result<(), DomainError> {
         if !self.characters_dir.exists() {
             tracing::info!("Creating characters directory: {:?}", self.characters_dir);
-            fs::create_dir_all(&self.characters_dir).await.map_err(|e| {
-                tracing::error!("Failed to create characters directory: {}", e);
-                DomainError::InternalError(format!("Failed to create characters directory: {}", e))
-            })?;
+            fs::create_dir_all(&self.characters_dir)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to create characters directory: {}", e);
+                    DomainError::InternalError(format!(
+                        "Failed to create characters directory: {}",
+                        e
+                    ))
+                })?;
         }
 
         if !self.chats_dir.exists() {
@@ -183,11 +199,19 @@ impl FileCharacterRepository {
         })?;
 
         // Set file name
-        let file_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        let file_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
         character.file_name = Some(file_name.clone());
 
         // Set avatar
-        character.avatar = path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        character.avatar = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
 
         // Set JSON data
         character.json_data = Some(json_data);
@@ -214,7 +238,11 @@ impl FileCharacterRepository {
     }
 
     /// Process a character for the character list
-    async fn process_character(&self, file_name: &str, shallow: bool) -> Result<Character, DomainError> {
+    async fn process_character(
+        &self,
+        file_name: &str,
+        shallow: bool,
+    ) -> Result<Character, DomainError> {
         // Try to get from cache first
         {
             let cache = self.memory_cache.lock().await;
@@ -254,12 +282,16 @@ impl FileCharacterRepository {
         let mut characters = Vec::new();
 
         for file_path in character_files {
-            let file_name = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let file_name = file_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
 
             match self.process_character(&file_name, shallow).await {
                 Ok(character) => {
                     characters.push(character);
-                },
+                }
                 Err(e) => {
                     logger::error(&format!("Failed to process character {}: {}", file_name, e));
                     // Continue processing other characters
@@ -329,7 +361,10 @@ impl CharacterRepository for FileCharacterRepository {
         // If not in cache, load from file
         let file_path = self.get_character_path(name);
         if !file_path.exists() {
-            return Err(DomainError::NotFound(format!("Character not found: {}", name)));
+            return Err(DomainError::NotFound(format!(
+                "Character not found: {}",
+                name
+            )));
         }
 
         let character = self.read_character_from_file(&file_path).await?;
@@ -348,7 +383,10 @@ impl CharacterRepository for FileCharacterRepository {
     async fn delete(&self, name: &str, delete_chats: bool) -> Result<(), DomainError> {
         let file_path = self.get_character_path(name);
         if !file_path.exists() {
-            return Err(DomainError::NotFound(format!("Character not found: {}", name)));
+            return Err(DomainError::NotFound(format!(
+                "Character not found: {}",
+                name
+            )));
         }
 
         // Delete character file
@@ -382,7 +420,10 @@ impl CharacterRepository for FileCharacterRepository {
 
         // Check if character exists
         if !file_path.exists() {
-            return Err(DomainError::NotFound(format!("Character not found: {}", file_name)));
+            return Err(DomainError::NotFound(format!(
+                "Character not found: {}",
+                file_name
+            )));
         }
 
         // Save the updated character
@@ -393,13 +434,19 @@ impl CharacterRepository for FileCharacterRepository {
         // Check if old character exists
         let old_path = self.get_character_path(old_name);
         if !old_path.exists() {
-            return Err(DomainError::NotFound(format!("Character not found: {}", old_name)));
+            return Err(DomainError::NotFound(format!(
+                "Character not found: {}",
+                old_name
+            )));
         }
 
         // Check if new name already exists
         let new_path = self.get_character_path(new_name);
         if new_path.exists() {
-            return Err(DomainError::InvalidData(format!("Character already exists: {}", new_name)));
+            return Err(DomainError::InvalidData(format!(
+                "Character already exists: {}",
+                new_name
+            )));
         }
 
         // Read the character
@@ -418,10 +465,12 @@ impl CharacterRepository for FileCharacterRepository {
         let new_chat_dir = self.get_chat_directory(new_name);
 
         if old_chat_dir.exists() && !new_chat_dir.exists() {
-            fs::rename(&old_chat_dir, &new_chat_dir).await.map_err(|e| {
-                logger::error(&format!("Failed to rename chat directory: {}", e));
-                DomainError::InternalError(format!("Failed to rename chat directory: {}", e))
-            })?;
+            fs::rename(&old_chat_dir, &new_chat_dir)
+                .await
+                .map_err(|e| {
+                    logger::error(&format!("Failed to rename chat directory: {}", e));
+                    DomainError::InternalError(format!("Failed to rename chat directory: {}", e))
+                })?;
         }
 
         // Delete the old character file
@@ -440,7 +489,11 @@ impl CharacterRepository for FileCharacterRepository {
         Ok(character)
     }
 
-    async fn import_character(&self, file_path: &Path, preserve_file_name: Option<String>) -> Result<Character, DomainError> {
+    async fn import_character(
+        &self,
+        file_path: &Path,
+        preserve_file_name: Option<String>,
+    ) -> Result<Character, DomainError> {
         // Read the file
         let file_data = fs::read(file_path).await.map_err(|e| {
             logger::error(&format!("Failed to read file: {}", e));
@@ -448,7 +501,11 @@ impl CharacterRepository for FileCharacterRepository {
         })?;
 
         // Get the file extension
-        let extension = file_path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        let extension = file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
 
         let mut character = match extension.as_str() {
             "png" => {
@@ -463,7 +520,7 @@ impl CharacterRepository for FileCharacterRepository {
                 character.avatar = "none".to_string();
 
                 character
-            },
+            }
             "json" => {
                 // Parse character from JSON
                 let json_data = String::from_utf8(file_data).map_err(|e| {
@@ -480,9 +537,12 @@ impl CharacterRepository for FileCharacterRepository {
                 character.avatar = "none".to_string();
 
                 character
-            },
+            }
             _ => {
-                return Err(DomainError::InvalidData(format!("Unsupported file format: {}", extension)));
+                return Err(DomainError::InvalidData(format!(
+                    "Unsupported file format: {}",
+                    extension
+                )));
             }
         };
 
@@ -513,7 +573,12 @@ impl CharacterRepository for FileCharacterRepository {
         Ok(())
     }
 
-    async fn create_with_avatar(&self, character: &Character, avatar_path: Option<&Path>, crop: Option<ImageCrop>) -> Result<Character, DomainError> {
+    async fn create_with_avatar(
+        &self,
+        character: &Character,
+        avatar_path: Option<&Path>,
+        crop: Option<ImageCrop>,
+    ) -> Result<Character, DomainError> {
         // Process avatar image if provided
         let image_data = if let Some(path) = avatar_path {
             // Read the avatar file
@@ -561,7 +626,12 @@ impl CharacterRepository for FileCharacterRepository {
         Ok(character.clone())
     }
 
-    async fn update_avatar(&self, name: &str, avatar_path: &Path, crop: Option<ImageCrop>) -> Result<(), DomainError> {
+    async fn update_avatar(
+        &self,
+        name: &str,
+        avatar_path: &Path,
+        crop: Option<ImageCrop>,
+    ) -> Result<(), DomainError> {
         // Find the character
         let character = self.find_by_name(name).await?;
 
@@ -597,7 +667,11 @@ impl CharacterRepository for FileCharacterRepository {
         Ok(())
     }
 
-    async fn get_character_chats(&self, name: &str, simple: bool) -> Result<Vec<CharacterChat>, DomainError> {
+    async fn get_character_chats(
+        &self,
+        name: &str,
+        simple: bool,
+    ) -> Result<Vec<CharacterChat>, DomainError> {
         let chat_dir = self.get_chat_directory(name);
 
         if !chat_dir.exists() {
@@ -622,7 +696,11 @@ impl CharacterRepository for FileCharacterRepository {
                 continue;
             }
 
-            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            let file_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
 
             if simple {
                 chats.push(CharacterChat {
@@ -654,7 +732,11 @@ impl CharacterRepository for FileCharacterRepository {
 
             let (last_message, last_message_date) = if let Some(last_line) = lines.last() {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(last_line) {
-                    let message = json.get("mes").and_then(|m| m.as_str()).unwrap_or("[The chat is empty]").to_string();
+                    let message = json
+                        .get("mes")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("[The chat is empty]")
+                        .to_string();
                     let date = json.get("send_date").and_then(|d| d.as_i64()).unwrap_or(0);
                     (message, date)
                 } else {

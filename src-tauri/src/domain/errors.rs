@@ -4,16 +4,16 @@ use thiserror::Error;
 pub enum DomainError {
     #[error("Entity not found: {0}")]
     NotFound(String),
-    
+
     #[error("Invalid data: {0}")]
     InvalidData(String),
-    
+
     #[error("Operation not permitted: {0}")]
     PermissionDenied(String),
-    
+
     #[error("Authentication error: {0}")]
     AuthenticationError(String),
-    
+
     #[error("Internal error: {0}")]
     InternalError(String),
 }

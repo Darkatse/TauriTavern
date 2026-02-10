@@ -1,17 +1,19 @@
+use async_trait::async_trait;
+use chrono::{DateTime, Datelike, Timelike, Utc};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use async_trait::async_trait;
-use chrono::{DateTime, Datelike, Timelike, Utc};
 use tokio::fs;
 use tokio::sync::Mutex;
-use std::collections::HashMap;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::group::Group;
 use crate::domain::repositories::group_repository::GroupRepository;
-use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file, list_files_with_extension};
 use crate::infrastructure::logging::logger;
+use crate::infrastructure::persistence::file_system::{
+    list_files_with_extension, read_json_file, write_json_file,
+};
 
 /// File-based implementation of the GroupRepository
 pub struct FileGroupRepository {
@@ -41,12 +43,17 @@ impl FileGroupRepository {
 
     /// Format a timestamp as a human-readable date string
     fn format_timestamp(&self, timestamp: i64) -> String {
-        let dt = DateTime::<Utc>::from_timestamp(timestamp / 1000, 0)
-            .unwrap_or_else(|| Utc::now());
-        format!("{}-{}-{} @{}h {}m {}s {}ms",
-            dt.year(), dt.month(), dt.day(),
-            dt.hour(), dt.minute(), dt.second(),
-            dt.timestamp_subsec_millis())
+        let dt = DateTime::<Utc>::from_timestamp(timestamp / 1000, 0).unwrap_or_else(|| Utc::now());
+        format!(
+            "{}-{}-{} @{}h {}m {}s {}ms",
+            dt.year(),
+            dt.month(),
+            dt.day(),
+            dt.hour(),
+            dt.minute(),
+            dt.second(),
+            dt.timestamp_subsec_millis()
+        )
     }
 
     /// Get the file path for a group
@@ -69,10 +76,15 @@ impl FileGroupRepository {
             }
 
             if !self.group_chats_dir.exists() {
-                fs::create_dir_all(&self.group_chats_dir).await.map_err(|e| {
-                    logger::error(&format!("Failed to create group chats directory: {}", e));
-                    DomainError::InternalError(format!("Failed to create group chats directory: {}", e))
-                })?;
+                fs::create_dir_all(&self.group_chats_dir)
+                    .await
+                    .map_err(|e| {
+                        logger::error(&format!("Failed to create group chats directory: {}", e));
+                        DomainError::InternalError(format!(
+                            "Failed to create group chats directory: {}",
+                            e
+                        ))
+                    })?;
             }
 
             // Load all groups into cache
@@ -85,7 +97,7 @@ impl FileGroupRepository {
                 match self.load_group_with_metadata(&file_path, &chat_files).await {
                     Ok(group) => {
                         cache.insert(group.id.clone(), group);
-                    },
+                    }
                     Err(e) => {
                         logger::error(&format!("Failed to load group from {:?}: {}", file_path, e));
                     }
@@ -93,20 +105,30 @@ impl FileGroupRepository {
             }
 
             *initialized = true;
-            logger::debug(&format!("Group cache initialized with {} groups", cache.len()));
+            logger::debug(&format!(
+                "Group cache initialized with {} groups",
+                cache.len()
+            ));
         }
 
         Ok(())
     }
 
     /// Load a group from a file and add metadata
-    async fn load_group_with_metadata(&self, file_path: &Path, chat_files: &[PathBuf]) -> Result<Group, DomainError> {
+    async fn load_group_with_metadata(
+        &self,
+        file_path: &Path,
+        chat_files: &[PathBuf],
+    ) -> Result<Group, DomainError> {
         // Read the group file
         let mut group: Group = read_json_file(file_path).await?;
 
         // Get file stats for metadata
         let metadata = fs::metadata(file_path).await.map_err(|e| {
-            logger::error(&format!("Failed to get metadata for {:?}: {}", file_path, e));
+            logger::error(&format!(
+                "Failed to get metadata for {:?}: {}",
+                file_path, e
+            ));
             DomainError::InternalError(format!("Failed to get file metadata: {}", e))
         })?;
 
@@ -200,7 +222,10 @@ impl GroupRepository for FileGroupRepository {
 
         // Check if the group exists
         if !file_path.exists() {
-            return Err(DomainError::NotFound(format!("Group not found: {}", group.id)));
+            return Err(DomainError::NotFound(format!(
+                "Group not found: {}",
+                group.id
+            )));
         }
 
         write_json_file(&file_path, group).await?;
@@ -244,7 +269,10 @@ impl GroupRepository for FileGroupRepository {
 
         // Delete the group file
         fs::remove_file(&file_path).await.map_err(|e| {
-            logger::error(&format!("Failed to delete group file {:?}: {}", file_path, e));
+            logger::error(&format!(
+                "Failed to delete group file {:?}: {}",
+                file_path, e
+            ));
             DomainError::InternalError(format!("Failed to delete group file: {}", e))
         })?;
 
@@ -254,7 +282,10 @@ impl GroupRepository for FileGroupRepository {
                 let chat_file_path = self.group_chats_dir.join(format!("{}.jsonl", chat_id));
                 if chat_file_path.exists() {
                     if let Err(e) = fs::remove_file(&chat_file_path).await {
-                        logger::error(&format!("Failed to delete group chat file {:?}: {}", chat_file_path, e));
+                        logger::error(&format!(
+                            "Failed to delete group chat file {:?}: {}",
+                            chat_file_path, e
+                        ));
                     }
                 }
             }
@@ -270,7 +301,8 @@ impl GroupRepository for FileGroupRepository {
     async fn get_group_chat_paths(&self) -> Result<Vec<String>, DomainError> {
         let chat_files = list_files_with_extension(&self.group_chats_dir, "jsonl").await?;
 
-        let paths: Vec<String> = chat_files.iter()
+        let paths: Vec<String> = chat_files
+            .iter()
             .filter_map(|path| {
                 path.file_stem()
                     .and_then(|stem| stem.to_str())

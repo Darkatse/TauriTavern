@@ -1,5 +1,5 @@
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use serde::{Serialize, Deserialize};
 
 /// Represents the directory structure for a user
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,7 +41,7 @@ impl UserDirectory {
     /// Create a new UserDirectory instance for a specific user handle
     pub fn new(data_root: &Path, handle: &str) -> Self {
         let root = data_root.join(handle);
-        
+
         Self {
             handle: handle.to_string(),
             root: root.clone(),
@@ -76,12 +76,12 @@ impl UserDirectory {
             reasoning: root.join("reasoning"),
         }
     }
-    
+
     /// Create a new UserDirectory instance for the default user
     pub fn default_user(data_root: &Path) -> Self {
         Self::new(data_root, "default-user")
     }
-    
+
     /// Get all directory paths as a vector
     pub fn all_directories(&self) -> Vec<&Path> {
         vec![

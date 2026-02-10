@@ -1,7 +1,7 @@
-use serde::Serialize;
-use thiserror::Error;
 use crate::application::errors::ApplicationError;
 use crate::domain::errors::DomainError;
+use serde::Serialize;
+use thiserror::Error;
 
 #[derive(Error, Debug, Serialize)]
 pub enum CommandError {
@@ -41,5 +41,11 @@ impl From<DomainError> for CommandError {
             DomainError::AuthenticationError(msg) => CommandError::Unauthorized(msg),
             DomainError::InternalError(msg) => CommandError::InternalServerError(msg),
         }
+    }
+}
+
+impl From<tauri::Error> for CommandError {
+    fn from(error: tauri::Error) -> Self {
+        CommandError::InternalServerError(error.to_string())
     }
 }

@@ -1,12 +1,12 @@
-use std::io::{Cursor, Read, Write};
-use std::collections::HashMap;
-use image::{ImageFormat, GenericImageView};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use serde::{Serialize, de::DeserializeOwned};
-use crc32fast::Hasher;
 use crate::domain::errors::DomainError;
-use crate::infrastructure::logging::logger;
 use crate::domain::repositories::character_repository::ImageCrop;
+use crate::infrastructure::logging::logger;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use crc32fast::Hasher;
+use image::{GenericImageView, ImageFormat};
+use serde::{de::DeserializeOwned, Serialize};
+use std::collections::HashMap;
+use std::io::{Cursor, Read, Write};
 
 /// PNG chunk names used for character data
 const CHUNK_NAME_V2: &str = "chara";
@@ -78,22 +78,32 @@ pub fn read_character_data_from_png(image_data: &[u8]) -> Result<String, DomainE
     let text_chunks = extract_text_chunks_from_chunks(&chunks)?;
 
     if text_chunks.is_empty() {
-        return Err(DomainError::InvalidData("PNG metadata does not contain any text chunks".to_string()));
+        return Err(DomainError::InvalidData(
+            "PNG metadata does not contain any text chunks".to_string(),
+        ));
     }
 
     // First try to find V3 format (ccv3)
-    if let Some(chunk) = text_chunks.iter().find(|c| c.keyword.to_lowercase() == CHUNK_NAME_V3) {
+    if let Some(chunk) = text_chunks
+        .iter()
+        .find(|c| c.keyword.to_lowercase() == CHUNK_NAME_V3)
+    {
         let decoded = decode_base64(&chunk.text)?;
         return Ok(decoded);
     }
 
     // Then try V2 format (chara)
-    if let Some(chunk) = text_chunks.iter().find(|c| c.keyword.to_lowercase() == CHUNK_NAME_V2) {
+    if let Some(chunk) = text_chunks
+        .iter()
+        .find(|c| c.keyword.to_lowercase() == CHUNK_NAME_V2)
+    {
         let decoded = decode_base64(&chunk.text)?;
         return Ok(decoded);
     }
 
-    Err(DomainError::InvalidData("PNG metadata does not contain character data".to_string()))
+    Err(DomainError::InvalidData(
+        "PNG metadata does not contain character data".to_string(),
+    ))
 }
 
 /// Writes character data to a PNG image
@@ -110,7 +120,10 @@ pub fn read_character_data_from_png(image_data: &[u8]) -> Result<String, DomainE
 ///
 /// * `Ok(Vec<u8>)` - The new PNG image data with embedded character data
 /// * `Err(DomainError)` - If the image cannot be written or the data cannot be embedded
-pub fn write_character_data_to_png(image_data: &[u8], character_data: &str) -> Result<Vec<u8>, DomainError> {
+pub fn write_character_data_to_png(
+    image_data: &[u8],
+    character_data: &str,
+) -> Result<Vec<u8>, DomainError> {
     tracing::debug!("Writing character data to PNG");
 
     // Extract existing chunks
@@ -130,8 +143,14 @@ pub fn write_character_data_to_png(image_data: &[u8], character_data: &str) -> R
     // Try to add V3 chunk
     if let Ok(mut v3_data) = serde_json::from_str::<serde_json::Value>(character_data) {
         if let Some(obj) = v3_data.as_object_mut() {
-            obj.insert("spec".to_string(), serde_json::Value::String("chara_card_v3".to_string()));
-            obj.insert("spec_version".to_string(), serde_json::Value::String("3.0".to_string()));
+            obj.insert(
+                "spec".to_string(),
+                serde_json::Value::String("chara_card_v3".to_string()),
+            );
+            obj.insert(
+                "spec_version".to_string(),
+                serde_json::Value::String("3.0".to_string()),
+            );
 
             if let Ok(v3_json) = serde_json::to_string(&v3_data) {
                 let v3_base64 = encode_base64(&v3_json)?;
@@ -170,12 +189,14 @@ pub fn extract_chunks(image_data: &[u8]) -> Result<Vec<PngChunk>, DomainError> {
 
     // Check PNG signature
     let mut signature = [0; 8];
-    cursor.read_exact(&mut signature).map_err(|e| {
-        DomainError::InvalidData(format!("Failed to read PNG signature: {}", e))
-    })?;
+    cursor
+        .read_exact(&mut signature)
+        .map_err(|e| DomainError::InvalidData(format!("Failed to read PNG signature: {}", e)))?;
 
     if signature != PNG_SIGNATURE {
-        return Err(DomainError::InvalidData("Invalid PNG signature".to_string()));
+        return Err(DomainError::InvalidData(
+            "Invalid PNG signature".to_string(),
+        ));
     }
 
     // Read chunks
@@ -190,21 +211,21 @@ pub fn extract_chunks(image_data: &[u8]) -> Result<Vec<PngChunk>, DomainError> {
 
         // Read chunk type
         let mut chunk_type = [0; 4];
-        cursor.read_exact(&mut chunk_type).map_err(|e| {
-            DomainError::InvalidData(format!("Failed to read chunk type: {}", e))
-        })?;
+        cursor
+            .read_exact(&mut chunk_type)
+            .map_err(|e| DomainError::InvalidData(format!("Failed to read chunk type: {}", e)))?;
 
         // Read chunk data
         let mut data = vec![0; length];
-        cursor.read_exact(&mut data).map_err(|e| {
-            DomainError::InvalidData(format!("Failed to read chunk data: {}", e))
-        })?;
+        cursor
+            .read_exact(&mut data)
+            .map_err(|e| DomainError::InvalidData(format!("Failed to read chunk data: {}", e)))?;
 
         // Skip CRC
         let mut crc = [0; 4];
-        cursor.read_exact(&mut crc).map_err(|e| {
-            DomainError::InvalidData(format!("Failed to read chunk CRC: {}", e))
-        })?;
+        cursor
+            .read_exact(&mut crc)
+            .map_err(|e| DomainError::InvalidData(format!("Failed to read chunk CRC: {}", e)))?;
 
         // Add chunk to list
         chunks.push(PngChunk {
@@ -259,12 +280,9 @@ fn extract_text_chunks_from_chunks(chunks: &[PngChunk]) -> Result<Vec<TextChunk>
 
             if let Some(pos) = null_pos {
                 let keyword = String::from_utf8_lossy(&chunk.data[0..pos]).to_string();
-                let text = String::from_utf8_lossy(&chunk.data[pos+1..]).to_string();
+                let text = String::from_utf8_lossy(&chunk.data[pos + 1..]).to_string();
 
-                text_chunks.push(TextChunk {
-                    keyword,
-                    text,
-                });
+                text_chunks.push(TextChunk { keyword, text });
             }
         }
     }
@@ -279,7 +297,8 @@ fn encode_base64(data: &str) -> Result<String, DomainError> {
 
 /// Decodes a base64 string
 fn decode_base64(data: &str) -> Result<String, DomainError> {
-    let bytes = BASE64.decode(data)
+    let bytes = BASE64
+        .decode(data)
         .map_err(|e| DomainError::InvalidData(format!("Failed to decode base64: {}", e)))?;
 
     String::from_utf8(bytes)
@@ -314,7 +333,10 @@ pub fn parse_character_from_png<T: DeserializeOwned>(image_data: &[u8]) -> Resul
 ///
 /// * `Ok(Vec<u8>)` - The new PNG image data with embedded character
 /// * `Err(DomainError)` - If the character cannot be written
-pub fn write_character_to_png<T: Serialize>(image_data: &[u8], character: &T) -> Result<Vec<u8>, DomainError> {
+pub fn write_character_to_png<T: Serialize>(
+    image_data: &[u8],
+    character: &T,
+) -> Result<Vec<u8>, DomainError> {
     let json_data = serde_json::to_string(character)
         .map_err(|e| DomainError::InvalidData(format!("Failed to serialize character: {}", e)))?;
 
@@ -332,7 +354,10 @@ pub fn write_character_to_png<T: Serialize>(image_data: &[u8], character: &T) ->
 ///
 /// * `Ok(Vec<u8>)` - The processed image data
 /// * `Err(DomainError)` - If the image cannot be processed
-pub async fn process_avatar_image(image_data: &[u8], crop: Option<ImageCrop>) -> Result<Vec<u8>, DomainError> {
+pub async fn process_avatar_image(
+    image_data: &[u8],
+    crop: Option<ImageCrop>,
+) -> Result<Vec<u8>, DomainError> {
     tracing::debug!("Processing avatar image");
 
     // Load the image
@@ -341,16 +366,18 @@ pub async fn process_avatar_image(image_data: &[u8], crop: Option<ImageCrop>) ->
 
     // Apply crop if defined
     if let Some(crop_params) = crop {
-        if crop_params.x >= 0 && crop_params.y >= 0 &&
-           crop_params.width > 0 && crop_params.height > 0 &&
-           (crop_params.x as u32 + crop_params.width as u32) <= img.width() &&
-           (crop_params.y as u32 + crop_params.height as u32) <= img.height() {
-
+        if crop_params.x >= 0
+            && crop_params.y >= 0
+            && crop_params.width > 0
+            && crop_params.height > 0
+            && (crop_params.x as u32 + crop_params.width as u32) <= img.width()
+            && (crop_params.y as u32 + crop_params.height as u32) <= img.height()
+        {
             img = img.crop(
                 crop_params.x as u32,
                 crop_params.y as u32,
                 crop_params.width as u32,
-                crop_params.height as u32
+                crop_params.height as u32,
             );
 
             // Apply standard resize if requested
@@ -359,7 +386,11 @@ pub async fn process_avatar_image(image_data: &[u8], crop: Option<ImageCrop>) ->
                 const AVATAR_WIDTH: u32 = 400;
                 const AVATAR_HEIGHT: u32 = 600;
 
-                img = img.resize_to_fill(AVATAR_WIDTH, AVATAR_HEIGHT, image::imageops::FilterType::Lanczos3);
+                img = img.resize_to_fill(
+                    AVATAR_WIDTH,
+                    AVATAR_HEIGHT,
+                    image::imageops::FilterType::Lanczos3,
+                );
             }
         } else {
             logger::warn("Invalid crop parameters, ignoring crop");

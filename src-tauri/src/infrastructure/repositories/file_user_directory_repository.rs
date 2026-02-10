@@ -1,9 +1,9 @@
+use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use async_trait::async_trait;
-use tokio::fs;
 use tauri::AppHandle;
 use tauri::Manager;
+use tokio::fs;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::user_directory::UserDirectory;
@@ -18,13 +18,18 @@ pub struct FileUserDirectoryRepository {
 impl FileUserDirectoryRepository {
     pub fn new(app_handle: AppHandle) -> Self {
         // 使用 Tauri 的 app_data_dir 获取应用数据目录
-        let app_data_dir = app_handle.path().app_data_dir()
+        let app_data_dir = app_handle
+            .path()
+            .app_data_dir()
             .expect("Failed to get app data directory");
 
         // 构建数据根目录
         let data_root = app_data_dir.join("data");
 
-        tracing::info!("User directory repository initialized with data root: {:?}", data_root);
+        tracing::info!(
+            "User directory repository initialized with data root: {:?}",
+            data_root
+        );
 
         Self {
             app_handle,
@@ -45,7 +50,10 @@ impl FileUserDirectoryRepository {
             }
         }
 
-        tracing::info!("Successfully created directories for user: {}", directories.handle);
+        tracing::info!(
+            "Successfully created directories for user: {}",
+            directories.handle
+        );
         Ok(())
     }
 }

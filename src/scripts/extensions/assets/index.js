@@ -7,10 +7,10 @@ import { DOMPurify } from '../../../lib.js';
 import { getRequestHeaders, processDroppedFiles, eventSource, event_types } from '../../../script.js';
 import { deleteExtension, extensionNames, getContext, installExtension, renderExtensionTemplateAsync } from '../../extensions.js';
 import { POPUP_TYPE, Popup, callGenericPopup } from '../../popup.js';
-import { executeSlashCommands } from '../../slash-commands.js';
+import { executeSlashCommandsWithOptions } from '../../slash-commands.js';
 import { accountStorage } from '../../util/AccountStorage.js';
 import { flashHighlight, getStringHash, isValidUrl } from '../../utils.js';
-import { t } from '../../i18n.js';
+import { t, translate } from '../../i18n.js';
 export { MODULE_NAME };
 
 const MODULE_NAME = 'assets';
@@ -53,12 +53,42 @@ function filterAssets() {
 }
 
 const KNOWN_TYPES = {
-    'extension': 'Extensions',
-    'character': 'Characters',
-    'ambient': 'Ambient sounds',
-    'bgm': 'Background music',
-    'blip': 'Blip sounds',
+    'extension': t`Extensions`,
+    'character': t`Characters`,
+    'ambient': t`Ambient sounds`,
+    'bgm': t`Background music`,
+    'blip': t`Blip sounds`,
 };
+
+const EMPTY_AUTHOR = {
+    name: '',
+    url: '',
+};
+
+/**
+ * Extracts the repository author from a given URL.
+ * @param {string} url - The URL of the repository.
+ * @returns {{name: string, url: string}} Object containing the author's name and URL, or empty strings if not found.
+ */
+function getAuthorFromUrl(url) {
+    const result = structuredClone(EMPTY_AUTHOR);
+
+    try {
+        const parsedUrl = new URL(url);
+        const pathSegments = parsedUrl.pathname.split('/').filter(s => s.length > 0);
+
+        // TODO: Handle non-GitHub URLs if needed
+        if (parsedUrl.host === 'github.com' && pathSegments.length >= 2) {
+            result.name = pathSegments[0];
+            result.url = `${parsedUrl.protocol}//${parsedUrl.hostname}/${result.name}`;
+        }
+    }
+    catch (error) {
+        console.debug(DEBUG_PREFIX, 'Error parsing URL:', error);
+    }
+
+    return result;
+}
 
 async function downloadAssetsList(url) {
     updateCurrentAssets().then(async function () {
@@ -88,7 +118,8 @@ async function downloadAssetsList(url) {
                 $('#assets_type_select').append($('<option />', { value: '', text: t`All` }));
 
                 for (const type of assetTypes) {
-                    const option = $('<option />', { value: type, text: t([KNOWN_TYPES[type] || type]) });
+                    const text = translate(KNOWN_TYPES[type] || type);
+                    const option = $('<option />', { value: type, text: text });
                     $('#assets_type_select').append(option);
                 }
 
@@ -108,8 +139,8 @@ async function downloadAssetsList(url) {
                         assetTypeMenu.append(await renderExtensionTemplateAsync('assets', 'installation'));
                     }
 
-                    for (const i in availableAssets[assetType].sort((a, b) => a?.name && b?.name && a['name'].localeCompare(b['name']))) {
-                        const asset = availableAssets[assetType][i];
+                    for (const asset of availableAssets[assetType].sort((a, b) => a?.name && b?.name && a['name'].localeCompare(b['name']))) {
+                        const i = availableAssets[assetType].indexOf(asset);
                         const elemId = `assets_install_${assetType}_${i}`;
                         let element = $('<div />', { id: elemId, class: 'asset-download-button right_menu_button' });
                         const label = $('<i class="fa-fw fa-solid fa-download fa-lg"></i>');
@@ -142,7 +173,7 @@ async function downloadAssetsList(url) {
                         const assetDelete = async function () {
                             if (assetType === 'character') {
                                 toastr.error('Go to the characters menu to delete a character.', 'Character deletion not supported');
-                                await executeSlashCommands(`/go ${asset['id']}`);
+                                await executeSlashCommandsWithOptions(`/go ${asset['id']}`);
                                 return;
                             }
                             element.off('click');
@@ -184,10 +215,11 @@ async function downloadAssetsList(url) {
                         const title = assetType === 'extension' ? t`Extension repo/guide:` + ` ${url}` : t`Preview in browser`;
                         const previewIcon = (assetType === 'extension' || assetType === 'character') ? 'fa-arrow-up-right-from-square' : 'fa-headphones-simple';
                         const toolTag = assetType === 'extension' && asset['tool'];
+                        const author = url && assetType === 'extension' ? getAuthorFromUrl(url) : EMPTY_AUTHOR;
 
                         const assetBlock = $('<i></i>')
                             .append(element)
-                            .append(`<div class="flex-container flexFlowColumn flexNoGap">
+                            .append(`<div class="flex-container flexFlowColumn flexNoGap wide100p overflowHidden">
                                         <span class="asset-name flex-container alignitemscenter">
                                             <b>${displayName}</b>
                                             <a class="asset_preview" href="${url}" target="_blank" title="${title}">
@@ -195,6 +227,8 @@ async function downloadAssetsList(url) {
                                             </a>` +
                                             (toolTag ? '<span class="tag" title="' + t`Adds a function tool` + '"><i class="fa-solid fa-sm fa-wrench"></i> ' +
                                             t`Tool` + '</span>' : '') +
+                                            '<span class="expander"></span>' +
+                                            (author.name ? `<a href="${author.url}" target="_blank" class="asset-author-info"><i class="fa-solid fa-at fa-xs"></i><span>${author.name}</span></a>` : '') +
                                         `</span>
                                         <small class="asset-description">
                                             ${description}
@@ -291,7 +325,7 @@ async function installAsset(url, assetType, filename) {
     try {
         if (category === 'extension') {
             console.debug(DEBUG_PREFIX, 'Installing extension ', url);
-            await installExtension(url);
+            await installExtension(url, false);
             console.debug(DEBUG_PREFIX, 'Extension installed.');
             return;
         }
@@ -309,7 +343,7 @@ async function installAsset(url, assetType, filename) {
                 console.debug(DEBUG_PREFIX, 'Importing character ', filename);
                 const blob = await result.blob();
                 const file = new File([blob], filename, { type: blob.type });
-                await processDroppedFiles([file], true);
+                await processDroppedFiles([file]);
                 console.debug(DEBUG_PREFIX, 'Character downloaded.');
             }
         }
@@ -391,7 +425,7 @@ async function updateCurrentAssets() {
     try {
         const result = await fetch('/api/assets/get', {
             method: 'POST',
-            headers: getRequestHeaders(),
+            headers: getRequestHeaders({ omitContentType: true }),
         });
         currentAssets = result.ok ? (await result.json()) : {};
     }

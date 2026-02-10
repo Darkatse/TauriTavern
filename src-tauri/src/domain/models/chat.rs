@@ -1,7 +1,7 @@
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc, Local, TimeZone};
-use uuid::Uuid;
+use chrono::{DateTime, Local, TimeZone, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// Format a date in the SillyTavern format (YYYY-MM-DD@HHhMMmSSs)
 pub fn humanized_date(date: DateTime<Utc>) -> String {
@@ -18,7 +18,11 @@ pub fn humanized_iso8601_date_time() -> String {
 /// Format a date in the SillyTavern message format (Month DD, YYYY HH:MMam/pm)
 pub fn message_date_format(date: DateTime<Utc>) -> String {
     let local = date.with_timezone(&Local);
-    local.format("%B %d, %Y %l:%M%P").to_string().trim().to_string()
+    local
+        .format("%B %d, %Y %l:%M%P")
+        .to_string()
+        .trim()
+        .to_string()
 }
 
 /// Chat metadata structure
@@ -264,7 +268,9 @@ impl Chat {
     pub fn get_last_message_timestamp(&self) -> i64 {
         if let Some(last) = self.last_message() {
             // Try to parse the send_date
-            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&last.send_date, "%B %d, %Y %l:%M%P") {
+            if let Ok(dt) =
+                chrono::NaiveDateTime::parse_from_str(&last.send_date, "%B %d, %Y %l:%M%P")
+            {
                 if let Some(dt) = Local.from_local_datetime(&dt).single() {
                     return dt.timestamp_millis();
                 }

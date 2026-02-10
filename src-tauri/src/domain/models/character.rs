@@ -1,9 +1,9 @@
-use serde::{Serialize, Deserialize, Deserializer};
-use serde::de::{self, Error as DeError};
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
+use serde::de::{self, Error as DeError};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
+use uuid::Uuid;
 
 /// Character model representing a character card in SillyTavern format
 /// Supports both V2 and V3 character card formats
@@ -214,12 +214,7 @@ where
 
 impl Character {
     /// Create a new character with basic information
-    pub fn new(
-        name: String,
-        description: String,
-        personality: String,
-        first_mes: String,
-    ) -> Self {
+    pub fn new(name: String, description: String, personality: String, first_mes: String) -> Self {
         let now = Utc::now();
         let timestamp = now.timestamp_millis();
         let formatted_date = humanized_date(now);
@@ -313,7 +308,7 @@ pub fn sanitize_filename(name: &str) -> String {
         .chars()
         .map(|c| match c {
             '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ => c
+            _ => c,
         })
         .collect::<String>();
 

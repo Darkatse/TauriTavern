@@ -84,7 +84,10 @@
 
 - **Tauri API**: 使用Tauri提供的IPC机制
 - **命令模式**: 通过`invoke`调用Rust后端函数
-- **事件系统**: 使用Tauri事件进行双向通信
+- **桥接层**: `tauri-bridge.js` 提供 `invoke/listen/convertFileSrc` 统一封装
+- **请求注入**: `src/tauri/main/interceptors.js` 同时拦截 `fetch` 与 `jQuery.ajax`
+- **路由分发**: `src/tauri/main/router.js` + `src/tauri/main/routes/*` 按业务域分模块处理
+- **上下文能力**: `src/tauri/main/context.js` 负责缓存、DTO转换与公共 helper
 
 ## 4. 开发工具
 
@@ -152,8 +155,9 @@
 ### 7.2 前端优化
 
 - **资源加载**: 优化资源加载顺序
+- **库注入链路**: `lib.js` 直接导入 `src/dist/lib.bundle.js`，移除运行时动态 loader
 - **延迟加载**: 非关键资源延迟加载
-- **缓存策略**: 适当使用缓存
+- **构建缓存**: webpack filesystem cache 提升增量构建速度
 
 ## 8. 兼容性和迁移
 
@@ -167,9 +171,10 @@
 
 ### 8.2 API兼容性
 
-- **模块化适配器**: 为每个功能模块提供专门的API适配器
-- **动态导入模式**: 使用动态导入检测和加载Tauri API
-- **前端拦截**: 使用fetch API拦截模式无缝替换HTTP请求
+- **模块化注入架构**: 使用 `bootstrap/context/interceptors/routes` 拆分原单体入口
+- **动态导入模式**: 启动阶段由 `init.js` 统一加载 `tauri-main.js`
+- **前端拦截**: 通过 `fetch + jQuery.ajax` 双通道拦截无缝替换HTTP请求
+- **路由域隔离**: 系统/设置/扩展/资源/角色/聊天路由分文件维护，降低耦合
 - **扩展兼容**: 支持现有扩展系统
 
 ## 9. 部署和分发

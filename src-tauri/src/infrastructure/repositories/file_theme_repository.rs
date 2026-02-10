@@ -1,13 +1,15 @@
-use std::path::PathBuf;
 use async_trait::async_trait;
+use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::Manager;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::theme::{Theme, sanitize_filename};
+use crate::domain::models::theme::{sanitize_filename, Theme};
 use crate::domain::repositories::theme_repository::ThemeRepository;
-use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file, list_files_with_extension, delete_file};
 use crate::infrastructure::logging::logger;
+use crate::infrastructure::persistence::file_system::{
+    delete_file, list_files_with_extension, read_json_file, write_json_file,
+};
 
 /// File-based implementation of the ThemeRepository
 pub struct FileThemeRepository {
@@ -19,8 +21,14 @@ impl FileThemeRepository {
     /// Create a new FileThemeRepository
     pub fn new(app_handle: AppHandle) -> Self {
         // Get the themes directory from the app data directory
-        let app_data_dir = app_handle.path().app_data_dir().expect("Failed to get app data directory");
-        let themes_dir = app_data_dir.join("data").join("default-user").join("themes");
+        let app_data_dir = app_handle
+            .path()
+            .app_data_dir()
+            .expect("Failed to get app data directory");
+        let themes_dir = app_data_dir
+            .join("data")
+            .join("default-user")
+            .join("themes");
 
         Self { themes_dir }
     }
@@ -28,10 +36,12 @@ impl FileThemeRepository {
     /// Ensure the themes directory exists
     async fn ensure_directory_exists(&self) -> Result<(), DomainError> {
         if !self.themes_dir.exists() {
-            tokio::fs::create_dir_all(&self.themes_dir).await.map_err(|e| {
-                logger::error(&format!("Failed to create themes directory: {}", e));
-                DomainError::InternalError(format!("Failed to create themes directory: {}", e))
-            })?;
+            tokio::fs::create_dir_all(&self.themes_dir)
+                .await
+                .map_err(|e| {
+                    logger::error(&format!("Failed to create themes directory: {}", e));
+                    DomainError::InternalError(format!("Failed to create themes directory: {}", e))
+                })?;
         }
 
         Ok(())
@@ -46,7 +56,6 @@ impl FileThemeRepository {
 
 #[async_trait]
 impl ThemeRepository for FileThemeRepository {
-
     async fn save_theme(&self, theme: &Theme) -> Result<(), DomainError> {
         logger::debug(&format!("Saving theme: {}", theme.name));
 

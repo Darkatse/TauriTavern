@@ -1,7 +1,7 @@
 import { CONNECT_API_MAP, getRequestHeaders } from '../../script.js';
 import { extension_settings, openThirdPartyExtensionMenu } from '../extensions.js';
 import { t } from '../i18n.js';
-import { oai_settings, proxies } from '../openai.js';
+import { oai_settings, proxies, ZAI_ENDPOINT } from '../openai.js';
 import { SECRET_KEYS, secret_state } from '../secrets.js';
 import { textgen_types, textgenerationwebui_settings } from '../textgen-settings.js';
 import { getTokenCountAsync } from '../tokenizers.js';
@@ -15,18 +15,12 @@ import { createThumbnail, isValidUrl } from '../utils.js';
  */
 export async function getMultimodalCaption(base64Img, prompt) {
     const useReverseProxy =
-        (['openai', 'anthropic', 'google', 'mistral'].includes(extension_settings.caption.multimodal_api))
+        (['openai', 'anthropic', 'google', 'mistral', 'vertexai', 'xai'].includes(extension_settings.caption.multimodal_api))
         && extension_settings.caption.allow_reverse_proxy
         && oai_settings.reverse_proxy
         && isValidUrl(oai_settings.reverse_proxy);
 
     throwIfInvalidModel(useReverseProxy);
-
-    const noPrefix = ['ollama', 'llamacpp'].includes(extension_settings.caption.multimodal_api);
-
-    if (noPrefix && base64Img.startsWith('data:image/')) {
-        base64Img = base64Img.split(',')[1];
-    }
 
     // OpenRouter has a payload limit of ~2MB. Google is 4MB, but we love democracy.
     // Ooba requires all images to be JPEGs. Koboldcpp just asked nicely.
@@ -38,9 +32,18 @@ export async function getMultimodalCaption(base64Img, prompt) {
     const isVllm = extension_settings.caption.multimodal_api === 'vllm';
     const base64Bytes = base64Img.length * 0.75;
     const compressionLimit = 2 * 1024 * 1024;
-    if ((['google', 'openrouter', 'mistral', 'groq'].includes(extension_settings.caption.multimodal_api) && base64Bytes > compressionLimit) || isOoba || isKoboldCpp) {
-        const maxSide = 1024;
-        base64Img = await createThumbnail(base64Img, maxSide, maxSide, 'image/jpeg');
+    const safeMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    const mimeType = base64Img?.split(';')?.[0]?.split(':')?.[1] || 'image/jpeg';
+    const isImage = mimeType.startsWith('image/');
+    const thumbnailNeeded = ['google', 'openrouter', 'mistral', 'groq', 'vertexai'].includes(extension_settings.caption.multimodal_api);
+    if ((isImage && thumbnailNeeded && base64Bytes > compressionLimit) || isOoba || isKoboldCpp) {
+        const maxSide = 2048;
+        base64Img = await createThumbnail(base64Img, maxSide, maxSide);
+    } else if (isImage && !safeMimeTypes.includes(mimeType)) {
+        base64Img = await createThumbnail(base64Img, null, null);
+    }
+    if (isOllama && base64Img.startsWith('data:image/')) {
+        base64Img = base64Img.split(',')[1];
     }
 
     const proxyUrl = useReverseProxy ? oai_settings.reverse_proxy : '';
@@ -55,12 +58,25 @@ export async function getMultimodalCaption(base64Img, prompt) {
         model: extension_settings.caption.multimodal_model || 'gpt-4-turbo',
     };
 
+    // Add Vertex AI specific parameters if using Vertex AI
+    if (extension_settings.caption.multimodal_api === 'vertexai') {
+        requestBody.vertexai_auth_mode = oai_settings.vertexai_auth_mode;
+        requestBody.vertexai_region = oai_settings.vertexai_region;
+        requestBody.vertexai_express_project_id = oai_settings.vertexai_express_project_id;
+    }
+
     if (isOllama) {
         if (extension_settings.caption.multimodal_model === 'ollama_current') {
             requestBody.model = textgenerationwebui_settings.ollama_model;
         }
 
-        requestBody.server_url = textgenerationwebui_settings.server_urls[textgen_types.OLLAMA];
+        if (extension_settings.caption.multimodal_model === 'ollama_custom') {
+            requestBody.model = extension_settings.caption.ollama_custom_model;
+        }
+
+        requestBody.server_url = extension_settings.caption.alt_endpoint_enabled
+            ? extension_settings.caption.alt_endpoint_url
+            : textgenerationwebui_settings.server_urls[textgen_types.OLLAMA];
     }
 
     if (isVllm) {
@@ -68,19 +84,27 @@ export async function getMultimodalCaption(base64Img, prompt) {
             requestBody.model = textgenerationwebui_settings.vllm_model;
         }
 
-        requestBody.server_url = textgenerationwebui_settings.server_urls[textgen_types.VLLM];
+        requestBody.server_url = extension_settings.caption.alt_endpoint_enabled
+            ? extension_settings.caption.alt_endpoint_url
+            : textgenerationwebui_settings.server_urls[textgen_types.VLLM];
     }
 
     if (isLlamaCpp) {
-        requestBody.server_url = textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP];
+        requestBody.server_url = extension_settings.caption.alt_endpoint_enabled
+            ? extension_settings.caption.alt_endpoint_url
+            : textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP];
     }
 
     if (isOoba) {
-        requestBody.server_url = textgenerationwebui_settings.server_urls[textgen_types.OOBA];
+        requestBody.server_url = extension_settings.caption.alt_endpoint_enabled
+            ? extension_settings.caption.alt_endpoint_url
+            : textgenerationwebui_settings.server_urls[textgen_types.OOBA];
     }
 
     if (isKoboldCpp) {
-        requestBody.server_url = textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP];
+        requestBody.server_url = extension_settings.caption.alt_endpoint_enabled
+            ? extension_settings.caption.alt_endpoint_url
+            : textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP];
     }
 
     if (isCustom) {
@@ -91,14 +115,17 @@ export async function getMultimodalCaption(base64Img, prompt) {
         requestBody.custom_exclude_body = oai_settings.custom_exclude_body;
     }
 
+    if (extension_settings.caption.multimodal_api === 'zai') {
+        requestBody.zai_endpoint = oai_settings.zai_endpoint || ZAI_ENDPOINT.COMMON;
+    }
+
     function getEndpointUrl() {
         switch (extension_settings.caption.multimodal_api) {
             case 'google':
+            case 'vertexai':
                 return '/api/google/caption-image';
             case 'anthropic':
                 return '/api/anthropic/caption-image';
-            case 'llamacpp':
-                return '/api/backends/text-completions/llamacpp/caption-image';
             case 'ollama':
                 return '/api/backends/text-completions/ollama/caption-image';
             default:
@@ -121,72 +148,125 @@ export async function getMultimodalCaption(base64Img, prompt) {
 }
 
 function throwIfInvalidModel(useReverseProxy) {
-    if (extension_settings.caption.multimodal_api === 'openai' && !secret_state[SECRET_KEYS.OPENAI] && !useReverseProxy) {
+    const altEndpointEnabled = extension_settings.caption.alt_endpoint_enabled;
+    const altEndpointUrl = extension_settings.caption.alt_endpoint_url;
+    const multimodalModel = extension_settings.caption.multimodal_model;
+    const multimodalApi = extension_settings.caption.multimodal_api;
+
+    if (altEndpointEnabled && ['llamacpp', 'ooba', 'koboldcpp', 'vllm', 'ollama'].includes(multimodalApi) && !altEndpointUrl) {
+        throw new Error('Secondary endpoint URL is not set.');
+    }
+
+    if (multimodalApi === 'openai' && !secret_state[SECRET_KEYS.OPENAI] && !useReverseProxy) {
         throw new Error('OpenAI API key is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'openrouter' && !secret_state[SECRET_KEYS.OPENROUTER]) {
+    if (multimodalApi === 'openrouter' && !secret_state[SECRET_KEYS.OPENROUTER]) {
         throw new Error('OpenRouter API key is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'anthropic' && !secret_state[SECRET_KEYS.CLAUDE] && !useReverseProxy) {
+    if (multimodalApi === 'anthropic' && !secret_state[SECRET_KEYS.CLAUDE] && !useReverseProxy) {
         throw new Error('Anthropic (Claude) API key is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'zerooneai' && !secret_state[SECRET_KEYS.ZEROONEAI]) {
-        throw new Error('01.AI API key is not set.');
-    }
-
-    if (extension_settings.caption.multimodal_api === 'groq' && !secret_state[SECRET_KEYS.GROQ]) {
+    if (multimodalApi === 'groq' && !secret_state[SECRET_KEYS.GROQ]) {
         throw new Error('Groq API key is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'google' && !secret_state[SECRET_KEYS.MAKERSUITE] && !useReverseProxy) {
+    if (multimodalApi === 'google' && !secret_state[SECRET_KEYS.MAKERSUITE] && !useReverseProxy) {
         throw new Error('Google AI Studio API key is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'mistral' && !secret_state[SECRET_KEYS.MISTRALAI] && !useReverseProxy) {
+    if (multimodalApi === 'vertexai' && !useReverseProxy) {
+        // Check based on authentication mode
+        const authMode = oai_settings.vertexai_auth_mode || 'express';
+
+        if (authMode === 'express') {
+            // Express mode requires API key
+            if (!secret_state[SECRET_KEYS.VERTEXAI]) {
+                throw new Error('Google Vertex AI API key is not set for Express mode.');
+            }
+        } else if (authMode === 'full') {
+            // Full mode requires Service Account JSON and region settings
+            if (!secret_state[SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT]) {
+                throw new Error('Service Account JSON is required for Vertex AI Full mode. Please validate and save your Service Account JSON.');
+            }
+            if (!oai_settings.vertexai_region) {
+                throw new Error('Region is required for Vertex AI Full mode.');
+            }
+        }
+    }
+
+    if (multimodalApi === 'mistral' && !secret_state[SECRET_KEYS.MISTRALAI] && !useReverseProxy) {
         throw new Error('Mistral AI API key is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'cohere' && !secret_state[SECRET_KEYS.COHERE]) {
+    if (multimodalApi === 'cohere' && !secret_state[SECRET_KEYS.COHERE]) {
         throw new Error('Cohere API key is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'xai' && !secret_state[SECRET_KEYS.XAI]) {
+    if (multimodalApi === 'xai' && !secret_state[SECRET_KEYS.XAI] && !useReverseProxy) {
         throw new Error('xAI API key is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'ollama' && !textgenerationwebui_settings.server_urls[textgen_types.OLLAMA]) {
+    if (multimodalApi === 'ollama' && !textgenerationwebui_settings.server_urls[textgen_types.OLLAMA] && !altEndpointEnabled) {
         throw new Error('Ollama server URL is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'ollama' && extension_settings.caption.multimodal_model === 'ollama_current' && !textgenerationwebui_settings.ollama_model) {
+    if (multimodalApi === 'ollama' && multimodalModel === 'ollama_current' && !textgenerationwebui_settings.ollama_model) {
         throw new Error('Ollama model is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'llamacpp' && !textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP]) {
+    if (multimodalApi === 'ollama' && multimodalModel === 'ollama_custom' && !extension_settings.caption.ollama_custom_model) {
+        throw new Error('Ollama custom model tag is not set.');
+    }
+
+    if (multimodalApi === 'llamacpp' && !textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP] && !altEndpointEnabled) {
         throw new Error('LlamaCPP server URL is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'ooba' && !textgenerationwebui_settings.server_urls[textgen_types.OOBA]) {
+    if (multimodalApi === 'ooba' && !textgenerationwebui_settings.server_urls[textgen_types.OOBA] && !altEndpointEnabled) {
         throw new Error('Text Generation WebUI server URL is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'koboldcpp' && !textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP]) {
+    if (multimodalApi === 'koboldcpp' && !textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP] && !altEndpointEnabled) {
         throw new Error('KoboldCpp server URL is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'vllm' && !textgenerationwebui_settings.server_urls[textgen_types.VLLM]) {
+    if (multimodalApi === 'vllm' && !textgenerationwebui_settings.server_urls[textgen_types.VLLM] && !altEndpointEnabled) {
         throw new Error('vLLM server URL is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'vllm' && extension_settings.caption.multimodal_model === 'vllm_current' && !textgenerationwebui_settings.vllm_model) {
+    if (multimodalApi === 'vllm' && multimodalModel === 'vllm_current' && !textgenerationwebui_settings.vllm_model) {
         throw new Error('vLLM model is not set.');
     }
 
-    if (extension_settings.caption.multimodal_api === 'custom' && !oai_settings.custom_url) {
+    if (multimodalApi === 'custom' && !oai_settings.custom_url) {
         throw new Error('Custom API URL is not set.');
+    }
+
+    if (multimodalApi === 'aimlapi' && !secret_state[SECRET_KEYS.AIMLAPI]) {
+        throw new Error('AI/ML API key is not set.');
+    }
+
+    if (multimodalApi === 'moonshot' && !secret_state[SECRET_KEYS.MOONSHOT]) {
+        throw new Error('Moonshot AI API key is not set.');
+    }
+
+    if (multimodalApi === 'nanogpt' && !secret_state[SECRET_KEYS.NANOGPT]) {
+        throw new Error('NanoGPT API key is not set.');
+    }
+
+    if (multimodalApi === 'electronhub' && !secret_state[SECRET_KEYS.ELECTRONHUB]) {
+        throw new Error('Electron Hub API key is not set.');
+    }
+
+    if (multimodalApi === 'chutes' && !secret_state[SECRET_KEYS.CHUTES]) {
+        throw new Error('Chutes API key is not set.');
+    }
+
+    if (multimodalApi === 'zai' && !secret_state[SECRET_KEYS.ZAI]) {
+        throw new Error('Z.AI API key is not set.');
     }
 }
 
@@ -321,7 +401,7 @@ export class ConnectionManagerRequestService {
             throw new Error('Connection Manager is not available');
         }
 
-        const profile = context.extensionSettings.connectionManager.profiles.find((p) => p.id === profileId);
+        const profile = this.getProfile(profileId);
         const selectedApiMap = this.validateProfile(profile);
 
         try {
@@ -341,8 +421,11 @@ export class ConnectionManagerRequestService {
                         model: profile.model,
                         chat_completion_source: selectedApiMap.source,
                         custom_url: profile['api-url'],
+                        vertexai_region: profile['api-url'],
+                        zai_endpoint: profile['api-url'],
                         reverse_proxy: proxyPreset?.url,
                         proxy_password: proxyPreset?.password,
+                        custom_prompt_post_processing: profile['prompt-post-processing'],
                         ...overridePayload,
                     }, {
                         presetName: includePreset ? profile.preset : undefined,
@@ -377,6 +460,38 @@ export class ConnectionManagerRequestService {
     }
 
     /**
+    * If using text completion, return a formatted prompt string given an array of messages, a given profile ID, and optional instruct settings.
+    * If using chat completion, simply return the given prompt as-is.
+    * @param {ChatCompletionMessage[]} prompt An array of prompt messages.
+    * @param {string} profileId ID of a given connection profile (from which to infer a completion preset).
+    * @param {InstructSettings} instructSettings optional instruct settings
+    */
+    static constructPrompt(prompt, profileId, instructSettings = null) {
+        const context = SillyTavern.getContext();
+        const profile = this.getProfile(profileId);
+        const selectedApiMap = this.validateProfile(profile);
+        const instructName = profile.instruct;
+
+        switch (selectedApiMap.selected) {
+            case 'openai': {
+                if (!selectedApiMap.source) {
+                    throw new Error(`API type ${selectedApiMap.selected} does not support chat completions`);
+                }
+                return prompt;
+            }
+            case 'textgenerationwebui': {
+                if (!selectedApiMap.type) {
+                    throw new Error(`API type ${selectedApiMap.selected} does not support text completions`);
+                }
+                return context.TextCompletionService.constructPrompt(prompt, instructName, instructSettings);
+            }
+            default: {
+                throw new Error(`Unknown API type ${selectedApiMap.selected}`);
+            }
+        }
+    }
+
+    /**
      * Respects allowed types.
      * @returns {import('./connection-manager/index.js').ConnectionProfile[]}
      */
@@ -388,6 +503,18 @@ export class ConnectionManagerRequestService {
 
         const profiles = context.extensionSettings.connectionManager.profiles;
         return profiles.filter((p) => this.isProfileSupported(p));
+    }
+
+    /**
+     * Return profile data given the profile ID
+     * @param {string} profileId
+     * @returns {import('./connection-manager/index.js').ConnectionProfile?} [profile]
+     * @throws {Error}
+     */
+    static getProfile(profileId) {
+        const profile = SillyTavern.getContext().extensionSettings.connectionManager.profiles.find((p) => p.id === profileId);
+        if (!profile) throw new Error(`Profile not found (ID: ${profileId})`);
+        return profile;
     }
 
     /**
@@ -417,7 +544,7 @@ export class ConnectionManagerRequestService {
 
     /**
      * @param {import('./connection-manager/index.js').ConnectionProfile?} [profile]
-     * @return {import('../../script.js').ConnectAPIMap}
+     * @return {import('../slash-commands.js').ConnectAPIMap}
      * @throws {Error}
      */
     static validateProfile(profile) {

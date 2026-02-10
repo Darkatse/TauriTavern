@@ -1,271 +1,125 @@
 # TauriTavern 前端指南
 
-本文档提供TauriTavern前端代码的结构说明和开发指南，帮助开发者理解和扩展前端功能。
+本文档描述 TauriTavern 当前前端（基于 SillyTavern 1.15.0）在 Tauri 环境下的集成架构与开发方式。
 
-## 1. 前端概述
+## 1. 目标与原则
 
-TauriTavern的前端基本保留了SillyTavern的原始代码，仅进行了必要的修改以适应Tauri环境。前端主要使用HTML、CSS和JavaScript (jQuery)构建，没有使用现代前端框架如React或Vue。
+- **最小侵入**：尽量保持上游 SillyTavern 前端行为不变。
+- **模块化**：将 Tauri 注入逻辑拆分为独立模块，避免单文件膨胀。
+- **低耦合**：路由注册、请求拦截、业务上下文分离。
+- **入口收敛**：统一走 `init.js -> tauri-main.js -> tauri/main/*`，减少重复入口。
 
-### 1.1 设计原则
+## 2. 启动链路
 
-- **最小修改原则**: 尽可能少地修改原SillyTavern前端代码
-- **兼容性优先**: 确保与SillyTavern扩展和主题兼容
-- **渐进增强**: 在保持基本功能的同时，逐步增强Tauri特有功能
+当前前端启动顺序如下：
 
-## 2. 目录结构
+1. `src/init.js` 动态导入：`lib.js` -> `tauri-main.js` -> `script.js`
+2. `src/lib.js` 静态导入 `src/dist/lib.bundle.js`，统一提供 ESM 导出
+3. `src/tauri-main.js` 仅调用 `bootstrapTauriMain()`（薄入口）
+4. `src/tauri/main/bootstrap.js` 负责：
+   - 创建运行上下文（`context`）
+   - 注册前端路由（`router + routes/*`）
+   - 安装请求拦截器（`fetch` 与 `jQuery.ajax`）
+   - 初始化 bridge 与目录信息
 
-```
+## 3. 目录结构（前端集成相关）
+
+```text
 src/
-├── assets/           # 静态资源（图片、字体等）
-├── css/              # 样式文件
-├── dist/             # 打包后的库文件
-├── scripts/          # JavaScript模块
-│   ├── extensions/   # 扩展功能
-│   ├── kai-settings/ # 设置相关
-│   ├── openai/       # OpenAI集成
-│   └── ...
-├── lib/              # 第三方库
-├── index.html        # 主HTML文件
-├── script.js         # 主JavaScript文件
-├── style.css         # 主样式文件
-├── tauri-api.js      # Tauri API封装
-├── tauri-bridge.js   # Tauri通信桥接
-└── types.d.ts        # TypeScript类型定义
+├── tauri-bridge.js            # 低层 bridge：invoke/listen/convertFileSrc
+├── tauri-main.js              # 新入口：只做 bootstrap
+├── tauri/
+│   └── main/
+│       ├── bootstrap.js       # 组合根（composition root）
+│       ├── context.js         # 状态与共享业务能力
+│       ├── http-utils.js      # URL/Body/Response 工具
+│       ├── interceptors.js    # fetch/jQuery 注入
+│       ├── router.js          # 轻量路由注册与分发
+│       └── routes/
+│           ├── system-routes.js
+│           ├── settings-routes.js
+│           ├── extensions-routes.js
+│           ├── resource-routes.js
+│           ├── character-routes.js
+│           └── chat-routes.js
+└── scripts/
+    └── ...                    # 上游 SillyTavern 功能模块
 ```
 
-## 3. 关键文件说明
+## 4. 核心模块职责
 
-### 3.1 核心文件
+### 4.1 `bootstrap.js`
 
-| 文件 | 描述 |
-|------|------|
-| `index.html` | 应用主HTML文件，包含UI结构 |
-| `script.js` | 主JavaScript文件，包含核心逻辑 |
-| `style.css` | 主样式文件 |
-| `tauri-bridge.js` | 前端与Rust后端通信的桥接层 |
-| `tauri-integration.js` | Tauri环境集成和初始化 |
-| `lib-bundle.js` | 打包的第三方库 |
-| `lib.js` | 库导出模块，提供统一接口 |
+- 组装模块依赖并执行初始化。
+- 确保只 bootstrap 一次。
+- 在 bridge 初始化后再次尝试 patch jQuery（处理加载时序问题）。
 
-### 3.2 功能模块
+### 4.2 `context.js`
 
-| 目录/文件 | 描述 |
-|-----------|------|
-| `scripts/extensions/` | 扩展系统相关代码 |
-| `scripts/kai-settings/` | 设置管理相关代码 |
-| `scripts/openai/` | OpenAI API集成 |
-| `scripts/secrets.js` | API密钥管理 |
-| `scripts/characters.js` | 角色管理 |
-| `scripts/chat.js` | 聊天功能 |
-| `scripts/power-user.js` | 高级用户功能 |
-| `scripts/templates.js` | 模板渲染系统 |
+- 提供统一的 `safeInvoke`（含短重试机制）。
+- 管理角色缓存和名称解析。
+- 处理头像/背景等资源路径转换（`convertFileSrc`）。
+- 封装表单到 DTO 的转换与上传文件临时落盘。
 
-### 3.3 Tauri适配器
+### 4.3 `interceptors.js`
 
-| 目录/文件 | 描述 |
-|-----------|------|
-| `scripts/tauri/` | Tauri API适配器目录 |
-| `scripts/tauri/secrets-api.js` | 密钥管理API适配器 |
-| `scripts/tauri/extensions-api.js` | 扩展管理API适配器 |
-| `scripts/tauri/templates-api.js` | 模板系统API适配器 |
-| `scripts/tauri/characters-api.js` | 角色管理API适配器 |
-| `scripts/tauri/chats-api.js` | 聊天管理API适配器 |
-| `scripts/tauri/groups-api.js` | 群组管理API适配器 |
-| `scripts/tauri/backgrounds-api.js` | 背景壁纸API适配器 |
-| `scripts/tauri/themes-api.js` | 主题管理API适配器 |
-| `scripts/tauri/avatars-api.js` | 头像管理API适配器 |
-| `scripts/tauri/settings-api.js` | 设置管理API适配器 |
-| `tauri/` | Tauri适配器初始化目录 |
-| `tauri/extensions-adapter.js` | 扩展系统适配器初始化 |
-| `tauri/templates-adapter.js` | 模板系统适配器初始化 |
-| `tauri/characters-adapter.js` | 角色管理适配器初始化 |
-| `tauri/chats-adapter.js` | 聊天管理适配器初始化 |
-| `tauri/groups-adapter.js` | 群组管理适配器初始化 |
-| `tauri/backgrounds-adapter.js` | 背景壁纸适配器初始化 |
-| `tauri/themes-adapter.js` | 主题管理适配器初始化 |
-| `tauri/avatars-adapter.js` | 头像管理适配器初始化 |
-| `tauri/settings-adapter.js` | 设置管理适配器初始化 |
+- 代理 `window.fetch`。
+- 代理 `$.ajax` 并保持 Deferred/jqXHR 行为兼容。
+- 只拦截本地 API 请求，其余请求透传原生实现。
 
-## 4. Tauri集成
+### 4.4 `router.js` + `routes/*`
 
-### 4.1 通信机制
+- `router.js` 提供简洁注册接口：`get/post/all`。
+- `routes/*` 按业务域组织，降低文件复杂度与改动冲突。
 
-TauriTavern使用Tauri的IPC机制替代了SillyTavern的HTTP API调用。主要通信方式包括：
+## 5. 请求注入流程
 
-1. **命令调用**: 使用`invoke`函数调用Rust后端函数
-2. **事件监听**: 使用`listen`函数监听后端事件
-3. **文件系统访问**: 使用Tauri的文件系统API
+1. 前端发起 `fetch('/api/...')` 或 `$.ajax('/api/...')`
+2. 拦截器判断是否属于需要接管的本地接口
+3. 命中后交给路由分发到 `routes/*`
+4. 路由通过 `context.safeInvoke(...)` 调用 Rust 命令
+5. 返回标准 `Response` 给前端调用方
 
-### 4.2 前端适配模式
+补充：`/csrf-token` 在 `system-routes.js` 中返回固定 token，用于通过前端初始化流程中的 CSRF 依赖检查。
 
-TauriTavern采用了一种优雅的前端适配模式，使原有SillyTavern代码能够在Tauri环境中运行：
+## 6. 路由分域说明
 
-```javascript
-// 示例：动态导入Tauri API
-// 检查是否在Tauri环境中运行
-const isTauri = window.__TAURI_INTERNALS__ !== undefined;
+| 文件 | 负责范围 |
+|------|----------|
+| `system-routes.js` | ping/version/csrf 等系统基础接口 |
+| `settings-routes.js` | 设置、快照、密钥、预设 |
+| `extensions-routes.js` | 扩展发现、安装、更新、删除等 |
+| `resource-routes.js` | 头像、背景、主题、群组等资源接口 |
+| `character-routes.js` | 角色列表、创建、编辑、导入导出、重命名 |
+| `chat-routes.js` | 聊天读写、搜索、最近记录、导出 |
 
-// 动态导入Tauri API
-let tauriAPI = null;
-if (isTauri) {
-    import('./tauri/module-api.js').then(module => {
-        tauriAPI = module;
-        console.log('Tauri API loaded');
-    }).catch(error => {
-        console.error('Failed to load Tauri API:', error);
-    });
-}
+## 7. 兼容层策略
 
-// 在函数中使用Tauri API
-async function someFunction() {
-    if (isTauri && tauriAPI) {
-        // 使用Tauri API
-        return await tauriAPI.someFunction();
-    } else {
-        // 回退到HTTP API
-        const response = await fetch('/api/endpoint');
-        return response.json();
-    }
-}
-```
+- `src/tauri-main.js`：新主入口（推荐）。
+- 已移除 legacy 入口文件（`tauri-init.js` / `tauri-integration.js` / `tauri/*-adapter.js`）。
+- 新开发统一集中在 `src/tauri/main/*`，避免重复实现与多处注入链路并存。
 
-### 4.3 模块化API适配器
+## 8. 如何新增一个 Tauri 注入接口
 
-TauriTavern为每个功能模块提供专门的API适配器，位于`scripts/tauri/`目录：
+1. 在 Rust 后端新增/确认命令（`src-tauri/src/presentation/commands/*`）。
+2. 在 `src/tauri/main/routes/` 对应业务域中新增路由。
+3. 路由内只做参数校验、DTO 组装、`context.safeInvoke` 调用。
+4. 需要共享逻辑时，优先放到 `context.js` 或 `http-utils.js`，不要回写到单体入口。
+5. 保持返回结构稳定（状态码 + JSON 结构），避免破坏上游前端调用假设。
 
-```javascript
-// 示例：扩展API适配器 (extensions-api.js)
-import { createApiClient } from './api-client.js';
+## 9. 调试与验证
 
-// 创建API客户端
-const extensionsApi = createApiClient('extensions');
+建议最小验证流程：
 
-/**
- * 获取所有扩展
- * @returns {Promise<Array>} - 扩展列表
- */
-export async function getExtensions() {
-    return extensionsApi.call('get_extensions');
-}
+1. `pnpm run build`
+2. `pnpm run tauri:dev`
+3. 启动后确认：
+   - 首屏加载正常
+   - 不再出现 CSRF 初始化错误
+   - 角色/聊天/设置等核心接口可用
 
-/**
- * 安装扩展
- * @param {string} url - 扩展仓库URL
- * @param {boolean} global - 是否全局安装
- * @returns {Promise<Object>} - 安装结果
- */
-export async function installExtension(url, global = false) {
-    return extensionsApi.call('install_extension', { url, global });
-}
-```
+如需快速定位问题：
 
-## 5. 库加载系统
-
-TauriTavern实现了一个动态库加载系统，解决了在Tauri环境中加载第三方库的问题：
-
-### 5.1 lib-bundle.js
-
-包含所有打包的第三方库，使用webpack构建。
-
-### 5.2 lib-loader.js
-
-负责动态加载库bundle并将库暴露到全局作用域。
-
-### 5.3 lib.js
-
-从全局作用域获取库并提供统一的导出接口。
-
-## 6. 前端修改指南
-
-### 6.1 修改原则
-
-1. **保持兼容性**: 修改不应破坏与原SillyTavern的兼容性
-2. **隔离Tauri代码**: Tauri特有代码应适当隔离，便于维护
-3. **详细注释**: 所有修改应有详细注释说明
-
-### 6.2 添加新功能
-
-添加新功能时，应遵循以下步骤：
-
-1. 在`tauri-bridge.js`中添加与后端通信的基础函数
-2. 在`tauri-api.js`中添加高级API封装
-3. 修改相关前端模块，使用新API
-4. 添加适当的错误处理和回退机制
-
-### 6.3 修改现有功能
-
-修改现有功能时，应遵循以下步骤：
-
-1. 识别需要修改的功能点
-2. 检查是否涉及后端API调用
-3. 如果涉及，使用Tauri API替代HTTP调用
-4. 保留原有逻辑作为回退机制
-
-### 6.4 调试技巧
-
-1. 使用`console.log`进行基本调试
-2. 使用Tauri的开发工具检查通信
-3. 使用浏览器开发者工具调试前端
-4. 添加详细的日志记录
-
-## 7. 常见问题与解决方案
-
-### 7.1 库加载问题
-
-**问题**: 第三方库无法正确加载或报错"Failed to resolve module specifier"
-
-**解决方案**:
-- 确保库已正确打包到`dist/lib.bundle.js`
-- 检查`lib-loader.js`中的路径配置
-- 使用全局变量而非ES模块导入
-
-### 7.2 通信问题
-
-**问题**: 与后端通信失败
-
-**解决方案**:
-- 检查Tauri环境是否正确初始化
-- 确认后端命令已正确注册
-- 添加详细的错误处理和日志
-
-### 7.3 文件访问问题
-
-**问题**: 无法访问文件系统
-
-**解决方案**:
-- 确认Tauri配置中已允许相应的文件系统权限
-- 使用Tauri的文件系统API而非Web API
-- 添加适当的错误处理
-
-## 8. 性能优化建议
-
-1. **延迟加载**: 非关键资源应延迟加载
-2. **减少DOM操作**: 批量处理DOM操作
-3. **缓存数据**: 适当缓存频繁访问的数据
-4. **优化事件监听**: 使用事件委托减少监听器数量
-5. **减少IPC调用**: 批量处理后端请求
-
-## 9. 测试指南
-
-### 9.1 手动测试
-
-1. 测试基本功能是否正常工作
-2. 测试在有/无网络环境下的行为
-3. 测试错误处理和恢复机制
-4. 测试与原SillyTavern的兼容性
-
-### 9.2 自动化测试
-
-可以考虑添加以下自动化测试：
-
-1. 单元测试: 测试独立功能模块
-2. 集成测试: 测试模块间交互
-3. E2E测试: 测试完整用户流程
-
-## 10. 贡献指南
-
-1. 遵循项目的代码风格和命名约定
-2. 提交前进行充分测试
-3. 提供详细的提交信息
-4. 更新相关文档
-5. 考虑兼容性和性能影响
+- 查看 DevTools 中请求是否命中本地注入路径。
+- 查看控制台 `invoke` 报错信息与路由返回状态码。
+- 检查对应 `routes/*` 是否遗漏请求字段映射。

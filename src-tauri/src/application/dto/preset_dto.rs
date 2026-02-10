@@ -1,6 +1,6 @@
+use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::domain::models::preset::{Preset, PresetType, DefaultPreset};
 
 /// DTO for saving a preset
 #[derive(Debug, Clone, Serialize, Deserialize)]

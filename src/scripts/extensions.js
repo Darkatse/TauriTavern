@@ -1,34 +1,21 @@
 import { DOMPurify, Popper } from '../lib.js';
 
-import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration } from '../script.js';
+import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION } from '../script.js';
 import { showLoader } from './loader.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { renderTemplate, renderTemplateAsync } from './templates.js';
-import { delay, isSubsetOf, sanitizeSelector, setValueByPath } from './utils.js';
+import { delay, isSubsetOf, sanitizeSelector, setValueByPath, versionCompare } from './utils.js';
 import { getContext } from './st-context.js';
 import { isAdmin } from './user.js';
 import { addLocaleData, getCurrentLocale, t } from './i18n.js';
 import { debounce_timeout } from './constants.js';
 import { accountStorage } from './util/AccountStorage.js';
-
-// Check if we're running in a Tauri environment
-const isTauri = window.__TAURI_INTERNALS__ !== undefined;
-
-// Import Tauri API if available
-let tauriExtensionsAPI = null;
-if (isTauri) {
-    // Dynamically import the Tauri API
-    import('./tauri/extensions-api.js').then(module => {
-        tauriExtensionsAPI = module;
-        console.log('Tauri Extensions API loaded');
-    }).catch(error => {
-        console.error('Failed to load Tauri Extensions API:', error);
-    });
-}
+import { SimpleMutex } from './util/SimpleMutex.js';
 
 export {
     getContext,
     getApiUrl,
+    SimpleMutex as ModuleWorkerWrapper,
 };
 
 /** @type {string[]} */
@@ -51,7 +38,13 @@ export let modules = [];
  * A set of active extensions.
  * @type {Set<string>}
  */
-let activeExtensions = new Set();
+const activeExtensions = new Set();
+
+/**
+ * Errors that occurred while loading extensions.
+ * @type {Set<string>}
+ */
+const extensionLoadErrors = new Set();
 
 const getApiUrl = () => extension_settings.apiUrl;
 const sortManifestsByOrder = (a, b) => parseInt(a.loading_order) - parseInt(b.loading_order) || String(a.display_name).localeCompare(String(b.display_name));
@@ -73,14 +66,20 @@ let requiresReload = false;
 let stateChanged = false;
 let saveMetadataTimeout = null;
 
+export function cancelDebouncedMetadataSave() {
+    if (saveMetadataTimeout) {
+        console.debug('Debounced metadata save cancelled');
+        clearTimeout(saveMetadataTimeout);
+        saveMetadataTimeout = null;
+    }
+}
+
 export function saveMetadataDebounced() {
     const context = getContext();
     const groupId = context.groupId;
     const characterId = context.characterId;
 
-    if (saveMetadataTimeout) {
-        clearTimeout(saveMetadataTimeout);
-    }
+    cancelDebouncedMetadataSave();
 
     saveMetadataTimeout = setTimeout(async () => {
         const newContext = getContext();
@@ -127,31 +126,6 @@ export function renderExtensionTemplateAsync(extensionName, templateId, template
     return renderTemplateAsync(`scripts/extensions/${extensionName}/${templateId}.html`, templateData, sanitize, localize, true);
 }
 
-// Disables parallel updates
-export class ModuleWorkerWrapper {
-    constructor(callback) {
-        this.isBusy = false;
-        this.callback = callback;
-    }
-
-    // Called by the extension
-    async update(...args) {
-        // Don't touch me I'm busy...
-        if (this.isBusy) {
-            return;
-        }
-
-        // I'm free. Let's update!
-        try {
-            this.isBusy = true;
-            await this.callback(...args);
-        }
-        finally {
-            this.isBusy = false;
-        }
-    }
-}
-
 export const extension_settings = {
     apiUrl: defaultUrl,
     apiKey: '',
@@ -181,6 +155,7 @@ export const extension_settings = {
         llmPrompt: undefined,
         allowMultiple: true,
         rerollIfSame: false,
+        promptType: 'raw',
     },
     connectionManager: {
         selectedProfile: '',
@@ -190,7 +165,12 @@ export const extension_settings = {
     dice: {},
     /** @type {import('./char-data.js').RegexScriptData[]} */
     regex: [],
+    /** @type {import('./extensions/regex/index.js').RegexPreset[]} */
+    regex_presets: [],
+    /** @type {string[]} */
     character_allowed_regex: [],
+    /** @type {Record<string, string[]>} */
+    preset_allowed_regex: {},
     tts: {},
     sd: {
         prompts: {},
@@ -254,7 +234,7 @@ const menuInterval = setInterval(showHideExtensionsMenu, 1000);
  * @param {string} externalId External ID of the extension (excluding or including the leading 'third-party/')
  * @returns {string} Type of the extension (global, local, system, or empty string if not found)
  */
-export function getExtensionType(externalId) {
+function getExtensionType(externalId) {
     const id = Object.keys(extensionTypes).find(id => id === externalId || (id.startsWith('third-party') && id.endsWith(externalId)));
     return id ? extensionTypes[id] : '';
 }
@@ -291,28 +271,16 @@ export async function doExtrasFetch(endpoint, args = {}) {
  * Discovers extensions from the API.
  * @returns {Promise<{name: string, type: string}[]>}
  */
-export async function discoverExtensions() {
+async function discoverExtensions() {
     try {
-        if (isTauri && tauriExtensionsAPI) {
-            // Use Tauri API
-            try {
-                const extensions = await tauriExtensionsAPI.getExtensions();
-                return extensions;
-            } catch (error) {
-                console.error('Could not discover extensions from Tauri backend:', error);
-                return [];
-            }
-        } else {
-            // Use standard API
-            const response = await fetch('/api/extensions/discover');
+        const response = await fetch('/api/extensions/discover');
 
-            if (response.ok) {
-                const extensions = await response.json();
-                return extensions;
-            }
-            else {
-                return [];
-            }
+        if (response.ok) {
+            const extensions = await response.json();
+            return extensions;
+        }
+        else {
+            return [];
         }
     }
     catch (err) {
@@ -400,37 +368,100 @@ async function getManifests(names) {
  * @returns {Promise<void>}
  */
 async function activateExtensions() {
+    extensionLoadErrors.clear();
+    const clientVersion = CLIENT_VERSION.split(':')[1];
     const extensions = Object.entries(manifests).sort((a, b) => sortManifestsByOrder(a[1], b[1]));
+    const extensionNames = extensions.map(x => x[0]);
     const promises = [];
 
     for (let entry of extensions) {
         const name = entry[0];
         const manifest = entry[1];
+        const extrasRequirements = manifest.requires;
+        const extensionDependencies = manifest.dependencies;
+        const minClientVersion = manifest.minimum_client_version;
+        const displayName = manifest.display_name || name;
 
         if (activeExtensions.has(name)) {
             continue;
         }
+        // Client version requirement: pass if 'minimum_client_version' is undefined or null.
+        let meetsClientMinimumVersion = true;
+        if (minClientVersion !== undefined) {
+            meetsClientMinimumVersion = versionCompare(clientVersion, minClientVersion);
+        }
 
-        const meetsModuleRequirements = !Array.isArray(manifest.requires) || isSubsetOf(modules, manifest.requires);
+        // Module requirements: pass if 'requires' is undefined, null, or not an array; check subset if it's an array
+        let meetsModuleRequirements = true;
+        let missingModules = [];
+        if (extrasRequirements !== undefined) {
+            if (Array.isArray(extrasRequirements)) {
+                meetsModuleRequirements = isSubsetOf(modules, extrasRequirements);
+                missingModules = extrasRequirements.filter(req => !modules.includes(req));
+            } else {
+                console.warn(`Extension ${name}: manifest.json 'requires' field is not an array. Loading allowed, but any intended requirements were not verified to exist.`);
+            }
+        }
+
+        // Extension dependencies: pass if 'dependencies' is undefined or not an array; check subset and disabled status if it's an array
+        let meetsExtensionDeps = true;
+        let missingDependencies = [];
+        let disabledDependencies = [];
+        if (extensionDependencies !== undefined) {
+            if (Array.isArray(extensionDependencies)) {
+                // Check if all dependencies exist
+                meetsExtensionDeps = isSubsetOf(extensionNames, extensionDependencies);
+                missingDependencies = extensionDependencies.filter(dep => !extensionNames.includes(dep));
+                // Check for disabled dependencies
+                if (meetsExtensionDeps) {
+                    disabledDependencies = extensionDependencies.filter(dep => extension_settings.disabledExtensions.includes(dep));
+                    if (disabledDependencies.length > 0) {
+                        // Fail if any dependencies are disabled
+                        meetsExtensionDeps = false;
+                    }
+                }
+            } else {
+                console.warn(`Extension ${name}: manifest.json 'dependencies' field is not an array. Loading allowed, but any intended requirements were not verified to exist.`);
+            }
+        }
+
         const isDisabled = extension_settings.disabledExtensions.includes(name);
 
-        if (meetsModuleRequirements && !isDisabled) {
+        if (meetsModuleRequirements && meetsExtensionDeps && meetsClientMinimumVersion && !isDisabled) {
             try {
                 console.debug('Activating extension', name);
-                const promise = addExtensionLocale(name, manifest).finally(() => Promise.all([addExtensionScript(name, manifest), addExtensionStyle(name, manifest)]));
+                const promise = addExtensionLocale(name, manifest).finally(() =>
+                    Promise.all([addExtensionScript(name, manifest), addExtensionStyle(name, manifest)]),
+                );
                 await promise
                     .then(() => activeExtensions.add(name))
-                    .catch(err => console.log('Could not activate extension', name, err));
+                    .catch(err => {
+                        console.log('Could not activate extension', name, err);
+                        extensionLoadErrors.add(t`Extension "${displayName}" failed to load: ${err}`);
+                    });
                 promises.push(promise);
+            } catch (error) {
+                console.error('Could not activate extension', name, error);
             }
-            catch (error) {
-                console.error('Could not activate extension', name);
-                console.error(error);
+        } else if (!meetsModuleRequirements && !isDisabled) {
+            console.warn(t`Extension "${name}" did not load. Missing required Extras module(s): "${missingModules.join(', ')}"`);
+            extensionLoadErrors.add(t`Extension "${displayName}" did not load. Missing required Extras module(s): "${missingModules.join(', ')}"`);
+        } else if (!meetsExtensionDeps && !isDisabled) {
+            if (disabledDependencies.length > 0) {
+                console.warn(t`Extension "${name}" did not load. Required extensions exist but are disabled: "${disabledDependencies.join(', ')}". Enable them first, then reload.`);
+                extensionLoadErrors.add(t`Extension "${displayName}" did not load. Required extensions exist but are disabled: "${disabledDependencies.join(', ')}". Enable them first, then reload.`);
+            } else {
+                console.warn(t`Extension "${name}" did not load. Missing required extensions: "${missingDependencies.join(', ')}"`);
+                extensionLoadErrors.add(t`Extension "${displayName}" did not load. Missing required extensions: "${missingDependencies.join(', ')}"`);
             }
+        } else if (!meetsClientMinimumVersion && !isDisabled) {
+            console.warn(t`Extension "${name}" did not load. Requires ST client version ${minClientVersion}, but current version is ${clientVersion}.`);
+            extensionLoadErrors.add(t`Extension "${displayName}" did not load. Requires ST client version ${minClientVersion}, but current version is ${clientVersion}.`);
         }
     }
 
     await Promise.allSettled(promises);
+    $('#extensions_details').toggleClass('warning', extensionLoadErrors.size > 0);
 }
 
 async function connectClickHandler() {
@@ -688,6 +719,7 @@ function generateExtensionHtml(name, manifest, isActive, isDisabled, isExternal,
     let deleteButton = isExternal ? `<button class="btn_delete menu_button" data-name="${externalId}" data-i18n="[title]Delete" title="Delete"><i class="fa-fw fa-solid fa-trash-can"></i></button>` : '';
     let updateButton = isExternal ? `<button class="btn_update menu_button displayNone" data-name="${externalId}" title="Update available"><i class="fa-solid fa-download fa-fw"></i></button>` : '';
     let moveButton = isExternal && isUserAdmin ? `<button class="btn_move menu_button" data-name="${externalId}" data-i18n="[title]Move" title="Move"><i class="fa-solid fa-folder-tree fa-fw"></i></button>` : '';
+    let branchButton = isExternal && isUserAdmin ? `<button class="btn_branch menu_button" data-name="${externalId}" data-i18n="[title]Switch branch" title="Switch branch"><i class="fa-solid fa-code-branch fa-fw"></i></button>` : '';
     let modulesInfo = '';
 
     if (isActive && Array.isArray(manifest.optional)) {
@@ -728,6 +760,7 @@ function generateExtensionHtml(name, manifest, isActive, isDisabled, isExternal,
 
             <div class="extension_actions flex-container alignItemsCenter">
                 ${updateButton}
+                ${branchButton}
                 ${moveButton}
                 ${deleteButton}
             </div>
@@ -771,6 +804,27 @@ function getModuleInformation() {
 }
 
 /**
+ * Generates HTML for the extension load errors.
+ * @returns {string} HTML string containing the errors that occurred while loading extensions.
+ */
+function getExtensionLoadErrorsHtml() {
+    if (extensionLoadErrors.size === 0) {
+        return '';
+    }
+
+    const container = document.createElement('div');
+    container.classList.add('info-block', 'error');
+
+    for (const error of extensionLoadErrors) {
+        const errorElement = document.createElement('div');
+        errorElement.textContent = error;
+        container.appendChild(errorElement);
+    }
+
+    return container.outerHTML;
+}
+
+/**
  * Generates the HTML strings for all extensions and displays them in a popup.
  */
 async function showExtensionsDetails() {
@@ -784,6 +838,7 @@ async function showExtensionsDetails() {
             initialScrollTop = oldPopup.content.scrollTop;
             await oldPopup.completeCancelled();
         }
+        const htmlErrors = getExtensionLoadErrorsHtml();
         const htmlDefault = $('<div class="marginBot10"><h3 class="textAlignCenter">' + t`Built-in Extensions:` + '</h3></div>');
         const htmlExternal = $('<div class="marginBot10"><h3 class="textAlignCenter">' + t`Installed Extensions:` + '</h3></div>');
         const htmlLoading = $(`<div class="flex-container alignItemsCenter justifyCenter marginTop10 marginBot5">
@@ -806,6 +861,7 @@ async function showExtensionsDetails() {
 
         const html = $('<div></div>')
             .addClass('extensions_info')
+            .append(htmlErrors)
             .append(htmlDefault)
             .append(htmlExternal)
             .append(getModuleInformation());
@@ -912,41 +968,29 @@ async function onUpdateClick() {
  * Updates a third-party extension via the API.
  * @param {string} extensionName Extension folder name
  * @param {boolean} quiet If true, don't show a success message
+ * @param {number?} timeout Timeout in milliseconds to wait for the update to complete. If null, no timeout is set.
  */
-async function updateExtension(extensionName, quiet) {
+async function updateExtension(extensionName, quiet, timeout = null) {
     try {
-        let data;
+        const signal = timeout ? AbortSignal.timeout(timeout) : undefined;
+        const response = await fetch('/api/extensions/update', {
+            method: 'POST',
+            signal: signal,
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                extensionName,
+                global: getExtensionType(extensionName) === 'global',
+            }),
+        });
 
-        if (isTauri && tauriExtensionsAPI) {
-            // Use Tauri API
-            try {
-                const isGlobal = getExtensionType(extensionName) === 'global';
-                data = await tauriExtensionsAPI.updateExtension(extensionName, isGlobal);
-            } catch (error) {
-                console.error('Could not update extension from Tauri backend:', error);
-                toastr.error(error.toString(), t`Extension update failed`, { timeOut: 5000 });
-                return;
-            }
-        } else {
-            // Use standard API
-            const response = await fetch('/api/extensions/update', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({
-                    extensionName,
-                    global: getExtensionType(extensionName) === 'global',
-                }),
-            });
-
-            if (!response.ok) {
-                const text = await response.text();
-                toastr.error(text || response.statusText, t`Extension update failed`, { timeOut: 5000 });
-                console.error('Extension update failed', response.status, response.statusText, text);
-                return;
-            }
-
-            data = await response.json();
+        if (!response.ok) {
+            const text = await response.text();
+            toastr.error(text || response.statusText, t`Extension update failed`, { timeOut: 5000 });
+            console.error('Extension update failed', response.status, response.statusText, text);
+            return;
         }
+
+        const data = await response.json();
 
         if (!quiet) {
             void showExtensionsDetails();
@@ -960,7 +1004,7 @@ async function updateExtension(extensionName, quiet) {
             toastr.success(t`Extension ${extensionName} updated to ${data.shortCommitHash}`, t`Reload the page to apply updates`);
         }
     } catch (error) {
-        console.error('Error:', error);
+        console.error('Extension update error:', error);
     }
 }
 
@@ -984,6 +1028,44 @@ async function onDeleteClick() {
     if (confirmation === POPUP_RESULT.AFFIRMATIVE) {
         await deleteExtension(extensionName);
     }
+}
+
+async function onBranchClick() {
+    const extensionName = $(this).data('name');
+    const isCurrentUserAdmin = isAdmin();
+    const isGlobal = getExtensionType(extensionName) === 'global';
+    if (isGlobal && !isCurrentUserAdmin) {
+        toastr.error(t`You don't have permission to switch branch.`);
+        return;
+    }
+
+    let newBranch = '';
+
+    const branches = await getExtensionBranches(extensionName, isGlobal);
+    const selectElement = document.createElement('select');
+    selectElement.classList.add('text_pole', 'wide100p');
+    selectElement.addEventListener('change', function () {
+        newBranch = this.value;
+    });
+    for (const branch of branches) {
+        const option = document.createElement('option');
+        option.value = branch.name;
+        option.textContent = `${branch.name} (${branch.commit}) [${branch.label}]`;
+        option.selected = branch.current;
+        selectElement.appendChild(option);
+    }
+
+    const popup = new Popup(selectElement, POPUP_TYPE.CONFIRM, '', {
+        okButton: t`Switch`,
+        cancelButton: t`Cancel`,
+    });
+    const popupResult = await popup.show();
+
+    if (!popupResult || !newBranch) {
+        return;
+    }
+
+    await switchExtensionBranch(extensionName, isGlobal, newBranch);
 }
 
 async function onMoveClick() {
@@ -1022,33 +1104,21 @@ async function onMoveClick() {
  */
 async function moveExtension(extensionName, source, destination) {
     try {
-        if (isTauri && tauriExtensionsAPI) {
-            // Use Tauri API
-            try {
-                await tauriExtensionsAPI.moveExtension(extensionName, source, destination);
-            } catch (error) {
-                console.error('Could not move extension from Tauri backend:', error);
-                toastr.error(error.toString(), t`Extension move failed`, { timeOut: 5000 });
-                return;
-            }
-        } else {
-            // Use standard API
-            const result = await fetch('/api/extensions/move', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({
-                    extensionName,
-                    source,
-                    destination,
-                }),
-            });
+        const result = await fetch('/api/extensions/move', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                extensionName,
+                source,
+                destination,
+            }),
+        });
 
-            if (!result.ok) {
-                const text = await result.text();
-                toastr.error(text || result.statusText, t`Extension move failed`, { timeOut: 5000 });
-                console.error('Extension move failed', result.status, result.statusText, text);
-                return;
-            }
+        if (!result.ok) {
+            const text = await result.text();
+            toastr.error(text || result.statusText, t`Extension move failed`, { timeOut: 5000 });
+            console.error('Extension move failed', result.status, result.statusText, text);
+            return;
         }
 
         toastr.success(t`Extension ${extensionName} moved.`);
@@ -1065,30 +1135,16 @@ async function moveExtension(extensionName, source, destination) {
  */
 export async function deleteExtension(extensionName) {
     try {
-        if (isTauri && tauriExtensionsAPI) {
-            // Use Tauri API
-            try {
-                const isGlobal = getExtensionType(extensionName) === 'global';
-                await tauriExtensionsAPI.deleteExtension(extensionName, isGlobal);
-            } catch (error) {
-                console.error('Could not delete extension from Tauri backend:', error);
-                toastr.error(error.toString(), t`Extension deletion failed`, { timeOut: 5000 });
-                return;
-            }
-        } else {
-            // Use standard API
-            await fetch('/api/extensions/delete', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({
-                    extensionName,
-                    global: getExtensionType(extensionName) === 'global',
-                }),
-            });
-        }
+        await fetch('/api/extensions/delete', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                extensionName,
+                global: getExtensionType(extensionName) === 'global',
+            }),
+        });
     } catch (error) {
         console.error('Error:', error);
-        return;
     }
 
     toastr.success(t`Extension ${extensionName} deleted`);
@@ -1106,33 +1162,90 @@ export async function deleteExtension(extensionName) {
  */
 async function getExtensionVersion(extensionName, abortSignal) {
     try {
-        if (isTauri && tauriExtensionsAPI) {
-            // Use Tauri API
-            try {
-                const isGlobal = getExtensionType(extensionName) === 'global';
-                return await tauriExtensionsAPI.getExtensionVersion(extensionName, isGlobal);
-            } catch (error) {
-                console.error('Could not get extension version from Tauri backend:', error);
-                throw error;
-            }
-        } else {
-            // Use standard API
-            const response = await fetch('/api/extensions/version', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({
-                    extensionName,
-                    global: getExtensionType(extensionName) === 'global',
-                }),
-                signal: abortSignal,
-            });
+        const response = await fetch('/api/extensions/version', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                extensionName,
+                global: getExtensionType(extensionName) === 'global',
+            }),
+            signal: abortSignal,
+        });
 
-            const data = await response.json();
-            return data;
-        }
+        const data = await response.json();
+        return data;
     } catch (error) {
         console.error('Error:', error);
-        throw error;
+    }
+}
+
+/**
+ * Gets the list of branches for a specific extension.
+ * @param {string} extensionName The name of the extension
+ * @param {boolean} isGlobal Whether the extension is global or not
+ * @returns {Promise<ExtensionBranch[]>} List of branches for the extension
+ * @typedef {object} ExtensionBranch
+ * @property {string} name The name of the branch
+ * @property {string} commit The commit hash of the branch
+ * @property {boolean} current Whether this branch is the current one
+ * @property {string} label The commit label of the branch
+ */
+async function getExtensionBranches(extensionName, isGlobal) {
+    try {
+        const response = await fetch('/api/extensions/branches', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                extensionName,
+                global: isGlobal,
+            }),
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            toastr.error(text || response.statusText, t`Extension branches fetch failed`);
+            console.error('Extension branches fetch failed', response.status, response.statusText, text);
+            return [];
+        }
+
+        return await response.json();
+    } catch (error) {
+        console.error('Error:', error);
+        return [];
+    }
+}
+
+/**
+ * Switches the branch of an extension.
+ * @param {string} extensionName The name of the extension
+ * @param {boolean} isGlobal If the extension is global
+ * @param {string} branch Branch name to switch to
+ * @returns {Promise<void>}
+ */
+async function switchExtensionBranch(extensionName, isGlobal, branch) {
+    try {
+        const response = await fetch('/api/extensions/switch', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                extensionName,
+                branch,
+                global: isGlobal,
+            }),
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            toastr.error(text || response.statusText, t`Extension branch switch failed`);
+            console.error('Extension branch switch failed', response.status, response.statusText, text);
+            return;
+        }
+
+        toastr.success(t`Extension ${extensionName} switched to ${branch}`);
+        await loadExtensionSettings({}, false, false);
+        void showExtensionsDetails();
+    } catch (error) {
+        console.error('Error:', error);
     }
 }
 
@@ -1142,52 +1255,33 @@ async function getExtensionVersion(extensionName, abortSignal) {
  * @param {boolean} global Is the extension global?
  * @returns {Promise<void>}
  */
-export async function installExtension(url, global) {
+export async function installExtension(url, global, branch = '') {
     console.debug('Extension installation started', url);
 
     toastr.info(t`Please wait...`, t`Installing extension`);
 
-    try {
-        let response;
+    const request = await fetch('/api/extensions/install', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            url,
+            global,
+            branch,
+        }),
+    });
 
-        if (isTauri && tauriExtensionsAPI) {
-            // Use Tauri API
-            try {
-                response = await tauriExtensionsAPI.installExtension(url, global);
-            } catch (error) {
-                console.error('Could not install extension from Tauri backend:', error);
-                toastr.warning(error.toString(), t`Extension installation failed`, { timeOut: 5000 });
-                return;
-            }
-        } else {
-            // Use standard API
-            const request = await fetch('/api/extensions/install', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({
-                    url,
-                    global,
-                }),
-            });
-
-            if (!request.ok) {
-                const text = await request.text();
-                toastr.warning(text || request.statusText, t`Extension installation failed`, { timeOut: 5000 });
-                console.error('Extension installation failed', request.status, request.statusText, text);
-                return;
-            }
-
-            response = await request.json();
-        }
-
-        toastr.success(t`Extension '${response.display_name}' by ${response.author} (version ${response.version}) has been installed successfully!`, t`Extension installation successful`);
-        console.debug(`Extension "${response.display_name}" has been installed successfully at ${response.extensionPath}`);
-        await loadExtensionSettings({}, false, false);
-        await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED, response);
-    } catch (error) {
-        console.error('Error installing extension:', error);
-        toastr.error(t`An unexpected error occurred while installing the extension.`, t`Installation Error`);
+    if (!request.ok) {
+        const text = await request.text();
+        toastr.warning(text || request.statusText, t`Extension installation failed`, { timeOut: 5000 });
+        console.error('Extension installation failed', request.status, request.statusText, text);
+        return;
     }
+
+    const response = await request.json();
+    toastr.success(t`Extension '${response.display_name}' by ${response.author} (version ${response.version}) has been installed successfully!`, t`Extension installation successful`);
+    console.debug(`Extension "${response.display_name}" has been installed successfully at ${response.extensionPath}`);
+    await loadExtensionSettings({}, false, false);
+    await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED, response);
 }
 
 /**
@@ -1381,6 +1475,7 @@ async function autoUpdateExtensions(forceAll) {
     const banner = toastr.info(t`Auto-updating extensions. This may take several minutes.`, t`Please wait...`, { timeOut: 10000, extendedTimeOut: 10000 });
     const isCurrentUserAdmin = isAdmin();
     const promises = [];
+    const autoUpdateTimeout = 60 * 1000;
     for (const [id, manifest] of Object.entries(manifests)) {
         const isDisabled = extension_settings.disabledExtensions.includes(id);
         if (!forceAll && isDisabled) {
@@ -1394,7 +1489,7 @@ async function autoUpdateExtensions(forceAll) {
         }
         if ((forceAll || manifest.auto_update) && id.startsWith('third-party')) {
             console.debug(`Auto-updating 3rd-party extension: ${manifest.display_name} (${id})`);
-            promises.push(updateExtension(id.replace('third-party', ''), true));
+            promises.push(updateExtension(id.replace('third-party', ''), true, autoUpdateTimeout));
         }
     }
     await Promise.allSettled(promises);
@@ -1437,7 +1532,7 @@ export async function runGenerationInterceptors(chat, contextSize, type) {
 
 /**
  * Writes a field to the character's data extensions object.
- * @param {number} characterId Index in the character array
+ * @param {number|string} characterId Index in the character array
  * @param {string} key Field name
  * @param {any} value Field value
  * @returns {Promise<void>} When the field is written
@@ -1507,9 +1602,17 @@ export async function openThirdPartyExtensionMenu(suggestUrl = '') {
             await popup.complete(POPUP_RESULT.AFFIRMATIVE);
         },
     };
+    /** @type {import('./popup.js').CustomPopupInput} */
+    const branchNameInput = {
+        id: 'extension_branch_name',
+        label: t`Branch or tag name (optional)`,
+        type: 'text',
+        tooltip: 'e.g. main, dev, v1.0.0',
+    };
 
     const customButtons = isCurrentUserAdmin ? [installForAllButton] : [];
-    const popup = new Popup(html, POPUP_TYPE.INPUT, suggestUrl ?? '', { okButton, customButtons });
+    const customInputs = [branchNameInput];
+    const popup = new Popup(html, POPUP_TYPE.INPUT, suggestUrl ?? '', { okButton, customButtons, customInputs });
     const input = await popup.show();
 
     if (!input) {
@@ -1518,7 +1621,8 @@ export async function openThirdPartyExtensionMenu(suggestUrl = '') {
     }
 
     const url = String(input).trim();
-    await installExtension(url, global);
+    const branchName = String(popup.inputResults.get('extension_branch_name') ?? '').trim();
+    await installExtension(url, global, branchName);
 }
 
 export async function initExtensions() {
@@ -1534,6 +1638,7 @@ export async function initExtensions() {
     $(document).on('click', '.extensions_info .extension_block .btn_update', onUpdateClick);
     $(document).on('click', '.extensions_info .extension_block .btn_delete', onDeleteClick);
     $(document).on('click', '.extensions_info .extension_block .btn_move', onMoveClick);
+    $(document).on('click', '.extensions_info .extension_block .btn_branch', onBranchClick);
 
     /**
      * Handles the click event for the third-party extension import button.

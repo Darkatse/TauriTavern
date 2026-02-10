@@ -1,9 +1,11 @@
 import {
+    MAX_INJECTION_DEPTH,
     animation_duration,
     chat_metadata,
     eventSource,
     event_types,
     extension_prompt_roles,
+    extension_prompt_types,
     saveSettingsDebounced,
     this_chid,
 } from '../script.js';
@@ -17,7 +19,9 @@ import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
 export { MODULE_NAME as NOTE_MODULE_NAME };
 import { t } from './i18n.js';
+import { macros, MacroCategory } from './macros/macro-system.js';
 import { MacrosParser } from './macros.js';
+import { power_user } from './power-user.js';
 
 const MODULE_NAME = '2_floating_prompt'; // <= Deliberate, for sorting lower than memory
 
@@ -347,7 +351,7 @@ export function setFloatingPrompt() {
     }
 
     if (lastMessageNumber <= 0 || chat_metadata[metadata_keys.interval] <= 0) {
-        context.setExtensionPrompt(MODULE_NAME, '');
+        context.setExtensionPrompt(MODULE_NAME, '', extension_prompt_types.NONE, MAX_INJECTION_DEPTH);
         $('#extension_floating_counter').text('(disabled)');
         shouldWIAddPrompt = false;
         return;
@@ -380,7 +384,7 @@ export function setFloatingPrompt() {
     }
     context.setExtensionPrompt(
         MODULE_NAME,
-        prompt,
+        String(prompt),
         chat_metadata[metadata_keys.position],
         chat_metadata[metadata_keys.depth],
         extension_settings.note.allowWIScan,
@@ -396,37 +400,38 @@ function onANMenuItemClick() {
     }
 
     //show AN if it's hidden
-    if ($('#floatingPrompt').css('display') !== 'flex') {
-        $('#floatingPrompt').addClass('resizing');
-        $('#floatingPrompt').css('display', 'flex');
-        $('#floatingPrompt').css('opacity', 0.0);
-        $('#floatingPrompt').transition({
+    const $ANcontainer = $('#floatingPrompt');
+    if ($ANcontainer.css('display') !== 'flex') {
+        $ANcontainer.addClass('resizing');
+        $ANcontainer.css('display', 'flex');
+        $ANcontainer.css('opacity', 0.0);
+        $ANcontainer.transition({
             opacity: 1.0,
             duration: animation_duration,
         }, async function () {
             await delay(50);
-            $('#floatingPrompt').removeClass('resizing');
+            $ANcontainer.removeClass('resizing');
         });
 
         //auto-open the main AN inline drawer
         if ($('#ANBlockToggle')
             .siblings('.inline-drawer-content')
             .css('display') !== 'block') {
-            $('#floatingPrompt').addClass('resizing');
-            $('#ANBlockToggle').click();
+            $ANcontainer.addClass('resizing');
+            $('#ANBlockToggle').trigger('click');
         }
     } else {
         //hide AN if it's already displayed
-        $('#floatingPrompt').addClass('resizing');
-        $('#floatingPrompt').transition({
+        $ANcontainer.addClass('resizing');
+        $ANcontainer.transition({
             opacity: 0.0,
             duration: animation_duration,
         }, async function () {
             await delay(50);
-            $('#floatingPrompt').removeClass('resizing');
+            $ANcontainer.removeClass('resizing');
         });
         setTimeout(function () {
-            $('#floatingPrompt').hide();
+            $ANcontainer.hide();
         }, animation_duration);
     }
 
@@ -578,7 +583,39 @@ export function initAuthorsNote() {
     }));
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
 
-    MacrosParser.registerMacro('authorsNote', () => chat_metadata[metadata_keys.prompt] ?? '', t`The contents of the Author's Note`);
-    MacrosParser.registerMacro('charAuthorsNote', () => this_chid !== undefined ? (extension_settings.note.chara.find((e) => e.name === getCharaFilename())?.prompt ?? '') : '', t`The contents of the Character Author's Note`);
-    MacrosParser.registerMacro('defaultAuthorsNote', () => extension_settings.note.default ?? '', t`The contents of the Default Author's Note`);
+    registerAuthorsNoteMacros();
+}
+
+function registerAuthorsNoteMacros() {
+    if (power_user.experimental_macro_engine) {
+        macros.register('authorsNote', {
+            category: MacroCategory.PROMPTS,
+            description: t`The contents of the Author's Note`,
+            handler: () => chat_metadata[metadata_keys.prompt] ?? '',
+        });
+        macros.register('charAuthorsNote', {
+            category: MacroCategory.CHARACTER,
+            description: t`The contents of the Character Author's Note`,
+            handler: () => this_chid !== undefined ? (extension_settings.note.chara.find((e) => e.name === getCharaFilename())?.prompt ?? '') : '',
+        });
+        macros.register('defaultAuthorsNote', {
+            category: MacroCategory.PROMPTS,
+            description: t`The contents of the Default Author's Note`,
+            handler: () => extension_settings.note.default ?? '',
+        });
+    } else {
+        // TODO: Remove this when the experimental macro engine is replacing the old macro engine
+        MacrosParser.registerMacro('authorsNote',
+            () => chat_metadata[metadata_keys.prompt] ?? '',
+            t`The contents of the Author's Note`,
+        );
+        MacrosParser.registerMacro('charAuthorsNote',
+            () => this_chid !== undefined ? (extension_settings.note.chara.find((e) => e.name === getCharaFilename())?.prompt ?? '') : '',
+            t`The contents of the Character Author's Note`,
+        );
+        MacrosParser.registerMacro('defaultAuthorsNote',
+            () => extension_settings.note.default ?? '',
+            t`The contents of the Default Author's Note`,
+        );
+    }
 }

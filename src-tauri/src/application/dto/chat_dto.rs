@@ -1,7 +1,9 @@
-use std::path::Path;
-use serde::{Serialize, Deserialize};
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
-use crate::domain::repositories::chat_repository::{ChatSearchResult, ChatImportFormat, ChatExportFormat};
+use crate::domain::repositories::chat_repository::{
+    ChatExportFormat, ChatImportFormat, ChatSearchResult,
+};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// DTO for chat message extra data
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +125,16 @@ pub struct ExportChatDto {
     pub format: String,
 }
 
+/// DTO for saving a full chat payload (metadata + messages)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveChatDto {
+    #[serde(rename = "ch_name")]
+    pub character_name: String,
+    pub file_name: String,
+    pub chat: Vec<serde_json::Value>,
+    pub force: Option<bool>,
+}
+
 impl From<MessageExtra> for MessageExtraDto {
     fn from(extra: MessageExtra) -> Self {
         Self {
@@ -191,25 +203,30 @@ impl From<ChatMessageDto> for ChatMessage {
 
 impl From<Chat> for ChatDto {
     fn from(chat: Chat) -> Self {
-        let file_name = chat.file_name.clone().unwrap_or_else(|| {
-            format!("{} - {}", chat.character_name, chat.create_date)
-        });
+        let file_name = chat
+            .file_name
+            .clone()
+            .unwrap_or_else(|| format!("{} - {}", chat.character_name, chat.create_date));
 
         // 1. 在 chat.messages 被移动之前，先获取它的长度
         let message_count = chat.messages.len();
 
         // 2. 现在可以安全地消耗 chat.messages 来创建 DTO 列表
         //    into_iter() 会移动 chat.messages，但我们不再需要它了
-        let messages_dto = chat.messages.into_iter().map(ChatMessageDto::from).collect();
+        let messages_dto = chat
+            .messages
+            .into_iter()
+            .map(ChatMessageDto::from)
+            .collect();
 
         Self {
             character_name: chat.character_name,
             user_name: chat.user_name,
             file_name,
             create_date: chat.create_date,
-            messages: messages_dto, 
-            message_count, 
-            chat_id: chat.chat_metadata.chat_id_hash, 
+            messages: messages_dto,
+            message_count,
+            chat_id: chat.chat_metadata.chat_id_hash,
         }
     }
 }

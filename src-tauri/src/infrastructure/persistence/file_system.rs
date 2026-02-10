@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
-use serde::{Serialize, de::DeserializeOwned};
-use tokio::fs::{self as tokio_fs, read_to_string, create_dir_all};
 use crate::domain::errors::DomainError;
 use crate::infrastructure::logging::logger;
+use serde::{de::DeserializeOwned, Serialize};
+use std::path::{Path, PathBuf};
+use tokio::fs::{self as tokio_fs, create_dir_all, read_to_string};
 
 /// Represents the application data directory structure
 pub struct DataDirectory {
@@ -162,7 +162,6 @@ impl DataDirectory {
     pub fn group_chats(&self) -> &Path {
         &self.group_chats
     }
-
 }
 
 /// Read a JSON file and deserialize it
@@ -199,14 +198,20 @@ pub async fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), 
     // Ensure the parent directory exists
     if let Some(parent) = path.parent() {
         create_dir_all(parent).await.map_err(|e| {
-            logger::error(&format!("Failed to create parent directory for {:?}: {}", path, e));
+            logger::error(&format!(
+                "Failed to create parent directory for {:?}: {}",
+                path, e
+            ));
             DomainError::InternalError(format!("Failed to create directory: {}", e))
         })?;
     }
 
     // Serialize data to JSON
     let json = serde_json::to_string_pretty(data).map_err(|e| {
-        logger::error(&format!("Failed to serialize to JSON for file {:?}: {}", path, e));
+        logger::error(&format!(
+            "Failed to serialize to JSON for file {:?}: {}",
+            path, e
+        ));
         DomainError::InvalidData(format!("Failed to serialize to JSON: {}", e))
     })?;
 
@@ -223,8 +228,14 @@ pub async fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), 
 ///
 /// This is an async function that lists all files in a directory with a specific extension.
 /// It uses tokio's async file I/O operations for better performance and non-blocking behavior.
-pub async fn list_files_with_extension(dir: &Path, extension: &str) -> Result<Vec<PathBuf>, DomainError> {
-    logger::debug(&format!("Listing files with extension '{}' in directory: {:?}", extension, dir));
+pub async fn list_files_with_extension(
+    dir: &Path,
+    extension: &str,
+) -> Result<Vec<PathBuf>, DomainError> {
+    logger::debug(&format!(
+        "Listing files with extension '{}' in directory: {:?}",
+        extension, dir
+    ));
 
     if !dir.exists() {
         return Ok(Vec::new());

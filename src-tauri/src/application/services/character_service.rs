@@ -1,15 +1,17 @@
-use std::path::Path;
-use std::sync::Arc;
-use crate::domain::errors::DomainError;
-use crate::domain::models::character::Character;
-use crate::domain::repositories::character_repository::{CharacterRepository, ImageCrop, CharacterChat};
 use crate::application::dto::character_dto::{
-    CharacterDto, CreateCharacterDto, UpdateCharacterDto, RenameCharacterDto,
-    ImportCharacterDto, ExportCharacterDto, UpdateAvatarDto, CreateWithAvatarDto,
-    DeleteCharacterDto, GetCharacterChatsDto, CharacterChatDto, ImageCropDto
+    CharacterChatDto, CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
+    ExportCharacterDto, GetCharacterChatsDto, ImageCropDto, ImportCharacterDto, RenameCharacterDto,
+    UpdateAvatarDto, UpdateCharacterDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::domain::errors::DomainError;
+use crate::domain::models::character::Character;
+use crate::domain::repositories::character_repository::{
+    CharacterChat, CharacterRepository, ImageCrop,
+};
 use crate::infrastructure::logging::logger;
+use std::path::Path;
+use std::sync::Arc;
 
 /// Service for character management
 pub struct CharacterService {
@@ -23,7 +25,10 @@ impl CharacterService {
     }
 
     /// Get all characters
-    pub async fn get_all_characters(&self, shallow: bool) -> Result<Vec<CharacterDto>, ApplicationError> {
+    pub async fn get_all_characters(
+        &self,
+        shallow: bool,
+    ) -> Result<Vec<CharacterDto>, ApplicationError> {
         logger::debug("Getting all characters");
         let characters = self.repository.find_all(shallow).await?;
         Ok(characters.into_iter().map(CharacterDto::from).collect())
@@ -37,7 +42,10 @@ impl CharacterService {
     }
 
     /// Create a new character
-    pub async fn create_character(&self, dto: CreateCharacterDto) -> Result<CharacterDto, ApplicationError> {
+    pub async fn create_character(
+        &self,
+        dto: CreateCharacterDto,
+    ) -> Result<CharacterDto, ApplicationError> {
         logger::debug(&format!("Creating character: {}", dto.name));
 
         // Convert DTO to domain model
@@ -53,8 +61,14 @@ impl CharacterService {
     }
 
     /// Create a character with an avatar
-    pub async fn create_with_avatar(&self, dto: CreateWithAvatarDto) -> Result<CharacterDto, ApplicationError> {
-        logger::debug(&format!("Creating character with avatar: {}", dto.character.name));
+    pub async fn create_with_avatar(
+        &self,
+        dto: CreateWithAvatarDto,
+    ) -> Result<CharacterDto, ApplicationError> {
+        logger::debug(&format!(
+            "Creating character with avatar: {}",
+            dto.character.name
+        ));
 
         // Convert DTO to domain model
         let character = Character::from(dto.character);
@@ -66,16 +80,23 @@ impl CharacterService {
         let avatar_path_ref: Option<&Path> = dto.avatar_path.as_deref().map(Path::new);
 
         // Convert crop parameters
-        let crop = dto.crop.map(|c_dto| ImageCrop::from(c_dto)); 
+        let crop = dto.crop.map(|c_dto| ImageCrop::from(c_dto));
 
         // Create character with avatar
-        let created = self.repository.create_with_avatar(&character, avatar_path_ref, crop).await?;
+        let created = self
+            .repository
+            .create_with_avatar(&character, avatar_path_ref, crop)
+            .await?;
 
         Ok(CharacterDto::from(created))
     }
 
     /// Update a character
-    pub async fn update_character(&self, name: &str, dto: UpdateCharacterDto) -> Result<CharacterDto, ApplicationError> {
+    pub async fn update_character(
+        &self,
+        name: &str,
+        dto: UpdateCharacterDto,
+    ) -> Result<CharacterDto, ApplicationError> {
         logger::debug(&format!("Updating character: {}", name));
 
         // Get the existing character
@@ -155,7 +176,9 @@ impl CharacterService {
         }
 
         if let Some(extensions) = dto.extensions {
-            if let Ok(ext_map) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(extensions) {
+            if let Ok(ext_map) =
+                serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(extensions)
+            {
                 for (key, value) in ext_map {
                     character.data.extensions.additional.insert(key, value);
                 }
@@ -179,23 +202,40 @@ impl CharacterService {
     }
 
     /// Rename a character
-    pub async fn rename_character(&self, dto: RenameCharacterDto) -> Result<CharacterDto, ApplicationError> {
-        logger::debug(&format!("Renaming character: {} -> {}", dto.old_name, dto.new_name));
+    pub async fn rename_character(
+        &self,
+        dto: RenameCharacterDto,
+    ) -> Result<CharacterDto, ApplicationError> {
+        logger::debug(&format!(
+            "Renaming character: {} -> {}",
+            dto.old_name, dto.new_name
+        ));
         let character = self.repository.rename(&dto.old_name, &dto.new_name).await?;
         Ok(CharacterDto::from(character))
     }
 
     /// Import a character
-    pub async fn import_character(&self, dto: ImportCharacterDto) -> Result<CharacterDto, ApplicationError> {
+    pub async fn import_character(
+        &self,
+        dto: ImportCharacterDto,
+    ) -> Result<CharacterDto, ApplicationError> {
         logger::debug(&format!("Importing character from: {}", dto.file_path));
-        let character = self.repository.import_character(Path::new(&dto.file_path), dto.preserve_file_name).await?;
+        let character = self
+            .repository
+            .import_character(Path::new(&dto.file_path), dto.preserve_file_name)
+            .await?;
         Ok(CharacterDto::from(character))
     }
 
     /// Export a character
     pub async fn export_character(&self, dto: ExportCharacterDto) -> Result<(), ApplicationError> {
-        logger::debug(&format!("Exporting character: {} to {}", dto.name, dto.target_path));
-        self.repository.export_character(&dto.name, Path::new(&dto.target_path)).await?;
+        logger::debug(&format!(
+            "Exporting character: {} to {}",
+            dto.name, dto.target_path
+        ));
+        self.repository
+            .export_character(&dto.name, Path::new(&dto.target_path))
+            .await?;
         Ok(())
     }
 
@@ -203,14 +243,22 @@ impl CharacterService {
     pub async fn update_avatar(&self, dto: UpdateAvatarDto) -> Result<(), ApplicationError> {
         logger::debug(&format!("Updating avatar for character: {}", dto.name));
         let crop = dto.crop.map(|c_dto| ImageCrop::from(c_dto));
-        self.repository.update_avatar(&dto.name, Path::new(&dto.avatar_path), crop).await?;
+        self.repository
+            .update_avatar(&dto.name, Path::new(&dto.avatar_path), crop)
+            .await?;
         Ok(())
     }
 
     /// Get character chats
-    pub async fn get_character_chats(&self, dto: GetCharacterChatsDto) -> Result<Vec<CharacterChatDto>, ApplicationError> {
+    pub async fn get_character_chats(
+        &self,
+        dto: GetCharacterChatsDto,
+    ) -> Result<Vec<CharacterChatDto>, ApplicationError> {
         logger::debug(&format!("Getting chats for character: {}", dto.name));
-        let chats = self.repository.get_character_chats(&dto.name, dto.simple).await?;
+        let chats = self
+            .repository
+            .get_character_chats(&dto.name, dto.simple)
+            .await?;
         Ok(chats.into_iter().map(CharacterChatDto::from).collect())
     }
 
@@ -225,12 +273,16 @@ impl CharacterService {
     fn validate_character(&self, character: &Character) -> Result<(), DomainError> {
         // Check required fields
         if character.name.trim().is_empty() {
-            return Err(DomainError::InvalidData("Character name is required".to_string()));
+            return Err(DomainError::InvalidData(
+                "Character name is required".to_string(),
+            ));
         }
 
         // Check name length
         if character.name.len() > 100 {
-            return Err(DomainError::InvalidData("Character name is too long (max 100 characters)".to_string()));
+            return Err(DomainError::InvalidData(
+                "Character name is too long (max 100 characters)".to_string(),
+            ));
         }
 
         Ok(())

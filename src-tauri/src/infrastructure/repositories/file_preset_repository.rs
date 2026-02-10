@@ -1,17 +1,19 @@
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tauri::path::BaseDirectory;
 use tauri::AppHandle;
 use tauri::Manager;
-use tauri::path::BaseDirectory;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::preset::{Preset, PresetType, DefaultPreset, sanitize_filename};
-use crate::domain::repositories::preset_repository::PresetRepository;
+use crate::domain::models::preset::{sanitize_filename, DefaultPreset, Preset, PresetType};
 use crate::domain::repositories::content_repository::ContentRepository;
+use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file, delete_file, list_files_with_extension};
+use crate::infrastructure::persistence::file_system::{
+    delete_file, list_files_with_extension, read_json_file, write_json_file,
+};
 
 /// File-based implementation of the PresetRepository
 pub struct FilePresetRepository {
@@ -31,7 +33,11 @@ impl FilePresetRepository {
     /// * `app_handle` - Tauri app handle for path resolution
     /// * `user_dir` - Base user directory path
     /// * `content_repository` - Content repository for default presets
-    pub fn new(app_handle: AppHandle, user_dir: PathBuf, content_repository: Arc<dyn ContentRepository>) -> Self {
+    pub fn new(
+        app_handle: AppHandle,
+        user_dir: PathBuf,
+        content_repository: Arc<dyn ContentRepository>,
+    ) -> Self {
         Self {
             app_handle,
             user_dir,
@@ -54,10 +60,13 @@ impl FilePresetRepository {
     /// Ensure the preset directory exists
     async fn ensure_directory_exists(&self, preset_type: &PresetType) -> Result<(), DomainError> {
         let directory = self.get_preset_directory(preset_type);
-        
+
         if !directory.exists() {
             tokio::fs::create_dir_all(&directory).await.map_err(|e| {
-                logger::error(&format!("Failed to create preset directory {:?}: {}", directory, e));
+                logger::error(&format!(
+                    "Failed to create preset directory {:?}: {}",
+                    directory, e
+                ));
                 DomainError::InternalError(format!("Failed to create preset directory: {}", e))
             })?;
         }
@@ -66,8 +75,15 @@ impl FilePresetRepository {
     }
 
     /// Get default preset from content system
-    async fn get_default_preset_from_content(&self, name: &str, preset_type: &PresetType) -> Result<Option<DefaultPreset>, DomainError> {
-        logger::debug(&format!("Looking for default preset: {} (type: {})", name, preset_type));
+    async fn get_default_preset_from_content(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<Option<DefaultPreset>, DomainError> {
+        logger::debug(&format!(
+            "Looking for default preset: {} (type: {})",
+            name, preset_type
+        ));
 
         // Get content index
         let content_items = self.content_repository.get_content_index().await?;
@@ -76,14 +92,30 @@ impl FilePresetRepository {
         for item in content_items {
             // Check if this is a preset of the right type
             let item_preset_type = match item.content_type {
-                crate::domain::repositories::content_repository::ContentType::KoboldPreset => Some(PresetType::Kobold),
-                crate::domain::repositories::content_repository::ContentType::NovelPreset => Some(PresetType::Novel),
-                crate::domain::repositories::content_repository::ContentType::OpenAIPreset => Some(PresetType::OpenAI),
-                crate::domain::repositories::content_repository::ContentType::TextGenPreset => Some(PresetType::TextGen),
-                crate::domain::repositories::content_repository::ContentType::Instruct => Some(PresetType::Instruct),
-                crate::domain::repositories::content_repository::ContentType::Context => Some(PresetType::Context),
-                crate::domain::repositories::content_repository::ContentType::SysPrompt => Some(PresetType::SysPrompt),
-                crate::domain::repositories::content_repository::ContentType::Reasoning => Some(PresetType::Reasoning),
+                crate::domain::repositories::content_repository::ContentType::KoboldPreset => {
+                    Some(PresetType::Kobold)
+                }
+                crate::domain::repositories::content_repository::ContentType::NovelPreset => {
+                    Some(PresetType::Novel)
+                }
+                crate::domain::repositories::content_repository::ContentType::OpenAIPreset => {
+                    Some(PresetType::OpenAI)
+                }
+                crate::domain::repositories::content_repository::ContentType::TextGenPreset => {
+                    Some(PresetType::TextGen)
+                }
+                crate::domain::repositories::content_repository::ContentType::Instruct => {
+                    Some(PresetType::Instruct)
+                }
+                crate::domain::repositories::content_repository::ContentType::Context => {
+                    Some(PresetType::Context)
+                }
+                crate::domain::repositories::content_repository::ContentType::SysPrompt => {
+                    Some(PresetType::SysPrompt)
+                }
+                crate::domain::repositories::content_repository::ContentType::Reasoning => {
+                    Some(PresetType::Reasoning)
+                }
                 _ => None,
             };
 
@@ -97,11 +129,22 @@ impl FilePresetRepository {
 
                     if item_name == name {
                         // Found matching preset, load it
-                        let content_path = self.app_handle.path()
-                            .resolve(&format!("default/content/{}", item.filename), BaseDirectory::Resource)
+                        let content_path = self
+                            .app_handle
+                            .path()
+                            .resolve(
+                                &format!("default/content/{}", item.filename),
+                                BaseDirectory::Resource,
+                            )
                             .map_err(|e| {
-                                logger::error(&format!("Failed to resolve content path for {}: {}", item.filename, e));
-                                DomainError::InternalError(format!("Failed to resolve content path: {}", e))
+                                logger::error(&format!(
+                                    "Failed to resolve content path for {}: {}",
+                                    item.filename, e
+                                ));
+                                DomainError::InternalError(format!(
+                                    "Failed to resolve content path: {}",
+                                    e
+                                ))
                             })?;
 
                         let data: Value = read_json_file(&content_path).await?;
@@ -118,7 +161,10 @@ impl FilePresetRepository {
             }
         }
 
-        logger::debug(&format!("Default preset not found: {} (type: {})", name, preset_type));
+        logger::debug(&format!(
+            "Default preset not found: {} (type: {})",
+            name, preset_type
+        ));
         Ok(None)
     }
 }
@@ -126,7 +172,10 @@ impl FilePresetRepository {
 #[async_trait]
 impl PresetRepository for FilePresetRepository {
     async fn save_preset(&self, preset: &Preset) -> Result<(), DomainError> {
-        logger::debug(&format!("Saving preset: {} (type: {})", preset.name, preset.preset_type));
+        logger::debug(&format!(
+            "Saving preset: {} (type: {})",
+            preset.name, preset.preset_type
+        ));
 
         // Ensure directory exists
         self.ensure_directory_exists(&preset.preset_type).await?;
@@ -145,7 +194,10 @@ impl PresetRepository for FilePresetRepository {
     }
 
     async fn delete_preset(&self, name: &str, preset_type: &PresetType) -> Result<(), DomainError> {
-        logger::debug(&format!("Deleting preset: {} (type: {})", name, preset_type));
+        logger::debug(&format!(
+            "Deleting preset: {} (type: {})",
+            name, preset_type
+        ));
 
         let file_path = self.get_preset_path(name, preset_type);
 
@@ -159,12 +211,20 @@ impl PresetRepository for FilePresetRepository {
         Ok(())
     }
 
-    async fn preset_exists(&self, name: &str, preset_type: &PresetType) -> Result<bool, DomainError> {
+    async fn preset_exists(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<bool, DomainError> {
         let file_path = self.get_preset_path(name, preset_type);
         Ok(file_path.exists())
     }
 
-    async fn get_preset(&self, name: &str, preset_type: &PresetType) -> Result<Option<Preset>, DomainError> {
+    async fn get_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<Option<Preset>, DomainError> {
         logger::debug(&format!("Getting preset: {} (type: {})", name, preset_type));
 
         let file_path = self.get_preset_path(name, preset_type);
@@ -192,24 +252,38 @@ impl PresetRepository for FilePresetRepository {
 
         let files = list_files_with_extension(&directory, preset_type.extension()).await?;
 
-        let preset_names: Vec<String> = files.into_iter()
+        let preset_names: Vec<String> = files
+            .into_iter()
             .filter_map(|file_path| {
-                file_path.file_stem()
+                file_path
+                    .file_stem()
                     .and_then(|stem| stem.to_str())
                     .map(|s| s.to_string())
             })
             .collect();
 
-        logger::debug(&format!("Found {} presets of type {}", preset_names.len(), preset_type));
+        logger::debug(&format!(
+            "Found {} presets of type {}",
+            preset_names.len(),
+            preset_type
+        ));
 
         Ok(preset_names)
     }
 
-    async fn get_default_preset(&self, name: &str, preset_type: &PresetType) -> Result<Option<DefaultPreset>, DomainError> {
-        self.get_default_preset_from_content(name, preset_type).await
+    async fn get_default_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<Option<DefaultPreset>, DomainError> {
+        self.get_default_preset_from_content(name, preset_type)
+            .await
     }
 
-    async fn list_default_presets(&self, preset_type: &PresetType) -> Result<Vec<DefaultPreset>, DomainError> {
+    async fn list_default_presets(
+        &self,
+        preset_type: &PresetType,
+    ) -> Result<Vec<DefaultPreset>, DomainError> {
         logger::debug(&format!("Listing default presets of type: {}", preset_type));
 
         // Get content index
@@ -220,14 +294,30 @@ impl PresetRepository for FilePresetRepository {
         // Find all presets of the specified type
         for item in content_items {
             let item_preset_type = match item.content_type {
-                crate::domain::repositories::content_repository::ContentType::KoboldPreset => Some(PresetType::Kobold),
-                crate::domain::repositories::content_repository::ContentType::NovelPreset => Some(PresetType::Novel),
-                crate::domain::repositories::content_repository::ContentType::OpenAIPreset => Some(PresetType::OpenAI),
-                crate::domain::repositories::content_repository::ContentType::TextGenPreset => Some(PresetType::TextGen),
-                crate::domain::repositories::content_repository::ContentType::Instruct => Some(PresetType::Instruct),
-                crate::domain::repositories::content_repository::ContentType::Context => Some(PresetType::Context),
-                crate::domain::repositories::content_repository::ContentType::SysPrompt => Some(PresetType::SysPrompt),
-                crate::domain::repositories::content_repository::ContentType::Reasoning => Some(PresetType::Reasoning),
+                crate::domain::repositories::content_repository::ContentType::KoboldPreset => {
+                    Some(PresetType::Kobold)
+                }
+                crate::domain::repositories::content_repository::ContentType::NovelPreset => {
+                    Some(PresetType::Novel)
+                }
+                crate::domain::repositories::content_repository::ContentType::OpenAIPreset => {
+                    Some(PresetType::OpenAI)
+                }
+                crate::domain::repositories::content_repository::ContentType::TextGenPreset => {
+                    Some(PresetType::TextGen)
+                }
+                crate::domain::repositories::content_repository::ContentType::Instruct => {
+                    Some(PresetType::Instruct)
+                }
+                crate::domain::repositories::content_repository::ContentType::Context => {
+                    Some(PresetType::Context)
+                }
+                crate::domain::repositories::content_repository::ContentType::SysPrompt => {
+                    Some(PresetType::SysPrompt)
+                }
+                crate::domain::repositories::content_repository::ContentType::Reasoning => {
+                    Some(PresetType::Reasoning)
+                }
                 _ => None,
             };
 
@@ -240,11 +330,22 @@ impl PresetRepository for FilePresetRepository {
                         .unwrap_or(&item.filename);
 
                     // Load preset data
-                    let content_path = self.app_handle.path()
-                        .resolve(&format!("default/content/{}", item.filename), BaseDirectory::Resource)
+                    let content_path = self
+                        .app_handle
+                        .path()
+                        .resolve(
+                            &format!("default/content/{}", item.filename),
+                            BaseDirectory::Resource,
+                        )
                         .map_err(|e| {
-                            logger::error(&format!("Failed to resolve content path for {}: {}", item.filename, e));
-                            DomainError::InternalError(format!("Failed to resolve content path: {}", e))
+                            logger::error(&format!(
+                                "Failed to resolve content path for {}: {}",
+                                item.filename, e
+                            ));
+                            DomainError::InternalError(format!(
+                                "Failed to resolve content path: {}",
+                                e
+                            ))
                         })?;
 
                     match read_json_file::<Value>(&content_path).await {
@@ -258,14 +359,21 @@ impl PresetRepository for FilePresetRepository {
                             });
                         }
                         Err(e) => {
-                            logger::warn(&format!("Failed to load default preset {}: {}", item.filename, e));
+                            logger::warn(&format!(
+                                "Failed to load default preset {}: {}",
+                                item.filename, e
+                            ));
                         }
                     }
                 }
             }
         }
 
-        logger::debug(&format!("Found {} default presets of type {}", default_presets.len(), preset_type));
+        logger::debug(&format!(
+            "Found {} default presets of type {}",
+            default_presets.len(),
+            preset_type
+        ));
 
         Ok(default_presets)
     }

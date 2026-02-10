@@ -1,12 +1,12 @@
-use std::sync::Arc;
 use serde_json::Value;
+use std::sync::Arc;
 
-use crate::domain::repositories::settings_repository::SettingsRepository;
 use crate::application::dto::settings_dto::{
-    AppSettingsDto, UpdateAppSettingsDto, UserSettingsDto,
-    SettingsSnapshotDto, SillyTavernSettingsResponseDto
+    AppSettingsDto, SettingsSnapshotDto, SillyTavernSettingsResponseDto, UpdateAppSettingsDto,
+    UserSettingsDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::domain::repositories::settings_repository::SettingsRepository;
 use crate::infrastructure::logging::logger;
 
 pub struct SettingsService {
@@ -28,7 +28,10 @@ impl SettingsService {
         Ok(AppSettingsDto::from(settings))
     }
 
-    pub async fn update_settings(&self, dto: UpdateAppSettingsDto) -> Result<AppSettingsDto, ApplicationError> {
+    pub async fn update_settings(
+        &self,
+        dto: UpdateAppSettingsDto,
+    ) -> Result<AppSettingsDto, ApplicationError> {
         tracing::info!("Updating application settings");
 
         let mut settings = self.settings_repository.load().await?;
@@ -58,35 +61,47 @@ impl SettingsService {
     // SillyTavern 设置 API
 
     /// 保存用户设置
-    pub async fn save_user_settings(&self, settings: UserSettingsDto) -> Result<(), ApplicationError> {
+    pub async fn save_user_settings(
+        &self,
+        settings: UserSettingsDto,
+    ) -> Result<(), ApplicationError> {
         tracing::info!("Saving user settings");
 
         let user_settings = settings.into();
-        self.settings_repository.save_user_settings(&user_settings).await?;
+        self.settings_repository
+            .save_user_settings(&user_settings)
+            .await?;
 
         Ok(())
     }
 
     /// 获取 SillyTavern 设置
-    pub async fn get_sillytavern_settings(&self) -> Result<SillyTavernSettingsResponseDto, ApplicationError> {
+    pub async fn get_sillytavern_settings(
+        &self,
+    ) -> Result<SillyTavernSettingsResponseDto, ApplicationError> {
         tracing::info!("Getting SillyTavern settings");
 
         // 加载用户设置
         let user_settings = self.settings_repository.load_user_settings().await?;
-        let settings_json = serde_json::to_string(&user_settings.data)
-            .map_err(|e| ApplicationError::InternalError(format!("Failed to serialize settings: {}", e)))?;
+        let settings_json = serde_json::to_string(&user_settings.data).map_err(|e| {
+            ApplicationError::InternalError(format!("Failed to serialize settings: {}", e))
+        })?;
 
         // 获取 KoboldAI 设置
-        let (koboldai_settings, koboldai_setting_names) = self.settings_repository.get_koboldai_settings().await?;
+        let (koboldai_settings, koboldai_setting_names) =
+            self.settings_repository.get_koboldai_settings().await?;
 
         // 获取 NovelAI 设置
-        let (novelai_settings, novelai_setting_names) = self.settings_repository.get_novelai_settings().await?;
+        let (novelai_settings, novelai_setting_names) =
+            self.settings_repository.get_novelai_settings().await?;
 
         // 获取 OpenAI 设置
-        let (openai_settings, openai_setting_names) = self.settings_repository.get_openai_settings().await?;
+        let (openai_settings, openai_setting_names) =
+            self.settings_repository.get_openai_settings().await?;
 
         // 获取 TextGen 设置
-        let (textgen_settings, textgen_setting_names) = self.settings_repository.get_textgen_settings().await?;
+        let (textgen_settings, textgen_setting_names) =
+            self.settings_repository.get_textgen_settings().await?;
 
         // 获取世界名称
         let world_names = self.settings_repository.get_world_names().await?;
@@ -97,27 +112,33 @@ impl SettingsService {
 
         // 获取 MovingUI 预设
         let moving_ui_presets = self.settings_repository.get_moving_ui_presets().await?;
-        let moving_ui_presets_json: Vec<Value> = moving_ui_presets.into_iter().map(|p| p.data).collect();
+        let moving_ui_presets_json: Vec<Value> =
+            moving_ui_presets.into_iter().map(|p| p.data).collect();
 
         // 获取快速回复预设
         let quick_reply_presets = self.settings_repository.get_quick_reply_presets().await?;
-        let quick_reply_presets_json: Vec<Value> = quick_reply_presets.into_iter().map(|p| p.data).collect();
+        let quick_reply_presets_json: Vec<Value> =
+            quick_reply_presets.into_iter().map(|p| p.data).collect();
 
         // 获取指令预设
         let instruct_presets = self.settings_repository.get_instruct_presets().await?;
-        let instruct_presets_json: Vec<Value> = instruct_presets.into_iter().map(|p| p.data).collect();
+        let instruct_presets_json: Vec<Value> =
+            instruct_presets.into_iter().map(|p| p.data).collect();
 
         // 获取上下文预设
         let context_presets = self.settings_repository.get_context_presets().await?;
-        let context_presets_json: Vec<Value> = context_presets.into_iter().map(|p| p.data).collect();
+        let context_presets_json: Vec<Value> =
+            context_presets.into_iter().map(|p| p.data).collect();
 
         // 获取系统提示预设
         let sysprompt_presets = self.settings_repository.get_sysprompt_presets().await?;
-        let sysprompt_presets_json: Vec<Value> = sysprompt_presets.into_iter().map(|p| p.data).collect();
+        let sysprompt_presets_json: Vec<Value> =
+            sysprompt_presets.into_iter().map(|p| p.data).collect();
 
         // 获取推理预设
         let reasoning_presets = self.settings_repository.get_reasoning_presets().await?;
-        let reasoning_presets_json: Vec<Value> = reasoning_presets.into_iter().map(|p| p.data).collect();
+        let reasoning_presets_json: Vec<Value> =
+            reasoning_presets.into_iter().map(|p| p.data).collect();
 
         // 构建响应
         let response = SillyTavernSettingsResponseDto {
@@ -138,9 +159,9 @@ impl SettingsService {
             context: context_presets_json,
             sysprompt: sysprompt_presets_json,
             reasoning: reasoning_presets_json,
-            enable_extensions: true, // 默认启用扩展
+            enable_extensions: true,             // 默认启用扩展
             enable_extensions_auto_update: true, // 默认启用扩展自动更新
-            enable_accounts: false, // 默认禁用账户
+            enable_accounts: false,              // 默认禁用账户
         };
 
         Ok(response)
@@ -160,7 +181,10 @@ impl SettingsService {
         tracing::info!("Getting settings snapshots");
 
         let snapshots = self.settings_repository.get_snapshots().await?;
-        let snapshot_dtos = snapshots.into_iter().map(SettingsSnapshotDto::from).collect();
+        let snapshot_dtos = snapshots
+            .into_iter()
+            .map(SettingsSnapshotDto::from)
+            .collect();
 
         Ok(snapshot_dtos)
     }

@@ -78,7 +78,11 @@ impl FileAvatarRepository {
         }
 
         // Resize the image to the standard avatar dimensions
-        let resized_img = img.resize_exact(AVATAR_WIDTH, AVATAR_HEIGHT, image::imageops::FilterType::Lanczos3);
+        let resized_img = img.resize_exact(
+            AVATAR_WIDTH,
+            AVATAR_HEIGHT,
+            image::imageops::FilterType::Lanczos3,
+        );
 
         // Convert the image to PNG format
         let mut buffer = Vec::new();
@@ -154,12 +158,10 @@ impl AvatarRepository for FileAvatarRepository {
         }
 
         // Delete the avatar file
-        tokio_fs::remove_file(&avatar_path)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to delete avatar: {}", e);
-                DomainError::InternalError(format!("Failed to delete avatar: {}", e))
-            })?;
+        tokio_fs::remove_file(&avatar_path).await.map_err(|e| {
+            tracing::error!("Failed to delete avatar: {}", e);
+            DomainError::InternalError(format!("Failed to delete avatar: {}", e))
+        })?;
 
         tracing::info!("Avatar deleted: {}", avatar_name);
         Ok(())

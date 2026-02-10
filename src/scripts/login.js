@@ -1,3 +1,5 @@
+import { initAccessibility } from './a11y.js';
+
 /**
  * CRSF token for requests.
  */
@@ -9,9 +11,26 @@ let discreetLogin = false;
  * @returns {Promise<string>} CSRF token
  */
 async function getCsrfToken() {
-    const response = await fetch('/csrf-token');
-    const data = await response.json();
-    return data.token;
+    try {
+        const response = await fetch('/csrf-token');
+        if (!response.ok) {
+            throw new Error(`CSRF request failed with status ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (typeof data?.token !== 'string' || !data.token) {
+            throw new Error('CSRF token is missing');
+        }
+
+        return data.token;
+    } catch (error) {
+        if (window.__TAURI_INTERNALS__ !== undefined) {
+            console.warn('CSRF token unavailable in Tauri login flow; using fallback token.', error);
+            return 'tauri-dummy-token';
+        }
+
+        throw error;
+    }
 }
 
 /**
@@ -265,6 +284,8 @@ function configureDiscreetLogin() {
 }
 
 (async function () {
+    initAccessibility();
+
     csrfToken = await getCsrfToken();
     const userList = await getUserList();
 

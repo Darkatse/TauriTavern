@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use crate::domain::errors::DomainError;
-use crate::domain::models::preset::{Preset, PresetType, DefaultPreset};
+use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::infrastructure::logging::logger;
+use std::sync::Arc;
 
 /// Service for managing presets
 pub struct PresetService {
@@ -12,9 +12,7 @@ pub struct PresetService {
 impl PresetService {
     /// Create a new PresetService
     pub fn new(preset_repository: Arc<dyn PresetRepository>) -> Self {
-        Self {
-            preset_repository,
-        }
+        Self { preset_repository }
     }
 
     /// Save a preset
@@ -27,7 +25,10 @@ impl PresetService {
     ///
     /// * `Result<(), DomainError>` - Success or error
     pub async fn save_preset(&self, preset: &Preset) -> Result<(), DomainError> {
-        logger::debug(&format!("Saving preset: {} (type: {})", preset.name, preset.preset_type));
+        logger::debug(&format!(
+            "Saving preset: {} (type: {})",
+            preset.name, preset.preset_type
+        ));
 
         // Validate the preset
         preset.validate().map_err(|e| {
@@ -52,17 +53,33 @@ impl PresetService {
     /// # Returns
     ///
     /// * `Result<(), DomainError>` - Success or error
-    pub async fn delete_preset(&self, name: &str, preset_type: &PresetType) -> Result<(), DomainError> {
-        logger::debug(&format!("Deleting preset: {} (type: {})", name, preset_type));
+    pub async fn delete_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<(), DomainError> {
+        logger::debug(&format!(
+            "Deleting preset: {} (type: {})",
+            name, preset_type
+        ));
 
         // Check if preset exists
-        if !self.preset_repository.preset_exists(name, preset_type).await? {
-            logger::warn(&format!("Preset not found for deletion: {} (type: {})", name, preset_type));
+        if !self
+            .preset_repository
+            .preset_exists(name, preset_type)
+            .await?
+        {
+            logger::warn(&format!(
+                "Preset not found for deletion: {} (type: {})",
+                name, preset_type
+            ));
             return Err(DomainError::NotFound(format!("Preset not found: {}", name)));
         }
 
         // Delete the preset
-        self.preset_repository.delete_preset(name, preset_type).await?;
+        self.preset_repository
+            .delete_preset(name, preset_type)
+            .await?;
 
         logger::info(&format!("Preset deleted successfully: {}", name));
         Ok(())
@@ -78,7 +95,11 @@ impl PresetService {
     /// # Returns
     ///
     /// * `Result<Option<Preset>, DomainError>` - The preset if found, None otherwise
-    pub async fn get_preset(&self, name: &str, preset_type: &PresetType) -> Result<Option<Preset>, DomainError> {
+    pub async fn get_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<Option<Preset>, DomainError> {
         logger::debug(&format!("Getting preset: {} (type: {})", name, preset_type));
 
         let preset = self.preset_repository.get_preset(name, preset_type).await?;
@@ -106,7 +127,11 @@ impl PresetService {
 
         let presets = self.preset_repository.list_presets(preset_type).await?;
 
-        logger::debug(&format!("Found {} presets of type {}", presets.len(), preset_type));
+        logger::debug(&format!(
+            "Found {} presets of type {}",
+            presets.len(),
+            preset_type
+        ));
 
         Ok(presets)
     }
@@ -121,10 +146,20 @@ impl PresetService {
     /// # Returns
     ///
     /// * `Result<Option<DefaultPreset>, DomainError>` - The default preset if found, None otherwise
-    pub async fn restore_default_preset(&self, name: &str, preset_type: &PresetType) -> Result<Option<DefaultPreset>, DomainError> {
-        logger::debug(&format!("Restoring default preset: {} (type: {})", name, preset_type));
+    pub async fn restore_default_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<Option<DefaultPreset>, DomainError> {
+        logger::debug(&format!(
+            "Restoring default preset: {} (type: {})",
+            name, preset_type
+        ));
 
-        let default_preset = self.preset_repository.get_default_preset(name, preset_type).await?;
+        let default_preset = self
+            .preset_repository
+            .get_default_preset(name, preset_type)
+            .await?;
 
         if default_preset.is_some() {
             logger::info(&format!("Default preset found for restoration: {}", name));
@@ -144,12 +179,22 @@ impl PresetService {
     /// # Returns
     ///
     /// * `Result<Vec<DefaultPreset>, DomainError>` - List of default presets
-    pub async fn list_default_presets(&self, preset_type: &PresetType) -> Result<Vec<DefaultPreset>, DomainError> {
+    pub async fn list_default_presets(
+        &self,
+        preset_type: &PresetType,
+    ) -> Result<Vec<DefaultPreset>, DomainError> {
         logger::debug(&format!("Listing default presets of type: {}", preset_type));
 
-        let default_presets = self.preset_repository.list_default_presets(preset_type).await?;
+        let default_presets = self
+            .preset_repository
+            .list_default_presets(preset_type)
+            .await?;
 
-        logger::debug(&format!("Found {} default presets of type {}", default_presets.len(), preset_type));
+        logger::debug(&format!(
+            "Found {} default presets of type {}",
+            default_presets.len(),
+            preset_type
+        ));
 
         Ok(default_presets)
     }
@@ -164,10 +209,20 @@ impl PresetService {
     /// # Returns
     ///
     /// * `Result<bool, DomainError>` - True if preset exists, false otherwise
-    pub async fn preset_exists(&self, name: &str, preset_type: &PresetType) -> Result<bool, DomainError> {
-        logger::debug(&format!("Checking if preset exists: {} (type: {})", name, preset_type));
+    pub async fn preset_exists(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<bool, DomainError> {
+        logger::debug(&format!(
+            "Checking if preset exists: {} (type: {})",
+            name, preset_type
+        ));
 
-        let exists = self.preset_repository.preset_exists(name, preset_type).await?;
+        let exists = self
+            .preset_repository
+            .preset_exists(name, preset_type)
+            .await?;
 
         logger::debug(&format!("Preset {} exists: {}", name, exists));
 
@@ -185,14 +240,18 @@ impl PresetService {
     /// # Returns
     ///
     /// * `Result<Preset, DomainError>` - The created preset
-    pub fn create_preset(&self, name: String, api_id: &str, data: serde_json::Value) -> Result<Preset, DomainError> {
+    pub fn create_preset(
+        &self,
+        name: String,
+        api_id: &str,
+        data: serde_json::Value,
+    ) -> Result<Preset, DomainError> {
         logger::debug(&format!("Creating preset: {} (api_id: {})", name, api_id));
 
-        let preset_type = PresetType::from_api_id(api_id)
-            .ok_or_else(|| {
-                logger::error(&format!("Unknown API ID: {}", api_id));
-                DomainError::InvalidData(format!("Unknown API ID: {}", api_id))
-            })?;
+        let preset_type = PresetType::from_api_id(api_id).ok_or_else(|| {
+            logger::error(&format!("Unknown API ID: {}", api_id));
+            DomainError::InvalidData(format!("Unknown API ID: {}", api_id))
+        })?;
 
         let preset = Preset::new(name, preset_type, data);
 
@@ -212,9 +271,9 @@ impl PresetService {
 mod tests {
     use super::*;
     use crate::domain::models::preset::PresetType;
+    use async_trait::async_trait;
     use serde_json::json;
     use std::collections::HashMap;
-    use async_trait::async_trait;
 
     // Mock repository for testing
     struct MockPresetRepository {
@@ -233,40 +292,65 @@ mod tests {
     impl PresetRepository for MockPresetRepository {
         async fn save_preset(&self, preset: &Preset) -> Result<(), DomainError> {
             let mut presets = self.presets.lock().unwrap();
-            presets.insert((preset.name.clone(), preset.preset_type.clone()), preset.clone());
+            presets.insert(
+                (preset.name.clone(), preset.preset_type.clone()),
+                preset.clone(),
+            );
             Ok(())
         }
 
-        async fn delete_preset(&self, name: &str, preset_type: &PresetType) -> Result<(), DomainError> {
+        async fn delete_preset(
+            &self,
+            name: &str,
+            preset_type: &PresetType,
+        ) -> Result<(), DomainError> {
             let mut presets = self.presets.lock().unwrap();
             presets.remove(&(name.to_string(), preset_type.clone()));
             Ok(())
         }
 
-        async fn preset_exists(&self, name: &str, preset_type: &PresetType) -> Result<bool, DomainError> {
+        async fn preset_exists(
+            &self,
+            name: &str,
+            preset_type: &PresetType,
+        ) -> Result<bool, DomainError> {
             let presets = self.presets.lock().unwrap();
             Ok(presets.contains_key(&(name.to_string(), preset_type.clone())))
         }
 
-        async fn get_preset(&self, name: &str, preset_type: &PresetType) -> Result<Option<Preset>, DomainError> {
+        async fn get_preset(
+            &self,
+            name: &str,
+            preset_type: &PresetType,
+        ) -> Result<Option<Preset>, DomainError> {
             let presets = self.presets.lock().unwrap();
-            Ok(presets.get(&(name.to_string(), preset_type.clone())).cloned())
+            Ok(presets
+                .get(&(name.to_string(), preset_type.clone()))
+                .cloned())
         }
 
         async fn list_presets(&self, preset_type: &PresetType) -> Result<Vec<String>, DomainError> {
             let presets = self.presets.lock().unwrap();
-            let names: Vec<String> = presets.keys()
+            let names: Vec<String> = presets
+                .keys()
                 .filter(|(_, t)| t == preset_type)
                 .map(|(name, _)| name.clone())
                 .collect();
             Ok(names)
         }
 
-        async fn get_default_preset(&self, _name: &str, _preset_type: &PresetType) -> Result<Option<DefaultPreset>, DomainError> {
+        async fn get_default_preset(
+            &self,
+            _name: &str,
+            _preset_type: &PresetType,
+        ) -> Result<Option<DefaultPreset>, DomainError> {
             Ok(None)
         }
 
-        async fn list_default_presets(&self, _preset_type: &PresetType) -> Result<Vec<DefaultPreset>, DomainError> {
+        async fn list_default_presets(
+            &self,
+            _preset_type: &PresetType,
+        ) -> Result<Vec<DefaultPreset>, DomainError> {
             Ok(vec![])
         }
     }
@@ -286,7 +370,10 @@ mod tests {
         service.save_preset(&preset).await.unwrap();
 
         // Get preset
-        let retrieved = service.get_preset("Test Preset", &PresetType::OpenAI).await.unwrap();
+        let retrieved = service
+            .get_preset("Test Preset", &PresetType::OpenAI)
+            .await
+            .unwrap();
         assert!(retrieved.is_some());
 
         let retrieved = retrieved.unwrap();
@@ -309,13 +396,22 @@ mod tests {
         service.save_preset(&preset).await.unwrap();
 
         // Verify it exists
-        assert!(service.preset_exists("Test Preset", &PresetType::OpenAI).await.unwrap());
+        assert!(service
+            .preset_exists("Test Preset", &PresetType::OpenAI)
+            .await
+            .unwrap());
 
         // Delete preset
-        service.delete_preset("Test Preset", &PresetType::OpenAI).await.unwrap();
+        service
+            .delete_preset("Test Preset", &PresetType::OpenAI)
+            .await
+            .unwrap();
 
         // Verify it's gone
-        assert!(!service.preset_exists("Test Preset", &PresetType::OpenAI).await.unwrap());
+        assert!(!service
+            .preset_exists("Test Preset", &PresetType::OpenAI)
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -323,11 +419,13 @@ mod tests {
         let repository = Arc::new(MockPresetRepository::new());
         let service = PresetService::new(repository);
 
-        let preset = service.create_preset(
-            "Test Preset".to_string(),
-            "openai",
-            json!({"temperature": 0.7}),
-        ).unwrap();
+        let preset = service
+            .create_preset(
+                "Test Preset".to_string(),
+                "openai",
+                json!({"temperature": 0.7}),
+            )
+            .unwrap();
 
         assert_eq!(preset.name, "Test Preset");
         assert_eq!(preset.preset_type, PresetType::OpenAI);

@@ -1,18 +1,20 @@
+use async_trait::async_trait;
+use serde_json::Value;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::collections::HashMap;
-use async_trait::async_trait;
 use tokio::fs;
 use tokio::sync::Mutex;
-use serde_json::Value;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::settings::{AppSettings, UserSettings, SettingsSnapshot};
+use crate::domain::models::settings::{AppSettings, SettingsSnapshot, UserSettings};
 use crate::domain::models::user_directory::UserDirectory;
 use crate::domain::repositories::settings_repository::SettingsRepository;
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file, list_files_with_extension};
+use crate::infrastructure::persistence::file_system::{
+    list_files_with_extension, read_json_file, write_json_file,
+};
 
 pub struct FileSettingsRepository {
     settings_file: PathBuf,
@@ -44,7 +46,10 @@ impl FileSettingsRepository {
                 tracing::info!("Creating settings directory: {:?}", parent);
                 fs::create_dir_all(parent).await.map_err(|e| {
                     tracing::error!("Failed to create settings directory: {}", e);
-                    DomainError::InternalError(format!("Failed to create settings directory: {}", e))
+                    DomainError::InternalError(format!(
+                        "Failed to create settings directory: {}",
+                        e
+                    ))
                 })?;
             }
         }
@@ -75,21 +80,26 @@ impl FileSettingsRepository {
     }
 
     /// 从目录中读取 JSON 文件列表
-    async fn read_json_files_from_directory(&self, dir: &Path) -> Result<Vec<UserSettings>, DomainError> {
+    async fn read_json_files_from_directory(
+        &self,
+        dir: &Path,
+    ) -> Result<Vec<UserSettings>, DomainError> {
         let mut result = Vec::new();
 
         if !dir.exists() {
             return Ok(result);
         }
 
-        let mut entries = fs::read_dir(dir).await
-            .map_err(|e| DomainError::InternalError(format!("Failed to read directory {}: {}", dir.display(), e)))?;
+        let mut entries = fs::read_dir(dir).await.map_err(|e| {
+            DomainError::InternalError(format!("Failed to read directory {}: {}", dir.display(), e))
+        })?;
 
         let mut entries_vec = Vec::new();
 
         // 收集所有条目
-        while let Some(entry) = entries.next_entry().await
-            .map_err(|e| DomainError::InternalError(format!("Failed to read directory entry: {}", e)))? {
+        while let Some(entry) = entries.next_entry().await.map_err(|e| {
+            DomainError::InternalError(format!("Failed to read directory entry: {}", e))
+        })? {
             entries_vec.push(entry);
         }
 
@@ -101,9 +111,13 @@ impl FileSettingsRepository {
                 match read_json_file::<UserSettings>(&path).await {
                     Ok(settings) => {
                         result.push(settings);
-                    },
+                    }
                     Err(e) => {
-                        logger::warn(&format!("Failed to read settings file {}: {}", path.display(), e));
+                        logger::warn(&format!(
+                            "Failed to read settings file {}: {}",
+                            path.display(),
+                            e
+                        ));
                         // 继续处理其他文件
                     }
                 }
@@ -114,13 +128,19 @@ impl FileSettingsRepository {
     }
 
     /// 从目录中读取预设文件
-    async fn read_presets_from_directory(&self, dir_name: &str) -> Result<Vec<UserSettings>, DomainError> {
+    async fn read_presets_from_directory(
+        &self,
+        dir_name: &str,
+    ) -> Result<Vec<UserSettings>, DomainError> {
         let dir = self.base_directory.join(dir_name);
         self.read_json_files_from_directory(&dir).await
     }
 
     /// 从目录中读取 AI 设置
-    async fn read_ai_settings(&self, dir_name: &str) -> Result<(Vec<String>, Vec<String>), DomainError> {
+    async fn read_ai_settings(
+        &self,
+        dir_name: &str,
+    ) -> Result<(Vec<String>, Vec<String>), DomainError> {
         let dir = self.base_directory.join(dir_name);
 
         if !dir.exists() {
@@ -133,9 +153,13 @@ impl FileSettingsRepository {
         let mut names = Vec::new();
 
         for file in files {
-            let file_name = file.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-            let content = fs::read_to_string(&file).await
-                .map_err(|e| DomainError::InternalError(format!("Failed to read file {}: {}", file.display(), e)))?;
+            let file_name = file
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
+            let content = fs::read_to_string(&file).await.map_err(|e| {
+                DomainError::InternalError(format!("Failed to read file {}: {}", file.display(), e))
+            })?;
 
             settings.push(content);
             names.push(file_name.to_string());
@@ -190,7 +214,10 @@ impl SettingsRepository for FileSettingsRepository {
     async fn save_user_settings(&self, settings: &UserSettings) -> Result<(), DomainError> {
         self.ensure_directory_exists().await?;
 
-        tracing::info!("Saving user settings to {}", self.user_settings_file.display());
+        tracing::info!(
+            "Saving user settings to {}",
+            self.user_settings_file.display()
+        );
         write_json_file(&self.user_settings_file, settings).await?;
 
         // Update cache
@@ -217,7 +244,10 @@ impl SettingsRepository for FileSettingsRepository {
             return Ok(default_settings);
         }
 
-        tracing::info!("Loading user settings from {}", self.user_settings_file.display());
+        tracing::info!(
+            "Loading user settings from {}",
+            self.user_settings_file.display()
+        );
         let settings = read_json_file::<UserSettings>(&self.user_settings_file).await?;
 
         // Update cache
@@ -254,24 +284,32 @@ impl SettingsRepository for FileSettingsRepository {
         let mut snapshots = Vec::new();
 
         // 读取快照目录
-        let mut entries = fs::read_dir(&snapshots_dir).await
-            .map_err(|e| DomainError::InternalError(format!("Failed to read snapshots directory: {}", e)))?;
+        let mut entries = fs::read_dir(&snapshots_dir).await.map_err(|e| {
+            DomainError::InternalError(format!("Failed to read snapshots directory: {}", e))
+        })?;
 
         // 处理每个条目
-        while let Some(entry) = entries.next_entry().await
-            .map_err(|e| DomainError::InternalError(format!("Failed to read directory entry: {}", e)))? {
-
+        while let Some(entry) = entries.next_entry().await.map_err(|e| {
+            DomainError::InternalError(format!("Failed to read directory entry: {}", e))
+        })? {
             let path = entry.path();
 
             if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
-                let file_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+                let file_name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default();
 
                 // 解析时间戳
                 if let Some(timestamp_str) = file_name.strip_prefix("settings_") {
                     if let Ok(timestamp) = timestamp_str.parse::<i64>() {
                         // 获取文件大小
-                        let metadata = fs::metadata(&path).await
-                            .map_err(|e| DomainError::InternalError(format!("Failed to get file metadata: {}", e)))?;
+                        let metadata = fs::metadata(&path).await.map_err(|e| {
+                            DomainError::InternalError(format!(
+                                "Failed to get file metadata: {}",
+                                e
+                            ))
+                        })?;
 
                         snapshots.push(SettingsSnapshot {
                             date: timestamp,
@@ -298,7 +336,10 @@ impl SettingsRepository for FileSettingsRepository {
 
         // 检查文件是否存在
         if !snapshot_file.exists() {
-            return Err(DomainError::NotFound(format!("Snapshot {} not found", name)));
+            return Err(DomainError::NotFound(format!(
+                "Snapshot {} not found",
+                name
+            )));
         }
 
         // 读取快照文件
@@ -375,14 +416,15 @@ impl SettingsRepository for FileSettingsRepository {
             return Ok(Vec::new());
         }
 
-        let mut entries = fs::read_dir(&worlds_dir).await
-            .map_err(|e| DomainError::InternalError(format!("Failed to read worlds directory: {}", e)))?;
+        let mut entries = fs::read_dir(&worlds_dir).await.map_err(|e| {
+            DomainError::InternalError(format!("Failed to read worlds directory: {}", e))
+        })?;
 
         let mut world_names = Vec::new();
 
-        while let Some(entry) = entries.next_entry().await
-            .map_err(|e| DomainError::InternalError(format!("Failed to read directory entry: {}", e)))? {
-
+        while let Some(entry) = entries.next_entry().await.map_err(|e| {
+            DomainError::InternalError(format!("Failed to read directory entry: {}", e))
+        })? {
             let path = entry.path();
 
             if path.is_dir() {

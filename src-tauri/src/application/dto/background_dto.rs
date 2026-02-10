@@ -1,12 +1,12 @@
-use serde::{Serialize, Deserialize};
 use crate::domain::models::background::Background;
+use serde::{Deserialize, Serialize};
 
 /// DTO for background image response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackgroundDto {
     /// The filename of the background image
     pub filename: String,
-    
+
     /// The path to the background image
     pub path: String,
 }
@@ -23,7 +23,7 @@ pub struct DeleteBackgroundDto {
 pub struct RenameBackgroundDto {
     /// The current filename of the background image
     pub old_bg: String,
-    
+
     /// The new filename for the background image
     pub new_bg: String,
 }

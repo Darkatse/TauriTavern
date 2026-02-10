@@ -4,7 +4,7 @@ import {
 import { chat, closeMessageEditor, event_types, eventSource, main_api, messageFormatting, saveChatConditional, saveChatDebounced, saveSettingsDebounced, substituteParams, syncMesToSwipe, updateMessageBlock } from '../script.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { getCurrentLocale, t, translate } from './i18n.js';
-import { MacrosParser } from './macros.js';
+import { macros, MacroCategory } from './macros/macro-system.js';
 import { chat_completion_sources, getChatCompletionModel, oai_settings } from './openai.js';
 import { Popup } from './popup.js';
 import { performFuzzySearch, power_user } from './power-user.js';
@@ -15,6 +15,7 @@ import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCom
 import { enumTypes, SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { textgen_types, textgenerationwebui_settings } from './textgen-settings.js';
+import { applyStreamFadeIn } from './util/stream-fadein.js';
 import { copyText, escapeRegex, isFalseBoolean, isTrueBoolean, setDatasetProperty, trimSpaces } from './utils.js';
 
 /**
@@ -50,8 +51,8 @@ const UI = {
 
 /**
  * Enum representing the type of the reasoning for a message (where it came from)
- * @enum {string}
  * @readonly
+ * @enum {string}
  */
 export const ReasoningType = {
     Model: 'model',
@@ -100,6 +101,8 @@ export function extractReasoningFromData(data, {
             switch (textGenType ?? textgenerationwebui_settings.type) {
                 case textgen_types.OPENROUTER:
                     return data?.choices?.[0]?.reasoning ?? '';
+                case textgen_types.OLLAMA:
+                    return data?.thinking ?? '';
             }
             break;
 
@@ -114,9 +117,21 @@ export function extractReasoningFromData(data, {
                 case chat_completion_sources.OPENROUTER:
                     return data?.choices?.[0]?.message?.reasoning ?? '';
                 case chat_completion_sources.MAKERSUITE:
+                case chat_completion_sources.VERTEXAI:
                     return data?.responseContent?.parts?.filter(part => part.thought)?.map(part => part.text)?.join('\n\n') ?? '';
                 case chat_completion_sources.CLAUDE:
                     return data?.content?.find(part => part.type === 'thinking')?.thinking ?? '';
+                case chat_completion_sources.MISTRALAI:
+                    return data?.choices?.[0]?.message?.content?.[0]?.thinking?.map(part => part.text)?.filter(x => x)?.join('\n\n') ?? '';
+                case chat_completion_sources.AIMLAPI:
+                case chat_completion_sources.POLLINATIONS:
+                case chat_completion_sources.MOONSHOT:
+                case chat_completion_sources.COMETAPI:
+                case chat_completion_sources.CHUTES:
+                case chat_completion_sources.ELECTRONHUB:
+                case chat_completion_sources.NANOGPT:
+                case chat_completion_sources.SILICONFLOW:
+                case chat_completion_sources.ZAI:
                 case chat_completion_sources.CUSTOM: {
                     return data?.choices?.[0]?.message?.reasoning_content
                         ?? data?.choices?.[0]?.message?.reasoning
@@ -127,6 +142,53 @@ export function extractReasoningFromData(data, {
     }
 
     return '';
+}
+
+/**
+ * Extracts encrypted reasoning signature from the response data.
+ * These signatures are used to maintain reasoning context across multi-turn conversations.
+ * @param {object} data Response data
+ * @param {object} [options] Optional parameters
+ * @param {string|null} [options.mainApi] Override for main API
+ * @param {string|null} [options.chatCompletionSource] Override for chat completion source
+ * @returns {string?} Encrypted signature of the reasoning text
+ */
+export function extractReasoningSignatureFromData(data, {
+    mainApi = null,
+    chatCompletionSource = null,
+} = {}) {
+    // Only Gemini models use thought signatures (via MakerSuite/VertexAI or OpenRouter)
+    if ((mainApi ?? main_api) !== 'openai') {
+        return null;
+    }
+
+    const source = chatCompletionSource ?? oai_settings.chat_completion_source;
+    const isGemini = source === chat_completion_sources.MAKERSUITE || source === chat_completion_sources.VERTEXAI;
+    const isOpenRouter = source === chat_completion_sources.OPENROUTER;
+
+    if (!isGemini && !isOpenRouter) {
+        return null;
+    }
+
+    // OpenRouter format: reasoning_details array with type "reasoning.encrypted" (exclude tool calls)
+    if (isOpenRouter && Array.isArray(data?.choices?.[0]?.message?.reasoning_details)) {
+        for (const detail of data.choices[0].message.reasoning_details) {
+            if (!/^tool_/.test(detail.id) && detail.type === 'reasoning.encrypted' && detail.data) {
+                return detail.data;
+            }
+        }
+    }
+
+    // Direct Gemini format: Extract from responseContent.parts if available (only text parts)
+    if (isGemini && Array.isArray(data?.responseContent?.parts)) {
+        data.responseContent.parts.forEach((part) => {
+            if (part.thoughtSignature && typeof part.text === 'string') {
+                return part.thoughtSignature;
+            }
+        });
+    }
+
+    return null;
 }
 
 /**
@@ -174,8 +236,8 @@ export function updateReasoningUI(messageIdOrElement, { reset = false } = {}) {
 
 /**
  * Enum for representing the state of reasoning
- * @enum {string}
  * @readonly
+ * @enum {string}
  */
 export const ReasoningState = {
     None: 'none',
@@ -398,7 +460,7 @@ export class ReasoningHandler {
         if (!power_user.reasoning.prefix || !power_user.reasoning.suffix)
             return mesChanged;
 
-        /** @type {{ mes: string, [key: string]: any}} */
+        /** @type {ChatMessage} */
         const message = chat[messageId];
         if (!message) return mesChanged;
 
@@ -425,7 +487,7 @@ export class ReasoningHandler {
         if (!this.#isParsingReasoning)
             return mesChanged;
 
-        // If we are in manual parsing mode, all currently streaming mes tokens will go the the reasoning block
+        // If we are in manual parsing mode, all currently streaming mes tokens will go to the reasoning block
         this.reasoning = parseTarget.slice(power_user.reasoning.prefix.length);
         message.mes = '';
 
@@ -488,7 +550,12 @@ export class ReasoningHandler {
         // Update the reasoning message
         const reasoning = trimSpaces(this.reasoningDisplayText ?? this.reasoning);
         const displayReasoning = messageFormatting(reasoning, '', false, false, messageId, {}, true);
-        this.messageReasoningContentDom.innerHTML = displayReasoning;
+
+        if (power_user.stream_fade_in) {
+            applyStreamFadeIn(this.messageReasoningContentDom, displayReasoning);
+        } else {
+            this.messageReasoningContentDom.innerHTML = displayReasoning;
+        }
 
         // Update tooltip for hidden reasoning edit
         /** @type {HTMLElement} */
@@ -980,9 +1047,21 @@ function registerReasoningSlashCommands() {
 }
 
 function registerReasoningMacros() {
-    MacrosParser.registerMacro('reasoningPrefix', () => power_user.reasoning.prefix, t`Reasoning Prefix`);
-    MacrosParser.registerMacro('reasoningSuffix', () => power_user.reasoning.suffix, t`Reasoning Suffix`);
-    MacrosParser.registerMacro('reasoningSeparator', () => power_user.reasoning.separator, t`Reasoning Separator`);
+    macros.register('reasoningPrefix', {
+        category: MacroCategory.PROMPTS,
+        description: t`The prefix string used before reasoning blocks`,
+        handler: () => power_user.reasoning.prefix,
+    });
+    macros.register('reasoningSuffix', {
+        category: MacroCategory.PROMPTS,
+        description: t`The suffix string used after reasoning blocks`,
+        handler: () => power_user.reasoning.suffix,
+    });
+    macros.register('reasoningSeparator', {
+        category: MacroCategory.PROMPTS,
+        description: t`The separator between thinking content and response`,
+        handler: () => power_user.reasoning.separator,
+    });
 }
 
 function setReasoningEventHandlers() {
@@ -1066,6 +1145,13 @@ function setReasoningEventHandlers() {
             const scrollOffset = textareaRect.bottom - chatRect.bottom;
             chatElement.scrollTop += scrollOffset;
         }
+    });
+
+    $(document).on('click', '.mes_reasoning_close_all', function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+
+        $('.mes_reasoning_details[open] .mes_reasoning_header').trigger('click');
     });
 
     $(document).on('click', '.mes_reasoning_edit_done', async function (e) {
@@ -1195,23 +1281,38 @@ export function removeReasoningFromString(str) {
 }
 
 /**
- * Parses reasoning from a string using the power user reasoning settings.
+ * Returns the reasoning template object from its name
+ * @param {string} name of the template
+ * @returns {ReasoningTemplate} the reasoning template object
+ * @throws {Error}
+ */
+export function getReasoningTemplateByName(name) {
+    const template = reasoning_templates.find(p => p.name === name);
+    if (!template) throw new Error(`Unknown reasoning template name: "${name}"`);
+    return template;
+}
+
+/**
+ * Parses reasoning from a string using the power user reasoning settings or optional template.
  * @typedef {Object} ParsedReasoning
  * @property {string} reasoning Reasoning block
  * @property {string} content Message content
  * @param {string} str Content of the message
  * @param {Object} options Optional arguments
  * @param {boolean} [options.strict=true] Whether the reasoning block **has** to be at the beginning of the provided string (excluding whitespaces), or can be anywhere in it
+ * @param {ReasoningTemplate} template Optional reasoning template to use instead of power_user.reasoning
  * @returns {ParsedReasoning|null} Parsed reasoning block and message content
  */
-export function parseReasoningFromString(str, { strict = true } = {}) {
+export function parseReasoningFromString(str, { strict = true } = {}, template = null) {
+    template = template ?? power_user.reasoning;  // if no template given, use the currently selected template
+
     // Both prefix and suffix must be defined
-    if (!power_user.reasoning.prefix || !power_user.reasoning.suffix) {
+    if (!template.prefix || !template.suffix) {
         return null;
     }
 
     try {
-        const regex = new RegExp(`${(strict ? '^\\s*?' : '')}${escapeRegex(power_user.reasoning.prefix)}(.*?)${escapeRegex(power_user.reasoning.suffix)}`, 's');
+        const regex = new RegExp(`${(strict ? '^\\s*?' : '')}${escapeRegex(template.prefix)}(.*?)${escapeRegex(template.suffix)}`, 's');
 
         let didReplace = false;
         let reasoning = '';
@@ -1236,12 +1337,13 @@ export function parseReasoningFromString(str, { strict = true } = {}) {
 /**
  * Parse reasoning in an array of swipe strings if auto-parsing is enabled.
  * @param {string[]} swipes Array of swipe strings
- * @param {{extra: ReasoningMessageExtra}[]} swipeInfoArray Array of swipe info objects
+ * @param {{extra: Partial<ReasoningMessageExtra>}[]} swipeInfoArray Array of swipe info objects
  * @param {number?} duration Duration of the reasoning
  * @typedef {object} ReasoningMessageExtra Extra reasoning data
  * @property {string} reasoning Reasoning block
  * @property {number} reasoning_duration Duration of the reasoning block
  * @property {string} reasoning_type Type of reasoning block
+ * @property {string?} reasoning_signature Encrypted signature of the reasoning text
  */
 export function parseReasoningInSwipes(swipes, swipeInfoArray, duration) {
     if (!power_user.reasoning.auto_parse) {
@@ -1334,6 +1436,29 @@ function registerReasoningAppEvents() {
     for (const event of [event_types.GENERATION_STOPPED, event_types.GENERATION_ENDED, event_types.CHAT_CHANGED]) {
         eventSource.on(event, () => PromptReasoning.clearLatest());
     }
+
+    eventSource.makeFirst(event_types.IMPERSONATE_READY, async () => {
+        if (!power_user.reasoning.auto_parse) {
+            return;
+        }
+
+        const sendTextArea = /** @type {HTMLTextAreaElement} */ (document.getElementById('send_textarea'));
+
+        if (!sendTextArea) {
+            console.warn('[Reasoning] Send textarea not found');
+            return;
+        }
+
+        console.debug('[Reasoning] Auto-parsing reasoning block for impersonation');
+
+        if (!sendTextArea.value) {
+            console.debug('[Reasoning] Reasoning is empty, skipping');
+            return;
+        }
+
+        sendTextArea.value = removeReasoningFromString(sendTextArea.value);
+        sendTextArea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
 }
 
 /**

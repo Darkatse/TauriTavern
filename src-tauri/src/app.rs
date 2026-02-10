@@ -1,54 +1,25 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tauri::AppHandle;
-use tauri::Manager;
 
-use crate::domain::repositories::character_repository::CharacterRepository;
-use crate::domain::repositories::chat_repository::ChatRepository;
-use crate::domain::repositories::user_repository::UserRepository;
-use crate::domain::repositories::settings_repository::SettingsRepository;
-use crate::domain::repositories::user_directory_repository::UserDirectoryRepository;
-use crate::domain::repositories::secret_repository::SecretRepository;
-use crate::domain::repositories::content_repository::ContentRepository;
-use crate::domain::repositories::extension_repository::ExtensionRepository;
-use crate::domain::repositories::avatar_repository::AvatarRepository;
-use crate::domain::repositories::group_repository::GroupRepository;
-use crate::domain::repositories::background_repository::BackgroundRepository;
-use crate::domain::repositories::theme_repository::ThemeRepository;
-use crate::domain::repositories::preset_repository::PresetRepository;
+use tauri::{AppHandle, Emitter, Manager};
 
-use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
-use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
-use crate::infrastructure::repositories::file_user_repository::FileUserRepository;
-use crate::infrastructure::repositories::file_settings_repository::FileSettingsRepository;
-use crate::infrastructure::repositories::file_user_directory_repository::FileUserDirectoryRepository;
-use crate::infrastructure::repositories::file_secret_repository::FileSecretRepository;
-use crate::infrastructure::repositories::file_content_repository::FileContentRepository;
-use crate::infrastructure::repositories::file_extension_repository::FileExtensionRepository;
-use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
-use crate::infrastructure::repositories::file_group_repository::FileGroupRepository;
-use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
-use crate::infrastructure::repositories::file_theme_repository::FileThemeRepository;
-use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
-
+use crate::application::services::avatar_service::AvatarService;
+use crate::application::services::background_service::BackgroundService;
 use crate::application::services::character_service::CharacterService;
 use crate::application::services::chat_service::ChatService;
-use crate::application::services::user_service::UserService;
-use crate::application::services::settings_service::SettingsService;
-use crate::application::services::user_directory_service::UserDirectoryService;
-use crate::application::services::secret_service::SecretService;
 use crate::application::services::content_service::ContentService;
 use crate::application::services::extension_service::ExtensionService;
-use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::group_service::GroupService;
-use crate::application::services::background_service::BackgroundService;
-use crate::application::services::theme_service::ThemeService;
 use crate::application::services::preset_service::PresetService;
-
-use crate::infrastructure::persistence::file_system::DataDirectory;
-use crate::infrastructure::logging::logger;
-
+use crate::application::services::secret_service::SecretService;
+use crate::application::services::settings_service::SettingsService;
+use crate::application::services::theme_service::ThemeService;
+use crate::application::services::user_directory_service::UserDirectoryService;
+use crate::application::services::user_service::UserService;
 use crate::domain::errors::DomainError;
+use crate::infrastructure::persistence::file_system::DataDirectory;
+
+mod bootstrap;
 
 pub struct AppState {
     pub data_directory: DataDirectory,
@@ -69,171 +40,72 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(app_handle: AppHandle, data_root: &Path) -> Result<Self, DomainError> {
-        tracing::info!("{}", &format!("Initializing application with data root: {:?}", data_root));
+        tracing::info!("Initializing application with data root: {:?}", data_root);
 
-        // Create data directory structure
-        let data_directory = DataDirectory::new(data_root.to_path_buf());
-        data_directory.initialize().await?;
-
-        // Create repositories
-        // 现在角色和聊天文件夹位于default-user目录下
-        let character_repository: Arc<dyn CharacterRepository> = Arc::new(
-            FileCharacterRepository::new(
-                data_directory.characters().to_path_buf(),
-                data_directory.chats().to_path_buf(),
-                data_directory.default_avatar().to_path_buf()
-            )
-        );
-
-        let chat_repository: Arc<dyn ChatRepository> = Arc::new(
-            FileChatRepository::new(data_directory.chats().to_path_buf())
-        );
-
-        // user_data现在等同于default-user
-        let user_repository: Arc<dyn UserRepository> = Arc::new(
-            FileUserRepository::new(data_directory.user_data().to_path_buf())
-        );
-
-        // settings.json位于default-user目录下
-        let settings_repository: Arc<dyn SettingsRepository> = Arc::new(
-            FileSettingsRepository::new(data_directory.settings().to_path_buf())
-        );
-
-        let user_directory_repository: Arc<dyn UserDirectoryRepository> = Arc::new(
-            FileUserDirectoryRepository::new(app_handle.clone())
-        );
-
-        // 创建密钥仓库，使用default-user目录
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(
-            FileSecretRepository::new(app_handle.clone())
-        );
-
-        // 创建内容仓库，用于复制默认文件
-        let content_repository: Arc<dyn ContentRepository> = Arc::new(
-            FileContentRepository::new(
-                app_handle.clone(),
-                data_directory.default_user().to_path_buf()
-            )
-        );
-
-        // 创建扩展仓库
-        let extension_repository: Arc<dyn ExtensionRepository> = Arc::new(
-            FileExtensionRepository::new(app_handle.clone())
-        );
-
-        // 创建头像仓库
-        let avatar_repository: Arc<dyn AvatarRepository> = Arc::new(
-            FileAvatarRepository::new(app_handle.clone())
-        );
-
-        // 创建群组仓库
-        let group_repository: Arc<dyn GroupRepository> = Arc::new(
-            FileGroupRepository::new(
-                data_directory.groups().to_path_buf(),
-                data_directory.group_chats().to_path_buf()
-            )
-        );
-
-        // 创建背景仓库
-        let background_repository: Arc<dyn BackgroundRepository> = Arc::new(
-            FileBackgroundRepository::new(
-                app_handle.clone(),
-                data_directory.default_user().join("backgrounds").to_path_buf()
-            )
-        );
-
-        // 创建主题仓库
-        let theme_repository: Arc<dyn ThemeRepository> = Arc::new(
-            FileThemeRepository::new(app_handle.clone())
-        );
-
-        // 创建预设仓库
-        let preset_repository: Arc<dyn PresetRepository> = Arc::new(
-            FilePresetRepository::new(
-                app_handle.clone(),
-                data_directory.default_user().to_path_buf(),
-                content_repository.clone()
-            )
-        );
-
-        // 创建内容服务
-        let content_service = Arc::new(
-            ContentService::new(content_repository.clone())
-        );
-
-        // 创建扩展服务
-        let extension_service = Arc::new(
-            ExtensionService::new(extension_repository.clone())
-        );
-
-        // 创建头像服务
-        let avatar_service = Arc::new(
-            AvatarService::new(avatar_repository.clone())
-        );
-
-        // 创建群组服务
-        let group_service = Arc::new(
-            GroupService::new(group_repository.clone())
-        );
-
-        // 创建背景服务
-        let background_service = Arc::new(
-            BackgroundService::new(background_repository.clone())
-        );
-
-        // 创建主题服务
-        let theme_service = Arc::new(
-            ThemeService::new(theme_repository.clone())
-        );
-
-        // 创建预设服务
-        let preset_service = Arc::new(
-            PresetService::new(preset_repository.clone())
-        );
-
-        // Create services
-        let character_service = Arc::new(
-            CharacterService::new(character_repository.clone())
-        );
-
-        let chat_service = Arc::new(
-            ChatService::new(chat_repository, character_repository.clone())
-        );
-
-        let user_service = Arc::new(
-            UserService::new(user_repository.clone())
-        );
-
-        let settings_service = Arc::new(
-            SettingsService::new(settings_repository.clone())
-        );
-
-        let user_directory_service = Arc::new(
-            UserDirectoryService::new(user_directory_repository.clone())
-        );
-
-        // 默认不允许暴露密钥，可以通过配置文件修改
-        let secret_service = Arc::new(
-            SecretService::new(secret_repository.clone(), false)
-        );
+        let data_directory = bootstrap::initialize_data_directory(data_root).await?;
+        let services = bootstrap::build_services(&app_handle, &data_directory);
 
         tracing::info!("Application initialized successfully");
 
         Ok(Self {
             data_directory,
-            character_service,
-            chat_service,
-            user_service,
-            settings_service,
-            user_directory_service,
-            secret_service,
-            content_service,
-            extension_service,
-            avatar_service,
-            group_service,
-            background_service,
-            theme_service,
-            preset_service,
+            character_service: services.character_service,
+            chat_service: services.chat_service,
+            user_service: services.user_service,
+            settings_service: services.settings_service,
+            user_directory_service: services.user_directory_service,
+            secret_service: services.secret_service,
+            content_service: services.content_service,
+            extension_service: services.extension_service,
+            avatar_service: services.avatar_service,
+            group_service: services.group_service,
+            background_service: services.background_service,
+            theme_service: services.theme_service,
+            preset_service: services.preset_service,
         })
     }
+}
+
+pub fn resolve_data_root(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let app_data_dir = app_handle.path().app_data_dir()?;
+    tracing::info!("App data directory: {:?}", app_data_dir);
+
+    let data_root = app_data_dir.join("data");
+    tracing::info!("Data root directory: {:?}", data_root);
+
+    std::fs::create_dir_all(&data_root)?;
+    Ok(data_root)
+}
+
+pub fn spawn_initialization(app_handle: AppHandle, data_root: PathBuf) {
+    tauri::async_runtime::spawn(async move {
+        match AppState::new(app_handle.clone(), &data_root).await {
+            Ok(state) => {
+                app_handle.manage(Arc::new(state));
+
+                let content_service = app_handle.state::<Arc<AppState>>().content_service.clone();
+                if let Err(error) = content_service
+                    .initialize_default_content("default-user")
+                    .await
+                {
+                    tracing::warn!("Failed to initialize default content: {}", error);
+                } else {
+                    tracing::info!("Successfully initialized default content");
+                }
+
+                if let Err(error) = app_handle.emit("app-ready", ()) {
+                    tracing::error!("Failed to emit app-ready event: {}", error);
+                } else {
+                    tracing::info!("Application is ready");
+                }
+            }
+            Err(error) => {
+                tracing::error!("Failed to initialize application state: {}", error);
+
+                if let Err(emit_error) = app_handle.emit("app-error", error.to_string()) {
+                    tracing::error!("Failed to emit app-error event: {}", emit_error);
+                }
+            }
+        }
+    });
 }

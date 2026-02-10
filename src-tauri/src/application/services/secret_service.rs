@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use crate::domain::repositories::secret_repository::SecretRepository;
-use crate::application::dto::secret_dto::{SecretStateDto, AllSecretsDto, FindSecretResponseDto};
+use crate::application::dto::secret_dto::{AllSecretsDto, FindSecretResponseDto, SecretStateDto};
 use crate::application::errors::ApplicationError;
 use crate::domain::models::secret::SecretKeys;
+use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::infrastructure::logging::logger;
 
 pub struct SecretService {
@@ -42,12 +42,16 @@ impl SecretService {
         tracing::info!("Viewing all secrets");
 
         if !self.allow_keys_exposure {
-            return Err(ApplicationError::PermissionDenied("Keys exposure not allowed".to_string()));
+            return Err(ApplicationError::PermissionDenied(
+                "Keys exposure not allowed".to_string(),
+            ));
         }
 
         let secrets = self.secret_repository.load().await?;
 
-        Ok(AllSecretsDto { secrets: secrets.secrets })
+        Ok(AllSecretsDto {
+            secrets: secrets.secrets,
+        })
     }
 
     /// 查找特定密钥
@@ -57,14 +61,19 @@ impl SecretService {
         // 检查是否允许暴露密钥
         let exportable_keys = SecretKeys::get_exportable_keys();
         if !self.allow_keys_exposure && !exportable_keys.contains(&key) {
-            return Err(ApplicationError::PermissionDenied("Keys exposure not allowed".to_string()));
+            return Err(ApplicationError::PermissionDenied(
+                "Keys exposure not allowed".to_string(),
+            ));
         }
 
         let secret = self.secret_repository.read_secret(key).await?;
 
         match secret {
             Some(value) if !value.is_empty() => Ok(FindSecretResponseDto { value }),
-            _ => Err(ApplicationError::NotFound(format!("Secret not found: {}", key))),
+            _ => Err(ApplicationError::NotFound(format!(
+                "Secret not found: {}",
+                key
+            ))),
         }
     }
 }

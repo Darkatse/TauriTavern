@@ -1,6 +1,6 @@
+use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use async_trait::async_trait;
 use tokio::fs;
 use tokio::sync::Mutex;
 
@@ -8,7 +8,9 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::user::User;
 use crate::domain::repositories::user_repository::UserRepository;
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file, list_files_with_extension, delete_file};
+use crate::infrastructure::persistence::file_system::{
+    delete_file, list_files_with_extension, read_json_file, write_json_file,
+};
 
 pub struct FileUserRepository {
     users_dir: PathBuf,
@@ -48,7 +50,7 @@ impl FileUserRepository {
             match read_json_file::<User>(&file_path).await {
                 Ok(user) => {
                     users.push(user);
-                },
+                }
                 Err(e) => {
                     tracing::error!("Failed to load user from {:?}: {}", file_path, e);
                     // Continue loading other users
@@ -106,7 +108,8 @@ impl UserRepository for FileUserRepository {
     async fn find_by_username(&self, username: &str) -> Result<User, DomainError> {
         let all_users = self.find_all().await?;
 
-        all_users.into_iter()
+        all_users
+            .into_iter()
             .find(|user| user.username == username)
             .ok_or_else(|| DomainError::NotFound(format!("User not found: {}", username)))
     }
@@ -149,7 +152,10 @@ impl UserRepository for FileUserRepository {
         // Check if user exists
         let file_path = self.get_user_path(&user.id);
         if !file_path.exists() {
-            return Err(DomainError::NotFound(format!("User not found: {}", user.id)));
+            return Err(DomainError::NotFound(format!(
+                "User not found: {}",
+                user.id
+            )));
         }
 
         // Save the updated user

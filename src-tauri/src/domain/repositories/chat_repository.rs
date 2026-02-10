@@ -1,8 +1,8 @@
-use std::path::Path;
-use async_trait::async_trait;
-use serde::{Serialize, Deserialize};
-use crate::domain::models::chat::{Chat, ChatMessage};
 use crate::domain::errors::DomainError;
+use crate::domain::models::chat::{Chat, ChatMessage};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Chat search result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,19 +52,44 @@ pub trait ChatRepository: Send + Sync {
     async fn delete_chat(&self, character_name: &str, file_name: &str) -> Result<(), DomainError>;
 
     /// Rename a chat
-    async fn rename_chat(&self, character_name: &str, old_file_name: &str, new_file_name: &str) -> Result<(), DomainError>;
+    async fn rename_chat(
+        &self,
+        character_name: &str,
+        old_file_name: &str,
+        new_file_name: &str,
+    ) -> Result<(), DomainError>;
 
     /// Add a message to a chat
-    async fn add_message(&self, character_name: &str, file_name: &str, message: ChatMessage) -> Result<Chat, DomainError>;
+    async fn add_message(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        message: ChatMessage,
+    ) -> Result<Chat, DomainError>;
 
     /// Search for chats
-    async fn search_chats(&self, query: &str, character_filter: Option<&str>) -> Result<Vec<ChatSearchResult>, DomainError>;
+    async fn search_chats(
+        &self,
+        query: &str,
+        character_filter: Option<&str>,
+    ) -> Result<Vec<ChatSearchResult>, DomainError>;
 
     /// Import a chat from a file
-    async fn import_chat(&self, character_name: &str, file_path: &Path, format: ChatImportFormat) -> Result<Chat, DomainError>;
+    async fn import_chat(
+        &self,
+        character_name: &str,
+        file_path: &Path,
+        format: ChatImportFormat,
+    ) -> Result<Chat, DomainError>;
 
     /// Export a chat to a file
-    async fn export_chat(&self, character_name: &str, file_name: &str, target_path: &Path, format: ChatExportFormat) -> Result<(), DomainError>;
+    async fn export_chat(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        target_path: &Path,
+        format: ChatExportFormat,
+    ) -> Result<(), DomainError>;
 
     /// Backup a chat
     async fn backup_chat(&self, character_name: &str, file_name: &str) -> Result<(), DomainError>;

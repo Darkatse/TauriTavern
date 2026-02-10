@@ -1,14 +1,16 @@
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tokio::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tauri::path::BaseDirectory;
 use tauri::AppHandle;
 use tauri::Manager;
-use tauri::path::BaseDirectory;
+use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::domain::repositories::content_repository::{ContentRepository, ContentItem, ContentType};
+use crate::domain::repositories::content_repository::{
+    ContentItem, ContentRepository, ContentType,
+};
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
 
@@ -105,14 +107,23 @@ impl FileContentRepository {
 
         // Only copy if destination doesn't exist
         if !dest_path.exists() {
-            logger::debug(&format!("Copying file from {:?} to {:?}", source_path, dest_path));
+            logger::debug(&format!(
+                "Copying file from {:?} to {:?}",
+                source_path, dest_path
+            ));
 
             fs::copy(source_path, dest_path).await.map_err(|e| {
-                logger::error(&format!("Failed to copy file from {:?} to {:?}: {}", source_path, dest_path, e));
+                logger::error(&format!(
+                    "Failed to copy file from {:?} to {:?}: {}",
+                    source_path, dest_path, e
+                ));
                 DomainError::InternalError(format!("Failed to copy file: {}", e))
             })?;
         } else {
-            logger::debug(&format!("Skipping copy, file already exists: {:?}", dest_path));
+            logger::debug(&format!(
+                "Skipping copy, file already exists: {:?}",
+                dest_path
+            ));
         }
 
         Ok(())
@@ -156,7 +167,10 @@ impl FileContentRepository {
 #[async_trait]
 impl ContentRepository for FileContentRepository {
     async fn copy_default_content_to_user(&self, user_handle: &str) -> Result<(), DomainError> {
-        tracing::info!("Copying default content to user directory for user: {}", user_handle);
+        tracing::info!(
+            "Copying default content to user directory for user: {}",
+            user_handle
+        );
 
         // Get content index
         let content_items = self.get_content_index().await?;
@@ -188,15 +202,26 @@ impl ContentRepository for FileContentRepository {
         for item in content_items {
             // Skip if already in content log
             if content_log.contains(&item.filename) {
-                logger::debug(&format!("Skipping content item {}, already in log", item.filename));
+                logger::debug(&format!(
+                    "Skipping content item {}, already in log",
+                    item.filename
+                ));
                 continue;
             }
 
             // Resolve the source path using Tauri's resource system
-            let source_path = self.app_handle.path()
-                .resolve(&format!("default/content/{}", item.filename), BaseDirectory::Resource)
+            let source_path = self
+                .app_handle
+                .path()
+                .resolve(
+                    &format!("default/content/{}", item.filename),
+                    BaseDirectory::Resource,
+                )
                 .map_err(|e| {
-                    logger::error(&format!("Failed to resolve source path for {}: {}", item.filename, e));
+                    logger::error(&format!(
+                        "Failed to resolve source path for {}: {}",
+                        item.filename, e
+                    ));
                     DomainError::InternalError(format!("Failed to resolve source path: {}", e))
                 })?;
 
@@ -205,16 +230,18 @@ impl ContentRepository for FileContentRepository {
 
             // Ensure target directory exists
             fs::create_dir_all(&target_dir).await.map_err(|e| {
-                logger::error(&format!("Failed to create target directory {:?}: {}", target_dir, e));
+                logger::error(&format!(
+                    "Failed to create target directory {:?}: {}",
+                    target_dir, e
+                ));
                 DomainError::InternalError(format!("Failed to create target directory: {}", e))
             })?;
 
             // Get the base filename
-            let base_filename = Path::new(&item.filename).file_name()
-                .ok_or_else(|| {
-                    logger::error(&format!("Invalid filename: {}", item.filename));
-                    DomainError::InvalidData(format!("Invalid filename: {}", item.filename))
-                })?;
+            let base_filename = Path::new(&item.filename).file_name().ok_or_else(|| {
+                logger::error(&format!("Invalid filename: {}", item.filename));
+                DomainError::InvalidData(format!("Invalid filename: {}", item.filename))
+            })?;
 
             // Create destination path
             let dest_path = target_dir.join(base_filename);
@@ -232,10 +259,12 @@ impl ContentRepository for FileContentRepository {
         }
 
         // Write content log
-        fs::write(&content_log_path, content_log.join("\n")).await.map_err(|e| {
-            logger::error(&format!("Failed to write content log: {}", e));
-            DomainError::InternalError(format!("Failed to write content log: {}", e))
-        })?;
+        fs::write(&content_log_path, content_log.join("\n"))
+            .await
+            .map_err(|e| {
+                logger::error(&format!("Failed to write content log: {}", e));
+                DomainError::InternalError(format!("Failed to write content log: {}", e))
+            })?;
 
         tracing::info!("Default content copied successfully");
         Ok(())
@@ -243,20 +272,26 @@ impl ContentRepository for FileContentRepository {
 
     async fn get_content_index(&self) -> Result<Vec<ContentItem>, DomainError> {
         // Resolve the path to the content index file using Tauri's resource system
-        let content_index_path = self.app_handle.path()
+        let content_index_path = self
+            .app_handle
+            .path()
             .resolve("default/content/index.json", BaseDirectory::Resource)
             .map_err(|e| {
                 logger::error(&format!("Failed to resolve content index path: {}", e));
                 DomainError::InternalError(format!("Failed to resolve content index path: {}", e))
             })?;
 
-        logger::debug(&format!("Reading content index from {:?}", content_index_path));
+        logger::debug(&format!(
+            "Reading content index from {:?}",
+            content_index_path
+        ));
 
         // Read content index
         let index_items: Vec<ContentIndexItem> = read_json_file(&content_index_path).await?;
 
         // Convert to domain model
-        let content_items = index_items.into_iter()
+        let content_items = index_items
+            .into_iter()
             .map(|item| ContentItem {
                 filename: item.filename,
                 content_type: self.content_type_from_string(&item.content_type),
@@ -267,7 +302,10 @@ impl ContentRepository for FileContentRepository {
     }
 
     async fn is_default_content_initialized(&self, user_handle: &str) -> Result<bool, DomainError> {
-        logger::debug(&format!("Checking if default content is initialized for user: {}", user_handle));
+        logger::debug(&format!(
+            "Checking if default content is initialized for user: {}",
+            user_handle
+        ));
 
         // User content directory - self.user_content_dir 已经是 data/default-user 路径了，不需要再 join user_handle
         let user_dir = self.user_content_dir.clone();
@@ -301,10 +339,14 @@ impl ContentRepository for FileContentRepository {
 
         // Check if at least some content items are in the log
         // We don't require all items to be in the log, as new content might be added later
-        let has_content = content_items.iter()
+        let has_content = content_items
+            .iter()
             .any(|item| content_log.contains(&item.filename));
 
-        logger::debug(&format!("Default content initialized for user {}: {}", user_handle, has_content));
+        logger::debug(&format!(
+            "Default content initialized for user {}: {}",
+            user_handle, has_content
+        ));
 
         Ok(has_content)
     }

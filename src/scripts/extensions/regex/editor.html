@@ -61,7 +61,7 @@
                     <small data-i18n="Replace With">Replace With</small>
                 </label>
                 <div>
-                    <textarea class="regex_replace_string text_pole wide100p textarea_compact" data-i18n="[placeholder]ext_regex_replace_string_placeholder" placeholder="Use {{match}} to include the matched text from the Find Regex or $1, $2, etc. for capture groups." rows="2"></textarea>
+                    <textarea class="regex_replace_string text_pole wide100p textarea_compact" data-i18n="[placeholder]ext_regex_replace_string_placeholder" placeholder="Use {{match}} to include the matched text from the Find Regex, $1, $2, etc. for numbered capture groups, or $&lt;name&gt; for named capture groups." rows="3"></textarea>
                 </div>
             </div>
             <div class="flex1">
@@ -146,8 +146,8 @@
                     </select>
                 </label>
                 <span>
-                    <small data-i18n="ext_regex_other_options" data-i18n="Ephemerality">Ephemerality</small>
-                    <span class="fa-solid fa-circle-question note-link-span" data-i18n="[title]ext_regex_other_options_desc" title="By default, regex scripts alter the chat file directly and irreversibly.&#10;Enabling either (or both) of the options below will prevent chat file alteration, while still altering the specified item(s)."></span>
+                    <small data-i18n="Ephemerality">Ephemerality</small>
+                    <span class="fa-solid fa-circle-question note-link-span" data-i18n="[title]ext_regex_other_options_desc" title="By default, regex scripts alter the chat file directly and irreversibly.&#13;Enabling either (or both) of the options below will prevent chat file alteration, while still altering the specified item(s)."></span>
                 </span>
                 <label class="checkbox flex-container" data-i18n="[title]ext_regex_only_format_visual_desc" title="Chat history file contents won't change, but regex will be applied to the messages displayed in the Chat UI.">
                     <input type="checkbox" name="only_format_display" />

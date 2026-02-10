@@ -1,5 +1,5 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 /// 表示用户的API密钥和其他敏感信息
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

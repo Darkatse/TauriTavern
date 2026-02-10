@@ -102,7 +102,11 @@ impl Preset {
 
     /// Get the filename for this preset
     pub fn filename(&self) -> String {
-        format!("{}{}", sanitize_filename(&self.name), self.preset_type.extension())
+        format!(
+            "{}{}",
+            sanitize_filename(&self.name),
+            self.preset_type.extension()
+        )
     }
 
     /// Validate the preset data
@@ -123,7 +127,7 @@ impl Preset {
     /// Get the preset data with the name field included
     pub fn data_with_name(&self) -> Value {
         let mut data = self.data.clone();
-        
+
         // Ensure data is an object
         if !data.is_object() {
             data = serde_json::json!({});
@@ -178,14 +182,32 @@ mod tests {
     #[test]
     fn test_preset_type_from_api_id() {
         assert_eq!(PresetType::from_api_id("kobold"), Some(PresetType::Kobold));
-        assert_eq!(PresetType::from_api_id("koboldhorde"), Some(PresetType::Kobold));
+        assert_eq!(
+            PresetType::from_api_id("koboldhorde"),
+            Some(PresetType::Kobold)
+        );
         assert_eq!(PresetType::from_api_id("novel"), Some(PresetType::Novel));
         assert_eq!(PresetType::from_api_id("openai"), Some(PresetType::OpenAI));
-        assert_eq!(PresetType::from_api_id("textgenerationwebui"), Some(PresetType::TextGen));
-        assert_eq!(PresetType::from_api_id("instruct"), Some(PresetType::Instruct));
-        assert_eq!(PresetType::from_api_id("context"), Some(PresetType::Context));
-        assert_eq!(PresetType::from_api_id("sysprompt"), Some(PresetType::SysPrompt));
-        assert_eq!(PresetType::from_api_id("reasoning"), Some(PresetType::Reasoning));
+        assert_eq!(
+            PresetType::from_api_id("textgenerationwebui"),
+            Some(PresetType::TextGen)
+        );
+        assert_eq!(
+            PresetType::from_api_id("instruct"),
+            Some(PresetType::Instruct)
+        );
+        assert_eq!(
+            PresetType::from_api_id("context"),
+            Some(PresetType::Context)
+        );
+        assert_eq!(
+            PresetType::from_api_id("sysprompt"),
+            Some(PresetType::SysPrompt)
+        );
+        assert_eq!(
+            PresetType::from_api_id("reasoning"),
+            Some(PresetType::Reasoning)
+        );
         assert_eq!(PresetType::from_api_id("unknown"), None);
     }
 
@@ -218,7 +240,7 @@ mod tests {
             PresetType::OpenAI,
             json!({"temperature": 0.7}),
         );
-        
+
         let data_with_name = preset.data_with_name();
         assert_eq!(data_with_name["name"], "Test Preset");
         assert_eq!(data_with_name["temperature"], 0.7);
@@ -228,8 +250,14 @@ mod tests {
     fn test_sanitize_filename() {
         assert_eq!(sanitize_filename("normal_name"), "normal_name");
         assert_eq!(sanitize_filename("name with spaces"), "name with spaces");
-        assert_eq!(sanitize_filename("name/with\\unsafe:chars"), "name_with_unsafe_chars");
-        assert_eq!(sanitize_filename("name*with?more\"unsafe<chars>"), "name_with_more_unsafe_chars_");
+        assert_eq!(
+            sanitize_filename("name/with\\unsafe:chars"),
+            "name_with_unsafe_chars"
+        );
+        assert_eq!(
+            sanitize_filename("name*with?more\"unsafe<chars>"),
+            "name_with_more_unsafe_chars_"
+        );
     }
 
     #[test]

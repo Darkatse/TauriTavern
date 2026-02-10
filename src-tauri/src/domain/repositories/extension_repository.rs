@@ -12,20 +12,41 @@ pub trait ExtensionRepository: Send + Sync {
     async fn discover_extensions(&self) -> Result<Vec<Extension>, DomainError>;
 
     /// Get extension manifest
-    async fn get_manifest(&self, extension_path: &Path) -> Result<Option<crate::domain::models::extension::ExtensionManifest>, DomainError>;
+    async fn get_manifest(
+        &self,
+        extension_path: &Path,
+    ) -> Result<Option<crate::domain::models::extension::ExtensionManifest>, DomainError>;
 
     /// Install an extension from a URL
-    async fn install_extension(&self, url: &str, global: bool) -> Result<ExtensionInstallResult, DomainError>;
+    async fn install_extension(
+        &self,
+        url: &str,
+        global: bool,
+    ) -> Result<ExtensionInstallResult, DomainError>;
 
     /// Update an extension
-    async fn update_extension(&self, extension_name: &str, global: bool) -> Result<ExtensionUpdateResult, DomainError>;
+    async fn update_extension(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<ExtensionUpdateResult, DomainError>;
 
     /// Delete an extension
-    async fn delete_extension(&self, extension_name: &str, global: bool) -> Result<(), DomainError>;
+    async fn delete_extension(&self, extension_name: &str, global: bool)
+        -> Result<(), DomainError>;
 
     /// Get extension version information
-    async fn get_extension_version(&self, extension_name: &str, global: bool) -> Result<ExtensionVersion, DomainError>;
+    async fn get_extension_version(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<ExtensionVersion, DomainError>;
 
     /// Move an extension between local and global directories
-    async fn move_extension(&self, extension_name: &str, source: &str, destination: &str) -> Result<(), DomainError>;
+    async fn move_extension(
+        &self,
+        extension_name: &str,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), DomainError>;
 }

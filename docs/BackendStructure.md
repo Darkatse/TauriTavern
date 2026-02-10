@@ -50,7 +50,9 @@ src-tauri/
 ├── src/
 │   ├── main.rs                # 应用入口点
 │   ├── lib.rs                 # 库入口点
-│   ├── app.rs                 # 应用状态管理
+│   ├── app.rs                 # 应用状态与运行时启动编排
+│   ├── app/
+│   │   └── bootstrap.rs       # 仓库/服务装配（依赖构建）
 │   ├── domain/                # 领域层
 │   │   ├── models/            # 领域模型
 │   │   ├── repositories/      # 仓库接口
@@ -65,6 +67,8 @@ src-tauri/
 │   │   └── logging/           # 日志系统
 │   └── presentation/          # 表示层
 │       ├── commands/          # Tauri命令
+│       │   ├── helpers.rs     # 命令日志/错误映射公共工具
+│       │   └── registry.rs    # 命令注册清单（invoke handler）
 │       └── errors.rs          # 命令错误
 ├── Cargo.toml                 # Rust依赖配置
 └── tauri.conf.json            # Tauri配置
@@ -295,52 +299,35 @@ pub fn error(message: &str) {
 Tauri命令是前端与后端通信的桥梁，通过IPC机制暴露给前端。
 
 ```rust
-// 示例: 角色命令
+// 示例: 角色命令（使用公共 helper）
+use crate::presentation::commands::helpers::{log_command, map_command_error};
+
 #[tauri::command]
-pub async fn get_characters(
+pub async fn get_all_characters(
+    shallow: bool,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<CharacterResponseDto>, CommandError> {
-    // 记录请求
-    logger::debug("Command: get_characters");
+) -> Result<Vec<CharacterDto>, CommandError> {
+    log_command(format!("get_all_characters (shallow: {})", shallow));
 
-    // 调用服务
-    let characters = app_state.character_service.get_all_characters()
+    app_state
+        .character_service
+        .get_all_characters(shallow)
         .await
-        .map_err(|e| CommandError::from(e))?;
-
-    // 转换为DTO
-    let response = characters.into_iter()
-        .map(|c| CharacterResponseDto::from(c))
-        .collect();
-
-    Ok(response)
+        .map_err(map_command_error("Failed to get all characters"))
 }
 
 #[tauri::command]
 pub async fn create_character(
-    app_state: State<'_, Arc<AppState>>,
     dto: CreateCharacterDto,
-) -> Result<CharacterResponseDto, CommandError> {
-    // 记录请求
-    logger::debug(&format!("Command: create_character, name: {}", dto.name));
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<CharacterDto, CommandError> {
+    log_command(format!("create_character {}", dto.name));
 
-    // 转换DTO为领域模型
-    let character = Character::new(
-        Uuid::new_v4().to_string(),
-        dto.name,
-        dto.description,
-        dto.personality,
-        dto.first_message,
-        dto.avatar_url,
-    );
-
-    // 调用服务
-    let created = app_state.character_service.create_character(character)
+    app_state
+        .character_service
+        .create_character(dto)
         .await
-        .map_err(|e| CommandError::from(e))?;
-
-    // 返回响应DTO
-    Ok(CharacterResponseDto::from(created))
+        .map_err(map_command_error("Failed to create character"))
 }
 ```
 
@@ -352,17 +339,17 @@ pub async fn create_character(
 // 示例: 命令错误
 #[derive(Debug, Error, Serialize)]
 pub enum CommandError {
-    #[error("Not found: {0}")]
-    NotFound(String),
-
     #[error("Bad request: {0}")]
     BadRequest(String),
 
-    #[error("Forbidden: {0}")]
-    Forbidden(String),
+    #[error("Not found: {0}")]
+    NotFound(String),
 
-    #[error("Internal error: {0}")]
-    Internal(String),
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
+    #[error("Internal server error: {0}")]
+    InternalServerError(String),
 }
 
 // 从领域错误转换为命令错误
@@ -370,13 +357,29 @@ impl From<DomainError> for CommandError {
     fn from(error: DomainError) -> Self {
         match error {
             DomainError::NotFound(msg) => CommandError::NotFound(msg),
-            DomainError::Validation(msg) => CommandError::BadRequest(msg),
-            DomainError::Forbidden(msg) => CommandError::Forbidden(msg),
-            _ => CommandError::Internal(error.to_string()),
+            DomainError::InvalidData(msg) => CommandError::BadRequest(msg),
+            DomainError::PermissionDenied(msg) => CommandError::Unauthorized(msg),
+            DomainError::AuthenticationError(msg) => CommandError::Unauthorized(msg),
+            DomainError::InternalError(msg) => CommandError::InternalServerError(msg),
         }
     }
 }
 ```
+
+#### 3.4.3 命令注册与解耦
+
+当前实现将命令注册集中在 `presentation/commands/registry.rs`，由 `lib.rs` 统一挂载：
+
+```rust
+// lib.rs
+use presentation::commands::registry::invoke_handler;
+
+tauri::Builder::default()
+    // ...
+    .invoke_handler(invoke_handler())
+```
+
+这样可以避免在 `lib.rs` 中直接维护超长命令列表，命令增减时只需更新 `registry.rs`。
 
 ## 4. 应用状态管理
 
@@ -387,7 +390,9 @@ impl From<DomainError> for CommandError {
 `AppState`结构体包含应用的全局状态，如服务实例和数据目录。
 
 ```rust
-// 示例: 应用状态
+// app.rs（示意）
+mod bootstrap;
+
 pub struct AppState {
     pub data_directory: DataDirectory,
     pub character_service: Arc<CharacterService>,
@@ -397,83 +402,36 @@ pub struct AppState {
     pub user_directory_service: Arc<UserDirectoryService>,
     pub secret_service: Arc<SecretService>,
     pub content_service: Arc<ContentService>,
+    pub extension_service: Arc<ExtensionService>,
+    pub avatar_service: Arc<AvatarService>,
+    pub group_service: Arc<GroupService>,
+    pub background_service: Arc<BackgroundService>,
+    pub theme_service: Arc<ThemeService>,
+    pub preset_service: Arc<PresetService>,
 }
 
 impl AppState {
     pub async fn new(app_handle: AppHandle, data_root: &Path) -> Result<Self, DomainError> {
-        // 初始化数据目录
-        let data_directory = DataDirectory::new(data_root)?;
-
-        // 创建仓库
-        let character_repository: Arc<dyn CharacterRepository> = Arc::new(
-            FileCharacterRepository::new(data_directory.characters().to_path_buf())
-        );
-
-        let chat_repository: Arc<dyn ChatRepository> = Arc::new(
-            FileChatRepository::new(data_directory.chats().to_path_buf())
-        );
-
-        let user_repository: Arc<dyn UserRepository> = Arc::new(
-            FileUserRepository::new(data_directory.users().to_path_buf())
-        );
-
-        let settings_repository: Arc<dyn SettingsRepository> = Arc::new(
-            FileSettingsRepository::new(data_directory.settings().to_path_buf())
-        );
-
-        let user_directory_repository: Arc<dyn UserDirectoryRepository> = Arc::new(
-            FileUserDirectoryRepository::new(app_handle.clone())
-        );
-
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(
-            FileSecretRepository::new(app_handle.clone())
-        );
-
-        let content_repository: Arc<dyn ContentRepository> = Arc::new(
-            FileContentRepository::new(
-                app_handle.clone(),
-                data_directory.default_user().to_path_buf()
-            )
-        );
-
-        // 创建服务
-        let character_service = Arc::new(
-            CharacterService::new(character_repository.clone())
-        );
-
-        let chat_service = Arc::new(
-            ChatService::new(chat_repository, character_repository.clone())
-        );
-
-        let user_service = Arc::new(
-            UserService::new(user_repository.clone())
-        );
-
-        let settings_service = Arc::new(
-            SettingsService::new(settings_repository.clone())
-        );
-
-        let user_directory_service = Arc::new(
-            UserDirectoryService::new(user_directory_repository.clone())
-        );
-
-        let secret_service = Arc::new(
-            SecretService::new(secret_repository.clone(), false)
-        );
-
-        let content_service = Arc::new(
-            ContentService::new(content_repository.clone())
-        );
+        // 初始化目录
+        let data_directory = bootstrap::initialize_data_directory(data_root).await?;
+        // 统一装配仓库与服务
+        let services = bootstrap::build_services(&app_handle, &data_directory);
 
         Ok(Self {
             data_directory,
-            character_service,
-            chat_service,
-            user_service,
-            settings_service,
-            user_directory_service,
-            secret_service,
-            content_service,
+            character_service: services.character_service,
+            chat_service: services.chat_service,
+            user_service: services.user_service,
+            settings_service: services.settings_service,
+            user_directory_service: services.user_directory_service,
+            secret_service: services.secret_service,
+            content_service: services.content_service,
+            extension_service: services.extension_service,
+            avatar_service: services.avatar_service,
+            group_service: services.group_service,
+            background_service: services.background_service,
+            theme_service: services.theme_service,
+            preset_service: services.preset_service,
         })
     }
 }
@@ -727,7 +685,7 @@ fn handle_error(error: &CommandError) {
 4. 在`application/services`中创建服务
 5. 在`application/dto`中定义数据传输对象
 6. 在`presentation/commands`中添加命令
-7. 在`app.rs`中更新`AppState`，添加新的仓库和服务
+7. 在`app/bootstrap.rs`中注册仓库和服务构建逻辑，并在`app.rs`的`AppState`中挂载
 
 ### 7.2 添加新API
 
@@ -735,7 +693,7 @@ fn handle_error(error: &CommandError) {
 
 1. 在`application/dto`中定义请求和响应DTO
 2. 在`presentation/commands`中添加命令函数
-3. 在`lib.rs`中注册命令
+3. 在`presentation/commands/registry.rs`中注册命令
 4. 更新前端`tauri-bridge.js`和相关API文件
 
 ### 7.3 集成外部服务
@@ -744,7 +702,7 @@ fn handle_error(error: &CommandError) {
 
 1. 在`infrastructure/apis`中创建服务客户端
 2. 在`application/services`中创建服务适配器
-3. 在`app.rs`中初始化服务
+3. 在`app/bootstrap.rs`中初始化服务装配
 4. 在`presentation/commands`中暴露API
 
 ### 7.4 使用Tauri资源系统

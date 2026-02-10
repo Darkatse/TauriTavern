@@ -1,6 +1,6 @@
 import { Fuse } from '../../../lib.js';
 
-import { characters, eventSource, event_types, generateRaw, getRequestHeaders, main_api, online_status, saveSettingsDebounced, substituteParams, substituteParamsExtended, system_message_types, this_chid } from '../../../script.js';
+import { characters, eventSource, event_types, generateQuietPrompt, generateRaw, getRequestHeaders, online_status, saveSettingsDebounced, substituteParams, substituteParamsExtended, system_message_types, this_chid } from '../../../script.js';
 import { dragElement, isMobile } from '../../RossAscends-mods.js';
 import { getContext, getApiUrl, modules, extension_settings, ModuleWorkerWrapper, doExtrasFetch, renderExtensionTemplateAsync } from '../../extensions.js';
 import { loadMovingUIState, performFuzzySearch, power_user } from '../../power-user.js';
@@ -84,6 +84,12 @@ const EXPRESSION_API = {
     llm: 2,
     webllm: 3,
     none: 99,
+};
+
+/** @enum {string} */
+const PROMPT_TYPE = {
+    raw: 'raw',
+    full: 'full',
 };
 
 let expressionsList = null;
@@ -661,7 +667,14 @@ export async function sendExpressionCall(spriteFolderName, expression, { force =
     }
 }
 
-async function setSpriteFolderCommand(_, folder) {
+/**
+ * Slash command callback for /setspritefolder
+ * @param {object} param Command parameters
+ * @param {string} param.name Character name override
+ * @param {string} folder Folder path, can be full or partial with leading slash
+ * @returns {Promise<string>} Empty string
+ */
+async function setSpriteFolderCommand({ name }, folder) {
     if (!folder) {
         console.log('Clearing sprite set');
         folder = '';
@@ -669,8 +682,12 @@ async function setSpriteFolderCommand(_, folder) {
 
     if (folder.startsWith('/') || folder.startsWith('\\')) {
         const currentLastMessage = getLastCharacterMessage();
+        if (currentLastMessage.name === null && !name) {
+            toastr.error('At least one character message is required to set a sprites subfolder.', 'Provide the name with "name=" argument.');
+            return '';
+        }
         folder = folder.slice(1);
-        folder = `${currentLastMessage.name}/${folder}`;
+        folder = `${name || currentLastMessage.name}/${folder}`;
     }
 
     $('#expression_override').val(folder.trim());
@@ -909,10 +926,6 @@ function sampleClassifyText(text) {
  * @returns {Promise<string>} Prompt for the LLM API.
  */
 async function getLlmPrompt(labels) {
-    if (isJsonSchemaSupported()) {
-        return '';
-    }
-
     const labelsString = labels.map(x => `"${x}"`).join(', ');
     const prompt = substituteParamsExtended(String(extension_settings.expressions.llmPrompt), { labels: labelsString });
     return prompt;
@@ -976,6 +989,7 @@ function getJsonSchema(emotions) {
         required: [
             'emotion',
         ],
+        additionalProperties: false,
     };
 }
 
@@ -1047,7 +1061,21 @@ export async function getExpressionLabel(text, expressionsApi = extension_settin
                 const expressionsList = await getExpressionsList({ filterAvailable: filterAvailable });
                 const prompt = substituteParamsExtended(customPrompt, { labels: expressionsList }) || await getLlmPrompt(expressionsList);
                 eventSource.once(event_types.TEXT_COMPLETION_SETTINGS_READY, onTextGenSettingsReady);
-                const emotionResponse = await generateRaw(text, main_api, false, false, prompt);
+
+                let emotionResponse;
+                try {
+                    inApiCall = true;
+                    switch (extension_settings.expressions.promptType) {
+                        case PROMPT_TYPE.raw:
+                            emotionResponse = await generateRaw({ prompt: text, systemPrompt: prompt });
+                            break;
+                        case PROMPT_TYPE.full:
+                            emotionResponse = await generateQuietPrompt({ quietPrompt: prompt });
+                            break;
+                    }
+                } finally {
+                    inApiCall = false;
+                }
                 return parseLlmResponse(emotionResponse, expressionsList);
             }
             // Using WebLLM
@@ -1314,7 +1342,7 @@ async function renderFallbackExpressionPicker() {
     defaultPicker.empty();
 
 
-    addOption(OPTION_NO_FALLBACK, '[ No fallback ]', !extension_settings.expressions.fallback_expression);
+    addOption(OPTION_NO_FALLBACK, '[ No fallback ]', !extension_settings.expressions.fallback_expression && !extension_settings.expressions.showDefault);
     addOption(OPTION_EMOJI_FALLBACK, '[ Default emojis ]', !!extension_settings.expressions.showDefault);
 
     for (const expression of expressions) {
@@ -1397,7 +1425,7 @@ export async function getExpressionsList({ filterAvailable = false } = {}) {
             if (extension_settings.expressions.api == EXPRESSION_API.local) {
                 const apiResult = await fetch('/api/extra/classify/labels', {
                     method: 'POST',
-                    headers: getRequestHeaders(),
+                    headers: getRequestHeaders({ omitContentType: true }),
                 });
 
                 if (apiResult.ok) {
@@ -1702,6 +1730,7 @@ function onExpressionApiChanged() {
     if (tempApi) {
         extension_settings.expressions.api = Number(tempApi);
         $('.expression_llm_prompt_block').toggle([EXPRESSION_API.llm, EXPRESSION_API.webllm].includes(extension_settings.expressions.api));
+        $('.expression_prompt_type_block').toggle(extension_settings.expressions.api === EXPRESSION_API.llm);
         expressionsList = null;
         spriteCache = {};
         moduleWorker();
@@ -1740,27 +1769,38 @@ async function onExpressionFallbackChanged() {
     saveSettingsDebounced();
 }
 
+/**
+ * Handles the file upload process for a sprite image.
+ * @param {string} url URL to upload the file to
+ * @param {FormData} formData FormData object containing the file and other data to upload
+ * @returns {Promise<any>} - The response data from the server
+ */
 async function handleFileUpload(url, formData) {
     try {
-        const data = await jQuery.ajax({
-            type: 'POST',
-            url: url,
-            data: formData,
-            beforeSend: function () { },
-            cache: false,
-            contentType: false,
-            processData: false,
+        const result = await fetch(url, {
+            method: 'POST',
+            headers: getRequestHeaders({ omitContentType: true }),
+            body: formData,
+            cache: 'no-cache',
         });
 
+        if (!result.ok) {
+            throw new Error(`Upload failed with status ${result.status}`);
+        }
+
+        const data = await result.json();
+
         // Refresh sprites list
-        const name = formData.get('name');
+        const name = formData.get('name').toString();
         delete spriteCache[name];
         await fetchImagesNoCache();
         await validateImages(name);
 
-        return data;
+        return data ?? {};
     } catch (error) {
+        console.error('Error uploading image:', error);
         toastr.error('Failed to upload image');
+        return {};
     }
 }
 
@@ -1978,7 +2018,11 @@ async function onClickExpressionUploadPackButton() {
         const uploadToast = toastr.info('Please wait...', 'Upload is processing', { timeOut: 0, extendedTimeOut: 0 });
         const { count } = await handleFileUpload('/api/sprites/upload-zip', formData);
         toastr.clear(uploadToast);
-        toastr.success(`Uploaded ${count} image(s) for ${name}`);
+
+        // Only show success message if at least one image was uploaded
+        if (count) {
+            toastr.success(`Uploaded ${count} image(s) for ${name}`);
+        }
 
         // Reset the input
         e.target.form.reset();
@@ -2098,8 +2142,13 @@ function migrateSettings() {
         saveSettingsDebounced();
     }
 
-    if (extension_settings.expressions.showDefault && extension_settings.expressions.fallback_expression !== undefined) {
+    if (extension_settings.expressions.showDefault && extension_settings.expressions.fallback_expression) {
         extension_settings.expressions.showDefault = false;
+        saveSettingsDebounced();
+    }
+
+    if (extension_settings.expressions.promptType === undefined) {
+        extension_settings.expressions.promptType = PROMPT_TYPE.raw;
         saveSettingsDebounced();
     }
 }
@@ -2169,6 +2218,16 @@ function migrateSettings() {
             extension_settings.expressions.llmPrompt = DEFAULT_LLM_PROMPT;
             saveSettingsDebounced();
         });
+        $('#expression_prompt_raw').on('input', function () {
+            extension_settings.expressions.promptType = PROMPT_TYPE.raw;
+            saveSettingsDebounced();
+        });
+        $('#expression_prompt_full').on('input', function () {
+            extension_settings.expressions.promptType = PROMPT_TYPE.full;
+            saveSettingsDebounced();
+        });
+        $(`input[name="expression_prompt_type"][value="${extension_settings.expressions.promptType}"]`).prop('checked', true);
+        $('.expression_prompt_type_block').toggle(extension_settings.expressions.api === EXPRESSION_API.llm);
 
         $('#expression_custom_add').on('click', onClickExpressionAddCustom);
         $('#expression_custom_remove').on('click', onClickExpressionRemoveCustom);
@@ -2274,6 +2333,16 @@ function migrateSettings() {
         name: 'expression-folder-override',
         aliases: ['spriteoverride', 'costume'],
         callback: setSpriteFolderCommand,
+        namedArgumentList:[
+            SlashCommandNamedArgument.fromProps({
+                name: 'name',
+                description: 'Character name to set a subfolder for. If not provided, the character who last sent a message will be used.',
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.characters('character'),
+                isRequired: false,
+                acceptsMultiple: false,
+            }),
+        ],
         unnamedArgumentList: [
             new SlashCommandArgument(
                 'optional folder', [ARGUMENT_TYPE.STRING], false,

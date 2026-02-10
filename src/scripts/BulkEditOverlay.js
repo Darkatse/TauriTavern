@@ -2,7 +2,6 @@
 
 import {
     characterGroupOverlay,
-    callPopup,
     characters,
     event_types,
     eventSource,
@@ -17,6 +16,7 @@ import {
 import { favsToHotswap } from './RossAscends-mods.js';
 import { hideLoader, showLoader } from './loader.js';
 import { convertCharacterToPersona } from './personas.js';
+import { callGenericPopup, POPUP_TYPE } from './popup.js';
 import { createTagInput, getTagKeyForEntity, getTagsList, printTagList, tag_map, compareTagsForSort, removeTagFromMap, importTags, tag_import_setting } from './tags.js';
 
 /**
@@ -101,7 +101,7 @@ class CharacterContextMenu {
      * @param {number} characterId
      * @returns {Promise<void>}
      */
-    static persona = async (characterId) => await convertCharacterToPersona(characterId);
+    static persona = async (characterId) => void(await convertCharacterToPersona(characterId));
 
     /**
      * Delete one or more characters,
@@ -342,7 +342,7 @@ class BulkTagPopupHandler {
 
         for (const characterId of this.characterIds) {
             for (const tag of mutualTags) {
-                removeTagFromMap(tag.id, characterId);
+                removeTagFromMap(tag.id, characterId.toString());
             }
         }
 
@@ -370,7 +370,7 @@ class BulkEditOverlayState {
  * Implement a SingletonPattern, allowing access to the group overlay instance
  * from everywhere via (new CharacterGroupOverlay())
  *
- * @type BulkEditOverlay
+ * @type {Readonly<BulkEditOverlay>}
  */
 let bulkEditOverlayInstance = null;
 
@@ -590,7 +590,8 @@ class BulkEditOverlay {
                     this.selectState();
                 } else if (this.state === BulkEditOverlayState.select) {
                     this.#contextMenuOpen = true;
-                    CharacterContextMenu.show(...this.#getContextMenuPosition(event));
+                    const [x, y] = this.#getContextMenuPosition(event);
+                    CharacterContextMenu.show(x, y);
                 }
             }
 
@@ -694,7 +695,7 @@ class BulkEditOverlay {
         const characterId = Number(character.getAttribute('data-chid'));
 
         const select = !this.selectedCharacters.includes(characterId);
-        const legacyBulkEditCheckbox = character.querySelector('.' + BulkEditOverlay.legacySelectedClass);
+        const legacyBulkEditCheckbox = /** @type {HTMLInputElement} */ (character.querySelector('.' + BulkEditOverlay.legacySelectedClass));
 
         if (select) {
             character.classList.add(BulkEditOverlay.selectedClass);
@@ -753,7 +754,8 @@ class BulkEditOverlay {
 
     handleContextMenuShow = (event) => {
         event.preventDefault();
-        CharacterContextMenu.show(...this.#getContextMenuPosition(event));
+        const [x,y] = this.#getContextMenuPosition(event);
+        CharacterContextMenu.show(x, y);
         this.#contextMenuOpen = true;
     };
 
@@ -761,6 +763,7 @@ class BulkEditOverlay {
         let contextMenu = document.getElementById(BulkEditOverlay.contextMenuId);
         if (false === contextMenu.contains(event.target)) {
             CharacterContextMenu.hide();
+            this.#contextMenuOpen = false;
         }
     };
 
@@ -835,12 +838,13 @@ class BulkEditOverlay {
      */
     handleContextMenuDelete = () => {
         const characterIds = this.selectedCharacters;
-        const popupContent = BulkEditOverlay.#getDeletePopupContentHtml(characterIds);
-        const promise = callPopup(popupContent, null)
+        const popupContent = $(BulkEditOverlay.#getDeletePopupContentHtml(characterIds));
+        const checkbox = popupContent.find('#del_char_checkbox');
+        const promise = callGenericPopup(popupContent, POPUP_TYPE.CONFIRM)
             .then((accept) => {
-                if (true !== accept) return;
+                if (!accept) return;
 
-                const deleteChats = document.getElementById('del_char_checkbox').checked ?? false;
+                const deleteChats = checkbox.prop('checked') ?? false;
 
                 showLoader();
                 const toast = toastr.info('We\'re deleting your characters, please wait...', 'Working on it');

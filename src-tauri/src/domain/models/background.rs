@@ -1,11 +1,11 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Represents a background image in the system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Background {
     /// The filename of the background image
     pub filename: String,
-    
+
     /// The path to the background image
     pub path: String,
 }
@@ -13,9 +13,6 @@ pub struct Background {
 impl Background {
     /// Create a new Background instance
     pub fn new(filename: String, path: String) -> Self {
-        Self {
-            filename,
-            path,
-        }
+        Self { filename, path }
     }
 }
