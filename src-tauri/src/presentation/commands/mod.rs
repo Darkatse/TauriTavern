@@ -17,3 +17,4 @@ pub mod theme_commands;
 pub mod tokenizer_commands;
 pub mod user_commands;
 pub mod user_directory_commands;
+pub mod world_info_commands;

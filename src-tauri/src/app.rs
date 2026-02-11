@@ -18,6 +18,7 @@ use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
+use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::file_system::DataDirectory;
 
@@ -40,6 +41,7 @@ pub struct AppState {
     pub preset_service: Arc<PresetService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
+    pub world_info_service: Arc<WorldInfoService>,
 }
 
 impl AppState {
@@ -68,6 +70,7 @@ impl AppState {
             preset_service: services.preset_service,
             chat_completion_service: services.chat_completion_service,
             tokenization_service: services.tokenization_service,
+            world_info_service: services.world_info_service,
         })
     }
 }

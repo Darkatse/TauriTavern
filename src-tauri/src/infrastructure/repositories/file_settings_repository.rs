@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -147,16 +147,24 @@ impl FileSettingsRepository {
             return Ok((Vec::new(), Vec::new()));
         }
 
-        let files = list_files_with_extension(&dir, "settings").await?;
+        let mut files = Vec::new();
+        files.extend(list_files_with_extension(&dir, "json").await?);
+        files.sort();
 
         let mut settings = Vec::new();
         let mut names = Vec::new();
+        let mut seen_names = HashSet::new();
 
         for file in files {
             let file_name = file
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or_default();
+
+            if !seen_names.insert(file_name.to_string()) {
+                continue;
+            }
+
             let content = fs::read_to_string(&file).await.map_err(|e| {
                 DomainError::InternalError(format!("Failed to read file {}: {}", file.display(), e))
             })?;
@@ -392,19 +400,19 @@ impl SettingsRepository for FileSettingsRepository {
     // AI 设置
 
     async fn get_koboldai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
-        self.read_ai_settings("KoboldAI/settings").await
+        self.read_ai_settings("KoboldAI Settings").await
     }
 
     async fn get_novelai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
-        self.read_ai_settings("NovelAI/settings").await
+        self.read_ai_settings("NovelAI Settings").await
     }
 
     async fn get_openai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
-        self.read_ai_settings("OpenAI/settings").await
+        self.read_ai_settings("OpenAI Settings").await
     }
 
     async fn get_textgen_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
-        self.read_ai_settings("TextGen/settings").await
+        self.read_ai_settings("TextGen Settings").await
     }
 
     // 世界信息
@@ -416,25 +424,16 @@ impl SettingsRepository for FileSettingsRepository {
             return Ok(Vec::new());
         }
 
-        let mut entries = fs::read_dir(&worlds_dir).await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to read worlds directory: {}", e))
-        })?;
+        let mut world_names = list_files_with_extension(&worlds_dir, "json")
+            .await?
+            .into_iter()
+            .filter_map(|path| {
+                path.file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .map(|name| name.to_string())
+            })
+            .collect::<Vec<_>>();
 
-        let mut world_names = Vec::new();
-
-        while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to read directory entry: {}", e))
-        })? {
-            let path = entry.path();
-
-            if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                    world_names.push(name.to_string());
-                }
-            }
-        }
-
-        // 按字母顺序排序
         world_names.sort();
 
         Ok(world_names)

@@ -14,3 +14,4 @@ pub mod theme_service;
 pub mod tokenization_service;
 pub mod user_directory_service;
 pub mod user_service;
+pub mod world_info_service;

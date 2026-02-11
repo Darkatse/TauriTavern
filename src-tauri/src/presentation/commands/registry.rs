@@ -43,6 +43,11 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::settings_commands::get_settings_snapshots,
         super::settings_commands::load_settings_snapshot,
         super::settings_commands::restore_settings_snapshot,
+        // World info commands
+        super::world_info_commands::get_world_info,
+        super::world_info_commands::save_world_info,
+        super::world_info_commands::delete_world_info,
+        super::world_info_commands::import_world_info,
         // User directory commands
         super::user_directory_commands::get_user_directory,
         super::user_directory_commands::get_default_user_directory,

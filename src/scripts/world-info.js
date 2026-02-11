@@ -5642,6 +5642,12 @@ export async function importWorldInfo(file) {
             console.log('Converting Risu Lorebook');
             formData.append('convertedData', JSON.stringify(convertRisuLorebook(jsonData)));
         }
+
+        // For normal SillyTavern lorebooks (and PNG-extracted JSON), pass raw JSON as convertedData.
+        // This avoids relying on local file path access in Tauri WebView.
+        if (!formData.has('convertedData')) {
+            formData.append('convertedData', JSON.stringify(jsonData));
+        }
     } catch (error) {
         toastr.error(`Error parsing file: ${error}`);
         return;

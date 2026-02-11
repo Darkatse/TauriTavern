@@ -18,6 +18,7 @@ use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
+use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::avatar_repository::AvatarRepository;
 use crate::domain::repositories::background_repository::BackgroundRepository;
@@ -34,6 +35,7 @@ use crate::domain::repositories::theme_repository::ThemeRepository;
 use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
 use crate::domain::repositories::user_directory_repository::UserDirectoryRepository;
 use crate::domain::repositories::user_repository::UserRepository;
+use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::apis::http_chat_completion_repository::HttpChatCompletionRepository;
 use crate::infrastructure::apis::tiktoken_tokenizer_repository::TiktokenTokenizerRepository;
 use crate::infrastructure::persistence::file_system::DataDirectory;
@@ -50,6 +52,7 @@ use crate::infrastructure::repositories::file_settings_repository::FileSettingsR
 use crate::infrastructure::repositories::file_theme_repository::FileThemeRepository;
 use crate::infrastructure::repositories::file_user_directory_repository::FileUserDirectoryRepository;
 use crate::infrastructure::repositories::file_user_repository::FileUserRepository;
+use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
 
 pub(super) struct AppServices {
     pub character_service: Arc<CharacterService>,
@@ -67,6 +70,7 @@ pub(super) struct AppServices {
     pub preset_service: Arc<PresetService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
+    pub world_info_service: Arc<WorldInfoService>,
 }
 
 struct AppRepositories {
@@ -85,6 +89,7 @@ struct AppRepositories {
     preset_repository: Arc<dyn PresetRepository>,
     chat_completion_repository: Arc<dyn ChatCompletionRepository>,
     tokenizer_repository: Arc<dyn TokenizerRepository>,
+    world_info_repository: Arc<dyn WorldInfoRepository>,
 }
 
 pub(super) async fn initialize_data_directory(
@@ -118,6 +123,9 @@ pub(super) fn build_services(
     ));
     let tokenization_service =
         Arc::new(TokenizationService::new(repositories.tokenizer_repository));
+    let world_info_service = Arc::new(WorldInfoService::new(
+        repositories.world_info_repository.clone(),
+    ));
 
     let character_service = Arc::new(CharacterService::new(
         repositories.character_repository.clone(),
@@ -151,6 +159,7 @@ pub(super) fn build_services(
         preset_service,
         chat_completion_service,
         tokenization_service,
+        world_info_service,
     })
 }
 
@@ -218,6 +227,9 @@ fn build_repositories(
         Arc::new(HttpChatCompletionRepository::new()?);
     let tokenizer_repository: Arc<dyn TokenizerRepository> =
         Arc::new(TiktokenTokenizerRepository::new());
+    let world_info_repository: Arc<dyn WorldInfoRepository> = Arc::new(
+        FileWorldInfoRepository::new(data_directory.default_user().join("worlds")),
+    );
 
     Ok(AppRepositories {
         character_repository,
@@ -235,5 +247,6 @@ fn build_repositories(
         preset_repository,
         chat_completion_repository,
         tokenizer_repository,
+        world_info_repository,
     })
 }

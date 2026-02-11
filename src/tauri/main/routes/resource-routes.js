@@ -1,4 +1,18 @@
 export function registerResourceRoutes(router, context, { jsonResponse, textResponse }) {
+    router.post('/api/files/sanitize-filename', async ({ body }) => {
+        const input = String(body?.fileName || '');
+        const sanitized = input
+            .replace(/[\/\\:*?"<>|\u0000-\u001f]/g, '_')
+            .replace(/[. ]+$/g, '')
+            .trim();
+
+        if (!sanitized) {
+            return jsonResponse({ error: 'Invalid filename' }, 400);
+        }
+
+        return jsonResponse({ fileName: sanitized });
+    });
+
     router.post('/api/avatars/get', async () => {
         const avatars = await context.safeInvoke('get_avatars');
         return jsonResponse(Array.isArray(avatars) ? avatars : []);

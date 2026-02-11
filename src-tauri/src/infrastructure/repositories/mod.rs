@@ -12,3 +12,4 @@ pub mod file_settings_repository;
 pub mod file_theme_repository;
 pub mod file_user_directory_repository;
 pub mod file_user_repository;
+pub mod file_world_info_repository;
