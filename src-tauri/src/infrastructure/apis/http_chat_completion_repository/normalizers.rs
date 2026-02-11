@@ -12,7 +12,7 @@ pub(super) fn normalize_claude_response(response: Value) -> Value {
     let mut text_parts = Vec::new();
     let mut tool_calls = Vec::new();
 
-    for block in &content_blocks {
+    for (index, block) in content_blocks.iter().enumerate() {
         let Some(block_object) = block.as_object() else {
             continue;
         };
@@ -33,36 +33,24 @@ pub(super) fn normalize_claude_response(response: Value) -> Value {
                 }
             }
             "tool_use" => {
-                let name = block_object
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or("tool");
-                let id = block_object
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or("tool_call");
-                let input = block_object
-                    .get("input")
-                    .cloned()
-                    .unwrap_or_else(|| Value::Object(Map::new()));
-                let arguments = if input.is_string() {
-                    input.as_str().unwrap_or_default().to_string()
-                } else {
-                    serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string())
-                };
+                let name = as_non_empty_str(block_object.get("name")).unwrap_or("tool");
+                let id = as_non_empty_str(block_object.get("id"))
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("tool_call_{index}"));
+                let arguments = to_openai_arguments(
+                    block_object
+                        .get("input")
+                        .cloned()
+                        .unwrap_or_else(|| Value::Object(Map::new())),
+                );
+                let signature = as_non_empty_str(block_object.get("signature")).map(str::to_string);
 
-                tool_calls.push(json!({
-                    "id": id,
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "arguments": arguments,
-                    }
-                }));
+                tool_calls.push(build_openai_tool_call(
+                    &id,
+                    name,
+                    arguments,
+                    signature.as_deref(),
+                ));
             }
             _ => {}
         }
@@ -168,30 +156,19 @@ pub(super) fn normalize_gemini_response(response: Value) -> Value {
         };
 
         if let Some(function_call) = part_object.get("functionCall").and_then(Value::as_object) {
-            let name = function_call
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("tool");
+            let name = as_non_empty_str(function_call.get("name")).unwrap_or("tool");
             let args = function_call
                 .get("args")
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new()));
-            let arguments = if args.is_string() {
-                args.as_str().unwrap_or_default().to_string()
-            } else {
-                serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string())
-            };
+            let arguments = to_openai_arguments(args);
+            let id = as_non_empty_str(function_call.get("id"))
+                .map(str::to_string)
+                .or_else(|| as_non_empty_str(part_object.get("id")).map(str::to_string))
+                .unwrap_or_else(|| format!("tool_call_{index}"));
+            let signature = as_non_empty_str(part_object.get("thoughtSignature"));
 
-            tool_calls.push(json!({
-                "id": format!("tool_call_{index}"),
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "arguments": arguments,
-                }
-            }));
+            tool_calls.push(build_openai_tool_call(&id, name, arguments, signature));
         }
 
         let is_thought = part_object
@@ -348,4 +325,148 @@ fn current_unix_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or_default()
+}
+
+fn build_openai_tool_call(
+    id: &str,
+    name: &str,
+    arguments: String,
+    signature: Option<&str>,
+) -> Value {
+    let mut tool_call = json!({
+        "id": id,
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": arguments,
+        }
+    });
+
+    if let Some(signature) = signature {
+        if let Some(object) = tool_call.as_object_mut() {
+            object.insert(
+                "signature".to_string(),
+                Value::String(signature.to_string()),
+            );
+        }
+    }
+
+    tool_call
+}
+
+fn as_non_empty_str(value: Option<&Value>) -> Option<&str> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn to_openai_arguments(value: Value) -> String {
+    if value.is_string() {
+        return value.as_str().unwrap_or_default().to_string();
+    }
+
+    serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{json, Value};
+
+    use super::{normalize_claude_response, normalize_gemini_response};
+
+    #[test]
+    fn normalize_claude_tool_use_preserves_signature() {
+        let response = json!({
+            "id": "claude-response",
+            "model": "claude-3-5-sonnet-latest",
+            "content": [{
+                "type": "tool_use",
+                "id": "call_weather",
+                "name": "weather",
+                "input": { "city": "Paris" },
+                "signature": "sig_1"
+            }],
+            "stop_reason": "tool_use"
+        });
+
+        let normalized = normalize_claude_response(response);
+        let tool_call = normalized
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(Value::as_object)
+            .and_then(|choice| choice.get("message"))
+            .and_then(Value::as_object)
+            .and_then(|message| message.get("tool_calls"))
+            .and_then(Value::as_array)
+            .and_then(|calls| calls.first())
+            .and_then(Value::as_object)
+            .expect("tool call should exist");
+
+        assert_eq!(
+            tool_call
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "call_weather"
+        );
+        assert_eq!(
+            tool_call
+                .get("signature")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "sig_1"
+        );
+    }
+
+    #[test]
+    fn normalize_gemini_function_call_maps_thought_signature() {
+        let response = json!({
+            "modelVersion": "gemini-2.5-flash",
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "name": "weather",
+                            "args": { "city": "Paris" }
+                        },
+                        "thoughtSignature": "sig_2"
+                    }]
+                }
+            }]
+        });
+
+        let normalized = normalize_gemini_response(response);
+        let tool_call = normalized
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(Value::as_object)
+            .and_then(|choice| choice.get("message"))
+            .and_then(Value::as_object)
+            .and_then(|message| message.get("tool_calls"))
+            .and_then(Value::as_array)
+            .and_then(|calls| calls.first())
+            .and_then(Value::as_object)
+            .expect("tool call should exist");
+
+        assert_eq!(
+            tool_call
+                .get("function")
+                .and_then(Value::as_object)
+                .and_then(|function| function.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "weather"
+        );
+        assert_eq!(
+            tool_call
+                .get("signature")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "sig_2"
+        );
+    }
 }

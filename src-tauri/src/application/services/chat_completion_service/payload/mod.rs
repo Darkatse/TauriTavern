@@ -7,7 +7,10 @@ mod claude;
 mod custom;
 mod makersuite;
 mod openai;
+mod openrouter;
+mod prompt_cache;
 mod shared;
+mod tool_calls;
 mod zai;
 
 pub(super) fn build_payload(
@@ -19,6 +22,7 @@ pub(super) fn build_payload(
         | ChatCompletionSource::DeepSeek
         | ChatCompletionSource::Moonshot
         | ChatCompletionSource::SiliconFlow => Ok(openai::build(payload)),
+        ChatCompletionSource::OpenRouter => Ok(openrouter::build(payload)),
         ChatCompletionSource::Zai => Ok(zai::build(payload)),
         ChatCompletionSource::Custom => custom::build(payload),
         ChatCompletionSource::Claude => Ok(claude::build(payload)?),

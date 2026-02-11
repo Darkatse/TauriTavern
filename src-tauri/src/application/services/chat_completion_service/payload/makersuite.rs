@@ -1,8 +1,17 @@
+use std::collections::HashMap;
+
 use serde_json::{json, Map, Value};
 
 use crate::application::errors::ApplicationError;
 
 use super::shared::{message_content_to_text, parse_data_url};
+use super::tool_calls::{
+    extract_openai_tool_calls, fallback_tool_name, message_tool_call_id, message_tool_name,
+    message_tool_result_text, normalize_tool_result_payload, OpenAiToolCall,
+};
+
+const GOOGLE_FLASH_MAX_BUDGET: i64 = 24_576;
+const GOOGLE_PRO_MAX_BUDGET: i64 = 32_768;
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     Ok((
@@ -68,6 +77,8 @@ fn build_makersuite_payload(
         }
     }
 
+    inject_google_thinking_config(payload, model, &mut generation_config);
+
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
     request.insert(
@@ -126,6 +137,7 @@ fn build_makersuite_payload(
 fn convert_messages(messages: Option<&Value>) -> (Vec<Value>, String) {
     let mut contents = Vec::new();
     let mut system_parts = Vec::new();
+    let mut tool_name_by_id: HashMap<String, String> = HashMap::new();
 
     let Some(messages) = messages else {
         return (contents, String::new());
@@ -167,19 +179,27 @@ fn convert_messages(messages: Option<&Value>) -> (Vec<Value>, String) {
         let mut parts = convert_message_content_to_parts(message.get("content"));
 
         if role == "assistant" {
-            if let Some(tool_calls) = message.get("tool_calls") {
-                parts.extend(convert_openai_tool_calls_to_parts(tool_calls));
+            let tool_calls = extract_openai_tool_calls(message.get("tool_calls"));
+            if !tool_calls.is_empty() {
+                for tool_call in &tool_calls {
+                    tool_name_by_id.insert(tool_call.id.clone(), tool_call.name.clone());
+                }
+                parts.extend(convert_openai_tool_calls_to_parts(&tool_calls));
             }
         }
 
         if role == "tool" {
-            let name = message
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("tool");
-            parts = vec![build_tool_response_part(name, content_text)];
+            let tool_call_id = message_tool_call_id(message);
+            let name = message_tool_name(message)
+                .or_else(|| {
+                    tool_call_id
+                        .as_ref()
+                        .and_then(|id| tool_name_by_id.get(id))
+                        .cloned()
+                })
+                .unwrap_or_else(|| fallback_tool_name().to_string());
+            let content = message_tool_result_text(message);
+            parts = vec![build_tool_response_part(&name, &content)];
         }
 
         if parts.is_empty() {
@@ -278,52 +298,36 @@ fn convert_message_content_to_parts(content: Option<&Value>) -> Vec<Value> {
     }
 }
 
-fn convert_openai_tool_calls_to_parts(tool_calls: &Value) -> Vec<Value> {
-    let Some(entries) = tool_calls.as_array() else {
-        return Vec::new();
-    };
-
-    entries
+fn convert_openai_tool_calls_to_parts(tool_calls: &[OpenAiToolCall]) -> Vec<Value> {
+    tool_calls
         .iter()
-        .filter_map(|entry| {
-            let object = entry.as_object()?;
-            let function = object.get("function")?.as_object()?;
-            let name = function
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())?;
-
-            let args = function
-                .get("arguments")
-                .and_then(Value::as_str)
-                .map(|raw| {
-                    serde_json::from_str::<Value>(raw)
-                        .unwrap_or_else(|_| Value::String(raw.to_string()))
-                })
-                .unwrap_or_else(|| Value::Object(Map::new()));
-
-            Some(json!({
+        .map(|tool_call| {
+            let mut part = json!({
                 "functionCall": {
-                    "name": name,
-                    "args": args,
+                    "name": tool_call.name,
+                    "args": tool_call.arguments,
                 }
-            }))
+            });
+
+            if let Some(signature) = tool_call.signature.as_ref() {
+                if let Some(part_object) = part.as_object_mut() {
+                    part_object.insert(
+                        "thoughtSignature".to_string(),
+                        Value::String(signature.clone()),
+                    );
+                }
+            }
+
+            part
         })
         .collect()
 }
 
-fn build_tool_response_part(name: &str, content: String) -> Value {
-    let parsed = serde_json::from_str::<Value>(&content).unwrap_or_else(|_| {
-        json!({
-            "content": content,
-        })
-    });
-
+fn build_tool_response_part(name: &str, content: &str) -> Value {
     json!({
         "functionResponse": {
             "name": name,
-            "response": parsed,
+            "response": normalize_tool_result_payload(content),
         }
     })
 }
@@ -405,4 +409,380 @@ fn map_tool_choice_to_makersuite(value: &Value) -> Option<Value> {
     }
 
     None
+}
+
+fn inject_google_thinking_config(
+    payload: &Map<String, Value>,
+    model: &str,
+    generation_config: &mut Map<String, Value>,
+) {
+    if !is_google_thinking_config_model(model) {
+        return;
+    }
+
+    let include_reasoning = payload
+        .get("include_reasoning")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let reasoning_effort = payload
+        .get("reasoning_effort")
+        .and_then(Value::as_str)
+        .unwrap_or("auto");
+    let max_output_tokens = generation_config
+        .get("maxOutputTokens")
+        .and_then(value_to_i64)
+        .unwrap_or(0);
+
+    let mut thinking_config = Map::new();
+    thinking_config.insert(
+        "includeThoughts".to_string(),
+        Value::Bool(include_reasoning),
+    );
+
+    if let Some(budget) = calculate_google_budget_tokens(max_output_tokens, reasoning_effort, model)
+    {
+        match budget {
+            GoogleThinkingBudget::Tokens(tokens) => {
+                thinking_config.insert(
+                    "thinkingBudget".to_string(),
+                    Value::Number(serde_json::Number::from(tokens)),
+                );
+            }
+            GoogleThinkingBudget::Level(level) => {
+                thinking_config.insert(
+                    "thinkingLevel".to_string(),
+                    Value::String(level.to_string()),
+                );
+            }
+        }
+    }
+
+    generation_config.insert("thinkingConfig".to_string(), Value::Object(thinking_config));
+}
+
+fn is_google_thinking_config_model(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    let is_gemini_25 = (model.starts_with("gemini-2.5-flash")
+        || model.starts_with("gemini-2.5-pro"))
+        && !model.ends_with("-image")
+        && !model.ends_with("-image-preview");
+    let is_gemini_3 = model.starts_with("gemini-3-flash") || model.starts_with("gemini-3-pro");
+
+    is_gemini_25 || is_gemini_3
+}
+
+enum GoogleThinkingBudget {
+    Tokens(i64),
+    Level(&'static str),
+}
+
+fn calculate_google_budget_tokens(
+    max_tokens: i64,
+    reasoning_effort: &str,
+    model: &str,
+) -> Option<GoogleThinkingBudget> {
+    let model = model.trim().to_ascii_lowercase();
+    let effort = reasoning_effort.trim().to_ascii_lowercase();
+    let max_tokens = max_tokens.max(0);
+
+    if model.contains("gemini-3-pro") {
+        let level = match effort.as_str() {
+            "auto" => return None,
+            "min" | "low" | "medium" => "low",
+            "high" | "max" => "high",
+            _ => return None,
+        };
+        return Some(GoogleThinkingBudget::Level(level));
+    }
+
+    if model.contains("gemini-3-flash") {
+        let level = match effort.as_str() {
+            "auto" => return None,
+            "min" => "minimal",
+            "low" => "low",
+            "medium" => "medium",
+            "high" | "max" => "high",
+            _ => return None,
+        };
+        return Some(GoogleThinkingBudget::Level(level));
+    }
+
+    if model.contains("flash-lite") {
+        let tokens = match effort.as_str() {
+            "auto" => return Some(GoogleThinkingBudget::Tokens(-1)),
+            "min" => 0,
+            "low" => max_tokens.saturating_mul(10) / 100,
+            "medium" => max_tokens.saturating_mul(25) / 100,
+            "high" => max_tokens.saturating_mul(50) / 100,
+            "max" => max_tokens,
+            _ => return None,
+        };
+
+        return Some(GoogleThinkingBudget::Tokens(
+            tokens.clamp(512, GOOGLE_FLASH_MAX_BUDGET),
+        ));
+    }
+
+    if model.contains("flash") {
+        let tokens = match effort.as_str() {
+            "auto" => return Some(GoogleThinkingBudget::Tokens(-1)),
+            "min" => 0,
+            "low" => max_tokens.saturating_mul(10) / 100,
+            "medium" => max_tokens.saturating_mul(25) / 100,
+            "high" => max_tokens.saturating_mul(50) / 100,
+            "max" => max_tokens,
+            _ => return None,
+        };
+
+        return Some(GoogleThinkingBudget::Tokens(
+            tokens.clamp(0, GOOGLE_FLASH_MAX_BUDGET),
+        ));
+    }
+
+    if model.contains("pro") {
+        let tokens = match effort.as_str() {
+            "auto" => return Some(GoogleThinkingBudget::Tokens(-1)),
+            "min" => 128,
+            "low" => max_tokens.saturating_mul(10) / 100,
+            "medium" => max_tokens.saturating_mul(25) / 100,
+            "high" => max_tokens.saturating_mul(50) / 100,
+            "max" => max_tokens,
+            _ => return None,
+        };
+
+        return Some(GoogleThinkingBudget::Tokens(
+            tokens.clamp(128, GOOGLE_PRO_MAX_BUDGET),
+        ));
+    }
+
+    None
+}
+
+fn value_to_i64(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{json, Value};
+
+    use super::build;
+
+    #[test]
+    fn makersuite_25_flash_sets_numeric_thinking_budget() {
+        let payload = json!({
+            "model": "gemini-2.5-flash",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 4000,
+            "reasoning_effort": "medium",
+            "include_reasoning": true
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+        let config = body
+            .get("generationConfig")
+            .and_then(Value::as_object)
+            .expect("generationConfig must be object");
+        let thinking = config
+            .get("thinkingConfig")
+            .and_then(Value::as_object)
+            .expect("thinkingConfig must be object");
+
+        assert_eq!(
+            thinking
+                .get("thinkingBudget")
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
+            1000
+        );
+        assert_eq!(
+            thinking
+                .get("includeThoughts")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            true
+        );
+    }
+
+    #[test]
+    fn makersuite_3_pro_sets_thinking_level() {
+        let payload = json!({
+            "model": "gemini-3-pro",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8000,
+            "reasoning_effort": "medium",
+            "include_reasoning": false
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+        let config = body
+            .get("generationConfig")
+            .and_then(Value::as_object)
+            .expect("generationConfig must be object");
+        let thinking = config
+            .get("thinkingConfig")
+            .and_then(Value::as_object)
+            .expect("thinkingConfig must be object");
+
+        assert_eq!(
+            thinking
+                .get("thinkingLevel")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "low"
+        );
+        assert!(thinking.get("thinkingBudget").is_none());
+    }
+
+    #[test]
+    fn makersuite_image_model_does_not_set_thinking_config() {
+        let payload = json!({
+            "model": "gemini-2.5-flash-image-preview",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 1024,
+            "reasoning_effort": "high",
+            "include_reasoning": true
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+        let config = body
+            .get("generationConfig")
+            .and_then(Value::as_object)
+            .expect("generationConfig must be object");
+
+        assert!(config.get("thinkingConfig").is_none());
+    }
+
+    #[test]
+    fn makersuite_tool_result_uses_previous_tool_call_name() {
+        let payload = json!({
+            "model": "gemini-2.5-flash",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_weather",
+                        "type": "function",
+                        "function": {
+                            "name": "weather",
+                            "arguments": "{\"city\":\"Paris\"}"
+                        }
+                    }]
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_weather",
+                    "content": "{\"temperature\":20}"
+                }
+            ]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+        let contents = body
+            .get("contents")
+            .and_then(Value::as_array)
+            .expect("contents must be array");
+
+        let model_part = contents
+            .first()
+            .and_then(Value::as_object)
+            .and_then(|content| content.get("parts"))
+            .and_then(Value::as_array)
+            .and_then(|parts| parts.first())
+            .and_then(Value::as_object)
+            .and_then(|part| part.get("functionCall"))
+            .and_then(Value::as_object)
+            .expect("functionCall must exist");
+        assert_eq!(
+            model_part
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "weather"
+        );
+
+        let user_part = contents
+            .get(1)
+            .and_then(Value::as_object)
+            .and_then(|content| content.get("parts"))
+            .and_then(Value::as_array)
+            .and_then(|parts| parts.first())
+            .and_then(Value::as_object)
+            .and_then(|part| part.get("functionResponse"))
+            .and_then(Value::as_object)
+            .expect("functionResponse must exist");
+        assert_eq!(
+            user_part
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "weather"
+        );
+        assert_eq!(
+            user_part
+                .get("response")
+                .and_then(Value::as_object)
+                .and_then(|response| response.get("temperature"))
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
+            20
+        );
+    }
+
+    #[test]
+    fn makersuite_tool_call_signature_maps_to_thought_signature() {
+        let payload = json!({
+            "model": "gemini-2.5-flash",
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_weather",
+                    "type": "function",
+                    "function": {
+                        "name": "weather",
+                        "arguments": "{}"
+                    },
+                    "signature": "sig_1"
+                }]
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+        let thought_signature = body
+            .get("contents")
+            .and_then(Value::as_array)
+            .and_then(|contents| contents.first())
+            .and_then(Value::as_object)
+            .and_then(|content| content.get("parts"))
+            .and_then(Value::as_array)
+            .and_then(|parts| parts.first())
+            .and_then(Value::as_object)
+            .and_then(|part| part.get("thoughtSignature"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        assert_eq!(thought_signature, "sig_1");
+    }
 }

@@ -7,6 +7,7 @@ use crate::domain::errors::DomainError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatCompletionSource {
     OpenAi,
+    OpenRouter,
     Custom,
     Claude,
     Makersuite,
@@ -20,6 +21,7 @@ impl ChatCompletionSource {
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_lowercase().as_str() {
             "" | "openai" => Some(Self::OpenAi),
+            "openrouter" | "open-router" => Some(Self::OpenRouter),
             "custom" => Some(Self::Custom),
             "claude" => Some(Self::Claude),
             "makersuite" | "gemini" | "google" => Some(Self::Makersuite),
@@ -65,6 +67,10 @@ mod tests {
         assert_eq!(
             ChatCompletionSource::parse("deepseek"),
             Some(ChatCompletionSource::DeepSeek)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("openrouter"),
+            Some(ChatCompletionSource::OpenRouter)
         );
         assert_eq!(
             ChatCompletionSource::parse("moonshot"),

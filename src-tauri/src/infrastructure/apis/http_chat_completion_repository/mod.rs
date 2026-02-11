@@ -58,13 +58,29 @@ impl HttpChatCompletionRepository {
     }
 
     fn apply_extra_headers(
-        mut request: RequestBuilder,
+        request: RequestBuilder,
         headers: &HashMap<String, String>,
     ) -> RequestBuilder {
+        Self::apply_extra_headers_with_filter(request, headers, |_, _| false)
+    }
+
+    fn apply_extra_headers_with_filter<F>(
+        mut request: RequestBuilder,
+        headers: &HashMap<String, String>,
+        mut should_skip: F,
+    ) -> RequestBuilder
+    where
+        F: FnMut(&str, &str) -> bool,
+    {
         for (key, value) in headers {
+            if should_skip(key, value) {
+                continue;
+            }
+
             if key.trim().is_empty() || value.trim().is_empty() {
                 continue;
             }
+
             request = request.header(key.as_str(), value.as_str());
         }
 
@@ -102,6 +118,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
     ) -> Result<Value, DomainError> {
         match source {
             ChatCompletionSource::OpenAi => openai::list_models(self, config, "OpenAI").await,
+            ChatCompletionSource::OpenRouter => {
+                openai::list_models(self, config, "OpenRouter").await
+            }
             ChatCompletionSource::Custom => {
                 openai::list_models(self, config, "Custom OpenAI").await
             }
@@ -128,6 +147,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         match source {
             ChatCompletionSource::OpenAi => {
                 openai::generate(self, config, endpoint_path, payload, "OpenAI").await
+            }
+            ChatCompletionSource::OpenRouter => {
+                openai::generate(self, config, endpoint_path, payload, "OpenRouter").await
             }
             ChatCompletionSource::Custom => {
                 openai::generate(self, config, endpoint_path, payload, "Custom OpenAI").await
@@ -181,4 +203,59 @@ fn extract_error_message(body: &str, default_message: &str) -> String {
     }
 
     body.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use reqwest::Client;
+
+    use super::HttpChatCompletionRepository;
+
+    #[test]
+    fn apply_extra_headers_with_filter_skips_matching_headers() {
+        let mut headers = HashMap::new();
+        headers.insert("anthropic-beta".to_string(), "prompt-caching".to_string());
+        headers.insert("x-custom".to_string(), "value".to_string());
+
+        let request = Client::new().get("https://example.com");
+        let request = HttpChatCompletionRepository::apply_extra_headers_with_filter(
+            request,
+            &headers,
+            |key, _| key.eq_ignore_ascii_case("anthropic-beta"),
+        );
+        let request = request.build().expect("request should build");
+
+        assert!(request.headers().get("anthropic-beta").is_none());
+        assert_eq!(
+            request
+                .headers()
+                .get("x-custom")
+                .and_then(|value| value.to_str().ok()),
+            Some("value")
+        );
+    }
+
+    #[test]
+    fn apply_extra_headers_skips_empty_keys_and_values() {
+        let mut headers = HashMap::new();
+        headers.insert("x-empty-value".to_string(), "   ".to_string());
+        headers.insert("   ".to_string(), "value".to_string());
+        headers.insert("x-valid".to_string(), "ok".to_string());
+
+        let request = Client::new().get("https://example.com");
+        let request = HttpChatCompletionRepository::apply_extra_headers(request, &headers);
+        let request = request.build().expect("request should build");
+
+        assert!(request.headers().get("x-empty-value").is_none());
+        assert!(request.headers().get("   ").is_none());
+        assert_eq!(
+            request
+                .headers()
+                .get("x-valid")
+                .and_then(|value| value.to_str().ok()),
+            Some("ok")
+        );
+    }
 }

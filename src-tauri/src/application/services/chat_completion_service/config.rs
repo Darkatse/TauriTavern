@@ -16,6 +16,7 @@ use crate::domain::repositories::secret_repository::SecretRepository;
 use super::custom_parameters;
 
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
+const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 const CLAUDE_API_BASE: &str = "https://api.anthropic.com/v1";
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com";
 const DEEPSEEK_API_BASE: &str = "https://api.deepseek.com/beta";
@@ -24,6 +25,8 @@ const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
 const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
 const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
 const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
+const OPENROUTER_REFERER: &str = "https://tauritavern.app";
+const OPENROUTER_TITLE: &str = "TauriTavern";
 
 const ZAI_ENDPOINT_CODING: &str = "coding";
 
@@ -199,6 +202,7 @@ fn default_base_url(
 ) -> String {
     match source {
         ChatCompletionSource::OpenAi => OPENAI_API_BASE.to_string(),
+        ChatCompletionSource::OpenRouter => OPENROUTER_API_BASE.to_string(),
         ChatCompletionSource::Claude => CLAUDE_API_BASE.to_string(),
         ChatCompletionSource::Makersuite => GEMINI_API_BASE.to_string(),
         ChatCompletionSource::DeepSeek => match purpose {
@@ -221,6 +225,7 @@ fn default_base_url(
 fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
     match source {
         ChatCompletionSource::OpenAi => Some(SecretKeys::OPENAI),
+        ChatCompletionSource::OpenRouter => Some(SecretKeys::OPENROUTER),
         ChatCompletionSource::Claude => Some(SecretKeys::CLAUDE),
         ChatCompletionSource::Makersuite => Some(SecretKeys::MAKERSUITE),
         ChatCompletionSource::DeepSeek => Some(SecretKeys::DEEPSEEK),
@@ -234,6 +239,7 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
 fn source_display_name(source: ChatCompletionSource) -> &'static str {
     match source {
         ChatCompletionSource::OpenAi => "OpenAI",
+        ChatCompletionSource::OpenRouter => "OpenRouter",
         ChatCompletionSource::Claude => "Claude",
         ChatCompletionSource::Makersuite => "Google Gemini",
         ChatCompletionSource::DeepSeek => "DeepSeek",
@@ -260,6 +266,10 @@ fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String>
     if source == ChatCompletionSource::Zai {
         headers.insert("Accept-Language".to_string(), "en-US,en".to_string());
     }
+    if source == ChatCompletionSource::OpenRouter {
+        headers.insert("HTTP-Referer".to_string(), OPENROUTER_REFERER.to_string());
+        headers.insert("X-Title".to_string(), OPENROUTER_TITLE.to_string());
+    }
 
     headers
 }
@@ -273,7 +283,8 @@ mod tests {
     use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
 
     use super::{
-        default_base_url, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, ZAI_API_BASE_CODING,
+        default_base_url, source_extra_headers, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE,
+        OPENROUTER_API_BASE, ZAI_API_BASE_CODING,
     };
 
     #[test]
@@ -292,5 +303,22 @@ mod tests {
         );
 
         assert_eq!(actual, ZAI_API_BASE_CODING);
+    }
+
+    #[test]
+    fn openrouter_uses_default_base_url() {
+        let actual = default_base_url(
+            ChatCompletionSource::OpenRouter,
+            ApiConfigPurpose::Generate,
+            "",
+        );
+        assert_eq!(actual, OPENROUTER_API_BASE);
+    }
+
+    #[test]
+    fn openrouter_uses_referer_headers() {
+        let headers = source_extra_headers(ChatCompletionSource::OpenRouter);
+        assert!(headers.contains_key("HTTP-Referer"));
+        assert!(headers.contains_key("X-Title"));
     }
 }
