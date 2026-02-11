@@ -18,6 +18,20 @@ use super::custom_parameters;
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 const CLAUDE_API_BASE: &str = "https://api.anthropic.com/v1";
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com";
+const DEEPSEEK_API_BASE: &str = "https://api.deepseek.com/beta";
+const DEEPSEEK_STATUS_API_BASE: &str = "https://api.deepseek.com";
+const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
+const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
+const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
+const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
+
+const ZAI_ENDPOINT_CODING: &str = "coding";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApiConfigPurpose {
+    Status,
+    Generate,
+}
 
 pub(super) async fn resolve_status_api_config(
     source: ChatCompletionSource,
@@ -36,6 +50,8 @@ pub(super) async fn resolve_status_api_config(
         proxy_password,
         custom_url,
         custom_headers_raw,
+        "",
+        ApiConfigPurpose::Status,
         secret_repository,
     )
     .await
@@ -51,6 +67,7 @@ pub(super) async fn resolve_generate_api_config(
     let custom_url_raw = get_payload_string(&dto.payload, "custom_url");
     let custom_url = custom_url_raw.trim();
     let custom_headers_raw = get_payload_string(&dto.payload, "custom_include_headers");
+    let zai_endpoint = get_payload_string(&dto.payload, "zai_endpoint");
 
     resolve_api_config(
         source,
@@ -58,6 +75,8 @@ pub(super) async fn resolve_generate_api_config(
         proxy_password,
         custom_url,
         &custom_headers_raw,
+        &zai_endpoint,
+        ApiConfigPurpose::Generate,
         secret_repository,
     )
     .await
@@ -69,37 +88,11 @@ async fn resolve_api_config(
     proxy_password: &str,
     custom_url: &str,
     custom_headers_raw: &str,
+    zai_endpoint: &str,
+    purpose: ApiConfigPurpose,
     secret_repository: &Arc<dyn SecretRepository>,
 ) -> Result<ChatCompletionApiConfig, ApplicationError> {
     match source {
-        ChatCompletionSource::OpenAi
-        | ChatCompletionSource::Claude
-        | ChatCompletionSource::Makersuite => {
-            let base_url = if reverse_proxy.is_empty() {
-                default_base_url(source).to_string()
-            } else {
-                reverse_proxy.to_string()
-            };
-
-            let api_key = if reverse_proxy.is_empty() {
-                let secret_key = source_secret_key(source).ok_or_else(|| {
-                    ApplicationError::InternalError(
-                        "Secret key mapping is missing for chat completion source".to_string(),
-                    )
-                })?;
-
-                read_required_secret(secret_repository, secret_key, source_display_name(source))
-                    .await?
-            } else {
-                proxy_password.to_string()
-            };
-
-            Ok(ChatCompletionApiConfig {
-                base_url,
-                api_key,
-                extra_headers: HashMap::new(),
-            })
-        }
         ChatCompletionSource::Custom => {
             let base_url = resolve_custom_base_url(custom_url, reverse_proxy)?;
             let extra_headers = custom_parameters::parse_string_map(custom_headers_raw)?;
@@ -116,6 +109,32 @@ async fn resolve_api_config(
                 base_url,
                 api_key,
                 extra_headers,
+            })
+        }
+        _ => {
+            let base_url = if supports_reverse_proxy(source) && !reverse_proxy.is_empty() {
+                reverse_proxy.to_string()
+            } else {
+                default_base_url(source, purpose, zai_endpoint)
+            };
+
+            let api_key = if supports_reverse_proxy(source) && !reverse_proxy.is_empty() {
+                proxy_password.to_string()
+            } else {
+                let secret_key = source_secret_key(source).ok_or_else(|| {
+                    ApplicationError::InternalError(
+                        "Secret key mapping is missing for chat completion source".to_string(),
+                    )
+                })?;
+
+                read_required_secret(secret_repository, secret_key, source_display_name(source))
+                    .await?
+            };
+
+            Ok(ChatCompletionApiConfig {
+                base_url,
+                api_key,
+                extra_headers: source_extra_headers(source),
             })
         }
     }
@@ -173,12 +192,29 @@ async fn read_optional_secret(
         .filter(|value| !value.trim().is_empty()))
 }
 
-fn default_base_url(source: ChatCompletionSource) -> &'static str {
+fn default_base_url(
+    source: ChatCompletionSource,
+    purpose: ApiConfigPurpose,
+    zai_endpoint: &str,
+) -> String {
     match source {
-        ChatCompletionSource::OpenAi => OPENAI_API_BASE,
-        ChatCompletionSource::Claude => CLAUDE_API_BASE,
-        ChatCompletionSource::Makersuite => GEMINI_API_BASE,
-        ChatCompletionSource::Custom => OPENAI_API_BASE,
+        ChatCompletionSource::OpenAi => OPENAI_API_BASE.to_string(),
+        ChatCompletionSource::Claude => CLAUDE_API_BASE.to_string(),
+        ChatCompletionSource::Makersuite => GEMINI_API_BASE.to_string(),
+        ChatCompletionSource::DeepSeek => match purpose {
+            ApiConfigPurpose::Status => DEEPSEEK_STATUS_API_BASE.to_string(),
+            ApiConfigPurpose::Generate => DEEPSEEK_API_BASE.to_string(),
+        },
+        ChatCompletionSource::Moonshot => MOONSHOT_API_BASE.to_string(),
+        ChatCompletionSource::SiliconFlow => SILICONFLOW_API_BASE.to_string(),
+        ChatCompletionSource::Zai => {
+            if is_zai_coding_endpoint(zai_endpoint) {
+                ZAI_API_BASE_CODING.to_string()
+            } else {
+                ZAI_API_BASE_COMMON.to_string()
+            }
+        }
+        ChatCompletionSource::Custom => OPENAI_API_BASE.to_string(),
     }
 }
 
@@ -187,6 +223,10 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
         ChatCompletionSource::OpenAi => Some(SecretKeys::OPENAI),
         ChatCompletionSource::Claude => Some(SecretKeys::CLAUDE),
         ChatCompletionSource::Makersuite => Some(SecretKeys::MAKERSUITE),
+        ChatCompletionSource::DeepSeek => Some(SecretKeys::DEEPSEEK),
+        ChatCompletionSource::Moonshot => Some(SecretKeys::MOONSHOT),
+        ChatCompletionSource::SiliconFlow => Some(SecretKeys::SILICONFLOW),
+        ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
         ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
     }
 }
@@ -196,6 +236,61 @@ fn source_display_name(source: ChatCompletionSource) -> &'static str {
         ChatCompletionSource::OpenAi => "OpenAI",
         ChatCompletionSource::Claude => "Claude",
         ChatCompletionSource::Makersuite => "Google Gemini",
+        ChatCompletionSource::DeepSeek => "DeepSeek",
+        ChatCompletionSource::Moonshot => "Moonshot AI",
+        ChatCompletionSource::SiliconFlow => "SiliconFlow",
+        ChatCompletionSource::Zai => "Z.AI (GLM)",
         ChatCompletionSource::Custom => "Custom OpenAI",
+    }
+}
+
+fn supports_reverse_proxy(source: ChatCompletionSource) -> bool {
+    matches!(
+        source,
+        ChatCompletionSource::OpenAi
+            | ChatCompletionSource::Claude
+            | ChatCompletionSource::Makersuite
+            | ChatCompletionSource::DeepSeek
+    )
+}
+
+fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String> {
+    let mut headers = HashMap::new();
+
+    if source == ChatCompletionSource::Zai {
+        headers.insert("Accept-Language".to_string(), "en-US,en".to_string());
+    }
+
+    headers
+}
+
+fn is_zai_coding_endpoint(value: &str) -> bool {
+    value.trim().eq_ignore_ascii_case(ZAI_ENDPOINT_CODING)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
+
+    use super::{
+        default_base_url, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, ZAI_API_BASE_CODING,
+    };
+
+    #[test]
+    fn deepseek_status_uses_non_beta_base() {
+        let actual = default_base_url(ChatCompletionSource::DeepSeek, ApiConfigPurpose::Status, "");
+
+        assert_eq!(actual, DEEPSEEK_STATUS_API_BASE);
+    }
+
+    #[test]
+    fn zai_coding_endpoint_resolves_coding_base() {
+        let actual = default_base_url(
+            ChatCompletionSource::Zai,
+            ApiConfigPurpose::Generate,
+            "coding",
+        );
+
+        assert_eq!(actual, ZAI_API_BASE_CODING);
     }
 }

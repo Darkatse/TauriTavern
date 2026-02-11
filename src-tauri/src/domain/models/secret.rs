@@ -88,6 +88,9 @@ impl SecretKeys {
     pub const BFL: &'static str = "api_key_bfl";
     pub const GENERIC: &'static str = "api_key_generic";
     pub const DEEPSEEK: &'static str = "api_key_deepseek";
+    pub const MOONSHOT: &'static str = "api_key_moonshot";
+    pub const SILICONFLOW: &'static str = "api_key_siliconflow";
+    pub const ZAI: &'static str = "api_key_zai";
     pub const SERPER: &'static str = "api_key_serper";
     pub const FALAI: &'static str = "api_key_falai";
     pub const XAI: &'static str = "api_key_xai";

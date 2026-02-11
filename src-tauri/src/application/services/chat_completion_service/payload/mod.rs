@@ -8,13 +8,18 @@ mod custom;
 mod makersuite;
 mod openai;
 mod shared;
+mod zai;
 
 pub(super) fn build_payload(
     source: ChatCompletionSource,
     payload: Map<String, Value>,
 ) -> Result<(String, Value), ApplicationError> {
     match source {
-        ChatCompletionSource::OpenAi => Ok(openai::build(payload)),
+        ChatCompletionSource::OpenAi
+        | ChatCompletionSource::DeepSeek
+        | ChatCompletionSource::Moonshot
+        | ChatCompletionSource::SiliconFlow => Ok(openai::build(payload)),
+        ChatCompletionSource::Zai => Ok(zai::build(payload)),
         ChatCompletionSource::Custom => custom::build(payload),
         ChatCompletionSource::Claude => Ok(claude::build(payload)?),
         ChatCompletionSource::Makersuite => Ok(makersuite::build(payload)?),

@@ -10,12 +10,6 @@ pub fn humanized_date(date: DateTime<Utc>) -> String {
     local.format("%Y-%m-%d@%Hh%Mm%Ss").to_string()
 }
 
-/// Format a date in ISO8601 format with local timezone
-pub fn humanized_iso8601_date_time() -> String {
-    let now = Local::now();
-    now.format("%Y-%m-%d %H:%M:%S").to_string()
-}
-
 /// Format a date in the SillyTavern message format (Month DD, YYYY HH:MMam/pm)
 pub fn message_date_format(date: DateTime<Utc>) -> String {
     let local = date.with_timezone(&Local);

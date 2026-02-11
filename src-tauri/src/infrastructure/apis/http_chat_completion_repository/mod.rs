@@ -105,6 +105,14 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             ChatCompletionSource::Custom => {
                 openai::list_models(self, config, "Custom OpenAI").await
             }
+            ChatCompletionSource::DeepSeek => openai::list_models(self, config, "DeepSeek").await,
+            ChatCompletionSource::Moonshot => {
+                openai::list_models(self, config, "Moonshot AI").await
+            }
+            ChatCompletionSource::SiliconFlow => {
+                openai::list_models(self, config, "SiliconFlow").await
+            }
+            ChatCompletionSource::Zai => openai::list_models(self, config, "Z.AI (GLM)").await,
             ChatCompletionSource::Claude => claude::list_models(self, config).await,
             ChatCompletionSource::Makersuite => makersuite::list_models(self, config).await,
         }
@@ -123,6 +131,18 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             }
             ChatCompletionSource::Custom => {
                 openai::generate(self, config, endpoint_path, payload, "Custom OpenAI").await
+            }
+            ChatCompletionSource::DeepSeek => {
+                openai::generate(self, config, endpoint_path, payload, "DeepSeek").await
+            }
+            ChatCompletionSource::Moonshot => {
+                openai::generate(self, config, endpoint_path, payload, "Moonshot AI").await
+            }
+            ChatCompletionSource::SiliconFlow => {
+                openai::generate(self, config, endpoint_path, payload, "SiliconFlow").await
+            }
+            ChatCompletionSource::Zai => {
+                openai::generate(self, config, endpoint_path, payload, "Z.AI (GLM)").await
             }
             ChatCompletionSource::Claude => {
                 claude::generate(self, config, endpoint_path, payload).await

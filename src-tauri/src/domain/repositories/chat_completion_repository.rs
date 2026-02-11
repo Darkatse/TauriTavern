@@ -10,6 +10,10 @@ pub enum ChatCompletionSource {
     Custom,
     Claude,
     Makersuite,
+    DeepSeek,
+    Moonshot,
+    SiliconFlow,
+    Zai,
 }
 
 impl ChatCompletionSource {
@@ -19,6 +23,10 @@ impl ChatCompletionSource {
             "custom" => Some(Self::Custom),
             "claude" => Some(Self::Claude),
             "makersuite" | "gemini" | "google" => Some(Self::Makersuite),
+            "deepseek" => Some(Self::DeepSeek),
+            "moonshot" | "moonshot ai" => Some(Self::Moonshot),
+            "siliconflow" | "silicon flow" => Some(Self::SiliconFlow),
+            "zai" | "z.ai" | "glm" => Some(Self::Zai),
             _ => None,
         }
     }
@@ -46,4 +54,29 @@ pub trait ChatCompletionRepository: Send + Sync {
         endpoint_path: &str,
         payload: &Value,
     ) -> Result<Value, DomainError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ChatCompletionSource;
+
+    #[test]
+    fn parse_new_openai_compatible_sources() {
+        assert_eq!(
+            ChatCompletionSource::parse("deepseek"),
+            Some(ChatCompletionSource::DeepSeek)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("moonshot"),
+            Some(ChatCompletionSource::Moonshot)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("siliconflow"),
+            Some(ChatCompletionSource::SiliconFlow)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("zai"),
+            Some(ChatCompletionSource::Zai)
+        );
+    }
 }

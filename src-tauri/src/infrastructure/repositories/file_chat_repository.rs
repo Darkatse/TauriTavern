@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::Local;
 use rand::random;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -10,7 +11,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::chat::{humanized_date, humanized_iso8601_date_time, Chat, ChatMessage};
+use crate::domain::models::chat::{humanized_date, Chat, ChatMessage};
 use crate::domain::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatRepository, ChatSearchResult,
 };
@@ -122,6 +123,8 @@ pub struct FileChatRepository {
 }
 
 impl FileChatRepository {
+    const CHAT_BACKUP_PREFIX: &'static str = "chat_";
+
     /// Create a new FileChatRepository
     pub fn new(chats_dir: PathBuf) -> Self {
         // Create a memory cache with 100 chat capacity and 30 minute TTL
@@ -141,8 +144,11 @@ impl FileChatRepository {
             backups_dir,
             memory_cache,
             throttled_backup,
-            max_backups_per_chat: 5,
-            max_total_backups: 50,
+            // Match SillyTavern defaults:
+            // - per-chat backups: 50
+            // - total backups: unlimited (-1 in SillyTavern config)
+            max_backups_per_chat: 50,
+            max_total_backups: usize::MAX,
             backup_enabled: true,
         }
     }
@@ -173,41 +179,115 @@ impl FileChatRepository {
         self.chats_dir.join(character_name)
     }
 
-    /// Get the path to a chat file
-    fn get_chat_path(&self, character_name: &str, file_name: &str) -> PathBuf {
-        let file_name = if file_name.ends_with(".jsonl") {
+    /// Ensure chat file names always use the JSONL extension
+    fn normalize_jsonl_file_name(file_name: &str) -> String {
+        if file_name.ends_with(".jsonl") {
             file_name.to_string()
         } else {
             format!("{}.jsonl", file_name)
-        };
+        }
+    }
 
-        self.get_character_dir(character_name).join(file_name)
+    /// Remove JSONL extension if present
+    fn strip_jsonl_extension(file_name: &str) -> &str {
+        file_name.strip_suffix(".jsonl").unwrap_or(file_name)
+    }
+
+    /// Build a timestamp that is safe to use in file names on all platforms.
+    fn backup_timestamp() -> String {
+        Local::now().format("%Y%m%d-%H%M%S").to_string()
+    }
+
+    /// Mirrors SillyTavern backup name normalization:
+    /// sanitize(name).replace(/[^a-z0-9]/gi, '_').toLowerCase()
+    fn sanitize_backup_name_for_sillytavern(input: &str) -> String {
+        let mut sanitized = String::with_capacity(input.len());
+
+        for ch in input.chars() {
+            let is_invalid = matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+                || ch.is_control();
+            if !is_invalid {
+                sanitized.push(ch);
+            }
+        }
+
+        let trimmed = sanitized.trim_matches([' ', '.']).to_string();
+        let lowered = trimmed.to_ascii_lowercase();
+
+        let is_reserved = matches!(
+            lowered.as_str(),
+            "" | "."
+                | ".."
+                | "con"
+                | "prn"
+                | "aux"
+                | "nul"
+                | "com1"
+                | "com2"
+                | "com3"
+                | "com4"
+                | "com5"
+                | "com6"
+                | "com7"
+                | "com8"
+                | "com9"
+                | "lpt1"
+                | "lpt2"
+                | "lpt3"
+                | "lpt4"
+                | "lpt5"
+                | "lpt6"
+                | "lpt7"
+                | "lpt8"
+                | "lpt9"
+        );
+
+        if is_reserved {
+            return String::new();
+        }
+
+        lowered
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+            .collect()
+    }
+
+    fn backup_file_prefix(character_name: &str) -> String {
+        format!(
+            "{}{}_",
+            Self::CHAT_BACKUP_PREFIX,
+            Self::sanitize_backup_name_for_sillytavern(character_name)
+        )
+    }
+
+    /// Build backup file name in the form `chat_<sanitized_character>_<timestamp>.jsonl`.
+    fn backup_file_name(character_name: &str) -> String {
+        format!(
+            "{}{}.jsonl",
+            Self::backup_file_prefix(character_name),
+            Self::backup_timestamp()
+        )
+    }
+
+    /// Get the path to a chat file
+    fn get_chat_path(&self, character_name: &str, file_name: &str) -> PathBuf {
+        let normalized = Self::normalize_jsonl_file_name(file_name);
+        self.get_character_dir(character_name).join(normalized)
     }
 
     /// Get the path to a chat backup file
-    fn get_backup_path(&self, character_name: &str, file_name: &str) -> PathBuf {
-        let timestamp = humanized_iso8601_date_time();
-        let file_name = if file_name.ends_with(".jsonl") {
-            file_name.to_string()
-        } else {
-            format!("{}.jsonl", file_name)
-        };
-
-        self.backups_dir.join(format!(
-            "{}_{}_backup_{}.jsonl",
-            character_name, file_name, timestamp
-        ))
+    fn get_backup_path(&self, character_name: &str, _file_name: &str) -> PathBuf {
+        self.backups_dir
+            .join(Self::backup_file_name(character_name))
     }
 
     /// Get the cache key for a chat
     fn get_cache_key(&self, character_name: &str, file_name: &str) -> String {
-        let file_name = if file_name.ends_with(".jsonl") {
-            file_name[0..file_name.len() - 6].to_string()
-        } else {
-            file_name.to_string()
-        };
-
-        format!("{}:{}", character_name, file_name)
+        format!(
+            "{}:{}",
+            character_name,
+            Self::strip_jsonl_extension(file_name)
+        )
     }
 
     /// Read a chat from a file
@@ -221,11 +301,7 @@ impl FileChatRepository {
             character_name, file_name
         ));
 
-        let file_name = if file_name.ends_with(".jsonl") {
-            file_name.to_string()
-        } else {
-            format!("{}.jsonl", file_name)
-        };
+        let file_name = Self::normalize_jsonl_file_name(file_name);
 
         let path = self.get_chat_path(character_name, &file_name);
 
@@ -252,11 +328,7 @@ impl FileChatRepository {
             user_name,
             character_name,
             create_date,
-            file_name: Some(if file_name.ends_with(".jsonl") {
-                file_name[0..file_name.len() - 6].to_string()
-            } else {
-                file_name
-            }),
+            file_name: Some(Self::strip_jsonl_extension(&file_name).to_string()),
             ..Default::default()
         };
 
@@ -385,28 +457,33 @@ impl FileChatRepository {
             throttled.update(&cache_key);
         }
 
-        // Remove old backups
-        self.remove_old_backups().await?;
+        // Remove old backups following SillyTavern semantics:
+        // 1) per-chat prefix limit
+        // 2) global chat_ prefix limit
+        let per_chat_prefix = Self::backup_file_prefix(character_name);
+        self.remove_old_backups_with_prefix(&per_chat_prefix, self.max_backups_per_chat)
+            .await?;
+        self.remove_old_backups_with_prefix(Self::CHAT_BACKUP_PREFIX, self.max_total_backups)
+            .await?;
 
         Ok(())
     }
 
-    /// Remove old backups to stay within limits
-    async fn remove_old_backups(&self) -> Result<(), DomainError> {
-        logger::debug("Removing old backups");
-
-        // List all backup files
-        let backup_files = list_files_with_extension(&self.backups_dir, "jsonl").await?;
-
-        if backup_files.len() <= self.max_total_backups {
+    /// Remove old backups with a specific file name prefix.
+    async fn remove_old_backups_with_prefix(
+        &self,
+        prefix: &str,
+        max_backups: usize,
+    ) -> Result<(), DomainError> {
+        if max_backups == usize::MAX {
             return Ok(());
         }
 
-        // Group backups by chat
-        let mut backups_by_chat: HashMap<String, Vec<(PathBuf, std::fs::Metadata)>> =
-            HashMap::new();
+        logger::debug(&format!("Removing old backups for prefix: {}", prefix));
 
-        for path in backup_files {
+        // List all backup files
+        let mut matching_backups: Vec<(PathBuf, std::fs::Metadata)> = Vec::new();
+        for path in list_files_with_extension(&self.backups_dir, "jsonl").await? {
             if let Ok(metadata) = fs::metadata(&path).await {
                 let file_name = path
                     .file_name()
@@ -414,53 +491,18 @@ impl FileChatRepository {
                     .to_string_lossy()
                     .to_string();
 
-                // Extract character and chat name from backup file name
-                if let Some(pos) = file_name.find('_') {
-                    let character_name = &file_name[0..pos];
-
-                    if let Some(pos2) = file_name[pos + 1..].find('_') {
-                        let chat_name = &file_name[pos + 1..pos + 1 + pos2];
-                        let key = format!("{}:{}", character_name, chat_name);
-
-                        backups_by_chat
-                            .entry(key)
-                            .or_default()
-                            .push((path, metadata));
-                    }
+                if file_name.starts_with(prefix) {
+                    matching_backups.push((path, metadata));
                 }
             }
+        }
+
+        if matching_backups.len() <= max_backups {
+            return Ok(());
         }
 
         // Sort backups by modification time (oldest first)
-        for backups in backups_by_chat.values_mut() {
-            backups.sort_by(|(_, a), (_, b)| {
-                a.modified()
-                    .unwrap_or_else(|_| std::time::SystemTime::UNIX_EPOCH)
-                    .cmp(
-                        &b.modified()
-                            .unwrap_or_else(|_| std::time::SystemTime::UNIX_EPOCH),
-                    )
-            });
-
-            // Remove excess backups for this chat
-            while backups.len() > self.max_backups_per_chat {
-                if let Some((path, _)) = backups.first() {
-                    let path = path.clone();
-                    if let Err(e) = fs::remove_file(&path).await {
-                        logger::error(&format!("Failed to remove old backup {:?}: {}", path, e));
-                    } else {
-                        logger::debug(&format!("Removed old backup: {:?}", path));
-                    }
-                }
-                backups.remove(0);
-            }
-        }
-
-        // If we still have too many backups, remove the oldest ones
-        let mut all_backups: Vec<(PathBuf, std::fs::Metadata)> =
-            backups_by_chat.values().flat_map(|v| v.clone()).collect();
-
-        all_backups.sort_by(|(_, a), (_, b)| {
+        matching_backups.sort_by(|(_, a), (_, b)| {
             a.modified()
                 .unwrap_or_else(|_| std::time::SystemTime::UNIX_EPOCH)
                 .cmp(
@@ -469,8 +511,8 @@ impl FileChatRepository {
                 )
         });
 
-        while all_backups.len() > self.max_total_backups {
-            if let Some((path, _)) = all_backups.first() {
+        while matching_backups.len() > max_backups {
+            if let Some((path, _)) = matching_backups.first() {
                 let path = path.clone();
                 if let Err(e) = fs::remove_file(&path).await {
                     logger::error(&format!("Failed to remove old backup {:?}: {}", path, e));
@@ -478,7 +520,7 @@ impl FileChatRepository {
                     logger::debug(&format!("Removed old backup: {:?}", path));
                 }
             }
-            all_backups.remove(0);
+            matching_backups.remove(0);
         }
 
         Ok(())
@@ -874,5 +916,54 @@ impl ChatRepository for FileChatRepository {
         let mut cache = self.memory_cache.lock().await;
         cache.clear();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FileChatRepository;
+
+    #[test]
+    fn backup_file_name_uses_windows_safe_timestamp() {
+        let backup_file_name = FileChatRepository::backup_file_name("Alice");
+
+        assert!(backup_file_name.starts_with(FileChatRepository::CHAT_BACKUP_PREFIX));
+        assert!(backup_file_name.ends_with(".jsonl"));
+        assert!(!backup_file_name.contains(':'));
+
+        let stem = backup_file_name
+            .strip_suffix(".jsonl")
+            .expect("backup file should end with .jsonl");
+        let (_chat_key, timestamp) = stem
+            .rsplit_once('_')
+            .expect("backup file should contain trailing timestamp");
+
+        assert_eq!(timestamp.len(), 15);
+        assert_eq!(timestamp.chars().nth(8), Some('-'));
+        assert!(timestamp
+            .chars()
+            .enumerate()
+            .all(|(index, ch)| (index == 8 && ch == '-') || ch.is_ascii_digit()));
+    }
+
+    #[test]
+    fn backup_name_matches_sillytavern_sanitization() {
+        let key = FileChatRepository::sanitize_backup_name_for_sillytavern("A:li*ce Name");
+        assert_eq!(key, "alice_name");
+
+        let unicode = FileChatRepository::sanitize_backup_name_for_sillytavern("角色-A");
+        assert_eq!(unicode, "___a");
+    }
+
+    #[test]
+    fn backup_name_reserved_windows_name_becomes_empty() {
+        let key = FileChatRepository::sanitize_backup_name_for_sillytavern("CON");
+        assert_eq!(key, "");
+    }
+
+    #[test]
+    fn backup_file_prefix_matches_sillytavern_pattern() {
+        let prefix = FileChatRepository::backup_file_prefix("A:li*ce Name");
+        assert_eq!(prefix, "chat_alice_name_");
     }
 }
