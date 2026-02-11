@@ -7375,6 +7375,11 @@ export async function getChat() {
             dataType: 'json',
             contentType: 'application/json',
         });
+
+        if (!Array.isArray(response)) {
+            throw new Error('Invalid chat payload');
+        }
+
         if (response[0] !== undefined) {
             chat.splice(0, chat.length, ...response);
             chat_metadata = chat[0]['chat_metadata'] ?? {};
@@ -7395,9 +7400,11 @@ export async function getChat() {
             }
             $('#send_textarea').trigger('click').trigger('focus');
         }, 200);
+        return true;
     } catch (error) {
-        await getChatResult();
-        console.log(error);
+        console.error('Failed to load chat:', error);
+        toastr.error(t`Could not load chat data. Existing chat file was not modified.`);
+        return false;
     }
 }
 
@@ -7467,7 +7474,10 @@ export async function openCharacterChat(file_name) {
     characters[this_chid]['chat'] = file_name;
     chat.length = 0;
     chat_metadata = {};
-    await getChat();
+    const loaded = await getChat();
+    if (!loaded) {
+        return;
+    }
     $('#selected_chat_pole').val(file_name);
     await createOrEditCharacter(new CustomEvent('newChat'));
 }

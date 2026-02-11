@@ -16,15 +16,15 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     router.post('/api/characters/chats', async ({ body }) => {
         const avatar = body?.avatar_url || body?.avatar;
         const simple = Boolean(body?.simple);
-        const characterName = await context.resolveCharacterName({ avatar, fallbackName: body?.ch_name || body?.name });
+        const characterId = await context.resolveCharacterId({ avatar, fallbackName: body?.ch_name || body?.name });
 
-        if (!characterName) {
+        if (!characterId) {
             return jsonResponse([]);
         }
 
         const chats = await context.safeInvoke('get_character_chats_by_id', {
             dto: {
-                name: characterName,
+                name: characterId,
                 simple,
             },
         });
@@ -66,15 +66,15 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
 
     router.post('/api/characters/delete', async ({ body }) => {
         const avatar = body?.avatar_url;
-        const characterName = await context.resolveCharacterName({ avatar, fallbackName: body?.name });
+        const characterId = await context.resolveCharacterId({ avatar, fallbackName: body?.name });
 
-        if (!characterName) {
+        if (!characterId) {
             return jsonResponse({ error: 'Character not found' }, 404);
         }
 
         await context.safeInvoke('delete_character', {
             dto: {
-                name: characterName,
+                name: characterId,
                 delete_chats: Boolean(body?.delete_chats),
             },
         });
@@ -86,15 +86,15 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     router.post('/api/characters/rename', async ({ body }) => {
         const avatar = body?.avatar_url;
         const newName = body?.new_name || '';
-        const oldName = await context.resolveCharacterName({ avatar });
+        const oldCharacterId = await context.resolveCharacterId({ avatar });
 
-        if (!oldName || !newName) {
+        if (!oldCharacterId || !newName) {
             return jsonResponse({ error: 'Character rename payload is invalid' }, 400);
         }
 
         const renamed = await context.safeInvoke('rename_character', {
             dto: {
-                old_name: oldName,
+                old_name: oldCharacterId,
                 new_name: newName,
             },
         });
@@ -106,13 +106,13 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
 
     router.post('/api/characters/duplicate', async ({ body }) => {
         const avatar = body?.avatar_url;
-        const originalName = await context.resolveCharacterName({ avatar });
+        const originalCharacterId = await context.resolveCharacterId({ avatar });
 
-        if (!originalName) {
+        if (!originalCharacterId) {
             return jsonResponse({ error: 'Character not found' }, 404);
         }
 
-        const original = await context.safeInvoke('get_character', { name: originalName });
+        const original = await context.safeInvoke('get_character', { name: originalCharacterId });
         const baseName = `${original.name} (Copy)`;
         const duplicateName = await context.uniqueCharacterName(baseName);
 
@@ -144,15 +144,15 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
 
     router.post('/api/characters/merge-attributes', async ({ body }) => {
         const avatar = body?.avatar;
-        const name = await context.resolveCharacterName({ avatar, fallbackName: body?.name });
+        const characterId = await context.resolveCharacterId({ avatar, fallbackName: body?.name });
 
-        if (!name) {
+        if (!characterId) {
             return jsonResponse({ ok: true });
         }
 
         const dto = context.pickCharacterUpdateFields(body || {});
         if (Object.keys(dto).length > 0) {
-            await context.safeInvoke('update_character', { name, dto });
+            await context.safeInvoke('update_character', { name: characterId, dto });
             await context.getAllCharacters({ shallow: false, forceRefresh: true });
         }
 
@@ -199,13 +199,13 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     router.post('/api/characters/export', async ({ body }) => {
         const avatar = body?.avatar_url;
         const format = String(body?.format || 'json').toLowerCase();
-        const characterName = await context.resolveCharacterName({ avatar, fallbackName: body?.name });
+        const characterId = await context.resolveCharacterId({ avatar, fallbackName: body?.name });
 
-        if (!characterName) {
+        if (!characterId) {
             return jsonResponse({ error: 'Character not found' }, 404);
         }
 
-        const character = await context.safeInvoke('get_character', { name: characterName });
+        const character = await context.safeInvoke('get_character', { name: characterId });
         const payload = JSON.stringify(character, null, 2);
         const contentType = format === 'json' ? 'application/json' : 'application/octet-stream';
 

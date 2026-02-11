@@ -2,6 +2,7 @@
 pub mod avatar_repository;
 pub mod background_repository;
 pub mod character_repository;
+pub mod chat_completion_repository;
 pub mod chat_repository;
 pub mod content_repository;
 pub mod extension_repository;
@@ -10,5 +11,6 @@ pub mod preset_repository;
 pub mod secret_repository;
 pub mod settings_repository;
 pub mod theme_repository;
+pub mod tokenizer_repository;
 pub mod user_directory_repository;
 pub mod user_repository;

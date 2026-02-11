@@ -41,6 +41,7 @@
 | serde | JSON序列化/反序列化 |
 | tokio | 异步运行时 |
 | reqwest | HTTP客户端 |
+| tiktoken-rs | OpenAI 系列 tokenizer 计数/编解码 |
 | tauri-api | Tauri API访问 |
 | rusqlite | SQLite数据库访问（可选） |
 | log | 日志记录 |
@@ -87,6 +88,7 @@
 - **桥接层**: `tauri-bridge.js` 提供 `invoke/listen/convertFileSrc` 统一封装
 - **请求注入**: `src/tauri/main/interceptors.js` 同时拦截 `fetch` 与 `jQuery.ajax`
 - **路由分发**: `src/tauri/main/router.js` + `src/tauri/main/routes/*` 按业务域分模块处理
+- **AI注入路由**: `src/tauri/main/routes/ai-routes.js` 承接 Chat Completion 与 tokenizer 端点
 - **上下文能力**: `src/tauri/main/context.js` 负责缓存、DTO转换与公共 helper
 
 ## 4. 开发工具
@@ -123,6 +125,7 @@
 |------|----------|------|
 | OpenAI | REST API | GPT模型访问 |
 | Anthropic | REST API | Claude模型访问 |
+| Custom OpenAI-compatible | REST API | 兼容OpenAI协议的自定义端口接入 |
 | 本地模型 | HTTP API | 本地AI模型访问 |
 | 其他提供商 | 各自API | 多样化模型选择 |
 

@@ -2,6 +2,7 @@
 pub mod avatar_service;
 pub mod background_service;
 pub mod character_service;
+pub mod chat_completion_service;
 pub mod chat_service;
 pub mod content_service;
 pub mod extension_service;
@@ -10,5 +11,6 @@ pub mod preset_service;
 pub mod secret_service;
 pub mod settings_service;
 pub mod theme_service;
+pub mod tokenization_service;
 pub mod user_directory_service;
 pub mod user_service;

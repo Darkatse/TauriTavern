@@ -27,6 +27,12 @@
         "scope": [
           "$APPCACHE/**",
           "$APPCACHE/*",
+          "$APPDATA/**",
+          "$APPDATA/*",
+          "$APPLOCALDATA/**",
+          "$APPLOCALDATA/*",
+          "$LOCALDATA/**",
+          "$LOCALDATA/*",
           "$RESOURCE/**",
           "$RESOURCE/*"
         ]

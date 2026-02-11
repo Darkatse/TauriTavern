@@ -108,6 +108,10 @@ impl CharacterService {
             character.data.name = character.name.clone();
         }
 
+        if let Some(chat) = dto.chat {
+            character.chat = chat;
+        }
+
         if let Some(description) = dto.description {
             character.description = description;
             character.data.description = character.description.clone();

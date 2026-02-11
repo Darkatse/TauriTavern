@@ -54,6 +54,7 @@ pub struct CreateCharacterDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCharacterDto {
     pub name: Option<String>,
+    pub chat: Option<String>,
     pub description: Option<String>,
     pub personality: Option<String>,
     pub scenario: Option<String>,

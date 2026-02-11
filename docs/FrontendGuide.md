@@ -41,7 +41,8 @@ src/
 │           ├── extensions-routes.js
 │           ├── resource-routes.js
 │           ├── character-routes.js
-│           └── chat-routes.js
+│           ├── chat-routes.js
+│           └── ai-routes.js
 └── scripts/
     └── ...                    # 上游 SillyTavern 功能模块
 ```
@@ -92,6 +93,7 @@ src/
 | `resource-routes.js` | 头像、背景、主题、群组等资源接口 |
 | `character-routes.js` | 角色列表、创建、编辑、导入导出、重命名 |
 | `chat-routes.js` | 聊天读写、搜索、最近记录、导出 |
+| `ai-routes.js` | Chat Completion（OpenAI / Claude / Gemini(MakerSuite)）与 tokenizer（count/encode/decode/bias） |
 
 ## 7. 兼容层策略
 

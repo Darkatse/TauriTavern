@@ -6,6 +6,7 @@ use tauri::AppHandle;
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
 use crate::application::services::character_service::CharacterService;
+use crate::application::services::chat_completion_service::ChatCompletionService;
 use crate::application::services::chat_service::ChatService;
 use crate::application::services::content_service::ContentService;
 use crate::application::services::extension_service::ExtensionService;
@@ -14,12 +15,14 @@ use crate::application::services::preset_service::PresetService;
 use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
 use crate::application::services::theme_service::ThemeService;
+use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::avatar_repository::AvatarRepository;
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::domain::repositories::character_repository::CharacterRepository;
+use crate::domain::repositories::chat_completion_repository::ChatCompletionRepository;
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::content_repository::ContentRepository;
 use crate::domain::repositories::extension_repository::ExtensionRepository;
@@ -28,8 +31,11 @@ use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::domain::repositories::settings_repository::SettingsRepository;
 use crate::domain::repositories::theme_repository::ThemeRepository;
+use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
 use crate::domain::repositories::user_directory_repository::UserDirectoryRepository;
 use crate::domain::repositories::user_repository::UserRepository;
+use crate::infrastructure::apis::http_chat_completion_repository::HttpChatCompletionRepository;
+use crate::infrastructure::apis::tiktoken_tokenizer_repository::TiktokenTokenizerRepository;
 use crate::infrastructure::persistence::file_system::DataDirectory;
 use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
 use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
@@ -59,6 +65,8 @@ pub(super) struct AppServices {
     pub background_service: Arc<BackgroundService>,
     pub theme_service: Arc<ThemeService>,
     pub preset_service: Arc<PresetService>,
+    pub chat_completion_service: Arc<ChatCompletionService>,
+    pub tokenization_service: Arc<TokenizationService>,
 }
 
 struct AppRepositories {
@@ -75,6 +83,8 @@ struct AppRepositories {
     background_repository: Arc<dyn BackgroundRepository>,
     theme_repository: Arc<dyn ThemeRepository>,
     preset_repository: Arc<dyn PresetRepository>,
+    chat_completion_repository: Arc<dyn ChatCompletionRepository>,
+    tokenizer_repository: Arc<dyn TokenizerRepository>,
 }
 
 pub(super) async fn initialize_data_directory(
@@ -88,8 +98,8 @@ pub(super) async fn initialize_data_directory(
 pub(super) fn build_services(
     app_handle: &AppHandle,
     data_directory: &DataDirectory,
-) -> AppServices {
-    let repositories = build_repositories(app_handle, data_directory);
+) -> Result<AppServices, DomainError> {
+    let repositories = build_repositories(app_handle, data_directory)?;
 
     let content_service = Arc::new(ContentService::new(repositories.content_repository.clone()));
     let extension_service = Arc::new(ExtensionService::new(
@@ -102,6 +112,12 @@ pub(super) fn build_services(
     ));
     let theme_service = Arc::new(ThemeService::new(repositories.theme_repository.clone()));
     let preset_service = Arc::new(PresetService::new(repositories.preset_repository.clone()));
+    let chat_completion_service = Arc::new(ChatCompletionService::new(
+        repositories.chat_completion_repository,
+        repositories.secret_repository.clone(),
+    ));
+    let tokenization_service =
+        Arc::new(TokenizationService::new(repositories.tokenizer_repository));
 
     let character_service = Arc::new(CharacterService::new(
         repositories.character_repository.clone(),
@@ -119,7 +135,7 @@ pub(super) fn build_services(
     // Do not expose secrets by default; this can be enabled by configuration later.
     let secret_service = Arc::new(SecretService::new(repositories.secret_repository, false));
 
-    AppServices {
+    Ok(AppServices {
         character_service,
         chat_service,
         user_service,
@@ -133,10 +149,15 @@ pub(super) fn build_services(
         background_service,
         theme_service,
         preset_service,
-    }
+        chat_completion_service,
+        tokenization_service,
+    })
 }
 
-fn build_repositories(app_handle: &AppHandle, data_directory: &DataDirectory) -> AppRepositories {
+fn build_repositories(
+    app_handle: &AppHandle,
+    data_directory: &DataDirectory,
+) -> Result<AppRepositories, DomainError> {
     let character_repository: Arc<dyn CharacterRepository> =
         Arc::new(FileCharacterRepository::new(
             data_directory.characters().to_path_buf(),
@@ -193,7 +214,12 @@ fn build_repositories(app_handle: &AppHandle, data_directory: &DataDirectory) ->
         content_repository.clone(),
     ));
 
-    AppRepositories {
+    let chat_completion_repository: Arc<dyn ChatCompletionRepository> =
+        Arc::new(HttpChatCompletionRepository::new()?);
+    let tokenizer_repository: Arc<dyn TokenizerRepository> =
+        Arc::new(TiktokenTokenizerRepository::new());
+
+    Ok(AppRepositories {
         character_repository,
         chat_repository,
         user_repository,
@@ -207,5 +233,7 @@ fn build_repositories(app_handle: &AppHandle, data_directory: &DataDirectory) ->
         background_repository,
         theme_repository,
         preset_repository,
-    }
+        chat_completion_repository,
+        tokenizer_repository,
+    })
 }

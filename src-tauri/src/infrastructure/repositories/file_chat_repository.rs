@@ -546,7 +546,11 @@ impl ChatRepository for FileChatRepository {
                 .to_string();
 
             match self.get_chat(character_name, &file_name).await {
-                Ok(chat) => {
+                Ok(mut chat) => {
+                    // Keep the internal character ID stable for list/read-model flows.
+                    // Chat metadata may contain a mutable display name, but filesystem
+                    // layout and routing logic are keyed by directory (character_name).
+                    chat.character_name = character_name.to_string();
                     chats.push(chat);
                 }
                 Err(e) => {
@@ -740,18 +744,27 @@ impl ChatRepository for FileChatRepository {
             if file_name_match || message_match {
                 // Get the file size
                 let path = self.get_chat_path(&chat.character_name, &file_name);
-                let file_size = if let Ok(metadata) = fs::metadata(&path).await {
-                    metadata.len()
+                let (file_size, fallback_date) = if let Ok(metadata) = fs::metadata(&path).await {
+                    let fallback_date = metadata
+                        .modified()
+                        .ok()
+                        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|duration| duration.as_millis() as i64)
+                        .unwrap_or(0);
+                    (metadata.len(), fallback_date)
                 } else {
-                    0
+                    (0, 0)
                 };
+                let date = chat.get_last_message_timestamp();
+                let date = if date > 0 { date } else { fallback_date };
 
                 results.push(ChatSearchResult {
                     character_name: chat.character_name.clone(),
                     file_name,
                     file_size,
+                    message_count: chat.message_count(),
                     preview,
-                    date: chat.get_last_message_timestamp(),
+                    date,
                     chat_id: Some(chat.chat_metadata.chat_id_hash.to_string()),
                 });
             }

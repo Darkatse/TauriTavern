@@ -92,6 +92,14 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::preset_commands::list_presets,
         super::preset_commands::preset_exists,
         super::preset_commands::get_preset,
+        // Chat completion commands
+        super::chat_completion_commands::get_chat_completions_status,
+        super::chat_completion_commands::generate_chat_completion,
+        // Tokenizer commands
+        super::tokenizer_commands::count_openai_tokens,
+        super::tokenizer_commands::encode_openai_tokens,
+        super::tokenizer_commands::decode_openai_tokens,
+        super::tokenizer_commands::build_openai_logit_bias,
         // Bridge commands
         super::bridge::emit_event,
         super::bridge::get_version,

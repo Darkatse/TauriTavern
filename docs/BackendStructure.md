@@ -147,6 +147,17 @@ pub enum DomainError {
 
 服务封装特定用例的业务逻辑，协调多个领域对象。
 
+当前与 AI 相关的新增服务包括：
+
+- `ChatCompletionService`：封装 Chat Completion 状态检查与生成流程（当前支持 OpenAI / Claude / Gemini(MakerSuite) / Custom OpenAI-compatible）。
+- `TokenizationService`：统一 token 计数、编码/解码、logit bias token 映射（基于 `tiktoken-rs`，非 OpenAI 模型先 fallback）。
+
+`ChatCompletionService` 已按 provider 能力拆分为模块目录：
+
+- `application/services/chat_completion_service/config.rs`：provider 配置与密钥解析（含 custom base URL / header 解析）。
+- `application/services/chat_completion_service/payload/*`：按 provider 构建上游请求体。
+- `application/services/chat_completion_service/custom_parameters.rs`：custom body/header 参数解析。
+
 ```rust
 // 示例: 角色服务
 pub struct CharacterService {
@@ -208,6 +219,18 @@ pub struct CharacterResponseDto {
 ### 3.3 基础设施层 (Infrastructure)
 
 基础设施层提供技术实现，如数据库访问、外部API集成等。
+
+在 AI 场景下，基础设施层新增了两类实现：
+
+- `HttpChatCompletionRepository`：统一封装 OpenAI / Claude / Gemini(MakerSuite) / Custom OpenAI-compatible 的 HTTP 调用与响应规范化。
+- `TiktokenTokenizerRepository`：负责 tokenizer 计数与编解码的底层实现。
+
+`HttpChatCompletionRepository` 同样按 provider 拆分为模块目录：
+
+- `infrastructure/apis/http_chat_completion_repository/openai.rs`
+- `infrastructure/apis/http_chat_completion_repository/claude.rs`
+- `infrastructure/apis/http_chat_completion_repository/makersuite.rs`
+- `infrastructure/apis/http_chat_completion_repository/normalizers.rs`
 
 #### 3.3.1 仓库实现 (Repository Implementations)
 

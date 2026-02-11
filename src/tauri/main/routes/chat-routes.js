@@ -1,38 +1,66 @@
 export function registerChatRoutes(router, context, { jsonResponse }) {
+    const isChatNotFoundError = (error) => {
+        const message = String(error?.message || error || '').toLowerCase();
+        return (
+            message.includes('not found') ||
+            message.includes('no such file') ||
+            message.includes('enoent') ||
+            message.includes('os error 2') ||
+            message.includes('failed to open jsonl file') ||
+            message.includes('没有那个文件或目录') ||
+            message.includes('找不到')
+        );
+    };
+
     router.post('/api/chats/get', async ({ body }) => {
-        const characterName = await context.resolveCharacterName({
+        const characterId = await context.resolveCharacterId({
             avatar: body?.avatar_url,
             fallbackName: body?.ch_name || body?.character_name,
         });
 
         const fileName = context.stripJsonl(body?.file_name || body?.chatfile || body?.file);
 
-        if (!characterName || !fileName) {
+        if (!characterId || !fileName) {
             return jsonResponse([]);
         }
 
-        const chat = await context.safeInvoke('get_chat', {
-            character_name: characterName,
-            file_name: fileName,
-        });
+        let chat;
+        try {
+            chat = await context.safeInvoke('get_chat', {
+                characterName: characterId,
+                fileName,
+            });
+        } catch (error) {
+            if (isChatNotFoundError(error)) {
+                return jsonResponse([]);
+            }
+
+            return jsonResponse(
+                {
+                    error: 'Failed to load chat',
+                    details: String(error?.message || error || ''),
+                },
+                500,
+            );
+        }
 
         return jsonResponse(context.toFrontendChat(chat));
     });
 
     router.post('/api/chats/save', async ({ body }) => {
-        const characterName = await context.resolveCharacterName({
+        const characterId = await context.resolveCharacterId({
             avatar: body?.avatar_url,
             fallbackName: body?.ch_name || body?.character_name,
         });
 
         const fileName = context.stripJsonl(body?.file_name || body?.chatfile || body?.file);
-        if (!characterName || !fileName || !Array.isArray(body?.chat)) {
+        if (!characterId || !fileName || !Array.isArray(body?.chat)) {
             return jsonResponse({ error: 'Invalid chat payload' }, 400);
         }
 
         await context.safeInvoke('save_chat', {
             dto: {
-                ch_name: characterName,
+                ch_name: characterId,
                 file_name: fileName,
                 chat: body.chat,
                 force: Boolean(body?.force),
@@ -43,19 +71,19 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/chats/delete', async ({ body }) => {
-        const characterName = await context.resolveCharacterName({
+        const characterId = await context.resolveCharacterId({
             avatar: body?.avatar_url,
             fallbackName: body?.ch_name || body?.character_name,
         });
 
         const fileName = context.stripJsonl(body?.chatfile || body?.file_name || body?.file);
-        if (!characterName || !fileName) {
+        if (!characterId || !fileName) {
             return jsonResponse({ ok: true });
         }
 
         await context.safeInvoke('delete_chat', {
-            character_name: characterName,
-            file_name: fileName,
+            characterName: characterId,
+            fileName,
         });
 
         return jsonResponse({ ok: true });
@@ -66,17 +94,17 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return jsonResponse({ error: 'Group chat rename is not supported' }, 400);
         }
 
-        const characterName = await context.resolveCharacterName({ avatar: body?.avatar_url });
+        const characterId = await context.resolveCharacterId({ avatar: body?.avatar_url });
         const oldFileName = context.stripJsonl(body?.original_file || body?.old_file_name);
         const newFileName = context.stripJsonl(body?.renamed_file || body?.new_file_name);
 
-        if (!characterName || !oldFileName || !newFileName) {
+        if (!characterId || !oldFileName || !newFileName) {
             return jsonResponse({ error: 'Invalid rename payload' }, 400);
         }
 
         await context.safeInvoke('rename_chat', {
             dto: {
-                character_name: characterName,
+                character_name: characterId,
                 old_file_name: oldFileName,
                 new_file_name: newFileName,
             },
@@ -90,11 +118,11 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return jsonResponse([]);
         }
 
-        const characterName = await context.resolveCharacterName({ avatar: body?.avatar_url });
+        const characterId = await context.resolveCharacterId({ avatar: body?.avatar_url });
         const query = String(body?.query || '');
         const results = await context.safeInvoke('search_chats', {
             query,
-            character_filter: characterName || null,
+            characterFilter: characterId || null,
         });
 
         const mapped = Array.isArray(results)
@@ -120,7 +148,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
                 const frontChat = context.toFrontendChat(chat);
                 const messageCount = Math.max(0, frontChat.length - 1);
                 const lastMessage = frontChat[frontChat.length - 1] || {};
-                const avatar = context.findAvatarByCharacterName(chat.character_name);
+                const avatar = context.findAvatarByCharacterId(chat.character_name);
 
                 return {
                     file_name: context.ensureJsonl(chat.file_name || ''),
@@ -142,19 +170,19 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return jsonResponse({ message: 'Group chat export is not supported in Tauri backend' }, 400);
         }
 
-        const characterName = await context.resolveCharacterName({
+        const characterId = await context.resolveCharacterId({
             avatar: body?.avatar_url,
             fallbackName: body?.ch_name,
         });
 
         const fileName = context.stripJsonl(body?.file || body?.file_name);
-        if (!characterName || !fileName) {
+        if (!characterId || !fileName) {
             return jsonResponse({ message: 'Invalid export payload' }, 400);
         }
 
         const chat = await context.safeInvoke('get_chat', {
-            character_name: characterName,
-            file_name: fileName,
+            characterName: characterId,
+            fileName,
         });
 
         const frontendChat = context.toFrontendChat(chat);

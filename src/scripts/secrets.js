@@ -374,20 +374,28 @@ export async function deleteSecret(key, id) {
  * @returns {Promise<void>}
  */
 export async function readSecretState() {
+    const applyState = async (state) => {
+        secret_state = state && typeof state === 'object' ? state : {};
+        updateSecretDisplay();
+        updateInputDataLists();
+        await checkOpenRouterAuth();
+    };
+
     try {
         const response = await fetch('/api/secrets/read', {
             method: 'POST',
             headers: getRequestHeaders({ omitContentType: true }),
         });
 
-        if (response.ok) {
-            secret_state = await response.json();
-            updateSecretDisplay();
-            updateInputDataLists();
-            await checkOpenRouterAuth();
+        if (!response.ok) {
+            await applyState({});
+            return;
         }
+
+        const state = await response.json().catch(() => ({}));
+        await applyState(state);
     } catch {
-        console.error('Could not read secrets file');
+        await applyState({});
     }
 }
 

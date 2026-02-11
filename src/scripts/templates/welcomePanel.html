@@ -43,7 +43,7 @@
         {{/if}}
         {{#each chats}}
             {{#with this}}
-            <div class="recentChat {{#if hidden}}hidden{{/if}} {{#if is_group}}group{{/if}}" data-file="{{chat_name}}" data-avatar="{{avatar}}" data-group="{{group}}">
+            <div class="recentChat {{#if hidden}}hidden{{/if}} {{#if is_group}}group{{/if}}" data-file="{{chat_name}}" data-avatar="{{avatar}}" data-group="{{group}}" data-thumbnail="{{char_thumbnail}}">
                 <div class="avatar" title="[Character] {{char_name}}&#10;File: {{avatar}}">
                     <img src="{{char_thumbnail}}" alt="{{char_name}}">
                 </div>

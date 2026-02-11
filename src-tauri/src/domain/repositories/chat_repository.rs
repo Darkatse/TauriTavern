@@ -10,6 +10,7 @@ pub struct ChatSearchResult {
     pub character_name: String,
     pub file_name: String,
     pub file_size: u64,
+    pub message_count: usize,
     pub preview: String,
     pub date: i64,
     pub chat_id: Option<String>,

@@ -86,6 +86,7 @@ pub fn read_character_data_from_png(image_data: &[u8]) -> Result<String, DomainE
     // First try to find V3 format (ccv3)
     if let Some(chunk) = text_chunks
         .iter()
+        .rev()
         .find(|c| c.keyword.to_lowercase() == CHUNK_NAME_V3)
     {
         let decoded = decode_base64(&chunk.text)?;
@@ -95,6 +96,7 @@ pub fn read_character_data_from_png(image_data: &[u8]) -> Result<String, DomainE
     // Then try V2 format (chara)
     if let Some(chunk) = text_chunks
         .iter()
+        .rev()
         .find(|c| c.keyword.to_lowercase() == CHUNK_NAME_V2)
     {
         let decoded = decode_base64(&chunk.text)?;
@@ -129,11 +131,8 @@ pub fn write_character_data_to_png(
     // Extract existing chunks
     let mut chunks = extract_chunks(image_data)?;
 
-    // Remove existing character data chunks
-    chunks.retain(|c| {
-        let name = c.name_str().to_lowercase();
-        name != CHUNK_NAME_V2 && name != CHUNK_NAME_V3
-    });
+    // Remove existing character metadata tEXt chunks (`chara` / `ccv3`).
+    chunks.retain(|chunk| !is_character_metadata_text_chunk(chunk));
 
     // Add V2 chunk
     let base64_data = encode_base64(character_data)?;
@@ -164,6 +163,19 @@ pub fn write_character_data_to_png(
     let output = encode_chunks(&chunks)?;
 
     Ok(output)
+}
+
+fn is_character_metadata_text_chunk(chunk: &PngChunk) -> bool {
+    if chunk.name != *b"tEXt" {
+        return false;
+    }
+
+    let Some(separator_index) = chunk.data.iter().position(|&b| b == 0) else {
+        return false;
+    };
+
+    let keyword = String::from_utf8_lossy(&chunk.data[..separator_index]).to_lowercase();
+    keyword == CHUNK_NAME_V2 || keyword == CHUNK_NAME_V3
 }
 
 /// Create text chunk data
@@ -405,4 +417,88 @@ pub async fn process_avatar_image(
         .map_err(|e| DomainError::InternalError(format!("Failed to write PNG image: {}", e)))?;
 
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        create_text_chunk_data, decode_base64, encode_base64, encode_chunks, extract_chunks,
+        is_character_metadata_text_chunk, read_character_data_from_png,
+        write_character_data_to_png, PngChunk,
+    };
+    use image::{DynamicImage, ImageFormat, RgbaImage};
+    use serde_json::Value;
+    use std::io::Cursor;
+
+    fn build_minimal_png() -> Vec<u8> {
+        let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 1));
+        let mut output = Vec::new();
+        let mut cursor = Cursor::new(&mut output);
+        image
+            .write_to(&mut cursor, ImageFormat::Png)
+            .expect("should build png");
+        output
+    }
+
+    fn count_character_metadata_chunks(png_data: &[u8]) -> usize {
+        extract_chunks(png_data)
+            .expect("valid png")
+            .iter()
+            .filter(|chunk| is_character_metadata_text_chunk(chunk))
+            .count()
+    }
+
+    #[test]
+    fn write_replaces_existing_character_metadata_chunks() {
+        let base_png = build_minimal_png();
+        let first_json =
+            r#"{"spec":"chara_card_v2","spec_version":"2.0","name":"Seraphina","chat":"old-chat"}"#;
+        let second_json =
+            r#"{"spec":"chara_card_v2","spec_version":"2.0","name":"Seraphina","chat":"new-chat"}"#;
+
+        let first_write =
+            write_character_data_to_png(&base_png, first_json).expect("first write succeeds");
+        let second_write =
+            write_character_data_to_png(&first_write, second_json).expect("second write succeeds");
+
+        // Exactly two metadata chunks should remain: one `chara`, one `ccv3`.
+        assert_eq!(count_character_metadata_chunks(&second_write), 2);
+
+        let decoded = read_character_data_from_png(&second_write).expect("read should succeed");
+        let parsed: Value = serde_json::from_str(&decoded).expect("valid json");
+        assert_eq!(parsed.get("chat").and_then(Value::as_str), Some("new-chat"));
+    }
+
+    #[test]
+    fn read_prefers_latest_duplicate_metadata_chunk() {
+        let base_png = build_minimal_png();
+        let mut chunks = extract_chunks(&base_png).expect("valid png");
+
+        let old_json =
+            r#"{"spec":"chara_card_v2","spec_version":"2.0","name":"Seraphina","chat":"old-chat"}"#;
+        let new_json =
+            r#"{"spec":"chara_card_v2","spec_version":"2.0","name":"Seraphina","chat":"new-chat"}"#;
+
+        let old_payload =
+            create_text_chunk_data("chara", &encode_base64(old_json).expect("encode old"));
+        let new_payload =
+            create_text_chunk_data("chara", &encode_base64(new_json).expect("encode new"));
+
+        // Insert duplicated `chara` chunks before IEND in chronological order.
+        chunks.insert(chunks.len() - 1, PngChunk::new("tEXt", old_payload));
+        chunks.insert(chunks.len() - 1, PngChunk::new("tEXt", new_payload));
+
+        let png_with_duplicates = encode_chunks(&chunks).expect("encode duplicated png");
+        let decoded =
+            read_character_data_from_png(&png_with_duplicates).expect("read should succeed");
+        let parsed: Value = serde_json::from_str(&decoded).expect("valid json");
+
+        assert_eq!(parsed.get("chat").and_then(Value::as_str), Some("new-chat"));
+
+        // Sanity check: base64 payload roundtrip helper works in this module.
+        assert_eq!(
+            decode_base64(&encode_base64(new_json).expect("encode")).expect("decode"),
+            new_json
+        );
+    }
 }

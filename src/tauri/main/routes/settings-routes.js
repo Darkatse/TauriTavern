@@ -32,8 +32,13 @@ export function registerSettingsRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/secrets/read', async () => {
-        const state = await context.safeInvoke('read_secret_state');
-        return jsonResponse(state || {});
+        try {
+            const state = await context.safeInvoke('read_secret_state');
+            return jsonResponse(state || {});
+        } catch (error) {
+            console.warn('Failed to read secret state:', error);
+            return jsonResponse({});
+        }
     });
 
     router.post('/api/secrets/find', async ({ body }) => {

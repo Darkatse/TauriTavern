@@ -190,6 +190,14 @@ async function sendWelcomePanel(chats, expand = false) {
             });
         });
         fragment.querySelectorAll('.recentChat').forEach((item) => {
+            const thumbnail = item.getAttribute('data-thumbnail') || '';
+            if (thumbnail) {
+                const image = item.querySelector('.avatar img');
+                if (image instanceof HTMLImageElement) {
+                    image.src = thumbnail;
+                }
+            }
+
             item.addEventListener('click', () => {
                 const avatarId = item.getAttribute('data-avatar');
                 const groupId = item.getAttribute('data-group');

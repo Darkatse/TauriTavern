@@ -31,12 +31,12 @@ export const listen = isTauriEnv
     : null;
 
 export const convertFileSrc = isTauriEnv
-    ? (path) => {
+    ? (path, protocol = 'asset') => {
         const fn = getTauri()?.core?.convertFileSrc;
         if (typeof fn !== 'function') {
             throw new Error('Tauri convertFileSrc is unavailable');
         }
-        return fn(path);
+        return fn(path, protocol);
     }
     : null;
 
@@ -99,5 +99,5 @@ export function getAssetUrl(path) {
         return path;
     }
 
-    return convertFileSrc(path);
+    return convertFileSrc(path, 'asset');
 }

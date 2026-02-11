@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::character::{sanitize_filename, Character};
+use crate::domain::models::chat::parse_message_timestamp_value;
 use crate::domain::repositories::character_repository::{
     CharacterChat, CharacterRepository, ImageCrop,
 };
@@ -720,6 +721,12 @@ impl CharacterRepository for FileCharacterRepository {
             })?;
 
             let file_size = format!("{:.2}kb", metadata.len() as f64 / 1024.0);
+            let fallback_date = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis() as i64)
+                .unwrap_or(0);
 
             // Read the last line of the file to get the last message
             let file_content = fs::read_to_string(&path).await.map_err(|e| {
@@ -737,13 +744,14 @@ impl CharacterRepository for FileCharacterRepository {
                         .and_then(|m| m.as_str())
                         .unwrap_or("[The chat is empty]")
                         .to_string();
-                    let date = json.get("send_date").and_then(|d| d.as_i64()).unwrap_or(0);
+                    let date = parse_message_timestamp_value(json.get("send_date"));
+                    let date = if date > 0 { date } else { fallback_date };
                     (message, date)
                 } else {
-                    ("[Invalid chat format]".to_string(), 0)
+                    ("[Invalid chat format]".to_string(), fallback_date)
                 }
             } else {
-                ("[The chat is empty]".to_string(), 0)
+                ("[The chat is empty]".to_string(), fallback_date)
             };
 
             chats.push(CharacterChat {

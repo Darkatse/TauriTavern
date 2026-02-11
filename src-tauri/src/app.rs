@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
 use crate::application::services::character_service::CharacterService;
+use crate::application::services::chat_completion_service::ChatCompletionService;
 use crate::application::services::chat_service::ChatService;
 use crate::application::services::content_service::ContentService;
 use crate::application::services::extension_service::ExtensionService;
@@ -14,6 +15,7 @@ use crate::application::services::preset_service::PresetService;
 use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
 use crate::application::services::theme_service::ThemeService;
+use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::domain::errors::DomainError;
@@ -36,6 +38,8 @@ pub struct AppState {
     pub background_service: Arc<BackgroundService>,
     pub theme_service: Arc<ThemeService>,
     pub preset_service: Arc<PresetService>,
+    pub chat_completion_service: Arc<ChatCompletionService>,
+    pub tokenization_service: Arc<TokenizationService>,
 }
 
 impl AppState {
@@ -43,7 +47,7 @@ impl AppState {
         tracing::info!("Initializing application with data root: {:?}", data_root);
 
         let data_directory = bootstrap::initialize_data_directory(data_root).await?;
-        let services = bootstrap::build_services(&app_handle, &data_directory);
+        let services = bootstrap::build_services(&app_handle, &data_directory)?;
 
         tracing::info!("Application initialized successfully");
 
@@ -62,6 +66,8 @@ impl AppState {
             background_service: services.background_service,
             theme_service: services.theme_service,
             preset_service: services.preset_service,
+            chat_completion_service: services.chat_completion_service,
+            tokenization_service: services.tokenization_service,
         })
     }
 }
