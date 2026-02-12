@@ -11,7 +11,7 @@ use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::persistence::file_system::{
     delete_file, list_files_with_extension, read_json_file, write_json_file,
 };
-use crate::infrastructure::persistence::png_utils::extract_chunks;
+use crate::infrastructure::persistence::png_utils::read_text_chunks_from_png;
 
 pub struct FileWorldInfoRepository {
     worlds_dir: PathBuf,
@@ -61,24 +61,14 @@ impl FileWorldInfoRepository {
     }
 
     fn parse_world_info_png(&self, image_data: &[u8]) -> Result<Value, DomainError> {
-        let chunks = extract_chunks(image_data)?;
+        let text_chunks = read_text_chunks_from_png(image_data)?;
 
-        for chunk in chunks {
-            if chunk.name != *b"tEXt" {
+        for chunk in text_chunks.iter().rev() {
+            if !chunk.keyword.eq_ignore_ascii_case("naidata") {
                 continue;
             }
 
-            let Some(separator_idx) = chunk.data.iter().position(|&b| b == 0) else {
-                continue;
-            };
-
-            let key = String::from_utf8_lossy(&chunk.data[..separator_idx]);
-            if !key.eq_ignore_ascii_case("naidata") {
-                continue;
-            }
-
-            let encoded = String::from_utf8_lossy(&chunk.data[separator_idx + 1..]);
-            let decoded = BASE64.decode(encoded.trim()).map_err(|e| {
+            let decoded = BASE64.decode(chunk.text.trim()).map_err(|e| {
                 DomainError::InvalidData(format!("Failed to decode world info PNG data: {}", e))
             })?;
 

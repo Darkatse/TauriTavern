@@ -29,7 +29,9 @@ impl DataDirectory {
         let settings = default_user.clone();
         let logs = root.join("logs");
         let user_data = default_user.clone();
-        let default_avatar = root.join("public").join("img").join("default_avatar.png");
+        let default_avatar = default_user
+            .join("characters")
+            .join("default_Seraphina.png");
         let groups = default_user.join("groups");
         let group_chats = default_user.join("group chats");
 

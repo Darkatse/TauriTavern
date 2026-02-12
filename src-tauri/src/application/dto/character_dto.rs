@@ -27,6 +27,7 @@ pub struct CharacterDto {
     pub system_prompt: String,
     pub post_history_instructions: String,
     pub extensions: Option<serde_json::Value>,
+    pub character_book: Option<serde_json::Value>,
 }
 
 /// Character creation DTO
@@ -171,6 +172,7 @@ impl From<Character> for CharacterDto {
             extensions: Some(
                 serde_json::to_value(&character.data.extensions).unwrap_or(serde_json::Value::Null),
             ),
+            character_book: character.data.character_book.clone(),
         }
     }
 }

@@ -1,9 +1,8 @@
 use chrono::{DateTime, Utc};
-use serde::de::{self, Error as DeError};
+use serde::de::{self};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
-use uuid::Uuid;
 
 /// Character model representing a character card in SillyTavern format
 /// Supports both V2 and V3 character card formats
@@ -16,6 +15,7 @@ pub struct Character {
     pub spec_version: String,
 
     // Core character information
+    #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -43,7 +43,7 @@ pub struct Character {
     // Metadata
     #[serde(default)]
     pub character_version: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_array")]
     pub tags: Vec<String>,
     #[serde(default)]
     pub create_date: String,
@@ -93,15 +93,15 @@ pub struct CharacterData {
     pub system_prompt: String,
     #[serde(default)]
     pub post_history_instructions: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_array")]
     pub tags: Vec<String>,
     #[serde(default)]
     pub creator: String,
     #[serde(default)]
     pub character_version: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_array")]
     pub alternate_greetings: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_array")]
     pub group_only_greetings: Vec<String>,
 
     #[serde(default)]
@@ -122,7 +122,7 @@ pub struct CharacterExtensions {
     pub world: String,
     #[serde(default)]
     pub depth_prompt: DepthPrompt,
-    #[serde(default)]
+    #[serde(default, flatten)]
     pub additional: HashMap<String, serde_json::Value>,
 }
 
@@ -212,6 +212,71 @@ where
     deserializer.deserialize_any(StringOrFloat)
 }
 
+/// Deserialize a string list that may be encoded as an array or comma-delimited string.
+fn deserialize_string_or_array<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct StringOrArray;
+
+    impl<'de> de::Visitor<'de> for StringOrArray {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string, string array, or null")
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Vec::new())
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Vec::new())
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToString::to_string)
+                .collect())
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut values = Vec::new();
+            while let Some(value) = seq.next_element::<serde_json::Value>()? {
+                match value {
+                    serde_json::Value::String(text) => {
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            values.push(trimmed.to_string());
+                        }
+                    }
+                    serde_json::Value::Number(number) => values.push(number.to_string()),
+                    serde_json::Value::Bool(boolean) => values.push(boolean.to_string()),
+                    _ => {}
+                }
+            }
+            Ok(values)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrArray)
+}
+
 impl Character {
     /// Create a new character with basic information
     pub fn new(name: String, description: String, personality: String, first_mes: String) -> Self {
@@ -220,7 +285,7 @@ impl Character {
         let formatted_date = humanized_date(now);
         let chat = format!("{} - {}", name, formatted_date);
 
-        let mut character = Self {
+        let character = Self {
             spec: default_spec(),
             spec_version: default_spec_version(),
             name: name.clone(),

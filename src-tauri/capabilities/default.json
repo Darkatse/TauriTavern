@@ -10,6 +10,7 @@
     "opener:default",
     "fs:allow-read-text-file",
     "fs:allow-resource-read-recursive",
-    "fs:default"
+    "fs:default",
+    "fs:allow-temp-write"
   ]
 }

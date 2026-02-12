@@ -76,7 +76,8 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
 
         const fileInfo = await context.materializeUploadFile(file);
         if (!fileInfo?.filePath) {
-            return jsonResponse({ error: 'Unable to access uploaded world info file path' }, 400);
+            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
+            return jsonResponse({ error: `Unable to access uploaded world info file path${reason}` }, 400);
         }
 
         try {

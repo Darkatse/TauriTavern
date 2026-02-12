@@ -129,6 +129,7 @@ pub(super) fn build_services(
 
     let character_service = Arc::new(CharacterService::new(
         repositories.character_repository.clone(),
+        repositories.world_info_repository.clone(),
     ));
     let chat_service = Arc::new(ChatService::new(
         repositories.chat_repository,

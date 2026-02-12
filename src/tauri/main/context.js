@@ -154,29 +154,70 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             extensions.fav = Boolean(character.fav);
         }
 
+        const characterBook = Object.prototype.hasOwnProperty.call(character, 'character_book')
+            ? character.character_book
+            : character?.data?.character_book;
+
+        const name = pickCharacterTextValue(character.name, character?.data?.name);
+        const description = pickCharacterTextValue(character.description, character?.data?.description);
+        const personality = pickCharacterTextValue(character.personality, character?.data?.personality);
+        const scenario = pickCharacterTextValue(character.scenario, character?.data?.scenario);
+        const firstMes = pickCharacterTextValue(character.first_mes, character?.data?.first_mes);
+        const mesExample = pickCharacterTextValue(character.mes_example, character?.data?.mes_example);
+        const creator = pickCharacterTextValue(character.creator, character?.data?.creator);
+        const creatorNotes = pickCharacterTextValue(character.creator_notes, character?.data?.creator_notes);
+        const characterVersion = pickCharacterTextValue(character.character_version, character?.data?.character_version);
+        const systemPrompt = pickCharacterTextValue(character.system_prompt, character?.data?.system_prompt);
+        const postHistoryInstructions = pickCharacterTextValue(
+            character.post_history_instructions,
+            character?.data?.post_history_instructions,
+        );
+
         const data = {
-            name: character.name,
-            description: character.description || '',
-            personality: character.personality || '',
-            scenario: character.scenario || '',
-            first_mes: character.first_mes || '',
-            mes_example: character.mes_example || '',
-            creator: character.creator || '',
-            creator_notes: character.creator_notes || '',
-            character_version: character.character_version || '',
-            system_prompt: character.system_prompt || '',
-            post_history_instructions: character.post_history_instructions || '',
+            name,
+            description,
+            personality,
+            scenario,
+            first_mes: firstMes,
+            mes_example: mesExample,
+            creator,
+            creator_notes: creatorNotes,
+            character_version: characterVersion,
+            system_prompt: systemPrompt,
+            post_history_instructions: postHistoryInstructions,
             tags: Array.isArray(character.tags) ? character.tags : [],
             alternate_greetings: Array.isArray(character.alternate_greetings) ? character.alternate_greetings : [],
+            character_book: characterBook ?? null,
             extensions,
         };
 
         return {
             ...character,
-            creatorcomment: character.creator_notes || '',
+            name,
+            description,
+            personality,
+            scenario,
+            first_mes: firstMes,
+            mes_example: mesExample,
+            creator,
+            creator_notes: creatorNotes,
+            character_version: characterVersion,
+            system_prompt: systemPrompt,
+            post_history_instructions: postHistoryInstructions,
+            creatorcomment: creatorNotes,
             data,
             shallow: false,
         };
+    }
+
+    function pickCharacterTextValue(...values) {
+        for (const value of values) {
+            if (typeof value === 'string' && value.length > 0) {
+                return value;
+            }
+        }
+
+        return '';
     }
 
     function normalizeExtensions(input) {
@@ -649,20 +690,25 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         const crop = parseCropParam(requestUrl);
         const file = formData.get('avatar');
 
-        if (file instanceof File && file.size > 0) {
-            const fileInfo = await materializeUploadFile(file);
-            if (fileInfo?.filePath) {
-                try {
-                    return await safeInvoke('create_character_with_avatar', {
-                        dto: {
-                            character: dto,
-                            avatar_path: fileInfo.filePath,
-                            crop,
-                        },
-                    });
-                } finally {
-                    await fileInfo.cleanup?.();
-                }
+        if (file instanceof Blob && file.size > 0) {
+            const fileInfo = await materializeUploadFile(file, {
+                preferredName: file.name,
+            });
+            if (!fileInfo?.filePath) {
+                const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
+                throw new Error(`Unable to access avatar file path${reason}`);
+            }
+
+            try {
+                return await safeInvoke('create_character_with_avatar', {
+                    dto: {
+                        character: dto,
+                        avatar_path: fileInfo.filePath,
+                        crop,
+                    },
+                });
+            } finally {
+                await fileInfo.cleanup?.();
             }
         }
 
@@ -682,22 +728,27 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         await safeInvoke('update_character', { name: originalCharacterId, dto });
 
         const file = formData.get('avatar');
-        if (file instanceof File && file.size > 0) {
+        if (file instanceof Blob && file.size > 0) {
             const crop = parseCropParam(requestUrl);
-            const fileInfo = await materializeUploadFile(file);
+            const fileInfo = await materializeUploadFile(file, {
+                preferredName: file.name,
+            });
 
-            if (fileInfo?.filePath) {
-                try {
-                    await safeInvoke('update_avatar', {
-                        dto: {
-                            name: dto.name || originalCharacterId,
-                            avatar_path: fileInfo.filePath,
-                            crop,
-                        },
-                    });
-                } finally {
-                    await fileInfo.cleanup?.();
-                }
+            if (!fileInfo?.filePath) {
+                const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
+                throw new Error(`Unable to access avatar file path${reason}`);
+            }
+
+            try {
+                await safeInvoke('update_avatar', {
+                    dto: {
+                        name: dto.name || originalCharacterId,
+                        avatar_path: fileInfo.filePath,
+                        crop,
+                    },
+                });
+            } finally {
+                await fileInfo.cleanup?.();
             }
         }
     }
@@ -748,7 +799,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
 
     async function uploadAvatarFromForm(formData, requestUrl) {
         const file = formData.get('avatar');
-        if (!(file instanceof File)) {
+        if (!(file instanceof Blob)) {
             throw new Error('No avatar file provided');
         }
 
@@ -756,9 +807,12 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         const overwriteName = overwriteNameRaw ? String(overwriteNameRaw) : null;
         const crop = parseCropParam(requestUrl);
 
-        const fileInfo = await materializeUploadFile(file);
+        const fileInfo = await materializeUploadFile(file, {
+            preferredName: file.name,
+        });
         if (!fileInfo?.filePath) {
-            throw new Error('Unable to access avatar file path');
+            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
+            throw new Error(`Unable to access avatar file path${reason}`);
         }
 
         try {
@@ -772,37 +826,103 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         }
     }
 
-    async function materializeUploadFile(file) {
+    async function materializeUploadFile(file, { preferredName = '', preferredExtension = '' } = {}) {
+        if (!(file instanceof Blob)) {
+            return null;
+        }
+
         const directPath = extractNativeFilePath(file);
         if (directPath) {
             return { filePath: directPath };
         }
 
         const tauri = window.__TAURI__;
-        const hasLegacyFs = Boolean(tauri?.path?.tempDir && tauri?.path?.join && tauri?.fs?.writeBinaryFile);
+        const pathApi = tauri?.path;
+        const invokeApi = tauri?.core?.invoke;
+        if (typeof pathApi?.tempDir !== 'function' || typeof pathApi?.join !== 'function') {
+            return {
+                filePath: '',
+                error: 'Tauri path API is unavailable',
+            };
+        }
 
-        if (!hasLegacyFs) {
+        if (typeof invokeApi !== 'function') {
+            return {
+                filePath: '',
+                error: 'Tauri invoke API is unavailable',
+            };
+        }
+
+        const extension = resolveUploadExtension({
+            preferredExtension,
+            preferredName,
+            sourceName: file.name,
+        });
+        const fileName = `tauritavern-upload-${Date.now()}-${Math.random().toString(16).slice(2)}.${extension}`;
+        const data = new Uint8Array(await file.arrayBuffer());
+
+        try {
+            const tempDir = await pathApi.tempDir();
+            const filePath = await pathApi.join(tempDir, fileName);
+            await writeTempUploadFile(filePath, data, invokeApi);
+
+            return {
+                filePath,
+                cleanup: async () => {
+                    try {
+                        await removeTempUploadFile(filePath, invokeApi);
+                    } catch {
+                        // noop
+                    }
+                },
+            };
+        } catch (error) {
+            console.warn('Tauri temp file write failed:', error);
+            return {
+                filePath: '',
+                error: error?.message || 'Failed to materialize upload file',
+            };
+        }
+    }
+
+    async function writeTempUploadFile(filePath, data, invokeApi) {
+        await invokeApi('plugin:fs|write_file', data, {
+            headers: {
+                path: encodeURIComponent(filePath),
+                options: '{}',
+            },
+        });
+    }
+
+    async function removeTempUploadFile(filePath, invokeApi) {
+        await invokeApi('plugin:fs|remove', { path: filePath });
+    }
+
+    function resolveUploadExtension({ preferredExtension, preferredName, sourceName }) {
+        const candidates = [preferredExtension, preferredName, sourceName];
+
+        for (const candidate of candidates) {
+            const normalized = normalizeExtensionCandidate(candidate);
+            if (normalized) {
+                return normalized;
+            }
+        }
+
+        return 'bin';
+    }
+
+    function normalizeExtensionCandidate(value) {
+        if (typeof value !== 'string' || !value.trim()) {
             return null;
         }
 
-        const tempDir = await tauri.path.tempDir();
-        const extension = (file.name && file.name.includes('.')) ? `.${file.name.split('.').pop()}` : '.bin';
-        const fileName = `tauritavern-upload-${Date.now()}-${Math.random().toString(16).slice(2)}${extension}`;
-        const filePath = await tauri.path.join(tempDir, fileName);
-        const data = new Uint8Array(await file.arrayBuffer());
+        const cleaned = value.trim().toLowerCase().replace(/^\./, '');
+        const extension = cleaned.includes('.') ? cleaned.split('.').pop() : cleaned;
+        if (!extension) {
+            return null;
+        }
 
-        await tauri.fs.writeBinaryFile(filePath, data);
-
-        return {
-            filePath,
-            cleanup: async () => {
-                try {
-                    await tauri.fs.removeFile(filePath);
-                } catch {
-                    // noop
-                }
-            },
-        };
+        return /^[a-z0-9]{1,12}$/.test(extension) ? extension : null;
     }
 
     function extractNativeFilePath(file) {

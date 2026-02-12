@@ -10255,7 +10255,22 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
         });
 
         if (!result.ok) {
-            throw new Error(`Failed to import character: ${result.statusText}`);
+            let details = '';
+
+            try {
+                const payload = await result.clone().json();
+                details = String(payload?.error || '').trim();
+            } catch {
+                try {
+                    details = String(await result.text()).trim();
+                } catch {
+                    // noop
+                }
+            }
+
+            const fallback = result.statusText || `HTTP ${result.status}`;
+            const reason = details || fallback;
+            throw new Error(`Failed to import character: ${reason}`);
         }
 
         const data = await result.json();
@@ -10287,7 +10302,8 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
         }
     } catch (error) {
         console.error('Error importing character', error);
-        toastr.error(t`The file is likely invalid or corrupted.`, t`Could not import character`);
+        const message = error?.message || t`The file is likely invalid or corrupted.`;
+        toastr.error(message, t`Could not import character`);
     }
 }
 

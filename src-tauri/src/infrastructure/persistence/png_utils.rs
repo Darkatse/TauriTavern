@@ -2,80 +2,89 @@ use crate::domain::errors::DomainError;
 use crate::domain::repositories::character_repository::ImageCrop;
 use crate::infrastructure::logging::logger;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use crc32fast::Hasher;
-use image::{GenericImageView, ImageFormat};
+use image::ImageFormat;
+use png::{text_metadata::TEXtChunk, BitDepth, ColorType, Transformations};
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::HashMap;
-use std::io::{Cursor, Read, Write};
+use std::io::Cursor;
 
-/// PNG chunk names used for character data
+/// PNG text keys used for character data.
 const CHUNK_NAME_V2: &str = "chara";
 const CHUNK_NAME_V3: &str = "ccv3";
 
-/// PNG signature bytes
-const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-
-/// Represents a PNG chunk
-#[derive(Debug, Clone)]
-pub struct PngChunk {
-    pub name: [u8; 4],
-    pub data: Vec<u8>,
-}
-
-impl PngChunk {
-    /// Create a new PNG chunk
-    pub fn new(name: &str, data: Vec<u8>) -> Self {
-        let mut name_bytes = [0; 4];
-        for (i, b) in name.bytes().take(4).enumerate() {
-            name_bytes[i] = b;
-        }
-
-        Self {
-            name: name_bytes,
-            data,
-        }
-    }
-
-    /// Get the chunk name as a string
-    pub fn name_str(&self) -> String {
-        String::from_utf8_lossy(&self.name).to_string()
-    }
-
-    /// Calculate the CRC for this chunk
-    pub fn calculate_crc(&self) -> u32 {
-        let mut hasher = Hasher::new();
-        hasher.update(&self.name);
-        hasher.update(&self.data);
-        hasher.finalize()
-    }
-}
-
-/// Represents a PNG text chunk
-#[derive(Debug, Clone)]
+/// Logical text entry parsed from PNG metadata (tEXt/zTXt/iTXt).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextChunk {
     pub keyword: String,
     pub text: String,
 }
 
-/// Reads character data from a PNG image
+#[derive(Debug)]
+struct DecodedPngFrame {
+    width: u32,
+    height: u32,
+    color_type: ColorType,
+    bit_depth: BitDepth,
+    palette: Option<Vec<u8>>,
+    trns: Option<Vec<u8>>,
+    image_data: Vec<u8>,
+}
+
+/// Reads all text metadata chunks from a PNG image.
 ///
-/// This function extracts character data from PNG metadata chunks.
-/// It supports both V2 (chara) and V3 (ccv3) formats, with V3 taking precedence.
+/// This includes `tEXt`, `zTXt`, and `iTXt` chunks.
+pub fn read_text_chunks_from_png(image_data: &[u8]) -> Result<Vec<TextChunk>, DomainError> {
+    let mut decoder = png::Decoder::new(Cursor::new(image_data));
+    decoder.set_transformations(Transformations::IDENTITY);
+
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| DomainError::InvalidData(format!("Failed to read PNG header: {}", e)))?;
+
+    // Parse the entire stream so metadata placed after IDAT (common for card files) is included.
+    reader
+        .finish()
+        .map_err(|e| DomainError::InvalidData(format!("Failed to parse PNG metadata: {}", e)))?;
+
+    let info = reader.info();
+    let mut chunks = Vec::new();
+
+    chunks.extend(info.uncompressed_latin1_text.iter().map(|chunk| TextChunk {
+        keyword: chunk.keyword.clone(),
+        text: chunk.text.clone(),
+    }));
+
+    for chunk in &info.compressed_latin1_text {
+        let text = chunk.get_text().map_err(|e| {
+            DomainError::InvalidData(format!("Failed to decode zTXt metadata: {}", e))
+        })?;
+
+        chunks.push(TextChunk {
+            keyword: chunk.keyword.clone(),
+            text,
+        });
+    }
+
+    for chunk in &info.utf8_text {
+        let text = chunk.get_text().map_err(|e| {
+            DomainError::InvalidData(format!("Failed to decode iTXt metadata: {}", e))
+        })?;
+
+        chunks.push(TextChunk {
+            keyword: chunk.keyword.clone(),
+            text,
+        });
+    }
+
+    Ok(chunks)
+}
+
+/// Reads character data from PNG metadata.
 ///
-/// # Arguments
-///
-/// * `image_data` - The PNG image data as a byte vector
-///
-/// # Returns
-///
-/// * `Ok(String)` - The character data as a JSON string
-/// * `Err(DomainError)` - If the image cannot be read or contains no character data
+/// It prefers V3 (`ccv3`) and falls back to V2 (`chara`).
 pub fn read_character_data_from_png(image_data: &[u8]) -> Result<String, DomainError> {
     tracing::debug!("Reading character data from PNG");
 
-    // Extract text chunks from the PNG
-    let chunks = extract_chunks(image_data)?;
-    let text_chunks = extract_text_chunks_from_chunks(&chunks)?;
+    let text_chunks = read_text_chunks_from_png(image_data)?;
 
     if text_chunks.is_empty() {
         return Err(DomainError::InvalidData(
@@ -83,24 +92,12 @@ pub fn read_character_data_from_png(image_data: &[u8]) -> Result<String, DomainE
         ));
     }
 
-    // First try to find V3 format (ccv3)
-    if let Some(chunk) = text_chunks
-        .iter()
-        .rev()
-        .find(|c| c.keyword.to_lowercase() == CHUNK_NAME_V3)
-    {
-        let decoded = decode_base64(&chunk.text)?;
-        return Ok(decoded);
+    if let Some(chunk) = find_first_text_chunk(&text_chunks, CHUNK_NAME_V3) {
+        return decode_base64(chunk);
     }
 
-    // Then try V2 format (chara)
-    if let Some(chunk) = text_chunks
-        .iter()
-        .rev()
-        .find(|c| c.keyword.to_lowercase() == CHUNK_NAME_V2)
-    {
-        let decoded = decode_base64(&chunk.text)?;
-        return Ok(decoded);
+    if let Some(chunk) = find_first_text_chunk(&text_chunks, CHUNK_NAME_V2) {
+        return decode_base64(chunk);
     }
 
     Err(DomainError::InvalidData(
@@ -108,225 +105,35 @@ pub fn read_character_data_from_png(image_data: &[u8]) -> Result<String, DomainE
     ))
 }
 
-/// Writes character data to a PNG image
+/// Writes character data to PNG metadata.
 ///
-/// This function embeds character data into PNG metadata chunks.
-/// It writes both V2 (chara) and V3 (ccv3) formats for compatibility.
-///
-/// # Arguments
-///
-/// * `image_data` - The original PNG image data
-/// * `character_data` - The character data as a JSON string
-///
-/// # Returns
-///
-/// * `Ok(Vec<u8>)` - The new PNG image data with embedded character data
-/// * `Err(DomainError)` - If the image cannot be written or the data cannot be embedded
+/// The image pixel data is kept and the metadata is rewritten using the `png` crate.
+/// Character chunks are always emitted as `tEXt`: `chara` (V2) and, when possible, `ccv3` (V3).
 pub fn write_character_data_to_png(
     image_data: &[u8],
     character_data: &str,
 ) -> Result<Vec<u8>, DomainError> {
     tracing::debug!("Writing character data to PNG");
 
-    // Extract existing chunks
-    let mut chunks = extract_chunks(image_data)?;
+    let decoded = decode_png_frame(image_data)?;
 
-    // Remove existing character metadata tEXt chunks (`chara` / `ccv3`).
-    chunks.retain(|chunk| !is_character_metadata_text_chunk(chunk));
+    let mut character_chunks = Vec::with_capacity(2);
+    character_chunks.push(TextChunk {
+        keyword: CHUNK_NAME_V2.to_string(),
+        text: encode_base64(character_data),
+    });
 
-    // Add V2 chunk
-    let base64_data = encode_base64(character_data)?;
-    let v2_chunk_data = create_text_chunk_data(CHUNK_NAME_V2, &base64_data);
-    chunks.insert(chunks.len() - 1, PngChunk::new("tEXt", v2_chunk_data));
-
-    // Try to add V3 chunk
-    if let Ok(mut v3_data) = serde_json::from_str::<serde_json::Value>(character_data) {
-        if let Some(obj) = v3_data.as_object_mut() {
-            obj.insert(
-                "spec".to_string(),
-                serde_json::Value::String("chara_card_v3".to_string()),
-            );
-            obj.insert(
-                "spec_version".to_string(),
-                serde_json::Value::String("3.0".to_string()),
-            );
-
-            if let Ok(v3_json) = serde_json::to_string(&v3_data) {
-                let v3_base64 = encode_base64(&v3_json)?;
-                let v3_chunk_data = create_text_chunk_data(CHUNK_NAME_V3, &v3_base64);
-                chunks.insert(chunks.len() - 1, PngChunk::new("tEXt", v3_chunk_data));
-            }
-        }
-    }
-
-    // Encode the chunks back to a PNG
-    let output = encode_chunks(&chunks)?;
-
-    Ok(output)
-}
-
-fn is_character_metadata_text_chunk(chunk: &PngChunk) -> bool {
-    if chunk.name != *b"tEXt" {
-        return false;
-    }
-
-    let Some(separator_index) = chunk.data.iter().position(|&b| b == 0) else {
-        return false;
-    };
-
-    let keyword = String::from_utf8_lossy(&chunk.data[..separator_index]).to_lowercase();
-    keyword == CHUNK_NAME_V2 || keyword == CHUNK_NAME_V3
-}
-
-/// Create text chunk data
-fn create_text_chunk_data(keyword: &str, text: &str) -> Vec<u8> {
-    let mut data = Vec::new();
-
-    // Add keyword
-    data.extend_from_slice(keyword.as_bytes());
-
-    // Add null separator
-    data.push(0);
-
-    // Add text
-    data.extend_from_slice(text.as_bytes());
-
-    data
-}
-
-/// Extract PNG chunks from image data
-pub fn extract_chunks(image_data: &[u8]) -> Result<Vec<PngChunk>, DomainError> {
-    let mut chunks = Vec::new();
-    let mut cursor = Cursor::new(image_data);
-
-    // Check PNG signature
-    let mut signature = [0; 8];
-    cursor
-        .read_exact(&mut signature)
-        .map_err(|e| DomainError::InvalidData(format!("Failed to read PNG signature: {}", e)))?;
-
-    if signature != PNG_SIGNATURE {
-        return Err(DomainError::InvalidData(
-            "Invalid PNG signature".to_string(),
-        ));
-    }
-
-    // Read chunks
-    loop {
-        // Read chunk length
-        let mut length_bytes = [0; 4];
-        if cursor.read_exact(&mut length_bytes).is_err() {
-            break; // End of file
-        }
-
-        let length = u32::from_be_bytes(length_bytes) as usize;
-
-        // Read chunk type
-        let mut chunk_type = [0; 4];
-        cursor
-            .read_exact(&mut chunk_type)
-            .map_err(|e| DomainError::InvalidData(format!("Failed to read chunk type: {}", e)))?;
-
-        // Read chunk data
-        let mut data = vec![0; length];
-        cursor
-            .read_exact(&mut data)
-            .map_err(|e| DomainError::InvalidData(format!("Failed to read chunk data: {}", e)))?;
-
-        // Skip CRC
-        let mut crc = [0; 4];
-        cursor
-            .read_exact(&mut crc)
-            .map_err(|e| DomainError::InvalidData(format!("Failed to read chunk CRC: {}", e)))?;
-
-        // Add chunk to list
-        chunks.push(PngChunk {
-            name: chunk_type,
-            data,
+    if let Some(v3_payload) = build_v3_payload(character_data)? {
+        character_chunks.push(TextChunk {
+            keyword: CHUNK_NAME_V3.to_string(),
+            text: v3_payload,
         });
-
-        // Check if this is the IEND chunk
-        if chunk_type == *b"IEND" {
-            break;
-        }
     }
 
-    Ok(chunks)
+    encode_png_with_text_chunks(&decoded, &character_chunks)
 }
 
-/// Encode PNG chunks to image data
-pub fn encode_chunks(chunks: &[PngChunk]) -> Result<Vec<u8>, DomainError> {
-    let mut output = Vec::new();
-
-    // Write PNG signature
-    output.extend_from_slice(&PNG_SIGNATURE);
-
-    // Write chunks
-    for chunk in chunks {
-        // Write chunk length
-        let length = chunk.data.len() as u32;
-        output.extend_from_slice(&length.to_be_bytes());
-
-        // Write chunk type
-        output.extend_from_slice(&chunk.name);
-
-        // Write chunk data
-        output.extend_from_slice(&chunk.data);
-
-        // Calculate and write CRC
-        let crc = chunk.calculate_crc();
-        output.extend_from_slice(&crc.to_be_bytes());
-    }
-
-    Ok(output)
-}
-
-/// Extract text chunks from PNG chunks
-fn extract_text_chunks_from_chunks(chunks: &[PngChunk]) -> Result<Vec<TextChunk>, DomainError> {
-    let mut text_chunks = Vec::new();
-
-    for chunk in chunks {
-        if chunk.name_str() == "tEXt" {
-            // Find the null separator
-            let null_pos = chunk.data.iter().position(|&b| b == 0);
-
-            if let Some(pos) = null_pos {
-                let keyword = String::from_utf8_lossy(&chunk.data[0..pos]).to_string();
-                let text = String::from_utf8_lossy(&chunk.data[pos + 1..]).to_string();
-
-                text_chunks.push(TextChunk { keyword, text });
-            }
-        }
-    }
-
-    Ok(text_chunks)
-}
-
-/// Encodes a string to base64
-fn encode_base64(data: &str) -> Result<String, DomainError> {
-    Ok(BASE64.encode(data.as_bytes()))
-}
-
-/// Decodes a base64 string
-fn decode_base64(data: &str) -> Result<String, DomainError> {
-    let bytes = BASE64
-        .decode(data)
-        .map_err(|e| DomainError::InvalidData(format!("Failed to decode base64: {}", e)))?;
-
-    String::from_utf8(bytes)
-        .map_err(|e| DomainError::InvalidData(format!("Failed to convert from UTF-8: {}", e)))
-}
-
-/// Parses a character from a PNG file
-///
-/// # Arguments
-///
-/// * `image_data` - The PNG image data
-///
-/// # Returns
-///
-/// * `Ok(T)` - The parsed character
-/// * `Err(DomainError)` - If the character cannot be parsed
+/// Parses a character object from a PNG file.
 pub fn parse_character_from_png<T: DeserializeOwned>(image_data: &[u8]) -> Result<T, DomainError> {
     let json_data = read_character_data_from_png(image_data)?;
 
@@ -334,17 +141,7 @@ pub fn parse_character_from_png<T: DeserializeOwned>(image_data: &[u8]) -> Resul
         .map_err(|e| DomainError::InvalidData(format!("Failed to parse character data: {}", e)))
 }
 
-/// Writes a character to a PNG file
-///
-/// # Arguments
-///
-/// * `image_data` - The original PNG image data
-/// * `character` - The character to write
-///
-/// # Returns
-///
-/// * `Ok(Vec<u8>)` - The new PNG image data with embedded character
-/// * `Err(DomainError)` - If the character cannot be written
+/// Writes a character object into PNG metadata.
 pub fn write_character_to_png<T: Serialize>(
     image_data: &[u8],
     character: &T,
@@ -355,17 +152,7 @@ pub fn write_character_to_png<T: Serialize>(
     write_character_data_to_png(image_data, &json_data)
 }
 
-/// Process an image for use as a character avatar
-///
-/// # Arguments
-///
-/// * `image_data` - The image data
-/// * `crop` - Optional crop parameters
-///
-/// # Returns
-///
-/// * `Ok(Vec<u8>)` - The processed image data
-/// * `Err(DomainError)` - If the image cannot be processed
+/// Process an image for use as a character avatar.
 pub async fn process_avatar_image(
     image_data: &[u8],
     crop: Option<ImageCrop>,
@@ -419,14 +206,135 @@ pub async fn process_avatar_image(
     Ok(output)
 }
 
+fn find_first_text_chunk<'a>(chunks: &'a [TextChunk], keyword: &str) -> Option<&'a str> {
+    chunks
+        .iter()
+        .find(|chunk| chunk.keyword.eq_ignore_ascii_case(keyword))
+        .map(|chunk| chunk.text.as_str())
+}
+
+fn encode_base64(data: &str) -> String {
+    BASE64.encode(data.as_bytes())
+}
+
+fn decode_base64(data: &str) -> Result<String, DomainError> {
+    let bytes = BASE64
+        .decode(data.trim())
+        .map_err(|e| DomainError::InvalidData(format!("Failed to decode base64: {}", e)))?;
+
+    String::from_utf8(bytes)
+        .map_err(|e| DomainError::InvalidData(format!("Failed to convert from UTF-8: {}", e)))
+}
+
+fn build_v3_payload(character_data: &str) -> Result<Option<String>, DomainError> {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(character_data) else {
+        return Ok(None);
+    };
+
+    let Some(object) = value.as_object_mut() else {
+        return Ok(None);
+    };
+
+    object.insert(
+        "spec".to_string(),
+        serde_json::Value::String("chara_card_v3".to_string()),
+    );
+    object.insert(
+        "spec_version".to_string(),
+        serde_json::Value::String("3.0".to_string()),
+    );
+
+    let serialized = serde_json::to_string(&value).map_err(|e| {
+        DomainError::InvalidData(format!("Failed to serialize V3 card data: {}", e))
+    })?;
+
+    Ok(Some(encode_base64(&serialized)))
+}
+
+fn decode_png_frame(image_data: &[u8]) -> Result<DecodedPngFrame, DomainError> {
+    let mut decoder = png::Decoder::new(Cursor::new(image_data));
+    decoder.set_transformations(Transformations::IDENTITY);
+
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| DomainError::InvalidData(format!("Failed to read PNG header: {}", e)))?;
+
+    let mut buffer = vec![0; reader.output_buffer_size()];
+    let output = reader
+        .next_frame(&mut buffer)
+        .map_err(|e| DomainError::InvalidData(format!("Failed to decode PNG image data: {}", e)))?;
+
+    buffer.truncate(output.buffer_size());
+
+    let info = reader.info();
+
+    if output.color_type == ColorType::Indexed && info.palette.is_none() {
+        return Err(DomainError::InvalidData(
+            "Indexed PNG is missing palette data".to_string(),
+        ));
+    }
+
+    Ok(DecodedPngFrame {
+        width: output.width,
+        height: output.height,
+        color_type: output.color_type,
+        bit_depth: output.bit_depth,
+        palette: info.palette.as_ref().map(|p| p.to_vec()),
+        trns: info.trns.as_ref().map(|t| t.to_vec()),
+        image_data: buffer,
+    })
+}
+
+fn encode_png_with_text_chunks(
+    decoded: &DecodedPngFrame,
+    text_chunks: &[TextChunk],
+) -> Result<Vec<u8>, DomainError> {
+    let mut output = Vec::new();
+
+    {
+        let mut encoder = png::Encoder::new(&mut output, decoded.width, decoded.height);
+        encoder.set_color(decoded.color_type);
+        encoder.set_depth(decoded.bit_depth);
+
+        if let Some(palette) = &decoded.palette {
+            encoder.set_palette(palette.clone());
+        }
+
+        if let Some(trns) = &decoded.trns {
+            encoder.set_trns(trns.clone());
+        }
+
+        let mut writer = encoder.write_header().map_err(|e| {
+            DomainError::InternalError(format!("Failed to write PNG header: {}", e))
+        })?;
+
+        writer.write_image_data(&decoded.image_data).map_err(|e| {
+            DomainError::InternalError(format!("Failed to write PNG image data: {}", e))
+        })?;
+
+        for chunk in text_chunks {
+            let text_chunk = TEXtChunk::new(chunk.keyword.clone(), chunk.text.clone());
+            writer.write_text_chunk(&text_chunk).map_err(|e| {
+                DomainError::InternalError(format!("Failed to write PNG text metadata: {}", e))
+            })?;
+        }
+
+        writer.finish().map_err(|e| {
+            DomainError::InternalError(format!("Failed to finalize PNG file: {}", e))
+        })?;
+    }
+
+    Ok(output)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        create_text_chunk_data, decode_base64, encode_base64, encode_chunks, extract_chunks,
-        is_character_metadata_text_chunk, read_character_data_from_png,
-        write_character_data_to_png, PngChunk,
+        decode_base64, decode_png_frame, encode_base64, read_character_data_from_png,
+        read_text_chunks_from_png, write_character_data_to_png, TextChunk,
     };
     use image::{DynamicImage, ImageFormat, RgbaImage};
+    use png::text_metadata::{ITXtChunk, TEXtChunk};
     use serde_json::Value;
     use std::io::Cursor;
 
@@ -440,12 +348,37 @@ mod tests {
         output
     }
 
-    fn count_character_metadata_chunks(png_data: &[u8]) -> usize {
-        extract_chunks(png_data)
-            .expect("valid png")
-            .iter()
-            .filter(|chunk| is_character_metadata_text_chunk(chunk))
-            .count()
+    fn build_png_with_text_chunks(text_chunks: &[TextChunk]) -> Vec<u8> {
+        let base_png = build_minimal_png();
+        let decoded = decode_png_frame(&base_png).expect("decode base png");
+
+        let mut output = Vec::new();
+        let mut encoder = png::Encoder::new(&mut output, decoded.width, decoded.height);
+        encoder.set_color(decoded.color_type);
+        encoder.set_depth(decoded.bit_depth);
+
+        if let Some(palette) = decoded.palette {
+            encoder.set_palette(palette);
+        }
+
+        if let Some(trns) = decoded.trns {
+            encoder.set_trns(trns);
+        }
+
+        let mut writer = encoder.write_header().expect("write header");
+        writer
+            .write_image_data(&decoded.image_data)
+            .expect("write image data");
+
+        for chunk in text_chunks {
+            let text_chunk = TEXtChunk::new(chunk.keyword.clone(), chunk.text.clone());
+            writer
+                .write_text_chunk(&text_chunk)
+                .expect("write text metadata");
+        }
+
+        writer.finish().expect("finish png");
+        output
     }
 
     #[test]
@@ -461,8 +394,17 @@ mod tests {
         let second_write =
             write_character_data_to_png(&first_write, second_json).expect("second write succeeds");
 
+        let text_chunks = read_text_chunks_from_png(&second_write).expect("read text metadata");
+        let character_chunks_count = text_chunks
+            .iter()
+            .filter(|chunk| {
+                chunk.keyword.eq_ignore_ascii_case("chara")
+                    || chunk.keyword.eq_ignore_ascii_case("ccv3")
+            })
+            .count();
+
         // Exactly two metadata chunks should remain: one `chara`, one `ccv3`.
-        assert_eq!(count_character_metadata_chunks(&second_write), 2);
+        assert_eq!(character_chunks_count, 2);
 
         let decoded = read_character_data_from_png(&second_write).expect("read should succeed");
         let parsed: Value = serde_json::from_str(&decoded).expect("valid json");
@@ -470,35 +412,66 @@ mod tests {
     }
 
     #[test]
-    fn read_prefers_latest_duplicate_metadata_chunk() {
-        let base_png = build_minimal_png();
-        let mut chunks = extract_chunks(&base_png).expect("valid png");
-
+    fn read_prefers_first_duplicate_metadata_chunk() {
         let old_json =
             r#"{"spec":"chara_card_v2","spec_version":"2.0","name":"Seraphina","chat":"old-chat"}"#;
         let new_json =
             r#"{"spec":"chara_card_v2","spec_version":"2.0","name":"Seraphina","chat":"new-chat"}"#;
 
-        let old_payload =
-            create_text_chunk_data("chara", &encode_base64(old_json).expect("encode old"));
-        let new_payload =
-            create_text_chunk_data("chara", &encode_base64(new_json).expect("encode new"));
+        let old_payload = encode_base64(old_json);
+        let new_payload = encode_base64(new_json);
 
-        // Insert duplicated `chara` chunks before IEND in chronological order.
-        chunks.insert(chunks.len() - 1, PngChunk::new("tEXt", old_payload));
-        chunks.insert(chunks.len() - 1, PngChunk::new("tEXt", new_payload));
+        let png_with_duplicates = build_png_with_text_chunks(&[
+            TextChunk {
+                keyword: "chara".to_string(),
+                text: old_payload,
+            },
+            TextChunk {
+                keyword: "chara".to_string(),
+                text: new_payload,
+            },
+        ]);
 
-        let png_with_duplicates = encode_chunks(&chunks).expect("encode duplicated png");
         let decoded =
             read_character_data_from_png(&png_with_duplicates).expect("read should succeed");
         let parsed: Value = serde_json::from_str(&decoded).expect("valid json");
 
-        assert_eq!(parsed.get("chat").and_then(Value::as_str), Some("new-chat"));
+        assert_eq!(parsed.get("chat").and_then(Value::as_str), Some("old-chat"));
 
-        // Sanity check: base64 payload roundtrip helper works in this module.
+        // Sanity check: base64 helper roundtrip.
         assert_eq!(
-            decode_base64(&encode_base64(new_json).expect("encode")).expect("decode"),
+            decode_base64(&encode_base64(new_json)).expect("decode"),
             new_json
+        );
+    }
+
+    #[test]
+    fn read_supports_itxt_metadata() {
+        let base_png = build_minimal_png();
+        let decoded = decode_png_frame(&base_png).expect("decode base png");
+        let json = r#"{"spec":"chara_card_v2","spec_version":"2.0","name":"Seraphina"}"#;
+        let encoded = encode_base64(json);
+
+        let mut output = Vec::new();
+        let mut encoder = png::Encoder::new(&mut output, decoded.width, decoded.height);
+        encoder.set_color(decoded.color_type);
+        encoder.set_depth(decoded.bit_depth);
+
+        let mut writer = encoder.write_header().expect("write header");
+        writer
+            .write_image_data(&decoded.image_data)
+            .expect("write image data");
+
+        let itxt = ITXtChunk::new("ccv3".to_string(), encoded);
+        writer.write_text_chunk(&itxt).expect("write iTXt chunk");
+        writer.finish().expect("finish png");
+
+        let parsed = read_character_data_from_png(&output).expect("read should succeed");
+        let parsed_json: Value = serde_json::from_str(&parsed).expect("valid json");
+
+        assert_eq!(
+            parsed_json.get("name").and_then(Value::as_str),
+            Some("Seraphina")
         );
     }
 }

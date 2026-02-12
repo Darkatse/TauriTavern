@@ -165,13 +165,21 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         }
 
         const file = body.get('avatar');
-        if (!(file instanceof File)) {
+        if (!(file instanceof Blob)) {
             return jsonResponse({ error: 'No character file provided' }, 400);
         }
 
-        const fileInfo = await context.materializeUploadFile(file);
+        const fileType = String(body.get('file_type') || '').trim().toLowerCase();
+        const fallbackName = fileType ? `import.${fileType}` : 'import.bin';
+        const preferredName = file instanceof File && file.name ? file.name : fallbackName;
+
+        const fileInfo = await context.materializeUploadFile(file, {
+            preferredName,
+            preferredExtension: fileType,
+        });
         if (!fileInfo?.filePath) {
-            return jsonResponse({ error: 'Unable to access uploaded character file path' }, 400);
+            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
+            return jsonResponse({ error: `Unable to access uploaded character file path${reason}` }, 400);
         }
 
         const preserveFileName = body.get('preserved_name');
