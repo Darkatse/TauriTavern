@@ -10,15 +10,16 @@ const secretsClient = createApiClient('secrets');
  * Write a secret to the backend
  * @param {string} key - The key of the secret
  * @param {string} value - The value of the secret
- * @returns {Promise<string>} - 'ok' if successful
+ * @param {string} [label] - Optional label for the secret
+ * @returns {Promise<string>} - ID of the new secret
  */
-export async function writeSecret(key, value) {
+export async function writeSecret(key, value, label) {
     try {
-        const result = await secretsClient.call('write', { dto: { key, value } }, {
+        const result = await secretsClient.call('write', { dto: { key, value, label } }, {
             path: 'write',
             commandName: 'write_secret'
         });
-        return result;
+        return result?.id ?? result;
     } catch (error) {
         console.error('Error writing secret:', error);
         throw error;
@@ -27,7 +28,7 @@ export async function writeSecret(key, value) {
 
 /**
  * Read the state of all secrets
- * @returns {Promise<Object>} - Object with secret keys and their state (boolean)
+ * @returns {Promise<Object>} - SecretStateMap
  */
 export async function readSecretState() {
     try {
@@ -35,7 +36,7 @@ export async function readSecretState() {
             path: 'read',
             commandName: 'read_secret_state'
         });
-        return result.states;
+        return result;
     } catch (error) {
         console.error('Error reading secret state:', error);
         throw error;
@@ -52,7 +53,7 @@ export async function viewSecrets() {
             path: 'view',
             commandName: 'view_secrets'
         });
-        return result.secrets;
+        return result;
     } catch (error) {
         console.error('Error viewing secrets:', error);
         throw error;
@@ -62,11 +63,12 @@ export async function viewSecrets() {
 /**
  * Find a specific secret by key
  * @param {string} key - The key to find
+ * @param {string} [id] - Optional secret ID
  * @returns {Promise<string>} - The secret value
  */
-export async function findSecret(key) {
+export async function findSecret(key, id) {
     try {
-        const result = await secretsClient.call('find', { dto: { key } }, {
+        const result = await secretsClient.call('find', { dto: { key, id } }, {
             path: 'find',
             commandName: 'find_secret'
         });

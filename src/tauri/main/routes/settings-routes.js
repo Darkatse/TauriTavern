@@ -43,25 +43,40 @@ export function registerSettingsRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/secrets/find', async ({ body }) => {
         const key = body?.key || '';
-        const result = await context.safeInvoke('find_secret', { dto: { key } });
+        const id = body?.id || null;
+        const result = await context.safeInvoke('find_secret', { dto: { key, id } });
         return jsonResponse(result || { value: '' });
     });
 
     router.post('/api/secrets/write', async ({ body }) => {
         const key = body?.key || '';
         const value = body?.value || '';
-        await context.safeInvoke('write_secret', { dto: { key, value } });
-        return jsonResponse({ id: 'default' });
+        const label = body?.label ?? null;
+        const id = await context.safeInvoke('write_secret', { dto: { key, value, label } });
+        return jsonResponse({ id });
     });
 
     router.post('/api/secrets/delete', async ({ body }) => {
         const key = body?.key || '';
-        await context.safeInvoke('write_secret', { dto: { key, value: '' } });
+        const id = body?.id || null;
+        await context.safeInvoke('delete_secret', { dto: { key, id } });
         return jsonResponse({ ok: true });
     });
 
-    router.post('/api/secrets/rotate', async () => jsonResponse({ ok: true }));
-    router.post('/api/secrets/rename', async () => jsonResponse({ ok: true }));
+    router.post('/api/secrets/rotate', async ({ body }) => {
+        const key = body?.key || '';
+        const id = body?.id || '';
+        await context.safeInvoke('rotate_secret', { dto: { key, id } });
+        return jsonResponse({ ok: true });
+    });
+
+    router.post('/api/secrets/rename', async ({ body }) => {
+        const key = body?.key || '';
+        const id = body?.id || '';
+        const label = body?.label || '';
+        await context.safeInvoke('rename_secret', { dto: { key, id, label } });
+        return jsonResponse({ ok: true });
+    });
 
     router.post('/api/secrets/view', async () => {
         try {

@@ -174,7 +174,7 @@ async fn read_required_secret(
     source_name: &str,
 ) -> Result<String, ApplicationError> {
     secret_repository
-        .read_secret(secret_key)
+        .read_secret(secret_key, None)
         .await?
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| {
@@ -190,7 +190,7 @@ async fn read_optional_secret(
     secret_key: &str,
 ) -> Result<Option<String>, ApplicationError> {
     Ok(secret_repository
-        .read_secret(secret_key)
+        .read_secret(secret_key, None)
         .await?
         .filter(|value| !value.trim().is_empty()))
 }

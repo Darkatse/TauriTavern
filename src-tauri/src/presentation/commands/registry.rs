@@ -58,6 +58,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::secret_commands::read_secret_state,
         super::secret_commands::view_secrets,
         super::secret_commands::find_secret,
+        super::secret_commands::delete_secret,
+        super::secret_commands::rotate_secret,
+        super::secret_commands::rename_secret,
         // Content commands
         super::content_commands::initialize_default_content,
         super::content_commands::is_default_content_initialized,

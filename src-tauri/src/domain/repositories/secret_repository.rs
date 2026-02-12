@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use std::collections::HashMap;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::secret::Secrets;
@@ -12,12 +11,24 @@ pub trait SecretRepository: Send + Sync {
     /// 加载所有密钥
     async fn load(&self) -> Result<Secrets, DomainError>;
 
-    /// 写入单个密钥
-    async fn write_secret(&self, key: &str, value: &str) -> Result<(), DomainError>;
+    /// 写入单个密钥，返回新密钥 ID
+    async fn write_secret(
+        &self,
+        key: &str,
+        value: &str,
+        label: &str,
+    ) -> Result<String, DomainError>;
 
-    /// 读取单个密钥
-    async fn read_secret(&self, key: &str) -> Result<Option<String>, DomainError>;
+    /// 读取单个密钥（按 ID 或当前 active）
+    async fn read_secret(&self, key: &str, id: Option<&str>)
+        -> Result<Option<String>, DomainError>;
 
-    /// 获取所有密钥的状态（是否存在有效值）
-    async fn get_secret_state(&self) -> Result<HashMap<String, bool>, DomainError>;
+    /// 删除单个密钥（按 ID 或当前 active）
+    async fn delete_secret(&self, key: &str, id: Option<&str>) -> Result<(), DomainError>;
+
+    /// 旋转 active 密钥
+    async fn rotate_secret(&self, key: &str, id: &str) -> Result<(), DomainError>;
+
+    /// 重命名密钥
+    async fn rename_secret(&self, key: &str, id: &str, label: &str) -> Result<(), DomainError>;
 }

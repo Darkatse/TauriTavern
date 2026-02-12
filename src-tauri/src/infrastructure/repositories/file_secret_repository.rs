@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::collections::HashMap;
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::AppHandle;
@@ -8,7 +8,7 @@ use tokio::fs;
 use tokio::sync::Mutex;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::secret::Secrets;
+use crate::domain::models::secret::{SecretEntry, SecretKeys, Secrets};
 use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
@@ -84,7 +84,6 @@ impl SecretRepository for FileSecretRepository {
     }
 
     async fn load(&self) -> Result<Secrets, DomainError> {
-        // 先尝试从缓存获取
         {
             let cache = self.cache.lock().await;
             if let Some(secrets) = cache.clone() {
@@ -92,103 +91,116 @@ impl SecretRepository for FileSecretRepository {
             }
         }
 
-        // 如果缓存中没有，从文件加载
         self.ensure_file_exists().await?;
 
-        let secrets = match read_json_file::<Secrets>(&self.secrets_file).await {
-            Ok(s) => s,
+        let raw = match read_json_file::<Value>(&self.secrets_file).await {
+            Ok(value) => value,
             Err(e) => {
                 logger::error(&format!("Failed to read secrets file: {}", e));
-                Secrets::new() // 如果读取失败，返回空的Secrets
+                Value::Object(Default::default())
             }
         };
+        let (secrets, migrated) = Self::deserialize_compat(raw);
 
-        // 更新缓存
-        let mut cache = self.cache.lock().await;
-        *cache = Some(secrets.clone());
+        if migrated {
+            if let Err(error) = self.save(&secrets).await {
+                logger::error(&format!(
+                    "Failed to persist migrated secrets file: {}",
+                    error
+                ));
+            }
+        } else {
+            let mut cache = self.cache.lock().await;
+            *cache = Some(secrets.clone());
+        }
 
         Ok(secrets)
     }
 
-    async fn write_secret(&self, key: &str, value: &str) -> Result<(), DomainError> {
+    async fn write_secret(
+        &self,
+        key: &str,
+        value: &str,
+        label: &str,
+    ) -> Result<String, DomainError> {
         let mut secrets = self.load().await?;
-
-        secrets.set(key.to_string(), value.to_string());
-
-        self.save(&secrets).await
+        let id = secrets.write_secret(key.to_string(), value.to_string(), label.to_string());
+        self.save(&secrets).await?;
+        Ok(id)
     }
 
-    async fn read_secret(&self, key: &str) -> Result<Option<String>, DomainError> {
+    async fn read_secret(
+        &self,
+        key: &str,
+        id: Option<&str>,
+    ) -> Result<Option<String>, DomainError> {
         let secrets = self.load().await?;
-
-        Ok(secrets.get(key).cloned())
+        Ok(secrets.read_secret(key, id))
     }
 
-    async fn get_secret_state(&self) -> Result<HashMap<String, bool>, DomainError> {
-        let secrets = self.load().await?;
-        let mut state = secrets.get_state();
+    async fn delete_secret(&self, key: &str, id: Option<&str>) -> Result<(), DomainError> {
+        let mut secrets = self.load().await?;
+        if secrets.delete_secret(key, id) {
+            self.save(&secrets).await?;
+        }
+        Ok(())
+    }
 
-        // 确保所有已知密钥都有状态，如果不存在则设置为 false
-        use crate::domain::models::secret::SecretKeys;
+    async fn rotate_secret(&self, key: &str, id: &str) -> Result<(), DomainError> {
+        let mut secrets = self.load().await?;
+        if secrets.rotate_secret(key, id) {
+            self.save(&secrets).await?;
+        }
+        Ok(())
+    }
 
-        // 定义所有已知密钥的列表
-        let known_keys = [
-            SecretKeys::HORDE,
-            SecretKeys::MANCER,
-            SecretKeys::VLLM,
-            SecretKeys::APHRODITE,
-            SecretKeys::TABBY,
-            SecretKeys::OPENAI,
-            SecretKeys::NOVEL,
-            SecretKeys::CLAUDE,
-            SecretKeys::OPENROUTER,
-            SecretKeys::SCALE,
-            SecretKeys::AI21,
-            SecretKeys::SCALE_COOKIE,
-            SecretKeys::MAKERSUITE,
-            SecretKeys::SERPAPI,
-            SecretKeys::MISTRALAI,
-            SecretKeys::TOGETHERAI,
-            SecretKeys::INFERMATICAI,
-            SecretKeys::DREAMGEN,
-            SecretKeys::CUSTOM,
-            SecretKeys::OOBA,
-            SecretKeys::NOMICAI,
-            SecretKeys::KOBOLDCPP,
-            SecretKeys::LLAMACPP,
-            SecretKeys::COHERE,
-            SecretKeys::PERPLEXITY,
-            SecretKeys::GROQ,
-            SecretKeys::AZURE_TTS,
-            SecretKeys::FEATHERLESS,
-            SecretKeys::ZEROONEAI,
-            SecretKeys::HUGGINGFACE,
-            SecretKeys::STABILITY,
-            SecretKeys::CUSTOM_OPENAI_TTS,
-            SecretKeys::NANOGPT,
-            SecretKeys::TAVILY,
-            SecretKeys::BFL,
-            SecretKeys::GENERIC,
-            SecretKeys::DEEPSEEK,
-            SecretKeys::MOONSHOT,
-            SecretKeys::SILICONFLOW,
-            SecretKeys::ZAI,
-            SecretKeys::SERPER,
-            SecretKeys::FALAI,
-            SecretKeys::XAI,
-            SecretKeys::CSRF_SECRET,
-        ];
+    async fn rename_secret(&self, key: &str, id: &str, label: &str) -> Result<(), DomainError> {
+        let mut secrets = self.load().await?;
+        if secrets.rename_secret(key, id, label.to_string()) {
+            self.save(&secrets).await?;
+        }
+        Ok(())
+    }
+}
 
-        // 确保所有已知密钥都有状态
-        for key in known_keys.iter() {
-            state.entry(key.to_string()).or_insert(false);
+impl FileSecretRepository {
+    fn deserialize_compat(raw: Value) -> (Secrets, bool) {
+        let mut secrets = Secrets::new();
+        let mut migrated = false;
+
+        let Value::Object(entries) = raw else {
+            return (secrets, migrated);
+        };
+
+        for (key, value) in entries {
+            if key == SecretKeys::MIGRATED {
+                continue;
+            }
+
+            match value {
+                Value::Array(array) => {
+                    let mut normalized = Vec::new();
+                    for item in array {
+                        if let Ok(entry) = serde_json::from_value::<SecretEntry>(item) {
+                            normalized.push(entry);
+                        }
+                    }
+
+                    if !normalized.is_empty() {
+                        Secrets::normalize_entries(&mut normalized);
+                        secrets.secrets.insert(key, normalized);
+                    }
+                }
+                Value::String(legacy) => {
+                    if !legacy.trim().is_empty() {
+                        secrets.write_secret(key.clone(), legacy, key);
+                        migrated = true;
+                    }
+                }
+                _ => {}
+            }
         }
 
-        // 添加可导出的密钥
-        for key in SecretKeys::get_exportable_keys() {
-            state.entry(key.to_string()).or_insert(false);
-        }
-
-        Ok(state)
+        (secrets, migrated)
     }
 }

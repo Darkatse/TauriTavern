@@ -4,7 +4,8 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::secret_dto::{
-    AllSecretsDto, FindSecretDto, FindSecretResponseDto, SecretStateDto, WriteSecretDto,
+    AllSecretsDto, DeleteSecretDto, FindSecretDto, FindSecretResponseDto, RenameSecretDto,
+    RotateSecretDto, SecretStateDto, WriteSecretDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -16,16 +17,16 @@ pub async fn write_secret(
 ) -> Result<String, CommandError> {
     log_command(format!("write_secret {}", dto.key));
 
-    app_state
+    let id = app_state
         .secret_service
-        .write_secret(&dto.key, &dto.value)
+        .write_secret(&dto.key, &dto.value, dto.label.as_deref())
         .await
         .map_err(map_command_error(format!(
             "Failed to write secret {}",
             dto.key
         )))?;
 
-    Ok("ok".to_string())
+    Ok(id)
 }
 
 #[tauri::command]
@@ -63,10 +64,61 @@ pub async fn find_secret(
 
     app_state
         .secret_service
-        .find_secret(&dto.key)
+        .find_secret(&dto.key, dto.id.as_deref())
         .await
         .map_err(map_command_error(format!(
             "Failed to find secret {}",
+            dto.key
+        )))
+}
+
+#[tauri::command]
+pub async fn delete_secret(
+    dto: DeleteSecretDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command(format!("delete_secret {}", dto.key));
+
+    app_state
+        .secret_service
+        .delete_secret(&dto.key, dto.id.as_deref())
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to delete secret {}",
+            dto.key
+        )))
+}
+
+#[tauri::command]
+pub async fn rotate_secret(
+    dto: RotateSecretDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command(format!("rotate_secret {}", dto.key));
+
+    app_state
+        .secret_service
+        .rotate_secret(&dto.key, &dto.id)
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to rotate secret {}",
+            dto.key
+        )))
+}
+
+#[tauri::command]
+pub async fn rename_secret(
+    dto: RenameSecretDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command(format!("rename_secret {}", dto.key));
+
+    app_state
+        .secret_service
+        .rename_secret(&dto.key, &dto.id, &dto.label)
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to rename secret {}",
             dto.key
         )))
 }
