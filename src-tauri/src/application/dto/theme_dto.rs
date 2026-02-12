@@ -1,4 +1,3 @@
-use crate::domain::models::theme::Theme;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -18,23 +17,4 @@ pub struct SaveThemeDto {
 pub struct DeleteThemeDto {
     /// The name of the theme to delete
     pub name: String,
-}
-
-/// DTO for theme response
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ThemeDto {
-    /// The name of the theme
-    pub name: String,
-
-    /// The theme data
-    pub data: Value,
-}
-
-impl From<Theme> for ThemeDto {
-    fn from(theme: Theme) -> Self {
-        Self {
-            name: theme.name,
-            data: theme.data,
-        }
-    }
 }

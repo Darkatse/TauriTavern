@@ -3,8 +3,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::dto::chat_dto::{
-    AddMessageDto, ChatDto, ChatMessageDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
-    ImportChatDto, MessageExtraDto, RenameChatDto, SaveChatDto,
+    AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
+    ImportChatDto, RenameChatDto, SaveChatDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::domain::models::chat::{humanized_date, Chat, ChatMessage, MessageExtra};
@@ -12,7 +12,6 @@ use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatRepository,
 };
-use crate::infrastructure::logging::logger;
 
 /// Service for managing chats
 pub struct ChatService {

@@ -87,17 +87,4 @@ pub trait PresetRepository: Send + Sync {
         preset_type: &PresetType,
     ) -> Result<Option<DefaultPreset>, DomainError>;
 
-    /// List all available default presets of a specific type
-    ///
-    /// # Arguments
-    ///
-    /// * `preset_type` - Type of presets to list
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Vec<DefaultPreset>, DomainError>` - List of default presets
-    async fn list_default_presets(
-        &self,
-        preset_type: &PresetType,
-    ) -> Result<Vec<DefaultPreset>, DomainError>;
 }

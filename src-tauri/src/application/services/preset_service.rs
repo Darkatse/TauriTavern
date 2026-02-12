@@ -170,35 +170,6 @@ impl PresetService {
         Ok(default_preset)
     }
 
-    /// List all available default presets of a specific type
-    ///
-    /// # Arguments
-    ///
-    /// * `preset_type` - Type of presets to list
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Vec<DefaultPreset>, DomainError>` - List of default presets
-    pub async fn list_default_presets(
-        &self,
-        preset_type: &PresetType,
-    ) -> Result<Vec<DefaultPreset>, DomainError> {
-        logger::debug(&format!("Listing default presets of type: {}", preset_type));
-
-        let default_presets = self
-            .preset_repository
-            .list_default_presets(preset_type)
-            .await?;
-
-        logger::debug(&format!(
-            "Found {} default presets of type {}",
-            default_presets.len(),
-            preset_type
-        ));
-
-        Ok(default_presets)
-    }
-
     /// Check if a preset exists
     ///
     /// # Arguments
@@ -347,12 +318,6 @@ mod tests {
             Ok(None)
         }
 
-        async fn list_default_presets(
-            &self,
-            _preset_type: &PresetType,
-        ) -> Result<Vec<DefaultPreset>, DomainError> {
-            Ok(vec![])
-        }
     }
 
     #[tokio::test]

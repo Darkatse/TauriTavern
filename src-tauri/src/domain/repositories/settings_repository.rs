@@ -1,7 +1,6 @@
 use crate::domain::errors::DomainError;
 use crate::domain::models::settings::{AppSettings, SettingsSnapshot, UserSettings};
 use async_trait::async_trait;
-use std::path::PathBuf;
 
 #[async_trait]
 pub trait SettingsRepository: Send + Sync {

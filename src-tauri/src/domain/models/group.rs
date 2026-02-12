@@ -93,34 +93,3 @@ fn default_auto_mode_delay() -> i32 {
 fn default_true() -> bool {
     true
 }
-
-impl Group {
-    /// Create a new group with basic information
-    pub fn new(id: String, name: String, members: Vec<String>, avatar_url: Option<String>) -> Self {
-        let chat_id = id.clone();
-
-        Self {
-            id,
-            name,
-            members,
-            avatar_url,
-            allow_self_responses: false,
-            activation_strategy: 0, // NATURAL
-            generation_mode: 0,     // SWAP
-            disabled_members: Vec::new(),
-            chat_metadata: HashMap::new(),
-            fav: false,
-            chat_id: chat_id.clone(),
-            chats: vec![chat_id],
-            auto_mode_delay: 5,
-            generation_mode_join_prefix: String::new(),
-            generation_mode_join_suffix: String::new(),
-            hide_muted_sprites: true,
-            past_metadata: HashMap::new(),
-            date_added: None,
-            create_date: None,
-            chat_size: None,
-            date_last_chat: None,
-        }
-    }
-}

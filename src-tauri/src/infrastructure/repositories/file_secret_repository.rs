@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::Manager;
@@ -122,14 +122,6 @@ impl SecretRepository for FileSecretRepository {
         let secrets = self.load().await?;
 
         Ok(secrets.get(key).cloned())
-    }
-
-    async fn delete_secret(&self, key: &str) -> Result<(), DomainError> {
-        let mut secrets = self.load().await?;
-
-        secrets.delete(key);
-
-        self.save(&secrets).await
     }
 
     async fn get_secret_state(&self) -> Result<HashMap<String, bool>, DomainError> {

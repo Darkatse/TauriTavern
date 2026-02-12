@@ -6,7 +6,6 @@ use crate::application::dto::user_dto::{CreateUserDto, UpdateUserDto, UserDto};
 use crate::application::errors::ApplicationError;
 use crate::domain::models::user::User;
 use crate::domain::repositories::user_repository::UserRepository;
-use crate::infrastructure::logging::logger;
 
 pub struct UserService {
     user_repository: Arc<dyn UserRepository>,

@@ -2,12 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecretDto {
-    pub key: String,
-    pub value: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecretStateDto {
     #[serde(flatten)]
     pub states: HashMap<String, bool>,

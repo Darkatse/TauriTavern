@@ -7,7 +7,6 @@ use crate::application::dto::settings_dto::{
 };
 use crate::application::errors::ApplicationError;
 use crate::domain::repositories::settings_repository::SettingsRepository;
-use crate::infrastructure::logging::logger;
 
 pub struct SettingsService {
     settings_repository: Arc<dyn SettingsRepository>,

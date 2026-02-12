@@ -27,16 +27,6 @@ impl Secrets {
         self.secrets.insert(key, value);
     }
 
-    /// 删除指定密钥
-    pub fn delete(&mut self, key: &str) -> Option<String> {
-        self.secrets.remove(key)
-    }
-
-    /// 检查指定密钥是否存在
-    pub fn has_key(&self, key: &str) -> bool {
-        self.secrets.contains_key(key)
-    }
-
     /// 获取所有密钥的状态（是否存在有效值）
     pub fn get_state(&self) -> HashMap<String, bool> {
         let mut state = HashMap::new();

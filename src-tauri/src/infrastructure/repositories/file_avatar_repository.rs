@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use image::{DynamicImage, GenericImageView, ImageFormat};
+use image::ImageFormat;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
@@ -8,7 +8,6 @@ use tokio::fs as tokio_fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::avatar::{Avatar, AvatarUploadResult, CropInfo};
 use crate::domain::repositories::avatar_repository::AvatarRepository;
-use crate::infrastructure::logging::logger;
 
 // Constants for avatar dimensions
 const AVATAR_WIDTH: u32 = 400;
@@ -16,7 +15,6 @@ const AVATAR_HEIGHT: u32 = 600;
 
 /// File-based implementation of AvatarRepository
 pub struct FileAvatarRepository {
-    app_handle: AppHandle,
     avatars_dir: PathBuf,
 }
 
@@ -38,10 +36,7 @@ impl FileAvatarRepository {
         // Create directory if it doesn't exist
         fs::create_dir_all(&avatars_dir).expect("Failed to create avatars directory");
 
-        Self {
-            app_handle,
-            avatars_dir,
-        }
+        Self { avatars_dir }
     }
 
     /// Process an image file with optional cropping

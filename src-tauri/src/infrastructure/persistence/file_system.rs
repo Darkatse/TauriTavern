@@ -10,9 +10,7 @@ pub struct DataDirectory {
     default_user: PathBuf,
     characters: PathBuf,
     chats: PathBuf,
-    avatars: PathBuf,
     settings: PathBuf,
-    logs: PathBuf,
     user_data: PathBuf,
     default_avatar: PathBuf,
     groups: PathBuf,
@@ -25,9 +23,7 @@ impl DataDirectory {
         let default_user = root.join("default-user");
         let characters = default_user.join("characters");
         let chats = default_user.join("chats");
-        let avatars = default_user.join("User Avatars");
         let settings = default_user.clone();
-        let logs = root.join("logs");
         let user_data = default_user.clone();
         let default_avatar = default_user
             .join("characters")
@@ -40,9 +36,7 @@ impl DataDirectory {
             default_user,
             characters,
             chats,
-            avatars,
             settings,
-            logs,
             user_data,
             default_avatar,
             groups,
@@ -110,11 +104,6 @@ impl DataDirectory {
         Ok(())
     }
 
-    /// Get the root directory
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
     /// Get the default user directory
     pub fn default_user(&self) -> &Path {
         &self.default_user
@@ -130,19 +119,9 @@ impl DataDirectory {
         &self.chats
     }
 
-    /// Get the avatars directory
-    pub fn avatars(&self) -> &Path {
-        &self.avatars
-    }
-
     /// Get the settings directory
     pub fn settings(&self) -> &Path {
         &self.settings
-    }
-
-    /// Get the logs directory
-    pub fn logs(&self) -> &Path {
-        &self.logs
     }
 
     /// Get the user data directory

@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use mime_guess::from_path;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
@@ -11,17 +10,13 @@ use crate::infrastructure::logging::logger;
 
 /// File system implementation of the BackgroundRepository
 pub struct FileBackgroundRepository {
-    app_handle: AppHandle,
     backgrounds_dir: PathBuf,
 }
 
 impl FileBackgroundRepository {
     /// Create a new FileBackgroundRepository instance
-    pub fn new(app_handle: AppHandle, backgrounds_dir: PathBuf) -> Self {
-        Self {
-            app_handle,
-            backgrounds_dir,
-        }
+    pub fn new(backgrounds_dir: PathBuf) -> Self {
+        Self { backgrounds_dir }
     }
 
     /// Check if a file is an image

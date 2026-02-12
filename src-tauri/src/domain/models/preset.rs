@@ -100,15 +100,6 @@ impl Preset {
         }
     }
 
-    /// Get the filename for this preset
-    pub fn filename(&self) -> String {
-        format!(
-            "{}{}",
-            sanitize_filename(&self.name),
-            self.preset_type.extension()
-        )
-    }
-
     /// Validate the preset data
     pub fn validate(&self) -> Result<(), String> {
         // Basic validation - ensure data is an object
@@ -221,16 +212,6 @@ mod tests {
         assert_eq!(PresetType::Context.directory_name(), "context");
         assert_eq!(PresetType::SysPrompt.directory_name(), "sysprompt");
         assert_eq!(PresetType::Reasoning.directory_name(), "reasoning");
-    }
-
-    #[test]
-    fn test_preset_filename() {
-        let preset = Preset::new(
-            "Test Preset".to_string(),
-            PresetType::OpenAI,
-            json!({"temperature": 0.7}),
-        );
-        assert_eq!(preset.filename(), "Test Preset.json");
     }
 
     #[test]

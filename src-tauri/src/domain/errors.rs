@@ -8,9 +8,6 @@ pub enum DomainError {
     #[error("Invalid data: {0}")]
     InvalidData(String),
 
-    #[error("Operation not permitted: {0}")]
-    PermissionDenied(String),
-
     #[error("Authentication error: {0}")]
     AuthenticationError(String),
 

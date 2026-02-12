@@ -3,7 +3,6 @@ use crate::domain::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatSearchResult,
 };
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 /// DTO for chat message extra data
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,4 +1,4 @@
-use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
+use crate::domain::models::preset::{Preset, PresetType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -77,56 +77,6 @@ pub struct DeleteOpenAIPresetResponseDto {
     pub error: Option<bool>,
 }
 
-/// DTO for preset information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PresetDto {
-    /// Name of the preset
-    pub name: String,
-    /// Type of the preset
-    pub preset_type: String,
-    /// Preset data
-    pub data: Value,
-}
-
-/// DTO for default preset information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DefaultPresetDto {
-    /// Filename of the default preset
-    pub filename: String,
-    /// Name of the preset
-    pub name: String,
-    /// Type of the preset
-    pub preset_type: String,
-    /// Whether this is a default preset
-    pub is_default: bool,
-    /// Preset data
-    pub data: Value,
-}
-
-// Conversion implementations
-
-impl From<Preset> for PresetDto {
-    fn from(preset: Preset) -> Self {
-        Self {
-            name: preset.name,
-            preset_type: preset.preset_type.to_api_id().to_string(),
-            data: preset.data,
-        }
-    }
-}
-
-impl From<DefaultPreset> for DefaultPresetDto {
-    fn from(default_preset: DefaultPreset) -> Self {
-        Self {
-            filename: default_preset.filename,
-            name: default_preset.name,
-            preset_type: default_preset.preset_type.to_api_id().to_string(),
-            is_default: default_preset.is_default,
-            data: default_preset.data,
-        }
-    }
-}
-
 impl TryFrom<SavePresetDto> for Preset {
     type Error = String;
 
@@ -193,20 +143,6 @@ mod tests {
         assert_eq!(preset.name, "Test Preset");
         assert_eq!(preset.preset_type, PresetType::OpenAI);
         assert_eq!(preset.data["temperature"], 0.7);
-    }
-
-    #[test]
-    fn test_preset_dto_from_preset() {
-        let preset = Preset::new(
-            "Test Preset".to_string(),
-            PresetType::OpenAI,
-            json!({"temperature": 0.7}),
-        );
-
-        let dto: PresetDto = preset.into();
-        assert_eq!(dto.name, "Test Preset");
-        assert_eq!(dto.preset_type, "openai");
-        assert_eq!(dto.data["temperature"], 0.7);
     }
 
     #[test]

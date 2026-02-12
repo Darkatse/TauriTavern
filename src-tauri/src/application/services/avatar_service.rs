@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::avatar::{Avatar, AvatarUploadResult, CropInfo};
+use crate::domain::models::avatar::{AvatarUploadResult, CropInfo};
 use crate::domain::repositories::avatar_repository::AvatarRepository;
 use crate::infrastructure::logging::logger;
 

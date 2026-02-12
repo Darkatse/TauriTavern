@@ -1,6 +1,5 @@
 use crate::domain::models::user_directory::UserDirectory;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserDirectoryDto {

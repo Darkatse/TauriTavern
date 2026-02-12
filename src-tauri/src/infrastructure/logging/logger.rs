@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::sync::Once;
-use tracing::{error, info, Level};
+use tracing::info;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan},
@@ -69,9 +69,4 @@ pub fn warn(message: &str) {
 /// Log an error message
 pub fn error(message: &str) {
     tracing::error!("{}", message);
-}
-
-/// Log an error message with the error object
-pub fn error_with_cause(message: &str, error: &dyn std::error::Error) {
-    tracing::error!("{}: {}", message, error);
 }

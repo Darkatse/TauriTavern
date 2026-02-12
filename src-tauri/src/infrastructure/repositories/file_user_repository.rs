@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::Mutex;
@@ -7,7 +7,6 @@ use tokio::sync::Mutex;
 use crate::domain::errors::DomainError;
 use crate::domain::models::user::User;
 use crate::domain::repositories::user_repository::UserRepository;
-use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
     delete_file, list_files_with_extension, read_json_file, write_json_file,
 };

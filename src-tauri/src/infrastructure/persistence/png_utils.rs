@@ -4,7 +4,6 @@ use crate::infrastructure::logging::logger;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use image::ImageFormat;
 use png::{text_metadata::TEXtChunk, BitDepth, ColorType, Transformations};
-use serde::{de::DeserializeOwned, Serialize};
 use std::io::Cursor;
 
 /// PNG text keys used for character data.
@@ -131,25 +130,6 @@ pub fn write_character_data_to_png(
     }
 
     encode_png_with_text_chunks(&decoded, &character_chunks)
-}
-
-/// Parses a character object from a PNG file.
-pub fn parse_character_from_png<T: DeserializeOwned>(image_data: &[u8]) -> Result<T, DomainError> {
-    let json_data = read_character_data_from_png(image_data)?;
-
-    serde_json::from_str(&json_data)
-        .map_err(|e| DomainError::InvalidData(format!("Failed to parse character data: {}", e)))
-}
-
-/// Writes a character object into PNG metadata.
-pub fn write_character_to_png<T: Serialize>(
-    image_data: &[u8],
-    character: &T,
-) -> Result<Vec<u8>, DomainError> {
-    let json_data = serde_json::to_string(character)
-        .map_err(|e| DomainError::InvalidData(format!("Failed to serialize character: {}", e)))?;
-
-    write_character_data_to_png(image_data, &json_data)
 }
 
 /// Process an image for use as a character avatar.

@@ -25,9 +25,7 @@ impl From<ApplicationError> for CommandError {
             ApplicationError::NotFound(msg) => CommandError::NotFound(msg),
             ApplicationError::Unauthorized(msg) => CommandError::Unauthorized(msg),
             ApplicationError::PermissionDenied(msg) => CommandError::Unauthorized(msg),
-            ApplicationError::DomainError(msg) => CommandError::InternalServerError(msg),
             ApplicationError::InternalError(msg) => CommandError::InternalServerError(msg),
-            ApplicationError::ServiceError(msg) => CommandError::InternalServerError(msg),
         }
     }
 }
@@ -37,7 +35,6 @@ impl From<DomainError> for CommandError {
         match error {
             DomainError::NotFound(msg) => CommandError::NotFound(msg),
             DomainError::InvalidData(msg) => CommandError::BadRequest(msg),
-            DomainError::PermissionDenied(msg) => CommandError::Unauthorized(msg),
             DomainError::AuthenticationError(msg) => CommandError::Unauthorized(msg),
             DomainError::InternalError(msg) => CommandError::InternalServerError(msg),
         }

@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::Path;
 
 /// Represents a UI theme in the application
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,11 +15,6 @@ impl Theme {
     /// Create a new theme
     pub fn new(name: String, data: Value) -> Self {
         Self { name, data }
-    }
-
-    /// Get the filename for this theme
-    pub fn get_filename(&self) -> String {
-        format!("{}.json", sanitize_filename(&self.name))
     }
 }
 

@@ -211,7 +211,6 @@ fn build_repositories(
 
     let background_repository: Arc<dyn BackgroundRepository> =
         Arc::new(FileBackgroundRepository::new(
-            app_handle.clone(),
             data_directory.default_user().join("backgrounds"),
         ));
 

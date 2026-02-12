@@ -1,9 +1,9 @@
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{
-    humanized_date, message_date_format, Chat, ChatMessage, MessageExtra,
+    humanized_date, Chat, ChatMessage,
 };
 use crate::infrastructure::logging::logger;
-use chrono::{Local, Utc};
+use chrono::Utc;
 use serde_json::Value;
 
 /// Import a chat from SillyTavern format

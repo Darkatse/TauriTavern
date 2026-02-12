@@ -2,7 +2,6 @@ use chrono::{DateTime, Local, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use uuid::Uuid;
 
 /// Format a date in the SillyTavern format (YYYY-MM-DD@HHhMMmSSs)
 pub fn humanized_date(date: DateTime<Utc>) -> String {
@@ -163,17 +162,6 @@ impl ChatMessage {
         }
     }
 
-    /// Create a new system message
-    pub fn system(content: &str) -> Self {
-        Self {
-            name: "System".to_string(),
-            is_user: false,
-            is_system: true,
-            send_date: message_date_format(Utc::now()),
-            mes: content.to_string(),
-            extra: MessageExtra::default(),
-        }
-    }
 }
 
 /// Chat structure

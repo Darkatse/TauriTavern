@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use serde_json::Value;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,7 +8,6 @@ use tokio::sync::Mutex;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::settings::{AppSettings, SettingsSnapshot, UserSettings};
-use crate::domain::models::user_directory::UserDirectory;
 use crate::domain::repositories::settings_repository::SettingsRepository;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{

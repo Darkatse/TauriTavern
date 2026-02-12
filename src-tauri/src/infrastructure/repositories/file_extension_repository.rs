@@ -24,18 +24,6 @@ pub struct FileExtensionRepository {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct GithubReleaseAsset {
-    name: String,
-    browser_download_url: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct GithubRelease {
-    tag_name: String,
-    assets: Vec<GithubReleaseAsset>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 struct GithubCommit {
     sha: String,
     commit: GithubCommitDetail,
@@ -372,28 +360,6 @@ impl FileExtensionRepository {
     /// Get the remote URL for a GitHub repository
     fn get_remote_url(&self, owner: &str, repo: &str) -> String {
         format!("https://github.com/{}/{}", owner, repo)
-    }
-
-    /// Get the extension type based on the path
-    fn get_extension_type(&self, path: &Path) -> ExtensionType {
-        if path.starts_with(&self.system_extensions_dir)
-            && !path.starts_with(&self.global_extensions_dir)
-        {
-            ExtensionType::System
-        } else if path.starts_with(&self.global_extensions_dir) {
-            ExtensionType::Global
-        } else {
-            ExtensionType::Local
-        }
-    }
-
-    /// Get the base directory for an extension type
-    fn get_base_directory(&self, extension_type: &ExtensionType) -> &Path {
-        match extension_type {
-            ExtensionType::System => &self.system_extensions_dir,
-            ExtensionType::Global => &self.global_extensions_dir,
-            ExtensionType::Local => &self.user_extensions_dir,
-        }
     }
 
     /// Get the extension path based on name and type

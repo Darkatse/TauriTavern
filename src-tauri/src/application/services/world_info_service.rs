@@ -80,10 +80,4 @@ impl WorldInfoService {
         Ok(imported_name)
     }
 
-    pub async fn list_world_names(&self) -> Result<Vec<String>, ApplicationError> {
-        self.world_info_repository
-            .list_world_names()
-            .await
-            .map_err(Into::into)
-    }
 }

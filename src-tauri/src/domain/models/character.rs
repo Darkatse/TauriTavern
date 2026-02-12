@@ -348,15 +348,6 @@ impl Character {
         character
     }
 
-    /// Convert character to V3 format
-    pub fn to_v3(&self) -> Self {
-        let mut character = self.to_v2();
-        character.spec = "chara_card_v3".to_string();
-        character.spec_version = "3.0".to_string();
-
-        character
-    }
-
     /// Get the file name for this character
     pub fn get_file_name(&self) -> String {
         if let Some(file_name) = &self.file_name {

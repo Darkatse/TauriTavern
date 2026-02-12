@@ -1,13 +1,11 @@
 use async_trait::async_trait;
 use chrono::Local;
-use rand::random;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
 use crate::domain::errors::DomainError;
@@ -20,9 +18,9 @@ use crate::infrastructure::persistence::chat_format_importers::{
     export_to_plain_text, import_from_agnai, import_from_cai_tools, import_from_kobold_lite,
     import_from_ooba, import_from_risuai, import_from_sillytavern,
 };
-use crate::infrastructure::persistence::file_system::{delete_file, list_files_with_extension};
+use crate::infrastructure::persistence::file_system::list_files_with_extension;
 use crate::infrastructure::persistence::jsonl_utils::{
-    append_jsonl_file, check_chat_integrity, read_first_line, read_jsonl_file, read_last_line,
+    read_jsonl_file,
     write_jsonl_file,
 };
 

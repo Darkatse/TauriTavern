@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::application::dto::user_directory_dto::UserDirectoryDto;
 use crate::application::errors::ApplicationError;
 use crate::domain::repositories::user_directory_repository::UserDirectoryRepository;
-use crate::infrastructure::logging::logger;
 
 pub struct UserDirectoryService {
     user_directory_repository: Arc<dyn UserDirectoryRepository>,

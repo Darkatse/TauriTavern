@@ -20,12 +20,10 @@ use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
-use crate::infrastructure::persistence::file_system::DataDirectory;
 
 mod bootstrap;
 
 pub struct AppState {
-    pub data_directory: DataDirectory,
     pub character_service: Arc<CharacterService>,
     pub chat_service: Arc<ChatService>,
     pub user_service: Arc<UserService>,
@@ -54,7 +52,6 @@ impl AppState {
         tracing::info!("Application initialized successfully");
 
         Ok(Self {
-            data_directory,
             character_service: services.character_service,
             chat_service: services.chat_service,
             user_service: services.user_service,

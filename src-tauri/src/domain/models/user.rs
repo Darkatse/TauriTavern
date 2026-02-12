@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -36,20 +35,6 @@ pub struct UserGenerationSettings {
     pub top_p: f32,
     pub top_k: u32,
     pub repetition_penalty: f32,
-}
-
-impl User {
-    pub fn new(username: String) -> Self {
-        let now = Utc::now();
-        Self {
-            id: Uuid::new_v4().to_string(),
-            username,
-            avatar: None,
-            created_at: now,
-            updated_at: now,
-            settings: UserSettings::default(),
-        }
-    }
 }
 
 impl Default for UserSettings {

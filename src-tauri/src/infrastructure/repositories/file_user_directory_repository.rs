@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::Manager;
 use tokio::fs;
@@ -11,7 +10,6 @@ use crate::domain::repositories::user_directory_repository::UserDirectoryReposit
 use crate::infrastructure::logging::logger;
 
 pub struct FileUserDirectoryRepository {
-    app_handle: AppHandle,
     data_root: PathBuf,
 }
 
@@ -31,10 +29,7 @@ impl FileUserDirectoryRepository {
             data_root
         );
 
-        Self {
-            app_handle,
-            data_root,
-        }
+        Self { data_root }
     }
 
     async fn create_directories(&self, directories: &UserDirectory) -> Result<(), DomainError> {

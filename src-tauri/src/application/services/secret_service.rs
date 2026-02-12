@@ -4,7 +4,6 @@ use crate::application::dto::secret_dto::{AllSecretsDto, FindSecretResponseDto, 
 use crate::application::errors::ApplicationError;
 use crate::domain::models::secret::SecretKeys;
 use crate::domain::repositories::secret_repository::SecretRepository;
-use crate::infrastructure::logging::logger;
 
 pub struct SecretService {
     secret_repository: Arc<dyn SecretRepository>,

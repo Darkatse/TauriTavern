@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tauri::path::BaseDirectory;
 use tauri::AppHandle;
 use tauri::Manager;
@@ -12,7 +11,7 @@ use crate::domain::repositories::content_repository::{
     ContentItem, ContentRepository, ContentType,
 };
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
+use crate::infrastructure::persistence::file_system::read_json_file;
 
 /// Content index item from JSON
 #[derive(Debug, Clone, Serialize, Deserialize)]
