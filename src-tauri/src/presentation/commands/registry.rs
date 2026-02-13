@@ -113,5 +113,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::bridge::get_version,
         super::bridge::get_client_version,
         super::bridge::is_ready,
+        super::bridge::read_frontend_template,
     ]
 }

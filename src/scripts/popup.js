@@ -134,6 +134,70 @@ const showPopupHelper = {
     },
 };
 
+const POPUP_TEMPLATE_FALLBACK_HTML = `
+    <dialog class="popup">
+        <div class="popup-body">
+            <div class="popup-content">
+                <h3 class="popup-header">text</h3>
+            </div>
+            <div class="popup-crop-wrap">
+                <img class="popup-crop-image" src="">
+            </div>
+            <textarea class="popup-input text_pole result-control auto-select" rows="1" data-result="1" data-result-event="submit"></textarea>
+            <div class="popup-inputs"></div>
+            <div class="popup-controls">
+                <div class="popup-button-ok menu_button result-control" data-result="1" data-i18n="Delete">Delete</div>
+                <div class="popup-button-cancel menu_button result-control" data-result="0" data-i18n="Cancel">Cancel</div>
+            </div>
+        </div>
+        <div class="popup-button-close right_menu_button fa-solid fa-circle-xmark" data-result="0" title="Close popup" data-i18n="[title]Close popup"></div>
+    </dialog>
+`;
+
+/**
+ * Clones popup dialog markup from #popup_template.
+ * Falls back to built-in markup when the template exists but has no dialog content.
+ *
+ * @returns {{ template: HTMLElement, dialog: HTMLDialogElement }}
+ */
+function clonePopupTemplateDialog() {
+    const fallbackTemplate = document.createElement('template');
+    fallbackTemplate.setAttribute('popup-button-save', 'Save');
+    fallbackTemplate.setAttribute('popup-button-yes', 'Yes');
+    fallbackTemplate.setAttribute('popup-button-no', 'No');
+    fallbackTemplate.setAttribute('popup-button-cancel', 'Cancel');
+    fallbackTemplate.setAttribute('popup-button-import', 'Import');
+    fallbackTemplate.setAttribute('popup-button-crop', 'Crop');
+    fallbackTemplate.innerHTML = POPUP_TEMPLATE_FALLBACK_HTML;
+
+    const templateCandidate = document.querySelector('#popup_template');
+    const template = templateCandidate instanceof HTMLElement ? templateCandidate : fallbackTemplate;
+
+    let popupTemplate = template instanceof HTMLTemplateElement
+        ? template.content.querySelector('.popup')
+        : template.querySelector('.popup');
+
+    if (!(popupTemplate instanceof HTMLElement) && template.innerHTML) {
+        const fallbackContainer = document.createElement('div');
+        fallbackContainer.innerHTML = template.innerHTML;
+        popupTemplate = fallbackContainer.querySelector('.popup');
+    }
+
+    if (!(popupTemplate instanceof HTMLElement)) {
+        console.warn('Popup template content is missing. Using built-in popup fallback.');
+        popupTemplate = fallbackTemplate.content.querySelector('.popup');
+    }
+
+    if (!(popupTemplate instanceof HTMLElement)) {
+        throw new Error('Failed to construct popup dialog.');
+    }
+
+    return {
+        template,
+        dialog: /** @type {HTMLDialogElement} */ (popupTemplate.cloneNode(true)),
+    };
+}
+
 export class Popup {
     /** @readonly @type {POPUP_TYPE} */ type;
 
@@ -189,10 +253,8 @@ export class Popup {
         this.onClose = onClose;
         this.onOpen = onOpen;
 
-        /**@type {HTMLTemplateElement}*/
-        const template = document.querySelector('#popup_template');
-        // @ts-ignore
-        this.dlg = template.content.cloneNode(true).querySelector('.popup');
+        const { template, dialog } = clonePopupTemplateDialog();
+        this.dlg = dialog;
         if (!this.dlg.showModal) {
             this.dlg.classList.add('poly_dialog');
             dialogPolyfill.registerDialog(this.dlg);

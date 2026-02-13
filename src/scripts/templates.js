@@ -1,5 +1,6 @@
 import { DOMPurify, Handlebars } from '../lib.js';
 import { applyLocale } from './i18n.js';
+import { isTauriEnv, invoke } from '../tauri-bridge.js';
 
 /**
  * @type {Map<string, function>}
@@ -26,26 +27,35 @@ function getUrlSync(url) {
 }
 
 /**
- * Loads a URL content using XMLHttpRequest asynchronously.
+ * Loads a URL content using fetch asynchronously.
  * @param {string} url URL to load asynchronously
  * @returns {Promise<string>} Response text
  */
-function getUrlAsync(url) {
-    return new Promise((resolve, reject) => {
-        const request = new XMLHttpRequest();
-        request.open('GET', url, true);
-        request.onload = () => {
-            if (request.status >= 200 && request.status < 300) {
-                resolve(request.responseText);
-            } else {
-                reject(new Error(`Error loading ${url}: ${request.status} ${request.statusText}`));
-            }
-        };
-        request.onerror = () => {
-            reject(new Error(`Error loading ${url}: ${request.status} ${request.statusText}`));
-        };
-        request.send();
-    });
+async function getUrlAsync(url) {
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Error loading ${url}: ${response.status} ${response.statusText}`);
+    }
+    return response.text();
+}
+
+/**
+ * Loads a template content, using Tauri resource reading on Tauri environments
+ * and fetch on regular web environments.
+ * @param {string} templateId Template ID (e.g., 'emptyBlock')
+ * @param {boolean} fullPath Whether templateId is a full path
+ * @returns {Promise<string>} Template HTML content
+ */
+async function getTemplateContent(templateId, fullPath) {
+    // On Tauri, use invoke to read from bundled resources (handles Android asset:// paths)
+    if (isTauriEnv && invoke && !fullPath) {
+        const fileName = `${templateId}.html`;
+        return invoke('read_frontend_template', { name: fileName });
+    }
+
+    // Fallback: use fetch for non-Tauri or full-path templates
+    const pathToTemplate = fullPath ? templateId : `/scripts/templates/${templateId}.html`;
+    return getUrlAsync(pathToTemplate);
 }
 
 /**
@@ -58,19 +68,19 @@ function getUrlAsync(url) {
  * @returns {Promise<string>} Rendered template
  */
 export async function renderTemplateAsync(templateId, templateData = {}, sanitize = true, localize = true, fullPath = false) {
-    async function fetchTemplateAsync(pathToTemplate) {
-        let template = TEMPLATE_CACHE.get(pathToTemplate);
+    async function fetchTemplateAsync(pathOrId) {
+        const cacheKey = fullPath ? pathOrId : `tauri:${pathOrId}`;
+        let template = TEMPLATE_CACHE.get(cacheKey);
         if (!template) {
-            const templateContent = await getUrlAsync(pathToTemplate);
+            const templateContent = await getTemplateContent(pathOrId, fullPath);
             template = Handlebars.compile(templateContent);
-            TEMPLATE_CACHE.set(pathToTemplate, template);
+            TEMPLATE_CACHE.set(cacheKey, template);
         }
         return template;
     }
 
     try {
-        const pathToTemplate = fullPath ? templateId : `/scripts/templates/${templateId}.html`;
-        const template = await fetchTemplateAsync(pathToTemplate);
+        const template = await fetchTemplateAsync(templateId);
         let result = template(templateData);
 
         if (sanitize) {
