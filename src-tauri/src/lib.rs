@@ -6,6 +6,7 @@ mod presentation;
 
 use app::{resolve_data_root, resolve_log_root, spawn_initialization};
 use infrastructure::logging::logger;
+use tauri::Manager;
 use presentation::commands::registry::invoke_handler;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33,6 +34,16 @@ pub async fn run() {
             tracing::info!("Starting TauriTavern application");
 
             let data_root = resolve_data_root(&app_handle)?;
+            if let Err(error) = app_handle
+                .asset_protocol_scope()
+                .allow_directory(&data_root, true)
+            {
+                tracing::warn!(
+                    "Failed to extend asset protocol scope for {:?}: {}",
+                    data_root,
+                    error
+                );
+            }
             spawn_initialization(app_handle, data_root);
             Ok(())
         })

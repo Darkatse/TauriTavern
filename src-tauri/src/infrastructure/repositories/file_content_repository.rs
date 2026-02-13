@@ -1,17 +1,17 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use tauri::path::BaseDirectory;
 use tauri::AppHandle;
-use tauri::Manager;
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::content_repository::{
     ContentItem, ContentRepository, ContentType,
 };
+use crate::infrastructure::assets::{
+    copy_resource_to_file, list_default_content_files_under, read_resource_json,
+};
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::persistence::file_system::read_json_file;
 
 /// Content index item from JSON
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,72 +94,50 @@ impl FileContentRepository {
         }
     }
 
-    /// Copy a file from default content to user content
-    async fn copy_file(&self, source_path: &Path, dest_path: &Path) -> Result<(), DomainError> {
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = dest_path.parent() {
-            fs::create_dir_all(parent).await.map_err(|e| {
-                logger::error(&format!("Failed to create directory {:?}: {}", parent, e));
-                DomainError::InternalError(format!("Failed to create directory: {}", e))
-            })?;
-        }
-
-        // Only copy if destination doesn't exist
-        if !dest_path.exists() {
-            logger::debug(&format!(
-                "Copying file from {:?} to {:?}",
-                source_path, dest_path
-            ));
-
-            fs::copy(source_path, dest_path).await.map_err(|e| {
-                logger::error(&format!(
-                    "Failed to copy file from {:?} to {:?}: {}",
-                    source_path, dest_path, e
-                ));
-                DomainError::InternalError(format!("Failed to copy file: {}", e))
-            })?;
-        } else {
-            logger::debug(&format!(
-                "Skipping copy, file already exists: {:?}",
-                dest_path
-            ));
-        }
-
-        Ok(())
+    fn is_directory_entry(path: &str) -> bool {
+        Path::new(path).extension().is_none()
     }
 
-    /// Copy a directory from default content to user content
-    async fn copy_directory(&self, source_dir: &Path, dest_dir: &Path) -> Result<(), DomainError> {
-        // Create destination directory if it doesn't exist
-        fs::create_dir_all(dest_dir).await.map_err(|e| {
-            logger::error(&format!("Failed to create directory {:?}: {}", dest_dir, e));
-            DomainError::InternalError(format!("Failed to create directory: {}", e))
-        })?;
-
-        // Read source directory
-        let mut entries = fs::read_dir(source_dir).await.map_err(|e| {
-            logger::error(&format!("Failed to read directory {:?}: {}", source_dir, e));
-            DomainError::InternalError(format!("Failed to read directory: {}", e))
-        })?;
-
-        // Process each entry
-        while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            logger::error(&format!("Failed to read directory entry: {}", e));
-            DomainError::InternalError(format!("Failed to read directory entry: {}", e))
-        })? {
-            let source_path = entry.path();
-            let dest_path = dest_dir.join(source_path.file_name().unwrap());
-
-            if source_path.is_dir() {
-                // Recursively copy subdirectory
-                Box::pin(self.copy_directory(&source_path, &dest_path)).await?;
-            } else {
-                // Copy file
-                self.copy_file(&source_path, &dest_path).await?;
-            }
+    fn expand_resource_entries(&self, filename: &str) -> Result<Vec<String>, DomainError> {
+        if !Self::is_directory_entry(filename) {
+            return Ok(vec![filename.to_string()]);
         }
 
-        Ok(())
+        let entries = list_default_content_files_under(filename);
+        if entries.is_empty() {
+            return Err(DomainError::NotFound(format!(
+                "Resource directory is empty or missing: {}",
+                filename
+            )));
+        }
+
+        Ok(entries)
+    }
+
+    fn build_destination_path(
+        &self,
+        item: &ContentItem,
+        resource_entry: &str,
+        target_dir: &Path,
+    ) -> Result<PathBuf, DomainError> {
+        if Self::is_directory_entry(&item.filename) {
+            let dir_name = Path::new(&item.filename).file_name().ok_or_else(|| {
+                DomainError::InvalidData(format!("Invalid directory entry: {}", item.filename))
+            })?;
+
+            let prefix = format!("{}/", item.filename.trim_matches('/').replace('\\', "/"));
+            let relative_entry = resource_entry
+                .strip_prefix(&prefix)
+                .unwrap_or(resource_entry);
+
+            return Ok(target_dir.join(dir_name).join(relative_entry));
+        }
+
+        let base_filename = Path::new(&item.filename).file_name().ok_or_else(|| {
+            DomainError::InvalidData(format!("Invalid filename: {}", item.filename))
+        })?;
+
+        Ok(target_dir.join(base_filename))
     }
 }
 
@@ -208,22 +186,6 @@ impl ContentRepository for FileContentRepository {
                 continue;
             }
 
-            // Resolve the source path using Tauri's resource system
-            let source_path = self
-                .app_handle
-                .path()
-                .resolve(
-                    &format!("default/content/{}", item.filename),
-                    BaseDirectory::Resource,
-                )
-                .map_err(|e| {
-                    logger::error(&format!(
-                        "Failed to resolve source path for {}: {}",
-                        item.filename, e
-                    ));
-                    DomainError::InternalError(format!("Failed to resolve source path: {}", e))
-                })?;
-
             // Get the target directory based on content type
             let target_dir = self.get_target_directory(&item.content_type, &user_dir);
 
@@ -236,21 +198,27 @@ impl ContentRepository for FileContentRepository {
                 DomainError::InternalError(format!("Failed to create target directory: {}", e))
             })?;
 
-            // Get the base filename
-            let base_filename = Path::new(&item.filename).file_name().ok_or_else(|| {
-                logger::error(&format!("Invalid filename: {}", item.filename));
-                DomainError::InvalidData(format!("Invalid filename: {}", item.filename))
-            })?;
+            let resource_entries = self.expand_resource_entries(&item.filename)?;
 
-            // Create destination path
-            let dest_path = target_dir.join(base_filename);
+            for resource_entry in resource_entries {
+                let resource_path = format!("default/content/{}", resource_entry);
+                let dest_path =
+                    self.build_destination_path(&item, &resource_entry, &target_dir)?;
 
-            logger::debug(&format!("Copying {} to {:?}", item.filename, dest_path));
+                if dest_path.exists() {
+                    logger::debug(&format!(
+                        "Skipping copy, file already exists: {:?}",
+                        dest_path
+                    ));
+                    continue;
+                }
 
-            if source_path.is_dir() {
-                Box::pin(self.copy_directory(&source_path, &dest_path)).await?;
-            } else {
-                self.copy_file(&source_path, &dest_path).await?;
+                logger::debug(&format!(
+                    "Copying {} to {:?}",
+                    resource_path, dest_path
+                ));
+
+                copy_resource_to_file(&self.app_handle, &resource_path, &dest_path).await?;
             }
 
             // Add to content log
@@ -270,23 +238,8 @@ impl ContentRepository for FileContentRepository {
     }
 
     async fn get_content_index(&self) -> Result<Vec<ContentItem>, DomainError> {
-        // Resolve the path to the content index file using Tauri's resource system
-        let content_index_path = self
-            .app_handle
-            .path()
-            .resolve("default/content/index.json", BaseDirectory::Resource)
-            .map_err(|e| {
-                logger::error(&format!("Failed to resolve content index path: {}", e));
-                DomainError::InternalError(format!("Failed to resolve content index path: {}", e))
-            })?;
-
-        logger::debug(&format!(
-            "Reading content index from {:?}",
-            content_index_path
-        ));
-
-        // Read content index
-        let index_items: Vec<ContentIndexItem> = read_json_file(&content_index_path).await?;
+        let index_items: Vec<ContentIndexItem> =
+            read_resource_json(&self.app_handle, "default/content/index.json")?;
 
         // Convert to domain model
         let content_items = index_items

@@ -2,14 +2,13 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tauri::path::BaseDirectory;
 use tauri::AppHandle;
-use tauri::Manager;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::preset::{sanitize_filename, DefaultPreset, Preset, PresetType};
 use crate::domain::repositories::content_repository::ContentRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
+use crate::infrastructure::assets::read_resource_json;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
     delete_file, list_files_with_extension, read_json_file, write_json_file,
@@ -129,25 +128,10 @@ impl FilePresetRepository {
 
                     if item_name == name {
                         // Found matching preset, load it
-                        let content_path = self
-                            .app_handle
-                            .path()
-                            .resolve(
-                                &format!("default/content/{}", item.filename),
-                                BaseDirectory::Resource,
-                            )
-                            .map_err(|e| {
-                                logger::error(&format!(
-                                    "Failed to resolve content path for {}: {}",
-                                    item.filename, e
-                                ));
-                                DomainError::InternalError(format!(
-                                    "Failed to resolve content path: {}",
-                                    e
-                                ))
-                            })?;
-
-                        let data: Value = read_json_file(&content_path).await?;
+                        let data: Value = read_resource_json(
+                            &self.app_handle,
+                            &format!("default/content/{}", item.filename),
+                        )?;
 
                         return Ok(Some(DefaultPreset {
                             filename: item.filename,

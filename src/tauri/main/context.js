@@ -121,7 +121,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             try {
                 return await invoke(command, args);
             } catch (error) {
-                const message = error?.message || error?.toString?.() || `Command failed: ${command}`;
+                const message = normalizeInvokeErrorMessage(error, `Command failed: ${command}`);
                 if (attempt < 19 && shouldRetryInvoke(message)) {
                     await sleep(200);
                     continue;
@@ -137,6 +137,72 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             (normalized.includes('state') && normalized.includes('not managed')) ||
             normalized.includes('invoke is unavailable')
         );
+    }
+
+    function normalizeInvokeErrorMessage(error, fallback) {
+        const extracted = extractErrorText(error);
+        if (extracted && extracted !== '[object Object]') {
+            return extracted;
+        }
+
+        try {
+            const serialized = JSON.stringify(error);
+            if (serialized && serialized !== '{}') {
+                return serialized;
+            }
+        } catch {
+            // Ignore serialization failure and continue fallback chain.
+        }
+
+        const stringified = String(error || '').trim();
+        if (stringified && stringified !== '[object Object]') {
+            return stringified;
+        }
+
+        return fallback;
+    }
+
+    function extractErrorText(value, depth = 0) {
+        if (depth > 4 || value === null || value === undefined) {
+            return '';
+        }
+
+        if (typeof value === 'string') {
+            return value.trim();
+        }
+
+        if (typeof value === 'number' || typeof value === 'boolean') {
+            return String(value);
+        }
+
+        if (value instanceof Error) {
+            const nested = extractErrorText(value.message, depth + 1);
+            return nested || String(value).trim();
+        }
+
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                const nested = extractErrorText(item, depth + 1);
+                if (nested) {
+                    return nested;
+                }
+            }
+            return '';
+        }
+
+        if (typeof value === 'object') {
+            const keys = ['message', 'error', 'details', 'reason', 'cause', 'data'];
+            for (const key of keys) {
+                if (Object.prototype.hasOwnProperty.call(value, key)) {
+                    const nested = extractErrorText(value[key], depth + 1);
+                    if (nested) {
+                        return nested;
+                    }
+                }
+            }
+        }
+
+        return '';
     }
 
     function normalizeCharacter(character) {

@@ -112,6 +112,11 @@
     --topBarBlockSize: calc(var(--topBarIconSize) + var(--topBarBlockPadding));
     --topBarBlockPadding: calc(var(--mainFontSize) / 3);
 
+    /* Android WebView can report zero env(safe-area-*) values. Native layer overrides these on Android. */
+    --tt-safe-area-top: env(safe-area-inset-top, 0px);
+    --tt-safe-area-right: env(safe-area-inset-right, 0px);
+    --tt-safe-area-left: env(safe-area-inset-left, 0px);
+
     /*styles for the color picker*/
     --tool-cool-color-picker-btn-bg: transparent;
     --tool-cool-color-picker-btn-border-color: transparent;

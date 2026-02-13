@@ -1,9 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::path::BaseDirectory;
-use tauri::{Emitter, Manager, Window};
-use tauri_plugin_fs::FsExt;
+use tauri::{Emitter, Window};
 
+use crate::infrastructure::assets::read_resource_text;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -88,18 +87,14 @@ pub fn read_frontend_template(app: tauri::AppHandle, name: String) -> Result<Str
         )));
     }
 
-    let resource_path = app
-        .path()
-        .resolve(
-            format!("frontend-templates/{}", name),
-            BaseDirectory::Resource,
-        )
-        .map_err(|e| {
-            CommandError::InternalServerError(format!("Failed to resolve template path: {}", e))
-        })?;
-
-    let content = app.fs().read_to_string(&resource_path).map_err(|e| {
-        CommandError::NotFound(format!("Failed to read template '{}': {}", name, e))
+    let content = read_resource_text(&app, &format!("frontend-templates/{}", name)).map_err(|e| {
+        match e {
+            crate::domain::errors::DomainError::NotFound(message) => CommandError::NotFound(message),
+            other => CommandError::InternalServerError(format!(
+                "Failed to read template '{}': {}",
+                name, other
+            )),
+        }
     })?;
 
     Ok(content)

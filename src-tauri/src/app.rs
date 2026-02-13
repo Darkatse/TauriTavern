@@ -20,6 +20,7 @@ use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
+use crate::infrastructure::paths::resolve_app_data_dir;
 
 mod bootstrap;
 
@@ -88,12 +89,6 @@ pub fn resolve_log_root(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn std::
     let log_root = app_data_dir.join("logs");
     std::fs::create_dir_all(&log_root)?;
     Ok(log_root)
-}
-
-fn resolve_app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let app_data_dir = app_handle.path().app_data_dir()?;
-    tracing::info!("App data directory: {:?}", app_data_dir);
-    Ok(app_data_dir)
 }
 
 pub fn spawn_initialization(app_handle: AppHandle, data_root: PathBuf) {

@@ -1,6 +1,17 @@
 export function registerChatRoutes(router, context, { jsonResponse }) {
     const isChatNotFoundError = (error) => {
-        const message = String(error?.message || error || '').toLowerCase();
+        const serialized = (() => {
+            try {
+                return JSON.stringify(error);
+            } catch {
+                return '';
+            }
+        })();
+
+        const message = [error?.message, error, serialized]
+            .map((value) => String(value || ''))
+            .join(' ')
+            .toLowerCase();
         return (
             message.includes('not found') ||
             message.includes('no such file') ||

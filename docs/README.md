@@ -9,6 +9,7 @@
 3. [前端指南](./FrontendGuide.md) - 前端代码结构、Tauri注入启动链与模块化路由开发指南
 4. [后端结构](./BackendStructure.md) - 后端架构和模块说明
 5. [实施计划](./ImplementationPlan.md) - 项目实施的阶段和里程碑
+6. [移动端开发说明](./MobileDevelopment.md) - Android/iOS 关键坑位、资源访问与路径解析方案
 
 ## 项目概述
 

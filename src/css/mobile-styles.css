@@ -217,8 +217,11 @@
     #top-settings-holder,
     #top-bar {
         position: fixed;
+        top: max(var(--tt-safe-area-top), 0px);
         width: 100vw;
         width: 100dvw;
+        padding-right: max(var(--tt-safe-area-right), 0px);
+        padding-left: max(var(--tt-safe-area-left), 0px);
     }
 
     #bg1,
@@ -240,7 +243,7 @@
         max-width: 100dvw;
         left: 0 !important;
         resize: none !important;
-        top: var(--topBarBlockSize);
+        top: calc(var(--topBarBlockSize) + max(var(--tt-safe-area-top), 0px));
     }
 
     .wi-settings {
@@ -271,6 +274,11 @@
         border: 1px solid var(--SmartThemeBorderColor);
         backdrop-filter: blur(calc(var(--SmartThemeBlurStrength) * 2));
         max-width: 100dvw;
+    }
+
+    #form_sheld {
+        padding-right: max(var(--tt-safe-area-right), 0px);
+        padding-left: max(var(--tt-safe-area-left), 0px);
     }
 
     #chat {
@@ -315,7 +323,7 @@
         border-right: 1px solid var(--SmartThemeBorderColor);
         border-bottom: 1px solid var(--SmartThemeBorderColor);
         border-radius: 0 0 20px 20px;
-        top: var(--topBarBlockSize) !important;
+        top: calc(var(--topBarBlockSize) + max(var(--tt-safe-area-top), 0px)) !important;
         left: 0 !important;
         backdrop-filter: blur(calc(var(--SmartThemeBlurStrength) * 2));
 
@@ -358,7 +366,7 @@
         width: 100%;
         border-radius: 0 0 20px 20px;
         margin-top: 0px;
-        height: calc(100% - var(--topBarBlockSize));
+        height: calc(100% - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px));
     }
 
     .drawer25pWidth {

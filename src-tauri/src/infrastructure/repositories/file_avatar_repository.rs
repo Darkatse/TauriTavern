@@ -2,12 +2,13 @@ use async_trait::async_trait;
 use image::ImageFormat;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tokio::fs as tokio_fs;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::avatar::{Avatar, AvatarUploadResult, CropInfo};
 use crate::domain::repositories::avatar_repository::AvatarRepository;
+use crate::infrastructure::paths::resolve_app_data_dir;
 
 // Constants for avatar dimensions
 const AVATAR_WIDTH: u32 = 400;
@@ -22,10 +23,8 @@ impl FileAvatarRepository {
     /// Create a new FileAvatarRepository
     pub fn new(app_handle: AppHandle) -> Self {
         // Get app data directory
-        let app_data_dir = app_handle
-            .path()
-            .app_data_dir()
-            .expect("Failed to get app data directory");
+        let app_data_dir =
+            resolve_app_data_dir(&app_handle).expect("Failed to get app data directory");
 
         // Construct avatars directory
         let avatars_dir = app_data_dir

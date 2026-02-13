@@ -14,6 +14,7 @@ use crate::domain::models::extension::{
 };
 use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::infrastructure::logging::logger;
+use crate::infrastructure::paths::resolve_app_data_dir;
 use crate::infrastructure::persistence::file_system::read_json_file;
 
 pub struct FileExtensionRepository {
@@ -48,10 +49,8 @@ struct GithubBranchCommit {
 impl FileExtensionRepository {
     pub fn new(app_handle: AppHandle) -> Self {
         // Get app data directory
-        let app_data_dir = app_handle
-            .path()
-            .app_data_dir()
-            .expect("Failed to get app data directory");
+        let app_data_dir =
+            resolve_app_data_dir(&app_handle).expect("Failed to get app data directory");
 
         // Construct extension directories
         let data_root = app_data_dir.join("data");
