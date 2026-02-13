@@ -73,14 +73,27 @@ impl AppState {
 }
 
 pub fn resolve_data_root(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let app_data_dir = app_handle.path().app_data_dir()?;
-    tracing::info!("App data directory: {:?}", app_data_dir);
+    let app_data_dir = resolve_app_data_dir(app_handle)?;
 
     let data_root = app_data_dir.join("data");
     tracing::info!("Data root directory: {:?}", data_root);
 
     std::fs::create_dir_all(&data_root)?;
     Ok(data_root)
+}
+
+pub fn resolve_log_root(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let app_data_dir = resolve_app_data_dir(app_handle)?;
+
+    let log_root = app_data_dir.join("logs");
+    std::fs::create_dir_all(&log_root)?;
+    Ok(log_root)
+}
+
+fn resolve_app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let app_data_dir = app_handle.path().app_data_dir()?;
+    tracing::info!("App data directory: {:?}", app_data_dir);
+    Ok(app_data_dir)
 }
 
 pub fn spawn_initialization(app_handle: AppHandle, data_root: PathBuf) {

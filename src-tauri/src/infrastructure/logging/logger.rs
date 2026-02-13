@@ -12,6 +12,9 @@ static INIT: Once = Once::new();
 
 /// Initialize the logger with file and console output
 pub fn init_logger(log_dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(log_dir)
+        .map_err(|error| format!("Failed to create log directory {:?}: {}", log_dir, error))?;
+
     INIT.call_once(|| {
         let file_appender = RollingFileAppender::new(Rotation::DAILY, log_dir, "tauritavern.log");
 

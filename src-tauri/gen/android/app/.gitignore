@@ -1,4 +1,5 @@
 /src/main/java/com/tauritavern/app/generated
+/src/main/assets/
 /src/main/jniLibs/**/*.so
 /src/main/assets/tauri.conf.json
 /tauri.build.gradle.kts
