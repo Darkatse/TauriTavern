@@ -2330,5 +2330,8 @@
     "Delete chat": "删除聊天",
     "Title/Memo": "标题（备忘）",
     "Strategy": "触发策略",
-    "Trigger %": "触发概率%"
+    "Trigger %": "触发概率%",
+    "Code Render": "代码渲染",
+    "Enable code rendering": "启用代码渲染",
+    "Render chat code blocks containing <html>, <!DOCTYPE>, or <script> as interactive UI.": "将聊天代码块中包含 <html>、<!DOCTYPE> 或 <script> 的内容直接渲染为可交互界面。"
 }

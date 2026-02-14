@@ -2758,5 +2758,8 @@
     "[title]Create a new": "新增",
     "[title]Delete a ": "刪除 ",
     "[title]Rename a ": "重新命名 ",
-    "completions note prefix": "完成提示前綴"
+    "completions note prefix": "完成提示前綴",
+    "Code Render": "程式碼渲染",
+    "Enable code rendering": "啟用程式碼渲染",
+    "Render chat code blocks containing <html>, <!DOCTYPE>, or <script> as interactive UI.": "將聊天程式碼區塊中包含 <html>、<!DOCTYPE> 或 <script> 的內容直接渲染為可互動介面。"
 }
