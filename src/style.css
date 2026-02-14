@@ -116,6 +116,7 @@
     --tt-safe-area-top: env(safe-area-inset-top, 0px);
     --tt-safe-area-right: env(safe-area-inset-right, 0px);
     --tt-safe-area-left: env(safe-area-inset-left, 0px);
+    --tt-safe-area-bottom: env(safe-area-inset-bottom, 0px);
 
     /*styles for the color picker*/
     --tool-cool-color-picker-btn-bg: transparent;
@@ -1309,7 +1310,7 @@ body.swipeAllMessages .mes:not(.last_mes) .swipes-counter {
     transition-duration: calc(var(--animation-duration-2x) * 0.7/0.3);
 }
 
-.fade :is(.swipes-counter, .swipe_left, .swipe_right){
+.fade :is(.swipes-counter, .swipe_left, .swipe_right) {
     /* Fade in and out: */
     /* https://nerdy.dev/using-starting-style-and-transition-behavior-for-enter-and-exit-stage-effects */
     /* https://developer.mozilla.org/en-US/docs/Web/CSS/transition-behavior#description */
@@ -4504,8 +4505,7 @@ input[type="range"]::-webkit-slider-thumb {
     field-sizing: content;
 }
 
-body:is([data-generating="true"], [data-swiping="true"]) :is(
-    #send_but,
+body:is([data-generating="true"], [data-swiping="true"]) :is(#send_but,
     #mes_continue,
     #mes_impersonate,
     #chat .last_mes .mes_buttons,

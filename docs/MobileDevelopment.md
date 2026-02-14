@@ -27,7 +27,7 @@ https://github.com/tauri-apps/tauri/issues/14240
 
 - 保留 edge-to-edge 与透明系统栏配置（沉浸基础）；
 - 监听系统栏 inset；
-- 将 inset 写入前端 CSS 变量 `--tt-safe-area-top/right/left`；
+- 将 inset 写入前端 CSS 变量 `--tt-safe-area-top/right/left/bottom`；
 - 注入前先检查页面就绪：
   - `document.readyState !== 'loading'`
   - `location.href !== 'about:blank'`

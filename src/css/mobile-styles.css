@@ -246,6 +246,11 @@
         top: calc(var(--topBarBlockSize) + max(var(--tt-safe-area-top), 0px));
     }
 
+    #sheld {
+        height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px) - max(var(--tt-safe-area-bottom), 0px));
+        max-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px) - max(var(--tt-safe-area-bottom), 0px));
+    }
+
     .wi-settings {
         flex-direction: column;
         gap: 5px !important;

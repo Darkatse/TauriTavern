@@ -114,6 +114,7 @@ class MainActivity : TauriActivity() {
         root.style.setProperty('--tt-safe-area-top', '${toCssPx(systemBarInsets.top)}');
         root.style.setProperty('--tt-safe-area-right', '${toCssPx(systemBarInsets.right)}');
         root.style.setProperty('--tt-safe-area-left', '${toCssPx(systemBarInsets.left)}');
+        root.style.setProperty('--tt-safe-area-bottom', '${toCssPx(systemBarInsets.bottom)}');
       })();
       """.trimIndent()
 
