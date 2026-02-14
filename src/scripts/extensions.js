@@ -213,6 +213,7 @@ export const extension_settings = {
     },
     code_render: {
         enabled: true,
+        replace_last_message_by_default: false,
     },
 };
 

@@ -1,17 +1,41 @@
 const PREVIEW_CONTAINER_CLASS = 'mes-code-preview';
 const PREVIEW_FRAME_WRAP_CLASS = 'mes-code-preview-frame-wrap';
 const PREVIEW_FRAME_CLASS = 'mes-code-preview-frame';
+const PREVIEW_TOGGLE_BUTTON_CLASS = 'mes-code-preview-toggle';
+const PREVIEW_RELOCATED_CLASS = 'mes-code-preview-relocated';
+const PREVIEW_ACTIVE_HOST_CLASS = 'mes-code-preview-host-active';
+const PREVIEW_PLACEHOLDER_CLASS = 'mes-code-preview-placeholder';
 const PREVIEW_MESSAGE_TYPE = 'tauritavern_html_code_preview_height';
 const PREVIEW_HEIGHT_FALLBACK = 220;
+const LAST_MESSAGE_SELECTOR = '.mes.last_mes.swipes_visible, .mes.last_mes';
+const EXPAND_ICON_CLASS = 'fa-up-right-and-down-left-from-center';
+const RESTORE_ICON_CLASS = 'fa-down-left-and-up-right-to-center';
 
 const HTML_ROOT_PATTERN = /<\s*html[\s>]/i;
 const DOCTYPE_PATTERN = /<!doctype\b/i;
 const SCRIPT_PATTERN = /<\s*script\b/i;
 let htmlCodeRenderEnabled = true;
+let replaceLastMessageByDefault = false;
 let previewCounter = 0;
 let isPreviewMessageListenerBound = false;
 /** @type {Map<string, HTMLIFrameElement>} */
 const previewFrames = new Map();
+/** @type {WeakMap<HTMLElement, PreviewExpansionState>} */
+const previewExpansionStates = new WeakMap();
+/** @type {HTMLElement | null} */
+let activeExpandedPreview = null;
+
+/**
+ * @typedef {object} PreviewExpansionState
+ * @property {boolean} expanded
+ * @property {HTMLButtonElement | null} toggleButton
+ * @property {HTMLElement | null} sourceMessageText
+ * @property {string} sourceMessageMinHeight
+ * @property {HTMLElement | null} sourcePlaceholder
+ * @property {HTMLElement | null} targetMessageText
+ * @property {string} targetMessageMinHeight
+ * @property {DocumentFragment | null} targetContent
+ */
 
 /**
  * Returns true if the snippet should be rendered as an interactive frontend preview.
@@ -77,6 +101,20 @@ function cleanupPreviewFrames() {
         if (!frame.isConnected) {
             previewFrames.delete(previewId);
         }
+    }
+
+    if (activeExpandedPreview && !activeExpandedPreview.isConnected) {
+        const state = previewExpansionStates.get(activeExpandedPreview);
+        if (state?.targetMessageText instanceof HTMLElement) {
+            state.targetMessageText.closest('.mes')?.classList.remove(PREVIEW_ACTIVE_HOST_CLASS);
+            if (state.targetContent instanceof DocumentFragment) {
+                state.targetMessageText.replaceChildren();
+                state.targetMessageText.append(state.targetContent);
+                state.targetMessageText.style.minHeight = state.targetMessageMinHeight;
+            }
+        }
+
+        activeExpandedPreview = null;
     }
 }
 
@@ -211,6 +249,289 @@ function syncMessageTextHeight(frameWrap, previewHeight) {
 }
 
 /**
+ * Finds the text container of the currently last message.
+ * @returns {HTMLElement | null}
+ */
+function findLastMessageTextContainer() {
+    const hostMessage = document.querySelector(LAST_MESSAGE_SELECTOR);
+    if (!(hostMessage instanceof HTMLElement)) {
+        return null;
+    }
+
+    const messageText = hostMessage.querySelector('.mes_text');
+    return messageText instanceof HTMLElement ? messageText : null;
+}
+
+/**
+ * Returns the current frame height for a preview container.
+ * @param {HTMLElement} container
+ * @returns {number}
+ */
+function getPreviewHeight(container) {
+    const iframe = container.querySelector(`.${PREVIEW_FRAME_CLASS}`);
+    if (!(iframe instanceof HTMLIFrameElement)) {
+        return PREVIEW_HEIGHT_FALLBACK;
+    }
+
+    const height = Number.parseFloat(iframe.style.height);
+    return Number.isFinite(height) ? Math.max(PREVIEW_HEIGHT_FALLBACK, Math.ceil(height)) : PREVIEW_HEIGHT_FALLBACK;
+}
+
+/**
+ * Keeps the current message text block sized correctly after preview moves.
+ * @param {HTMLElement} container
+ * @returns {void}
+ */
+function syncPreviewContainerHeight(container) {
+    const frameWrap = container.querySelector(`.${PREVIEW_FRAME_WRAP_CLASS}`);
+    if (!(frameWrap instanceof HTMLElement)) {
+        return;
+    }
+
+    syncMessageTextHeight(frameWrap, getPreviewHeight(container));
+}
+
+/**
+ * Updates the button icon and tooltip for the current expansion state.
+ * @param {PreviewExpansionState | undefined} state
+ * @param {boolean} expanded
+ * @returns {void}
+ */
+function updateToggleButtonState(state, expanded) {
+    const button = state?.toggleButton;
+    if (!(button instanceof HTMLButtonElement)) {
+        return;
+    }
+
+    button.classList.toggle('active', expanded);
+    button.title = expanded
+        ? 'Restore preview to original message'
+        : 'Replace last message with this preview';
+    button.innerHTML = `<i class="fa-solid ${expanded ? RESTORE_ICON_CLASS : EXPAND_ICON_CLASS}"></i>`;
+}
+
+/**
+ * Ensures expansion state exists for the container.
+ * @param {HTMLElement} container
+ * @returns {PreviewExpansionState}
+ */
+function ensurePreviewExpansionState(container) {
+    let state = previewExpansionStates.get(container);
+    if (state) {
+        return state;
+    }
+
+    state = {
+        expanded: false,
+        toggleButton: null,
+        sourceMessageText: null,
+        sourceMessageMinHeight: '',
+        sourcePlaceholder: null,
+        targetMessageText: null,
+        targetMessageMinHeight: '',
+        targetContent: null,
+    };
+
+    previewExpansionStates.set(container, state);
+    return state;
+}
+
+/**
+ * Expands a preview to replace the current last message block.
+ * @param {HTMLElement} container
+ * @returns {boolean}
+ */
+function expandPreviewToLastMessage(container) {
+    const state = ensurePreviewExpansionState(container);
+    if (state.expanded) {
+        return true;
+    }
+
+    const sourceMessageText = container.closest('.mes_text');
+    if (!(sourceMessageText instanceof HTMLElement)) {
+        return false;
+    }
+
+    const targetMessageText = findLastMessageTextContainer();
+    if (!(targetMessageText instanceof HTMLElement)) {
+        return false;
+    }
+
+    state.sourceMessageText = sourceMessageText;
+    state.sourceMessageMinHeight = sourceMessageText.style.minHeight || '';
+
+    if (sourceMessageText === targetMessageText) {
+        const hostMessage = sourceMessageText.closest('.mes');
+        if (hostMessage instanceof HTMLElement) {
+            hostMessage.classList.add(PREVIEW_ACTIVE_HOST_CLASS);
+        }
+
+        container.classList.add(PREVIEW_RELOCATED_CLASS);
+        state.expanded = true;
+        updateToggleButtonState(state, true);
+        syncPreviewContainerHeight(container);
+        return true;
+    }
+
+    const sourceParent = container.parentElement;
+    if (!(sourceParent instanceof HTMLElement)) {
+        return false;
+    }
+
+    const placeholder = document.createElement('div');
+    placeholder.className = PREVIEW_PLACEHOLDER_CLASS;
+    placeholder.hidden = true;
+    sourceParent.insertBefore(placeholder, container);
+
+    const preservedTargetContent = document.createDocumentFragment();
+    while (targetMessageText.firstChild) {
+        preservedTargetContent.append(targetMessageText.firstChild);
+    }
+
+    state.sourcePlaceholder = placeholder;
+    state.targetMessageText = targetMessageText;
+    state.targetMessageMinHeight = targetMessageText.style.minHeight || '';
+    state.targetContent = preservedTargetContent;
+
+    sourceMessageText.style.minHeight = '';
+    targetMessageText.append(container);
+
+    const hostMessage = targetMessageText.closest('.mes');
+    if (hostMessage instanceof HTMLElement) {
+        hostMessage.classList.add(PREVIEW_ACTIVE_HOST_CLASS);
+    }
+
+    container.classList.add(PREVIEW_RELOCATED_CLASS);
+    state.expanded = true;
+    updateToggleButtonState(state, true);
+    syncPreviewContainerHeight(container);
+    return true;
+}
+
+/**
+ * Restores an expanded preview to its original message location.
+ * @param {HTMLElement} container
+ * @returns {void}
+ */
+function collapseExpandedPreview(container) {
+    const state = previewExpansionStates.get(container);
+    if (!state || !state.expanded) {
+        return;
+    }
+
+    const hostMessage = container.closest('.mes');
+    if (hostMessage instanceof HTMLElement) {
+        hostMessage.classList.remove(PREVIEW_ACTIVE_HOST_CLASS);
+    }
+
+    if (state.targetMessageText instanceof HTMLElement && state.targetContent instanceof DocumentFragment) {
+        state.targetMessageText.replaceChildren();
+        state.targetMessageText.append(state.targetContent);
+        state.targetMessageText.style.minHeight = state.targetMessageMinHeight;
+    }
+
+    if (state.sourcePlaceholder?.parentNode) {
+        state.sourcePlaceholder.parentNode.insertBefore(container, state.sourcePlaceholder);
+        state.sourcePlaceholder.remove();
+    } else if (state.sourceMessageText instanceof HTMLElement) {
+        state.sourceMessageText.append(container);
+    }
+
+    if (state.sourceMessageText instanceof HTMLElement) {
+        state.sourceMessageText.style.minHeight = state.sourceMessageMinHeight;
+    }
+
+    container.classList.remove(PREVIEW_RELOCATED_CLASS);
+    state.expanded = false;
+    state.sourceMessageText = null;
+    state.sourceMessageMinHeight = '';
+    state.sourcePlaceholder = null;
+    state.targetMessageText = null;
+    state.targetMessageMinHeight = '';
+    state.targetContent = null;
+
+    if (activeExpandedPreview === container) {
+        activeExpandedPreview = null;
+    }
+
+    updateToggleButtonState(state, false);
+    syncPreviewContainerHeight(container);
+}
+
+/**
+ * Toggles replacement mode for a preview container.
+ * @param {HTMLElement} container
+ * @returns {void}
+ */
+function togglePreviewReplacement(container) {
+    const state = ensurePreviewExpansionState(container);
+    if (state.expanded) {
+        collapseExpandedPreview(container);
+        return;
+    }
+
+    if (activeExpandedPreview && activeExpandedPreview !== container) {
+        collapseExpandedPreview(activeExpandedPreview);
+    }
+
+    if (expandPreviewToLastMessage(container)) {
+        activeExpandedPreview = container;
+    }
+}
+
+/**
+ * Creates a toggle button to switch preview replacement mode.
+ * @param {HTMLElement} container
+ * @returns {HTMLButtonElement}
+ */
+function createPreviewToggleButton(container) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = PREVIEW_TOGGLE_BUTTON_CLASS;
+
+    const state = ensurePreviewExpansionState(container);
+    state.toggleButton = button;
+    updateToggleButtonState(state, false);
+
+    button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        togglePreviewReplacement(container);
+    });
+
+    return button;
+}
+
+/**
+ * Applies default replacement behavior if enabled.
+ * @param {HTMLElement} container
+ * @returns {void}
+ */
+function scheduleDefaultReplacement(container) {
+    if (!replaceLastMessageByDefault) {
+        return;
+    }
+
+    requestAnimationFrame(() => {
+        if (!replaceLastMessageByDefault || !container.isConnected) {
+            return;
+        }
+
+        const hostMessage = container.closest('.mes');
+        if (!(hostMessage instanceof HTMLElement) || !hostMessage.classList.contains('last_mes')) {
+            return;
+        }
+
+        const state = previewExpansionStates.get(container);
+        if (state?.expanded) {
+            return;
+        }
+
+        togglePreviewReplacement(container);
+    });
+}
+
+/**
  * Creates a sandboxed iframe node for rendering user-provided code.
  * @param {string} srcdoc
  * @param {string} previewId
@@ -249,7 +570,10 @@ function createPreviewContainer(sourceCode) {
     previewFrames.set(previewId, iframe);
     frameWrap.append(iframe);
 
+    const toggleButton = createPreviewToggleButton(container);
+
     container.append(frameWrap);
+    container.append(toggleButton);
 
     return container;
 }
@@ -270,6 +594,15 @@ function isMessageContext($root) {
  */
 export function setHtmlCodeRenderEnabled(enabled) {
     htmlCodeRenderEnabled = !!enabled;
+}
+
+/**
+ * Configures whether the newest rendered preview should replace the last message by default.
+ * @param {boolean} enabled
+ * @returns {void}
+ */
+export function setHtmlCodeRenderReplaceLastMessageByDefault(enabled) {
+    replaceLastMessageByDefault = !!enabled;
 }
 
 /**
@@ -309,5 +642,6 @@ export function renderInteractiveHtmlCodeBlocks(messageElement) {
         if (frameWrap instanceof HTMLElement) {
             syncMessageTextHeight(frameWrap, PREVIEW_HEIGHT_FALLBACK);
         }
+        scheduleDefaultReplacement(previewContainer);
     }
 }

@@ -5388,6 +5388,7 @@ body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDra
 .mes-code-preview {
     margin-top: 8px;
     width: 100%;
+    position: relative;
 }
 
 .mes-code-preview-frame-wrap {
@@ -5406,6 +5407,48 @@ body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDra
     border: none;
     display: block;
     background: white;
+}
+
+.mes-code-preview-toggle {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 50%;
+    background-color: var(--black50a);
+    color: var(--SmartThemeBodyColor);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 3;
+    opacity: 0.55;
+    transition: opacity var(--animation-duration) ease-in-out;
+}
+
+.mes-code-preview-toggle:hover,
+.mes-code-preview-toggle.active {
+    opacity: 0.9;
+}
+
+.mes-code-preview-relocated {
+    margin-top: 0;
+}
+
+.mes.mes-code-preview-host-active>.mes_block> :not(.mes_text),
+.mes.mes-code-preview-host-active> :not(.mes_block) {
+    display: none !important;
+}
+
+.mes.mes-code-preview-host-active .mes_text {
+    padding: 0 !important;
+    min-height: 0 !important;
+}
+
+.mes.mes-code-preview-host-active .mes-code-preview {
+    margin-top: 0;
 }
 
 .mes_block:has(.mes-code-preview) {

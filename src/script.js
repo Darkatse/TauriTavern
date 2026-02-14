@@ -245,7 +245,11 @@ import { hideLoader, showLoader } from './scripts/loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
 import { initTextGenModels } from './scripts/textgen-models.js';
 import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
-import { renderInteractiveHtmlCodeBlocks, setHtmlCodeRenderEnabled } from './scripts/html-code-preview.js';
+import {
+    renderInteractiveHtmlCodeBlocks,
+    setHtmlCodeRenderEnabled,
+    setHtmlCodeRenderReplaceLastMessageByDefault,
+} from './scripts/html-code-preview.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
 import { evaluateMacros, getLastMessageId, initMacros } from './scripts/macros.js';
 import { currentUser, setUserControls } from './scripts/user.js';
@@ -2375,6 +2379,7 @@ export function appendMediaToMessage(mes, messageElement, scrollBehavior = SCROL
 
 export function addCopyToCodeBlocks(messageElement) {
     setHtmlCodeRenderEnabled(extension_settings.code_render?.enabled !== false);
+    setHtmlCodeRenderReplaceLastMessageByDefault(extension_settings.code_render?.replace_last_message_by_default === true);
     renderInteractiveHtmlCodeBlocks(messageElement);
 
     const codeBlocks = $(messageElement).find('pre code');
