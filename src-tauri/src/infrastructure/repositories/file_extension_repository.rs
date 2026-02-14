@@ -26,7 +26,7 @@ pub struct FileExtensionRepository {
 
 /// Built-in extensions enabled in TauriTavern.
 /// Keep this list explicit so unsupported built-ins stay disabled by default.
-const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &["regex", "code-render"];
+const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &["regex", "code-render", "data-migration"];
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GithubCommit {

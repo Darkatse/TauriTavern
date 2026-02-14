@@ -1,0 +1,10 @@
+{
+    "display_name": "Data Migration",
+    "loading_order": 23,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "author": "TauriTavern",
+    "version": "1.0.0",
+    "homePage": "https://github.com/Darkatse/TauriTavern"
+}

@@ -6,6 +6,7 @@ pub mod character_commands;
 pub mod chat_commands;
 pub mod chat_completion_commands;
 pub mod content_commands;
+pub mod data_archive_commands;
 pub mod extension_commands;
 pub mod group_commands;
 pub mod helpers;

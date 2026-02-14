@@ -7,6 +7,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../src/scripts/templates");
     println!("cargo:rerun-if-changed=../src/scripts/extensions/regex");
     println!("cargo:rerun-if-changed=../src/scripts/extensions/code-render");
+    println!("cargo:rerun-if-changed=../src/scripts/extensions/data-migration");
 
     if let Err(error) = generate_resource_artifacts() {
         panic!("Failed to generate resource artifacts: {}", error);
@@ -26,6 +27,7 @@ fn generate_resource_artifacts() -> Result<(), Box<dyn Error>> {
     let template_root = PathBuf::from("../src/scripts/templates");
     let regex_template_root = PathBuf::from("../src/scripts/extensions/regex");
     let code_render_template_root = PathBuf::from("../src/scripts/extensions/code-render");
+    let data_migration_template_root = PathBuf::from("../src/scripts/extensions/data-migration");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
 
     let mut content_files = collect_relative_files(&content_root, &content_root)?;
@@ -72,16 +74,32 @@ fn generate_resource_artifacts() -> Result<(), Box<dyn Error>> {
             .collect::<Vec<_>>(),
     );
 
-    let code_render_template_files = collect_relative_files(&code_render_template_root, &code_render_template_root)?
-        .into_iter()
-        .filter(|relative| relative.ends_with(".html"))
-        .collect::<Vec<_>>();
+    let code_render_template_files =
+        collect_relative_files(&code_render_template_root, &code_render_template_root)?
+            .into_iter()
+            .filter(|relative| relative.ends_with(".html"))
+            .collect::<Vec<_>>();
     embedded_resources.extend(
         code_render_template_files
             .iter()
             .map(|relative| ResourceEntry {
                 virtual_path: format!("frontend-extensions/code-render/{}", relative),
                 source_path: code_render_template_root.join(relative),
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    let data_migration_template_files =
+        collect_relative_files(&data_migration_template_root, &data_migration_template_root)?
+            .into_iter()
+            .filter(|relative| relative.ends_with(".html"))
+            .collect::<Vec<_>>();
+    embedded_resources.extend(
+        data_migration_template_files
+            .iter()
+            .map(|relative| ResourceEntry {
+                virtual_path: format!("frontend-extensions/data-migration/{}", relative),
+                source_path: data_migration_template_root.join(relative),
             })
             .collect::<Vec<_>>(),
     );
@@ -118,7 +136,8 @@ fn collect_relative_files(root: &Path, current: &Path) -> Result<Vec<String>, Bo
 }
 
 fn build_embedded_resources_source(resources: &[ResourceEntry]) -> Result<String, Box<dyn Error>> {
-    let mut source = String::from("pub fn get_embedded_resource(path: &str) -> Option<&'static [u8]> {\n");
+    let mut source =
+        String::from("pub fn get_embedded_resource(path: &str) -> Option<&'static [u8]> {\n");
     source.push_str("    match path {\n");
 
     for resource in resources {
