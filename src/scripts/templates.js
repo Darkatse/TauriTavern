@@ -40,6 +40,44 @@ async function getUrlAsync(url) {
 }
 
 /**
+ * Normalizes a template path for browser fetch.
+ * Relative local paths are converted to absolute paths to avoid base-URL ambiguity.
+ * @param {string} path Input template path
+ * @returns {string} Normalized path
+ */
+function normalizeTemplateFetchPath(path) {
+    const value = String(path || '').trim();
+    if (!value) {
+        return value;
+    }
+
+    if (/^[a-z]+:\/\//i.test(value) || value.startsWith('data:')) {
+        return value;
+    }
+
+    return value.startsWith('/') ? value : `/${value}`;
+}
+
+/**
+ * Parses full-path extension template URLs such as:
+ * scripts/extensions/regex/dropdown.html
+ * @param {string} templatePath
+ * @returns {{ extension: string, name: string } | null}
+ */
+function parseExtensionTemplatePath(templatePath) {
+    const normalized = String(templatePath || '').trim().replace(/^\/+/, '');
+    const match = normalized.match(/^scripts\/extensions\/([^/]+)\/([^/]+)\.html$/i);
+    if (!match) {
+        return null;
+    }
+
+    return {
+        extension: match[1],
+        name: match[2],
+    };
+}
+
+/**
  * Loads a template content, using Tauri resource reading on Tauri environments
  * and fetch on regular web environments.
  * @param {string} templateId Template ID (e.g., 'emptyBlock')
@@ -48,13 +86,26 @@ async function getUrlAsync(url) {
  */
 async function getTemplateContent(templateId, fullPath) {
     // On Tauri, use invoke to read from bundled resources (handles Android asset:// paths)
-    if (isTauriEnv && invoke && !fullPath) {
-        const fileName = `${templateId}.html`;
-        return invoke('read_frontend_template', { name: fileName });
+    if (isTauriEnv && invoke) {
+        if (!fullPath) {
+            const fileName = `${templateId}.html`;
+            return invoke('read_frontend_template', { name: fileName });
+        }
+
+        const extensionTemplate = parseExtensionTemplatePath(templateId);
+        if (extensionTemplate) {
+            try {
+                return await invoke('read_frontend_extension_template', extensionTemplate);
+            } catch (error) {
+                console.warn('Failed to read extension template via Tauri bridge, fallback to fetch:', templateId, error);
+            }
+        }
     }
 
     // Fallback: use fetch for non-Tauri or full-path templates
-    const pathToTemplate = fullPath ? templateId : `/scripts/templates/${templateId}.html`;
+    const pathToTemplate = fullPath
+        ? normalizeTemplateFetchPath(templateId)
+        : `/scripts/templates/${templateId}.html`;
     return getUrlAsync(pathToTemplate);
 }
 
@@ -121,7 +172,9 @@ export function renderTemplate(templateId, templateData = {}, sanitize = true, l
     }
 
     try {
-        const pathToTemplate = fullPath ? templateId : `/scripts/templates/${templateId}.html`;
+        const pathToTemplate = fullPath
+            ? normalizeTemplateFetchPath(templateId)
+            : `/scripts/templates/${templateId}.html`;
         const template = fetchTemplateSync(pathToTemplate);
         let result = template(templateData);
 

@@ -24,6 +24,10 @@ pub struct FileExtensionRepository {
     system_extensions_dir: PathBuf,
 }
 
+/// Built-in extensions enabled in TauriTavern.
+/// Keep this list explicit so unsupported built-ins stay disabled by default.
+const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &["regex"];
+
 #[derive(Debug, Serialize, Deserialize)]
 struct GithubCommit {
     sha: String,
@@ -389,42 +393,21 @@ impl ExtensionRepository for FileExtensionRepository {
 
         let mut extensions = Vec::new();
 
-        // Get built-in extensions (excluding third-party)
-        if self.system_extensions_dir.exists() {
-            let entries = fs::read_dir(&self.system_extensions_dir).map_err(|e| {
-                logger::error(&format!(
-                    "Failed to read system extensions directory: {}",
-                    e
-                ));
-                DomainError::InternalError(format!(
-                    "Failed to read system extensions directory: {}",
-                    e
-                ))
-            })?;
+        // Built-in extensions are explicitly allowlisted; unsupported modules remain disabled.
+        for &name in ENABLED_SYSTEM_EXTENSIONS {
+            let path = self.system_extensions_dir.join(name);
+            let manifest = self.get_manifest(&path).await.ok().flatten();
 
-            for entry in entries {
-                let entry = entry.map_err(|e| {
-                    logger::error(&format!("Failed to read directory entry: {}", e));
-                    DomainError::InternalError(format!("Failed to read directory entry: {}", e))
-                })?;
-
-                let path = entry.path();
-                if path.is_dir() && path != self.global_extensions_dir {
-                    let name = path.file_name().unwrap().to_string_lossy().to_string();
-                    let manifest = self.get_manifest(&path).await.ok().flatten();
-
-                    extensions.push(Extension {
-                        name,
-                        extension_type: ExtensionType::System,
-                        manifest,
-                        path,
-                        remote_url: None,
-                        commit_hash: None,
-                        branch_name: None,
-                        is_up_to_date: None,
-                    });
-                }
-            }
+            extensions.push(Extension {
+                name: name.to_string(),
+                extension_type: ExtensionType::System,
+                manifest,
+                path,
+                remote_url: None,
+                commit_hash: None,
+                branch_name: None,
+                is_up_to_date: None,
+            });
         }
 
         // Get user extensions

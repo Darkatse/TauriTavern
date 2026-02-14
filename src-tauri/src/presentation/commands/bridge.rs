@@ -74,18 +74,22 @@ pub fn is_ready() -> Result<bool, CommandError> {
     Ok(true)
 }
 
+fn validate_resource_segment(value: &str, field: &str) -> Result<(), CommandError> {
+    if value.is_empty() || value.contains('/') || value.contains('\\') || value.contains("..") {
+        return Err(CommandError::BadRequest(format!(
+            "Invalid {}: {}",
+            field, value
+        )));
+    }
+    Ok(())
+}
+
 /// Read a frontend template file from the bundled resources.
 /// On Android, resources are stored as APK assets accessible via asset://localhost/.
 /// This command uses Tauri's FsExt to handle both desktop and Android paths.
 #[tauri::command]
 pub fn read_frontend_template(app: tauri::AppHandle, name: String) -> Result<String, CommandError> {
-    // Sanitize: only allow simple filenames (no path separators or ..)
-    if name.contains('/') || name.contains('\\') || name.contains("..") || name.is_empty() {
-        return Err(CommandError::BadRequest(format!(
-            "Invalid template name: {}",
-            name
-        )));
-    }
+    validate_resource_segment(&name, "template name")?;
 
     let content = read_resource_text(&app, &format!("frontend-templates/{}", name)).map_err(|e| {
         match e {
@@ -95,6 +99,29 @@ pub fn read_frontend_template(app: tauri::AppHandle, name: String) -> Result<Str
                 name, other
             )),
         }
+    })?;
+
+    Ok(content)
+}
+
+/// Read a built-in extension template file from bundled resources.
+/// This is used on mobile platforms where direct fetch from asset:// may be unreliable.
+#[tauri::command]
+pub fn read_frontend_extension_template(
+    app: tauri::AppHandle,
+    extension: String,
+    name: String,
+) -> Result<String, CommandError> {
+    validate_resource_segment(&extension, "extension")?;
+    validate_resource_segment(&name, "template name")?;
+
+    let resource_path = format!("frontend-extensions/{}/{}.html", extension, name);
+    let content = read_resource_text(&app, &resource_path).map_err(|e| match e {
+        crate::domain::errors::DomainError::NotFound(message) => CommandError::NotFound(message),
+        other => CommandError::InternalServerError(format!(
+            "Failed to read extension template '{}': {}",
+            resource_path, other
+        )),
     })?;
 
     Ok(content)

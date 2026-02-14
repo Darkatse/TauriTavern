@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 fn main() {
     println!("cargo:rerun-if-changed=../default/content");
     println!("cargo:rerun-if-changed=../src/scripts/templates");
+    println!("cargo:rerun-if-changed=../src/scripts/extensions/regex");
 
     if let Err(error) = generate_resource_artifacts() {
         panic!("Failed to generate resource artifacts: {}", error);
@@ -22,6 +23,7 @@ struct ResourceEntry {
 fn generate_resource_artifacts() -> Result<(), Box<dyn Error>> {
     let content_root = PathBuf::from("../default/content");
     let template_root = PathBuf::from("../src/scripts/templates");
+    let regex_template_root = PathBuf::from("../src/scripts/extensions/regex");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
 
     let mut content_files = collect_relative_files(&content_root, &content_root)?;
@@ -50,6 +52,20 @@ fn generate_resource_artifacts() -> Result<(), Box<dyn Error>> {
             .map(|relative| ResourceEntry {
                 virtual_path: format!("frontend-templates/{}", relative),
                 source_path: template_root.join(relative),
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    let regex_template_files = collect_relative_files(&regex_template_root, &regex_template_root)?
+        .into_iter()
+        .filter(|relative| relative.ends_with(".html"))
+        .collect::<Vec<_>>();
+    embedded_resources.extend(
+        regex_template_files
+            .iter()
+            .map(|relative| ResourceEntry {
+                virtual_path: format!("frontend-extensions/regex/{}", relative),
+                source_path: regex_template_root.join(relative),
             })
             .collect::<Vec<_>>(),
     );
