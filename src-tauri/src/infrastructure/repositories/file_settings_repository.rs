@@ -173,6 +173,17 @@ impl FileSettingsRepository {
 
         Ok((settings, names))
     }
+
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    fn enforce_mobile_theme_chat_width(theme: &mut UserSettings) {
+        if let Some(theme_obj) = theme.data.as_object_mut() {
+            theme_obj.insert("chat_width".to_string(), serde_json::Value::from(100));
+        }
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    fn enforce_mobile_theme_chat_width(_theme: &mut UserSettings) {
+    }
 }
 
 #[async_trait]
@@ -368,7 +379,13 @@ impl SettingsRepository for FileSettingsRepository {
     // 预设和主题
 
     async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {
-        self.read_presets_from_directory("themes").await
+        let mut themes = self.read_presets_from_directory("themes").await?;
+
+        for theme in &mut themes {
+            Self::enforce_mobile_theme_chat_width(theme);
+        }
+
+        Ok(themes)
     }
 
     async fn get_moving_ui_presets(&self) -> Result<Vec<UserSettings>, DomainError> {

@@ -1,4 +1,4 @@
-package com.tauritavern.app
+package com.tauritavern.client
 
 import android.content.res.Configuration
 import android.graphics.Color

@@ -25,7 +25,7 @@ const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
 const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
 const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
 const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
-const OPENROUTER_REFERER: &str = "https://tauritavern.app";
+const OPENROUTER_REFERER: &str = "https://tauritavern.client";
 const OPENROUTER_TITLE: &str = "TauriTavern";
 
 const ZAI_ENDPOINT_CODING: &str = "coding";

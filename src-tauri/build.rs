@@ -6,6 +6,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../default/content");
     println!("cargo:rerun-if-changed=../src/scripts/templates");
     println!("cargo:rerun-if-changed=../src/scripts/extensions/regex");
+    println!("cargo:rerun-if-changed=../src/scripts/extensions/code-render");
 
     if let Err(error) = generate_resource_artifacts() {
         panic!("Failed to generate resource artifacts: {}", error);
@@ -24,6 +25,7 @@ fn generate_resource_artifacts() -> Result<(), Box<dyn Error>> {
     let content_root = PathBuf::from("../default/content");
     let template_root = PathBuf::from("../src/scripts/templates");
     let regex_template_root = PathBuf::from("../src/scripts/extensions/regex");
+    let code_render_template_root = PathBuf::from("../src/scripts/extensions/code-render");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
 
     let mut content_files = collect_relative_files(&content_root, &content_root)?;
@@ -66,6 +68,20 @@ fn generate_resource_artifacts() -> Result<(), Box<dyn Error>> {
             .map(|relative| ResourceEntry {
                 virtual_path: format!("frontend-extensions/regex/{}", relative),
                 source_path: regex_template_root.join(relative),
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    let code_render_template_files = collect_relative_files(&code_render_template_root, &code_render_template_root)?
+        .into_iter()
+        .filter(|relative| relative.ends_with(".html"))
+        .collect::<Vec<_>>();
+    embedded_resources.extend(
+        code_render_template_files
+            .iter()
+            .map(|relative| ResourceEntry {
+                virtual_path: format!("frontend-extensions/code-render/{}", relative),
+                source_path: code_render_template_root.join(relative),
             })
             .collect::<Vec<_>>(),
     );
