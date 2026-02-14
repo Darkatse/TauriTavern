@@ -1,0 +1,10 @@
+{
+    "display_name": "代码渲染",
+    "loading_order": 22,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "author": "TauriTavern",
+    "version": "1.0.0",
+    "homePage": "https://github.com/Darkatse/TauriTavern"
+}

@@ -211,6 +211,9 @@ export const extension_settings = {
         /** @type {string} */
         sort: 'dateAsc',
     },
+    code_render: {
+        enabled: true,
+    },
 };
 
 function showHideExtensionsMenu() {

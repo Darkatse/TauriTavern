@@ -898,14 +898,14 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         }
 
         const directPath = extractNativeFilePath(file);
-        if (directPath) {
+        if (shouldUseDirectUploadPath(directPath)) {
             return { filePath: directPath };
         }
 
         const tauri = window.__TAURI__;
         const pathApi = tauri?.path;
         const invokeApi = tauri?.core?.invoke;
-        if (typeof pathApi?.tempDir !== 'function' || typeof pathApi?.join !== 'function') {
+        if (typeof pathApi?.join !== 'function') {
             return {
                 filePath: '',
                 error: 'Tauri path API is unavailable',
@@ -928,8 +928,8 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         const data = new Uint8Array(await file.arrayBuffer());
 
         try {
-            const tempDir = await pathApi.tempDir();
-            const filePath = await pathApi.join(tempDir, fileName);
+            const uploadDir = await resolveUploadDirectory(pathApi);
+            const filePath = await pathApi.join(uploadDir, fileName);
             await writeTempUploadFile(filePath, data, invokeApi);
 
             return {
@@ -949,6 +949,85 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
                 error: error?.message || 'Failed to materialize upload file',
             };
         }
+    }
+
+    async function resolveUploadDirectory(pathApi) {
+        const getAppCacheDir = typeof pathApi?.appCacheDir === 'function'
+            ? () => pathApi.appCacheDir()
+            : null;
+        const getTempDir = typeof pathApi?.tempDir === 'function'
+            ? () => pathApi.tempDir()
+            : null;
+
+        const candidates = [];
+        if (isAndroidRuntime() && getAppCacheDir) {
+            candidates.push(getAppCacheDir);
+        }
+
+        if (getTempDir) {
+            candidates.push(getTempDir);
+        }
+
+        if (getAppCacheDir && !candidates.includes(getAppCacheDir)) {
+            candidates.push(getAppCacheDir);
+        }
+
+        let lastError = null;
+        for (const candidate of candidates) {
+            try {
+                const directory = await candidate();
+                if (typeof directory === 'string' && directory.trim()) {
+                    return directory;
+                }
+            } catch (error) {
+                lastError = error;
+            }
+        }
+
+        if (lastError) {
+            throw lastError;
+        }
+
+        throw new Error('No writable upload directory is available');
+    }
+
+    function shouldUseDirectUploadPath(filePath) {
+        if (!isLikelyFileSystemPath(filePath)) {
+            return false;
+        }
+
+        // Android file pickers often expose content URIs or external paths that are not directly readable by Rust.
+        // Materializing into app storage keeps behavior consistent and permission-safe.
+        if (isAndroidRuntime()) {
+            return false;
+        }
+
+        return true;
+    }
+
+    function isLikelyFileSystemPath(value) {
+        if (typeof value !== 'string' || !value.trim()) {
+            return false;
+        }
+
+        const normalized = value.trim();
+        if (/^[a-z]+:\/\//i.test(normalized)) {
+            return false;
+        }
+
+        return (
+            normalized.startsWith('/') ||
+            normalized.startsWith('\\\\') ||
+            /^[a-z]:[\\/]/i.test(normalized)
+        );
+    }
+
+    function isAndroidRuntime() {
+        if (typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') {
+            return false;
+        }
+
+        return /android/i.test(navigator.userAgent);
     }
 
     async function writeTempUploadFile(filePath, data, invokeApi) {

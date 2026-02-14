@@ -245,6 +245,7 @@ import { hideLoader, showLoader } from './scripts/loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
 import { initTextGenModels } from './scripts/textgen-models.js';
 import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
+import { renderInteractiveHtmlCodeBlocks, setHtmlCodeRenderEnabled } from './scripts/html-code-preview.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
 import { evaluateMacros, getLastMessageId, initMacros } from './scripts/macros.js';
 import { currentUser, setUserControls } from './scripts/user.js';
@@ -2373,21 +2374,29 @@ export function appendMediaToMessage(mes, messageElement, scrollBehavior = SCROL
 }
 
 export function addCopyToCodeBlocks(messageElement) {
+    setHtmlCodeRenderEnabled(extension_settings.code_render?.enabled !== false);
+    renderInteractiveHtmlCodeBlocks(messageElement);
+
     const codeBlocks = $(messageElement).find('pre code');
     for (let i = 0; i < codeBlocks.length; i++) {
-        hljs.highlightElement(codeBlocks.get(i));
-        const copyButton = document.createElement('i');
-        copyButton.classList.add('fa-solid', 'fa-copy', 'code-copy', 'interactable');
-        copyButton.title = 'Copy code';
-        codeBlocks.get(i).appendChild(copyButton);
-        copyButton.addEventListener('click', function (e) {
-            e.stopPropagation();
-        });
-        copyButton.addEventListener('pointerup', async function () {
-            const text = codeBlocks.get(i).textContent;
-            await copyText(text);
-            toastr.info(t`Copied!`, '', { timeOut: 2000 });
-        });
+        const codeBlock = codeBlocks.get(i);
+        hljs.highlightElement(codeBlock);
+
+        // This helper can be called multiple times for the same message; avoid duplicate buttons.
+        if (!codeBlock.querySelector('.code-copy')) {
+            const copyButton = document.createElement('i');
+            copyButton.classList.add('fa-solid', 'fa-copy', 'code-copy', 'interactable');
+            copyButton.title = 'Copy code';
+            codeBlock.appendChild(copyButton);
+            copyButton.addEventListener('click', function (e) {
+                e.stopPropagation();
+            });
+            copyButton.addEventListener('pointerup', async function () {
+                const text = codeBlock.textContent;
+                await copyText(text);
+                toastr.info(t`Copied!`, '', { timeOut: 2000 });
+            });
+        }
     }
 }
 

@@ -5385,6 +5385,33 @@ body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDra
     opacity: 0.8;
 }
 
+.mes-code-preview {
+    margin-top: 8px;
+    width: 100%;
+}
+
+.mes-code-preview-frame-wrap {
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    background-color: var(--SmartThemeBlurTintColor);
+    width: 100%;
+    min-height: 220px;
+    overflow: hidden;
+}
+
+.mes-code-preview-frame {
+    width: 100%;
+    min-height: 220px;
+    height: 220px;
+    border: none;
+    display: block;
+    background: white;
+}
+
+.mes_block:has(.mes-code-preview) {
+    overflow-y: visible;
+}
+
 .custom-drawer-icon,
 .inline-drawer-icon {
     display: block;
