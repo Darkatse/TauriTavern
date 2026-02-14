@@ -86,5 +86,4 @@ pub trait PresetRepository: Send + Sync {
         name: &str,
         preset_type: &PresetType,
     ) -> Result<Option<DefaultPreset>, DomainError>;
-
 }

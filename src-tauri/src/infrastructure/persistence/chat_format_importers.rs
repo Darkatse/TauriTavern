@@ -1,7 +1,5 @@
 use crate::domain::errors::DomainError;
-use crate::domain::models::chat::{
-    humanized_date, Chat, ChatMessage,
-};
+use crate::domain::models::chat::{humanized_date, Chat, ChatMessage};
 use crate::infrastructure::logging::logger;
 use chrono::Utc;
 use serde_json::Value;

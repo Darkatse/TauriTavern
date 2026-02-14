@@ -19,10 +19,7 @@ use crate::infrastructure::persistence::chat_format_importers::{
     import_from_ooba, import_from_risuai, import_from_sillytavern,
 };
 use crate::infrastructure::persistence::file_system::list_files_with_extension;
-use crate::infrastructure::persistence::jsonl_utils::{
-    read_jsonl_file,
-    write_jsonl_file,
-};
+use crate::infrastructure::persistence::jsonl_utils::{read_jsonl_file, write_jsonl_file};
 
 /// Memory cache for chat data
 struct MemoryCache {

@@ -317,7 +317,6 @@ mod tests {
         ) -> Result<Option<DefaultPreset>, DomainError> {
             Ok(None)
         }
-
     }
 
     #[tokio::test]

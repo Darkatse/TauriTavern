@@ -7,9 +7,7 @@ use crate::domain::models::theme::{sanitize_filename, Theme};
 use crate::domain::repositories::theme_repository::ThemeRepository;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::paths::resolve_app_data_dir;
-use crate::infrastructure::persistence::file_system::{
-    delete_file, write_json_file,
-};
+use crate::infrastructure::persistence::file_system::{delete_file, write_json_file};
 
 /// File-based implementation of the ThemeRepository
 pub struct FileThemeRepository {

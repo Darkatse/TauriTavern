@@ -161,7 +161,6 @@ impl ChatMessage {
             extra: MessageExtra::default(),
         }
     }
-
 }
 
 /// Chat structure

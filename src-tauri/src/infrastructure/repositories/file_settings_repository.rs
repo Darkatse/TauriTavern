@@ -182,8 +182,7 @@ impl FileSettingsRepository {
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn enforce_mobile_theme_chat_width(_theme: &mut UserSettings) {
-    }
+    fn enforce_mobile_theme_chat_width(_theme: &mut UserSettings) {}
 }
 
 #[async_trait]

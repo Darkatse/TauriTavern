@@ -20,7 +20,10 @@ mod embedded_resources {
     include!(concat!(env!("OUT_DIR"), "/embedded_resources.rs"));
 }
 
-pub fn read_resource_text(app_handle: &AppHandle, relative_path: &str) -> Result<String, DomainError> {
+pub fn read_resource_text(
+    app_handle: &AppHandle,
+    relative_path: &str,
+) -> Result<String, DomainError> {
     let bytes = read_resource_bytes(app_handle, relative_path)?;
     String::from_utf8(bytes).map_err(|e| {
         logger::error(&format!(
@@ -34,7 +37,10 @@ pub fn read_resource_text(app_handle: &AppHandle, relative_path: &str) -> Result
     })
 }
 
-pub fn read_resource_bytes(app_handle: &AppHandle, relative_path: &str) -> Result<Vec<u8>, DomainError> {
+pub fn read_resource_bytes(
+    app_handle: &AppHandle,
+    relative_path: &str,
+) -> Result<Vec<u8>, DomainError> {
     let normalized = normalize_resource_relative_path(relative_path)?;
 
     #[cfg(target_os = "android")]
@@ -73,10 +79,7 @@ pub fn read_resource_json<T: DeserializeOwned>(
             "Failed to parse JSON resource {:?}: {}",
             relative_path, e
         ));
-        DomainError::InvalidData(format!(
-            "Invalid JSON resource '{}': {}",
-            relative_path, e
-        ))
+        DomainError::InvalidData(format!("Invalid JSON resource '{}': {}", relative_path, e))
     })
 }
 
@@ -143,7 +146,10 @@ fn load_default_content_manifest() -> Vec<String> {
 }
 
 #[cfg(not(target_os = "android"))]
-fn resolve_resource_path(app_handle: &AppHandle, relative_path: &str) -> Result<std::path::PathBuf, DomainError> {
+fn resolve_resource_path(
+    app_handle: &AppHandle,
+    relative_path: &str,
+) -> Result<std::path::PathBuf, DomainError> {
     app_handle
         .path()
         .resolve(relative_path, BaseDirectory::Resource)
@@ -174,6 +180,9 @@ fn map_resource_error(relative_path: &str, error: std::io::Error) -> DomainError
     if error.kind() == std::io::ErrorKind::NotFound {
         DomainError::NotFound(format!("Resource not found: {}", relative_path))
     } else {
-        DomainError::InternalError(format!("Failed to read resource '{}': {}", relative_path, error))
+        DomainError::InternalError(format!(
+            "Failed to read resource '{}': {}",
+            relative_path, error
+        ))
     }
 }

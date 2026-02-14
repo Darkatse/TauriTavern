@@ -3,8 +3,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::dto::chat_dto::{
-    AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
-    ImportChatDto, RenameChatDto, SaveChatDto,
+    AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto, ImportChatDto,
+    RenameChatDto, SaveChatDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::domain::models::chat::{humanized_date, Chat, ChatMessage, MessageExtra};

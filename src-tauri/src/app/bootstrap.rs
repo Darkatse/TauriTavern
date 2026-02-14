@@ -209,10 +209,9 @@ fn build_repositories(
         data_directory.group_chats().to_path_buf(),
     ));
 
-    let background_repository: Arc<dyn BackgroundRepository> =
-        Arc::new(FileBackgroundRepository::new(
-            data_directory.default_user().join("backgrounds"),
-        ));
+    let background_repository: Arc<dyn BackgroundRepository> = Arc::new(
+        FileBackgroundRepository::new(data_directory.default_user().join("backgrounds")),
+    );
 
     let theme_repository: Arc<dyn ThemeRepository> =
         Arc::new(FileThemeRepository::new(app_handle.clone()));

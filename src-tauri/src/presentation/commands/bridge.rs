@@ -91,15 +91,16 @@ fn validate_resource_segment(value: &str, field: &str) -> Result<(), CommandErro
 pub fn read_frontend_template(app: tauri::AppHandle, name: String) -> Result<String, CommandError> {
     validate_resource_segment(&name, "template name")?;
 
-    let content = read_resource_text(&app, &format!("frontend-templates/{}", name)).map_err(|e| {
-        match e {
-            crate::domain::errors::DomainError::NotFound(message) => CommandError::NotFound(message),
+    let content =
+        read_resource_text(&app, &format!("frontend-templates/{}", name)).map_err(|e| match e {
+            crate::domain::errors::DomainError::NotFound(message) => {
+                CommandError::NotFound(message)
+            }
             other => CommandError::InternalServerError(format!(
                 "Failed to read template '{}': {}",
                 name, other
             )),
-        }
-    })?;
+        })?;
 
     Ok(content)
 }

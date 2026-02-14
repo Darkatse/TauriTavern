@@ -202,8 +202,7 @@ impl ContentRepository for FileContentRepository {
 
             for resource_entry in resource_entries {
                 let resource_path = format!("default/content/{}", resource_entry);
-                let dest_path =
-                    self.build_destination_path(&item, &resource_entry, &target_dir)?;
+                let dest_path = self.build_destination_path(&item, &resource_entry, &target_dir)?;
 
                 if dest_path.exists() {
                     logger::debug(&format!(
@@ -213,10 +212,7 @@ impl ContentRepository for FileContentRepository {
                     continue;
                 }
 
-                logger::debug(&format!(
-                    "Copying {} to {:?}",
-                    resource_path, dest_path
-                ));
+                logger::debug(&format!("Copying {} to {:?}", resource_path, dest_path));
 
                 copy_resource_to_file(&self.app_handle, &resource_path, &dest_path).await?;
             }

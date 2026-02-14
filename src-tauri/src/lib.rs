@@ -6,8 +6,8 @@ mod presentation;
 
 use app::{resolve_data_root, resolve_log_root, spawn_initialization};
 use infrastructure::logging::logger;
-use tauri::Manager;
 use presentation::commands::registry::invoke_handler;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub async fn run() {

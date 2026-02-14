@@ -1,7 +1,7 @@
 use std::error::Error;
-use std::path::PathBuf;
 #[cfg(target_os = "android")]
 use std::path::Path;
+use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
 // Temporary workaround for Tauri Android app-data path bug.
