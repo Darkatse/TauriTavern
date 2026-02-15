@@ -12,8 +12,6 @@ dist
 dist-ssr
 .cache
 *.local
-sillytavern
-pnpm-lock.yaml
 
 # Editor directories and files
 .vscode/*
@@ -25,7 +23,3 @@ pnpm-lock.yaml
 *.njsproj
 *.sln
 *.sw?
-
-src-sillytavern
-sillytavern
-tauri-docs
