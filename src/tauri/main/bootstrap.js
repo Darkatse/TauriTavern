@@ -2,6 +2,7 @@ import { initializeBridge, invoke, isTauriEnv, convertFileSrc } from '../../taur
 import { createTauriMainContext } from './context.js';
 import { createInterceptors } from './interceptors.js';
 import { createRouteRegistry } from './router.js';
+import { installNativeShareBridge } from './share-target-bridge.js';
 import {
     getMethod,
     jsonResponse,
@@ -21,6 +22,8 @@ export function bootstrapTauriMain() {
         return;
     }
     bootstrapped = true;
+
+    installNativeShareBridge();
 
     const context = createTauriMainContext({ invoke, convertFileSrc });
     const router = createRouteRegistry();

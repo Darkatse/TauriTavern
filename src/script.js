@@ -258,6 +258,7 @@ import { renderTemplate, renderTemplateAsync } from './scripts/templates.js';
 import { initScrapers } from './scripts/scrapers.js';
 import { initCustomSelectedSamplers, validateDisabledSamplers } from './scripts/samplerSelect.js';
 import { DragAndDropHandler } from './scripts/dragdrop.js';
+import { initializeShareTargetImport } from './scripts/share-target-import.js';
 import { INTERACTABLE_CONTROL_CLASS, initKeyboard } from './scripts/keyboard.js';
 import { initDynamicStyles } from './scripts/dynamic-styles.js';
 import { initInputMarkdown } from './scripts/input-md-formatting.js';
@@ -12313,6 +12314,10 @@ jQuery(async function () {
 
     // Added here to prevent execution before script.js is loaded and get rid of quirky timeouts
     await firstLoadInit();
+    initializeShareTargetImport({
+        importFromExternalUrl,
+        processDroppedFiles,
+    });
 
     window.addEventListener('beforeunload', (e) => {
         if (isChatSaving || this_edit_mes_id >= 0) {

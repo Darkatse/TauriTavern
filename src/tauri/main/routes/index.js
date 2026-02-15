@@ -7,6 +7,7 @@ import { registerChatRoutes } from './chat-routes.js';
 import { registerAiRoutes } from './ai-routes.js';
 import { registerStatsRoutes } from './stats-routes.js';
 import { registerWorldInfoRoutes } from './worldinfo-routes.js';
+import { registerContentRoutes } from './content-routes.js';
 
 export function registerRoutes(router, context, responses) {
     registerSystemRoutes(router, context, responses);
@@ -15,6 +16,7 @@ export function registerRoutes(router, context, responses) {
     registerResourceRoutes(router, context, responses);
     registerCharacterRoutes(router, context, responses);
     registerChatRoutes(router, context, responses);
+    registerContentRoutes(router, context, responses);
     registerWorldInfoRoutes(router, context, responses);
     registerAiRoutes(router, context, responses);
     registerStatsRoutes(router, context, responses);

@@ -64,6 +64,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // Content commands
         super::content_commands::initialize_default_content,
         super::content_commands::is_default_content_initialized,
+        super::content_commands::download_external_import_url,
         // Data archive commands
         super::data_archive_commands::import_data_archive,
         super::data_archive_commands::export_data_archive,
