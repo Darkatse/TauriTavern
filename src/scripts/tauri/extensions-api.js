@@ -31,7 +31,7 @@ export async function installExtension(url, global = false) {
  * @returns {Promise<Object>} - Update result
  */
 export async function updateExtension(extensionName, global = false) {
-    return extensionsApi.call('update_extension', { extension_name: extensionName, global }, { commandName: 'update_extension' });
+    return extensionsApi.call('update_extension', { extensionName, global }, { commandName: 'update_extension' });
 }
 
 /**
@@ -41,7 +41,7 @@ export async function updateExtension(extensionName, global = false) {
  * @returns {Promise<void>}
  */
 export async function deleteExtension(extensionName, global = false) {
-    return extensionsApi.call('delete_extension', { extension_name: extensionName, global }, { commandName: 'delete_extension' });
+    return extensionsApi.call('delete_extension', { extensionName, global }, { commandName: 'delete_extension' });
 }
 
 /**
@@ -51,7 +51,7 @@ export async function deleteExtension(extensionName, global = false) {
  * @returns {Promise<Object>} - Version information
  */
 export async function getExtensionVersion(extensionName, global = false) {
-    return extensionsApi.call('get_extension_version', { extension_name: extensionName, global }, { commandName: 'get_extension_version' });
+    return extensionsApi.call('get_extension_version', { extensionName, global }, { commandName: 'get_extension_version' });
 }
 
 /**
@@ -62,7 +62,7 @@ export async function getExtensionVersion(extensionName, global = false) {
  * @returns {Promise<void>}
  */
 export async function moveExtension(extensionName, source, destination) {
-    return extensionsApi.call('move_extension', { extension_name: extensionName, source, destination }, { commandName: 'move_extension' });
+    return extensionsApi.call('move_extension', { extensionName, source, destination }, { commandName: 'move_extension' });
 }
 
 // Export all functions as a module

@@ -3,7 +3,8 @@ use std::path::Path;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::extension::{
-    Extension, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
+    Extension, ExtensionAssetPayload, ExtensionInstallResult, ExtensionUpdateResult,
+    ExtensionVersion,
 };
 
 #[async_trait]
@@ -50,4 +51,12 @@ pub trait ExtensionRepository: Send + Sync {
         source: &str,
         destination: &str,
     ) -> Result<(), DomainError>;
+
+    /// Read a file from a third-party extension directory.
+    async fn read_third_party_asset(
+        &self,
+        extension_name: &str,
+        relative_path: &str,
+        location_hint: Option<&str>,
+    ) -> Result<ExtensionAssetPayload, DomainError>;
 }

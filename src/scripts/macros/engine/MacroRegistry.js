@@ -636,23 +636,50 @@ function isValueOfType(value, type) {
  *
  * @returns {{ isExtension: boolean, isThirdParty: boolean, source: string }}
  */
+function isAssetExtensionStackLine(line) {
+    return line.includes('/extensions/') && !line.includes('/scripts/extensions/');
+}
+
+function extractExtensionSourceFromStackLine(line) {
+    if (!line) {
+        return '';
+    }
+
+    if (line.includes('/scripts/extensions/third-party/')) {
+        return line.replace(/^.*?\/scripts\/extensions\/third-party\/([^/]+)\/.*$/, '$1');
+    }
+
+    if (line.includes('/extensions/third-party/')) {
+        return line.replace(/^.*?\/extensions\/third-party\/([^/]+)\/.*$/, '$1');
+    }
+
+    if (line.includes('/scripts/extensions/')) {
+        return line.replace(/^.*?\/scripts\/extensions\/([^/]+)\/.*$/, '$1');
+    }
+
+    if (isAssetExtensionStackLine(line)) {
+        return line.replace(/^.*?\/extensions\/([^/]+)\/.*$/, '$1');
+    }
+
+    return '';
+}
+
 function detectMacroSource() {
     const stack = new Error().stack?.split('\n').map(line => line.trim()) ?? [];
-
-    const isExtension = stack.some(line => line.includes('/scripts/extensions/'));
-    const isThirdParty = stack.some(line => line.includes('/scripts/extensions/third-party/'));
+    const extensionLine = stack.find(line => line.includes('/scripts/extensions/') || isAssetExtensionStackLine(line));
+    const isExtension = Boolean(extensionLine);
+    const isThirdParty = Boolean(
+        extensionLine
+        && (
+            extensionLine.includes('/scripts/extensions/third-party/')
+            || extensionLine.includes('/extensions/third-party/')
+            || isAssetExtensionStackLine(extensionLine)
+        ),
+    );
 
     let source = 'unknown';
-    if (isThirdParty) {
-        const match = stack.find(line => line.includes('/scripts/extensions/third-party/'));
-        if (match) {
-            source = match.replace(/^.*?\/scripts\/extensions\/third-party\/([^/]+)\/.*$/, '$1');
-        }
-    } else if (isExtension) {
-        const match = stack.find(line => line.includes('/scripts/extensions/'));
-        if (match) {
-            source = match.replace(/^.*?\/scripts\/extensions\/([^/]+)\/.*$/, '$1');
-        }
+    if (isExtension && extensionLine) {
+        source = extractExtensionSourceFromStackLine(extensionLine) || 'unknown';
     } else {
         // Find the first meaningful caller outside MacroRegistry
         const callerIdx = stack.findIndex(line =>

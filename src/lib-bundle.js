@@ -22,6 +22,7 @@ import { toggle as slideToggle } from 'slidetoggle';
 import chalk from 'chalk';
 import yaml from 'yaml';
 import * as chevrotain from 'chevrotain';
+import { init as moduleLexerInit, parse as moduleLexerParse } from 'es-module-lexer';
 
 const libBundle = {
     lodash,
@@ -46,6 +47,8 @@ const libBundle = {
     chalk,
     yaml,
     chevrotain,
+    moduleLexerInit,
+    moduleLexerParse,
     initialized: true,
 };
 
@@ -72,6 +75,8 @@ export {
     chalk,
     yaml,
     chevrotain,
+    moduleLexerInit,
+    moduleLexerParse,
 };
 
 export default libBundle;

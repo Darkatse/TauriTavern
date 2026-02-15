@@ -3,6 +3,19 @@ let dynamicStyleSheet = null;
 /** @type {CSSStyleSheet} */
 let dynamicExtensionStyleSheet = null;
 
+function isExtensionStylesheetHref(href) {
+    const normalizedHref = String(href || '').toLowerCase();
+    if (!normalizedHref) {
+        return false;
+    }
+
+    if (normalizedHref.includes('scripts/extensions')) {
+        return true;
+    }
+
+    return normalizedHref.includes('/extensions/') && !normalizedHref.includes('/scripts/extensions/');
+}
+
 /**
  * An observer that will check if any new stylesheets are added to the head
  * @type {MutationObserver}
@@ -190,7 +203,7 @@ export function initDynamicStyles() {
     // Process all stylesheets on initial load
     Array.from(document.styleSheets).forEach(sheet => {
         try {
-            applyDynamicFocusStyles(sheet, { fromExtension: sheet.href?.toLowerCase().includes('scripts/extensions') == true });
+            applyDynamicFocusStyles(sheet, { fromExtension: isExtensionStylesheetHref(sheet.href) });
         } catch (e) {
             console.warn('Failed to process stylesheet on initial load:', e);
         }

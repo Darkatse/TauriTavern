@@ -23,7 +23,65 @@ function sanitizeFileName(value, fallback = 'tauritavern-data.zip') {
     return fileName.replace(/[\\/:*?"<>|]+/g, '_');
 }
 
-export function registerExtensionRoutes(router, context, { jsonResponse }) {
+function decodeRoutePath(value) {
+    try {
+        return decodeURIComponent(String(value || ''));
+    } catch {
+        return String(value || '');
+    }
+}
+
+function parseThirdPartyAssetRoutePath(wildcard) {
+    const decodedPath = decodeRoutePath(wildcard)
+        .replace(/[\\/]+/g, '/')
+        .replace(/^\/+/, '');
+    const segments = decodedPath.split('/').filter(Boolean);
+    if (segments.length < 2) {
+        return null;
+    }
+
+    const extensionFolder = segments[0];
+    const relativePath = segments.slice(1).join('/');
+    if (!extensionFolder || !relativePath) {
+        return null;
+    }
+
+    return {
+        extensionName: `third-party/${extensionFolder}`,
+        relativePath,
+    };
+}
+
+export function registerExtensionRoutes(router, context, { jsonResponse, textResponse }) {
+    router.get('/scripts/extensions/third-party/*', async ({ wildcard }) => {
+        const parsed = parseThirdPartyAssetRoutePath(wildcard);
+        if (!parsed) {
+            return textResponse('Not Found', 404);
+        }
+
+        try {
+            const payload = await context.safeInvoke('read_third_party_extension_asset', {
+                extensionName: parsed.extensionName,
+                relativePath: parsed.relativePath,
+            });
+
+            const bytes = decodeBase64ToBytes(payload?.content_base64 || '');
+            return new Response(bytes, {
+                status: 200,
+                headers: {
+                    'Content-Type': payload?.mime_type || 'application/octet-stream',
+                    'Cache-Control': 'no-store',
+                },
+            });
+        } catch (error) {
+            const message = String(error?.message || error || '').toLowerCase();
+            if (message.includes('not found')) {
+                return textResponse('Not Found', 404);
+            }
+            throw error;
+        }
+    });
+
     router.all('/api/extensions/discover', async () => {
         const extensions = await context.safeInvoke('get_extensions');
         const mapped = Array.isArray(extensions)
@@ -53,7 +111,7 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/extensions/update', async ({ body }) => {
         const result = await context.safeInvoke('update_extension', {
-            extension_name: body?.extensionName || '',
+            extensionName: body?.extensionName || '',
             global: Boolean(body?.global),
         });
 
@@ -65,7 +123,7 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/extensions/delete', async ({ body }) => {
         await context.safeInvoke('delete_extension', {
-            extension_name: body?.extensionName || '',
+            extensionName: body?.extensionName || '',
             global: Boolean(body?.global),
         });
 
@@ -74,7 +132,7 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/extensions/version', async ({ body }) => {
         const result = await context.safeInvoke('get_extension_version', {
-            extension_name: body?.extensionName || '',
+            extensionName: body?.extensionName || '',
             global: Boolean(body?.global),
         });
 
@@ -88,7 +146,7 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/extensions/move', async ({ body }) => {
         await context.safeInvoke('move_extension', {
-            extension_name: body?.extensionName || '',
+            extensionName: body?.extensionName || '',
             source: body?.source || 'local',
             destination: body?.destination || 'global',
         });

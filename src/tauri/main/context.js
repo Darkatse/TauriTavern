@@ -51,6 +51,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             const assetUrl = filePath ? toAssetUrl(filePath) : null;
             return assetUrl || `User Avatars/${file}`;
         };
+
     }
 
     function resolveAssetPath(type, file) {
@@ -117,9 +118,11 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
     }
 
     async function safeInvoke(command, args = {}) {
+        const invokeArgs = withTauriArgumentAliases(args);
+
         for (let attempt = 0; attempt < 20; attempt += 1) {
             try {
-                return await invoke(command, args);
+                return await invoke(command, invokeArgs);
             } catch (error) {
                 const message = normalizeInvokeErrorMessage(error, `Command failed: ${command}`);
                 if (attempt < 19 && shouldRetryInvoke(message)) {
@@ -129,6 +132,27 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
                 throw new Error(message);
             }
         }
+    }
+
+    function withTauriArgumentAliases(args) {
+        if (!args || typeof args !== 'object' || Array.isArray(args)) {
+            return args;
+        }
+
+        const aliased = { ...args };
+
+        for (const [key, value] of Object.entries(args)) {
+            if (!key.includes('_')) {
+                continue;
+            }
+
+            const camelCaseKey = key.replace(/_+([a-zA-Z0-9])/g, (_, char) => char.toUpperCase());
+            if (!Object.prototype.hasOwnProperty.call(aliased, camelCaseKey)) {
+                aliased[camelCaseKey] = value;
+            }
+        }
+
+        return aliased;
     }
 
     function shouldRetryInvoke(message) {

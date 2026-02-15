@@ -6,6 +6,8 @@ use crate::infrastructure::assets::read_resource_text;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
+const SILLYTAVERN_COMPAT_VERSION: &str = "1.15.0";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EventType {
     CharacterCreated,
@@ -60,7 +62,8 @@ pub fn get_client_version() -> Result<VersionInfo, CommandError> {
 
     let pkg_version = env!("CARGO_PKG_VERSION");
     let version_info = VersionInfo {
-        agent: format!("TauriTavern/{}", pkg_version),
+        // Keep the upstream client-agent shape for extension compatibility checks.
+        agent: format!("SillyTavern:{}:TauriTavern", SILLYTAVERN_COMPAT_VERSION),
         pkg_version: pkg_version.to_string(),
         git_revision: Some("tauri".to_string()),
         git_branch: Some("main".to_string()),

@@ -6,6 +6,7 @@ import {
     Handlebars,
     SVGInject,
     Popper,
+    initLibraryShims,
     default as libs,
 } from './lib.js';
 import { getClientVersion as getBridgeClientVersion } from './tauri-bridge.js';
@@ -393,6 +394,7 @@ let importFlashTimeout;
 export let isChatSaving = false;
 let firstRun = false;
 let settingsReady = false;
+let pendingSettingsSave = false;
 let currentVersion = '0.0.0';
 export let displayVersion = 'TauriTavern';
 
@@ -409,7 +411,8 @@ export const default_avatar = 'img/ai4.png';
 export const system_avatar = 'img/five.png';
 export const comment_avatar = 'img/quill.png';
 export const default_user_avatar = 'img/user-default.png';
-export let CLIENT_VERSION = 'TauriTavern/UNKNOWN'; // For Horde header
+const SILLYTAVERN_COMPAT_VERSION = '1.15.0';
+export let CLIENT_VERSION = 'SillyTavern:UNKNOWN:TauriTavern'; // For Horde header
 let optionsPopper = Popper.createPopper(document.getElementById('options_button'), document.getElementById('options'), {
     placement: 'top-start',
 });
@@ -476,7 +479,7 @@ export const MAX_INJECTION_DEPTH = 10000;
 async function getClientVersion() {
     try {
         const data = await getBridgeClientVersion();
-        CLIENT_VERSION = data.agent || `TauriTavern/${data.pkgVersion || 'UNKNOWN'}`;
+        CLIENT_VERSION = data.agent || `SillyTavern:${SILLYTAVERN_COMPAT_VERSION}:TauriTavern`;
         displayVersion = `TauriTavern ${data.pkgVersion || 'UNKNOWN'}`;
         currentVersion = data.pkgVersion || '0.0.0';
 
@@ -690,6 +693,7 @@ async function firstLoadInit() {
     registerPromptManagerMigration();
     initDomHandlers();
     initStandaloneMode();
+    initLibraryShims();
     addShowdownPatch(showdown);
     addDOMPurifyHooks();
     reloadMarkdownProcessor();
@@ -7777,13 +7781,22 @@ export async function getSettings() {
     await validateDisabledSamplers();
     settingsReady = true;
     await eventSource.emit(event_types.SETTINGS_LOADED);
+
+    // Some extensions may request saves during bootstrap before settings are ready.
+    // Flush exactly one deferred save once initialization has completed.
+    if (pendingSettingsSave) {
+        pendingSettingsSave = false;
+        saveSettingsDebounced();
+    }
 }
 
 //MARK: saveSettings()
 export async function saveSettings(loopCounter = 0) {
     if (!settingsReady) {
-        console.warn('Settings not ready, scheduling another save');
-        saveSettingsDebounced();
+        if (!pendingSettingsSave) {
+            console.warn('Settings not ready, deferring settings save');
+        }
+        pendingSettingsSave = true;
         return;
     }
 

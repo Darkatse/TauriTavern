@@ -35,6 +35,34 @@ export const PARSER_FLAG = {
     'REPLACE_GETVAR': 2,
 };
 
+function isAssetExtensionStackLine(line) {
+    return line.includes('/extensions/') && !line.includes('/scripts/extensions/');
+}
+
+function extractExtensionSourceFromStackLine(line) {
+    if (!line) {
+        return '';
+    }
+
+    if (line.includes('/scripts/extensions/third-party/')) {
+        return line.replace(/^.*?\/scripts\/extensions\/third-party\/([^/]+)\/.*$/, '$1');
+    }
+
+    if (line.includes('/extensions/third-party/')) {
+        return line.replace(/^.*?\/extensions\/third-party\/([^/]+)\/.*$/, '$1');
+    }
+
+    if (line.includes('/scripts/extensions/')) {
+        return line.replace(/^.*?\/scripts\/extensions\/([^/]+)\/.*$/, '$1');
+    }
+
+    if (isAssetExtensionStackLine(line)) {
+        return line.replace(/^.*?\/extensions\/([^/]+)\/.*$/, '$1');
+    }
+
+    return '';
+}
+
 export class SlashCommandParser {
     /** @type {Object.<string, SlashCommand>} */ static commands = {};
 
@@ -76,12 +104,15 @@ export class SlashCommandParser {
         }
 
         const stack = new Error().stack.split('\n').map(it=>it.trim());
-        command.isExtension = stack.find(it=>it.includes('/scripts/extensions/')) != null;
-        command.isThirdParty = stack.find(it=>it.includes('/scripts/extensions/third-party/')) != null;
-        if (command.isThirdParty) {
-            command.source = stack.find(it=>it.includes('/scripts/extensions/third-party/')).replace(/^.*?\/scripts\/extensions\/third-party\/([^/]+)\/.*$/, '$1');
-        } else if (command.isExtension) {
-            command.source = stack.find(it=>it.includes('/scripts/extensions/')).replace(/^.*?\/scripts\/extensions\/([^/]+)\/.*$/, '$1');
+        const extensionLine = stack.find(it => it.includes('/scripts/extensions/') || isAssetExtensionStackLine(it));
+        command.isExtension = extensionLine != null;
+        command.isThirdParty = extensionLine != null && (
+            extensionLine.includes('/scripts/extensions/third-party/')
+            || extensionLine.includes('/extensions/third-party/')
+            || isAssetExtensionStackLine(extensionLine)
+        );
+        if (command.isExtension && extensionLine) {
+            command.source = extractExtensionSourceFromStackLine(extensionLine) || 'unknown';
         } else {
             const idx = stack.findLastIndex(it=>it.includes('at SlashCommandParser.')) + 1;
             command.source = stack[idx].replace(/^.*?\/((?:scripts\/)?(?:[^/]+)\.js).*$/, '$1');

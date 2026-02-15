@@ -97,6 +97,7 @@
     "diff-match-patch": "^1.0.5",
     "dompurify": "^3.2.6",
     "droll": "^0.2.1",
+    "es-module-lexer": "^2.0.0",
     "express": "^4.21.0",
     "form-data": "^4.0.2",
     "fuse.js": "^7.1.0",

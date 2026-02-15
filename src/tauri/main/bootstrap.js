@@ -55,9 +55,10 @@ export function bootstrapTauriMain() {
     interceptors.patchFetch();
     interceptors.patchJQueryAjax();
 
-    initializeTauriIntegration(context, interceptors).catch((error) => {
+    const readyPromise = initializeTauriIntegration(context, interceptors).catch((error) => {
         console.error('Failed to initialize Tauri integration:', error);
     });
+    window.__TAURITAVERN_MAIN_READY__ = readyPromise;
 }
 
 async function initializeTauriIntegration(context, interceptors) {

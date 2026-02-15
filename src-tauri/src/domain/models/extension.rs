@@ -88,6 +88,15 @@ pub struct ExtensionVersion {
     pub remote_url: String,
 }
 
+/// Third-party extension file payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionAssetPayload {
+    /// File content encoded as Base64.
+    pub content_base64: String,
+    /// MIME type inferred from file extension.
+    pub mime_type: String,
+}
+
 /// Extension installation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionInstallResult {

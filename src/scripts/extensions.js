@@ -1,4 +1,4 @@
-import { DOMPurify, Popper } from '../lib.js';
+import { DOMPurify, Popper, moduleLexerInit, moduleLexerParse } from '../lib.js';
 
 import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION } from '../script.js';
 import { showLoader } from './loader.js';
@@ -45,6 +45,28 @@ const activeExtensions = new Set();
  * @type {Set<string>}
  */
 const extensionLoadErrors = new Set();
+const thirdPartyModuleBlobCache = new Map();
+const thirdPartyModuleBlobUrls = new Set();
+const thirdPartyStyleBlobCache = new Map();
+const thirdPartyStyleBlobUrls = new Set();
+const EXTENSION_SCRIPT_LOAD_TIMEOUT_MS = 30000;
+const EXTENSION_STYLE_LOAD_TIMEOUT_MS = 15000;
+let moduleLexerReadyPromise = null;
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        for (const blobUrl of thirdPartyModuleBlobUrls) {
+            URL.revokeObjectURL(blobUrl);
+        }
+        for (const blobUrl of thirdPartyStyleBlobUrls) {
+            URL.revokeObjectURL(blobUrl);
+        }
+        thirdPartyModuleBlobUrls.clear();
+        thirdPartyModuleBlobCache.clear();
+        thirdPartyStyleBlobUrls.clear();
+        thirdPartyStyleBlobCache.clear();
+    }, { once: true });
+}
 
 const getApiUrl = () => extension_settings.apiUrl;
 const sortManifestsByOrder = (a, b) => parseInt(a.loading_order) - parseInt(b.loading_order) || String(a.display_name).localeCompare(String(b.display_name));
@@ -241,6 +263,292 @@ const menuInterval = setInterval(showHideExtensionsMenu, 1000);
 function getExtensionType(externalId) {
     const id = Object.keys(extensionTypes).find(id => id === externalId || (id.startsWith('third-party') && id.endsWith(externalId)));
     return id ? extensionTypes[id] : '';
+}
+
+function normalizeExtensionResourcePath(resourcePath) {
+    return String(resourcePath || '').replace(/^\/+/, '');
+}
+
+function getExtensionResourceUrl(name, resourcePath) {
+    const normalizedPath = normalizeExtensionResourcePath(resourcePath);
+    return `/scripts/extensions/${name}/${normalizedPath}`;
+}
+
+function isThirdPartyExtension(name) {
+    return String(name || '').startsWith('third-party/');
+}
+
+function ensureModuleLexerReady() {
+    if (!moduleLexerReadyPromise) {
+        moduleLexerReadyPromise = Promise.resolve(moduleLexerInit);
+    }
+
+    return moduleLexerReadyPromise;
+}
+
+function normalizeThirdPartyModuleUrl(url) {
+    const parsed = new URL(String(url), window.location.origin);
+    parsed.hash = '';
+    return parsed.href;
+}
+
+function isRouteThirdPartyModuleUrl(url) {
+    const parsed = new URL(String(url), window.location.origin);
+    return parsed.origin === window.location.origin
+        && parsed.pathname.startsWith('/scripts/extensions/third-party/');
+}
+
+function resolveModuleSpecifier(baseUrl, specifier) {
+    if (typeof specifier !== 'string' || !specifier) {
+        return null;
+    }
+
+    const isRelativeSpecifier = specifier.startsWith('./') || specifier.startsWith('../');
+    const isRootSpecifier = specifier.startsWith('/');
+    const hasProtocol = /^[a-zA-Z][a-zA-Z0-9+\-.]*:/.test(specifier);
+
+    if (!isRelativeSpecifier && !isRootSpecifier && !hasProtocol) {
+        return null;
+    }
+
+    try {
+        return new URL(specifier, baseUrl).href;
+    } catch {
+        return null;
+    }
+}
+
+function toBrowserModuleSpecifier(url) {
+    const parsed = new URL(String(url), window.location.origin);
+    return parsed.href;
+}
+
+function isQuotedSpecifierSlice(value) {
+    if (!value || value.length < 2) {
+        return false;
+    }
+
+    const quote = value[0];
+    return (quote === '\'' || quote === '"' || quote === '`') && value[value.length - 1] === quote;
+}
+
+function getImportSpecifierReplaceRange(source, importRecord) {
+    let start = importRecord.s;
+    let end = importRecord.e;
+    const before = source[start - 1];
+    const after = source[end];
+    if ((before === '\'' || before === '"' || before === '`') && after === before) {
+        start -= 1;
+        end += 1;
+    }
+
+    return { start, end };
+}
+
+function isDynamicImportRecord(importRecord) {
+    return importRecord?.t === 2 || Number(importRecord?.d) >= 0;
+}
+
+function looksLikeHtmlPayload(text) {
+    return /^\s*</.test(String(text || ''));
+}
+
+async function rewriteThirdPartyModuleSource(source, moduleUrl, processingChain = new Set()) {
+    await ensureModuleLexerReady();
+    const [imports] = moduleLexerParse(String(source));
+    if (!Array.isArray(imports) || imports.length === 0) {
+        return String(source);
+    }
+
+    const chain = new Set(processingChain);
+    chain.add(normalizeThirdPartyModuleUrl(moduleUrl));
+    let rewritten = String(source);
+    for (let index = imports.length - 1; index >= 0; index -= 1) {
+        const importRecord = imports[index];
+        if (typeof importRecord?.n !== 'string') {
+            continue;
+        }
+
+        const resolved = resolveModuleSpecifier(moduleUrl, importRecord.n);
+        if (!resolved) {
+            continue;
+        }
+
+        let replacement = importRecord.n;
+        if (isRouteThirdPartyModuleUrl(resolved)) {
+            const normalizedResolved = normalizeThirdPartyModuleUrl(resolved);
+            const isCircularDependency = chain.has(normalizedResolved);
+            const isDynamicImport = isDynamicImportRecord(importRecord);
+
+            // Avoid deadlock on circular import graphs and avoid eagerly resolving dynamic imports.
+            replacement = (isCircularDependency || isDynamicImport)
+                ? toBrowserModuleSpecifier(resolved)
+                : await getThirdPartyModuleBlobUrl(resolved, chain);
+        } else {
+            replacement = toBrowserModuleSpecifier(resolved);
+        }
+
+        if (replacement !== importRecord.n) {
+            const { start, end } = getImportSpecifierReplaceRange(rewritten, importRecord);
+            const currentSlice = rewritten.slice(start, end);
+            const replacementLiteral = isQuotedSpecifierSlice(currentSlice)
+                ? JSON.stringify(replacement)
+                : replacement;
+            rewritten = `${rewritten.slice(0, start)}${replacementLiteral}${rewritten.slice(end)}`;
+        }
+    }
+
+    return rewritten;
+}
+
+async function getThirdPartyModuleBlobUrl(moduleUrl, processingChain = new Set()) {
+    const normalizedUrl = normalizeThirdPartyModuleUrl(moduleUrl);
+    const cachedTask = thirdPartyModuleBlobCache.get(normalizedUrl);
+    if (cachedTask) {
+        return cachedTask;
+    }
+
+    const chain = new Set(processingChain);
+    chain.add(normalizedUrl);
+    const task = (async () => {
+        const response = await fetch(normalizedUrl, { cache: 'no-store' });
+        if (!response.ok) {
+            throw new Error(`Failed to fetch extension module: ${response.status} ${response.statusText}`);
+        }
+
+        const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+        const source = await response.text();
+        if (contentType.includes('text/html') || looksLikeHtmlPayload(source)) {
+            throw new Error(`Extension module is not JavaScript: ${normalizedUrl}`);
+        }
+
+        const rewritten = await rewriteThirdPartyModuleSource(source, normalizedUrl, chain);
+        const blobUrl = URL.createObjectURL(new Blob([rewritten], { type: 'text/javascript' }));
+        thirdPartyModuleBlobUrls.add(blobUrl);
+        return blobUrl;
+    })();
+
+    thirdPartyModuleBlobCache.set(normalizedUrl, task);
+
+    try {
+        return await task;
+    } catch (error) {
+        thirdPartyModuleBlobCache.delete(normalizedUrl);
+        throw error;
+    }
+}
+
+async function getThirdPartyStylesheetBlobUrl(stylesheetUrl) {
+    const normalizedUrl = normalizeThirdPartyModuleUrl(stylesheetUrl);
+    const cachedTask = thirdPartyStyleBlobCache.get(normalizedUrl);
+    if (cachedTask) {
+        return cachedTask;
+    }
+
+    const task = (async () => {
+        const response = await fetch(normalizedUrl, { cache: 'no-store' });
+        if (!response.ok) {
+            throw new Error(`Failed to fetch extension stylesheet: ${response.status} ${response.statusText}`);
+        }
+
+        const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+        const source = await response.text();
+        if (contentType.includes('text/html') || looksLikeHtmlPayload(source)) {
+            throw new Error(`Extension stylesheet is not CSS: ${normalizedUrl}`);
+        }
+
+        const blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/css' }));
+        thirdPartyStyleBlobUrls.add(blobUrl);
+        return blobUrl;
+    })();
+
+    thirdPartyStyleBlobCache.set(normalizedUrl, task);
+
+    try {
+        return await task;
+    } catch (error) {
+        thirdPartyStyleBlobCache.delete(normalizedUrl);
+        throw error;
+    }
+}
+
+async function withTimeout(taskFactory, timeoutMs, timeoutErrorFactory) {
+    return await new Promise((resolve, reject) => {
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            reject(timeoutErrorFactory());
+        }, timeoutMs);
+
+        Promise.resolve()
+            .then(taskFactory)
+            .then(result => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                clearTimeout(timeoutId);
+                resolve(result);
+            })
+            .catch(error => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                clearTimeout(timeoutId);
+                reject(error);
+            });
+    });
+}
+
+function toStyleLoadError(name, url, error) {
+    if (error instanceof Error) {
+        return error;
+    }
+
+    const errorType = error?.type || 'error';
+    return new Error(`Extension "${name}" stylesheet load failed (${errorType}): ${url}`);
+}
+
+function toStyleTimeoutError(name, url) {
+    return new Error(`Extension "${name}" stylesheet load timed out after ${EXTENSION_STYLE_LOAD_TIMEOUT_MS}ms: ${url}`);
+}
+
+function toStylePrepareTimeoutError(name, url) {
+    return new Error(`Extension "${name}" stylesheet preprocessing timed out after ${EXTENSION_STYLE_LOAD_TIMEOUT_MS}ms: ${url}`);
+}
+
+function toScriptLoadError(name, url, error) {
+    if (error instanceof Error) {
+        return error;
+    }
+
+    const errorType = error?.type || 'error';
+    return new Error(`Extension "${name}" script load failed (${errorType}): ${url}`);
+}
+
+function toScriptTimeoutError(name, url) {
+    return new Error(`Extension "${name}" script load timed out after ${EXTENSION_SCRIPT_LOAD_TIMEOUT_MS}ms: ${url}`);
+}
+
+function toScriptPrepareTimeoutError(name, url) {
+    return new Error(`Extension "${name}" script preprocessing timed out after ${EXTENSION_SCRIPT_LOAD_TIMEOUT_MS}ms: ${url}`);
+}
+
+async function waitForTauriMainReady() {
+    const readyPromise = window.__TAURITAVERN_MAIN_READY__;
+    if (!readyPromise || typeof readyPromise.then !== 'function') {
+        return;
+    }
+
+    try {
+        await readyPromise;
+    } catch {
+        // Continue with fallback URL behavior.
+    }
 }
 
 /**
@@ -582,29 +890,65 @@ function updateStatus(success) {
  * @param {object} manifest Extension manifest
  * @returns {Promise<void>} When the CSS is loaded
  */
-function addExtensionStyle(name, manifest) {
+async function addExtensionStyle(name, manifest) {
     if (!manifest.css) {
-        return Promise.resolve();
+        return;
     }
 
-    return new Promise((resolve, reject) => {
-        const url = `/scripts/extensions/${name}/${manifest.css}`;
-        const id = sanitizeSelector(`${name}-css`);
-
-        if ($(`link[id="${id}"]`).length === 0) {
-            const link = document.createElement('link');
-            link.id = id;
-            link.rel = 'stylesheet';
-            link.type = 'text/css';
-            link.href = url;
-            link.onload = function () {
-                resolve();
-            };
-            link.onerror = function (e) {
-                reject(e);
-            };
-            document.head.appendChild(link);
+    const id = sanitizeSelector(`${name}-css`);
+    const existing = document.getElementById(id);
+    if (existing) {
+        if (existing.dataset.tauritavernLoaded === 'true') {
+            return;
         }
+
+        existing.remove();
+    }
+
+    let styleUrl = getExtensionResourceUrl(name, manifest.css);
+    if (isThirdPartyExtension(name)) {
+        styleUrl = await withTimeout(
+            () => getThirdPartyStylesheetBlobUrl(styleUrl),
+            EXTENSION_STYLE_LOAD_TIMEOUT_MS,
+            () => toStylePrepareTimeoutError(name, styleUrl),
+        );
+    }
+
+    await new Promise((resolve, reject) => {
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            link.dataset.tauritavernLoaded = 'false';
+            reject(toStyleTimeoutError(name, styleUrl));
+        }, EXTENSION_STYLE_LOAD_TIMEOUT_MS);
+
+        const link = document.createElement('link');
+        link.id = id;
+        link.rel = 'stylesheet';
+        link.type = 'text/css';
+        link.href = styleUrl;
+        link.onload = function () {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(timeoutId);
+            link.dataset.tauritavernLoaded = 'true';
+            resolve();
+        };
+        link.onerror = function (err) {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(timeoutId);
+            link.dataset.tauritavernLoaded = 'false';
+            reject(toStyleLoadError(name, styleUrl, err));
+        };
+        document.head.appendChild(link);
     });
 }
 
@@ -614,33 +958,65 @@ function addExtensionStyle(name, manifest) {
  * @param {object} manifest Extension manifest
  * @returns {Promise<void>} When the script is loaded
  */
-function addExtensionScript(name, manifest) {
+async function addExtensionScript(name, manifest) {
     if (!manifest.js) {
-        return Promise.resolve();
+        return;
     }
 
-    return new Promise((resolve, reject) => {
-        const url = `/scripts/extensions/${name}/${manifest.js}`;
-        const id = sanitizeSelector(`${name}-js`);
-        let ready = false;
-
-        if ($(`script[id="${id}"]`).length === 0) {
-            const script = document.createElement('script');
-            script.id = id;
-            script.type = 'module';
-            script.src = url;
-            script.async = true;
-            script.onerror = function (err) {
-                reject(err);
-            };
-            script.onload = function () {
-                if (!ready) {
-                    ready = true;
-                    resolve();
-                }
-            };
-            document.body.appendChild(script);
+    const id = sanitizeSelector(`${name}-js`);
+    const existing = document.getElementById(id);
+    if (existing) {
+        if (existing.dataset.tauritavernLoaded === 'true') {
+            return;
         }
+
+        existing.remove();
+    }
+
+    let scriptUrl = getExtensionResourceUrl(name, manifest.js);
+    if (isThirdPartyExtension(name)) {
+        scriptUrl = await withTimeout(
+            () => getThirdPartyModuleBlobUrl(scriptUrl),
+            EXTENSION_SCRIPT_LOAD_TIMEOUT_MS,
+            () => toScriptPrepareTimeoutError(name, scriptUrl),
+        );
+    }
+
+    await new Promise((resolve, reject) => {
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            script.dataset.tauritavernLoaded = 'false';
+            reject(toScriptTimeoutError(name, scriptUrl));
+        }, EXTENSION_SCRIPT_LOAD_TIMEOUT_MS);
+
+        const script = document.createElement('script');
+        script.id = id;
+        script.type = 'module';
+        script.src = scriptUrl;
+        script.async = true;
+        script.onerror = function (err) {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(timeoutId);
+            script.dataset.tauritavernLoaded = 'false';
+            reject(toScriptLoadError(name, scriptUrl, err));
+        };
+        script.onload = function () {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(timeoutId);
+            script.dataset.tauritavernLoaded = 'true';
+            resolve();
+        };
+        document.body.appendChild(script);
     });
 }
 
@@ -663,7 +1039,7 @@ function addExtensionLocale(name, manifest) {
         return Promise.resolve();
     }
 
-    return fetch(`/scripts/extensions/${name}/${localeFile}`)
+    return fetch(getExtensionResourceUrl(name, localeFile))
         .then(async response => {
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -1295,6 +1671,8 @@ export async function installExtension(url, global, branch = '') {
  * @param {boolean} enableAutoUpdate Enable auto-update
  */
 export async function loadExtensionSettings(settings, versionChanged, enableAutoUpdate) {
+    await waitForTauriMainReady();
+
     if (settings.extension_settings) {
         Object.assign(extension_settings, settings.extension_settings);
     }

@@ -27,6 +27,10 @@ export function shouldIntercept(url) {
         return true;
     }
 
+    if (url.pathname.startsWith('/scripts/extensions/third-party/')) {
+        return true;
+    }
+
     return url.pathname.startsWith('/api/');
 }
 

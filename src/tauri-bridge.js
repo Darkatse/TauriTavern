@@ -1,5 +1,7 @@
 // Core Tauri bridge for frontend modules.
 
+const SILLYTAVERN_COMPAT_VERSION = '1.15.0';
+
 export const isTauriEnv = typeof window !== 'undefined'
     && (window.__TAURI_INTERNALS__ !== undefined || typeof window.__TAURI__?.core?.invoke === 'function');
 
@@ -95,7 +97,7 @@ export async function getClientVersion() {
         console.error('Error getting client version from Tauri backend:', error);
         const version = await invokeFn('get_version');
         return {
-            agent: `TauriTavern/${version}`,
+            agent: `SillyTavern:${SILLYTAVERN_COMPAT_VERSION}:TauriTavern`,
             pkgVersion: version,
             gitRevision: 'tauri',
             gitBranch: 'main',
