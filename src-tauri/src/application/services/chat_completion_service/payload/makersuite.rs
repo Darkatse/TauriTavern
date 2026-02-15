@@ -14,8 +14,18 @@ const GOOGLE_FLASH_MAX_BUDGET: i64 = 24_576;
 const GOOGLE_PRO_MAX_BUDGET: i64 = 32_768;
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
+    let stream = payload
+        .get("stream")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let endpoint = if stream {
+        "/streamGenerateContent"
+    } else {
+        "/generateContent"
+    };
+
     Ok((
-        String::new(),
+        endpoint.to_string(),
         Value::Object(build_makersuite_payload(&payload)?),
     ))
 }

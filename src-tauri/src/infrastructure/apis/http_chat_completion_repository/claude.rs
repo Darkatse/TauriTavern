@@ -5,7 +5,9 @@ use reqwest::RequestBuilder;
 use serde_json::Value;
 
 use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_completion_repository::ChatCompletionApiConfig;
+use crate::domain::repositories::chat_completion_repository::{
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
+};
 
 use super::normalizers;
 use super::HttpChatCompletionRepository;
@@ -104,6 +106,58 @@ pub(super) async fn generate(
     })?;
 
     Ok(normalizers::normalize_claude_response(body))
+}
+
+pub(super) async fn generate_stream(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+    sender: ChatCompletionStreamSender,
+    cancel: ChatCompletionCancelReceiver,
+) -> Result<(), DomainError> {
+    let endpoint_path = if endpoint_path.trim().is_empty() {
+        "/messages"
+    } else {
+        endpoint_path
+    };
+
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+
+    let request = repository
+        .client
+        .post(url)
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "text/event-stream")
+        .header("anthropic-version", ANTHROPIC_VERSION)
+        .json(payload);
+
+    let request = HttpChatCompletionRepository::apply_header_if_present(
+        request,
+        "x-api-key",
+        &config.api_key,
+    );
+    let request = apply_anthropic_beta_header(request, config, payload);
+    let request = HttpChatCompletionRepository::apply_extra_headers_with_filter(
+        request,
+        &config.extra_headers,
+        |key, _| key.eq_ignore_ascii_case("anthropic-beta"),
+    );
+
+    let response = request.send().await.map_err(|error| {
+        DomainError::InternalError(format!("Generation request failed: {error}"))
+    })?;
+
+    if !response.status().is_success() {
+        return Err(HttpChatCompletionRepository::map_error_response(
+            "Claude",
+            response,
+            "Generation request failed",
+        )
+        .await);
+    }
+
+    HttpChatCompletionRepository::stream_sse_response("Claude", response, sender, cancel).await
 }
 
 fn apply_anthropic_beta_header(

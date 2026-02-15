@@ -1,28 +1,34 @@
 <div id="data_migration_settings">
     <div class="inline-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>Data Migration</b>
+            <b data-i18n="Data Migration">Data Migration</b>
             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content">
-            <div class="toggle-description justifyLeft">
-                Import a SillyTavern <code>data</code> zip archive and migrate it to TauriTavern.
-            </div>
-            <div class="toggle-description justifyLeft">
-                Imported user handles are normalized to <code>default-user</code>.
-            </div>
+            <small class="extensions_info"
+                data-i18n="Import a SillyTavern data zip archive and migrate it to TauriTavern.">
+                Import a SillyTavern data zip archive and migrate it to TauriTavern.
+            </small>
+            <small class="extensions_info" data-i18n="Imported user handles are normalized to default-user.">
+                Imported user handles are normalized to default-user.
+            </small>
             <div class="flex-container flexGap5">
-                <button id="data_migration_import_button" class="menu_button">
-                    Import Data Zip
+                <button id="data_migration_import_button" class="menu_button menu_button_icon"
+                    data-i18n="Import Data Zip">
+                    <i class="fa-solid fa-file-import"></i>
+                    <span>Import Data Zip</span>
                 </button>
-                <button id="data_migration_export_button" class="menu_button">
-                    Export Current Data
+                <button id="data_migration_export_button" class="menu_button menu_button_icon"
+                    data-i18n="Export Current Data">
+                    <i class="fa-solid fa-file-export"></i>
+                    <span>Export Current Data</span>
                 </button>
             </div>
             <input id="data_migration_import_input" type="file" accept=".zip,application/zip" hidden />
-            <div class="toggle-description justifyLeft">
-                Warning: importing will replace your current local <code>data</code> directory.
-            </div>
+            <small class="extensions_info"
+                data-i18n="Warning: importing will replace your current local data directory.">
+                Warning: importing will replace your current local data directory.
+            </small>
         </div>
     </div>
 </div>

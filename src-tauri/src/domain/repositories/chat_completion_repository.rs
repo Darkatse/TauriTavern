@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
+use tokio::sync::{mpsc::UnboundedSender, watch};
 
 use crate::domain::errors::DomainError;
 
@@ -41,6 +42,9 @@ pub struct ChatCompletionApiConfig {
     pub extra_headers: HashMap<String, String>,
 }
 
+pub type ChatCompletionStreamSender = UnboundedSender<String>;
+pub type ChatCompletionCancelReceiver = watch::Receiver<bool>;
+
 #[async_trait]
 pub trait ChatCompletionRepository: Send + Sync {
     async fn list_models(
@@ -56,6 +60,16 @@ pub trait ChatCompletionRepository: Send + Sync {
         endpoint_path: &str,
         payload: &Value,
     ) -> Result<Value, DomainError>;
+
+    async fn generate_stream(
+        &self,
+        source: ChatCompletionSource,
+        config: &ChatCompletionApiConfig,
+        endpoint_path: &str,
+        payload: &Value,
+        sender: ChatCompletionStreamSender,
+        cancel: ChatCompletionCancelReceiver,
+    ) -> Result<(), DomainError>;
 }
 
 #[cfg(test)]

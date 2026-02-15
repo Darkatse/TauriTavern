@@ -8,7 +8,8 @@ use serde_json::Value;
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionRepository, ChatCompletionSource,
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
+    ChatCompletionSource, ChatCompletionStreamSender,
 };
 
 mod claude;
@@ -107,6 +108,109 @@ impl HttpChatCompletionRepository {
             )),
         }
     }
+
+    async fn stream_sse_response(
+        provider_name: &str,
+        mut response: reqwest::Response,
+        sender: ChatCompletionStreamSender,
+        mut cancel: ChatCompletionCancelReceiver,
+    ) -> Result<(), DomainError> {
+        let mut buffer = Vec::<u8>::new();
+
+        loop {
+            if *cancel.borrow() {
+                return Ok(());
+            }
+
+            let chunk = tokio::select! {
+                _ = cancel.changed() => {
+                    if *cancel.borrow() {
+                        return Ok(());
+                    }
+                    continue;
+                }
+                chunk = response.chunk() => {
+                    chunk.map_err(|error| DomainError::InternalError(format!(
+                        "{provider_name} stream read failed: {error}"
+                    )))?
+                }
+            };
+
+            let Some(chunk) = chunk else {
+                break;
+            };
+
+            buffer.extend_from_slice(&chunk);
+            Self::forward_sse_lines(&mut buffer, &sender)?;
+        }
+
+        if !buffer.is_empty() {
+            Self::forward_sse_lines(&mut buffer, &sender)?;
+            Self::forward_sse_line(buffer.as_slice(), &sender)?;
+            buffer.clear();
+        }
+
+        Ok(())
+    }
+
+    fn forward_sse_lines(
+        buffer: &mut Vec<u8>,
+        sender: &ChatCompletionStreamSender,
+    ) -> Result<(), DomainError> {
+        let mut line_start = 0_usize;
+        let mut consumed = 0_usize;
+
+        for (index, byte) in buffer.iter().enumerate() {
+            if *byte != b'\n' {
+                continue;
+            }
+
+            let mut line = &buffer[line_start..index];
+            if line.last().is_some_and(|byte| *byte == b'\r') {
+                line = &line[..line.len() - 1];
+            }
+
+            Self::forward_sse_line(line, sender)?;
+            consumed = index + 1;
+            line_start = consumed;
+        }
+
+        if consumed > 0 {
+            buffer.drain(..consumed);
+        }
+
+        Ok(())
+    }
+
+    fn forward_sse_line(
+        line: &[u8],
+        sender: &ChatCompletionStreamSender,
+    ) -> Result<(), DomainError> {
+        const DATA_PREFIX: &[u8] = b"data:";
+
+        let Some(data) = line.strip_prefix(DATA_PREFIX) else {
+            return Ok(());
+        };
+
+        let data_start = data
+            .iter()
+            .position(|byte| *byte != b' ' && *byte != b'\t')
+            .unwrap_or(data.len());
+        let payload = &data[data_start..];
+
+        if payload.is_empty() {
+            return Ok(());
+        }
+
+        if sender
+            .send(String::from_utf8_lossy(payload).to_string())
+            .is_err()
+        {
+            return Ok(());
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -169,7 +273,113 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             ChatCompletionSource::Claude => {
                 claude::generate(self, config, endpoint_path, payload).await
             }
-            ChatCompletionSource::Makersuite => makersuite::generate(self, config, payload).await,
+            ChatCompletionSource::Makersuite => {
+                makersuite::generate(self, config, endpoint_path, payload).await
+            }
+        }
+    }
+
+    async fn generate_stream(
+        &self,
+        source: ChatCompletionSource,
+        config: &ChatCompletionApiConfig,
+        endpoint_path: &str,
+        payload: &Value,
+        sender: ChatCompletionStreamSender,
+        cancel: ChatCompletionCancelReceiver,
+    ) -> Result<(), DomainError> {
+        match source {
+            ChatCompletionSource::OpenAi => {
+                openai::generate_stream(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "OpenAI",
+                    sender,
+                    cancel,
+                )
+                .await
+            }
+            ChatCompletionSource::OpenRouter => {
+                openai::generate_stream(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "OpenRouter",
+                    sender,
+                    cancel,
+                )
+                .await
+            }
+            ChatCompletionSource::Custom => {
+                openai::generate_stream(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "Custom OpenAI",
+                    sender,
+                    cancel,
+                )
+                .await
+            }
+            ChatCompletionSource::DeepSeek => {
+                openai::generate_stream(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "DeepSeek",
+                    sender,
+                    cancel,
+                )
+                .await
+            }
+            ChatCompletionSource::Moonshot => {
+                openai::generate_stream(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "Moonshot AI",
+                    sender,
+                    cancel,
+                )
+                .await
+            }
+            ChatCompletionSource::SiliconFlow => {
+                openai::generate_stream(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "SiliconFlow",
+                    sender,
+                    cancel,
+                )
+                .await
+            }
+            ChatCompletionSource::Zai => {
+                openai::generate_stream(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "Z.AI (GLM)",
+                    sender,
+                    cancel,
+                )
+                .await
+            }
+            ChatCompletionSource::Claude => {
+                claude::generate_stream(self, config, endpoint_path, payload, sender, cancel).await
+            }
+            ChatCompletionSource::Makersuite => {
+                makersuite::generate_stream(self, config, endpoint_path, payload, sender, cancel)
+                    .await
+            }
         }
     }
 }
@@ -210,6 +420,7 @@ mod tests {
     use std::collections::HashMap;
 
     use reqwest::Client;
+    use tokio::sync::mpsc;
 
     use super::HttpChatCompletionRepository;
 
@@ -257,5 +468,31 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("ok")
         );
+    }
+
+    #[test]
+    fn forward_sse_lines_extracts_data_payloads() {
+        let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
+        let mut buffer =
+            b"event: message\r\ndata: {\"chunk\":1}\n\n: ping\ndata: [DONE]\n".to_vec();
+
+        let result = HttpChatCompletionRepository::forward_sse_lines(&mut buffer, &sender);
+        assert!(result.is_ok());
+
+        assert_eq!(receiver.try_recv().ok(), Some("{\"chunk\":1}".to_string()));
+        assert_eq!(receiver.try_recv().ok(), Some("[DONE]".to_string()));
+        assert!(receiver.try_recv().is_err());
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn forward_sse_lines_keeps_partial_line_in_buffer() {
+        let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
+        let mut buffer = b"data: {\"chunk\":1}".to_vec();
+
+        let result = HttpChatCompletionRepository::forward_sse_lines(&mut buffer, &sender);
+        assert!(result.is_ok());
+        assert_eq!(receiver.try_recv().ok(), None);
+        assert_eq!(buffer, b"data: {\"chunk\":1}".to_vec());
     }
 }

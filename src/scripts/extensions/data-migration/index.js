@@ -3,6 +3,7 @@ import { t } from '../../i18n.js';
 import { download } from '../../utils.js';
 
 const MODULE_NAME = 'data-migration';
+const MIGRATED_TARGET_USER = 'default-user';
 
 function extractErrorMessage(text) {
     if (!text) {
@@ -77,10 +78,10 @@ async function onImportInputChange(event) {
     const sourceUsers = Array.isArray(result?.source_users)
         ? result.source_users.filter((value) => typeof value === 'string' && value.trim())
         : [];
-    const userSummary = sourceUsers.length > 0 ? sourceUsers.join(', ') : 'unknown';
+    const userSummary = sourceUsers.length > 0 ? sourceUsers.join(', ') : t`Unknown`;
 
     toastr.success(
-        t`Imported users: ${userSummary}. Migrated target: default-user. Reloading...`,
+        t`Imported users: ${userSummary}. Migrated target: ${MIGRATED_TARGET_USER}. Reloading...`,
         t`Data import completed`,
         { timeOut: 6000 },
     );

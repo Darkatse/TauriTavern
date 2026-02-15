@@ -2,7 +2,9 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{json, Value};
 
 use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_completion_repository::ChatCompletionApiConfig;
+use crate::domain::repositories::chat_completion_repository::{
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
+};
 
 use super::normalizers;
 use super::HttpChatCompletionRepository;
@@ -85,6 +87,7 @@ pub(super) async fn list_models(
 pub(super) async fn generate(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
     payload: &Value,
 ) -> Result<Value, DomainError> {
     let payload_object = payload.as_object().ok_or_else(|| {
@@ -101,7 +104,8 @@ pub(super) async fn generate(
     let mut body = payload_object.clone();
     body.remove("model");
 
-    let model_path = format!("{}:generateContent", normalize_gemini_model(model));
+    let method = resolve_generation_method(endpoint_path, false);
+    let model_path = format!("{}:{method}", normalize_gemini_model(model));
     let url = build_gemini_url(&config.base_url, &model_path);
 
     let request = repository
@@ -143,6 +147,70 @@ pub(super) async fn generate(
     Ok(normalizers::normalize_gemini_response(body))
 }
 
+pub(super) async fn generate_stream(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+    sender: ChatCompletionStreamSender,
+    cancel: ChatCompletionCancelReceiver,
+) -> Result<(), DomainError> {
+    let payload_object = payload.as_object().ok_or_else(|| {
+        DomainError::InvalidData("Gemini payload must be a JSON object".to_string())
+    })?;
+
+    let model = payload_object
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| DomainError::InvalidData("Gemini payload missing model".to_string()))?;
+
+    let mut body = payload_object.clone();
+    body.remove("model");
+
+    let method = resolve_generation_method(endpoint_path, true);
+    let model_path = format!("{}:{method}", normalize_gemini_model(model));
+    let url = build_gemini_url(&config.base_url, &model_path);
+
+    let request = repository
+        .client
+        .post(url)
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "text/event-stream")
+        .json(&Value::Object(body));
+
+    let request = HttpChatCompletionRepository::apply_header_if_present(
+        request,
+        "x-goog-api-key",
+        &config.api_key,
+    );
+
+    let request = if config.api_key.trim().is_empty() {
+        request.query(&[("alt", "sse")])
+    } else {
+        request.query(&[("key", config.api_key.as_str()), ("alt", "sse")])
+    };
+
+    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+
+    let response = request.send().await.map_err(|error| {
+        DomainError::InternalError(format!("Generation request failed: {error}"))
+    })?;
+
+    if !response.status().is_success() {
+        return Err(HttpChatCompletionRepository::map_error_response(
+            "Google Gemini",
+            response,
+            "Generation request failed",
+        )
+        .await);
+    }
+
+    HttpChatCompletionRepository::stream_sse_response("Google Gemini", response, sender, cancel)
+        .await
+}
+
 fn normalize_gemini_model(model: &str) -> String {
     let model = model.trim();
     if model.starts_with("models/") {
@@ -160,5 +228,23 @@ fn build_gemini_url(base_url: &str, suffix: &str) -> String {
         format!("{trimmed}/{suffix}")
     } else {
         format!("{trimmed}/{GEMINI_API_VERSION}/{suffix}")
+    }
+}
+
+fn resolve_generation_method(endpoint_path: &str, stream: bool) -> &'static str {
+    let endpoint = endpoint_path.trim().trim_matches('/');
+
+    if endpoint.eq_ignore_ascii_case("streamGenerateContent") {
+        return "streamGenerateContent";
+    }
+
+    if endpoint.eq_ignore_ascii_case("generateContent") {
+        return "generateContent";
+    }
+
+    if stream {
+        "streamGenerateContent"
+    } else {
+        "generateContent"
     }
 }

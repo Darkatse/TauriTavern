@@ -2,7 +2,9 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::Value;
 
 use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_completion_repository::ChatCompletionApiConfig;
+use crate::domain::repositories::chat_completion_repository::{
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
+};
 
 use super::HttpChatCompletionRepository;
 
@@ -74,4 +76,41 @@ pub(super) async fn generate(
     response.json::<Value>().await.map_err(|error| {
         DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
     })
+}
+
+pub(super) async fn generate_stream(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+    provider_name: &str,
+    sender: ChatCompletionStreamSender,
+    cancel: ChatCompletionCancelReceiver,
+) -> Result<(), DomainError> {
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+
+    let request = repository
+        .client
+        .post(url)
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "text/event-stream")
+        .json(payload);
+
+    let request = HttpChatCompletionRepository::apply_bearer_auth(request, &config.api_key);
+    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+
+    let response = request.send().await.map_err(|error| {
+        DomainError::InternalError(format!("Generation request failed: {error}"))
+    })?;
+
+    if !response.status().is_success() {
+        return Err(HttpChatCompletionRepository::map_error_response(
+            provider_name,
+            response,
+            "Generation request failed",
+        )
+        .await);
+    }
+
+    HttpChatCompletionRepository::stream_sse_response(provider_name, response, sender, cancel).await
 }

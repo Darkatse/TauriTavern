@@ -14,71 +14,192 @@ function getErrorMessage(error) {
     return error.message || error.toString?.() || 'Unknown error';
 }
 
-function normalizeMessageContent(content) {
-    if (typeof content === 'string') {
-        return content;
+const STREAM_FRAME_INTERVAL_MS = 10;
+
+function createStreamId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
     }
 
-    if (Array.isArray(content)) {
-        return content
-            .map((item) => {
-                if (typeof item === 'string') {
-                    return item;
-                }
-
-                if (item && typeof item === 'object') {
-                    if (typeof item.text === 'string') {
-                        return item.text;
-                    }
-
-                    if (typeof item.content === 'string') {
-                        return item.content;
-                    }
-                }
-
-                return '';
-            })
-            .join('');
-    }
-
-    if (content === null || content === undefined) {
-        return '';
-    }
-
-    return String(content);
+    const timestamp = Date.now().toString(36);
+    const random = Math.random().toString(36).slice(2, 10);
+    return `${timestamp}-${random}`;
 }
 
-function toSingleChunkSseResponse(completion) {
-    const choice = completion?.choices?.[0] || {};
-    const message = choice?.message || {};
-    const content = normalizeMessageContent(message?.content);
-    const delta = {};
+async function createChatCompletionStreamResponse(context, payload, signal) {
+    const streamId = createStreamId();
+    const eventName = `chat-completion-stream:${streamId}`;
+    const encoder = new TextEncoder();
 
-    if (content) {
-        delta.content = content;
+    const tauriEvent = window.__TAURI__?.event;
+    if (typeof tauriEvent?.listen !== 'function') {
+        throw new Error('Tauri event API is unavailable');
     }
 
-    if (Array.isArray(message?.tool_calls) && message.tool_calls.length > 0) {
-        delta.tool_calls = message.tool_calls;
-    }
+    let isClosed = false;
+    let sawDone = false;
+    let unlisten = null;
+    let flushTimer = null;
+    let abortHandler = null;
+    let controllerRef = null;
+    const pendingFrames = [];
 
-    const chunk = {
-        id: completion?.id || 'tauri-chat-completion',
-        object: 'chat.completion.chunk',
-        created: completion?.created || Math.floor(Date.now() / 1000),
-        model: completion?.model || '',
-        choices: [
-            {
-                index: 0,
-                delta,
-                finish_reason: choice?.finish_reason || (delta.tool_calls ? 'tool_calls' : 'stop'),
-            },
-        ],
+    const flushFrames = () => {
+        if (!controllerRef || pendingFrames.length === 0) {
+            return;
+        }
+
+        const framed = pendingFrames.map((data) => `data: ${data}\n\n`).join('');
+        pendingFrames.length = 0;
+        controllerRef.enqueue(encoder.encode(framed));
     };
 
-    const streamText = `data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`;
+    const scheduleFlush = () => {
+        if (flushTimer !== null || isClosed) {
+            return;
+        }
 
-    return new Response(streamText, {
+        flushTimer = setTimeout(() => {
+            flushTimer = null;
+            flushFrames();
+        }, STREAM_FRAME_INTERVAL_MS);
+    };
+
+    const closeStream = async ({ cancelUpstream = false, appendDone = false, errorMessage = '' } = {}) => {
+        if (isClosed) {
+            return;
+        }
+
+        isClosed = true;
+
+        if (flushTimer !== null) {
+            clearTimeout(flushTimer);
+            flushTimer = null;
+        }
+
+        if (errorMessage) {
+            pendingFrames.push(JSON.stringify({ error: { message: errorMessage } }));
+        }
+
+        if (appendDone && !sawDone) {
+            sawDone = true;
+            pendingFrames.push('[DONE]');
+        }
+
+        flushFrames();
+
+        if (controllerRef) {
+            try {
+                controllerRef.close();
+            } catch {
+                // stream already closed
+            }
+        }
+
+        if (typeof unlisten === 'function') {
+            try {
+                unlisten();
+            } catch {
+                // ignore listener teardown failures
+            }
+            unlisten = null;
+        }
+
+        if (signal && abortHandler) {
+            signal.removeEventListener('abort', abortHandler);
+            abortHandler = null;
+        }
+
+        if (cancelUpstream) {
+            try {
+                await context.safeInvoke('cancel_chat_completion_stream', { streamId });
+            } catch (error) {
+                console.debug('Failed to cancel chat completion stream:', error);
+            }
+        }
+    };
+
+    const onStreamEvent = (event) => {
+        if (isClosed) {
+            return;
+        }
+
+        const payload = asObject(event?.payload);
+        const eventType = String(payload.type || '');
+
+        if (eventType === 'chunk') {
+            const data = typeof payload.data === 'string' ? payload.data : '';
+            if (!data) {
+                return;
+            }
+
+            pendingFrames.push(data);
+
+            if (data === '[DONE]') {
+                sawDone = true;
+                flushFrames();
+                void closeStream();
+                return;
+            }
+
+            scheduleFlush();
+            return;
+        }
+
+        if (eventType === 'error') {
+            const message = typeof payload.message === 'string' && payload.message.trim()
+                ? payload.message
+                : 'Chat completion stream failed';
+            void closeStream({ appendDone: true, errorMessage: message });
+            return;
+        }
+
+        if (eventType === 'done') {
+            void closeStream({ appendDone: true });
+        }
+    };
+
+    const readable = new ReadableStream({
+        async start(controller) {
+            controllerRef = controller;
+
+            try {
+                unlisten = await tauriEvent.listen(eventName, onStreamEvent);
+            } catch (error) {
+                const message = getErrorMessage(error);
+                await closeStream({ appendDone: true, errorMessage: message });
+                return;
+            }
+
+            if (signal) {
+                abortHandler = () => {
+                    void closeStream({ cancelUpstream: true });
+                };
+
+                if (signal.aborted) {
+                    abortHandler();
+                    return;
+                }
+
+                signal.addEventListener('abort', abortHandler, { once: true });
+            }
+
+            try {
+                await context.safeInvoke('start_chat_completion_stream', {
+                    streamId,
+                    dto: payload,
+                });
+            } catch (error) {
+                const message = getErrorMessage(error);
+                await closeStream({ appendDone: true, errorMessage: message });
+            }
+        },
+        async cancel() {
+            await closeStream({ cancelUpstream: true });
+        },
+    });
+
+    return new Response(readable, {
         status: 200,
         headers: {
             'Content-Type': 'text/event-stream; charset=utf-8',
@@ -116,21 +237,16 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
         }
     });
 
-    router.post('/api/backends/chat-completions/generate', async ({ body }) => {
+    router.post('/api/backends/chat-completions/generate', async ({ body, init }) => {
         const payload = { ...asObject(body) };
         const wantsStream = Boolean(payload.stream);
 
-        if (wantsStream) {
-            payload.stream = false;
-        }
-
         try {
-            const completion = await context.safeInvoke('generate_chat_completion', { dto: payload });
-
             if (wantsStream) {
-                return toSingleChunkSseResponse(completion);
+                return await createChatCompletionStreamResponse(context, payload, init?.signal);
             }
 
+            const completion = await context.safeInvoke('generate_chat_completion', { dto: payload });
             return jsonResponse(completion || {});
         } catch (error) {
             console.error('Chat completion generation failed:', error);
