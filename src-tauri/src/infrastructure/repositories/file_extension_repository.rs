@@ -1,11 +1,13 @@
 use async_trait::async_trait;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tokio::fs as tokio_fs;
 use url::Url;
+use uuid::Uuid;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::extension::{
@@ -18,7 +20,7 @@ use crate::infrastructure::paths::resolve_app_data_dir;
 use crate::infrastructure::persistence::file_system::read_json_file;
 
 pub struct FileExtensionRepository {
-    app_handle: AppHandle,
+    http_client: Client,
     user_extensions_dir: PathBuf,
     global_extensions_dir: PathBuf,
     system_extensions_dir: PathBuf,
@@ -27,27 +29,33 @@ pub struct FileExtensionRepository {
 /// Built-in extensions enabled in TauriTavern.
 /// Keep this list explicit so unsupported built-ins stay disabled by default.
 const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &["regex", "code-render", "data-migration"];
+const GITHUB_API_BASE: &str = "https://api.github.com";
+const SOURCE_METADATA_FILE: &str = ".tauritavern-source.json";
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
+struct GithubRepositoryInfo {
+    default_branch: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct GithubCommit {
     sha: String,
-    commit: GithubCommitDetail,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct GithubCommitDetail {
-    message: String,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct ExtensionSourceMetadata {
+    owner: String,
+    repo: String,
+    reference: String,
+    remote_url: String,
+    installed_commit: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct GithubBranch {
-    name: String,
-    commit: GithubBranchCommit,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct GithubBranchCommit {
-    sha: String,
+#[derive(Debug)]
+struct GithubRepoLocation {
+    owner: String,
+    repo: String,
+    reference_from_url: Option<String>,
 }
 
 impl FileExtensionRepository {
@@ -70,312 +78,32 @@ impl FileExtensionRepository {
         fs::create_dir_all(&system_extensions_dir)
             .expect("Failed to create system extensions directory");
 
+        let http_client = Client::builder()
+            .user_agent("TauriTavern")
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
-            app_handle,
+            http_client,
             user_extensions_dir,
             global_extensions_dir,
             system_extensions_dir,
         }
     }
 
-    /// Extract repository owner and name from a GitHub URL
-    fn extract_repo_info(&self, url: &str) -> Result<(String, String), DomainError> {
-        let parsed_url = Url::parse(url).map_err(|e| {
-            logger::error(&format!("Failed to parse URL: {}", e));
-            DomainError::InvalidData(format!("Invalid URL: {}", e))
-        })?;
-
-        if parsed_url.host_str() != Some("github.com") {
-            return Err(DomainError::InvalidData(
-                "Only GitHub repositories are supported".to_string(),
-            ));
-        }
-
-        let path_segments: Vec<&str> = parsed_url
-            .path_segments()
-            .ok_or_else(|| DomainError::InvalidData("Invalid GitHub URL".to_string()))?
-            .collect();
-
-        if path_segments.len() < 2 {
-            return Err(DomainError::InvalidData(
-                "Invalid GitHub repository URL".to_string(),
-            ));
-        }
-
-        let owner = path_segments[0].to_string();
-        let repo = path_segments[1].to_string().replace(".git", "");
-
-        Ok((owner, repo))
-    }
-
-    /// Download a file from a URL to a local path
-    async fn download_file(&self, url: &str, path: &Path) -> Result<(), DomainError> {
-        logger::debug(&format!("Downloading file from {} to {:?}", url, path));
-
-        let client = Client::new();
-        let response = client.get(url).send().await.map_err(|e| {
-            logger::error(&format!("Failed to download file: {}", e));
-            DomainError::InternalError(format!("Failed to download file: {}", e))
-        })?;
-
-        if !response.status().is_success() {
-            return Err(DomainError::InternalError(format!(
-                "Failed to download file: HTTP {}",
-                response.status()
-            )));
-        }
-
-        let content = response.bytes().await.map_err(|e| {
-            logger::error(&format!("Failed to read response body: {}", e));
-            DomainError::InternalError(format!("Failed to read response body: {}", e))
-        })?;
-
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            tokio_fs::create_dir_all(parent).await.map_err(|e| {
-                logger::error(&format!("Failed to create parent directory: {}", e));
-                DomainError::InternalError(format!("Failed to create parent directory: {}", e))
-            })?;
-        }
-
-        // Write file
-        tokio_fs::write(path, content).await.map_err(|e| {
-            logger::error(&format!("Failed to write file: {}", e));
-            DomainError::InternalError(format!("Failed to write file: {}", e))
-        })?;
-
-        Ok(())
-    }
-
-    /// Download a GitHub repository as a zip file and extract it
-    async fn download_github_repo(
-        &self,
-        owner: &str,
-        repo: &str,
-        branch: &str,
-        destination: &Path,
-    ) -> Result<(), DomainError> {
-        tracing::info!(
-            "Downloading GitHub repository {}/{} (branch: {}) to {:?}",
-            owner,
-            repo,
-            branch,
-            destination
-        );
-
-        // Create destination directory if it doesn't exist
-        tokio_fs::create_dir_all(destination).await.map_err(|e| {
-            logger::error(&format!("Failed to create destination directory: {}", e));
-            DomainError::InternalError(format!("Failed to create destination directory: {}", e))
-        })?;
-
-        // Download zip file
-        let zip_url = format!(
-            "https://github.com/{}/{}/archive/{}.zip",
-            owner, repo, branch
-        );
-        let temp_dir = self.app_handle.path().app_cache_dir().map_err(|e| {
-            logger::error(&format!("Failed to get app cache directory: {}", e));
-            DomainError::InternalError(format!("Failed to get app cache directory: {}", e))
-        })?;
-        let zip_path = temp_dir.join(format!("{}-{}.zip", repo, branch));
-
-        self.download_file(&zip_url, &zip_path).await?;
-
-        // Extract zip file
-        let zip_file = fs::File::open(&zip_path).map_err(|e| {
-            logger::error(&format!("Failed to open zip file: {}", e));
-            DomainError::InternalError(format!("Failed to open zip file: {}", e))
-        })?;
-
-        let mut archive = zip::ZipArchive::new(zip_file).map_err(|e| {
-            logger::error(&format!("Failed to read zip archive: {}", e));
-            DomainError::InternalError(format!("Failed to read zip archive: {}", e))
-        })?;
-
-        // The top-level directory in the zip file is usually "{repo}-{branch}"
-        let prefix = format!("{}-{}", repo, branch);
-
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i).map_err(|e| {
-                logger::error(&format!("Failed to read zip entry: {}", e));
-                DomainError::InternalError(format!("Failed to read zip entry: {}", e))
-            })?;
-
-            let file_path = file.name();
-
-            // Skip the top-level directory
-            if !file_path.starts_with(&prefix) {
-                continue;
-            }
-
-            // Remove the top-level directory from the path
-            let relative_path = file_path
-                .strip_prefix(&format!("{}/", prefix))
-                .unwrap_or(file_path);
-            let output_path = destination.join(relative_path);
-
-            if file.is_dir() {
-                fs::create_dir_all(&output_path).map_err(|e| {
-                    logger::error(&format!("Failed to create directory: {}", e));
-                    DomainError::InternalError(format!("Failed to create directory: {}", e))
-                })?;
-            } else {
-                if let Some(parent) = output_path.parent() {
-                    fs::create_dir_all(parent).map_err(|e| {
-                        logger::error(&format!("Failed to create parent directory: {}", e));
-                        DomainError::InternalError(format!(
-                            "Failed to create parent directory: {}",
-                            e
-                        ))
-                    })?;
-                }
-
-                let mut output_file = fs::File::create(&output_path).map_err(|e| {
-                    logger::error(&format!("Failed to create file: {}", e));
-                    DomainError::InternalError(format!("Failed to create file: {}", e))
-                })?;
-
-                std::io::copy(&mut file, &mut output_file).map_err(|e| {
-                    logger::error(&format!("Failed to write file: {}", e));
-                    DomainError::InternalError(format!("Failed to write file: {}", e))
-                })?;
-            }
-        }
-
-        // Clean up
-        fs::remove_file(zip_path).map_err(|e| {
-            logger::error(&format!("Failed to remove temporary zip file: {}", e));
-            DomainError::InternalError(format!("Failed to remove temporary zip file: {}", e))
-        })?;
-
-        Ok(())
-    }
-
-    /// Get the latest commit hash for a GitHub repository
-    async fn get_latest_commit_hash(
-        &self,
-        owner: &str,
-        repo: &str,
-        branch: &str,
-    ) -> Result<String, DomainError> {
-        logger::debug(&format!(
-            "Getting latest commit hash for {}/{} (branch: {})",
-            owner, repo, branch
-        ));
-
-        let client = Client::new();
-        let url = format!(
-            "https://api.github.com/repos/{}/{}/commits/{}",
-            owner, repo, branch
-        );
-
-        let response = client
-            .get(&url)
-            .header("User-Agent", "TauriTavern")
-            .send()
-            .await
-            .map_err(|e| {
-                logger::error(&format!("Failed to get latest commit hash: {}", e));
-                DomainError::InternalError(format!("Failed to get latest commit hash: {}", e))
-            })?;
-
-        if !response.status().is_success() {
-            return Err(DomainError::InternalError(format!(
-                "Failed to get latest commit hash: HTTP {}",
-                response.status()
-            )));
-        }
-
-        let commit: GithubCommit = response.json().await.map_err(|e| {
-            logger::error(&format!("Failed to parse GitHub API response: {}", e));
-            DomainError::InternalError(format!("Failed to parse GitHub API response: {}", e))
-        })?;
-
-        Ok(commit.sha)
-    }
-
-    /// Get the default branch for a GitHub repository
-    async fn get_default_branch(&self, owner: &str, repo: &str) -> Result<String, DomainError> {
-        logger::debug(&format!("Getting default branch for {}/{}", owner, repo));
-
-        let client = Client::new();
-        let url = format!("https://api.github.com/repos/{}/{}/branches", owner, repo);
-
-        let response = client
-            .get(&url)
-            .header("User-Agent", "TauriTavern")
-            .send()
-            .await
-            .map_err(|e| {
-                logger::error(&format!("Failed to get repository branches: {}", e));
-                DomainError::InternalError(format!("Failed to get repository branches: {}", e))
-            })?;
-
-        if !response.status().is_success() {
-            return Err(DomainError::InternalError(format!(
-                "Failed to get repository branches: HTTP {}",
-                response.status()
-            )));
-        }
-
-        let branches: Vec<GithubBranch> = response.json().await.map_err(|e| {
-            logger::error(&format!("Failed to parse GitHub API response: {}", e));
-            DomainError::InternalError(format!("Failed to parse GitHub API response: {}", e))
-        })?;
-
-        // Try to find main or master branch
-        for branch_name in ["main", "master"] {
-            if let Some(branch) = branches.iter().find(|b| b.name == branch_name) {
-                return Ok(branch.name.clone());
-            }
-        }
-
-        // If no main or master branch, use the first branch
-        if let Some(branch) = branches.first() {
-            return Ok(branch.name.clone());
-        }
-
-        Err(DomainError::InternalError(
-            "No branches found in repository".to_string(),
-        ))
-    }
-
-    /// Check if a repository is up to date
-    async fn check_if_repo_is_up_to_date(
-        &self,
-        extension_path: &Path,
-        owner: &str,
-        repo: &str,
-        branch: &str,
-        current_commit_hash: &str,
-    ) -> Result<bool, DomainError> {
-        logger::debug(&format!(
-            "Checking if repository is up to date: {:?}",
-            extension_path
-        ));
-
-        let latest_commit_hash = self.get_latest_commit_hash(owner, repo, branch).await?;
-
-        Ok(current_commit_hash == latest_commit_hash)
-    }
-
-    /// Get the remote URL for a GitHub repository
-    fn get_remote_url(&self, owner: &str, repo: &str) -> String {
-        format!("https://github.com/{}/{}", owner, repo)
-    }
-
-    /// Get the extension path based on name and type
-    fn get_extension_path(&self, extension_name: &str, global: bool) -> PathBuf {
+    fn extension_base_dir(&self, global: bool) -> &Path {
         if global {
-            self.global_extensions_dir.join(extension_name)
+            &self.global_extensions_dir
         } else {
-            self.user_extensions_dir.join(extension_name)
+            &self.user_extensions_dir
         }
     }
 
-    /// Sanitize a filename
-    fn sanitize_filename(&self, filename: &str) -> String {
+    fn source_metadata_path(extension_path: &Path) -> PathBuf {
+        extension_path.join(SOURCE_METADATA_FILE)
+    }
+
+    fn sanitize_filename(filename: &str) -> String {
         filename
             .chars()
             .map(|c| match c {
@@ -383,6 +111,595 @@ impl FileExtensionRepository {
                 _ => c,
             })
             .collect()
+    }
+
+    fn normalize_extension_name(&self, extension_name: &str) -> Result<String, DomainError> {
+        let normalized = extension_name.trim().replace('\\', "/");
+        let normalized = normalized.trim_matches('/');
+        let normalized = normalized
+            .strip_prefix("third-party/")
+            .unwrap_or(normalized);
+
+        if normalized.is_empty() || normalized.contains("..") {
+            return Err(DomainError::InvalidData(format!(
+                "Invalid extension name: {}",
+                extension_name
+            )));
+        }
+
+        let sanitized = Self::sanitize_filename(normalized);
+        if sanitized.trim().is_empty() {
+            return Err(DomainError::InvalidData(format!(
+                "Invalid extension name: {}",
+                extension_name
+            )));
+        }
+
+        Ok(sanitized)
+    }
+
+    fn resolve_extension_path(
+        &self,
+        extension_name: &str,
+        global: bool,
+    ) -> Result<PathBuf, DomainError> {
+        let normalized_name = self.normalize_extension_name(extension_name)?;
+        Ok(self.extension_base_dir(global).join(normalized_name))
+    }
+
+    fn parse_github_repo_url(&self, url: &str) -> Result<GithubRepoLocation, DomainError> {
+        let parsed_url = Url::parse(url).map_err(|error| {
+            DomainError::InvalidData(format!("Invalid GitHub URL '{}': {}", url, error))
+        })?;
+
+        let host = parsed_url
+            .host_str()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        if host != "github.com" && host != "www.github.com" {
+            return Err(DomainError::InvalidData(
+                "Only GitHub repositories are supported".to_string(),
+            ));
+        }
+
+        let path_segments = parsed_url
+            .path_segments()
+            .ok_or_else(|| DomainError::InvalidData("Invalid GitHub URL path".to_string()))?
+            .filter(|segment| !segment.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<String>>();
+
+        if path_segments.len() < 2 {
+            return Err(DomainError::InvalidData(
+                "GitHub URL must include owner and repository".to_string(),
+            ));
+        }
+
+        let owner = path_segments[0].trim().to_string();
+        let repo = path_segments[1].trim_end_matches(".git").trim().to_string();
+
+        if owner.is_empty() || repo.is_empty() {
+            return Err(DomainError::InvalidData(
+                "GitHub owner/repository cannot be empty".to_string(),
+            ));
+        }
+
+        let reference_from_url = if path_segments.len() >= 4 && path_segments[2] == "tree" {
+            let reference = path_segments[3..].join("/");
+            if reference.is_empty() {
+                None
+            } else {
+                Some(reference)
+            }
+        } else {
+            parsed_url
+                .query_pairs()
+                .find(|(key, _)| key == "ref")
+                .map(|(_, value)| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        };
+
+        Ok(GithubRepoLocation {
+            owner,
+            repo,
+            reference_from_url,
+        })
+    }
+
+    fn normalize_requested_reference(reference: Option<String>) -> Option<String> {
+        reference
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    fn build_github_api_url(&self, segments: &[&str]) -> Result<Url, DomainError> {
+        let mut url = Url::parse(GITHUB_API_BASE).map_err(|error| {
+            DomainError::InternalError(format!("Failed to parse GitHub API base URL: {}", error))
+        })?;
+
+        {
+            let mut path_segments = url.path_segments_mut().map_err(|_| {
+                DomainError::InternalError("Failed to mutate GitHub API URL".to_string())
+            })?;
+            path_segments.clear();
+            for segment in segments {
+                path_segments.push(segment);
+            }
+        }
+
+        Ok(url)
+    }
+
+    async fn github_get_json<T>(&self, segments: &[&str]) -> Result<T, DomainError>
+    where
+        T: DeserializeOwned,
+    {
+        let url = self.build_github_api_url(segments)?;
+
+        let response = self
+            .http_client
+            .get(url.clone())
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+            .map_err(|error| {
+                DomainError::InternalError(format!("GitHub request failed: {}", error))
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            let snippet = body.trim();
+            let suffix = if snippet.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", snippet)
+            };
+            return Err(DomainError::InternalError(format!(
+                "GitHub request failed for '{}': HTTP {}{}",
+                url, status, suffix
+            )));
+        }
+
+        response.json::<T>().await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to parse GitHub response for '{}': {}",
+                url, error
+            ))
+        })
+    }
+
+    async fn github_get_default_branch(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<String, DomainError> {
+        let info: GithubRepositoryInfo = self.github_get_json(&["repos", owner, repo]).await?;
+        if info.default_branch.trim().is_empty() {
+            return Err(DomainError::InternalError(format!(
+                "Repository '{}/{}' has no default branch",
+                owner, repo
+            )));
+        }
+
+        Ok(info.default_branch)
+    }
+
+    async fn github_get_latest_commit_hash(
+        &self,
+        owner: &str,
+        repo: &str,
+        reference: &str,
+    ) -> Result<String, DomainError> {
+        let commit: GithubCommit = self
+            .github_get_json(&["repos", owner, repo, "commits", reference])
+            .await?;
+
+        if commit.sha.trim().is_empty() {
+            return Err(DomainError::InternalError(format!(
+                "Repository '{}/{}' returned an empty commit SHA for reference '{}'",
+                owner, repo, reference
+            )));
+        }
+
+        Ok(commit.sha)
+    }
+
+    async fn create_temp_directory(
+        &self,
+        parent: &Path,
+        prefix: &str,
+    ) -> Result<PathBuf, DomainError> {
+        for _ in 0..8 {
+            let candidate = parent.join(format!(".{}-{}", prefix, Uuid::new_v4()));
+            if !candidate.exists() {
+                tokio_fs::create_dir_all(&candidate)
+                    .await
+                    .map_err(|error| {
+                        DomainError::InternalError(format!(
+                            "Failed to create temporary directory '{}': {}",
+                            candidate.display(),
+                            error
+                        ))
+                    })?;
+                return Ok(candidate);
+            }
+        }
+
+        Err(DomainError::InternalError(
+            "Failed to allocate temporary directory for extension operation".to_string(),
+        ))
+    }
+
+    async fn cleanup_temp_directory(path: &Path) {
+        if path.exists() {
+            let _ = tokio_fs::remove_dir_all(path).await;
+        }
+    }
+
+    fn strip_archive_root(path: &Path) -> Option<PathBuf> {
+        let mut components = path.components();
+        components.next()?;
+        let remainder = components.as_path();
+
+        if remainder.as_os_str().is_empty() {
+            None
+        } else {
+            Some(remainder.to_path_buf())
+        }
+    }
+
+    fn extract_zip_bytes(&self, bytes: &[u8], destination: &Path) -> Result<(), DomainError> {
+        let reader = Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(reader).map_err(|error| {
+            DomainError::InternalError(format!("Failed to read downloaded ZIP archive: {}", error))
+        })?;
+
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).map_err(|error| {
+                DomainError::InternalError(format!("Failed to read ZIP entry: {}", error))
+            })?;
+
+            // Skip entries that are not safely enclosed paths.
+            let enclosed_path = match entry.enclosed_name() {
+                Some(path) => path.to_path_buf(),
+                None => continue,
+            };
+
+            // GitHub archives always wrap files in a top-level root folder.
+            let relative_path = match Self::strip_archive_root(&enclosed_path) {
+                Some(path) => path,
+                None => continue,
+            };
+
+            let output_path = destination.join(relative_path);
+
+            if entry.is_dir() {
+                fs::create_dir_all(&output_path).map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to create directory '{}': {}",
+                        output_path.display(),
+                        error
+                    ))
+                })?;
+                continue;
+            }
+
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to create directory '{}': {}",
+                        parent.display(),
+                        error
+                    ))
+                })?;
+            }
+
+            let mut output_file = fs::File::create(&output_path).map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to create file '{}': {}",
+                    output_path.display(),
+                    error
+                ))
+            })?;
+
+            std::io::copy(&mut entry, &mut output_file).map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to write file '{}': {}",
+                    output_path.display(),
+                    error
+                ))
+            })?;
+        }
+
+        Ok(())
+    }
+
+    async fn download_and_extract_snapshot(
+        &self,
+        owner: &str,
+        repo: &str,
+        commit_hash: &str,
+        destination: &Path,
+    ) -> Result<(), DomainError> {
+        let url = self.build_github_api_url(&["repos", owner, repo, "zipball", commit_hash])?;
+
+        let response = self
+            .http_client
+            .get(url.clone())
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to download extension archive: {}",
+                    error
+                ))
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            let snippet = body.trim();
+            let suffix = if snippet.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", snippet)
+            };
+            return Err(DomainError::InternalError(format!(
+                "Failed to download extension archive from '{}': HTTP {}{}",
+                url, status, suffix
+            )));
+        }
+
+        let archive_bytes = response.bytes().await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to read extension archive response: {}",
+                error
+            ))
+        })?;
+
+        self.extract_zip_bytes(archive_bytes.as_ref(), destination)
+    }
+
+    async fn read_source_metadata(
+        &self,
+        extension_path: &Path,
+    ) -> Result<Option<ExtensionSourceMetadata>, DomainError> {
+        let metadata_path = Self::source_metadata_path(extension_path);
+        if !metadata_path.exists() {
+            return Ok(None);
+        }
+
+        let metadata: ExtensionSourceMetadata = read_json_file(&metadata_path).await?;
+        Ok(Some(metadata))
+    }
+
+    async fn write_source_metadata(
+        &self,
+        extension_path: &Path,
+        metadata: &ExtensionSourceMetadata,
+    ) -> Result<(), DomainError> {
+        let metadata_path = Self::source_metadata_path(extension_path);
+        let serialized = serde_json::to_string_pretty(metadata).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to serialize extension source metadata for '{}': {}",
+                extension_path.display(),
+                error
+            ))
+        })?;
+
+        tokio_fs::write(&metadata_path, serialized)
+            .await
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to write extension source metadata '{}': {}",
+                    metadata_path.display(),
+                    error
+                ))
+            })
+    }
+
+    fn parse_origin_remote_url(config: &str) -> Option<String> {
+        let mut in_origin = false;
+
+        for line in config.lines() {
+            let trimmed = line.trim();
+
+            if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                in_origin = trimmed == "[remote \"origin\"]";
+                continue;
+            }
+
+            if !in_origin {
+                continue;
+            }
+
+            if let Some((key, value)) = trimmed.split_once('=') {
+                if key.trim() == "url" {
+                    return Some(value.trim().to_string());
+                }
+            }
+        }
+
+        None
+    }
+
+    fn normalize_git_remote_url(remote_url: &str) -> String {
+        let trimmed = remote_url.trim();
+
+        if let Some(path) = trimmed.strip_prefix("git@github.com:") {
+            return format!("https://github.com/{}", path);
+        }
+
+        if let Some(path) = trimmed.strip_prefix("ssh://git@github.com/") {
+            return format!("https://github.com/{}", path);
+        }
+
+        trimmed.to_string()
+    }
+
+    fn resolve_git_head_commit(git_dir: &Path, head_content: &str) -> Option<String> {
+        let trimmed = head_content.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if let Some(reference) = trimmed.strip_prefix("ref: ") {
+            let ref_name = reference.trim();
+            if ref_name.is_empty() {
+                return None;
+            }
+
+            let ref_path = git_dir.join(ref_name);
+            if let Ok(commit) = fs::read_to_string(ref_path) {
+                let commit = commit.trim();
+                if !commit.is_empty() {
+                    return Some(commit.to_string());
+                }
+            }
+
+            let packed_refs_path = git_dir.join("packed-refs");
+            if let Ok(packed_refs) = fs::read_to_string(packed_refs_path) {
+                for line in packed_refs.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
+                        continue;
+                    }
+
+                    let mut parts = line.split_whitespace();
+                    let Some(commit) = parts.next() else {
+                        continue;
+                    };
+                    let Some(name) = parts.next() else {
+                        continue;
+                    };
+
+                    if name == ref_name {
+                        return Some(commit.to_string());
+                    }
+                }
+            }
+
+            return None;
+        }
+
+        Some(trimmed.to_string())
+    }
+
+    fn infer_source_metadata_from_git(
+        &self,
+        extension_path: &Path,
+    ) -> Option<ExtensionSourceMetadata> {
+        let git_dir = extension_path.join(".git");
+        if !git_dir.is_dir() {
+            return None;
+        }
+
+        let git_config = fs::read_to_string(git_dir.join("config")).ok()?;
+        let remote_url = Self::parse_origin_remote_url(&git_config)?;
+        let normalized_remote_url = Self::normalize_git_remote_url(&remote_url);
+        let repo = self.parse_github_repo_url(&normalized_remote_url).ok()?;
+
+        let head_content = fs::read_to_string(git_dir.join("HEAD")).ok()?;
+        let installed_commit = Self::resolve_git_head_commit(&git_dir, &head_content)?;
+        let reference = if let Some(head_ref) = head_content.trim().strip_prefix("ref: ") {
+            head_ref
+                .trim()
+                .strip_prefix("refs/heads/")
+                .unwrap_or(head_ref.trim())
+                .to_string()
+        } else {
+            installed_commit.clone()
+        };
+
+        if reference.trim().is_empty() {
+            return None;
+        }
+
+        Some(ExtensionSourceMetadata {
+            owner: repo.owner.clone(),
+            repo: repo.repo.clone(),
+            reference,
+            remote_url: format!("https://github.com/{}/{}", repo.owner, repo.repo),
+            installed_commit,
+        })
+    }
+
+    async fn resolve_source_metadata(
+        &self,
+        extension_path: &Path,
+    ) -> Result<Option<ExtensionSourceMetadata>, DomainError> {
+        if let Some(metadata) = self.read_source_metadata(extension_path).await? {
+            return Ok(Some(metadata));
+        }
+
+        Ok(self.infer_source_metadata_from_git(extension_path))
+    }
+
+    async fn required_manifest(
+        &self,
+        extension_path: &Path,
+    ) -> Result<ExtensionManifest, DomainError> {
+        match self.get_manifest(extension_path).await? {
+            Some(manifest) => Ok(manifest),
+            None => Err(DomainError::InvalidData(
+                "Extension manifest not found".to_string(),
+            )),
+        }
+    }
+
+    fn short_commit_hash(commit_hash: &str) -> String {
+        commit_hash.chars().take(7).collect()
+    }
+
+    fn replace_directory(&self, source: &Path, destination: &Path) -> Result<(), DomainError> {
+        let destination_name = destination
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| "extension".to_string());
+        let backup_path =
+            destination.with_file_name(format!(".backup-{}-{}", destination_name, Uuid::new_v4()));
+
+        fs::rename(destination, &backup_path).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to move existing extension '{}' to temporary backup '{}': {}",
+                destination.display(),
+                backup_path.display(),
+                error
+            ))
+        })?;
+
+        if let Err(error) = fs::rename(source, destination) {
+            let _ = fs::rename(&backup_path, destination);
+            return Err(DomainError::InternalError(format!(
+                "Failed to activate updated extension '{}': {}",
+                destination.display(),
+                error
+            )));
+        }
+
+        if let Err(error) = fs::remove_dir_all(&backup_path) {
+            logger::warn(&format!(
+                "Failed to remove extension backup directory '{}': {}",
+                backup_path.display(),
+                error
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn resolve_move_dir<'a>(&'a self, location: &str) -> Result<&'a Path, DomainError> {
+        match location {
+            "global" => Ok(&self.global_extensions_dir),
+            "local" => Ok(&self.user_extensions_dir),
+            _ => Err(DomainError::InvalidData(format!(
+                "Invalid extension location: {}",
+                location
+            ))),
+        }
     }
 }
 
@@ -412,82 +729,101 @@ impl ExtensionRepository for FileExtensionRepository {
 
         // Get user extensions
         if self.user_extensions_dir.exists() {
-            let entries = fs::read_dir(&self.user_extensions_dir).map_err(|e| {
-                logger::error(&format!("Failed to read user extensions directory: {}", e));
+            let entries = fs::read_dir(&self.user_extensions_dir).map_err(|error| {
                 DomainError::InternalError(format!(
-                    "Failed to read user extensions directory: {}",
-                    e
+                    "Failed to read local extensions directory '{}': {}",
+                    self.user_extensions_dir.display(),
+                    error
                 ))
             })?;
 
             for entry in entries {
-                let entry = entry.map_err(|e| {
-                    logger::error(&format!("Failed to read directory entry: {}", e));
-                    DomainError::InternalError(format!("Failed to read directory entry: {}", e))
+                let entry = entry.map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to read local extension directory entry: {}",
+                        error
+                    ))
                 })?;
 
                 let path = entry.path();
-                if path.is_dir() {
-                    let name = path.file_name().unwrap().to_string_lossy().to_string();
-                    let manifest = self.get_manifest(&path).await.ok().flatten();
-
-                    extensions.push(Extension {
-                        name: format!("third-party/{}", name),
-                        extension_type: ExtensionType::Local,
-                        manifest,
-                        path,
-                        remote_url: None,
-                        commit_hash: None,
-                        branch_name: None,
-                        is_up_to_date: None,
-                    });
+                if !path.is_dir() {
+                    continue;
                 }
+
+                let name = match path.file_name() {
+                    Some(value) => value.to_string_lossy().to_string(),
+                    None => continue,
+                };
+
+                let manifest = self.get_manifest(&path).await.ok().flatten();
+                let source = self.read_source_metadata(&path).await.ok().flatten();
+
+                extensions.push(Extension {
+                    name: format!("third-party/{}", name),
+                    extension_type: ExtensionType::Local,
+                    manifest,
+                    path,
+                    remote_url: source.as_ref().map(|metadata| metadata.remote_url.clone()),
+                    commit_hash: source
+                        .as_ref()
+                        .map(|metadata| metadata.installed_commit.clone()),
+                    branch_name: source.as_ref().map(|metadata| metadata.reference.clone()),
+                    is_up_to_date: None,
+                });
             }
         }
 
         // Get global extensions
         if self.global_extensions_dir.exists() {
-            let entries = fs::read_dir(&self.global_extensions_dir).map_err(|e| {
-                logger::error(&format!(
-                    "Failed to read global extensions directory: {}",
-                    e
-                ));
+            let entries = fs::read_dir(&self.global_extensions_dir).map_err(|error| {
                 DomainError::InternalError(format!(
-                    "Failed to read global extensions directory: {}",
-                    e
+                    "Failed to read global extensions directory '{}': {}",
+                    self.global_extensions_dir.display(),
+                    error
                 ))
             })?;
 
             for entry in entries {
-                let entry = entry.map_err(|e| {
-                    logger::error(&format!("Failed to read directory entry: {}", e));
-                    DomainError::InternalError(format!("Failed to read directory entry: {}", e))
+                let entry = entry.map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to read global extension directory entry: {}",
+                        error
+                    ))
                 })?;
 
                 let path = entry.path();
-                if path.is_dir() {
-                    let name = path.file_name().unwrap().to_string_lossy().to_string();
-                    let manifest = self.get_manifest(&path).await.ok().flatten();
-
-                    // Skip if the extension is already in the user directory
-                    if extensions
-                        .iter()
-                        .any(|e| e.name == format!("third-party/{}", name))
-                    {
-                        continue;
-                    }
-
-                    extensions.push(Extension {
-                        name: format!("third-party/{}", name),
-                        extension_type: ExtensionType::Global,
-                        manifest,
-                        path,
-                        remote_url: None,
-                        commit_hash: None,
-                        branch_name: None,
-                        is_up_to_date: None,
-                    });
+                if !path.is_dir() {
+                    continue;
                 }
+
+                let name = match path.file_name() {
+                    Some(value) => value.to_string_lossy().to_string(),
+                    None => continue,
+                };
+
+                // In case of conflict, the extension in user scope takes precedence.
+                if extensions
+                    .iter()
+                    .any(|extension| extension.name == format!("third-party/{}", name))
+                {
+                    continue;
+                }
+
+                let manifest = self.get_manifest(&path).await.ok().flatten();
+                let source = self.read_source_metadata(&path).await.ok().flatten();
+
+                extensions.push(Extension {
+                    name: format!("third-party/{}", name),
+                    extension_type: ExtensionType::Global,
+                    manifest,
+                    path,
+                    remote_url: source.as_ref().map(|metadata| metadata.remote_url.clone()),
+                    commit_hash: source
+                        .as_ref()
+                        .map(|metadata| metadata.installed_commit.clone()),
+                    branch_name: source.as_ref().map(|metadata| metadata.reference.clone()),
+                    is_up_to_date: None,
+                });
             }
         }
 
@@ -500,7 +836,6 @@ impl ExtensionRepository for FileExtensionRepository {
         extension_path: &Path,
     ) -> Result<Option<ExtensionManifest>, DomainError> {
         let manifest_path = extension_path.join("manifest.json");
-
         if !manifest_path.exists() {
             return Ok(None);
         }
@@ -513,64 +848,75 @@ impl ExtensionRepository for FileExtensionRepository {
         &self,
         url: &str,
         global: bool,
+        branch: Option<String>,
     ) -> Result<ExtensionInstallResult, DomainError> {
         tracing::info!("Installing extension from {}", url);
 
-        // Extract repository owner and name
-        let (owner, repo) = self.extract_repo_info(url)?;
+        let repo = self.parse_github_repo_url(url)?;
+        let reference = Self::normalize_requested_reference(branch)
+            .or(repo.reference_from_url.clone())
+            .unwrap_or(
+                self.github_get_default_branch(&repo.owner, &repo.repo)
+                    .await?,
+            );
+        let latest_commit = self
+            .github_get_latest_commit_hash(&repo.owner, &repo.repo, &reference)
+            .await?;
 
-        // Get the base directory
-        let base_dir = if global {
-            &self.global_extensions_dir
-        } else {
-            &self.user_extensions_dir
-        };
+        let base_dir = self.extension_base_dir(global);
+        let extension_folder_name = Self::sanitize_filename(&repo.repo);
+        let extension_path = base_dir.join(&extension_folder_name);
 
-        // Sanitize repository name
-        let sanitized_repo = self.sanitize_filename(&repo);
-        let extension_path = base_dir.join(&sanitized_repo);
-
-        // Check if the extension already exists
         if extension_path.exists() {
             return Err(DomainError::InvalidData(format!(
-                "Extension already exists at {:?}",
-                extension_path
+                "Extension already exists at '{}'",
+                extension_path.display()
             )));
         }
 
-        // Get the default branch
-        let branch = self.get_default_branch(&owner, &repo).await?;
-
-        // Download the repository
-        self.download_github_repo(&owner, &repo, &branch, &extension_path)
+        let staging_dir = self
+            .create_temp_directory(base_dir, "extension-install")
             .await?;
+        if let Err(error) = self
+            .download_and_extract_snapshot(&repo.owner, &repo.repo, &latest_commit, &staging_dir)
+            .await
+        {
+            Self::cleanup_temp_directory(&staging_dir).await;
+            return Err(error);
+        }
 
-        // Get the manifest
-        let manifest = match self.get_manifest(&extension_path).await? {
-            Some(manifest) => manifest,
-            None => {
-                // Clean up if manifest is not found
-                tokio_fs::remove_dir_all(&extension_path)
-                    .await
-                    .map_err(|e| {
-                        logger::error(&format!("Failed to remove extension directory: {}", e));
-                        DomainError::InternalError(format!(
-                            "Failed to remove extension directory: {}",
-                            e
-                        ))
-                    })?;
-
-                return Err(DomainError::InvalidData(
-                    "Extension manifest not found".to_string(),
-                ));
+        let manifest = match self.required_manifest(&staging_dir).await {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                Self::cleanup_temp_directory(&staging_dir).await;
+                return Err(error);
             }
         };
 
+        fs::rename(&staging_dir, &extension_path).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to finalize extension installation into '{}': {}",
+                extension_path.display(),
+                error
+            ))
+        })?;
+
+        let source_metadata = ExtensionSourceMetadata {
+            owner: repo.owner.clone(),
+            repo: repo.repo.clone(),
+            reference: reference.clone(),
+            remote_url: format!("https://github.com/{}/{}", repo.owner, repo.repo),
+            installed_commit: latest_commit.clone(),
+        };
+        self.write_source_metadata(&extension_path, &source_metadata)
+            .await?;
+
         tracing::info!(
-            "Extension installed: {} v{} by {}",
+            "Extension installed: {} v{} by {} ({})",
             manifest.display_name,
             manifest.version,
-            manifest.author
+            manifest.author,
+            extension_path.display()
         );
 
         Ok(ExtensionInstallResult {
@@ -588,67 +934,74 @@ impl ExtensionRepository for FileExtensionRepository {
     ) -> Result<ExtensionUpdateResult, DomainError> {
         tracing::info!("Updating extension: {}", extension_name);
 
-        // Get the extension path
-        let extension_path = self.get_extension_path(extension_name, global);
-
+        let extension_path = self.resolve_extension_path(extension_name, global)?;
         if !extension_path.exists() {
             return Err(DomainError::NotFound(format!(
-                "Extension not found at {:?}",
-                extension_path
+                "Extension not found at '{}'",
+                extension_path.display()
             )));
         }
 
-        // Try to find a GitHub URL in the extension directory
-        // For now, we'll assume the extension was installed from GitHub
-        // and the repository name is the same as the extension name
-        let (owner, repo) = match extension_name.split('/').collect::<Vec<_>>().as_slice() {
-            [org, name] => (org.to_string(), name.to_string()),
-            _ => {
-                // Try to extract from manifest
-                if let Some(manifest) = self.get_manifest(&extension_path).await? {
-                    if let Some(author) = manifest.author.split(' ').next() {
-                        (author.to_string(), extension_name.to_string())
-                    } else {
-                        return Err(DomainError::InvalidData(
-                            "Could not determine repository owner and name".to_string(),
-                        ));
-                    }
-                } else {
-                    return Err(DomainError::InvalidData(
-                        "Could not determine repository owner and name".to_string(),
-                    ));
-                }
-            }
-        };
+        let mut source = self
+            .resolve_source_metadata(&extension_path)
+            .await?
+            .ok_or_else(|| {
+                DomainError::InvalidData(
+                    "Extension source metadata is missing. Reinstall this extension to enable updates."
+                        .to_string(),
+                )
+            })?;
 
-        // Get the default branch
-        let branch = self.get_default_branch(&owner, &repo).await?;
-
-        // Get the current commit hash
-        let current_commit_hash = self.get_latest_commit_hash(&owner, &repo, &branch).await?;
-        let short_commit_hash = current_commit_hash[..7].to_string();
-
-        // Check if the repository is up to date
-        let is_up_to_date = true; // We're always up to date after an update
-
-        // Get the remote URL
-        let remote_url = self.get_remote_url(&owner, &repo);
-
-        // Download the repository
-        self.download_github_repo(&owner, &repo, &branch, &extension_path)
+        let latest_commit = self
+            .github_get_latest_commit_hash(&source.owner, &source.repo, &source.reference)
             .await?;
+        let is_up_to_date = source.installed_commit == latest_commit;
 
-        tracing::info!(
-            "Extension updated: {} to commit {}",
-            extension_name,
-            short_commit_hash
-        );
+        if !is_up_to_date {
+            let base_dir = extension_path.parent().ok_or_else(|| {
+                DomainError::InternalError(format!(
+                    "Failed to resolve parent directory for '{}'",
+                    extension_path.display()
+                ))
+            })?;
+            let staging_dir = self
+                .create_temp_directory(base_dir, "extension-update")
+                .await?;
+
+            if let Err(error) = self
+                .download_and_extract_snapshot(
+                    &source.owner,
+                    &source.repo,
+                    &latest_commit,
+                    &staging_dir,
+                )
+                .await
+            {
+                Self::cleanup_temp_directory(&staging_dir).await;
+                return Err(error);
+            }
+
+            if let Err(error) = self.required_manifest(&staging_dir).await {
+                Self::cleanup_temp_directory(&staging_dir).await;
+                return Err(error);
+            }
+
+            if let Err(error) = self.replace_directory(&staging_dir, &extension_path) {
+                Self::cleanup_temp_directory(&staging_dir).await;
+                return Err(error);
+            }
+
+            source.installed_commit = latest_commit.clone();
+            self.write_source_metadata(&extension_path, &source).await?;
+        }
+
+        let short_commit_hash = Self::short_commit_hash(&latest_commit);
 
         Ok(ExtensionUpdateResult {
             short_commit_hash,
             extension_path: extension_path.to_string_lossy().to_string(),
             is_up_to_date,
-            remote_url,
+            remote_url: source.remote_url,
         })
     }
 
@@ -659,22 +1012,22 @@ impl ExtensionRepository for FileExtensionRepository {
     ) -> Result<(), DomainError> {
         tracing::info!("Deleting extension: {}", extension_name);
 
-        // Get the extension path
-        let extension_path = self.get_extension_path(extension_name, global);
-
+        let extension_path = self.resolve_extension_path(extension_name, global)?;
         if !extension_path.exists() {
             return Err(DomainError::NotFound(format!(
-                "Extension not found at {:?}",
-                extension_path
+                "Extension not found at '{}'",
+                extension_path.display()
             )));
         }
 
-        // Delete the extension directory
         tokio_fs::remove_dir_all(&extension_path)
             .await
-            .map_err(|e| {
-                tracing::error!("Failed to remove extension directory: {}", e);
-                DomainError::InternalError(format!("Failed to remove extension directory: {}", e))
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to delete extension directory '{}': {}",
+                    extension_path.display(),
+                    error
+                ))
             })?;
 
         tracing::info!("Extension deleted: {}", extension_name);
@@ -688,69 +1041,38 @@ impl ExtensionRepository for FileExtensionRepository {
     ) -> Result<ExtensionVersion, DomainError> {
         tracing::info!("Getting extension version: {}", extension_name);
 
-        // Get the extension path
-        let extension_path = self.get_extension_path(extension_name, global);
-
+        let extension_path = self.resolve_extension_path(extension_name, global)?;
         if !extension_path.exists() {
             return Err(DomainError::NotFound(format!(
-                "Extension not found at {:?}",
-                extension_path
+                "Extension not found at '{}'",
+                extension_path.display()
             )));
         }
 
-        // Try to find a GitHub URL in the extension directory
-        // For now, we'll assume the extension was installed from GitHub
-        // and the repository name is the same as the extension name
-        let (owner, repo) = match extension_name.split('/').collect::<Vec<_>>().as_slice() {
-            [org, name] => (org.to_string(), name.to_string()),
-            _ => {
-                // Try to extract from manifest
-                if let Some(manifest) = self.get_manifest(&extension_path).await? {
-                    if let Some(author) = manifest.author.split(' ').next() {
-                        (author.to_string(), extension_name.to_string())
-                    } else {
-                        return Err(DomainError::InvalidData(
-                            "Could not determine repository owner and name".to_string(),
-                        ));
-                    }
-                } else {
-                    return Err(DomainError::InvalidData(
-                        "Could not determine repository owner and name".to_string(),
-                    ));
-                }
+        let source = match self.resolve_source_metadata(&extension_path).await? {
+            Some(source) => source,
+            None => {
+                // Keep behavior close to upstream: for non-managed directories,
+                // version endpoint returns an empty Git state instead of failing.
+                return Ok(ExtensionVersion {
+                    current_branch_name: String::new(),
+                    current_commit_hash: String::new(),
+                    is_up_to_date: true,
+                    remote_url: String::new(),
+                });
             }
         };
 
-        // Get the default branch
-        let branch = self.get_default_branch(&owner, &repo).await?;
-
-        // Get the current commit hash
-        let current_commit_hash = self.get_latest_commit_hash(&owner, &repo, &branch).await?;
-
-        // Check if the repository is up to date
-        let is_up_to_date = self
-            .check_if_repo_is_up_to_date(
-                &extension_path,
-                &owner,
-                &repo,
-                &branch,
-                &current_commit_hash,
-            )
+        let latest_commit = self
+            .github_get_latest_commit_hash(&source.owner, &source.repo, &source.reference)
             .await?;
-
-        // Get the remote URL
-        let remote_url = self.get_remote_url(&owner, &repo);
-
-        logger::debug(&format!(
-            "Extension version: {} (branch: {}, commit: {}, up to date: {})",
-            extension_name, branch, current_commit_hash, is_up_to_date
-        ));
+        let is_up_to_date = source.installed_commit == latest_commit;
 
         Ok(ExtensionVersion {
-            current_branch_name: branch,
-            current_commit_hash,
+            current_branch_name: source.reference,
+            current_commit_hash: source.installed_commit,
             is_up_to_date,
-            remote_url,
+            remote_url: source.remote_url,
         })
     }
 
@@ -767,85 +1089,72 @@ impl ExtensionRepository for FileExtensionRepository {
             destination
         );
 
-        // Get the source and destination directories
-        let source_dir = match source {
-            "global" => &self.global_extensions_dir,
-            "local" => &self.user_extensions_dir,
-            _ => {
-                return Err(DomainError::InvalidData(format!(
-                    "Invalid source: {}",
-                    source
-                )))
-            }
-        };
-
-        let destination_dir = match destination {
-            "global" => &self.global_extensions_dir,
-            "local" => &self.user_extensions_dir,
-            _ => {
-                return Err(DomainError::InvalidData(format!(
-                    "Invalid destination: {}",
-                    destination
-                )))
-            }
-        };
-
-        // Get the source and destination paths
-        let source_path = source_dir.join(extension_name);
-        let destination_path = destination_dir.join(extension_name);
-
-        if !source_path.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Extension not found at {:?}",
-                source_path
-            )));
-        }
-
-        if destination_path.exists() {
-            return Err(DomainError::InvalidData(format!(
-                "Destination already exists at {:?}",
-                destination_path
-            )));
-        }
-
         if source == destination {
             return Err(DomainError::InvalidData(
                 "Source and destination are the same".to_string(),
             ));
         }
 
-        // Copy the extension directory
-        copy_dir_all(&source_path, &destination_path).map_err(|e| {
-            logger::error(&format!("Failed to copy extension directory: {}", e));
-            DomainError::InternalError(format!("Failed to copy extension directory: {}", e))
+        let extension_folder_name = self.normalize_extension_name(extension_name)?;
+        let source_dir = self.resolve_move_dir(source)?;
+        let destination_dir = self.resolve_move_dir(destination)?;
+
+        let source_path = source_dir.join(&extension_folder_name);
+        let destination_path = destination_dir.join(&extension_folder_name);
+
+        if !source_path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Source extension does not exist at '{}'",
+                source_path.display()
+            )));
+        }
+
+        if destination_path.exists() {
+            return Err(DomainError::InvalidData(format!(
+                "Destination extension already exists at '{}'",
+                destination_path.display()
+            )));
+        }
+
+        copy_dir_all(&source_path, &destination_path).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to copy extension from '{}' to '{}': {}",
+                source_path.display(),
+                destination_path.display(),
+                error
+            ))
         })?;
 
-        // Delete the source directory
-        tokio_fs::remove_dir_all(&source_path).await.map_err(|e| {
-            logger::error(&format!("Failed to remove source directory: {}", e));
-            DomainError::InternalError(format!("Failed to remove source directory: {}", e))
-        })?;
+        tokio_fs::remove_dir_all(&source_path)
+            .await
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to delete old extension location '{}': {}",
+                    source_path.display(),
+                    error
+                ))
+            })?;
 
         tracing::info!(
             "Extension moved: {} from {} to {}",
-            extension_name,
+            extension_folder_name,
             source,
             destination
         );
-
         Ok(())
     }
 }
 
-// Helper function to recursively copy a directory
+// Helper function to recursively copy a directory.
 fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let ty = entry.file_type()?;
         let path = entry.path();
-        let filename = path.file_name().unwrap();
-        let target = dst.join(filename);
+        let file_name = path.file_name().unwrap();
+        let target = dst.join(file_name);
+
         if ty.is_dir() {
             copy_dir_all(&path, &target)?;
         } else {

@@ -26,13 +26,14 @@ pub async fn get_extensions(
 pub async fn install_extension(
     url: String,
     global: bool,
+    branch: Option<String>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<ExtensionInstallResult, CommandError> {
     log_command(format!("install_extension {}", url));
 
     app_state
         .extension_service
-        .install_extension(&url, global)
+        .install_extension(&url, global, branch)
         .await
         .map_err(map_command_error("Failed to install extension"))
 }

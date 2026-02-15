@@ -31,10 +31,11 @@ impl ExtensionService {
         &self,
         url: &str,
         global: bool,
+        branch: Option<String>,
     ) -> Result<ExtensionInstallResult, DomainError> {
         logger::debug(&format!("Installing extension from {}", url));
         self.extension_repository
-            .install_extension(url, global)
+            .install_extension(url, global, branch)
             .await
     }
 

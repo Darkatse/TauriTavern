@@ -22,6 +22,7 @@ pub trait ExtensionRepository: Send + Sync {
         &self,
         url: &str,
         global: bool,
+        branch: Option<String>,
     ) -> Result<ExtensionInstallResult, DomainError>;
 
     /// Update an extension

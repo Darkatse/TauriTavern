@@ -40,6 +40,7 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
         const result = await context.safeInvoke('install_extension', {
             url: body?.url || '',
             global: Boolean(body?.global),
+            branch: typeof body?.branch === 'string' && body.branch.trim() ? body.branch.trim() : null,
         });
 
         return jsonResponse({
