@@ -15,7 +15,6 @@ permissions:
 
 jobs:
   build-and-publish:
-    if: matrix.platform != 'ubuntu-22.04-arm' || !github.event.repository.private
     strategy:
       fail-fast: false
       matrix:
@@ -31,10 +30,10 @@ jobs:
             args: --target aarch64-apple-darwin
           - name: linux-x64
             platform: ubuntu-22.04
-            args: ""
+            args: --bundles appimage,deb,rpm
           - name: linux-arm64
             platform: ubuntu-22.04-arm
-            args: ""
+            args: --bundles appimage,deb,rpm
 
     runs-on: ${{ matrix.platform }}
     name: build-${{ matrix.name }}
@@ -47,7 +46,7 @@ jobs:
         if: startsWith(matrix.platform, 'ubuntu-22.04')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf rpm
           if apt-cache show libayatana-appindicator3-dev > /dev/null 2>&1; then
             sudo apt-get install -y libayatana-appindicator3-dev
           else
