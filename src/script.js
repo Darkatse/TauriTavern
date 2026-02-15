@@ -8,6 +8,7 @@ import {
     Popper,
     default as libs,
 } from './lib.js';
+import { getClientVersion as getBridgeClientVersion } from './tauri-bridge.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -393,7 +394,7 @@ export let isChatSaving = false;
 let firstRun = false;
 let settingsReady = false;
 let currentVersion = '0.0.0';
-export let displayVersion = 'SillyTavern';
+export let displayVersion = 'TauriTavern';
 
 let generation_started = new Date();
 /** @type {Character[]} */
@@ -408,7 +409,7 @@ export const default_avatar = 'img/ai4.png';
 export const system_avatar = 'img/five.png';
 export const comment_avatar = 'img/quill.png';
 export const default_user_avatar = 'img/user-default.png';
-export let CLIENT_VERSION = 'SillyTavern:UNKNOWN:Cohee#1207'; // For Horde header
+export let CLIENT_VERSION = 'TauriTavern/UNKNOWN'; // For Horde header
 let optionsPopper = Popper.createPopper(document.getElementById('options_button'), document.getElementById('options'), {
     placement: 'top-start',
 });
@@ -474,11 +475,10 @@ export const MAX_INJECTION_DEPTH = 10000;
 
 async function getClientVersion() {
     try {
-        const response = await fetch('/version');
-        const data = await response.json();
-        CLIENT_VERSION = data.agent;
-        displayVersion = `SillyTavern ${data.pkgVersion}`;
-        currentVersion = data.pkgVersion;
+        const data = await getBridgeClientVersion();
+        CLIENT_VERSION = data.agent || `TauriTavern/${data.pkgVersion || 'UNKNOWN'}`;
+        displayVersion = `TauriTavern ${data.pkgVersion || 'UNKNOWN'}`;
+        currentVersion = data.pkgVersion || '0.0.0';
 
         if (data.gitRevision && data.gitBranch) {
             displayVersion += ` '${data.gitBranch}' (${data.gitRevision})`;

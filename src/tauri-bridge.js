@@ -1,6 +1,7 @@
 // Core Tauri bridge for frontend modules.
 
-export const isTauriEnv = typeof window !== 'undefined' && window.__TAURI_INTERNALS__ !== undefined;
+export const isTauriEnv = typeof window !== 'undefined'
+    && (window.__TAURI_INTERNALS__ !== undefined || typeof window.__TAURI__?.core?.invoke === 'function');
 
 function getTauri() {
     if (typeof window === 'undefined') {
@@ -8,6 +9,11 @@ function getTauri() {
     }
 
     return window.__TAURI__ || null;
+}
+
+function getInvokeFn() {
+    const fn = getTauri()?.core?.invoke;
+    return typeof fn === 'function' ? fn : null;
 }
 
 export const invoke = isTauriEnv
@@ -45,12 +51,13 @@ export function isTauri() {
 }
 
 export async function initializeBridge() {
-    if (!isTauriEnv || !invoke) {
+    const invokeFn = getInvokeFn();
+    if (!invokeFn) {
         return false;
     }
 
     try {
-        return await invoke('is_ready');
+        return await invokeFn('is_ready');
     } catch (error) {
         console.error('Failed to initialize Tauri bridge:', error);
         return false;
@@ -66,25 +73,27 @@ export async function initializeApp() {
 }
 
 export async function getVersion() {
-    if (!isTauriEnv || !invoke) {
+    const invokeFn = getInvokeFn();
+    if (!invokeFn) {
         const response = await fetch('/version');
         return response.json();
     }
 
-    return invoke('get_version');
+    return invokeFn('get_version');
 }
 
 export async function getClientVersion() {
-    if (!isTauriEnv || !invoke) {
+    const invokeFn = getInvokeFn();
+    if (!invokeFn) {
         const response = await fetch('/version');
         return response.json();
     }
 
     try {
-        return await invoke('get_client_version');
+        return await invokeFn('get_client_version');
     } catch (error) {
         console.error('Error getting client version from Tauri backend:', error);
-        const version = await invoke('get_version');
+        const version = await invokeFn('get_version');
         return {
             agent: `TauriTavern/${version}`,
             pkgVersion: version,
