@@ -1,0 +1,64 @@
+name: Mobile iOS Generate And Push
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-ios-generate-and-push-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  generate-ios-project:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: Install Rust toolchain (iOS target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate iOS project
+        run: pnpm tauri ios init
+
+      - name: Commit generated iOS project
+        shell: bash
+        run: |
+          if [ ! -d "src-tauri/gen/apple" ]; then
+            echo "src-tauri/gen/apple was not generated."
+            exit 1
+          fi
+
+          if [ -z "$(git status --porcelain -- src-tauri/gen/apple)" ]; then
+            echo "No changes in src-tauri/gen/apple. Skip commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/gen/apple
+          git commit -m "chore(mobile): generate iOS project files [skip ci]"
+          git push origin HEAD:main
