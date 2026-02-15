@@ -37,7 +37,7 @@ export function registerSettingsRoutes(router, context, { jsonResponse }) {
             return jsonResponse(state || {});
         } catch (error) {
             console.warn('Failed to read secret state:', error);
-            return jsonResponse({});
+            return jsonResponse({ error: 'secret_state_unavailable' }, 503);
         }
     });
 

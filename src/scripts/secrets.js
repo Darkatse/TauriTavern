@@ -179,7 +179,29 @@ const INPUT_MAP = {
     [SECRET_KEYS.COMFY_RUNPOD]: '#api_key_comfy_runpod',
 };
 
+const KNOWN_SECRET_KEYS = new Set(Object.values(SECRET_KEYS));
+const SECRET_STATE_MAX_RETRIES = 10;
+const SECRET_STATE_RETRY_DELAY_MS = 350;
+
 const getLabel = () => moment().format('L LT');
+
+function isSecretStateResponse(state) {
+    if (!state || typeof state !== 'object' || Array.isArray(state)) {
+        return false;
+    }
+
+    for (const key of KNOWN_SECRET_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(state, key)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 /**
  * Resolves the secret key based on the selected API, chat completion source, and text completion type.
@@ -375,28 +397,37 @@ export async function deleteSecret(key, id) {
  */
 export async function readSecretState() {
     const applyState = async (state) => {
-        secret_state = state && typeof state === 'object' ? state : {};
+        secret_state = isSecretStateResponse(state) ? state : {};
         updateSecretDisplay();
         updateInputDataLists();
         await checkOpenRouterAuth();
     };
 
-    try {
-        const response = await fetch('/api/secrets/read', {
-            method: 'POST',
-            headers: getRequestHeaders({ omitContentType: true }),
-        });
+    for (let attempt = 0; attempt <= SECRET_STATE_MAX_RETRIES; attempt++) {
+        try {
+            const response = await fetch('/api/secrets/read', {
+                method: 'POST',
+                headers: getRequestHeaders({ omitContentType: true }),
+            });
 
-        if (!response.ok) {
-            await applyState({});
-            return;
+            if (response.ok) {
+                const state = await response.json().catch(() => null);
+                if (isSecretStateResponse(state)) {
+                    await applyState(state);
+                    return;
+                }
+            }
+        } catch {
+            // Ignore transient startup errors and retry.
         }
 
-        const state = await response.json().catch(() => ({}));
-        await applyState(state);
-    } catch {
-        await applyState({});
+        if (attempt < SECRET_STATE_MAX_RETRIES) {
+            await sleep(SECRET_STATE_RETRY_DELAY_MS);
+        }
     }
+
+    console.warn('Failed to read secret state after retries; using empty fallback state.');
+    await applyState({});
 }
 
 /**
