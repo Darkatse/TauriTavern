@@ -1,6 +1,7 @@
-import { moduleLexerInit, moduleLexerParse } from '../../../lib.js';
+import { moduleLexerInit, moduleLexerParse, css as cssTools } from '../../../lib.js';
 
 let moduleLexerReadyPromise = null;
+let cssLayerSupportCache = null;
 
 function ensureModuleLexerReady() {
     if (!moduleLexerReadyPromise) {
@@ -75,6 +76,88 @@ function isDynamicImportRecord(importRecord) {
 
 function looksLikeHtmlPayload(text) {
     return /^\s*</.test(String(text || ''));
+}
+
+function supportsCssCascadeLayers() {
+    if (cssLayerSupportCache !== null) {
+        return cssLayerSupportCache;
+    }
+
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+        cssLayerSupportCache = true;
+        return cssLayerSupportCache;
+    }
+
+    if (typeof window.CSSLayerBlockRule !== 'undefined' || typeof window.CSSLayerStatementRule !== 'undefined') {
+        cssLayerSupportCache = true;
+        return cssLayerSupportCache;
+    }
+
+    try {
+        const style = document.createElement('style');
+        style.textContent = '@layer tauritavern_probe { .tauritavern_probe { display: block; } }';
+        (document.head || document.documentElement).appendChild(style);
+
+        const stylesheet = style.sheet;
+        const firstRule = stylesheet?.cssRules?.item?.(0) || stylesheet?.cssRules?.[0];
+        const cssText = String(firstRule?.cssText || '').toLowerCase();
+        cssLayerSupportCache = cssText.includes('@layer');
+
+        style.remove();
+    } catch {
+        cssLayerSupportCache = false;
+    }
+
+    return cssLayerSupportCache;
+}
+
+function flattenLayerRules(rules) {
+    const normalizedRules = Array.isArray(rules) ? rules : [];
+    const flattened = [];
+
+    for (const rule of normalizedRules) {
+        if (!rule || typeof rule !== 'object') {
+            continue;
+        }
+
+        if (rule.type === 'layer') {
+            if (Array.isArray(rule.rules) && rule.rules.length > 0) {
+                flattened.push(...flattenLayerRules(rule.rules));
+            }
+            continue;
+        }
+
+        if (Array.isArray(rule.rules) && rule.rules.length > 0) {
+            rule.rules = flattenLayerRules(rule.rules);
+        }
+
+        flattened.push(rule);
+    }
+
+    return flattened;
+}
+
+function preprocessStylesheetForLegacyWebView(source) {
+    const cssSource = String(source || '');
+    if (!cssSource.includes('@layer') || supportsCssCascadeLayers()) {
+        return cssSource;
+    }
+
+    if (!cssTools || typeof cssTools.parse !== 'function' || typeof cssTools.stringify !== 'function') {
+        return cssSource;
+    }
+
+    try {
+        const ast = cssTools.parse(cssSource, { silent: true });
+        if (!ast?.stylesheet || !Array.isArray(ast.stylesheet.rules)) {
+            return cssSource;
+        }
+
+        ast.stylesheet.rules = flattenLayerRules(ast.stylesheet.rules);
+        return cssTools.stringify(ast, { compress: true });
+    } catch {
+        return cssSource;
+    }
 }
 
 function resolveFetchImpl(fetchImpl) {
@@ -221,7 +304,8 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
                 throw new Error(`Extension stylesheet is not CSS: ${normalizedUrl}`);
             }
 
-            const blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/css' }));
+            const preparedStylesheet = preprocessStylesheetForLegacyWebView(source);
+            const blobUrl = URL.createObjectURL(new Blob([preparedStylesheet], { type: 'text/css' }));
             styleBlobUrls.add(blobUrl);
             return blobUrl;
         })();
