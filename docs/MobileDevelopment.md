@@ -162,3 +162,50 @@ https://v2.tauri.app/develop/resources/#android
 3. **新增移动端特性时**  
    优先复用现有单点抽象（`assets.rs` / `paths.rs` / `MainActivity.kt`），避免再次把平台差异扩散到业务代码。
 
+---
+
+## 6. 插件系统（前端）移动端兼容补丁
+
+以下问题仅在 Android 旧 WebView 上高概率出现，桌面端通常不复现。
+
+### 6.1 `*.at is not a function`
+
+现象：
+
+- 第三方插件初始化报错（典型如 `g.at is not a function`）。
+
+根因：
+
+- 插件构建产物使用了较新的 JS API（`Array/String.at`、`toSorted`、`findLastIndex` 等）。
+- 旧 Android WebView 缺少这些 API。
+
+已落地方案：
+
+- 在 `src/scripts/browser-fixes.js` 增加移动端按需兼容层：
+  - 仅在移动端且检测到缺失 API 时执行；
+  - 仅执行一次；
+  - 桌面端零开销。
+
+### 6.2 插件面板样式大面积失效（如 `TH-custom-tailwind` 布局错乱）
+
+现象：
+
+- 插件 CSS 文件请求成功，但大量样式未生效，界面排布混乱。
+
+根因：
+
+- 旧 Android WebView 对 CSS Cascade Layers（`@layer`）支持不完整。
+- 采用 Tailwind v4 打包的插件会把大量规则放在 `@layer` 中，导致整层失效。
+
+已落地方案：
+
+- 在 `src/scripts/extensions/runtime/third-party-runtime.js` 的样式加载链路中：
+  - 先探测当前 WebView 是否支持 `@layer`；
+  - 不支持时用 `css-tools` 将 `@layer` 规则展平后再注入。
+
+性能策略：
+
+- 支持 `@layer` 的环境走快路径，不转换；
+- 能力检测结果缓存；
+- 预处理结果走现有样式缓存，避免重复计算。
+

@@ -107,9 +107,10 @@ src/
 ### 7.2 模块分层
 
 - `src/scripts/extensions.js`：插件激活编排层（发现、排序、依赖/版本检查、触发加载）。
+- `src/scripts/browser-fixes.js`：前端运行时兼容层入口（移动端按需补齐缺失 JS API，避免插件在旧 WebView 初始化失败）。
 - `src/scripts/extensions/runtime/resource-paths.js`：扩展资源路径规范化与 third-party 判定。
 - `src/scripts/extensions/runtime/tauri-ready.js`：等待 `__TAURITAVERN_MAIN_READY__`，避免 bridge 未就绪时提前加载。
-- `src/scripts/extensions/runtime/third-party-runtime.js`：第三方 ESM 重写与 Blob URL 解析（处理动态导入/循环依赖、HTML 误回包检测；请求阶段使用当前 `window.fetch` 以确保命中拦截器）。
+- `src/scripts/extensions/runtime/third-party-runtime.js`：第三方 ESM/CSS 运行时（处理动态导入/循环依赖、HTML 误回包检测、legacy WebView 的 `@layer` 样式降级；请求阶段使用当前 `window.fetch` 以确保命中拦截器）。
 - `src/scripts/extensions/runtime/asset-loader.js`：脚本与样式注入、超时保护、重复注入幂等控制。
 
 ### 7.3 端到端加载链路
@@ -145,6 +146,49 @@ src/
 - 新增插件加载能力时，优先扩展 `src/scripts/extensions/runtime/*`，不要把 Tauri 细节回灌到 `extensions.js`。
 - 新增插件 API 时，优先在 `src/tauri/main/routes/extensions-routes.js` 封装，再通过 `context.safeInvoke()` 调 Rust 命令。
 - 若调整插件路径约定，必须同时更新 `resource-paths.js` 与 `extensions-routes.js` 的路径解析规则。
+
+### 7.7 移动端插件兼容（新增）
+
+#### 7.7.1 JS 运行时兼容（Android 旧 WebView）
+
+- 实现位置：`src/scripts/browser-fixes.js`。
+- 入口：`applyBrowserFixes()` 中优先执行 `applyMobileRuntimeCompatibility()`。
+- 启用条件：仅在 `isMobile() === true` 且检测到缺失 API 时启用，且只执行一次。
+- 当前按需补齐：
+  - `Array.prototype.at`
+  - `String.prototype.at`
+  - `Array.prototype.findLast`
+  - `Array.prototype.findLastIndex`
+  - `Array.prototype.toSorted`
+  - `Array.prototype.toReversed`
+  - `Object.hasOwn`
+
+该策略用于修复移动端第三方插件在初始化阶段出现的 `TypeError: *.at is not a function`。
+
+#### 7.7.2 CSS `@layer` 降级（Android 旧 WebView）
+
+- 实现位置：`src/scripts/extensions/runtime/third-party-runtime.js`（样式加载链路）。
+- 触发条件：
+  - 样式内容包含 `@layer`；
+  - 当前 WebView 不支持 CSS Cascade Layers。
+- 处理方式：
+  - 通过 `css-tools` 解析 CSS AST；
+  - 将 `layer` 规则展平为普通规则；
+  - 再生成压缩后的 CSS 文本注入 Blob URL。
+- 缓存与性能：
+  - 能力检测结果缓存（`supportsCssCascadeLayers`）；
+  - 样式结果走现有 `styleBlobCache`，同一文件不重复处理；
+  - 支持 `@layer` 的环境走快路径，不做转换。
+
+该策略用于修复移动端插件面板（如 `TH-custom-tailwind`）样式大面积失效导致的布局错乱。
+
+#### 7.7.3 调试建议
+
+- 若看到 `*.at is not a function`：
+  - 检查 `applyBrowserFixes()` 是否在应用初始化阶段已执行。
+- 若插件样式错乱但 CSS 已成功请求：
+  - 优先检查是否命中 `@layer` 降级分支；
+  - 关注 `resolveStylesheetBlobUrl()` 是否返回预处理后的样式文本。
 
 ## 8. 兼容层策略
 
