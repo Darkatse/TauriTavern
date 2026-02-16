@@ -1,17 +1,18 @@
-use chrono::Utc;
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::dto::chat_dto::{
-    AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto, ImportChatDto,
-    RenameChatDto, SaveChatDto,
+    AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, DeleteGroupChatDto, ExportChatDto,
+    GetGroupChatDto, ImportCharacterChatsDto, ImportChatDto, ImportGroupChatDto, RenameChatDto,
+    RenameGroupChatDto, SaveChatDto, SaveGroupChatDto,
 };
 use crate::application::errors::ApplicationError;
-use crate::domain::models::chat::{humanized_date, Chat, ChatMessage, MessageExtra};
+use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatRepository,
 };
+use serde_json::Value;
 
 /// Service for managing chats
 pub struct ChatService {
@@ -264,57 +265,152 @@ impl ChatService {
         Ok(())
     }
 
-    /// Save a full chat payload from frontend-compatible JSONL objects
-    pub async fn save_chat(&self, dto: SaveChatDto) -> Result<(), ApplicationError> {
-        tracing::info!("Saving chat: {}/{}", dto.character_name, dto.file_name);
+    /// Get raw JSONL payload for a character chat.
+    pub async fn get_chat_payload(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Vec<Value>, ApplicationError> {
+        tracing::info!("Getting chat payload: {}/{}", character_name, file_name);
+        self.chat_repository
+            .get_chat_payload(character_name, file_name)
+            .await
+            .map_err(Into::into)
+    }
 
-        // Verify that the character exists
-        self.character_repository
-            .find_by_name(&dto.character_name)
+    /// Save a full raw JSONL payload for a character chat.
+    pub async fn save_chat(&self, dto: SaveChatDto) -> Result<(), ApplicationError> {
+        tracing::info!(
+            "Saving chat payload: {}/{}",
+            dto.character_name,
+            dto.file_name
+        );
+
+        if dto.chat.is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Chat payload is empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .save_chat_payload(
+                &dto.character_name,
+                &dto.file_name,
+                &dto.chat,
+                dto.force.unwrap_or(false),
+            )
             .await?;
 
-        let mut payload_iter = dto.chat.into_iter();
-        let metadata = payload_iter.next().ok_or_else(|| {
-            ApplicationError::ValidationError("Chat payload is empty".to_string())
-        })?;
-
-        let metadata_obj = metadata.as_object().ok_or_else(|| {
-            ApplicationError::ValidationError("Chat metadata is invalid".to_string())
-        })?;
-
-        let user_name = metadata_obj
-            .get("user_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("User")
-            .to_string();
-
-        let create_date = metadata_obj
-            .get("create_date")
-            .and_then(|v| v.as_str())
-            .map(ToString::to_string)
-            .unwrap_or_else(|| humanized_date(Utc::now()));
-
-        let mut chat = Chat {
-            user_name,
-            character_name: dto.character_name.clone(),
-            create_date,
-            file_name: Some(dto.file_name.trim_end_matches(".jsonl").to_string()),
-            ..Default::default()
-        };
-
-        if let Some(chat_metadata) = metadata_obj.get("chat_metadata") {
-            if let Ok(parsed) = serde_json::from_value(chat_metadata.clone()) {
-                chat.chat_metadata = parsed;
-            }
-        }
-
-        for message_value in payload_iter {
-            if let Ok(message) = serde_json::from_value::<ChatMessage>(message_value) {
-                chat.add_message(message);
-            }
-        }
-
-        self.chat_repository.save(&chat).await?;
         Ok(())
+    }
+
+    /// Get raw JSONL payload for a group chat.
+    pub async fn get_group_chat(
+        &self,
+        dto: GetGroupChatDto,
+    ) -> Result<Vec<Value>, ApplicationError> {
+        if dto.id.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Group chat id cannot be empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .get_group_chat_payload(&dto.id)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Save raw JSONL payload for a group chat.
+    pub async fn save_group_chat(&self, dto: SaveGroupChatDto) -> Result<(), ApplicationError> {
+        if dto.id.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Group chat id cannot be empty".to_string(),
+            ));
+        }
+
+        if dto.chat.is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Chat payload is empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .save_group_chat_payload(&dto.id, &dto.chat, dto.force.unwrap_or(false))
+            .await?;
+        Ok(())
+    }
+
+    /// Delete a group chat payload file.
+    pub async fn delete_group_chat(&self, dto: DeleteGroupChatDto) -> Result<(), ApplicationError> {
+        if dto.id.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Group chat id cannot be empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .delete_group_chat_payload(&dto.id)
+            .await?;
+        Ok(())
+    }
+
+    /// Rename a group chat payload file.
+    pub async fn rename_group_chat(&self, dto: RenameGroupChatDto) -> Result<(), ApplicationError> {
+        if dto.old_file_name.trim().is_empty() || dto.new_file_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Group chat file name cannot be empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .rename_group_chat_payload(&dto.old_file_name, &dto.new_file_name)
+            .await?;
+        Ok(())
+    }
+
+    /// Import one or more character chats from an uploaded file.
+    pub async fn import_character_chats(
+        &self,
+        dto: ImportCharacterChatsDto,
+    ) -> Result<Vec<String>, ApplicationError> {
+        if dto.character_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Character name cannot be empty".to_string(),
+            ));
+        }
+
+        let character_display_name = dto
+            .character_display_name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(&dto.character_name);
+        let user_name = dto
+            .user_name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or("User");
+
+        self.chat_repository
+            .import_chat_payload(
+                &dto.character_name,
+                character_display_name,
+                user_name,
+                Path::new(&dto.file_path),
+                &dto.file_type,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Import a group chat payload and return the created chat id.
+    pub async fn import_group_chat(
+        &self,
+        dto: ImportGroupChatDto,
+    ) -> Result<String, ApplicationError> {
+        self.chat_repository
+            .import_group_chat_payload(Path::new(&dto.file_path))
+            .await
+            .map_err(Into::into)
     }
 }

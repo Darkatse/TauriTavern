@@ -2,6 +2,7 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::Path;
 
 /// Chat search result
@@ -39,6 +40,12 @@ pub enum ChatExportFormat {
 pub trait ChatRepository: Send + Sync {
     /// Save a chat to the repository
     async fn save(&self, chat: &Chat) -> Result<(), DomainError>;
+
+    /// Save a chat with explicit overwrite/integrity options.
+    async fn save_with_options(&self, chat: &Chat, force: bool) -> Result<(), DomainError> {
+        let _ = force;
+        self.save(chat).await
+    }
 
     /// Get a chat by character name and file name
     async fn get_chat(&self, character_name: &str, file_name: &str) -> Result<Chat, DomainError>;
@@ -94,6 +101,56 @@ pub trait ChatRepository: Send + Sync {
 
     /// Backup a chat
     async fn backup_chat(&self, character_name: &str, file_name: &str) -> Result<(), DomainError>;
+
+    /// Get a raw chat JSONL payload for a character chat.
+    async fn get_chat_payload(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Vec<Value>, DomainError>;
+
+    /// Save a raw chat JSONL payload for a character chat.
+    async fn save_chat_payload(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        payload: &[Value],
+        force: bool,
+    ) -> Result<(), DomainError>;
+
+    /// Get a raw chat JSONL payload for a group chat.
+    async fn get_group_chat_payload(&self, chat_id: &str) -> Result<Vec<Value>, DomainError>;
+
+    /// Save a raw chat JSONL payload for a group chat.
+    async fn save_group_chat_payload(
+        &self,
+        chat_id: &str,
+        payload: &[Value],
+        force: bool,
+    ) -> Result<(), DomainError>;
+
+    /// Delete a group chat payload file.
+    async fn delete_group_chat_payload(&self, chat_id: &str) -> Result<(), DomainError>;
+
+    /// Rename a group chat payload file.
+    async fn rename_group_chat_payload(
+        &self,
+        old_file_name: &str,
+        new_file_name: &str,
+    ) -> Result<(), DomainError>;
+
+    /// Import character chat file(s) and return created JSONL file names.
+    async fn import_chat_payload(
+        &self,
+        character_name: &str,
+        character_display_name: &str,
+        user_name: &str,
+        file_path: &Path,
+        format: &str,
+    ) -> Result<Vec<String>, DomainError>;
+
+    /// Import a group chat payload and return the created chat id (without extension).
+    async fn import_group_chat_payload(&self, file_path: &Path) -> Result<String, DomainError>;
 
     /// Clear the chat cache
     async fn clear_cache(&self) -> Result<(), DomainError>;

@@ -16,6 +16,27 @@ use crate::infrastructure::persistence::png_utils::{
 use super::FileCharacterRepository;
 
 impl FileCharacterRepository {
+    fn parse_alternate_greetings(value: Option<&Value>) -> Vec<String> {
+        match value {
+            Some(Value::Array(items)) => items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToString::to_string)
+                .collect(),
+            Some(Value::String(item)) => {
+                let trimmed = item.trim();
+                if trimmed.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![trimmed.to_string()]
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
     pub(crate) fn parse_imported_character_json(
         &self,
         json_data: &str,
@@ -97,6 +118,14 @@ impl FileCharacterRepository {
                     .filter(|tag| !tag.is_empty())
                     .collect();
             }
+        }
+
+        if character.data.alternate_greetings.is_empty() {
+            character.data.alternate_greetings = Self::parse_alternate_greetings(
+                raw_value
+                    .get("alternate_greetings")
+                    .or_else(|| raw_value.pointer("/data/alternate_greetings")),
+            );
         }
     }
 

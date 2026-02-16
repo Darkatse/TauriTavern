@@ -406,6 +406,57 @@ tauri::Builder::default()
 
 这样可以避免在 `lib.rs` 中直接维护超长命令列表，命令增减时只需更新 `registry.rs`。
 
+### 3.5 聊天后端链路（Payload-First，2026-02重构）
+
+本次聊天链路重构目标是对齐 SillyTavern 上游业务逻辑与文件系统语义，同时降低字段漂移/数据丢失风险。
+
+#### 3.5.1 设计原则
+
+- **Payload First**：聊天保存/读取优先以 JSONL 原始 payload（`Vec<serde_json::Value>`）为边界，而非先强制转领域模型再落盘。
+- **字段保真**：`ChatMetadata`、`ChatMessage`、`MessageExtra` 通过 `#[serde(flatten)] additional` 保留未知字段。
+- **完整性优先**：保存链路内置 `chat_metadata.integrity` 校验；冲突时返回 `integrity`，由前端决定是否 `force` 覆盖。
+- **兼容上游文件系统**：目录与命名策略对齐 SillyTavern，便于用户无损迁移。
+
+#### 3.5.2 分层职责
+
+- `domain/repositories/chat_repository.rs`
+  - 保留 typed API（`get_chat` / `save` / `search_chats` 等）用于领域操作。
+  - 新增 payload API（`get_chat_payload` / `save_chat_payload` / `get_group_chat_payload` / `import_chat_payload` 等）用于文件级保真操作。
+- `application/services/chat_service.rs`
+  - `save_chat` 改为直接调用 `save_chat_payload`，不再进行二次模型转换。
+  - 新增 group chat payload 与 character/group import 服务方法。
+- `presentation/commands/chat_commands.rs`
+  - 新增 `get_chat_payload`、`get_group_chat`、`save_group_chat`、`delete_group_chat`、`rename_group_chat`、`import_character_chats`、`import_group_chat_payload` 等命令并在 `registry.rs` 注册。
+- `infrastructure/repositories/file_chat_repository/`
+  - `mod.rs`：仓库结构体与构造装配。
+  - `repository_impl.rs`：`ChatRepository` 业务实现编排。
+  - `paths.rs` / `payload.rs` / `backup.rs` / `importing.rs`：路径命名、payload 读写与完整性校验、备份策略、导入与预览逻辑。
+  - `cache.rs`：内存缓存与备份节流。
+  - 实现 payload 读写、integrity 校验、group chat 文件操作、导入转换与备份策略。
+
+#### 3.5.3 关键链路
+
+1. 角色聊天保存  
+`/api/chats/save` -> `save_chat` 命令 -> `ChatService::save_chat` -> `ChatRepository::save_chat_payload(force)` -> 写入 JSONL + 备份。
+
+2. 群聊保存  
+`/api/chats/group/save` -> `save_group_chat` 命令 -> `ChatService::save_group_chat` -> `save_group_chat_payload(force)`。
+
+3. 聊天导入  
+`/api/chats/import`（character）或 `/api/chats/group/import`（group） -> 对应 import 命令 -> `chat_format_importers.rs` 转换 -> 落盘。
+
+4. 完整性冲突  
+当现有文件的 `chat_metadata.integrity` 与待写入 payload 不一致且 `force=false` 时，仓库返回 `DomainError::InvalidData("integrity")`，前端映射为 HTTP `400 { error: "integrity" }`。
+
+#### 3.5.4 文件系统与备份语义
+
+- 角色聊天：`default-user/chats/<character_id>/*.jsonl`
+- 群聊：`default-user/group chats/*.jsonl`
+- 聊天备份：`default-user/backups/chat_<sanitized_name>_<timestamp>.jsonl`
+- 备份节流：10 秒（对齐上游默认）
+- 单会话备份上限：50（对齐上游默认）
+- 全局备份上限：无限（默认）
+
 ## 4. 应用状态管理
 
 应用状态管理负责初始化和管理应用的全局状态，包括服务实例和配置。
@@ -505,6 +556,7 @@ impl DataDirectory {
         let default_user_dirs = [
             "characters",
             "chats",
+            "backups",
             "User Avatars",
             "backgrounds",
             "thumbnails",
@@ -562,6 +614,10 @@ impl DataDirectory {
         self.default_user.join("chats")
     }
 
+    pub fn backups(&self) -> PathBuf {
+        self.default_user.join("backups")
+    }
+
     pub fn settings(&self) -> PathBuf {
         self.default_user.clone()
     }
@@ -600,13 +656,28 @@ TauriTavern的后端API通过Tauri命令暴露给前端。以下是主要API类�
 | `get_all_chats` | 获取所有聊天 | 无 | `Vec<ChatDto>` |
 | `get_character_chats` | 获取角色的聊天 | `character_name: String` | `Vec<ChatDto>` |
 | `get_chat` | 获取单个聊天 | `character_name: String, file_name: String` | `ChatDto` |
+| `get_chat_payload` | 获取角色聊天原始JSONL对象数组 | `character_name: String, file_name: String` | `Vec<Value>` |
 | `create_chat` | 创建新聊天 | `CreateChatDto` | `ChatDto` |
 | `delete_chat` | 删除聊天 | `character_name: String, file_name: String` | `()` |
 | `add_message` | 添加消息 | `AddMessageDto` | `ChatDto` |
 | `rename_chat` | 重命名聊天 | `RenameChatDto` | `()` |
 | `search_chats` | 搜索聊天 | `query: String, character_filter: Option<String>` | `Vec<ChatSearchResultDto>` |
-| `import_chat` | 导入聊天 | `ImportChatDto` | `ChatDto` |
+| `import_chat` | 导入聊天（legacy typed） | `ImportChatDto` | `ChatDto` |
+| `import_character_chats` | 导入角色聊天（payload链路） | `ImportCharacterChatsDto` | `Vec<String>` |
 | `export_chat` | 导出聊天 | `ExportChatDto` | `()` |
+| `save_chat` | 保存角色聊天payload（含 integrity/force） | `SaveChatDto` | `()` |
+| `backup_chat` | 触发聊天备份 | `character_name: String, file_name: String` | `()` |
+| `clear_chat_cache` | 清理聊天缓存 | 无 | `()` |
+
+### 5.2.1 群聊Payload命令
+
+| 命令 | 描述 | 参数 | 返回值 |
+|------|------|------|--------|
+| `get_group_chat` | 获取群聊原始JSONL对象数组 | `GetGroupChatDto` | `Vec<Value>` |
+| `save_group_chat` | 保存群聊payload（含 integrity/force） | `SaveGroupChatDto` | `()` |
+| `delete_group_chat` | 删除群聊聊天文件 | `DeleteGroupChatDto` | `()` |
+| `rename_group_chat` | 重命名群聊聊天文件 | `RenameGroupChatDto` | `()` |
+| `import_group_chat_payload` | 导入群聊JSONL文件 | `ImportGroupChatDto` | `String` |
 
 ### 5.3 群组管理API
 
@@ -754,6 +825,30 @@ pub async fn read_file(path: &str) -> Result<String, DomainError> {
     Ok(content)
 }
 ```
+
+### 7.5 聊天链路持续维护约束
+
+为避免聊天文件腐化或字段丢失，后续维护需遵循以下约束：
+
+1. **新增聊天字段时优先走透传**  
+若字段仅用于前端/上游兼容且不参与领域规则，优先落在 `flatten additional`，避免硬编码映射。
+
+2. **写路径优先使用 payload API**  
+涉及文件级同步（导入、恢复、迁移、group chat、批量操作）时，优先调用 `save_chat_payload` / `save_group_chat_payload`，避免 typed -> payload 重建造成信息丢失。
+
+3. **不要绕过 integrity 逻辑**  
+所有写入链路必须通过仓库统一入口，保留 `force` 开关和冲突信号 `integrity`。
+
+4. **目录结构改动必须同步三处**  
+- `DataDirectory`  
+- `bootstrap` 仓库注入  
+- 文档与前端路由约定（`chat-routes.js`）
+
+5. **变更后至少覆盖以下测试面**  
+- payload 字段保真（metadata/message/extra）  
+- integrity 冲突与 force 覆盖  
+- group chat 读写删改  
+- 导入命名冲突去重
 
 ## 8. 测试策略
 

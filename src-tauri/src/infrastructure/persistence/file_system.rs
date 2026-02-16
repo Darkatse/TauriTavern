@@ -15,6 +15,7 @@ pub struct DataDirectory {
     default_avatar: PathBuf,
     groups: PathBuf,
     group_chats: PathBuf,
+    backups: PathBuf,
 }
 
 impl DataDirectory {
@@ -30,6 +31,7 @@ impl DataDirectory {
             .join("default_Seraphina.png");
         let groups = default_user.join("groups");
         let group_chats = default_user.join("group chats");
+        let backups = default_user.join("backups");
 
         Self {
             root,
@@ -41,6 +43,7 @@ impl DataDirectory {
             default_avatar,
             groups,
             group_chats,
+            backups,
         }
     }
 
@@ -66,6 +69,7 @@ impl DataDirectory {
             "user/images",
             "groups",
             "group chats",
+            "backups",
             "NovelAI Settings",
             "KoboldAI Settings",
             "OpenAI Settings",
@@ -142,6 +146,11 @@ impl DataDirectory {
     /// Get the group chats directory
     pub fn group_chats(&self) -> &Path {
         &self.group_chats
+    }
+
+    /// Get the chat backups directory
+    pub fn backups(&self) -> &Path {
+        &self.backups
     }
 }
 

@@ -162,3 +162,72 @@ async fn import_png_uses_data_description_when_top_level_is_empty() {
 
     let _ = fs::remove_dir_all(&root).await;
 }
+
+#[tokio::test]
+async fn import_json_preserves_top_level_alternate_greetings_array() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "name": "Legacy Greeting Character",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "Hello",
+        "alternate_greetings": [
+            "Hi there",
+            "Howdy"
+        ],
+    });
+
+    let import_path = root.join("legacy-alt-array.json");
+    fs::write(
+        &import_path,
+        serde_json::to_vec(&card_payload).expect("serialize card"),
+    )
+    .await
+    .expect("write import json");
+
+    let imported = repository
+        .import_character(&import_path, None)
+        .await
+        .expect("import json character");
+
+    assert_eq!(
+        imported.data.alternate_greetings,
+        vec!["Hi there".to_string(), "Howdy".to_string()]
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn import_json_preserves_top_level_alternate_greetings_string() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "name": "Legacy Greeting String Character",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "Hello",
+        "alternate_greetings": "Hello, traveler",
+    });
+
+    let import_path = root.join("legacy-alt-string.json");
+    fs::write(
+        &import_path,
+        serde_json::to_vec(&card_payload).expect("serialize card"),
+    )
+    .await
+    .expect("write import json");
+
+    let imported = repository
+        .import_character(&import_path, None)
+        .await
+        .expect("import json character");
+
+    assert_eq!(
+        imported.data.alternate_greetings,
+        vec!["Hello, traveler".to_string()]
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}

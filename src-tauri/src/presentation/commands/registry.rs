@@ -27,6 +27,13 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_commands::backup_chat,
         super::chat_commands::clear_chat_cache,
         super::chat_commands::save_chat,
+        super::chat_commands::get_chat_payload,
+        super::chat_commands::get_group_chat,
+        super::chat_commands::save_group_chat,
+        super::chat_commands::delete_group_chat,
+        super::chat_commands::rename_group_chat,
+        super::chat_commands::import_character_chats,
+        super::chat_commands::import_group_chat_payload,
         // User commands
         super::user_commands::get_all_users,
         super::user_commands::get_user,

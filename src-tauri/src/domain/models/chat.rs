@@ -60,6 +60,12 @@ pub struct ChatMetadata {
 
     #[serde(default)]
     pub extensions: Option<HashMap<String, serde_json::Value>>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrity: Option<String>,
+
+    #[serde(default, flatten)]
+    pub additional: HashMap<String, serde_json::Value>,
 }
 
 /// Timed world info structure
@@ -113,6 +119,9 @@ pub struct MessageExtra {
 
     #[serde(default)]
     pub force_avatar: Option<String>,
+
+    #[serde(default, flatten)]
+    pub additional: HashMap<String, serde_json::Value>,
 }
 
 /// Chat message structure
@@ -135,6 +144,9 @@ pub struct ChatMessage {
 
     #[serde(default)]
     pub extra: MessageExtra,
+
+    #[serde(default, flatten)]
+    pub additional: HashMap<String, serde_json::Value>,
 }
 
 impl ChatMessage {
@@ -147,6 +159,7 @@ impl ChatMessage {
             send_date: message_date_format(Utc::now()),
             mes: content.to_string(),
             extra: MessageExtra::default(),
+            additional: HashMap::new(),
         }
     }
 
@@ -159,6 +172,7 @@ impl ChatMessage {
             send_date: message_date_format(Utc::now()),
             mes: content.to_string(),
             extra: MessageExtra::default(),
+            additional: HashMap::new(),
         }
     }
 }

@@ -3,6 +3,7 @@ use crate::domain::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatSearchResult,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// DTO for chat message extra data
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +46,9 @@ pub struct MessageExtraDto {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub force_avatar: Option<String>,
+
+    #[serde(default, flatten)]
+    pub additional: HashMap<String, serde_json::Value>,
 }
 
 /// DTO for chat message
@@ -56,6 +60,9 @@ pub struct ChatMessageDto {
     pub send_date: String,
     pub mes: String,
     pub extra: MessageExtraDto,
+
+    #[serde(default, flatten)]
+    pub additional: HashMap<String, serde_json::Value>,
 }
 
 /// DTO for chat
@@ -65,6 +72,7 @@ pub struct ChatDto {
     pub user_name: String,
     pub file_name: String,
     pub create_date: String,
+    pub chat_metadata: serde_json::Value,
     pub messages: Vec<ChatMessageDto>,
     pub message_count: usize,
     pub chat_id: u64,
@@ -135,6 +143,49 @@ pub struct SaveChatDto {
     pub force: Option<bool>,
 }
 
+/// DTO for retrieving a group chat payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetGroupChatDto {
+    pub id: String,
+}
+
+/// DTO for saving a group chat payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveGroupChatDto {
+    pub id: String,
+    pub chat: Vec<serde_json::Value>,
+    pub force: Option<bool>,
+}
+
+/// DTO for deleting a group chat payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteGroupChatDto {
+    pub id: String,
+}
+
+/// DTO for importing character chats from uploaded files
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportCharacterChatsDto {
+    pub character_name: String,
+    pub character_display_name: Option<String>,
+    pub user_name: Option<String>,
+    pub file_path: String,
+    pub file_type: String,
+}
+
+/// DTO for importing group chats from uploaded files
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportGroupChatDto {
+    pub file_path: String,
+}
+
+/// DTO for renaming a group chat file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenameGroupChatDto {
+    pub old_file_name: String,
+    pub new_file_name: String,
+}
+
 impl From<MessageExtra> for MessageExtraDto {
     fn from(extra: MessageExtra) -> Self {
         Self {
@@ -151,6 +202,7 @@ impl From<MessageExtra> for MessageExtraDto {
             swipe_info: extra.swipe_info,
             title: extra.title,
             force_avatar: extra.force_avatar,
+            additional: extra.additional,
         }
     }
 }
@@ -171,6 +223,7 @@ impl From<MessageExtraDto> for MessageExtra {
             swipe_info: dto.swipe_info,
             title: dto.title,
             force_avatar: dto.force_avatar,
+            additional: dto.additional,
         }
     }
 }
@@ -184,6 +237,7 @@ impl From<ChatMessage> for ChatMessageDto {
             send_date: message.send_date,
             mes: message.mes,
             extra: MessageExtraDto::from(message.extra),
+            additional: message.additional,
         }
     }
 }
@@ -197,36 +251,39 @@ impl From<ChatMessageDto> for ChatMessage {
             send_date: dto.send_date,
             mes: dto.mes,
             extra: MessageExtra::from(dto.extra),
+            additional: dto.additional,
         }
     }
 }
 
 impl From<Chat> for ChatDto {
     fn from(chat: Chat) -> Self {
-        let file_name = chat
-            .file_name
-            .clone()
-            .unwrap_or_else(|| format!("{} - {}", chat.character_name, chat.create_date));
+        let Chat {
+            character_name,
+            user_name,
+            file_name,
+            create_date,
+            chat_metadata,
+            messages,
+        } = chat;
 
-        // 1. 在 chat.messages 被移动之前，先获取它的长度
-        let message_count = chat.messages.len();
-
-        // 2. 现在可以安全地消耗 chat.messages 来创建 DTO 列表
-        //    into_iter() 会移动 chat.messages，但我们不再需要它了
-        let messages_dto = chat
-            .messages
-            .into_iter()
-            .map(ChatMessageDto::from)
-            .collect();
+        let file_name =
+            file_name.unwrap_or_else(|| format!("{} - {}", character_name, create_date));
+        let chat_id = chat_metadata.chat_id_hash;
+        let chat_metadata =
+            serde_json::to_value(chat_metadata).unwrap_or_else(|_| serde_json::json!({}));
+        let message_count = messages.len();
+        let messages = messages.into_iter().map(ChatMessageDto::from).collect();
 
         Self {
-            character_name: chat.character_name,
-            user_name: chat.user_name,
+            character_name,
+            user_name,
             file_name,
-            create_date: chat.create_date,
-            messages: messages_dto,
+            create_date,
+            chat_metadata,
+            messages,
             message_count,
-            chat_id: chat.chat_metadata.chat_id_hash,
+            chat_id,
         }
     }
 }

@@ -544,24 +544,43 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
     }
 
     function toFrontendChat(chatDto) {
+        if (Array.isArray(chatDto)) {
+            return chatDto.map((entry) => (entry && typeof entry === 'object' ? { ...entry } : entry));
+        }
+
         const messages = Array.isArray(chatDto?.messages)
-            ? chatDto.messages.map((message) => ({
-                name: message.name,
-                is_user: Boolean(message.is_user),
-                is_system: Boolean(message.is_system),
-                send_date: message.send_date,
-                mes: message.mes,
-                extra: message.extra || {},
-            }))
+            ? chatDto.messages.map((message) => {
+                const messageAdditional = message?.additional && typeof message.additional === 'object'
+                    ? message.additional
+                    : {};
+                const rawExtra = message?.extra && typeof message.extra === 'object' ? message.extra : {};
+                const extraAdditional = rawExtra?.additional && typeof rawExtra.additional === 'object'
+                    ? rawExtra.additional
+                    : {};
+                const extra = { ...rawExtra, ...extraAdditional };
+                delete extra.additional;
+
+                return {
+                    ...messageAdditional,
+                    name: message.name,
+                    is_user: Boolean(message.is_user),
+                    is_system: Boolean(message.is_system),
+                    send_date: message.send_date,
+                    mes: message.mes,
+                    extra,
+                };
+            })
             : [];
+
+        const metadata = chatDto?.chat_metadata && typeof chatDto.chat_metadata === 'object'
+            ? chatDto.chat_metadata
+            : { chat_id_hash: Number(chatDto?.chat_id || 0) };
 
         const header = {
             user_name: chatDto?.user_name || 'User',
             character_name: chatDto?.character_name || '',
             create_date: chatDto?.create_date || '',
-            chat_metadata: {
-                chat_id_hash: Number(chatDto?.chat_id || 0),
-            },
+            chat_metadata: metadata,
         };
 
         return [header, ...messages];
@@ -591,10 +610,15 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
     }
 
     function exportChatAsText(frontendChat) {
-        const lines = frontendChat.slice(1).map((message) => {
-            const role = message.is_system ? 'System' : message.name || (message.is_user ? 'User' : 'Assistant');
-            return `${role}: ${message.mes || ''}`;
-        });
+        const payload = Array.isArray(frontendChat) ? frontendChat : [];
+        const lines = payload
+            .slice(1)
+            .filter((message) => !Boolean(message?.is_system))
+            .map((message) => {
+                const role = message?.name || (message?.is_user ? 'User' : 'Assistant');
+                const displayText = message?.extra?.display_text || message?.mes || '';
+                return `${role}: ${String(displayText).replace(/\r?\n/g, '\n')}`;
+            });
 
         return lines.join('\n\n');
     }
