@@ -2,6 +2,9 @@ import { moduleLexerInit, moduleLexerParse, css as cssTools } from '../../../lib
 
 let moduleLexerReadyPromise = null;
 let cssLayerSupportCache = null;
+const THIRD_PARTY_ROUTE_URL_PATTERN = /(?:https?:\/\/[^\s"'`<>()]+)?\/scripts\/extensions\/third-party\/[^\s"'`<>()]+/g;
+const MODULE_FILE_PATTERN = /\.m?js(?:[?#].*)?$/i;
+const STYLESHEET_FILE_PATTERN = /\.css(?:[?#].*)?$/i;
 
 function ensureModuleLexerReady() {
     if (!moduleLexerReadyPromise) {
@@ -76,6 +79,42 @@ function isDynamicImportRecord(importRecord) {
 
 function looksLikeHtmlPayload(text) {
     return /^\s*</.test(String(text || ''));
+}
+
+function looksLikeHtmlBytes(bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
+        return false;
+    }
+
+    try {
+        const previewLength = Math.min(bytes.length, 256);
+        const preview = new TextDecoder().decode(bytes.subarray(0, previewLength));
+        return looksLikeHtmlPayload(preview);
+    } catch {
+        return false;
+    }
+}
+
+function isOffsetWithinRanges(offset, ranges) {
+    for (const range of ranges) {
+        if (offset < range.start) {
+            return false;
+        }
+
+        if (offset >= range.start && offset < range.end) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function collectImportSpecifierRanges(source, imports) {
+    const importRecords = Array.isArray(imports) ? imports : [];
+    return importRecords
+        .map(importRecord => getImportSpecifierReplaceRange(source, importRecord))
+        .filter(range => Number.isInteger(range.start) && Number.isInteger(range.end) && range.start < range.end)
+        .sort((left, right) => left.start - right.start);
 }
 
 function supportsCssCascadeLayers() {
@@ -181,6 +220,8 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
     const moduleBlobUrls = new Set();
     const styleBlobCache = new Map();
     const styleBlobUrls = new Set();
+    const assetBlobCache = new Map();
+    const assetBlobUrls = new Set();
 
     function cleanup() {
         for (const blobUrl of moduleBlobUrls) {
@@ -189,10 +230,15 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
         for (const blobUrl of styleBlobUrls) {
             URL.revokeObjectURL(blobUrl);
         }
+        for (const blobUrl of assetBlobUrls) {
+            URL.revokeObjectURL(blobUrl);
+        }
         moduleBlobUrls.clear();
         moduleBlobCache.clear();
         styleBlobUrls.clear();
         styleBlobCache.clear();
+        assetBlobUrls.clear();
+        assetBlobCache.clear();
     }
 
     if (typeof window !== 'undefined') {
@@ -201,48 +247,131 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
 
     async function rewriteThirdPartyModuleSource(source, moduleUrl, processingChain = new Set()) {
         await ensureModuleLexerReady();
-        const [imports] = moduleLexerParse(String(source));
-        if (!Array.isArray(imports) || imports.length === 0) {
-            return String(source);
-        }
-
+        const sourceText = String(source);
+        const [imports] = moduleLexerParse(sourceText);
         const chain = new Set(processingChain);
         chain.add(normalizeThirdPartyModuleUrl(moduleUrl));
-        let rewritten = String(source);
-        for (let index = imports.length - 1; index >= 0; index -= 1) {
-            const importRecord = imports[index];
-            if (typeof importRecord?.n !== 'string') {
-                continue;
-            }
+        let rewritten = sourceText;
 
-            const resolved = resolveModuleSpecifier(moduleUrl, importRecord.n);
-            if (!resolved) {
-                continue;
-            }
+        if (Array.isArray(imports) && imports.length > 0) {
+            for (let index = imports.length - 1; index >= 0; index -= 1) {
+                const importRecord = imports[index];
+                if (typeof importRecord?.n !== 'string') {
+                    continue;
+                }
 
-            let replacement = importRecord.n;
-            if (isRouteThirdPartyModuleUrl(resolved)) {
-                const normalizedResolved = normalizeThirdPartyModuleUrl(resolved);
-                const isCircularDependency = chain.has(normalizedResolved);
-                const isDynamicImport = isDynamicImportRecord(importRecord);
+                const resolved = resolveModuleSpecifier(moduleUrl, importRecord.n);
+                if (!resolved) {
+                    continue;
+                }
 
-                replacement = (isCircularDependency || isDynamicImport)
-                    ? toBrowserModuleSpecifier(resolved)
-                    : await resolveModuleBlobUrl(resolved, chain);
-            } else {
-                replacement = toBrowserModuleSpecifier(resolved);
-            }
+                let replacement = importRecord.n;
+                if (isRouteThirdPartyModuleUrl(resolved)) {
+                    const normalizedResolved = normalizeThirdPartyModuleUrl(resolved);
+                    const isCircularDependency = chain.has(normalizedResolved);
+                    const isDynamicImport = isDynamicImportRecord(importRecord);
 
-            if (replacement !== importRecord.n) {
-                const { start, end } = getImportSpecifierReplaceRange(rewritten, importRecord);
-                const currentSlice = rewritten.slice(start, end);
-                const replacementLiteral = isQuotedSpecifierSlice(currentSlice)
-                    ? JSON.stringify(replacement)
-                    : replacement;
-                rewritten = `${rewritten.slice(0, start)}${replacementLiteral}${rewritten.slice(end)}`;
+                    replacement = (isCircularDependency || isDynamicImport)
+                        ? toBrowserModuleSpecifier(resolved)
+                        : await resolveModuleBlobUrl(resolved, chain);
+                } else {
+                    replacement = toBrowserModuleSpecifier(resolved);
+                }
+
+                if (replacement !== importRecord.n) {
+                    const { start, end } = getImportSpecifierReplaceRange(rewritten, importRecord);
+                    const currentSlice = rewritten.slice(start, end);
+                    const replacementLiteral = isQuotedSpecifierSlice(currentSlice)
+                        ? JSON.stringify(replacement)
+                        : replacement;
+                    rewritten = `${rewritten.slice(0, start)}${replacementLiteral}${rewritten.slice(end)}`;
+                }
             }
         }
 
+        return rewriteEmbeddedThirdPartyAssetUrls(rewritten, moduleUrl, chain);
+    }
+
+    function resolveThirdPartyInlineAssetUrl(routeUrl, processingChain = new Set()) {
+        const normalized = normalizeThirdPartyModuleUrl(routeUrl);
+        if (processingChain.has(normalized)) {
+            return Promise.resolve(toBrowserModuleSpecifier(normalized));
+        }
+
+        const pathname = new URL(normalized, window.location.origin).pathname;
+        if (MODULE_FILE_PATTERN.test(pathname)) {
+            return resolveModuleBlobUrl(normalized, processingChain);
+        }
+
+        if (STYLESHEET_FILE_PATTERN.test(pathname)) {
+            return resolveStylesheetBlobUrl(normalized);
+        }
+
+        return resolveAssetBlobUrl(normalized);
+    }
+
+    async function rewriteEmbeddedThirdPartyAssetUrls(source, moduleUrl, processingChain = new Set()) {
+        const sourceText = String(source || '');
+        if (!sourceText.includes('/scripts/extensions/third-party/')) {
+            return sourceText;
+        }
+
+        let imports = [];
+        try {
+            [imports] = moduleLexerParse(sourceText);
+        } catch {
+            return sourceText;
+        }
+        const importSpecifierRanges = collectImportSpecifierRanges(sourceText, imports);
+        const routeUrlPattern = new RegExp(THIRD_PARTY_ROUTE_URL_PATTERN.source, THIRD_PARTY_ROUTE_URL_PATTERN.flags);
+
+        const matches = [];
+        for (const match of sourceText.matchAll(routeUrlPattern)) {
+            const candidate = String(match?.[0] || '');
+            const start = Number(match?.index);
+            if (!candidate || !Number.isInteger(start) || isOffsetWithinRanges(start, importSpecifierRanges)) {
+                continue;
+            }
+
+            const resolved = resolveModuleSpecifier(moduleUrl, candidate);
+            if (!resolved || !isRouteThirdPartyModuleUrl(resolved)) {
+                continue;
+            }
+
+            matches.push({
+                start,
+                end: start + candidate.length,
+                resolved: normalizeThirdPartyModuleUrl(resolved),
+            });
+        }
+
+        if (matches.length === 0) {
+            return sourceText;
+        }
+
+        const resolvedMap = new Map();
+        for (const match of matches) {
+            if (resolvedMap.has(match.resolved)) {
+                continue;
+            }
+
+            const rewrittenUrl = await resolveThirdPartyInlineAssetUrl(match.resolved, processingChain);
+            resolvedMap.set(match.resolved, rewrittenUrl);
+        }
+
+        let cursor = 0;
+        let rewritten = '';
+        for (const match of matches) {
+            const replacement = resolvedMap.get(match.resolved);
+            if (!replacement) {
+                continue;
+            }
+
+            rewritten += sourceText.slice(cursor, match.start);
+            rewritten += replacement;
+            cursor = match.end;
+        }
+        rewritten += sourceText.slice(cursor);
         return rewritten;
     }
 
@@ -280,6 +409,41 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
             return await task;
         } catch (error) {
             moduleBlobCache.delete(normalizedUrl);
+            throw error;
+        }
+    }
+
+    async function resolveAssetBlobUrl(assetUrl) {
+        const doFetch = resolveFetchImpl(fetchImpl);
+        const normalizedUrl = normalizeThirdPartyModuleUrl(assetUrl);
+        const cachedTask = assetBlobCache.get(normalizedUrl);
+        if (cachedTask) {
+            return cachedTask;
+        }
+
+        const task = (async () => {
+            const response = await doFetch(normalizedUrl, { cache: 'no-store' });
+            if (!response.ok) {
+                throw new Error(`Failed to fetch extension asset: ${response.status} ${response.statusText}`);
+            }
+
+            const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            if (contentType.includes('text/html') || looksLikeHtmlBytes(bytes)) {
+                throw new Error(`Extension asset is not binary/text payload: ${normalizedUrl}`);
+            }
+
+            const blobUrl = URL.createObjectURL(new Blob([bytes], { type: contentType || 'application/octet-stream' }));
+            assetBlobUrls.add(blobUrl);
+            return blobUrl;
+        })();
+
+        assetBlobCache.set(normalizedUrl, task);
+
+        try {
+            return await task;
+        } catch (error) {
+            assetBlobCache.delete(normalizedUrl);
             throw error;
         }
     }
