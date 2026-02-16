@@ -18,23 +18,7 @@ export function toUrl(input) {
     return null;
 }
 
-export function shouldIntercept(url) {
-    if (url.origin !== window.location.origin) {
-        return false;
-    }
-
-    if (url.pathname === '/version' || url.pathname === '/csrf-token') {
-        return true;
-    }
-
-    if (url.pathname.startsWith('/scripts/extensions/third-party/')) {
-        return true;
-    }
-
-    return url.pathname.startsWith('/api/');
-}
-
-export async function getMethod(input, init) {
+export function getMethodHint(input, init) {
     if (init?.method) {
         return String(init.method).toUpperCase();
     }
@@ -44,6 +28,10 @@ export async function getMethod(input, init) {
     }
 
     return 'GET';
+}
+
+export async function getMethod(input, init) {
+    return getMethodHint(input, init);
 }
 
 export async function readRequestBody(input, init) {

@@ -10,6 +10,7 @@ import {
     default as libs,
 } from './lib.js';
 import { getClientVersion as getBridgeClientVersion } from './tauri-bridge.js';
+import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -411,7 +412,6 @@ export const default_avatar = 'img/ai4.png';
 export const system_avatar = 'img/five.png';
 export const comment_avatar = 'img/quill.png';
 export const default_user_avatar = 'img/user-default.png';
-const SILLYTAVERN_COMPAT_VERSION = '1.15.0';
 export let CLIENT_VERSION = 'SillyTavern:UNKNOWN:TauriTavern'; // For Horde header
 let optionsPopper = Popper.createPopper(document.getElementById('options_button'), document.getElementById('options'), {
     placement: 'top-start',

@@ -1,7 +1,7 @@
 export function createInterceptors({
     isTauri,
     originalFetch,
-    shouldIntercept,
+    canHandleRequest,
     toUrl,
     routeRequest,
     jsonResponse,
@@ -22,7 +22,7 @@ export function createInterceptors({
             }
 
             const requestUrl = toUrl(input);
-            if (!requestUrl || !shouldIntercept(requestUrl)) {
+            if (!requestUrl || !canHandleRequest(requestUrl, input, init)) {
                 return originalFetch(input, init);
             }
 
@@ -54,7 +54,9 @@ export function createInterceptors({
                 : { ...(urlOrOptions || {}) };
 
             const requestUrl = toUrl(options.url);
-            if (!requestUrl || !shouldIntercept(requestUrl)) {
+            if (!requestUrl || !canHandleRequest(requestUrl, options.url, {
+                method: options.type || options.method || 'GET',
+            })) {
                 return originalAjax(urlOrOptions, maybeOptions);
             }
 

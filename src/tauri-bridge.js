@@ -1,6 +1,6 @@
 // Core Tauri bridge for frontend modules.
 
-const SILLYTAVERN_COMPAT_VERSION = '1.15.0';
+import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
 
 export const isTauriEnv = typeof window !== 'undefined'
     && (window.__TAURI_INTERNALS__ !== undefined || typeof window.__TAURI__?.core?.invoke === 'function');

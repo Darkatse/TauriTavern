@@ -5,10 +5,10 @@ import { createRouteRegistry } from './router.js';
 import { installNativeShareBridge } from './share-target-bridge.js';
 import {
     getMethod,
+    getMethodHint,
     jsonResponse,
     readRequestBody,
     safeJson,
-    shouldIntercept,
     textResponse,
     toUrl,
 } from './http-utils.js';
@@ -29,6 +29,15 @@ export function bootstrapTauriMain() {
     const router = createRouteRegistry();
     registerRoutes(router, context, { jsonResponse, textResponse });
 
+    const canHandleRequest = (url, input, init) => {
+        if (!url || url.origin !== window.location.origin) {
+            return false;
+        }
+
+        const method = getMethodHint(input, init);
+        return router.canHandle(method, url.pathname);
+    };
+
     const routeRequest = async (url, input, init) => {
         const method = await getMethod(input, init);
         const body = await readRequestBody(input, init);
@@ -45,7 +54,7 @@ export function bootstrapTauriMain() {
     const interceptors = createInterceptors({
         isTauri,
         originalFetch: window.fetch.bind(window),
-        shouldIntercept,
+        canHandleRequest,
         toUrl,
         routeRequest,
         jsonResponse,

@@ -117,11 +117,7 @@ pub async fn read_third_party_extension_asset(
 
     app_state
         .extension_service
-        .read_third_party_asset(
-            &extension_name,
-            &relative_path,
-            location_hint.as_deref(),
-        )
+        .read_third_party_asset(&extension_name, &relative_path, location_hint.as_deref())
         .await
         .map_err(map_command_error("Failed to read extension asset"))
 }

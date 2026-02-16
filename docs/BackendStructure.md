@@ -236,6 +236,8 @@ pub struct CharacterResponseDto {
 
 实现领域层定义的仓库接口，提供具体的持久化逻辑。
 
+扩展仓库 `FileExtensionRepository` 已按职责拆分为子模块（如 GitHub 快照访问、元数据解析、临时目录与替换策略），主仓储仅保留装配与用例编排逻辑，以降低单文件复杂度并提升可测试性。
+
 ```rust
 // 示例: 文件系统角色仓库
 pub struct FileCharacterRepository {

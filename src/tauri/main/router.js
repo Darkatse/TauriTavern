@@ -54,6 +54,28 @@ export function createRouteRegistry() {
         return matchedSpecific || matchedWildcard;
     }
 
+    function resolve(method, path) {
+        const specific = routes.get(makeRouteKey(method, path));
+        if (specific) {
+            return { handler: specific, wildcard: '' };
+        }
+
+        const wildcard = routes.get(makeRouteKey('*', path));
+        if (wildcard) {
+            return { handler: wildcard, wildcard: '' };
+        }
+
+        const wildcardRoute = findWildcardHandler(method, path);
+        if (!wildcardRoute) {
+            return null;
+        }
+
+        return {
+            handler: wildcardRoute.handler,
+            wildcard: path.slice(wildcardRoute.prefix.length),
+        };
+    }
+
     return {
         get(path, handler) {
             register('GET', path, handler);
@@ -64,21 +86,17 @@ export function createRouteRegistry() {
         all(path, handler) {
             register('*', path, handler);
         },
+        canHandle(method, path) {
+            const normalizedMethod = String(method || 'GET').toUpperCase();
+            const normalizedPath = String(path || '');
+            return resolve(normalizedMethod, normalizedPath) !== null;
+        },
         async handle(request) {
-            const specific = routes.get(makeRouteKey(request.method, request.path));
-            if (specific) {
-                return specific(request);
-            }
-
-            const wildcard = routes.get(makeRouteKey('*', request.path));
-            if (wildcard) {
-                return wildcard(request);
-            }
-
-            const wildcardRoute = findWildcardHandler(request.method, request.path);
-            if (wildcardRoute) {
-                const wildcard = request.path.slice(wildcardRoute.prefix.length);
-                return wildcardRoute.handler({ ...request, wildcard });
+            const normalizedMethod = String(request.method || 'GET').toUpperCase();
+            const normalizedPath = String(request.path || '');
+            const resolved = resolve(normalizedMethod, normalizedPath);
+            if (resolved) {
+                return resolved.handler({ ...request, wildcard: resolved.wildcard });
             }
 
             return null;
