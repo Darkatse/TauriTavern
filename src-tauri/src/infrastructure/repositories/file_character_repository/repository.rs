@@ -223,6 +223,31 @@ impl CharacterRepository for FileCharacterRepository {
         Ok(())
     }
 
+    async fn export_character_png_bytes(
+        &self,
+        name: &str,
+        character_card_json: &str,
+    ) -> Result<Vec<u8>, DomainError> {
+        let file_path = self.get_character_path(name);
+        if !file_path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Character not found: {}",
+                name
+            )));
+        }
+
+        let image_data = fs::read(&file_path).await.map_err(|e| {
+            logger::error(&format!(
+                "Failed to read character file for export {}: {}",
+                file_path.display(),
+                e
+            ));
+            DomainError::InternalError(format!("Failed to read character file: {}", e))
+        })?;
+
+        write_character_data_to_png(&image_data, character_card_json)
+    }
+
     async fn create_with_avatar(
         &self,
         character: &Character,

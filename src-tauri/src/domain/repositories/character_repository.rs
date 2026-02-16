@@ -34,6 +34,13 @@ pub trait CharacterRepository: Send + Sync {
     /// Export a character to a file
     async fn export_character(&self, name: &str, target_path: &Path) -> Result<(), DomainError>;
 
+    /// Export a character card as PNG bytes by writing supplied card JSON metadata.
+    async fn export_character_png_bytes(
+        &self,
+        name: &str,
+        character_card_json: &str,
+    ) -> Result<Vec<u8>, DomainError>;
+
     /// Create a character with an avatar image
     async fn create_with_avatar(
         &self,

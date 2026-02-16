@@ -1,7 +1,8 @@
 use crate::application::dto::character_dto::{
     CharacterChatDto, CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
-    ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto, RenameCharacterDto,
-    UpdateAvatarDto, UpdateCharacterDto,
+    ExportCharacterContentDto, ExportCharacterContentResultDto, ExportCharacterDto,
+    GetCharacterChatsDto, ImportCharacterDto, RenameCharacterDto, UpdateAvatarDto,
+    UpdateCharacterDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::domain::errors::DomainError;
@@ -254,6 +255,54 @@ impl CharacterService {
             .export_character(&dto.name, Path::new(&dto.target_path))
             .await?;
         Ok(())
+    }
+
+    /// Export character as downloadable content (PNG/JSON)
+    pub async fn export_character_content(
+        &self,
+        dto: ExportCharacterContentDto,
+    ) -> Result<ExportCharacterContentResultDto, ApplicationError> {
+        let format = dto.format.trim().to_ascii_lowercase();
+        if format != "png" && format != "json" {
+            return Err(ApplicationError::ValidationError(format!(
+                "Unsupported character export format: {}",
+                dto.format
+            )));
+        }
+
+        let character = self.repository.find_by_name(&dto.name).await?;
+        let export_value = Self::build_export_card_value(&character)?;
+
+        if format == "json" {
+            let pretty_json = serde_json::to_string_pretty(&export_value).map_err(|error| {
+                ApplicationError::InternalError(format!(
+                    "Failed to serialize exported character JSON: {}",
+                    error
+                ))
+            })?;
+
+            return Ok(ExportCharacterContentResultDto {
+                data: pretty_json.into_bytes(),
+                mime_type: "application/json".to_string(),
+            });
+        }
+
+        let card_json = serde_json::to_string(&export_value).map_err(|error| {
+            ApplicationError::InternalError(format!(
+                "Failed to serialize exported character card JSON: {}",
+                error
+            ))
+        })?;
+
+        let png_bytes = self
+            .repository
+            .export_character_png_bytes(&dto.name, &card_json)
+            .await?;
+
+        Ok(ExportCharacterContentResultDto {
+            data: png_bytes,
+            mime_type: "image/png".to_string(),
+        })
     }
 
     /// Update a character's avatar
@@ -731,11 +780,31 @@ impl CharacterService {
             _ => Vec::new(),
         }
     }
+
+    fn build_export_card_value(character: &Character) -> Result<Value, DomainError> {
+        let mut export_card = character.to_v2();
+        export_card.fav = false;
+        export_card.data.extensions.fav = false;
+
+        let mut export_value = serde_json::to_value(&export_card).map_err(|error| {
+            DomainError::InvalidData(format!(
+                "Failed to build exported character payload: {}",
+                error
+            ))
+        })?;
+
+        if let Some(object) = export_value.as_object_mut() {
+            object.remove("chat");
+        }
+
+        Ok(export_value)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::CharacterService;
+    use crate::domain::models::character::Character;
     use serde_json::json;
 
     #[test]
@@ -812,5 +881,36 @@ mod tests {
 
         assert_eq!(from_array, vec!["a", "b"]);
         assert_eq!(from_csv, vec!["x", "y", "z"]);
+    }
+
+    #[test]
+    fn build_export_card_value_removes_private_fields() {
+        let mut character = Character::new(
+            "Export Test".to_string(),
+            "desc".to_string(),
+            "persona".to_string(),
+            "hello".to_string(),
+        );
+        character.chat = "private-chat-name".to_string();
+        character.fav = true;
+        character.data.extensions.fav = true;
+
+        let export_value = CharacterService::build_export_card_value(&character)
+            .expect("export payload should be built");
+
+        assert!(
+            export_value.get("chat").is_none(),
+            "chat should be removed from exported payload"
+        );
+        assert_eq!(
+            export_value.get("fav").and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            export_value
+                .pointer("/data/extensions/fav")
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
     }
 }

@@ -94,6 +94,20 @@ pub struct ExportCharacterDto {
     pub target_path: String,
 }
 
+/// Character export content DTO
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportCharacterContentDto {
+    pub name: String,
+    pub format: String,
+}
+
+/// Character export content response DTO
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportCharacterContentResultDto {
+    pub data: Vec<u8>,
+    pub mime_type: String,
+}
+
 /// Character avatar update DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateAvatarDto {

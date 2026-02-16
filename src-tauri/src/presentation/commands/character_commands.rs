@@ -5,8 +5,9 @@ use tauri::State;
 use crate::app::AppState;
 use crate::application::dto::character_dto::{
     CharacterChatDto, CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
-    ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto, RenameCharacterDto,
-    UpdateAvatarDto, UpdateCharacterDto,
+    ExportCharacterContentDto, ExportCharacterContentResultDto, ExportCharacterDto,
+    GetCharacterChatsDto, ImportCharacterDto, RenameCharacterDto, UpdateAvatarDto,
+    UpdateCharacterDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -148,6 +149,23 @@ pub async fn export_character(
         .export_character(dto)
         .await
         .map_err(map_command_error("Failed to export character"))
+}
+
+#[tauri::command]
+pub async fn export_character_content(
+    dto: ExportCharacterContentDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ExportCharacterContentResultDto, CommandError> {
+    log_command(format!(
+        "export_character_content {} format {}",
+        dto.name, dto.format
+    ));
+
+    app_state
+        .character_service
+        .export_character_content(dto)
+        .await
+        .map_err(map_command_error("Failed to export character content"))
 }
 
 #[tauri::command]

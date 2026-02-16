@@ -213,10 +213,31 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             return jsonResponse({ error: 'Character not found' }, 404);
         }
 
-        const character = await context.safeInvoke('get_character', { name: characterId });
-        const payload = JSON.stringify(character, null, 2);
-        const contentType = format === 'json' ? 'application/json' : 'application/octet-stream';
+        const normalizedFormat = format === 'json' ? 'json' : format === 'png' ? 'png' : '';
+        if (!normalizedFormat) {
+            return jsonResponse({ error: 'Unsupported export format' }, 400);
+        }
 
-        return new Response(payload, { status: 200, headers: { 'Content-Type': contentType } });
+        const exported = await context.safeInvoke('export_character_content', {
+            dto: {
+                name: characterId,
+                format: normalizedFormat,
+            },
+        });
+
+        const payload = Array.isArray(exported?.data) ? Uint8Array.from(exported.data) : new Uint8Array();
+        const contentType = String(
+            exported?.mime_type || (normalizedFormat === 'png' ? 'image/png' : 'application/json'),
+        );
+        const fallbackName = `${characterId}.${normalizedFormat}`;
+        const downloadName = String(avatar || fallbackName).replace(/\.png$/i, `.${normalizedFormat}`);
+
+        return new Response(payload, {
+            status: 200,
+            headers: {
+                'Content-Type': contentType,
+                'Content-Disposition': `attachment; filename="${encodeURI(downloadName)}"`,
+            },
+        });
     });
 }
