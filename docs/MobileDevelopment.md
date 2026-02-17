@@ -23,7 +23,13 @@ https://github.com/tauri-apps/tauri/issues/14240
 
 ### 1.3 当前实现
 
-核心在 `src-tauri/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`：
+核心入口仍是 `src-tauri/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`，但职责已拆分为：
+
+- `AndroidInsetsBridge.kt`：系统栏/IME inset 监听与 CSS 变量注入；
+- `WebViewReadinessPoller.kt`：页面就绪轮询；
+- `ShareIntentParser.kt`：分享 Intent 解析与导入文件持久化；
+- `SharePayloadDispatcher.kt`：分享 payload 队列与前端 bridge 分发；
+- `MainActivity.kt`：仅保留生命周期编排与模块协作。
 
 - 保留 edge-to-edge 与透明系统栏配置（沉浸基础）；
 - 监听系统栏与 IME inset；
