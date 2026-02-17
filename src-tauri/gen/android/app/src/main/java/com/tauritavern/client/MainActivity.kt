@@ -25,6 +25,7 @@ import java.util.Locale
 class MainActivity : TauriActivity() {
   private var webView: WebView? = null
   private var systemBarInsets: Insets = Insets.NONE
+  private var imeBottomInset: Int = 0
   private val pendingSharePayloads = ArrayDeque<SharePayload>()
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -92,9 +93,15 @@ class MainActivity : TauriActivity() {
     val contentRoot = getContentRoot() ?: return
 
     ViewCompat.setOnApplyWindowInsetsListener(contentRoot) { _, insets ->
-      updateSystemBarInsets(insets)
+      updateWindowInsets(insets)
       insets
     }
+  }
+
+  private fun updateWindowInsets(insets: WindowInsetsCompat) {
+    updateSystemBarInsets(insets)
+    updateImeInsets(insets)
+    pushInsetsToWebView()
   }
 
   private fun updateSystemBarInsets(insets: WindowInsetsCompat) {
@@ -108,7 +115,11 @@ class MainActivity : TauriActivity() {
         maxOf(visibleInsets.right, stableInsets.right),
         maxOf(visibleInsets.bottom, stableInsets.bottom),
       )
-    pushInsetsToWebView()
+  }
+
+  private fun updateImeInsets(insets: WindowInsetsCompat) {
+    val imeType = WindowInsetsCompat.Type.ime()
+    imeBottomInset = if (insets.isVisible(imeType)) insets.getInsets(imeType).bottom else 0
   }
 
   private fun requestSystemInsets() {
@@ -132,6 +143,7 @@ class MainActivity : TauriActivity() {
         root.style.setProperty('--tt-safe-area-right', '${toCssPx(systemBarInsets.right)}');
         root.style.setProperty('--tt-safe-area-left', '${toCssPx(systemBarInsets.left)}');
         root.style.setProperty('--tt-safe-area-bottom', '${toCssPx(systemBarInsets.bottom)}');
+        root.style.setProperty('--tt-ime-bottom', '${toCssPx(imeBottomInset)}');
       })();
       """.trimIndent()
 

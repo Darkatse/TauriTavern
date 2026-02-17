@@ -23,11 +23,14 @@ https://github.com/tauri-apps/tauri/issues/14240
 
 ### 1.3 当前实现
 
-核心在 `src-tauri/gen/android/app/src/main/java/com/tauritavern/app/MainActivity.kt`：
+核心在 `src-tauri/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`：
 
 - 保留 edge-to-edge 与透明系统栏配置（沉浸基础）；
-- 监听系统栏 inset；
-- 将 inset 写入前端 CSS 变量 `--tt-safe-area-top/right/left/bottom`；
+- 监听系统栏与 IME inset；
+- 将 inset 写入前端 CSS 变量：
+  - `--tt-safe-area-top/right/left/bottom`（系统安全区）
+  - `--tt-ime-bottom`（输入法可见时的底部 inset）
+  - `--tt-viewport-bottom-inset`（前端通过 `max()` 合成有效底部 inset）
 - 注入前先检查页面就绪：
   - `document.readyState !== 'loading'`
   - `location.href !== 'about:blank'`
