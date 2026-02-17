@@ -604,9 +604,31 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         return `${result.toFixed(result >= 10 ? 0 : 1)} ${units[unitIndex]}`;
     }
 
+    function normalizeEpochMillis(epoch) {
+        if (!Number.isFinite(epoch)) {
+            return 0;
+        }
+
+        const normalized = Math.trunc(epoch);
+        return Math.abs(normalized) < 1_000_000_000_000 ? normalized * 1000 : normalized;
+    }
+
     function parseTimestamp(sendDate) {
-        const parsed = Date.parse(String(sendDate || ''));
-        return Number.isFinite(parsed) ? parsed : Date.now();
+        if (typeof sendDate === 'number') {
+            return normalizeEpochMillis(sendDate);
+        }
+
+        const raw = String(sendDate || '').trim();
+        if (!raw) {
+            return 0;
+        }
+
+        if (/^-?\d+(\.\d+)?$/.test(raw)) {
+            return normalizeEpochMillis(Number(raw));
+        }
+
+        const parsed = Date.parse(raw);
+        return Number.isFinite(parsed) ? parsed : 0;
     }
 
     function exportChatAsText(frontendChat) {

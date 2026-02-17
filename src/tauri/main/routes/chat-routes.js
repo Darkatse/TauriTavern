@@ -244,8 +244,11 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
                     }
 
                     try {
-                        const payload = await context.safeInvoke('get_group_chat', { dto: { id } });
-                        if (!Array.isArray(payload)) {
+                        const payload = await context.safeInvoke('get_group_chat', {
+                            dto: { id },
+                            allow_not_found: true,
+                        });
+                        if (!Array.isArray(payload) || payload.length === 0) {
                             return null;
                         }
 
@@ -299,26 +302,59 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         await context.getAllCharacters({ shallow: false });
 
         const characterEntries = Array.isArray(chats)
-            ? chats.map((chat) => {
-                const frontendChat = context.toFrontendChat(chat);
-                const messageCount = Math.max(0, frontendChat.length - 1);
-                const lastMessage = frontendChat[frontendChat.length - 1] || {};
-                const avatar = context.findAvatarByCharacterId(chat.character_name);
-                const result = {
-                    file_name: context.ensureJsonl(chat.file_name || ''),
-                    file_size: '0 B',
-                    chat_items: messageCount,
-                    mes: lastMessage.mes || '',
-                    last_mes: context.parseTimestamp(lastMessage.send_date),
-                    avatar: avatar || '',
-                };
+            ? await Promise.all(
+                chats.map(async (chat) => {
+                    const characterId = String(chat?.character_name || '').trim();
+                    const fileStem = context.stripJsonl(chat?.file_name || '');
+                    if (!characterId || !fileStem) {
+                        return null;
+                    }
 
-                if (withMetadata) {
-                    result.chat_metadata = frontendChat[0]?.chat_metadata || {};
-                }
+                    let payload = [];
+                    try {
+                        payload = await context.safeInvoke('get_chat_payload', {
+                            character_name: characterId,
+                            file_name: fileStem,
+                            allow_not_found: true,
+                        });
+                    } catch {
+                        payload = [];
+                    }
 
-                return result;
-            })
+                    const normalizedPayload = normalizePayload(
+                        Array.isArray(payload) && payload.length > 0 ? payload : context.toFrontendChat(chat),
+                    );
+                    if (normalizedPayload.length === 0) {
+                        return null;
+                    }
+
+                    const messages = payloadMessages(normalizedPayload);
+                    const header = normalizedPayload[0] && typeof normalizedPayload[0] === 'object'
+                        ? normalizedPayload[0]
+                        : {};
+                    const lastMessage = messages[messages.length - 1] || {};
+                    let lastMes = context.parseTimestamp(lastMessage?.send_date);
+                    if (!lastMes) {
+                        lastMes = context.parseTimestamp(header?.create_date || chat?.create_date);
+                    }
+
+                    const avatar = context.findAvatarByCharacterId(characterId);
+                    const result = {
+                        file_name: context.ensureJsonl(chat.file_name || ''),
+                        file_size: context.formatFileSize(new TextEncoder().encode(payloadToJsonl(normalizedPayload)).length),
+                        chat_items: messages.length,
+                        mes: lastMessage?.mes || '',
+                        last_mes: Number(lastMes || 0),
+                        avatar: avatar || '',
+                    };
+
+                    if (withMetadata) {
+                        result.chat_metadata = header?.chat_metadata || {};
+                    }
+
+                    return result;
+                }),
+            )
             : [];
 
         const groupEntries = Array.isArray(groups)
@@ -334,20 +370,27 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
                         }
 
                         try {
-                            const payload = await context.safeInvoke('get_group_chat', { dto: { id } });
-                            if (!Array.isArray(payload)) {
+                            const payload = await context.safeInvoke('get_group_chat', {
+                                dto: { id },
+                                allow_not_found: true,
+                            });
+                            if (!Array.isArray(payload) || payload.length === 0) {
                                 return null;
                             }
 
                             const messages = payloadMessages(payload);
                             const header = payload[0] && typeof payload[0] === 'object' ? payload[0] : {};
                             const lastMessage = messages[messages.length - 1] || {};
+                            let lastMes = context.parseTimestamp(lastMessage?.send_date);
+                            if (!lastMes) {
+                                lastMes = context.parseTimestamp(header?.create_date);
+                            }
                             const result = {
                                 file_name: context.ensureJsonl(id),
                                 file_size: context.formatFileSize(new TextEncoder().encode(payloadToJsonl(payload)).length),
                                 chat_items: messages.length,
                                 mes: lastMessage?.mes || '',
-                                last_mes: context.parseTimestamp(lastMessage?.send_date),
+                                last_mes: Number(lastMes || 0),
                                 group: groupId,
                             };
 
@@ -364,7 +407,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             )
             : [];
 
-        const allEntries = [...characterEntries, ...groupEntries.filter(Boolean)];
+        const allEntries = [...characterEntries.filter(Boolean), ...groupEntries.filter(Boolean)];
         allEntries.sort((a, b) => Number(b.last_mes || 0) - Number(a.last_mes || 0));
 
         return jsonResponse(allEntries.slice(0, Math.max(0, max)));
@@ -484,6 +527,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         try {
             const payload = await context.safeInvoke('get_group_chat', {
                 dto: { id },
+                allow_not_found: true,
             });
             return jsonResponse(Array.isArray(payload) ? payload : []);
         } catch (error) {

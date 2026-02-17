@@ -21,6 +21,16 @@ fn make_message(name: &str, is_user: bool, mes: &str) -> Value {
     })
 }
 
+fn is_js_truthy(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(flag)) => *flag,
+        Some(Value::Number(number)) => number.as_f64().map(|v| v != 0.0).unwrap_or(false),
+        Some(Value::String(text)) => !text.is_empty(),
+        Some(Value::Array(_)) | Some(Value::Object(_)) => true,
+    }
+}
+
 fn flatten_chub_payload(payload: &mut [Value], user_name: &str, character_name: &str) {
     for (index, line) in payload.iter_mut().enumerate() {
         let Some(object) = line.as_object_mut() else {
@@ -118,10 +128,8 @@ fn import_agnai_payload(
 
     let mut payload = vec![default_header()];
     for message in messages {
-        let is_user = message
-            .get("userId")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        // Match SillyTavern upstream semantics: `!!message.userId`
+        let is_user = is_js_truthy(message.get("userId"));
         let text = message
             .get("msg")
             .and_then(Value::as_str)
@@ -422,4 +430,37 @@ pub fn export_payload_to_plain_text(payload: &[Value]) -> String {
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::import_chat_payloads_from_json;
+    use serde_json::json;
+
+    #[test]
+    fn import_agnai_treats_string_user_id_as_user_message() {
+        let payload = json!({
+            "messages": [
+                { "userId": "u-1", "msg": "Hello" },
+                { "msg": "Hi there" }
+            ]
+        });
+
+        let imported = import_chat_payloads_from_json(&payload, "User", "Assistant")
+            .expect("agnai payload should import");
+
+        assert_eq!(imported.len(), 1);
+        let chat = &imported[0];
+
+        assert_eq!(chat.len(), 3);
+        assert_eq!(chat[1].get("is_user").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            chat[1].get("name").and_then(|v| v.as_str()),
+            Some("User")
+        );
+        assert_eq!(
+            chat[2].get("name").and_then(|v| v.as_str()),
+            Some("Assistant")
+        );
+    }
 }

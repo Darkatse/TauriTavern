@@ -253,15 +253,21 @@ pub async fn get_chat_payload(
 #[tauri::command]
 pub async fn get_group_chat(
     dto: GetGroupChatDto,
+    allow_not_found: Option<bool>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<Value>, CommandError> {
-    log_command(format!("get_group_chat {}", dto.id));
+    let chat_id = dto.id.clone();
+    log_command(format!("get_group_chat {}", chat_id));
 
-    app_state
-        .chat_service
-        .get_group_chat(dto)
-        .await
-        .map_err(map_command_error("Failed to get group chat payload"))
+    match app_state.chat_service.get_group_chat(dto).await {
+        Ok(payload) => Ok(payload),
+        Err(ApplicationError::NotFound(_)) if allow_not_found.unwrap_or(false) => Ok(Vec::new()),
+        Err(error) => {
+            let context = format!("Failed to get group chat payload {}", chat_id);
+            logger::error(&format!("{}: {}", context, error));
+            Err(error.into())
+        }
+    }
 }
 
 #[tauri::command]

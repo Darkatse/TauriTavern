@@ -236,6 +236,58 @@ async fn import_chat_payload_creates_unique_files() {
     let _ = fs::remove_dir_all(&root).await;
 }
 
+#[tokio::test]
+async fn rename_chat_keeps_raw_header_fields_intact() {
+    let (repository, root) = setup_repository().await;
+    let payload = vec![
+        json!({
+            "chat_metadata": {
+                "integrity": "rename-a",
+            },
+            "user_name": "unused",
+            "character_name": "unused",
+            "custom_header": {
+                "keep": true,
+            },
+        }),
+        json!({
+            "name": "User",
+            "is_user": true,
+            "send_date": "2026-01-01T00:00:00.000Z",
+            "mes": "hello",
+            "extra": {},
+        }),
+    ];
+
+    repository
+        .save_chat_payload("alice", "session", &payload, false)
+        .await
+        .expect("save payload");
+
+    repository
+        .rename_chat("alice", "session", "session-renamed")
+        .await
+        .expect("rename chat");
+
+    let renamed = repository
+        .get_chat_payload("alice", "session-renamed")
+        .await
+        .expect("read renamed payload");
+    assert_eq!(
+        renamed[0]
+            .get("custom_header")
+            .and_then(Value::as_object)
+            .and_then(|entry| entry.get("keep"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let old = repository.get_chat_payload("alice", "session").await;
+    assert!(matches!(old, Err(DomainError::NotFound(_))));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
 fn payload_to_jsonl(payload: &[Value]) -> String {
     payload
         .iter()

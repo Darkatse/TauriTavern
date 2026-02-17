@@ -211,17 +211,28 @@ impl ChatRepository for FileChatRepository {
             character_name, old_file_name, character_name, new_file_name
         ));
 
-        // Get the chat
-        let mut chat = self.get_chat(character_name, old_file_name).await?;
-
-        // Update the file name
-        chat.file_name = Some(Self::strip_jsonl_extension(new_file_name).to_string());
-
-        // Save the chat with the new file name
-        self.write_chat_file(&chat, true).await?;
-
-        // Delete the old file
         let old_path = self.get_chat_path(character_name, old_file_name);
+        if !old_path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Chat not found: {}/{}",
+                character_name, old_file_name
+            )));
+        }
+
+        let new_path = self.get_chat_path(character_name, new_file_name);
+        if new_path.exists() {
+            return Err(DomainError::InvalidData(format!(
+                "Chat already exists: {}/{}",
+                character_name, new_file_name
+            )));
+        }
+
+        // Keep payload byte-for-byte intact to avoid field drift.
+        fs::copy(&old_path, &new_path).await.map_err(|e| {
+            logger::error(&format!("Failed to copy chat file: {}", e));
+            DomainError::InternalError(format!("Failed to copy chat file: {}", e))
+        })?;
+
         fs::remove_file(&old_path).await.map_err(|e| {
             logger::error(&format!("Failed to delete old chat file: {}", e));
             DomainError::InternalError(format!("Failed to delete old chat file: {}", e))
@@ -232,8 +243,13 @@ impl ChatRepository for FileChatRepository {
         let new_cache_key = self.get_cache_key(character_name, new_file_name);
 
         let mut cache = self.memory_cache.lock().await;
-        cache.remove(&old_cache_key);
-        cache.set(new_cache_key, chat);
+        if let Some(mut chat) = cache.get(&old_cache_key) {
+            chat.file_name = Some(Self::strip_jsonl_extension(new_file_name).to_string());
+            cache.remove(&old_cache_key);
+            cache.set(new_cache_key, chat);
+        } else {
+            cache.remove(&old_cache_key);
+        }
 
         Ok(())
     }
