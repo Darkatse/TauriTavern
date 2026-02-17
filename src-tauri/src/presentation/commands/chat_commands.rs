@@ -8,6 +8,8 @@ use crate::application::dto::chat_dto::{
     GetGroupChatDto, ImportCharacterChatsDto, ImportChatDto, ImportGroupChatDto, RenameChatDto,
     RenameGroupChatDto, SaveChatDto, SaveGroupChatDto,
 };
+use crate::application::errors::ApplicationError;
+use crate::infrastructure::logging::logger;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use serde_json::Value;
@@ -225,18 +227,27 @@ pub async fn save_chat(
 pub async fn get_chat_payload(
     character_name: String,
     file_name: String,
+    allow_not_found: Option<bool>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<Value>, CommandError> {
     log_command(format!("get_chat_payload {}/{}", character_name, file_name));
 
-    app_state
+    match app_state
         .chat_service
         .get_chat_payload(&character_name, &file_name)
         .await
-        .map_err(map_command_error(format!(
-            "Failed to get chat payload {}/{}",
-            character_name, file_name
-        )))
+    {
+        Ok(payload) => Ok(payload),
+        Err(ApplicationError::NotFound(_)) if allow_not_found.unwrap_or(false) => Ok(Vec::new()),
+        Err(error) => {
+            let context = format!(
+                "Failed to get chat payload {}/{}",
+                character_name, file_name
+            );
+            logger::error(&format!("{}: {}", context, error));
+            Err(error.into())
+        }
+    }
 }
 
 #[tauri::command]

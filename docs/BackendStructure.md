@@ -850,6 +850,9 @@ pub async fn read_file(path: &str) -> Result<String, DomainError> {
 - group chat 读写删改  
 - 导入命名冲突去重
 
+6. **角色导入不应提前写入初始 chat 文件**  
+角色卡导入阶段只负责角色资产与角色数据落盘；首条消息与 swipe 结构由聊天链路在“首次打开会话”时生成，避免把 `alternate_greetings` 折损成单条 `mes`。
+
 ## 8. 测试策略
 
 ### 8.1 单元测试

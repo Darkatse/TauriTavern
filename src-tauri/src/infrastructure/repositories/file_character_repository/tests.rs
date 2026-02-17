@@ -47,7 +47,7 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
 }
 
 #[tokio::test]
-async fn import_png_creates_initial_chat_file() {
+async fn import_png_does_not_eagerly_create_chat_file() {
     let (repository, root) = setup_repository().await;
 
     let mut character = Character::new(
@@ -78,13 +78,10 @@ async fn import_png_creates_initial_chat_file() {
         .join("chats")
         .join(character_id)
         .join(format!("{}.jsonl", imported.chat));
-    let chat_content = fs::read_to_string(&chat_path)
-        .await
-        .expect("initial chat file should exist");
 
     assert!(
-        chat_content.contains("Hello from import"),
-        "initial chat should include first message"
+        !chat_path.exists(),
+        "character import should not eagerly create chat files"
     );
     assert_eq!(imported.avatar, "Test Character.png");
 
@@ -227,6 +224,93 @@ async fn import_json_preserves_top_level_alternate_greetings_string() {
     assert_eq!(
         imported.data.alternate_greetings,
         vec!["Hello, traveler".to_string()]
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn import_json_with_alternate_greetings_does_not_create_initial_chat_file() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "name": "No Eager Chat Character",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "Primary greeting",
+        "alternate_greetings": ["Alt A", "Alt B"],
+    });
+
+    let import_path = root.join("no-eager-chat.json");
+    fs::write(
+        &import_path,
+        serde_json::to_vec(&card_payload).expect("serialize card"),
+    )
+    .await
+    .expect("write import json");
+
+    let imported = repository
+        .import_character(&import_path, None)
+        .await
+        .expect("import json character");
+
+    let character_id = imported.avatar.trim_end_matches(".png").to_string();
+    let chat_path = root
+        .join("chats")
+        .join(character_id)
+        .join(format!("{}.jsonl", imported.chat));
+
+    assert_eq!(
+        imported.data.alternate_greetings,
+        vec!["Alt A".to_string(), "Alt B".to_string()]
+    );
+    assert!(
+        !chat_path.exists(),
+        "character import should not write initial chat payload"
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn import_json_with_only_alternate_greetings_keeps_payload_for_first_open() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "name": "Alternate Only Character",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "",
+        "alternate_greetings": ["Only Alt"],
+    });
+
+    let import_path = root.join("alternate-only.json");
+    fs::write(
+        &import_path,
+        serde_json::to_vec(&card_payload).expect("serialize card"),
+    )
+    .await
+    .expect("write import json");
+
+    let imported = repository
+        .import_character(&import_path, None)
+        .await
+        .expect("import json character");
+
+    let character_id = imported.avatar.trim_end_matches(".png").to_string();
+    let chat_path = root
+        .join("chats")
+        .join(character_id)
+        .join(format!("{}.jsonl", imported.chat));
+
+    assert_eq!(imported.first_mes, "");
+    assert_eq!(
+        imported.data.alternate_greetings,
+        vec!["Only Alt".to_string()]
+    );
+    assert!(
+        !chat_path.exists(),
+        "character import should keep first-message selection for chat open flow"
     );
 
     let _ = fs::remove_dir_all(&root).await;

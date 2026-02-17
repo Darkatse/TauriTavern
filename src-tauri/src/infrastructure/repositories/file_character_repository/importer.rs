@@ -1,6 +1,5 @@
 use chrono::Utc;
-use rand::random;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 use tokio::fs;
@@ -8,7 +7,6 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::character::{sanitize_filename, Character};
 use crate::domain::models::chat::humanized_date as humanized_chat_date;
-use crate::infrastructure::persistence::jsonl_utils::write_jsonl_file;
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
@@ -302,53 +300,6 @@ impl FileCharacterRepository {
         Ok(target_path)
     }
 
-    async fn create_initial_chat_file_if_missing(
-        &self,
-        character_id: &str,
-        character_name: &str,
-        chat_file_stem: &str,
-        first_message: &str,
-    ) -> Result<(), DomainError> {
-        let chat_dir = self.get_chat_directory(character_id);
-        if !chat_dir.exists() {
-            fs::create_dir_all(&chat_dir).await.map_err(|e| {
-                DomainError::InternalError(format!(
-                    "Failed to create chat directory {}: {}",
-                    chat_dir.display(),
-                    e
-                ))
-            })?;
-        }
-
-        let chat_path = chat_dir.join(format!("{}.jsonl", chat_file_stem));
-        if chat_path.exists() {
-            return Ok(());
-        }
-
-        let now = Utc::now();
-        let mut objects = vec![json!({
-            "user_name": "User",
-            "character_name": character_id,
-            "create_date": humanized_chat_date(now),
-            "chat_metadata": {
-                "chat_id_hash": random::<u64>(),
-            },
-        })];
-
-        if !first_message.trim().is_empty() {
-            objects.push(json!({
-                "name": character_name,
-                "is_user": false,
-                "is_system": false,
-                "send_date": now.to_rfc3339(),
-                "mes": first_message,
-                "extra": {},
-            }));
-        }
-
-        write_jsonl_file(&chat_path, &objects).await
-    }
-
     pub(crate) async fn import_from_png_file(
         &self,
         source_path: &Path,
@@ -367,14 +318,6 @@ impl FileCharacterRepository {
         let target_path = self
             .persist_character_card(&file_stem, file_data, &character)
             .await?;
-
-        self.create_initial_chat_file_if_missing(
-            &file_stem,
-            &character.name,
-            &character.chat,
-            &character.first_mes,
-        )
-        .await?;
 
         self.read_character_from_file(&target_path).await
     }
@@ -400,14 +343,6 @@ impl FileCharacterRepository {
         let target_path = self
             .persist_character_card(&file_stem, &default_avatar, &character)
             .await?;
-
-        self.create_initial_chat_file_if_missing(
-            &file_stem,
-            &character.name,
-            &character.chat,
-            &character.first_mes,
-        )
-        .await?;
 
         self.read_character_from_file(&target_path).await
     }

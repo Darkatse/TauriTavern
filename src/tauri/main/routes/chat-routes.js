@@ -113,6 +113,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             const payload = await context.safeInvoke('get_chat_payload', {
                 character_name: characterId,
                 file_name: fileName,
+                allow_not_found: true,
             });
             return jsonResponse(Array.isArray(payload) ? payload : []);
         } catch (error) {
