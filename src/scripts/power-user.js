@@ -87,6 +87,10 @@ const defaultStoryString = '{{#if system}}{{system}}\n{{/if}}{{#if description}}
 const defaultExampleSeparator = '***';
 const defaultChatStart = '***';
 const defaultToastPosition = 'toast-top-center';
+const MOBILE_THEME_CHAT_WIDTH_VW = 100;
+const MOBILE_SAFE_AREA_TOP = 'max(var(--tt-safe-area-top), 0px)';
+const MOBILE_SAFE_AREA_RIGHT = 'max(var(--tt-safe-area-right), 0px)';
+const MOBILE_SAFE_AREA_LEFT = 'max(var(--tt-safe-area-left), 0px)';
 
 const avatar_styles = {
     ROUND: 0,
@@ -1144,6 +1148,34 @@ function applyThemeColor(type) {
     }
 }
 
+function normalizeThemeForMobile(theme) {
+    if (!isMobile() || typeof theme !== 'object' || theme === null) {
+        return theme;
+    }
+
+    theme.chat_width = MOBILE_THEME_CHAT_WIDTH_VW;
+    return theme;
+}
+
+function enforceMobileTopBarSafeArea() {
+    if (!isMobile()) {
+        return;
+    }
+
+    const topSettingsHolder = document.getElementById('top-settings-holder');
+    const topBar = document.getElementById('top-bar');
+
+    for (const element of [topSettingsHolder, topBar]) {
+        if (!(element instanceof HTMLElement)) {
+            continue;
+        }
+
+        element.style.setProperty('top', MOBILE_SAFE_AREA_TOP, 'important');
+        element.style.setProperty('padding-right', MOBILE_SAFE_AREA_RIGHT, 'important');
+        element.style.setProperty('padding-left', MOBILE_SAFE_AREA_LEFT, 'important');
+    }
+}
+
 function applyCustomCSS() {
     $('#customCSS').val(power_user.custom_css);
     var styleId = 'custom-style';
@@ -1155,6 +1187,7 @@ function applyCustomCSS() {
         document.head.appendChild(style);
     }
     style.innerHTML = power_user.custom_css;
+    enforceMobileTopBarSafeArea();
 }
 
 function applyBlurStrength() {
@@ -1226,7 +1259,8 @@ function showMediaDisplayReloadPrompt() {
 }
 
 function applyTheme(name) {
-    const theme = themes.find(x => x.name == name);
+    const rawTheme = themes.find(x => x.name == name);
+    const theme = normalizeThemeForMobile(rawTheme);
 
     if (!theme) {
         return;
@@ -2588,7 +2622,7 @@ function getNewTheme(parsed) {
             theme[key] = parsed[key];
         }
     }
-    return theme;
+    return normalizeThemeForMobile(theme);
 }
 
 async function saveMovingUI() {
