@@ -15,6 +15,8 @@ pub struct ChatSearchResult {
     pub preview: String,
     pub date: i64,
     pub chat_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_metadata: Option<Value>,
 }
 
 /// Chat import format
@@ -80,6 +82,27 @@ pub trait ChatRepository: Send + Sync {
         &self,
         query: &str,
         character_filter: Option<&str>,
+    ) -> Result<Vec<ChatSearchResult>, DomainError>;
+
+    /// List character chat summaries without loading full payloads.
+    async fn list_chat_summaries(
+        &self,
+        character_filter: Option<&str>,
+        include_metadata: bool,
+    ) -> Result<Vec<ChatSearchResult>, DomainError>;
+
+    /// List group chat summaries without loading full payloads.
+    async fn list_group_chat_summaries(
+        &self,
+        chat_ids: Option<&[String]>,
+        include_metadata: bool,
+    ) -> Result<Vec<ChatSearchResult>, DomainError>;
+
+    /// Search group chats with optional chat id filter.
+    async fn search_group_chats(
+        &self,
+        query: &str,
+        chat_ids: Option<&[String]>,
     ) -> Result<Vec<ChatSearchResult>, DomainError>;
 
     /// Import a chat from a file

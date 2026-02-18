@@ -454,10 +454,7 @@ mod tests {
 
         assert_eq!(chat.len(), 3);
         assert_eq!(chat[1].get("is_user").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(
-            chat[1].get("name").and_then(|v| v.as_str()),
-            Some("User")
-        );
+        assert_eq!(chat[1].get("name").and_then(|v| v.as_str()), Some("User"));
         assert_eq!(
             chat[2].get("name").and_then(|v| v.as_str()),
             Some("Assistant")

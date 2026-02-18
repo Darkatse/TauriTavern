@@ -2,6 +2,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use tokio::fs;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::character::Character;
@@ -380,16 +381,30 @@ impl CharacterRepository for FileCharacterRepository {
                 .map(|duration| duration.as_millis() as i64)
                 .unwrap_or(0);
 
-            let file_content = fs::read_to_string(&path).await.map_err(|e| {
-                tracing::error!("Failed to read chat file: {}", e);
-                DomainError::InternalError(format!("Failed to read chat file: {}", e))
+            let file = fs::File::open(&path).await.map_err(|e| {
+                tracing::error!("Failed to open chat file: {}", e);
+                DomainError::InternalError(format!("Failed to open chat file: {}", e))
             })?;
+            let reader = BufReader::new(file);
+            let mut lines = reader.lines();
+            let mut line_count = 0usize;
+            let mut last_non_empty_line: Option<String> = None;
 
-            let lines: Vec<&str> = file_content.lines().collect();
-            let chat_items = lines.len().saturating_sub(1);
+            while let Some(line) = lines.next_line().await.map_err(|e| {
+                tracing::error!("Failed to read line from chat file: {}", e);
+                DomainError::InternalError(format!("Failed to read line from chat file: {}", e))
+            })? {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                line_count = line_count.saturating_add(1);
+                last_non_empty_line = Some(line);
+            }
 
-            let (last_message, last_message_date) = if let Some(last_line) = lines.last() {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(last_line) {
+            let chat_items = line_count.saturating_sub(1);
+
+            let (last_message, last_message_date) = if let Some(last_line) = last_non_empty_line {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&last_line) {
                     let message = json
                         .get("mes")
                         .and_then(|m| m.as_str())

@@ -235,44 +235,30 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             if (!group || !Array.isArray(group.chats) || group.chats.length === 0) {
                 return jsonResponse([]);
             }
+            const chatIds = group.chats
+                .map((chatId) => String(chatId || '').trim())
+                .filter(Boolean);
+            if (chatIds.length === 0) {
+                return jsonResponse([]);
+            }
 
-            const mapped = await Promise.all(
-                group.chats.map(async (chatId) => {
-                    const id = String(chatId || '').trim();
-                    if (!id) {
-                        return null;
-                    }
+            const results = await context.safeInvoke('search_group_chats', {
+                query,
+                chat_ids: chatIds,
+            });
 
-                    try {
-                        const payload = await context.safeInvoke('get_group_chat', {
-                            dto: { id },
-                            allow_not_found: true,
-                        });
-                        if (!Array.isArray(payload) || payload.length === 0) {
-                            return null;
-                        }
+            const mapped = Array.isArray(results)
+                ? results.map((entry) => ({
+                    file_name: context.ensureJsonl(entry.file_name),
+                    file_size: context.formatFileSize(entry.file_size),
+                    message_count: Number(entry.message_count || 0),
+                    preview_message: entry.preview || '',
+                    last_mes: Number(entry.date || 0),
+                }))
+                : [];
 
-                        if (!matchesSearch(id, payload, query)) {
-                            return null;
-                        }
-
-                        const messages = payloadMessages(payload);
-                        return {
-                            file_name: context.ensureJsonl(id),
-                            file_size: context.formatFileSize(new TextEncoder().encode(payloadToJsonl(payload)).length),
-                            message_count: messages.length,
-                            preview_message: previewMessage(messages),
-                            last_mes: lastMessageTimestamp(context, payload),
-                        };
-                    } catch {
-                        return null;
-                    }
-                }),
-            );
-
-            const results = mapped.filter(Boolean);
-            results.sort((a, b) => Number(b.last_mes || 0) - Number(a.last_mes || 0));
-            return jsonResponse(results);
+            mapped.sort((a, b) => Number(b.last_mes || 0) - Number(a.last_mes || 0));
+            return jsonResponse(mapped);
         }
 
         const characterId = await context.resolveCharacterId({ avatar: body?.avatar_url });
@@ -297,114 +283,91 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     router.post('/api/chats/recent', async ({ body }) => {
         const max = Number(body?.max || Number.MAX_SAFE_INTEGER);
         const withMetadata = Boolean(body?.metadata);
-        const chats = await context.safeInvoke('get_all_chats');
-        const groups = await context.safeInvoke('get_all_groups');
+        const [chats, groups] = await Promise.all([
+            context.safeInvoke('list_chat_summaries', {
+                include_metadata: withMetadata,
+            }),
+            context.safeInvoke('get_all_groups'),
+        ]);
         await context.getAllCharacters({ shallow: false });
 
         const characterEntries = Array.isArray(chats)
-            ? await Promise.all(
-                chats.map(async (chat) => {
-                    const characterId = String(chat?.character_name || '').trim();
-                    const fileStem = context.stripJsonl(chat?.file_name || '');
-                    if (!characterId || !fileStem) {
-                        return null;
-                    }
+            ? chats.map((chat) => {
+                const characterId = String(chat?.character_name || '').trim();
+                const fileStem = context.stripJsonl(chat?.file_name || '');
+                if (!characterId || !fileStem) {
+                    return null;
+                }
 
-                    let payload = [];
-                    try {
-                        payload = await context.safeInvoke('get_chat_payload', {
-                            character_name: characterId,
-                            file_name: fileStem,
-                            allow_not_found: true,
-                        });
-                    } catch {
-                        payload = [];
-                    }
+                const avatar = context.findAvatarByCharacterId(characterId);
+                const result = {
+                    file_name: context.ensureJsonl(chat.file_name || ''),
+                    file_size: context.formatFileSize(chat.file_size),
+                    chat_items: Number(chat.message_count || 0),
+                    mes: String(chat.preview || ''),
+                    last_mes: Number(chat.date || 0),
+                    avatar: avatar || '',
+                };
 
-                    const normalizedPayload = normalizePayload(
-                        Array.isArray(payload) && payload.length > 0 ? payload : context.toFrontendChat(chat),
-                    );
-                    if (normalizedPayload.length === 0) {
-                        return null;
-                    }
+                if (withMetadata) {
+                    result.chat_metadata = chat?.chat_metadata || {};
+                }
 
-                    const messages = payloadMessages(normalizedPayload);
-                    const header = normalizedPayload[0] && typeof normalizedPayload[0] === 'object'
-                        ? normalizedPayload[0]
-                        : {};
-                    const lastMessage = messages[messages.length - 1] || {};
-                    let lastMes = context.parseTimestamp(lastMessage?.send_date);
-                    if (!lastMes) {
-                        lastMes = context.parseTimestamp(header?.create_date || chat?.create_date);
-                    }
-
-                    const avatar = context.findAvatarByCharacterId(characterId);
-                    const result = {
-                        file_name: context.ensureJsonl(chat.file_name || ''),
-                        file_size: context.formatFileSize(new TextEncoder().encode(payloadToJsonl(normalizedPayload)).length),
-                        chat_items: messages.length,
-                        mes: lastMessage?.mes || '',
-                        last_mes: Number(lastMes || 0),
-                        avatar: avatar || '',
-                    };
-
-                    if (withMetadata) {
-                        result.chat_metadata = header?.chat_metadata || {};
-                    }
-
-                    return result;
-                }),
-            )
+                return result;
+            })
             : [];
 
-        const groupEntries = Array.isArray(groups)
-            ? await Promise.all(
-                groups.flatMap((group) => {
-                    const groupId = String(group?.id || '').trim();
-                    const chatIds = Array.isArray(group?.chats) ? group.chats : [];
+        const groupChatToGroup = new Map();
+        if (Array.isArray(groups)) {
+            groups.forEach((group) => {
+                const groupId = String(group?.id || '').trim();
+                const chatIds = Array.isArray(group?.chats) ? group.chats : [];
+                if (!groupId) {
+                    return;
+                }
 
-                    return chatIds.map(async (chatId) => {
-                        const id = String(chatId || '').trim();
-                        if (!id) {
-                            return null;
-                        }
+                chatIds.forEach((chatId) => {
+                    const id = context.stripJsonl(chatId);
+                    if (!id || groupChatToGroup.has(id)) {
+                        return;
+                    }
+                    groupChatToGroup.set(id, groupId);
+                });
+            });
+        }
 
-                        try {
-                            const payload = await context.safeInvoke('get_group_chat', {
-                                dto: { id },
-                                allow_not_found: true,
-                            });
-                            if (!Array.isArray(payload) || payload.length === 0) {
-                                return null;
-                            }
+        const groupChatIds = Array.from(groupChatToGroup.keys());
+        const groupSummaries = groupChatIds.length > 0
+            ? await context.safeInvoke('list_group_chat_summaries', {
+                chat_ids: groupChatIds,
+                include_metadata: withMetadata,
+            })
+            : [];
 
-                            const messages = payloadMessages(payload);
-                            const header = payload[0] && typeof payload[0] === 'object' ? payload[0] : {};
-                            const lastMessage = messages[messages.length - 1] || {};
-                            let lastMes = context.parseTimestamp(lastMessage?.send_date);
-                            if (!lastMes) {
-                                lastMes = context.parseTimestamp(header?.create_date);
-                            }
-                            const result = {
-                                file_name: context.ensureJsonl(id),
-                                file_size: context.formatFileSize(new TextEncoder().encode(payloadToJsonl(payload)).length),
-                                chat_items: messages.length,
-                                mes: lastMessage?.mes || '',
-                                last_mes: Number(lastMes || 0),
-                                group: groupId,
-                            };
+        const groupEntries = Array.isArray(groupSummaries)
+            ? groupSummaries.map((chat) => {
+                const fileName = context.ensureJsonl(chat.file_name || '');
+                const fileStem = context.stripJsonl(fileName);
+                const groupId = groupChatToGroup.get(fileStem);
+                if (!groupId) {
+                    return null;
+                }
 
-                            if (withMetadata) {
-                                result.chat_metadata = header?.chat_metadata || {};
-                            }
+                const result = {
+                    file_name: fileName,
+                    file_size: context.formatFileSize(chat.file_size),
+                    chat_items: Number(chat.message_count || 0),
+                    mes: String(chat.preview || ''),
+                    last_mes: Number(chat.date || 0),
+                    group: groupId,
+                };
 
-                            return result;
-                        } catch {
-                            return null;
-                        }
-                    });
-                }),
-            )
+                if (withMetadata) {
+                    result.chat_metadata = chat?.chat_metadata || {};
+                }
+
+                return result;
+            })
             : [];
 
         const allEntries = [...characterEntries.filter(Boolean), ...groupEntries.filter(Boolean)];

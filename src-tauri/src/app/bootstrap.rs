@@ -185,6 +185,7 @@ fn build_repositories(
         ));
 
     let chat_repository: Arc<dyn ChatRepository> = Arc::new(FileChatRepository::new(
+        data_directory.characters().to_path_buf(),
         data_directory.chats().to_path_buf(),
         data_directory.group_chats().to_path_buf(),
         data_directory.backups().to_path_buf(),

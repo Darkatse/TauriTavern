@@ -26,7 +26,12 @@ impl ChatRepository for FileChatRepository {
 
     async fn save_with_options(&self, chat: &Chat, force: bool) -> Result<(), DomainError> {
         self.ensure_directory_exists().await?;
-        self.write_chat_file(chat, force).await
+        self.write_chat_file(chat, force).await?;
+        if let Some(file_name) = &chat.file_name {
+            let path = self.get_chat_path(&chat.character_name, file_name);
+            self.remove_summary_cache_for_path(&path).await;
+        }
+        Ok(())
     }
 
     async fn get_chat(&self, character_name: &str, file_name: &str) -> Result<Chat, DomainError> {
@@ -194,8 +199,11 @@ impl ChatRepository for FileChatRepository {
 
         // Remove from cache
         let cache_key = self.get_cache_key(character_name, file_name);
-        let mut cache = self.memory_cache.lock().await;
-        cache.remove(&cache_key);
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.remove(&cache_key);
+        }
+        self.remove_summary_cache_for_path(&path).await;
 
         Ok(())
     }
@@ -242,14 +250,18 @@ impl ChatRepository for FileChatRepository {
         let old_cache_key = self.get_cache_key(character_name, old_file_name);
         let new_cache_key = self.get_cache_key(character_name, new_file_name);
 
-        let mut cache = self.memory_cache.lock().await;
-        if let Some(mut chat) = cache.get(&old_cache_key) {
-            chat.file_name = Some(Self::strip_jsonl_extension(new_file_name).to_string());
-            cache.remove(&old_cache_key);
-            cache.set(new_cache_key, chat);
-        } else {
-            cache.remove(&old_cache_key);
+        {
+            let mut cache = self.memory_cache.lock().await;
+            if let Some(mut chat) = cache.get(&old_cache_key) {
+                chat.file_name = Some(Self::strip_jsonl_extension(new_file_name).to_string());
+                cache.remove(&old_cache_key);
+                cache.set(new_cache_key, chat);
+            } else {
+                cache.remove(&old_cache_key);
+            }
         }
+        self.remove_summary_cache_for_path(&old_path).await;
+        self.remove_summary_cache_for_path(&new_path).await;
 
         Ok(())
     }
@@ -282,88 +294,131 @@ impl ChatRepository for FileChatRepository {
         query: &str,
         character_filter: Option<&str>,
     ) -> Result<Vec<ChatSearchResult>, DomainError> {
-        logger::debug(&format!("Searching chats for: {}", query));
+        logger::debug("Searching character chats with streaming scanner");
 
-        let fragments: Vec<String> = query
-            .trim()
-            .to_lowercase()
-            .split_whitespace()
-            .filter(|fragment| !fragment.is_empty())
-            .map(ToString::to_string)
-            .collect();
+        let normalized_query = Self::normalize_search_query(query);
+        let search_cache_key =
+            Self::character_search_cache_key(&normalized_query, character_filter);
+        if let Some(cached) = self.get_cached_search_results(&search_cache_key).await {
+            return Ok(cached);
+        }
+
+        let descriptors = self.list_character_chat_files(character_filter).await?;
+        let fragments = Self::search_fragments(&normalized_query);
         let mut results = Vec::new();
 
-        // Get all chats
-        let chats = if let Some(character) = character_filter {
-            self.get_character_chats(character).await?
-        } else {
-            self.get_all_chats().await?
-        };
-
-        // Search for matching chats
-        for chat in chats {
-            let file_name = chat.get_file_name();
-            let searchable_text = {
-                let mut text = String::with_capacity(file_name.len() + 128);
-                text.push_str(Self::strip_jsonl_extension(&file_name));
-                for message in &chat.messages {
-                    text.push('\n');
-                    text.push_str(&message.mes);
-                }
-                text.to_lowercase()
-            };
-
-            let has_match = if fragments.is_empty() {
-                true
-            } else {
-                fragments
-                    .iter()
-                    .all(|fragment| searchable_text.contains(fragment))
-            };
-
-            if !has_match {
+        for descriptor in descriptors {
+            let entry = self.get_chat_summary_entry(&descriptor).await?;
+            let mut summary = entry.summary.clone();
+            summary.chat_metadata = None;
+            if fragments.is_empty() {
+                results.push(summary);
                 continue;
             }
 
-            let primary_path = self.get_chat_path(&chat.character_name, &file_name);
-            let fallback_root_path = self
-                .chats_dir
-                .join(Self::normalize_jsonl_file_name(&file_name));
-            let effective_path = if primary_path.exists() {
-                primary_path
-            } else {
-                fallback_root_path
-            };
+            let file_stem = Self::strip_jsonl_extension(&descriptor.file_name);
+            if Self::file_stem_matches_all(file_stem, &fragments) {
+                results.push(summary);
+                continue;
+            }
 
-            let (file_size, fallback_date) =
-                if let Ok(metadata) = fs::metadata(&effective_path).await {
-                    let fallback_date = metadata
-                        .modified()
-                        .ok()
-                        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|duration| duration.as_millis() as i64)
-                        .unwrap_or(0);
-                    (metadata.len(), fallback_date)
-                } else {
-                    (0, 0)
-                };
-            let date = chat.get_last_message_timestamp();
-            let date = if date > 0 { date } else { fallback_date };
+            if !entry.fingerprint.might_match_fragments(&fragments) {
+                continue;
+            }
 
-            results.push(ChatSearchResult {
-                character_name: chat.character_name.clone(),
-                file_name,
-                file_size,
-                message_count: chat.message_count(),
-                preview: Self::preview_message(&chat.messages),
-                date,
-                chat_id: Some(chat.chat_metadata.chat_id_hash.to_string()),
-            });
+            if self
+                .file_matches_query(&descriptor.path, file_stem, &fragments)
+                .await?
+            {
+                results.push(summary);
+            }
         }
 
-        // Sort results by date (newest first)
         results.sort_by(|a, b| b.date.cmp(&a.date));
+        self.cache_search_results(search_cache_key, results.clone())
+            .await;
+        self.flush_summary_index_if_needed().await?;
+        Ok(results)
+    }
 
+    async fn list_chat_summaries(
+        &self,
+        character_filter: Option<&str>,
+        include_metadata: bool,
+    ) -> Result<Vec<ChatSearchResult>, DomainError> {
+        let descriptors = self.list_character_chat_files(character_filter).await?;
+        let mut results = Vec::with_capacity(descriptors.len());
+        for descriptor in descriptors {
+            results.push(self.get_chat_summary(&descriptor, include_metadata).await?);
+        }
+        results.sort_by(|a, b| b.date.cmp(&a.date));
+        self.flush_summary_index_if_needed().await?;
+        Ok(results)
+    }
+
+    async fn list_group_chat_summaries(
+        &self,
+        chat_ids: Option<&[String]>,
+        include_metadata: bool,
+    ) -> Result<Vec<ChatSearchResult>, DomainError> {
+        let descriptors = self.list_group_chat_files(chat_ids).await?;
+        let mut results = Vec::with_capacity(descriptors.len());
+        for descriptor in descriptors {
+            results.push(self.get_chat_summary(&descriptor, include_metadata).await?);
+        }
+        results.sort_by(|a, b| b.date.cmp(&a.date));
+        self.flush_summary_index_if_needed().await?;
+        Ok(results)
+    }
+
+    async fn search_group_chats(
+        &self,
+        query: &str,
+        chat_ids: Option<&[String]>,
+    ) -> Result<Vec<ChatSearchResult>, DomainError> {
+        logger::debug("Searching group chats with streaming scanner");
+
+        let normalized_query = Self::normalize_search_query(query);
+        let search_cache_key = Self::group_search_cache_key(&normalized_query, chat_ids);
+        if let Some(cached) = self.get_cached_search_results(&search_cache_key).await {
+            return Ok(cached);
+        }
+
+        let descriptors = self.list_group_chat_files(chat_ids).await?;
+        let fragments = Self::search_fragments(&normalized_query);
+        let mut results = Vec::new();
+
+        for descriptor in descriptors {
+            let entry = self.get_chat_summary_entry(&descriptor).await?;
+            let mut summary = entry.summary.clone();
+            summary.chat_metadata = None;
+            if fragments.is_empty() {
+                results.push(summary);
+                continue;
+            }
+
+            let file_stem = Self::strip_jsonl_extension(&descriptor.file_name);
+            if Self::file_stem_matches_all(file_stem, &fragments) {
+                results.push(summary);
+                continue;
+            }
+
+            if !entry.fingerprint.might_match_fragments(&fragments) {
+                continue;
+            }
+
+            if self
+                .file_matches_query(&descriptor.path, file_stem, &fragments)
+                .await?
+            {
+                results.push(summary);
+            }
+        }
+
+        results.sort_by(|a, b| b.date.cmp(&a.date));
+        self.cache_search_results(search_cache_key, results.clone())
+            .await;
+        self.flush_summary_index_if_needed().await?;
         Ok(results)
     }
 
@@ -498,8 +553,11 @@ impl ChatRepository for FileChatRepository {
         self.write_payload_to_path(&path, payload, force, character_name, &backup_key)
             .await?;
 
-        let mut cache = self.memory_cache.lock().await;
-        cache.remove(&backup_key);
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.remove(&backup_key);
+        }
+        self.remove_summary_cache_for_path(&path).await;
 
         Ok(())
     }
@@ -526,7 +584,9 @@ impl ChatRepository for FileChatRepository {
         let path = self.get_group_chat_path(chat_id);
         let backup_key = format!("group:{}", Self::strip_jsonl_extension(chat_id));
         self.write_payload_to_path(&path, payload, force, chat_id, &backup_key)
-            .await
+            .await?;
+        self.remove_summary_cache_for_path(&path).await;
+        Ok(())
     }
 
     async fn delete_group_chat_payload(&self, chat_id: &str) -> Result<(), DomainError> {
@@ -540,7 +600,9 @@ impl ChatRepository for FileChatRepository {
 
         fs::remove_file(&path).await.map_err(|e| {
             DomainError::InternalError(format!("Failed to delete group chat file: {}", e))
-        })
+        })?;
+        self.remove_summary_cache_for_path(&path).await;
+        Ok(())
     }
 
     async fn rename_group_chat_payload(
@@ -571,6 +633,8 @@ impl ChatRepository for FileChatRepository {
         fs::remove_file(&old_path).await.map_err(|e| {
             DomainError::InternalError(format!("Failed to remove old group chat file: {}", e))
         })?;
+        self.remove_summary_cache_for_path(&old_path).await;
+        self.remove_summary_cache_for_path(&new_path).await;
 
         Ok(())
     }
@@ -626,6 +690,7 @@ impl ChatRepository for FileChatRepository {
                 self.next_import_chat_file_stem(character_name, character_display_name, index);
             let path = self.get_chat_path(character_name, &file_stem);
             write_jsonl_file(&path, payload).await?;
+            self.remove_summary_cache_for_path(&path).await;
             created_files.push(Self::normalize_jsonl_file_name(&file_stem));
         }
 
@@ -641,13 +706,39 @@ impl ChatRepository for FileChatRepository {
         fs::copy(file_path, &target_path).await.map_err(|e| {
             DomainError::InternalError(format!("Failed to import group chat file: {}", e))
         })?;
+        self.remove_summary_cache_for_path(&target_path).await;
 
         Ok(chat_id)
     }
 
     async fn clear_cache(&self) -> Result<(), DomainError> {
-        let mut cache = self.memory_cache.lock().await;
-        cache.clear();
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.clear();
+        }
+        self.clear_summary_cache().await;
         Ok(())
+    }
+}
+
+impl FileChatRepository {
+    fn character_search_cache_key(query: &str, character_filter: Option<&str>) -> String {
+        let character_key = character_filter.unwrap_or("*");
+        format!("character|{}|{}", character_key, query)
+    }
+
+    fn group_search_cache_key(query: &str, chat_ids: Option<&[String]>) -> String {
+        let filter_key = if let Some(chat_ids) = chat_ids {
+            let mut normalized_ids: Vec<String> = chat_ids
+                .iter()
+                .map(|id| Self::strip_jsonl_extension(id).to_string())
+                .collect();
+            normalized_ids.sort();
+            normalized_ids.dedup();
+            normalized_ids.join(",")
+        } else {
+            "*".to_string()
+        };
+        format!("group|{}|{}", filter_key, query)
     }
 }

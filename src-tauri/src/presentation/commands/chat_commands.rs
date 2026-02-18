@@ -144,6 +144,54 @@ pub async fn search_chats(
 }
 
 #[tauri::command]
+pub async fn list_chat_summaries(
+    character_filter: Option<String>,
+    include_metadata: Option<bool>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ChatSearchResultDto>, CommandError> {
+    log_command("list_chat_summaries");
+
+    app_state
+        .chat_service
+        .list_chat_summaries(
+            character_filter.as_deref(),
+            include_metadata.unwrap_or(false),
+        )
+        .await
+        .map_err(map_command_error("Failed to list chat summaries"))
+}
+
+#[tauri::command]
+pub async fn list_group_chat_summaries(
+    chat_ids: Option<Vec<String>>,
+    include_metadata: Option<bool>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ChatSearchResultDto>, CommandError> {
+    log_command("list_group_chat_summaries");
+
+    app_state
+        .chat_service
+        .list_group_chat_summaries(chat_ids.as_deref(), include_metadata.unwrap_or(false))
+        .await
+        .map_err(map_command_error("Failed to list group chat summaries"))
+}
+
+#[tauri::command]
+pub async fn search_group_chats(
+    query: String,
+    chat_ids: Option<Vec<String>>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ChatSearchResultDto>, CommandError> {
+    log_command(format!("search_group_chats {}", query));
+
+    app_state
+        .chat_service
+        .search_group_chats(&query, chat_ids.as_deref())
+        .await
+        .map_err(map_command_error("Failed to search group chats"))
+}
+
+#[tauri::command]
 pub async fn import_chat(
     dto: ImportChatDto,
     app_state: State<'_, Arc<AppState>>,

@@ -1,35 +1,11 @@
 use chrono::Utc;
 
 use crate::domain::models::character::sanitize_filename;
-use crate::domain::models::chat::{humanized_date, ChatMessage};
+use crate::domain::models::chat::humanized_date;
 
 use super::FileChatRepository;
 
 impl FileChatRepository {
-    pub(super) fn preview_message(messages: &[ChatMessage]) -> String {
-        const MAX_PREVIEW_CHARS: usize = 400;
-
-        let Some(last_message) = messages.last().map(|message| message.mes.as_str()) else {
-            return String::new();
-        };
-
-        let total_chars = last_message.chars().count();
-        if total_chars <= MAX_PREVIEW_CHARS {
-            return last_message.to_string();
-        }
-
-        let tail: String = last_message
-            .chars()
-            .rev()
-            .take(MAX_PREVIEW_CHARS)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-
-        format!("...{}", tail)
-    }
-
     pub(super) fn next_import_chat_file_stem(
         &self,
         character_name: &str,

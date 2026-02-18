@@ -191,6 +191,54 @@ impl ChatService {
         Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
     }
 
+    /// List chat summaries without loading full chat payloads.
+    pub async fn list_chat_summaries(
+        &self,
+        character_filter: Option<&str>,
+        include_metadata: bool,
+    ) -> Result<Vec<ChatSearchResultDto>, ApplicationError> {
+        tracing::info!("Listing chat summaries");
+
+        let results = self
+            .chat_repository
+            .list_chat_summaries(character_filter, include_metadata)
+            .await?;
+
+        Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
+    }
+
+    /// List group chat summaries without loading full chat payloads.
+    pub async fn list_group_chat_summaries(
+        &self,
+        chat_ids: Option<&[String]>,
+        include_metadata: bool,
+    ) -> Result<Vec<ChatSearchResultDto>, ApplicationError> {
+        tracing::info!("Listing group chat summaries");
+
+        let results = self
+            .chat_repository
+            .list_group_chat_summaries(chat_ids, include_metadata)
+            .await?;
+
+        Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
+    }
+
+    /// Search group chats with optional chat ID filtering.
+    pub async fn search_group_chats(
+        &self,
+        query: &str,
+        chat_ids: Option<&[String]>,
+    ) -> Result<Vec<ChatSearchResultDto>, ApplicationError> {
+        tracing::info!("Searching group chats");
+
+        let results = self
+            .chat_repository
+            .search_group_chats(query, chat_ids)
+            .await?;
+
+        Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
+    }
+
     /// Import a chat
     pub async fn import_chat(&self, dto: ImportChatDto) -> Result<ChatDto, ApplicationError> {
         tracing::info!(
