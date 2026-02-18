@@ -8,6 +8,7 @@ pub mod content_repository;
 pub mod extension_repository;
 pub mod group_repository;
 pub mod preset_repository;
+pub mod quick_reply_repository;
 pub mod secret_repository;
 pub mod settings_repository;
 pub mod theme_repository;

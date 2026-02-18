@@ -7,6 +7,7 @@ pub mod file_content_repository;
 pub mod file_extension_repository;
 pub mod file_group_repository;
 pub mod file_preset_repository;
+pub mod file_quick_reply_repository;
 pub mod file_secret_repository;
 pub mod file_settings_repository;
 pub mod file_theme_repository;

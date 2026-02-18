@@ -11,6 +11,7 @@ pub mod extension_commands;
 pub mod group_commands;
 pub mod helpers;
 pub mod preset_commands;
+pub mod quick_reply_commands;
 pub mod registry;
 pub mod secret_commands;
 pub mod settings_commands;

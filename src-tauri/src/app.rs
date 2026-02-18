@@ -12,6 +12,7 @@ use crate::application::services::content_service::ContentService;
 use crate::application::services::extension_service::ExtensionService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::preset_service::PresetService;
+use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
 use crate::application::services::theme_service::ThemeService;
@@ -38,6 +39,7 @@ pub struct AppState {
     pub background_service: Arc<BackgroundService>,
     pub theme_service: Arc<ThemeService>,
     pub preset_service: Arc<PresetService>,
+    pub quick_reply_service: Arc<QuickReplyService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
     pub world_info_service: Arc<WorldInfoService>,
@@ -66,6 +68,7 @@ impl AppState {
             background_service: services.background_service,
             theme_service: services.theme_service,
             preset_service: services.preset_service,
+            quick_reply_service: services.quick_reply_service,
             chat_completion_service: services.chat_completion_service,
             tokenization_service: services.tokenization_service,
             world_info_service: services.world_info_service,

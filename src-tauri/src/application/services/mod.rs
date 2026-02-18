@@ -8,6 +8,7 @@ pub mod content_service;
 pub mod extension_service;
 pub mod group_service;
 pub mod preset_service;
+pub mod quick_reply_service;
 pub mod secret_service;
 pub mod settings_service;
 pub mod theme_service;

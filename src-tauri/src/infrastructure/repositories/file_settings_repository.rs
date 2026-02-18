@@ -392,7 +392,7 @@ impl SettingsRepository for FileSettingsRepository {
     }
 
     async fn get_quick_reply_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
-        self.read_presets_from_directory("quickreplies").await
+        self.read_presets_from_directory("QuickReplies").await
     }
 
     async fn get_instruct_presets(&self) -> Result<Vec<UserSettings>, DomainError> {

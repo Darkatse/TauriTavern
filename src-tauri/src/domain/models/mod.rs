@@ -6,6 +6,7 @@ pub mod chat;
 pub mod extension;
 pub mod group;
 pub mod preset;
+pub mod quick_reply;
 pub mod secret;
 pub mod settings;
 pub mod theme;

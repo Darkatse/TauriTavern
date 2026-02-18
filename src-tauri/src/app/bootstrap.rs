@@ -12,6 +12,7 @@ use crate::application::services::content_service::ContentService;
 use crate::application::services::extension_service::ExtensionService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::preset_service::PresetService;
+use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
 use crate::application::services::theme_service::ThemeService;
@@ -29,6 +30,7 @@ use crate::domain::repositories::content_repository::ContentRepository;
 use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::domain::repositories::group_repository::GroupRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
+use crate::domain::repositories::quick_reply_repository::QuickReplyRepository;
 use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::domain::repositories::settings_repository::SettingsRepository;
 use crate::domain::repositories::theme_repository::ThemeRepository;
@@ -47,6 +49,7 @@ use crate::infrastructure::repositories::file_content_repository::FileContentRep
 use crate::infrastructure::repositories::file_extension_repository::FileExtensionRepository;
 use crate::infrastructure::repositories::file_group_repository::FileGroupRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
+use crate::infrastructure::repositories::file_quick_reply_repository::FileQuickReplyRepository;
 use crate::infrastructure::repositories::file_secret_repository::FileSecretRepository;
 use crate::infrastructure::repositories::file_settings_repository::FileSettingsRepository;
 use crate::infrastructure::repositories::file_theme_repository::FileThemeRepository;
@@ -68,6 +71,7 @@ pub(super) struct AppServices {
     pub background_service: Arc<BackgroundService>,
     pub theme_service: Arc<ThemeService>,
     pub preset_service: Arc<PresetService>,
+    pub quick_reply_service: Arc<QuickReplyService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
     pub world_info_service: Arc<WorldInfoService>,
@@ -87,6 +91,7 @@ struct AppRepositories {
     background_repository: Arc<dyn BackgroundRepository>,
     theme_repository: Arc<dyn ThemeRepository>,
     preset_repository: Arc<dyn PresetRepository>,
+    quick_reply_repository: Arc<dyn QuickReplyRepository>,
     chat_completion_repository: Arc<dyn ChatCompletionRepository>,
     tokenizer_repository: Arc<dyn TokenizerRepository>,
     world_info_repository: Arc<dyn WorldInfoRepository>,
@@ -117,6 +122,9 @@ pub(super) fn build_services(
     ));
     let theme_service = Arc::new(ThemeService::new(repositories.theme_repository.clone()));
     let preset_service = Arc::new(PresetService::new(repositories.preset_repository.clone()));
+    let quick_reply_service = Arc::new(QuickReplyService::new(
+        repositories.quick_reply_repository.clone(),
+    ));
     let chat_completion_service = Arc::new(ChatCompletionService::new(
         repositories.chat_completion_repository,
         repositories.secret_repository.clone(),
@@ -158,6 +166,7 @@ pub(super) fn build_services(
         background_service,
         theme_service,
         preset_service,
+        quick_reply_service,
         chat_completion_service,
         tokenization_service,
         world_info_service,
@@ -223,6 +232,9 @@ fn build_repositories(
         data_directory.default_user().to_path_buf(),
         content_repository.clone(),
     ));
+    let quick_reply_repository: Arc<dyn QuickReplyRepository> = Arc::new(
+        FileQuickReplyRepository::new(data_directory.default_user().join("QuickReplies")),
+    );
 
     let chat_completion_repository: Arc<dyn ChatCompletionRepository> =
         Arc::new(HttpChatCompletionRepository::new()?);
@@ -246,6 +258,7 @@ fn build_repositories(
         background_repository,
         theme_repository,
         preset_repository,
+        quick_reply_repository,
         chat_completion_repository,
         tokenizer_repository,
         world_info_repository,

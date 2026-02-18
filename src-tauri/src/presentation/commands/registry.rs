@@ -113,6 +113,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::preset_commands::list_presets,
         super::preset_commands::preset_exists,
         super::preset_commands::get_preset,
+        // Quick reply commands
+        super::quick_reply_commands::save_quick_reply_set,
+        super::quick_reply_commands::delete_quick_reply_set,
         // Chat completion commands
         super::chat_completion_commands::get_chat_completions_status,
         super::chat_completion_commands::generate_chat_completion,
