@@ -1205,23 +1205,57 @@ async function switchExtensionBranch(extensionName, isGlobal, branch) {
  * @param {boolean} global Is the extension global?
  * @returns {Promise<void>}
  */
+const GITHUB_ONLY_ERROR_TOKEN = 'only github repositories are supported';
+
+function isGithubOnlyRepositoryError(value) {
+    const message = String(value || '').toLowerCase();
+    return message.includes(GITHUB_ONLY_ERROR_TOKEN);
+}
+
+async function showGithubOnlyRepositoryPopup() {
+    await callGenericPopup(
+        t`Only GitHub repositories are supported for extension installation.`,
+        POPUP_TYPE.TEXT,
+        '',
+        { okButton: t`OK` },
+    );
+}
+
 export async function installExtension(url, global, branch = '') {
     console.debug('Extension installation started', url);
 
     toastr.info(t`Please wait...`, t`Installing extension`);
 
-    const request = await fetch('/api/extensions/install', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
-            url,
-            global,
-            branch,
-        }),
-    });
+    let request;
+    try {
+        request = await fetch('/api/extensions/install', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                url,
+                global,
+                branch,
+            }),
+        });
+    } catch (error) {
+        const message = String(error?.message || error || '');
+        if (isGithubOnlyRepositoryError(message)) {
+            await showGithubOnlyRepositoryPopup();
+            return;
+        }
+
+        toastr.warning(message || t`Unknown error`, t`Extension installation failed`, { timeOut: 5000 });
+        console.error('Extension installation failed', error);
+        return;
+    }
 
     if (!request.ok) {
         const text = await request.text();
+        if (isGithubOnlyRepositoryError(text)) {
+            await showGithubOnlyRepositoryPopup();
+            return;
+        }
+
         toastr.warning(text || request.statusText, t`Extension installation failed`, { timeOut: 5000 });
         console.error('Extension installation failed', request.status, request.statusText, text);
         return;
