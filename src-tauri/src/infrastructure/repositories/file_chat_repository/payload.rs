@@ -6,7 +6,9 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::Chat;
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::persistence::jsonl_utils::{read_jsonl_file, write_jsonl_file};
+use crate::infrastructure::persistence::jsonl_utils::{
+    parse_jsonl_bytes, read_first_non_empty_jsonl_line, write_jsonl_bytes_file, write_jsonl_file,
+};
 
 use super::FileChatRepository;
 
@@ -88,6 +90,13 @@ impl FileChatRepository {
             .map(ToString::to_string)
     }
 
+    fn extract_integrity_slug_from_jsonl_line(line: &str) -> Option<String> {
+        serde_json::from_str::<Value>(line)
+            .ok()
+            .as_ref()
+            .and_then(Self::extract_integrity_slug_from_header)
+    }
+
     async fn read_integrity_slug_from_existing_file(
         &self,
         path: &Path,
@@ -96,9 +105,8 @@ impl FileChatRepository {
             return Ok(None);
         }
 
-        let existing = read_jsonl_file(path).await?;
-        if let Some(header) = existing.first() {
-            return Ok(Self::extract_integrity_slug_from_header(header));
+        if let Some(line) = read_first_non_empty_jsonl_line(path).await? {
+            return Ok(Self::extract_integrity_slug_from_jsonl_line(&line));
         }
 
         Ok(None)
@@ -134,6 +142,86 @@ impl FileChatRepository {
         Ok(())
     }
 
+    fn read_incoming_integrity_from_bytes(payload: &[u8]) -> Result<Option<String>, DomainError> {
+        if payload.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Chat payload is empty".to_string(),
+            ));
+        }
+
+        let text = std::str::from_utf8(payload)
+            .map_err(|e| DomainError::InvalidData(format!("Invalid UTF-8 payload: {}", e)))?;
+        let Some(first_line) = text.lines().find(|line| !line.trim().is_empty()) else {
+            return Err(DomainError::InvalidData(
+                "Chat payload is empty".to_string(),
+            ));
+        };
+
+        Ok(Self::extract_integrity_slug_from_jsonl_line(first_line))
+    }
+
+    async fn verify_chat_integrity_bytes_if_needed(
+        &self,
+        path: &Path,
+        payload: &[u8],
+        force: bool,
+    ) -> Result<(), DomainError> {
+        if force {
+            return Ok(());
+        }
+
+        let Some(incoming_integrity) = Self::read_incoming_integrity_from_bytes(payload)? else {
+            return Ok(());
+        };
+
+        let existing_integrity = self.read_integrity_slug_from_existing_file(path).await?;
+        if let Some(existing) = existing_integrity {
+            if existing != incoming_integrity {
+                return Err(DomainError::InvalidData("integrity".to_string()));
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn read_incoming_integrity_from_file(
+        payload_path: &Path,
+    ) -> Result<Option<String>, DomainError> {
+        let Some(line) = read_first_non_empty_jsonl_line(payload_path).await? else {
+            return Err(DomainError::InvalidData(
+                "Chat payload is empty".to_string(),
+            ));
+        };
+
+        Ok(Self::extract_integrity_slug_from_jsonl_line(&line))
+    }
+
+    async fn verify_chat_integrity_file_if_needed(
+        &self,
+        path: &Path,
+        payload_path: &Path,
+        force: bool,
+    ) -> Result<(), DomainError> {
+        if force {
+            return Ok(());
+        }
+
+        let Some(incoming_integrity) =
+            Self::read_incoming_integrity_from_file(payload_path).await?
+        else {
+            return Ok(());
+        };
+
+        let existing_integrity = self.read_integrity_slug_from_existing_file(path).await?;
+        if let Some(existing) = existing_integrity {
+            if existing != incoming_integrity {
+                return Err(DomainError::InvalidData("integrity".to_string()));
+            }
+        }
+
+        Ok(())
+    }
+
     pub(super) async fn write_payload_to_path(
         &self,
         path: &Path,
@@ -156,6 +244,75 @@ impl FileChatRepository {
         Ok(())
     }
 
+    pub(super) async fn write_payload_bytes_to_path(
+        &self,
+        path: &Path,
+        payload: &[u8],
+        force: bool,
+        backup_name: &str,
+        backup_key: &str,
+    ) -> Result<(), DomainError> {
+        if payload.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Chat payload is empty".to_string(),
+            ));
+        }
+
+        self.verify_chat_integrity_bytes_if_needed(path, payload, force)
+            .await?;
+        write_jsonl_bytes_file(path, payload).await?;
+        self.backup_chat_file(path, backup_name, backup_key).await?;
+
+        Ok(())
+    }
+
+    pub(super) async fn write_payload_file_to_path(
+        &self,
+        path: &Path,
+        source_path: &Path,
+        force: bool,
+        backup_name: &str,
+        backup_key: &str,
+    ) -> Result<(), DomainError> {
+        if !source_path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Chat payload source file not found: {:?}",
+                source_path
+            )));
+        }
+
+        self.verify_chat_integrity_file_if_needed(path, source_path, force)
+            .await?;
+
+        let temp_path = path.with_extension("jsonl.tmp");
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent).await.map_err(|e| {
+                    DomainError::InternalError(format!("Failed to create directory: {}", e))
+                })?;
+            }
+        }
+
+        fs::copy(source_path, &temp_path).await.map_err(|e| {
+            DomainError::InternalError(format!("Failed to copy chat payload file: {}", e))
+        })?;
+        fs::rename(&temp_path, path).await.map_err(|e| {
+            DomainError::InternalError(format!("Failed to move chat payload file: {}", e))
+        })?;
+
+        self.backup_chat_file(path, backup_name, backup_key).await?;
+        Ok(())
+    }
+
+    pub(super) async fn read_payload_bytes_from_path(
+        &self,
+        path: &Path,
+    ) -> Result<Vec<u8>, DomainError> {
+        fs::read(path).await.map_err(|e| {
+            DomainError::InternalError(format!("Failed to read chat payload bytes: {}", e))
+        })
+    }
+
     /// Read a chat from a file
     pub(super) async fn read_chat_file(
         &self,
@@ -170,7 +327,8 @@ impl FileChatRepository {
         let file_name = Self::normalize_jsonl_file_name(file_name);
 
         let path = self.get_chat_path(character_name, &file_name);
-        let objects: Vec<Value> = read_jsonl_file(&path).await?;
+        let bytes = self.read_payload_bytes_from_path(&path).await?;
+        let objects: Vec<Value> = parse_jsonl_bytes(&bytes)?;
         self.parse_chat_from_payload(character_name, &file_name, &objects)
     }
 

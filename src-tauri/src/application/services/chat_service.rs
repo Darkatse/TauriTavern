@@ -4,7 +4,8 @@ use std::sync::Arc;
 use crate::application::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, DeleteGroupChatDto, ExportChatDto,
     GetGroupChatDto, ImportCharacterChatsDto, ImportChatDto, ImportGroupChatDto, RenameChatDto,
-    RenameGroupChatDto, SaveChatDto, SaveGroupChatDto,
+    RenameGroupChatDto, SaveChatDto, SaveChatFromFileDto, SaveGroupChatDto,
+    SaveGroupChatFromFileDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
@@ -326,6 +327,43 @@ impl ChatService {
             .map_err(Into::into)
     }
 
+    /// Get raw JSONL bytes for a character chat payload.
+    pub async fn get_chat_payload_bytes(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Vec<u8>, ApplicationError> {
+        self.chat_repository
+            .get_chat_payload_bytes(character_name, file_name)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Get raw JSONL text for a character chat payload.
+    pub async fn get_chat_payload_text(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<String, ApplicationError> {
+        let bytes = self.get_chat_payload_bytes(character_name, file_name).await?;
+        String::from_utf8(bytes).map_err(|e| {
+            ApplicationError::InternalError(format!("Chat payload is not valid UTF-8: {}", e))
+        })
+    }
+
+    /// Get the absolute path to a character chat payload file.
+    pub async fn get_chat_payload_path(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<String, ApplicationError> {
+        let path = self
+            .chat_repository
+            .get_chat_payload_path(character_name, file_name)
+            .await?;
+        Ok(path.to_string_lossy().to_string())
+    }
+
     /// Save a full raw JSONL payload for a character chat.
     pub async fn save_chat(&self, dto: SaveChatDto) -> Result<(), ApplicationError> {
         tracing::info!(
@@ -352,6 +390,54 @@ impl ChatService {
         Ok(())
     }
 
+    /// Save a character chat payload from raw JSONL bytes.
+    pub async fn save_chat_payload_bytes(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        payload: &[u8],
+        force: bool,
+    ) -> Result<(), ApplicationError> {
+        if character_name.trim().is_empty() || file_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Character name and file name cannot be empty".to_string(),
+            ));
+        }
+
+        if payload.is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Chat payload is empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .save_chat_payload_bytes(character_name, file_name, payload, force)
+            .await?;
+        Ok(())
+    }
+
+    /// Save a character chat payload from a JSONL file path.
+    pub async fn save_chat_from_file(
+        &self,
+        dto: SaveChatFromFileDto,
+    ) -> Result<(), ApplicationError> {
+        if dto.character_name.trim().is_empty() || dto.file_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Character name and file name cannot be empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .save_chat_payload_from_path(
+                &dto.character_name,
+                &dto.file_name,
+                Path::new(&dto.file_path),
+                dto.force.unwrap_or(false),
+            )
+            .await
+            .map_err(Into::into)
+    }
+
     /// Get raw JSONL payload for a group chat.
     pub async fn get_group_chat(
         &self,
@@ -367,6 +453,52 @@ impl ChatService {
             .get_group_chat_payload(&dto.id)
             .await
             .map_err(Into::into)
+    }
+
+    /// Get raw JSONL bytes for a group chat payload.
+    pub async fn get_group_chat_payload_bytes(
+        &self,
+        chat_id: &str,
+    ) -> Result<Vec<u8>, ApplicationError> {
+        if chat_id.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Group chat id cannot be empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .get_group_chat_payload_bytes(chat_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Get raw JSONL text for a group chat payload.
+    pub async fn get_group_chat_text(
+        &self,
+        chat_id: &str,
+    ) -> Result<String, ApplicationError> {
+        let bytes = self.get_group_chat_payload_bytes(chat_id).await?;
+        String::from_utf8(bytes).map_err(|e| {
+            ApplicationError::InternalError(format!("Group chat payload is not valid UTF-8: {}", e))
+        })
+    }
+
+    /// Get the absolute path to a group chat payload file.
+    pub async fn get_group_chat_payload_path(
+        &self,
+        chat_id: &str,
+    ) -> Result<String, ApplicationError> {
+        if chat_id.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Group chat id cannot be empty".to_string(),
+            ));
+        }
+
+        let path = self
+            .chat_repository
+            .get_group_chat_payload_path(chat_id)
+            .await?;
+        Ok(path.to_string_lossy().to_string())
     }
 
     /// Save raw JSONL payload for a group chat.
@@ -387,6 +519,52 @@ impl ChatService {
             .save_group_chat_payload(&dto.id, &dto.chat, dto.force.unwrap_or(false))
             .await?;
         Ok(())
+    }
+
+    /// Save a group chat payload from raw JSONL bytes.
+    pub async fn save_group_chat_payload_bytes(
+        &self,
+        chat_id: &str,
+        payload: &[u8],
+        force: bool,
+    ) -> Result<(), ApplicationError> {
+        if chat_id.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Group chat id cannot be empty".to_string(),
+            ));
+        }
+
+        if payload.is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Chat payload is empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .save_group_chat_payload_bytes(chat_id, payload, force)
+            .await?;
+        Ok(())
+    }
+
+    /// Save a group chat payload from a JSONL file path.
+    pub async fn save_group_chat_from_file(
+        &self,
+        dto: SaveGroupChatFromFileDto,
+    ) -> Result<(), ApplicationError> {
+        if dto.id.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Group chat id cannot be empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .save_group_chat_payload_from_path(
+                &dto.id,
+                Path::new(&dto.file_path),
+                dto.force.unwrap_or(false),
+            )
+            .await
+            .map_err(Into::into)
     }
 
     /// Delete a group chat payload file.

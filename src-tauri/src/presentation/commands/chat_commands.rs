@@ -1,18 +1,108 @@
 use std::sync::Arc;
 
+use tauri::http::HeaderMap;
+use tauri::ipc::{InvokeBody, Request as InvokeRequest, Response as InvokeResponse};
 use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, DeleteGroupChatDto, ExportChatDto,
     GetGroupChatDto, ImportCharacterChatsDto, ImportChatDto, ImportGroupChatDto, RenameChatDto,
-    RenameGroupChatDto, SaveChatDto, SaveGroupChatDto,
+    RenameGroupChatDto, SaveChatDto, SaveChatFromFileDto, SaveGroupChatDto,
+    SaveGroupChatFromFileDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::infrastructure::logging::logger;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use serde_json::Value;
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn maybe_percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    if !bytes.contains(&b'%') {
+        return value.to_string();
+    }
+
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return value.to_string();
+            }
+
+            let hi = hex_value(bytes[index + 1]);
+            let lo = hex_value(bytes[index + 2]);
+            let (Some(hi), Some(lo)) = (hi, lo) else {
+                return value.to_string();
+            };
+
+            decoded.push((hi << 4) | lo);
+            index += 3;
+            continue;
+        }
+
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8(decoded).unwrap_or_else(|_| value.to_string())
+}
+
+fn header_required(headers: &HeaderMap, key: &str) -> Result<String, CommandError> {
+    headers
+        .get(key)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(maybe_percent_decode)
+        .ok_or_else(|| CommandError::BadRequest(format!("Missing header: {}", key)))
+}
+
+fn header_bool(headers: &HeaderMap, key: &str) -> bool {
+    headers
+        .get(key)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        })
+        .unwrap_or(false)
+}
+
+fn bytes_from_request_body(body: &InvokeBody) -> Result<Vec<u8>, CommandError> {
+    match body {
+        InvokeBody::Raw(bytes) => Ok(bytes.clone()),
+        InvokeBody::Json(Value::Array(values)) => values
+            .iter()
+            .map(|value| {
+                value
+                    .as_u64()
+                    .filter(|number| *number <= u8::MAX as u64)
+                    .map(|number| number as u8)
+                    .ok_or_else(|| {
+                        CommandError::BadRequest(
+                            "Invalid raw byte payload; expected an array of numbers".to_string(),
+                        )
+                    })
+            })
+            .collect(),
+        InvokeBody::Json(Value::String(text)) => Ok(text.as_bytes().to_vec()),
+        _ => Err(CommandError::BadRequest(
+            "Invalid raw payload body".to_string(),
+        )),
+    }
+}
 
 #[tauri::command]
 pub async fn get_all_chats(
@@ -299,6 +389,124 @@ pub async fn get_chat_payload(
 }
 
 #[tauri::command]
+pub async fn get_chat_payload_raw(
+    character_name: String,
+    file_name: String,
+    allow_not_found: Option<bool>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<InvokeResponse, CommandError> {
+    log_command(format!(
+        "get_chat_payload_raw {}/{}",
+        character_name, file_name
+    ));
+
+    match app_state
+        .chat_service
+        .get_chat_payload_bytes(&character_name, &file_name)
+        .await
+    {
+        Ok(payload) => Ok(InvokeResponse::new(payload)),
+        Err(ApplicationError::NotFound(_)) if allow_not_found.unwrap_or(false) => {
+            Ok(InvokeResponse::new(Vec::<u8>::new()))
+        }
+        Err(error) => {
+            let context = format!(
+                "Failed to get raw chat payload {}/{}",
+                character_name, file_name
+            );
+            logger::error(&format!("{}: {}", context, error));
+            Err(error.into())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_chat_payload_path(
+    character_name: String,
+    file_name: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<String, CommandError> {
+    log_command(format!(
+        "get_chat_payload_path {}/{}",
+        character_name, file_name
+    ));
+
+    app_state
+        .chat_service
+        .get_chat_payload_path(&character_name, &file_name)
+        .await
+        .map_err(map_command_error("Failed to get chat payload path"))
+}
+
+#[tauri::command]
+pub async fn get_chat_payload_text(
+    character_name: String,
+    file_name: String,
+    allow_not_found: Option<bool>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<String, CommandError> {
+    log_command(format!(
+        "get_chat_payload_text {}/{}",
+        character_name, file_name
+    ));
+
+    match app_state
+        .chat_service
+        .get_chat_payload_text(&character_name, &file_name)
+        .await
+    {
+        Ok(text) => Ok(text),
+        Err(ApplicationError::NotFound(_)) if allow_not_found.unwrap_or(false) => {
+            Ok(String::new())
+        }
+        Err(error) => {
+            let context = format!(
+                "Failed to get chat payload text {}/{}",
+                character_name, file_name
+            );
+            logger::error(&format!("{}: {}", context, error));
+            Err(error.into())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn save_chat_payload_raw(
+    request: InvokeRequest<'_>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("save_chat_payload_raw");
+
+    let character_name = header_required(request.headers(), "x-character-name")?;
+    let file_name = header_required(request.headers(), "x-file-name")?;
+    let force = header_bool(request.headers(), "x-force");
+    let payload = bytes_from_request_body(request.body())?;
+
+    app_state
+        .chat_service
+        .save_chat_payload_bytes(&character_name, &file_name, &payload, force)
+        .await
+        .map_err(map_command_error("Failed to save raw chat payload"))
+}
+
+#[tauri::command]
+pub async fn save_chat_payload_from_file(
+    dto: SaveChatFromFileDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command(format!(
+        "save_chat_payload_from_file {}/{}",
+        dto.character_name, dto.file_name
+    ));
+
+    app_state
+        .chat_service
+        .save_chat_from_file(dto)
+        .await
+        .map_err(map_command_error("Failed to save chat payload from file"))
+}
+
+#[tauri::command]
 pub async fn get_group_chat(
     dto: GetGroupChatDto,
     allow_not_found: Option<bool>,
@@ -319,6 +527,72 @@ pub async fn get_group_chat(
 }
 
 #[tauri::command]
+pub async fn get_group_chat_raw(
+    dto: GetGroupChatDto,
+    allow_not_found: Option<bool>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<InvokeResponse, CommandError> {
+    let chat_id = dto.id.clone();
+    log_command(format!("get_group_chat_raw {}", chat_id));
+
+    match app_state
+        .chat_service
+        .get_group_chat_payload_bytes(&chat_id)
+        .await
+    {
+        Ok(payload) => Ok(InvokeResponse::new(payload)),
+        Err(ApplicationError::NotFound(_)) if allow_not_found.unwrap_or(false) => {
+            Ok(InvokeResponse::new(Vec::<u8>::new()))
+        }
+        Err(error) => {
+            let context = format!("Failed to get raw group chat payload {}", chat_id);
+            logger::error(&format!("{}: {}", context, error));
+            Err(error.into())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_group_chat_path(
+    dto: GetGroupChatDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<String, CommandError> {
+    log_command(format!("get_group_chat_path {}", dto.id));
+
+    app_state
+        .chat_service
+        .get_group_chat_payload_path(&dto.id)
+        .await
+        .map_err(map_command_error("Failed to get group chat payload path"))
+}
+
+#[tauri::command]
+pub async fn get_group_chat_text(
+    dto: GetGroupChatDto,
+    allow_not_found: Option<bool>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<String, CommandError> {
+    let chat_id = dto.id.clone();
+    log_command(format!("get_group_chat_text {}", chat_id));
+
+    match app_state
+        .chat_service
+        .get_group_chat_text(&chat_id)
+        .await
+    {
+        Ok(text) => Ok(text),
+        Err(ApplicationError::NotFound(_)) if allow_not_found.unwrap_or(false) => {
+            Ok(String::new())
+        }
+        Err(error) => {
+            let context = format!("Failed to get group chat payload text {}", chat_id);
+            logger::error(&format!("{}: {}", context, error));
+            Err(error.into())
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn save_group_chat(
     dto: SaveGroupChatDto,
     app_state: State<'_, Arc<AppState>>,
@@ -330,6 +604,40 @@ pub async fn save_group_chat(
         .save_group_chat(dto)
         .await
         .map_err(map_command_error("Failed to save group chat payload"))
+}
+
+#[tauri::command]
+pub async fn save_group_chat_raw(
+    request: InvokeRequest<'_>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("save_group_chat_raw");
+
+    let chat_id = header_required(request.headers(), "x-chat-id")?;
+    let force = header_bool(request.headers(), "x-force");
+    let payload = bytes_from_request_body(request.body())?;
+
+    app_state
+        .chat_service
+        .save_group_chat_payload_bytes(&chat_id, &payload, force)
+        .await
+        .map_err(map_command_error("Failed to save raw group chat payload"))
+}
+
+#[tauri::command]
+pub async fn save_group_chat_from_file(
+    dto: SaveGroupChatFromFileDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command(format!("save_group_chat_from_file {}", dto.id));
+
+    app_state
+        .chat_service
+        .save_group_chat_from_file(dto)
+        .await
+        .map_err(map_command_error(
+            "Failed to save group chat payload from file",
+        ))
 }
 
 #[tauri::command]
@@ -389,4 +697,27 @@ pub async fn import_group_chat_payload(
         .import_group_chat(dto)
         .await
         .map_err(map_command_error("Failed to import group chat payload"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::maybe_percent_decode;
+
+    #[test]
+    fn maybe_percent_decode_handles_uri_encoded_utf8() {
+        let encoded = "%E8%A7%92%E8%89%B2%201";
+        assert_eq!(maybe_percent_decode(encoded), "角色 1");
+    }
+
+    #[test]
+    fn maybe_percent_decode_keeps_plain_ascii() {
+        let value = "alice-session";
+        assert_eq!(maybe_percent_decode(value), "alice-session");
+    }
+
+    #[test]
+    fn maybe_percent_decode_falls_back_on_invalid_sequences() {
+        let value = "bad%zzvalue";
+        assert_eq!(maybe_percent_decode(value), "bad%zzvalue");
+    }
 }

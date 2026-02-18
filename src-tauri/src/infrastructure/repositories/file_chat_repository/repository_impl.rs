@@ -14,7 +14,9 @@ use crate::infrastructure::persistence::chat_format_importers::{
     export_payload_to_plain_text, import_chat_payloads_from_json, import_chat_payloads_from_jsonl,
 };
 use crate::infrastructure::persistence::file_system::list_files_with_extension;
-use crate::infrastructure::persistence::jsonl_utils::{read_jsonl_file, write_jsonl_file};
+use crate::infrastructure::persistence::jsonl_utils::{
+    parse_jsonl_bytes, read_jsonl_file, write_jsonl_file,
+};
 
 use super::FileChatRepository;
 
@@ -518,6 +520,17 @@ impl ChatRepository for FileChatRepository {
         character_name: &str,
         file_name: &str,
     ) -> Result<Vec<Value>, DomainError> {
+        let bytes = self
+            .get_chat_payload_bytes(character_name, file_name)
+            .await?;
+        parse_jsonl_bytes(&bytes)
+    }
+
+    async fn get_chat_payload_bytes(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Vec<u8>, DomainError> {
         let path = self.get_chat_path(character_name, file_name);
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
@@ -526,7 +539,23 @@ impl ChatRepository for FileChatRepository {
             )));
         }
 
-        read_jsonl_file(&path).await
+        self.read_payload_bytes_from_path(&path).await
+    }
+
+    async fn get_chat_payload_path(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<std::path::PathBuf, DomainError> {
+        let path = self.get_chat_path(character_name, file_name);
+        if !path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Chat not found: {}/{}",
+                character_name, file_name
+            )));
+        }
+
+        Ok(path)
     }
 
     async fn save_chat_payload(
@@ -562,7 +591,78 @@ impl ChatRepository for FileChatRepository {
         Ok(())
     }
 
+    async fn save_chat_payload_bytes(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        payload: &[u8],
+        force: bool,
+    ) -> Result<(), DomainError> {
+        self.ensure_directory_exists().await?;
+
+        let character_dir = self.get_character_dir(character_name);
+        if !character_dir.exists() {
+            fs::create_dir_all(&character_dir).await.map_err(|e| {
+                DomainError::InternalError(format!(
+                    "Failed to create character chat directory: {}",
+                    e
+                ))
+            })?;
+        }
+
+        let path = self.get_chat_path(character_name, file_name);
+        let backup_key = self.get_cache_key(character_name, file_name);
+        self.write_payload_bytes_to_path(&path, payload, force, character_name, &backup_key)
+            .await?;
+
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.remove(&backup_key);
+        }
+        self.remove_summary_cache_for_path(&path).await;
+
+        Ok(())
+    }
+
+    async fn save_chat_payload_from_path(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        source_path: &Path,
+        force: bool,
+    ) -> Result<(), DomainError> {
+        self.ensure_directory_exists().await?;
+
+        let character_dir = self.get_character_dir(character_name);
+        if !character_dir.exists() {
+            fs::create_dir_all(&character_dir).await.map_err(|e| {
+                DomainError::InternalError(format!(
+                    "Failed to create character chat directory: {}",
+                    e
+                ))
+            })?;
+        }
+
+        let path = self.get_chat_path(character_name, file_name);
+        let backup_key = self.get_cache_key(character_name, file_name);
+        self.write_payload_file_to_path(&path, source_path, force, character_name, &backup_key)
+            .await?;
+
+        {
+            let mut cache = self.memory_cache.lock().await;
+            cache.remove(&backup_key);
+        }
+        self.remove_summary_cache_for_path(&path).await;
+
+        Ok(())
+    }
+
     async fn get_group_chat_payload(&self, chat_id: &str) -> Result<Vec<Value>, DomainError> {
+        let bytes = self.get_group_chat_payload_bytes(chat_id).await?;
+        parse_jsonl_bytes(&bytes)
+    }
+
+    async fn get_group_chat_payload_bytes(&self, chat_id: &str) -> Result<Vec<u8>, DomainError> {
         let path = self.get_group_chat_path(chat_id);
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
@@ -571,7 +671,22 @@ impl ChatRepository for FileChatRepository {
             )));
         }
 
-        read_jsonl_file(&path).await
+        self.read_payload_bytes_from_path(&path).await
+    }
+
+    async fn get_group_chat_payload_path(
+        &self,
+        chat_id: &str,
+    ) -> Result<std::path::PathBuf, DomainError> {
+        let path = self.get_group_chat_path(chat_id);
+        if !path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Group chat not found: {}",
+                chat_id
+            )));
+        }
+
+        Ok(path)
     }
 
     async fn save_group_chat_payload(
@@ -584,6 +699,36 @@ impl ChatRepository for FileChatRepository {
         let path = self.get_group_chat_path(chat_id);
         let backup_key = format!("group:{}", Self::strip_jsonl_extension(chat_id));
         self.write_payload_to_path(&path, payload, force, chat_id, &backup_key)
+            .await?;
+        self.remove_summary_cache_for_path(&path).await;
+        Ok(())
+    }
+
+    async fn save_group_chat_payload_bytes(
+        &self,
+        chat_id: &str,
+        payload: &[u8],
+        force: bool,
+    ) -> Result<(), DomainError> {
+        self.ensure_directory_exists().await?;
+        let path = self.get_group_chat_path(chat_id);
+        let backup_key = format!("group:{}", Self::strip_jsonl_extension(chat_id));
+        self.write_payload_bytes_to_path(&path, payload, force, chat_id, &backup_key)
+            .await?;
+        self.remove_summary_cache_for_path(&path).await;
+        Ok(())
+    }
+
+    async fn save_group_chat_payload_from_path(
+        &self,
+        chat_id: &str,
+        source_path: &Path,
+        force: bool,
+    ) -> Result<(), DomainError> {
+        self.ensure_directory_exists().await?;
+        let path = self.get_group_chat_path(chat_id);
+        let backup_key = format!("group:{}", Self::strip_jsonl_extension(chat_id));
+        self.write_payload_file_to_path(&path, source_path, force, chat_id, &backup_key)
             .await?;
         self.remove_summary_cache_for_path(&path).await;
         Ok(())

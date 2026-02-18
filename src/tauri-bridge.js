@@ -18,12 +18,41 @@ function getInvokeFn() {
     return typeof fn === 'function' ? fn : null;
 }
 
+function isPlainObject(value) {
+    return Object.prototype.toString.call(value) === '[object Object]';
+}
+
+function withTauriArgumentAliases(args) {
+    if (!isPlainObject(args)) {
+        return args;
+    }
+
+    const aliased = { ...args };
+    for (const [key, value] of Object.entries(args)) {
+        if (!key.includes('_')) {
+            continue;
+        }
+
+        const camelCaseKey = key.replace(/_+([a-zA-Z0-9])/g, (_, char) => char.toUpperCase());
+        if (!Object.prototype.hasOwnProperty.call(aliased, camelCaseKey)) {
+            aliased[camelCaseKey] = value;
+        }
+    }
+
+    return aliased;
+}
+
 export const invoke = isTauriEnv
     ? (...args) => {
         const fn = getTauri()?.core?.invoke;
         if (typeof fn !== 'function') {
             throw new Error('Tauri invoke is unavailable');
         }
+
+        if (args.length === 2 && isPlainObject(args[1])) {
+            return fn(args[0], withTauriArgumentAliases(args[1]));
+        }
+
         return fn(...args);
     }
     : null;

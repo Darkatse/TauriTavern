@@ -26,27 +26,47 @@ pub async fn read_jsonl_file(path: &Path) -> Result<Vec<Value>, DomainError> {
 
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
-    let mut objects = Vec::new();
+    parse_jsonl_lines(&mut lines).await
+}
 
-    // Read each line and parse it as JSON
-    while let Some(line) = lines.next_line().await.map_err(|e| {
-        logger::error(&format!("Failed to read line from JSONL file: {}", e));
-        DomainError::InternalError(format!("Failed to read line from JSONL file: {}", e))
-    })? {
+/// Parse JSONL payload bytes into JSON values.
+pub fn parse_jsonl_bytes(bytes: &[u8]) -> Result<Vec<Value>, DomainError> {
+    let text = std::str::from_utf8(bytes).map_err(|e| {
+        DomainError::InvalidData(format!("JSONL payload is not valid UTF-8: {}", e))
+    })?;
+    let mut objects = Vec::new();
+    for line in text.lines() {
         if line.trim().is_empty() {
             continue;
         }
 
-        match serde_json::from_str::<Value>(&line) {
+        match serde_json::from_str::<Value>(line) {
             Ok(obj) => objects.push(obj),
-            Err(e) => {
-                logger::warn(&format!("Failed to parse JSON line: {}", e));
-                // Continue reading other lines
-            }
+            Err(e) => logger::warn(&format!("Failed to parse JSON line: {}", e)),
+        }
+    }
+    Ok(objects)
+}
+
+/// Read the first non-empty line from a JSONL file.
+pub async fn read_first_non_empty_jsonl_line(path: &Path) -> Result<Option<String>, DomainError> {
+    let file = File::open(path).await.map_err(|e| {
+        logger::error(&format!("Failed to open JSONL file: {}", e));
+        DomainError::InternalError(format!("Failed to open JSONL file: {}", e))
+    })?;
+
+    let reader = BufReader::new(file);
+    let mut lines = reader.lines();
+    while let Some(line) = lines.next_line().await.map_err(|e| {
+        logger::error(&format!("Failed to read line from JSONL file: {}", e));
+        DomainError::InternalError(format!("Failed to read line from JSONL file: {}", e))
+    })? {
+        if !line.trim().is_empty() {
+            return Ok(Some(line));
         }
     }
 
-    Ok(objects)
+    Ok(None)
 }
 
 /// Write a vector of JSON values to a JSONL file
@@ -63,10 +83,24 @@ pub async fn read_jsonl_file(path: &Path) -> Result<Vec<Value>, DomainError> {
 pub async fn write_jsonl_file(path: &Path, objects: &[Value]) -> Result<(), DomainError> {
     logger::debug(&format!("Writing JSONL file: {:?}", path));
 
-    // Create a temporary file
+    let mut serialized = Vec::new();
+
+    for obj in objects {
+        let line = serde_json::to_string(obj).map_err(|e| {
+            logger::error(&format!("Failed to serialize JSON: {}", e));
+            DomainError::InternalError(format!("Failed to serialize JSON: {}", e))
+        })?;
+        serialized.extend_from_slice(line.as_bytes());
+        serialized.push(b'\n');
+    }
+
+    write_jsonl_bytes_file(path, &serialized).await
+}
+
+/// Atomically write raw JSONL bytes to a file.
+pub async fn write_jsonl_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
     let temp_path = path.with_extension("jsonl.tmp");
 
-    // Create the parent directory if it doesn't exist
     if let Some(parent) = path.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent).await.map_err(|e| {
@@ -76,43 +110,49 @@ pub async fn write_jsonl_file(path: &Path, objects: &[Value]) -> Result<(), Doma
         }
     }
 
-    // Open the temporary file
     let file = File::create(&temp_path).await.map_err(|e| {
         logger::error(&format!("Failed to create temporary file: {}", e));
         DomainError::InternalError(format!("Failed to create temporary file: {}", e))
     })?;
 
     let mut writer = BufWriter::new(file);
+    writer.write_all(bytes).await.map_err(|e| {
+        logger::error(&format!("Failed to write to temporary file: {}", e));
+        DomainError::InternalError(format!("Failed to write to temporary file: {}", e))
+    })?;
 
-    // Write each object as a JSON line
-    for obj in objects {
-        let line = serde_json::to_string(obj).map_err(|e| {
-            logger::error(&format!("Failed to serialize JSON: {}", e));
-            DomainError::InternalError(format!("Failed to serialize JSON: {}", e))
-        })?;
-
-        writer.write_all(line.as_bytes()).await.map_err(|e| {
-            logger::error(&format!("Failed to write to temporary file: {}", e));
-            DomainError::InternalError(format!("Failed to write to temporary file: {}", e))
-        })?;
-
-        writer.write_all(b"\n").await.map_err(|e| {
-            logger::error(&format!("Failed to write newline to temporary file: {}", e));
-            DomainError::InternalError(format!("Failed to write newline to temporary file: {}", e))
-        })?;
-    }
-
-    // Flush the writer to ensure all data is written
     writer.flush().await.map_err(|e| {
         logger::error(&format!("Failed to flush temporary file: {}", e));
         DomainError::InternalError(format!("Failed to flush temporary file: {}", e))
     })?;
 
-    // Rename the temporary file to the target file (atomic operation)
     fs::rename(&temp_path, path).await.map_err(|e| {
         logger::error(&format!("Failed to rename temporary file: {}", e));
         DomainError::InternalError(format!("Failed to rename temporary file: {}", e))
     })?;
 
     Ok(())
+}
+
+async fn parse_jsonl_lines<R>(lines: &mut tokio::io::Lines<R>) -> Result<Vec<Value>, DomainError>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    let mut objects = Vec::new();
+
+    while let Some(line) = lines.next_line().await.map_err(|e| {
+        logger::error(&format!("Failed to read line from JSONL file: {}", e));
+        DomainError::InternalError(format!("Failed to read line from JSONL file: {}", e))
+    })? {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        match serde_json::from_str::<Value>(&line) {
+            Ok(obj) => objects.push(obj),
+            Err(e) => logger::warn(&format!("Failed to parse JSON line: {}", e)),
+        }
+    }
+
+    Ok(objects)
 }

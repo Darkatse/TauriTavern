@@ -120,6 +120,102 @@ async fn save_chat_payload_enforces_integrity_when_not_forced() {
 }
 
 #[tokio::test]
+async fn save_chat_payload_bytes_enforces_integrity_when_not_forced() {
+    let (repository, root) = setup_repository().await;
+
+    let first_payload = payload_to_jsonl(&payload_with_integrity("slug-a"));
+    repository
+        .save_chat_payload_bytes("alice", "session", first_payload.as_bytes(), false)
+        .await
+        .expect("initial save should succeed");
+
+    let second_payload = payload_to_jsonl(&payload_with_integrity("slug-b"));
+    let error = repository
+        .save_chat_payload_bytes("alice", "session", second_payload.as_bytes(), false)
+        .await
+        .expect_err("save should fail on integrity mismatch");
+
+    assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
+
+    repository
+        .save_chat_payload_bytes("alice", "session", second_payload.as_bytes(), true)
+        .await
+        .expect("forced overwrite should bypass integrity check");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn chat_payload_bytes_roundtrip_and_path() {
+    let (repository, root) = setup_repository().await;
+
+    let raw_payload = payload_to_jsonl(&payload_with_integrity("bytes-a"));
+    repository
+        .save_chat_payload_bytes("alice", "session", raw_payload.as_bytes(), false)
+        .await
+        .expect("save raw payload bytes");
+
+    let loaded_bytes = repository
+        .get_chat_payload_bytes("alice", "session")
+        .await
+        .expect("load raw payload bytes");
+    assert_eq!(loaded_bytes, raw_payload.as_bytes());
+
+    let payload_path = repository
+        .get_chat_payload_path("alice", "session")
+        .await
+        .expect("get payload path");
+    assert!(payload_path.exists());
+    assert_eq!(
+        payload_path.file_name().and_then(|name| name.to_str()),
+        Some("session.jsonl")
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn save_chat_payload_from_path_enforces_integrity() {
+    let (repository, root) = setup_repository().await;
+
+    let source_a = root.join("source-a.jsonl");
+    let payload_a = payload_to_jsonl(&payload_with_integrity("path-a"));
+    fs::write(&source_a, &payload_a)
+        .await
+        .expect("write first source payload");
+
+    repository
+        .save_chat_payload_from_path("alice", "session", &source_a, false)
+        .await
+        .expect("save payload from source file");
+
+    let source_b = root.join("source-b.jsonl");
+    let payload_b = payload_to_jsonl(&payload_with_integrity("path-b"));
+    fs::write(&source_b, &payload_b)
+        .await
+        .expect("write second source payload");
+
+    let error = repository
+        .save_chat_payload_from_path("alice", "session", &source_b, false)
+        .await
+        .expect_err("save should fail on integrity mismatch");
+    assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
+
+    repository
+        .save_chat_payload_from_path("alice", "session", &source_b, true)
+        .await
+        .expect("forced save should bypass integrity check");
+
+    let loaded_bytes = repository
+        .get_chat_payload_bytes("alice", "session")
+        .await
+        .expect("load chat payload bytes");
+    assert_eq!(loaded_bytes, payload_b.as_bytes());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn save_and_load_chat_preserves_additional_fields() {
     let (repository, root) = setup_repository().await;
 
@@ -178,6 +274,76 @@ async fn save_and_load_chat_preserves_additional_fields() {
             .and_then(Value::as_str),
         Some("kept")
     );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn group_chat_payload_bytes_roundtrip_and_path() {
+    let (repository, root) = setup_repository().await;
+
+    let raw_payload = payload_to_jsonl(&payload_with_integrity("group-bytes-a"));
+    repository
+        .save_group_chat_payload_bytes("group-session", raw_payload.as_bytes(), false)
+        .await
+        .expect("save group raw payload bytes");
+
+    let loaded_bytes = repository
+        .get_group_chat_payload_bytes("group-session")
+        .await
+        .expect("load group raw payload bytes");
+    assert_eq!(loaded_bytes, raw_payload.as_bytes());
+
+    let payload_path = repository
+        .get_group_chat_payload_path("group-session")
+        .await
+        .expect("get group payload path");
+    assert!(payload_path.exists());
+    assert_eq!(
+        payload_path.file_name().and_then(|name| name.to_str()),
+        Some("group-session.jsonl")
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn save_group_chat_payload_from_path_enforces_integrity() {
+    let (repository, root) = setup_repository().await;
+
+    let source_a = root.join("group-source-a.jsonl");
+    let payload_a = payload_to_jsonl(&payload_with_integrity("group-path-a"));
+    fs::write(&source_a, &payload_a)
+        .await
+        .expect("write first group source payload");
+
+    repository
+        .save_group_chat_payload_from_path("group-session", &source_a, false)
+        .await
+        .expect("save group payload from source file");
+
+    let source_b = root.join("group-source-b.jsonl");
+    let payload_b = payload_to_jsonl(&payload_with_integrity("group-path-b"));
+    fs::write(&source_b, &payload_b)
+        .await
+        .expect("write second group source payload");
+
+    let error = repository
+        .save_group_chat_payload_from_path("group-session", &source_b, false)
+        .await
+        .expect_err("save should fail on integrity mismatch");
+    assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
+
+    repository
+        .save_group_chat_payload_from_path("group-session", &source_b, true)
+        .await
+        .expect("forced group save should bypass integrity check");
+
+    let loaded_bytes = repository
+        .get_group_chat_payload_bytes("group-session")
+        .await
+        .expect("load group payload bytes");
+    assert_eq!(loaded_bytes, payload_b.as_bytes());
 
     let _ = fs::remove_dir_all(&root).await;
 }

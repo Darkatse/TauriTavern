@@ -3,7 +3,7 @@ use crate::domain::models::chat::{Chat, ChatMessage};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Chat search result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +132,20 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
     ) -> Result<Vec<Value>, DomainError>;
 
+    /// Get raw JSONL bytes for a character chat payload.
+    async fn get_chat_payload_bytes(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Vec<u8>, DomainError>;
+
+    /// Get the absolute path to a character chat payload file.
+    async fn get_chat_payload_path(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<PathBuf, DomainError>;
+
     /// Save a raw chat JSONL payload for a character chat.
     async fn save_chat_payload(
         &self,
@@ -141,14 +155,54 @@ pub trait ChatRepository: Send + Sync {
         force: bool,
     ) -> Result<(), DomainError>;
 
+    /// Save raw JSONL bytes for a character chat payload.
+    async fn save_chat_payload_bytes(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        payload: &[u8],
+        force: bool,
+    ) -> Result<(), DomainError>;
+
+    /// Save raw JSONL bytes for a character chat payload from an existing file path.
+    async fn save_chat_payload_from_path(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        source_path: &Path,
+        force: bool,
+    ) -> Result<(), DomainError>;
+
     /// Get a raw chat JSONL payload for a group chat.
     async fn get_group_chat_payload(&self, chat_id: &str) -> Result<Vec<Value>, DomainError>;
+
+    /// Get raw JSONL bytes for a group chat payload.
+    async fn get_group_chat_payload_bytes(&self, chat_id: &str) -> Result<Vec<u8>, DomainError>;
+
+    /// Get the absolute path to a group chat payload file.
+    async fn get_group_chat_payload_path(&self, chat_id: &str) -> Result<PathBuf, DomainError>;
 
     /// Save a raw chat JSONL payload for a group chat.
     async fn save_group_chat_payload(
         &self,
         chat_id: &str,
         payload: &[Value],
+        force: bool,
+    ) -> Result<(), DomainError>;
+
+    /// Save raw JSONL bytes for a group chat payload.
+    async fn save_group_chat_payload_bytes(
+        &self,
+        chat_id: &str,
+        payload: &[u8],
+        force: bool,
+    ) -> Result<(), DomainError>;
+
+    /// Save raw JSONL bytes for a group chat payload from an existing file path.
+    async fn save_group_chat_payload_from_path(
+        &self,
+        chat_id: &str,
+        source_path: &Path,
         force: bool,
     ) -> Result<(), DomainError>;
 

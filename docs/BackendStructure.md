@@ -406,47 +406,59 @@ tauri::Builder::default()
 
 这样可以避免在 `lib.rs` 中直接维护超长命令列表，命令增减时只需更新 `registry.rs`。
 
-### 3.5 聊天后端链路（Payload-First，2026-02重构）
+### 3.5 聊天后端链路（Payload-First + Byte Transport，2026-02重构）
 
 本次聊天链路重构目标是对齐 SillyTavern 上游业务逻辑与文件系统语义，同时降低字段漂移/数据丢失风险。
 
 #### 3.5.1 设计原则
 
-- **Payload First**：聊天保存/读取优先以 JSONL 原始 payload（`Vec<serde_json::Value>`）为边界，而非先强制转领域模型再落盘。
+- **Payload First**：聊天保存/读取优先以 JSONL 原始 payload 为边界，而非先强制转领域模型再落盘。
+- **Control/Data Plane 分离**：小参数走 JSON invoke（control plane），大 payload 走 raw bytes / 文件路径（data plane）。
 - **字段保真**：`ChatMetadata`、`ChatMessage`、`MessageExtra` 通过 `#[serde(flatten)] additional` 保留未知字段。
 - **完整性优先**：保存链路内置 `chat_metadata.integrity` 校验；冲突时返回 `integrity`，由前端决定是否 `force` 覆盖。
 - **兼容上游文件系统**：目录与命名策略对齐 SillyTavern，便于用户无损迁移。
+- **移动端优先规避峰值内存**：Android 读走 `asset://` 路径，写走“前端临时文件 -> 后端按路径原子落盘”。
 
 #### 3.5.2 分层职责
 
 - `domain/repositories/chat_repository.rs`
   - 保留 typed API（`get_chat` / `save` / `search_chats` 等）用于领域操作。
-  - 新增 payload API（`get_chat_payload` / `save_chat_payload` / `get_group_chat_payload` / `import_chat_payload` 等）用于文件级保真操作。
+  - payload API 扩展为三类：对象数组（`*_payload`）、字节流（`*_payload_bytes`）、路径/文件直通（`*_payload_path`、`*_payload_from_path`）。
 - `application/services/chat_service.rs`
-  - `save_chat` 改为直接调用 `save_chat_payload`，不再进行二次模型转换。
-  - 新增 group chat payload 与 character/group import 服务方法。
+  - `save_chat` 直接调用 payload 写接口，不做 typed -> payload 二次构建。
+  - 新增 character/group 的 bytes、path、from-file 服务方法；`save_*_from_file` 走仓库路径直通，避免整文件读入内存。
 - `presentation/commands/chat_commands.rs`
-  - 新增 `get_chat_payload`、`get_group_chat`、`save_group_chat`、`delete_group_chat`、`rename_group_chat`、`import_character_chats`、`import_group_chat_payload` 等命令并在 `registry.rs` 注册。
+  - 保留 JSON payload 命令：`get_chat_payload` / `save_chat` / `get_group_chat` / `save_group_chat` 等。
+  - 新增 raw/path/from-file 命令：`get_chat_payload_raw`、`get_chat_payload_path`、`save_chat_payload_raw`、`save_chat_payload_from_file`、`get_group_chat_raw`、`get_group_chat_path`、`save_group_chat_raw`、`save_group_chat_from_file`。
+  - raw 保存命令通过 header 传递元信息；后端对 header 值执行 percent decode，兼容非 ASCII 名称。
 - `infrastructure/repositories/file_chat_repository/`
-  - `mod.rs`：仓库结构体与构造装配。
-  - `repository_impl.rs`：`ChatRepository` 业务实现编排。
-  - `paths.rs` / `payload.rs` / `backup.rs` / `importing.rs`：路径命名、payload 读写与完整性校验、备份策略、导入与预览逻辑。
-  - `cache.rs`：内存缓存与备份节流。
-  - 实现 payload 读写、integrity 校验、group chat 文件操作、导入转换与备份策略。
+  - `repository_impl.rs`：统一编排 typed/payload/bytes/path 写入入口。
+  - `payload.rs`：完整性校验、字节写入、文件路径直通写入（原子替换 + 备份）。
+  - `jsonl_utils.rs`：`parse_jsonl_bytes`、`write_jsonl_bytes_file`、`read_first_non_empty_jsonl_line` 等基础能力。
+  - 完整性校验改为“首个非空行”解析，避免为校验反序列化整个文件。
 
 #### 3.5.3 关键链路
 
-1. 角色聊天保存  
-`/api/chats/save` -> `save_chat` 命令 -> `ChatService::save_chat` -> `ChatRepository::save_chat_payload(force)` -> 写入 JSONL + 备份。
+1. 桌面/iOS 角色聊天读取（高性能路径）  
+前端 `invoke(get_chat_payload_raw)` -> 命令返回 bytes -> 前端按 JSONL 解析。
 
-2. 群聊保存  
-`/api/chats/group/save` -> `save_group_chat` 命令 -> `ChatService::save_group_chat` -> `save_group_chat_payload(force)`。
+2. Android 角色聊天读取  
+前端 `invoke(get_chat_payload_path)` -> `convertFileSrc(..., 'asset')` -> `fetch(asset://...)`。
 
-3. 聊天导入  
-`/api/chats/import`（character）或 `/api/chats/group/import`（group） -> 对应 import 命令 -> `chat_format_importers.rs` 转换 -> 落盘。
+3. 桌面/iOS 角色聊天保存（高性能路径）  
+前端 raw bytes + headers -> `save_chat_payload_raw` -> `ChatService::save_chat_payload_bytes` -> 仓库原子写入 + 备份。
 
-4. 完整性冲突  
-当现有文件的 `chat_metadata.integrity` 与待写入 payload 不一致且 `force=false` 时，仓库返回 `DomainError::InvalidData("integrity")`，前端映射为 HTTP `400 { error: "integrity" }`。
+4. Android 角色聊天保存  
+前端先落临时 JSONL 文件 -> `save_chat_payload_from_file` -> `ChatService::save_chat_from_file` -> `save_chat_payload_from_path`。
+
+5. 群聊读写链路  
+与角色聊天完全对称：`get_group_chat_raw/get_group_chat_path/save_group_chat_raw/save_group_chat_from_file`。
+
+6. 完整性冲突  
+当现有文件的 `chat_metadata.integrity` 与待写入 payload 不一致且 `force=false` 时，仓库返回 `DomainError::InvalidData("integrity")`，前端映射为冲突提示并可二次 `force` 覆盖。
+
+7. Header 编码约定（raw 保存）  
+`x-character-name` / `x-file-name` / `x-chat-id` 在前端使用 URI 百分号编码（ASCII 安全），后端解码后再进入服务层。
 
 #### 3.5.4 文件系统与备份语义
 
@@ -657,6 +669,8 @@ TauriTavern的后端API通过Tauri命令暴露给前端。以下是主要API类�
 | `get_character_chats` | 获取角色的聊天 | `character_name: String` | `Vec<ChatDto>` |
 | `get_chat` | 获取单个聊天 | `character_name: String, file_name: String` | `ChatDto` |
 | `get_chat_payload` | 获取角色聊天原始JSONL对象数组 | `character_name: String, file_name: String` | `Vec<Value>` |
+| `get_chat_payload_raw` | 获取角色聊天原始JSONL字节流 | `characterName: String, fileName: String, allowNotFound?: bool` | `InvokeResponse(bytes)` |
+| `get_chat_payload_path` | 获取角色聊天文件绝对路径 | `characterName: String, fileName: String` | `String` |
 | `create_chat` | 创建新聊天 | `CreateChatDto` | `ChatDto` |
 | `delete_chat` | 删除聊天 | `character_name: String, file_name: String` | `()` |
 | `add_message` | 添加消息 | `AddMessageDto` | `ChatDto` |
@@ -666,6 +680,8 @@ TauriTavern的后端API通过Tauri命令暴露给前端。以下是主要API类�
 | `import_character_chats` | 导入角色聊天（payload链路） | `ImportCharacterChatsDto` | `Vec<String>` |
 | `export_chat` | 导出聊天 | `ExportChatDto` | `()` |
 | `save_chat` | 保存角色聊天payload（含 integrity/force） | `SaveChatDto` | `()` |
+| `save_chat_payload_raw` | 以 raw bytes 保存角色聊天 | `body: bytes, headers: x-character-name/x-file-name/x-force` | `()` |
+| `save_chat_payload_from_file` | 从现有JSONL文件路径保存角色聊天 | `SaveChatFromFileDto` | `()` |
 | `backup_chat` | 触发聊天备份 | `character_name: String, file_name: String` | `()` |
 | `clear_chat_cache` | 清理聊天缓存 | 无 | `()` |
 
@@ -674,7 +690,11 @@ TauriTavern的后端API通过Tauri命令暴露给前端。以下是主要API类�
 | 命令 | 描述 | 参数 | 返回值 |
 |------|------|------|--------|
 | `get_group_chat` | 获取群聊原始JSONL对象数组 | `GetGroupChatDto` | `Vec<Value>` |
+| `get_group_chat_raw` | 获取群聊原始JSONL字节流 | `GetGroupChatDto, allowNotFound?: bool` | `InvokeResponse(bytes)` |
+| `get_group_chat_path` | 获取群聊文件绝对路径 | `GetGroupChatDto` | `String` |
 | `save_group_chat` | 保存群聊payload（含 integrity/force） | `SaveGroupChatDto` | `()` |
+| `save_group_chat_raw` | 以 raw bytes 保存群聊 | `body: bytes, headers: x-chat-id/x-force` | `()` |
+| `save_group_chat_from_file` | 从现有JSONL文件路径保存群聊 | `SaveGroupChatFromFileDto` | `()` |
 | `delete_group_chat` | 删除群聊聊天文件 | `DeleteGroupChatDto` | `()` |
 | `rename_group_chat` | 重命名群聊聊天文件 | `RenameGroupChatDto` | `()` |
 | `import_group_chat_payload` | 导入群聊JSONL文件 | `ImportGroupChatDto` | `String` |
@@ -852,6 +872,12 @@ pub async fn read_file(path: &str) -> Result<String, DomainError> {
 
 6. **角色导入不应提前写入初始 chat 文件**  
 角色卡导入阶段只负责角色资产与角色数据落盘；首条消息与 swipe 结构由聊天链路在“首次打开会话”时生成，避免把 `alternate_greetings` 折损成单条 `mes`。
+
+7. **raw 命令 header 必须保持 ASCII 安全**  
+若 header 携带角色名/会话名/群聊 ID，前端必须先 URI 编码；后端统一解码，避免 WebView `Headers` 非 Latin-1 异常。
+
+8. **移动端大文件写入优先走 from-file**  
+Android 及低内存场景下，避免把大 JSONL 一次性塞入 IPC body，优先走临时文件 + `save_*_from_file`。
 
 ## 8. 测试策略
 

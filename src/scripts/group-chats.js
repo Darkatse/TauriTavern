@@ -87,6 +87,11 @@ import { isExternalMediaAllowed } from './chats.js';
 import { POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
+import {
+    isTauriChatPayloadTransportEnabled,
+    loadGroupChatPayload,
+    saveGroupChatPayload,
+} from './chat-payload-transport.js';
 
 export {
     selected_group,
@@ -193,10 +198,28 @@ async function regenerateGroup() {
  * @returns {Promise<ChatFile>} Array of chat messages
  */
 async function loadGroupChat(chatId) {
+    const normalizedChatId = String(chatId || '').trim();
+    if (!normalizedChatId) {
+        return [];
+    }
+
+    if (isTauriChatPayloadTransportEnabled()) {
+        try {
+            const data = await loadGroupChatPayload({
+                id: normalizedChatId,
+                allowNotFound: true,
+            });
+            return Array.isArray(data) ? data : [];
+        } catch (error) {
+            console.error('Failed to load group chat payload from Tauri transport', error);
+            return [];
+        }
+    }
+
     const response = await fetch('/api/chats/group/get', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chatId }),
+        body: JSON.stringify({ id: normalizedChatId }),
     });
 
     if (response.ok) {
@@ -635,18 +658,46 @@ async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
         user_name: 'unused',
         character_name: 'unused',
     };
-    const response = await fetch('/api/chats/group/save', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chatId, chat: [chatHeader, ...chat], force: force }),
-    });
+    const payload = [chatHeader, ...chat];
+    const isIntegrityTransportError = (error) =>
+        String(error?.code || '').toLowerCase() === 'integrity'
+        || /integrity/i.test(String(error?.message || ''));
 
-    if (!response.ok) {
-        const errorData = await response.json();
-        const isIntegrityError = errorData?.error === 'integrity' && !force;
+    try {
+        if (isTauriChatPayloadTransportEnabled()) {
+            await saveGroupChatPayload({
+                id: chatId,
+                payload,
+                force: Boolean(force),
+            });
+        } else {
+            const response = await fetch('/api/chats/group/save', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ id: chatId, chat: payload, force: force }),
+            });
+
+            if (response.ok) {
+                if (shouldSaveGroup) {
+                    await editGroup(groupId, false, false);
+                }
+                return;
+            }
+
+            const errorData = await response.json();
+            if (errorData?.error === 'integrity' && !force) {
+                const integrityError = new Error('integrity');
+                integrityError.code = 'integrity';
+                throw integrityError;
+            }
+
+            throw new Error(response.statusText || 'Group chat save failed');
+        }
+    } catch (error) {
+        const isIntegrityError = isIntegrityTransportError(error) && !force;
         if (!isIntegrityError) {
             toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group Chat could not be saved`);
-            console.error('Group chat could not be saved', response);
+            console.error('Group chat could not be saved', error);
             return;
         }
 
@@ -729,15 +780,18 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
 
                     if (hadChanges) {
                         await eventSource.emit(event_types.CHARACTER_RENAMED_IN_PAST_CHAT, messages, oldAvatar, newAvatar);
+                        if (isTauriChatPayloadTransportEnabled()) {
+                            await saveGroupChatPayload({ id: chatId, payload: [...messages] });
+                        } else {
+                            const saveChatResponse = await fetch('/api/chats/group/save', {
+                                method: 'POST',
+                                headers: getRequestHeaders(),
+                                body: JSON.stringify({ id: chatId, chat: [...messages] }),
+                            });
 
-                        const saveChatResponse = await fetch('/api/chats/group/save', {
-                            method: 'POST',
-                            headers: getRequestHeaders(),
-                            body: JSON.stringify({ id: chatId, chat: [...messages] }),
-                        });
-
-                        if (!saveChatResponse.ok) {
-                            throw new Error('Group member could not be renamed');
+                            if (!saveChatResponse.ok) {
+                                throw new Error('Group member could not be renamed');
+                            }
                         }
 
                         console.log(`Renamed character ${newName} in group chat: ${chatId}`);
@@ -2355,15 +2409,26 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
 
     await editGroup(groupId, true, false);
 
-    const response = await fetch('/api/chats/group/save', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ id: name, chat: [chatHeader, ...trimmedChat] }),
-    });
+    try {
+        if (isTauriChatPayloadTransportEnabled()) {
+            await saveGroupChatPayload({
+                id: name,
+                payload: [chatHeader, ...trimmedChat],
+            });
+        } else {
+            const response = await fetch('/api/chats/group/save', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ id: name, chat: [chatHeader, ...trimmedChat] }),
+            });
 
-    if (!response.ok) {
+            if (!response.ok) {
+                throw new Error(response.statusText || 'Group chat save failed');
+            }
+        }
+    } catch (error) {
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be saved`);
-        console.error('Group chat could not be saved', response);
+        console.error('Group chat could not be saved', error);
     }
 }
 

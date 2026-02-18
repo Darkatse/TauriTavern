@@ -145,6 +145,16 @@ pub struct SaveChatDto {
     pub force: Option<bool>,
 }
 
+/// DTO for saving a character chat payload from an existing JSONL file path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveChatFromFileDto {
+    #[serde(rename = "ch_name")]
+    pub character_name: String,
+    pub file_name: String,
+    pub file_path: String,
+    pub force: Option<bool>,
+}
+
 /// DTO for retrieving a group chat payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetGroupChatDto {
@@ -156,6 +166,14 @@ pub struct GetGroupChatDto {
 pub struct SaveGroupChatDto {
     pub id: String,
     pub chat: Vec<serde_json::Value>,
+    pub force: Option<bool>,
+}
+
+/// DTO for saving a group chat payload from an existing JSONL file path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveGroupChatFromFileDto {
+    pub id: String,
+    pub file_path: String,
     pub force: Option<bool>,
 }
 

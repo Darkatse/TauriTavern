@@ -11,6 +11,12 @@ import {
 } from './lib.js';
 import { getClientVersion as getBridgeClientVersion } from './tauri-bridge.js';
 import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
+import {
+    isTauriChatPayloadTransportEnabled,
+    loadGroupChatPayload,
+    loadCharacterChatPayload,
+    saveCharacterChatPayload,
+} from './scripts/chat-payload-transport.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -393,6 +399,8 @@ export let swipeState = SWIPE_STATE.NONE;
 let chatSaveTimeout;
 let importFlashTimeout;
 export let isChatSaving = false;
+export let isChatLoading = false;
+let hasPendingSaveAfterLoad = false;
 let firstRun = false;
 let settingsReady = false;
 let pendingSettingsSave = false;
@@ -7048,20 +7056,33 @@ async function renamePastChats(oldAvatar, newAvatar, newName) {
     for (const { file_name } of pastChats) {
         try {
             const fileNameWithoutExtension = file_name.replace('.jsonl', '');
-            const getChatResponse = await fetch('/api/chats/get', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({
-                    ch_name: newName,
-                    file_name: fileNameWithoutExtension,
-                    avatar_url: newAvatar,
-                }),
-                cache: 'no-cache',
-            });
+            const currentChat = isTauriChatPayloadTransportEnabled()
+                ? await loadCharacterChatPayload({
+                    characterName: newName,
+                    avatarUrl: newAvatar,
+                    fileName: fileNameWithoutExtension,
+                    allowNotFound: true,
+                })
+                : await (async () => {
+                    const getChatResponse = await fetch('/api/chats/get', {
+                        method: 'POST',
+                        headers: getRequestHeaders(),
+                        body: JSON.stringify({
+                            ch_name: newName,
+                            file_name: fileNameWithoutExtension,
+                            avatar_url: newAvatar,
+                        }),
+                        cache: 'no-cache',
+                    });
 
-            if (getChatResponse.ok) {
-                const currentChat = await getChatResponse.json();
+                    if (!getChatResponse.ok) {
+                        return [];
+                    }
 
+                    return getChatResponse.json();
+                })();
+
+            if (Array.isArray(currentChat) && currentChat.length) {
                 for (const message of currentChat) {
                     if (message.is_user || message.is_system || message.extra?.type == system_message_types.NARRATOR) {
                         continue;
@@ -7074,20 +7095,29 @@ async function renamePastChats(oldAvatar, newAvatar, newName) {
 
                 await eventSource.emit(event_types.CHARACTER_RENAMED_IN_PAST_CHAT, currentChat, oldAvatar, newAvatar);
 
-                const saveChatResponse = await fetch('/api/chats/save', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({
-                        ch_name: newName,
-                        file_name: fileNameWithoutExtension,
-                        chat: currentChat,
-                        avatar_url: newAvatar,
-                    }),
-                    cache: 'no-cache',
-                });
+                if (isTauriChatPayloadTransportEnabled()) {
+                    await saveCharacterChatPayload({
+                        characterName: newName,
+                        avatarUrl: newAvatar,
+                        fileName: fileNameWithoutExtension,
+                        payload: currentChat,
+                    });
+                } else {
+                    const saveChatResponse = await fetch('/api/chats/save', {
+                        method: 'POST',
+                        headers: getRequestHeaders(),
+                        body: JSON.stringify({
+                            ch_name: newName,
+                            file_name: fileNameWithoutExtension,
+                            chat: currentChat,
+                            avatar_url: newAvatar,
+                        }),
+                        cache: 'no-cache',
+                    });
 
-                if (!saveChatResponse.ok) {
-                    throw new Error('Could not save chat');
+                    if (!saveChatResponse.ok) {
+                        throw new Error('Could not save chat');
+                    }
                 }
             }
         } catch (error) {
@@ -7166,8 +7196,23 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
         user_name: 'unused',
         character_name: 'unused',
     };
+    const payload = [chatHeader, ...trimmedChat];
+    const isIntegrityTransportError = (error) =>
+        String(error?.code || '').toLowerCase() === 'integrity'
+        || /integrity/i.test(String(error?.message || ''));
 
     try {
+        if (isTauriChatPayloadTransportEnabled()) {
+            await saveCharacterChatPayload({
+                characterName: characters[this_chid].name,
+                avatarUrl: characters[this_chid].avatar,
+                fileName: fileName,
+                payload,
+                force: Boolean(force),
+            });
+            return;
+        }
+
         const result = await fetch('/api/chats/save', {
             method: 'POST',
             cache: 'no-cache',
@@ -7175,7 +7220,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
             body: JSON.stringify({
                 ch_name: characters[this_chid].name,
                 file_name: fileName,
-                chat: [chatHeader, ...trimmedChat],
+                chat: payload,
                 avatar_url: characters[this_chid].avatar,
                 force: force,
             }),
@@ -7187,8 +7232,18 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
 
         const errorData = await result.json();
         const isIntegrityError = errorData?.error === 'integrity' && !force;
+        if (isIntegrityError) {
+            const integrityError = new Error('integrity');
+            integrityError.code = 'integrity';
+            throw integrityError;
+        }
+        throw new Error(result.statusText);
+    } catch (error) {
+        const isIntegrityError = isIntegrityTransportError(error) && !force;
         if (!isIntegrityError) {
-            throw new Error(result.statusText);
+            console.error(error);
+            toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be saved`);
+            return;
         }
 
         const popupResult = await Popup.show.input(
@@ -7208,9 +7263,6 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
         }
 
         await saveChat({ chatName, withMetadata, mesId, force: true });
-    } catch (error) {
-        console.error(error);
-        toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be saved`);
     }
 }
 
@@ -7380,20 +7432,27 @@ export async function unshallowCharacter(characterId) {
 
 export async function getChat() {
     //console.log('/api/chats/get -- entered for -- ' + characters[this_chid].name);
+    isChatLoading = true;
     try {
         await unshallowCharacter(this_chid);
-
-        const response = await $.ajax({
-            type: 'POST',
-            url: '/api/chats/get',
-            data: JSON.stringify({
-                ch_name: characters[this_chid].name,
-                file_name: characters[this_chid].chat,
-                avatar_url: characters[this_chid].avatar,
-            }),
-            dataType: 'json',
-            contentType: 'application/json',
-        });
+        const response = await (isTauriChatPayloadTransportEnabled()
+            ? loadCharacterChatPayload({
+                characterName: characters[this_chid].name,
+                avatarUrl: characters[this_chid].avatar,
+                fileName: characters[this_chid].chat,
+                allowNotFound: true,
+            })
+            : $.ajax({
+                type: 'POST',
+                url: '/api/chats/get',
+                data: JSON.stringify({
+                    ch_name: characters[this_chid].name,
+                    file_name: characters[this_chid].chat,
+                    avatar_url: characters[this_chid].avatar,
+                }),
+                dataType: 'json',
+                contentType: 'application/json',
+            }));
 
         if (!Array.isArray(response)) {
             throw new Error('Invalid chat payload');
@@ -7409,8 +7468,18 @@ export async function getChat() {
         if (!chat_metadata['integrity']) {
             chat_metadata['integrity'] = uuidv4();
         }
+
+        // Release loading guard only after chat metadata is fully initialized.
+        isChatLoading = false;
         await getChatResult();
         eventSource.emit('chatLoaded', { detail: { id: this_chid, character: characters[this_chid] } });
+
+        if (hasPendingSaveAfterLoad) {
+            hasPendingSaveAfterLoad = false;
+            queueMicrotask(() => {
+                saveChatConditional();
+            });
+        }
 
         // Focus on the textarea if not already focused on a visible text input
         setTimeout(function () {
@@ -7424,6 +7493,8 @@ export async function getChat() {
         console.error('Failed to load chat:', error);
         toastr.error(t`Could not load chat data. Existing chat file was not modified.`);
         return false;
+    } finally {
+        isChatLoading = false;
     }
 }
 
@@ -8199,27 +8270,41 @@ export async function getChatsFromFiles(data, isGroupChat) {
         return new Promise(async (res, rej) => {
             try {
                 const endpoint = isGroupChat ? '/api/chats/group/get' : '/api/chats/get';
-                const requestBody = isGroupChat
-                    ? JSON.stringify({ id: file_name })
-                    : JSON.stringify({
-                        ch_name: characters[context.characterId].name,
-                        file_name: file_name.replace('.jsonl', ''),
-                        avatar_url: characters[context.characterId].avatar,
-                    });
+                const currentChat = isTauriChatPayloadTransportEnabled()
+                    ? (isGroupChat
+                        ? await loadGroupChatPayload({ id: file_name, allowNotFound: true })
+                        : await loadCharacterChatPayload({
+                            characterName: characters[context.characterId].name,
+                            avatarUrl: characters[context.characterId].avatar,
+                            fileName: file_name.replace('.jsonl', ''),
+                            allowNotFound: true,
+                        }))
+                    : await (async () => {
+                        const requestBody = isGroupChat
+                            ? JSON.stringify({ id: file_name })
+                            : JSON.stringify({
+                                ch_name: characters[context.characterId].name,
+                                file_name: file_name.replace('.jsonl', ''),
+                                avatar_url: characters[context.characterId].avatar,
+                            });
 
-                const chatResponse = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: requestBody,
-                    cache: 'no-cache',
-                });
+                        const chatResponse = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: getRequestHeaders(),
+                            body: requestBody,
+                            cache: 'no-cache',
+                        });
 
-                if (!chatResponse.ok) {
+                        if (!chatResponse.ok) {
+                            return null;
+                        }
+
+                        return chatResponse.json();
+                    })();
+
+                if (!Array.isArray(currentChat)) {
                     return res();
-                    // continue;
                 }
-
-                const currentChat = await chatResponse.json();
                 if (!isGroupChat) {
                     // remove the first message, which is metadata, only for individual chats
                     currentChat.shift();
@@ -9116,6 +9201,12 @@ export async function saveMetadata() {
 }
 
 export async function saveChatConditional() {
+    if (isChatLoading) {
+        hasPendingSaveAfterLoad = true;
+        console.debug('Skipping save while chat payload is loading');
+        return;
+    }
+
     try {
         await waitUntilCondition(() => !isChatSaving, DEFAULT_SAVE_EDIT_TIMEOUT, 100);
     } catch {
