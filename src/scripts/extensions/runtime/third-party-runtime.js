@@ -5,6 +5,10 @@ let cssLayerSupportCache = null;
 const THIRD_PARTY_ROUTE_URL_PATTERN = /(?:https?:\/\/[^\s"'`<>()]+)?\/scripts\/extensions\/third-party\/[^\s"'`<>()]+/g;
 const MODULE_FILE_PATTERN = /\.m?js(?:[?#].*)?$/i;
 const STYLESHEET_FILE_PATTERN = /\.css(?:[?#].*)?$/i;
+const DOCUMENT_FILE_PATTERN = /\.html?(?:[?#].*)?$/i;
+const DOM_PATCH_PENDING_ATTR = 'data-tauritavern-pending-url';
+const DOM_PATCH_INTERNAL_FLAG = Symbol('tauritavern.thirdParty.domPatch');
+const DOM_PATCH_QUERY_SELECTOR = 'script[src*="scripts/extensions/third-party/"],link[href*="scripts/extensions/third-party/"],iframe[src*="scripts/extensions/third-party/"]';
 
 function ensureModuleLexerReady() {
     if (!moduleLexerReadyPromise) {
@@ -79,6 +83,21 @@ function isDynamicImportRecord(importRecord) {
 
 function looksLikeHtmlPayload(text) {
     return /^\s*</.test(String(text || ''));
+}
+
+function resolveRouteThirdPartyUrl(url, baseUrl = window.location.origin) {
+    if (typeof url !== 'string' || !url.trim()) {
+        return null;
+    }
+
+    try {
+        const resolved = new URL(url, baseUrl).href;
+        return isRouteThirdPartyModuleUrl(resolved)
+            ? normalizeThirdPartyModuleUrl(resolved)
+            : null;
+    } catch {
+        return null;
+    }
 }
 
 function looksLikeHtmlBytes(bytes) {
@@ -199,6 +218,37 @@ function preprocessStylesheetForLegacyWebView(source) {
     }
 }
 
+function isCssUrlBypassScheme(url) {
+    const normalized = String(url || '').trim().toLowerCase();
+    return normalized.startsWith('data:')
+        || normalized.startsWith('blob:')
+        || normalized.startsWith('about:')
+        || normalized.startsWith('javascript:')
+        || normalized.startsWith('#');
+}
+
+function absolutizeStylesheetUrls(source, stylesheetUrl) {
+    const cssSource = String(source || '');
+    if (!cssSource.includes('url(')) {
+        return cssSource;
+    }
+
+    return cssSource.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (fullMatch, quote, rawUrl) => {
+        const candidate = String(rawUrl || '').trim();
+        if (!candidate || isCssUrlBypassScheme(candidate)) {
+            return fullMatch;
+        }
+
+        try {
+            const absoluteUrl = new URL(candidate, stylesheetUrl).href;
+            const wrappedQuote = quote || '"';
+            return `url(${wrappedQuote}${absoluteUrl}${wrappedQuote})`;
+        } catch {
+            return fullMatch;
+        }
+    });
+}
+
 function resolveFetchImpl(fetchImpl) {
     if (typeof fetchImpl === 'function') {
         return fetchImpl;
@@ -218,10 +268,14 @@ function resolveFetchImpl(fetchImpl) {
 export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
     const moduleBlobCache = new Map();
     const moduleBlobUrls = new Set();
+    const stylesheetSourceCache = new Map();
     const styleBlobCache = new Map();
     const styleBlobUrls = new Set();
+    const documentBlobCache = new Map();
+    const documentBlobUrls = new Set();
     const assetBlobCache = new Map();
     const assetBlobUrls = new Set();
+    let domAssetPatchInstalled = false;
 
     function cleanup() {
         for (const blobUrl of moduleBlobUrls) {
@@ -230,19 +284,332 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
         for (const blobUrl of styleBlobUrls) {
             URL.revokeObjectURL(blobUrl);
         }
+        for (const blobUrl of documentBlobUrls) {
+            URL.revokeObjectURL(blobUrl);
+        }
         for (const blobUrl of assetBlobUrls) {
             URL.revokeObjectURL(blobUrl);
         }
         moduleBlobUrls.clear();
         moduleBlobCache.clear();
+        stylesheetSourceCache.clear();
         styleBlobUrls.clear();
         styleBlobCache.clear();
+        documentBlobUrls.clear();
+        documentBlobCache.clear();
         assetBlobUrls.clear();
         assetBlobCache.clear();
     }
 
     if (typeof window !== 'undefined') {
         window.addEventListener('beforeunload', cleanup, { once: true });
+    }
+
+    function inferThirdPartyAssetKindByPath(routeUrl) {
+        const pathname = new URL(routeUrl, window.location.origin).pathname;
+        if (MODULE_FILE_PATTERN.test(pathname)) {
+            return 'module';
+        }
+
+        if (STYLESHEET_FILE_PATTERN.test(pathname)) {
+            return 'style';
+        }
+
+        if (DOCUMENT_FILE_PATTERN.test(pathname)) {
+            return 'document';
+        }
+
+        return 'asset';
+    }
+
+    function resolveThirdPartyOrExternalUrl(url, baseUrl = window.location.origin) {
+        const thirdPartyRouteUrl = resolveRouteThirdPartyUrl(url, baseUrl);
+        if (thirdPartyRouteUrl) {
+            return {
+                type: 'third-party',
+                url: thirdPartyRouteUrl,
+            };
+        }
+
+        if (typeof url !== 'string' || !url.trim()) {
+            return null;
+        }
+
+        try {
+            const parsed = new URL(url, baseUrl);
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                return null;
+            }
+
+            parsed.hash = '';
+            return {
+                type: 'external',
+                url: parsed.href,
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    function isModuleScriptElement(node) {
+        const type = String(node?.getAttribute?.('type') || node?.type || '').trim().toLowerCase();
+        return type === 'module';
+    }
+
+    function readPendingDomAssetCandidate(node) {
+        if (!node || typeof window === 'undefined') {
+            return null;
+        }
+
+        if (node instanceof window.HTMLScriptElement) {
+            const candidate = node.getAttribute('src') || node.getAttribute(DOM_PATCH_PENDING_ATTR) || node.src;
+            if (!candidate) {
+                return null;
+            }
+
+            return {
+                kind: isModuleScriptElement(node) ? 'module' : 'script',
+                url: candidate,
+                attribute: 'src',
+            };
+        }
+
+        if (node instanceof window.HTMLLinkElement) {
+            const rel = String(node.getAttribute('rel') || node.rel || '').toLowerCase();
+            if (rel !== 'stylesheet' && rel !== 'modulepreload') {
+                return null;
+            }
+
+            const candidate = node.getAttribute('href') || node.getAttribute(DOM_PATCH_PENDING_ATTR) || node.href;
+            if (!candidate) {
+                return null;
+            }
+
+            return {
+                kind: rel === 'modulepreload' ? 'module' : 'style',
+                url: candidate,
+                attribute: 'href',
+            };
+        }
+
+        if (node instanceof window.HTMLIFrameElement) {
+            const candidate = node.getAttribute('src') || node.getAttribute(DOM_PATCH_PENDING_ATTR) || node.src;
+            if (!candidate) {
+                return null;
+            }
+
+            return {
+                kind: 'document',
+                url: candidate,
+                attribute: 'src',
+            };
+        }
+
+        return null;
+    }
+
+    function collectPendingDomAssetRequests(node) {
+        if (!node || typeof window === 'undefined') {
+            return [];
+        }
+
+        const requests = [];
+        const visitedNodes = new Set();
+        const tryCollect = (candidateNode) => {
+            if (!candidateNode || visitedNodes.has(candidateNode)) {
+                return;
+            }
+            visitedNodes.add(candidateNode);
+
+            const request = readPendingDomAssetCandidate(candidateNode);
+            if (!request) {
+                return;
+            }
+
+            const routeUrl = resolveRouteThirdPartyUrl(request.url);
+            if (!routeUrl) {
+                return;
+            }
+
+            requests.push({ node: candidateNode, request, routeUrl });
+        };
+
+        tryCollect(node);
+
+        if (typeof node.querySelectorAll === 'function') {
+            for (const candidateNode of node.querySelectorAll(DOM_PATCH_QUERY_SELECTOR)) {
+                tryCollect(candidateNode);
+            }
+        }
+
+        return requests;
+    }
+
+    function markNodeForDeferredAssetLoad(node, request) {
+        if (!node || node[DOM_PATCH_INTERNAL_FLAG]) {
+            return false;
+        }
+
+        node[DOM_PATCH_INTERNAL_FLAG] = true;
+        node.setAttribute(DOM_PATCH_PENDING_ATTR, request.url);
+        try {
+            node.removeAttribute(request.attribute);
+        } catch {
+            // Ignore attribute removal failure.
+        }
+
+        return true;
+    }
+
+    async function resolveAndApplyDomAsset(node, request, routeUrl) {
+        try {
+            const resolvedUrl = await resolveThirdPartyInlineAssetUrl(routeUrl, new Set(), request.kind);
+            if (!resolvedUrl) {
+                return;
+            }
+
+            node.setAttribute(request.attribute, resolvedUrl);
+            node.removeAttribute(DOM_PATCH_PENDING_ATTR);
+        } catch (error) {
+            console.error('[TauriTavern] Failed to resolve third-party DOM asset:', routeUrl, error);
+            node.dispatchEvent(new Event('error'));
+        } finally {
+            delete node[DOM_PATCH_INTERNAL_FLAG];
+        }
+    }
+
+    function maybeScheduleDomAssetRewrite(node) {
+        const requests = collectPendingDomAssetRequests(node);
+        if (requests.length === 0) {
+            return;
+        }
+
+        for (const pending of requests) {
+            const isMarked = markNodeForDeferredAssetLoad(pending.node, pending.request);
+            if (!isMarked) {
+                continue;
+            }
+
+            queueMicrotask(() => {
+                void resolveAndApplyDomAsset(pending.node, pending.request, pending.routeUrl);
+            });
+        }
+    }
+
+    function installDomAssetPatch() {
+        if (domAssetPatchInstalled || typeof window === 'undefined') {
+            return;
+        }
+
+        const elementProto = window.Element?.prototype;
+        if (!elementProto) {
+            return;
+        }
+
+        const originalAppendChild = elementProto.appendChild;
+        const originalInsertBefore = elementProto.insertBefore;
+
+        elementProto.appendChild = function patchedAppendChild(child) {
+            maybeScheduleDomAssetRewrite(child);
+            return originalAppendChild.call(this, child);
+        };
+
+        elementProto.insertBefore = function patchedInsertBefore(newNode, referenceNode) {
+            maybeScheduleDomAssetRewrite(newNode);
+            return originalInsertBefore.call(this, newNode, referenceNode);
+        };
+
+        const iframePrototype = window.HTMLIFrameElement?.prototype;
+        const iframeSrcDescriptor = iframePrototype
+            ? Object.getOwnPropertyDescriptor(iframePrototype, 'src')
+            : null;
+        if (iframeSrcDescriptor && typeof iframeSrcDescriptor.set === 'function' && typeof iframeSrcDescriptor.get === 'function') {
+            Object.defineProperty(iframePrototype, 'src', {
+                configurable: true,
+                enumerable: iframeSrcDescriptor.enumerable,
+                get() {
+                    return iframeSrcDescriptor.get.call(this);
+                },
+                set(value) {
+                    if (this[DOM_PATCH_INTERNAL_FLAG]) {
+                        iframeSrcDescriptor.set.call(this, value);
+                        return;
+                    }
+
+                    const routeUrl = resolveRouteThirdPartyUrl(value);
+                    if (!routeUrl) {
+                        iframeSrcDescriptor.set.call(this, value);
+                        return;
+                    }
+
+                    const request = {
+                        kind: 'document',
+                        url: String(value),
+                        attribute: 'src',
+                    };
+                    const isMarked = markNodeForDeferredAssetLoad(this, request);
+                    if (!isMarked) {
+                        iframeSrcDescriptor.set.call(this, value);
+                        return;
+                    }
+
+                    queueMicrotask(() => {
+                        void resolveAndApplyDomAsset(this, request, routeUrl);
+                    });
+                },
+            });
+        }
+
+        const originalOpen = typeof window.open === 'function'
+            ? window.open.bind(window)
+            : null;
+        if (originalOpen) {
+            window.open = function patchedWindowOpen(url, target, features) {
+                const routeUrl = resolveRouteThirdPartyUrl(url);
+                if (!routeUrl) {
+                    return originalOpen(url, target, features);
+                }
+
+                const fallbackUrl = toBrowserModuleSpecifier(routeUrl);
+                const popup = originalOpen('about:blank', target, features);
+                if (!popup) {
+                    return originalOpen(fallbackUrl, target, features);
+                }
+
+                const preferredKind = inferThirdPartyAssetKindByPath(routeUrl);
+                queueMicrotask(() => {
+                    void resolveThirdPartyInlineAssetUrl(routeUrl, new Set(), preferredKind)
+                        .then((resolvedUrl) => {
+                            if (!popup || popup.closed) {
+                                return;
+                            }
+
+                            const targetUrl = resolvedUrl || fallbackUrl;
+                            try {
+                                popup.location.replace(targetUrl);
+                            } catch {
+                                // Ignore popup navigation failures.
+                            }
+                        })
+                        .catch((error) => {
+                            console.error('[TauriTavern] Failed to resolve third-party popup asset:', routeUrl, error);
+                            if (!popup || popup.closed) {
+                                return;
+                            }
+
+                            try {
+                                popup.location.replace(fallbackUrl);
+                            } catch {
+                                // Ignore popup navigation failures.
+                            }
+                        });
+                });
+
+                return popup;
+            };
+        }
+
+        domAssetPatchInstalled = true;
     }
 
     async function rewriteThirdPartyModuleSource(source, moduleUrl, processingChain = new Set()) {
@@ -292,10 +659,26 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
         return rewriteEmbeddedThirdPartyAssetUrls(rewritten, moduleUrl, chain);
     }
 
-    function resolveThirdPartyInlineAssetUrl(routeUrl, processingChain = new Set()) {
+    function resolveThirdPartyInlineAssetUrl(routeUrl, processingChain = new Set(), preferredKind = 'auto') {
         const normalized = normalizeThirdPartyModuleUrl(routeUrl);
         if (processingChain.has(normalized)) {
             return Promise.resolve(toBrowserModuleSpecifier(normalized));
+        }
+
+        if (preferredKind === 'module') {
+            return resolveModuleBlobUrl(normalized, processingChain);
+        }
+
+        if (preferredKind === 'style') {
+            return resolveStylesheetBlobUrl(normalized);
+        }
+
+        if (preferredKind === 'document') {
+            return resolveDocumentBlobUrl(normalized, processingChain);
+        }
+
+        if (preferredKind === 'script' || preferredKind === 'asset') {
+            return resolveAssetBlobUrl(normalized);
         }
 
         const pathname = new URL(normalized, window.location.origin).pathname;
@@ -307,8 +690,14 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
             return resolveStylesheetBlobUrl(normalized);
         }
 
+        if (DOCUMENT_FILE_PATTERN.test(pathname)) {
+            return resolveDocumentBlobUrl(normalized, processingChain);
+        }
+
         return resolveAssetBlobUrl(normalized);
     }
+
+    installDomAssetPatch();
 
     async function rewriteEmbeddedThirdPartyAssetUrls(source, moduleUrl, processingChain = new Set()) {
         const sourceText = String(source || '');
@@ -373,6 +762,215 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
         }
         rewritten += sourceText.slice(cursor);
         return rewritten;
+    }
+
+    async function rewriteThirdPartyDocumentSource(source, documentUrl, processingChain = new Set()) {
+        if (typeof DOMParser === 'undefined') {
+            return source;
+        }
+
+        const sourceText = String(source || '');
+        const parser = new DOMParser();
+        const parsedDocument = parser.parseFromString(sourceText, 'text/html');
+        const htmlElement = parsedDocument?.documentElement;
+        if (!htmlElement) {
+            return sourceText;
+        }
+
+        const headElement = parsedDocument.head || parsedDocument.createElement('head');
+        if (!parsedDocument.head) {
+            if (htmlElement.firstChild) {
+                htmlElement.insertBefore(headElement, htmlElement.firstChild);
+            } else {
+                htmlElement.appendChild(headElement);
+            }
+        }
+
+        let baseElement = headElement.querySelector('base');
+        if (!baseElement) {
+            baseElement = parsedDocument.createElement('base');
+            if (headElement.firstChild) {
+                headElement.insertBefore(baseElement, headElement.firstChild);
+            } else {
+                headElement.appendChild(baseElement);
+            }
+        }
+        baseElement.setAttribute('href', documentUrl);
+
+        const resolvedCache = new Map();
+        const resolveDocumentAsset = async (node, attribute, preferredKind = 'auto') => {
+            const candidate = node.getAttribute(attribute);
+            if (!candidate) {
+                return;
+            }
+
+            const resolvedTarget = resolveThirdPartyOrExternalUrl(candidate, documentUrl);
+            if (!resolvedTarget) {
+                return;
+            }
+
+            if (preferredKind === 'style' && resolvedTarget.type === 'third-party') {
+                try {
+                    const stylesheetSource = await loadPreparedStylesheetSource(resolvedTarget.url);
+                    const styleElement = parsedDocument.createElement('style');
+                    styleElement.setAttribute('data-tauritavern-inline-style', resolvedTarget.url);
+                    styleElement.textContent = stylesheetSource;
+                    node.replaceWith(styleElement);
+                    return;
+                } catch (error) {
+                    console.warn('[TauriTavern] Failed to inline third-party stylesheet, falling back to blob URL:', resolvedTarget.url, error);
+                }
+            }
+
+            const cacheKey = `${preferredKind}:${resolvedTarget.url}`;
+            let resolvedUrlPromise = resolvedCache.get(cacheKey);
+            if (!resolvedUrlPromise) {
+                resolvedUrlPromise = resolveThirdPartyInlineAssetUrl(resolvedTarget.url, processingChain, preferredKind);
+                resolvedCache.set(cacheKey, resolvedUrlPromise);
+            }
+
+            let resolvedUrl;
+            try {
+                resolvedUrl = await resolvedUrlPromise;
+            } catch (error) {
+                resolvedCache.delete(cacheKey);
+                console.warn('[TauriTavern] Failed to proxy document asset, using original URL:', resolvedTarget.url, error);
+                return;
+            }
+            if (resolvedUrl) {
+                node.setAttribute(attribute, resolvedUrl);
+            }
+        };
+
+        for (const scriptElement of parsedDocument.querySelectorAll('script[src]')) {
+            const scriptKind = isModuleScriptElement(scriptElement) ? 'module' : 'script';
+            await resolveDocumentAsset(scriptElement, 'src', scriptKind);
+        }
+
+        for (const linkElement of parsedDocument.querySelectorAll('link[href]')) {
+            const rel = String(linkElement.getAttribute('rel') || '').toLowerCase();
+            const preferredKind = rel === 'stylesheet'
+                ? 'style'
+                : rel === 'modulepreload'
+                    ? 'module'
+                    : 'asset';
+            await resolveDocumentAsset(linkElement, 'href', preferredKind);
+        }
+
+        for (const iframeElement of parsedDocument.querySelectorAll('iframe[src]')) {
+            await resolveDocumentAsset(iframeElement, 'src', 'document');
+        }
+
+        for (const mediaElement of parsedDocument.querySelectorAll('img[src],audio[src],video[src],source[src],track[src],embed[src],input[src]')) {
+            await resolveDocumentAsset(mediaElement, 'src', 'asset');
+        }
+
+        for (const objectElement of parsedDocument.querySelectorAll('object[data]')) {
+            await resolveDocumentAsset(objectElement, 'data', 'asset');
+        }
+
+        for (const sourceElement of parsedDocument.querySelectorAll('source[srcset],img[srcset]')) {
+            const srcset = sourceElement.getAttribute('srcset');
+            if (!srcset) {
+                continue;
+            }
+
+            const segments = srcset
+                .split(',')
+                .map(segment => segment.trim())
+                .filter(Boolean);
+            if (segments.length === 0) {
+                continue;
+            }
+
+            let hasChanged = false;
+            const rewrittenSegments = [];
+            for (const segment of segments) {
+                const [urlToken, ...descriptorTokens] = segment.split(/\s+/);
+                if (!urlToken) {
+                    continue;
+                }
+
+                const resolvedTarget = resolveThirdPartyOrExternalUrl(urlToken, documentUrl);
+                if (!resolvedTarget) {
+                    rewrittenSegments.push(segment);
+                    continue;
+                }
+
+                const cacheKey = `asset:${resolvedTarget.url}`;
+                let resolvedUrlPromise = resolvedCache.get(cacheKey);
+                if (!resolvedUrlPromise) {
+                    resolvedUrlPromise = resolveThirdPartyInlineAssetUrl(resolvedTarget.url, processingChain, 'asset');
+                    resolvedCache.set(cacheKey, resolvedUrlPromise);
+                }
+
+                let resolvedUrl;
+                try {
+                    resolvedUrl = await resolvedUrlPromise;
+                } catch (error) {
+                    resolvedCache.delete(cacheKey);
+                    console.warn('[TauriTavern] Failed to proxy document srcset asset, using original URL:', resolvedTarget.url, error);
+                    rewrittenSegments.push(segment);
+                    continue;
+                }
+
+                if (!resolvedUrl) {
+                    rewrittenSegments.push(segment);
+                    continue;
+                }
+
+                hasChanged = true;
+                const descriptor = descriptorTokens.join(' ').trim();
+                rewrittenSegments.push(descriptor ? `${resolvedUrl} ${descriptor}` : resolvedUrl);
+            }
+
+            if (hasChanged && rewrittenSegments.length > 0) {
+                sourceElement.setAttribute('srcset', rewrittenSegments.join(', '));
+            }
+        }
+
+        const doctype = parsedDocument.doctype?.name
+            ? `<!DOCTYPE ${parsedDocument.doctype.name}>`
+            : '<!DOCTYPE html>';
+        return `${doctype}\n${htmlElement.outerHTML}`;
+    }
+
+    async function resolveDocumentBlobUrl(documentUrl, processingChain = new Set()) {
+        const doFetch = resolveFetchImpl(fetchImpl);
+        const normalizedUrl = normalizeThirdPartyModuleUrl(documentUrl);
+        const cachedTask = documentBlobCache.get(normalizedUrl);
+        if (cachedTask) {
+            return cachedTask;
+        }
+
+        const chain = new Set(processingChain);
+        chain.add(normalizedUrl);
+        const task = (async () => {
+            const response = await doFetch(normalizedUrl, { cache: 'no-store' });
+            if (!response.ok) {
+                throw new Error(`Failed to fetch extension document: ${response.status} ${response.statusText}`);
+            }
+
+            const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+            const source = await response.text();
+            if (!contentType.includes('text/html') && !looksLikeHtmlPayload(source)) {
+                throw new Error(`Extension document is not HTML: ${normalizedUrl}`);
+            }
+
+            const rewritten = await rewriteThirdPartyDocumentSource(source, normalizedUrl, chain);
+            const blobUrl = URL.createObjectURL(new Blob([rewritten], { type: 'text/html' }));
+            documentBlobUrls.add(blobUrl);
+            return blobUrl;
+        })();
+
+        documentBlobCache.set(normalizedUrl, task);
+
+        try {
+            return await task;
+        } catch (error) {
+            documentBlobCache.delete(normalizedUrl);
+            throw error;
+        }
     }
 
     async function resolveModuleBlobUrl(moduleUrl, processingChain = new Set()) {
@@ -448,10 +1046,10 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
         }
     }
 
-    async function resolveStylesheetBlobUrl(stylesheetUrl) {
+    async function loadPreparedStylesheetSource(stylesheetUrl) {
         const doFetch = resolveFetchImpl(fetchImpl);
         const normalizedUrl = normalizeThirdPartyModuleUrl(stylesheetUrl);
-        const cachedTask = styleBlobCache.get(normalizedUrl);
+        const cachedTask = stylesheetSourceCache.get(normalizedUrl);
         if (cachedTask) {
             return cachedTask;
         }
@@ -469,7 +1067,29 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
             }
 
             const preparedStylesheet = preprocessStylesheetForLegacyWebView(source);
-            const blobUrl = URL.createObjectURL(new Blob([preparedStylesheet], { type: 'text/css' }));
+            return absolutizeStylesheetUrls(preparedStylesheet, normalizedUrl);
+        })();
+
+        stylesheetSourceCache.set(normalizedUrl, task);
+
+        try {
+            return await task;
+        } catch (error) {
+            stylesheetSourceCache.delete(normalizedUrl);
+            throw error;
+        }
+    }
+
+    async function resolveStylesheetBlobUrl(stylesheetUrl) {
+        const normalizedUrl = normalizeThirdPartyModuleUrl(stylesheetUrl);
+        const cachedTask = styleBlobCache.get(normalizedUrl);
+        if (cachedTask) {
+            return cachedTask;
+        }
+
+        const task = (async () => {
+            const stylesheetSource = await loadPreparedStylesheetSource(normalizedUrl);
+            const blobUrl = URL.createObjectURL(new Blob([stylesheetSource], { type: 'text/css' }));
             styleBlobUrls.add(blobUrl);
             return blobUrl;
         })();
