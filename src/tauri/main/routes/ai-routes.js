@@ -14,7 +14,194 @@ function getErrorMessage(error) {
     return error.message || error.toString?.() || 'Unknown error';
 }
 
+const DEFAULT_COMPLETION_MODEL = 'tauritavern-error';
+const DEFAULT_ERROR_MESSAGE = 'Chat completion request failed';
+const ERROR_LABEL = '[API Error]';
+const ERROR_PREFIX_PATTERNS = Object.freeze([
+    /^internal server error:\s*/i,
+    /^internal error:\s*/i,
+    /^validation error:\s*/i,
+    /^bad request:\s*/i,
+    /^unauthorized:\s*/i,
+    /^permission denied:\s*/i,
+]);
 const STREAM_FRAME_INTERVAL_MS = 10;
+const STREAM_RESPONSE_HEADERS = Object.freeze({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+});
+
+function getChatCompletionSource(payload) {
+    return String(asObject(payload).chat_completion_source || '').trim().toLowerCase();
+}
+
+function isQuietRequest(payload) {
+    return String(asObject(payload).type || '').trim().toLowerCase() === 'quiet';
+}
+
+function getCompletionModel(payload) {
+    const source = asObject(payload);
+    const candidates = [
+        source.model,
+        source.openai_model,
+        source.custom_model,
+        source.claude_model,
+        source.google_model,
+        source.vertexai_model,
+        source.deepseek_model,
+        source.moonshot_model,
+        source.siliconflow_model,
+        source.zai_model,
+    ];
+
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+            return candidate.trim();
+        }
+    }
+
+    return DEFAULT_COMPLETION_MODEL;
+}
+
+function stripKnownErrorPrefixes(message) {
+    let normalized = String(message || '').trim();
+    if (!normalized) {
+        return '';
+    }
+
+    let previous = '';
+    while (normalized && normalized !== previous) {
+        previous = normalized;
+        for (const prefixPattern of ERROR_PREFIX_PATTERNS) {
+            normalized = normalized.replace(prefixPattern, '').trim();
+        }
+    }
+
+    return normalized;
+}
+
+function buildErrorAssistantText(error) {
+    const rawMessage = getErrorMessage(error);
+    const normalizedMessage = stripKnownErrorPrefixes(rawMessage) || DEFAULT_ERROR_MESSAGE;
+    if (normalizedMessage.startsWith(ERROR_LABEL)) {
+        return normalizedMessage;
+    }
+
+    return `${ERROR_LABEL}\n${normalizedMessage}`;
+}
+
+function buildLegacyErrorPayload(error) {
+    return {
+        error: {
+            message: getErrorMessage(error),
+        },
+    };
+}
+
+function buildErrorCompletionPayload(error, payload) {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const content = buildErrorAssistantText(error);
+
+    return {
+        id: `tauritavern-error-${timestamp}`,
+        object: 'chat.completion',
+        created: timestamp,
+        model: getCompletionModel(payload),
+        choices: [
+            {
+                index: 0,
+                message: {
+                    role: 'assistant',
+                    content,
+                },
+                finish_reason: 'stop',
+            },
+        ],
+        usage: {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        },
+    };
+}
+
+function buildOpenAiStyleErrorChunk(error, payload) {
+    const timestamp = Math.floor(Date.now() / 1000);
+    return {
+        id: `tauritavern-error-chunk-${timestamp}`,
+        object: 'chat.completion.chunk',
+        created: timestamp,
+        model: getCompletionModel(payload),
+        choices: [
+            {
+                index: 0,
+                delta: {
+                    content: buildErrorAssistantText(error),
+                },
+                finish_reason: null,
+            },
+        ],
+    };
+}
+
+function buildErrorStreamChunk(error, payload) {
+    const content = buildErrorAssistantText(error);
+    const source = getChatCompletionSource(payload);
+
+    if (source === 'claude') {
+        return {
+            delta: {
+                text: content,
+            },
+        };
+    }
+
+    if (source === 'makersuite' || source === 'vertexai') {
+        return {
+            candidates: [
+                {
+                    index: 0,
+                    content: {
+                        parts: [{ text: content }],
+                    },
+                },
+            ],
+        };
+    }
+
+    if (source === 'cohere') {
+        return {
+            type: 'content-delta',
+            delta: {
+                message: {
+                    content: {
+                        text: content,
+                    },
+                },
+            },
+        };
+    }
+
+    return buildOpenAiStyleErrorChunk(error, payload);
+}
+
+function createImmediateErrorStreamResponse(error, payload) {
+    const encoder = new TextEncoder();
+    const chunk = buildErrorStreamChunk(error, payload);
+    const readable = new ReadableStream({
+        start(controller) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+            controller.close();
+        },
+    });
+
+    return new Response(readable, {
+        status: 200,
+        headers: STREAM_RESPONSE_HEADERS,
+    });
+}
 
 function createStreamId() {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -65,7 +252,7 @@ async function createChatCompletionStreamResponse(context, payload, signal) {
         }, STREAM_FRAME_INTERVAL_MS);
     };
 
-    const closeStream = async ({ cancelUpstream = false, appendDone = false, errorMessage = '' } = {}) => {
+    const closeStream = async ({ cancelUpstream = false, appendDone = false, errorPayload = null } = {}) => {
         if (isClosed) {
             return;
         }
@@ -77,8 +264,8 @@ async function createChatCompletionStreamResponse(context, payload, signal) {
             flushTimer = null;
         }
 
-        if (errorMessage) {
-            pendingFrames.push(JSON.stringify({ error: { message: errorMessage } }));
+        if (errorPayload) {
+            pendingFrames.push(JSON.stringify(errorPayload));
         }
 
         if (appendDone && !sawDone) {
@@ -124,11 +311,11 @@ async function createChatCompletionStreamResponse(context, payload, signal) {
             return;
         }
 
-        const payload = asObject(event?.payload);
-        const eventType = String(payload.type || '');
+        const eventPayload = asObject(event?.payload);
+        const eventType = String(eventPayload.type || '');
 
         if (eventType === 'chunk') {
-            const data = typeof payload.data === 'string' ? payload.data : '';
+            const data = typeof eventPayload.data === 'string' ? eventPayload.data : '';
             if (!data) {
                 return;
             }
@@ -147,10 +334,13 @@ async function createChatCompletionStreamResponse(context, payload, signal) {
         }
 
         if (eventType === 'error') {
-            const message = typeof payload.message === 'string' && payload.message.trim()
-                ? payload.message
+            const message = typeof eventPayload.message === 'string' && eventPayload.message.trim()
+                ? eventPayload.message
                 : 'Chat completion stream failed';
-            void closeStream({ appendDone: true, errorMessage: message });
+            void closeStream({
+                appendDone: true,
+                errorPayload: buildErrorStreamChunk(message, payload),
+            });
             return;
         }
 
@@ -167,7 +357,10 @@ async function createChatCompletionStreamResponse(context, payload, signal) {
                 unlisten = await tauriEvent.listen(eventName, onStreamEvent);
             } catch (error) {
                 const message = getErrorMessage(error);
-                await closeStream({ appendDone: true, errorMessage: message });
+                await closeStream({
+                    appendDone: true,
+                    errorPayload: buildErrorStreamChunk(message, payload),
+                });
                 return;
             }
 
@@ -191,7 +384,10 @@ async function createChatCompletionStreamResponse(context, payload, signal) {
                 });
             } catch (error) {
                 const message = getErrorMessage(error);
-                await closeStream({ appendDone: true, errorMessage: message });
+                await closeStream({
+                    appendDone: true,
+                    errorPayload: buildErrorStreamChunk(message, payload),
+                });
             }
         },
         async cancel() {
@@ -201,11 +397,7 @@ async function createChatCompletionStreamResponse(context, payload, signal) {
 
     return new Response(readable, {
         status: 200,
-        headers: {
-            'Content-Type': 'text/event-stream; charset=utf-8',
-            'Cache-Control': 'no-cache',
-            Connection: 'keep-alive',
-        },
+        headers: STREAM_RESPONSE_HEADERS,
     });
 }
 
@@ -250,14 +442,21 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
             return jsonResponse(completion || {});
         } catch (error) {
             console.error('Chat completion generation failed:', error);
-            return jsonResponse(
-                {
-                    error: {
-                        message: getErrorMessage(error),
-                    },
-                },
-                502,
-            );
+            const isQuiet = isQuietRequest(payload);
+
+            if (wantsStream) {
+                if (isQuiet) {
+                    return jsonResponse(buildLegacyErrorPayload(error), 502);
+                }
+
+                return createImmediateErrorStreamResponse(error, payload);
+            }
+
+            if (isQuiet) {
+                return jsonResponse(buildLegacyErrorPayload(error), 502);
+            }
+
+            return jsonResponse(buildErrorCompletionPayload(error, payload));
         }
     });
 
