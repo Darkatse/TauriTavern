@@ -375,6 +375,75 @@ toastr.options = {
     },
 };
 
+const TAURI_BACKEND_ERROR_EVENT = 'tauritavern:backend-error';
+const TAURI_BACKEND_ERROR_QUEUE_KEY = '__TAURITAVERN_BACKEND_ERROR_QUEUE__';
+const TAURI_BACKEND_ERROR_READY_KEY = '__TAURITAVERN_BACKEND_ERROR_CONSUMER_READY__';
+const BACKEND_ERROR_DEDUPE_WINDOW_MS = 1200;
+const backendErrorToastTimestamps = new Map();
+
+function normalizeBackendErrorMessage(payload) {
+    if (typeof payload === 'string') {
+        return payload.trim();
+    }
+
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return '';
+    }
+
+    return typeof payload.message === 'string' ? payload.message.trim() : '';
+}
+
+function shouldDisplayBackendErrorToast(message) {
+    const now = Date.now();
+    const lastTimestamp = backendErrorToastTimestamps.get(message) || 0;
+    if (now - lastTimestamp < BACKEND_ERROR_DEDUPE_WINDOW_MS) {
+        return false;
+    }
+
+    backendErrorToastTimestamps.set(message, now);
+
+    if (backendErrorToastTimestamps.size > 128) {
+        for (const [cachedMessage, timestamp] of backendErrorToastTimestamps.entries()) {
+            if (now - timestamp > BACKEND_ERROR_DEDUPE_WINDOW_MS * 5) {
+                backendErrorToastTimestamps.delete(cachedMessage);
+            }
+        }
+    }
+
+    return true;
+}
+
+function showBackendErrorToast(payload) {
+    const message = normalizeBackendErrorMessage(payload);
+    if (!message || !shouldDisplayBackendErrorToast(message)) {
+        return;
+    }
+
+    toastr.error(message, t`Backend Error`, {
+        timeOut: 10000,
+        extendedTimeOut: 15000,
+        preventDuplicates: true,
+    });
+}
+
+function installBackendErrorToasts() {
+    window.addEventListener(TAURI_BACKEND_ERROR_EVENT, (event) => {
+        showBackendErrorToast(event?.detail);
+    });
+
+    window[TAURI_BACKEND_ERROR_READY_KEY] = true;
+
+    const queuedErrors = window[TAURI_BACKEND_ERROR_QUEUE_KEY];
+    if (Array.isArray(queuedErrors) && queuedErrors.length > 0) {
+        for (const payload of queuedErrors) {
+            showBackendErrorToast(payload);
+        }
+    }
+    window[TAURI_BACKEND_ERROR_QUEUE_KEY] = [];
+}
+
+installBackendErrorToasts();
+
 export const characterGroupOverlay = new BulkEditOverlay();
 
 // Markdown converter

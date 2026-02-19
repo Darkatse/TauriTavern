@@ -19,6 +19,7 @@ pub async fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(move |app| {
             let app_handle = app.handle().clone();
+            logger::bind_app_handle(app_handle.clone());
 
             match resolve_log_root(&app_handle) {
                 Ok(log_root) => {

@@ -7,40 +7,77 @@ export function createInterceptors({
     jsonResponse,
     safeJson,
 }) {
-    let fetchPatched = false;
-    let ajaxPatched = false;
+    const fetchPatchedWindows = new WeakSet();
+    const ajaxPatchedWindows = new WeakSet();
 
-    function patchFetch() {
-        if (fetchPatched) {
+    function resolveWindowBaseUrl(targetWindow) {
+        try {
+            const href = String(targetWindow?.location?.href || '');
+            if (href && !href.startsWith('about:')) {
+                return href;
+            }
+
+            const origin = String(targetWindow?.location?.origin || '');
+            if (origin && origin !== 'null') {
+                return origin;
+            }
+
+            return window.location.origin;
+        } catch {
+            return window.location.origin;
+        }
+    }
+
+    function getOriginalFetch(targetWindow) {
+        if (targetWindow === window && typeof originalFetch === 'function') {
+            return originalFetch;
+        }
+
+        if (typeof targetWindow?.fetch === 'function') {
+            return targetWindow.fetch.bind(targetWindow);
+        }
+
+        return null;
+    }
+
+    function patchFetch(targetWindow = window) {
+        if (!targetWindow || fetchPatchedWindows.has(targetWindow)) {
             return;
         }
-        fetchPatched = true;
 
-        window.fetch = async function patchedFetch(input, init = {}) {
+        const fallbackFetch = getOriginalFetch(targetWindow);
+        if (!fallbackFetch) {
+            return;
+        }
+
+        fetchPatchedWindows.add(targetWindow);
+
+        targetWindow.fetch = async function patchedFetch(input, init = {}) {
             if (!isTauri) {
-                return originalFetch(input, init);
+                return fallbackFetch(input, init);
             }
 
-            const requestUrl = toUrl(input);
-            if (!requestUrl || !canHandleRequest(requestUrl, input, init)) {
-                return originalFetch(input, init);
+            const requestUrl = toUrl(input, resolveWindowBaseUrl(targetWindow));
+            if (!requestUrl || !canHandleRequest(requestUrl, input, init, targetWindow)) {
+                return fallbackFetch(input, init);
             }
 
-            const response = await routeRequest(requestUrl, input, init);
+            const response = await routeRequest(requestUrl, input, init, targetWindow);
             return response || jsonResponse({ error: `Unsupported endpoint: ${requestUrl.pathname}` }, 404);
         };
     }
 
-    function patchJQueryAjax() {
-        if (ajaxPatched) {
+    function patchJQueryAjax(targetWindow = window) {
+        if (!targetWindow || ajaxPatchedWindows.has(targetWindow)) {
             return;
         }
 
-        const $ = window.jQuery || window.$;
+        const $ = targetWindow.jQuery || targetWindow.$;
         if (!$ || typeof $.ajax !== 'function') {
             return;
         }
-        ajaxPatched = true;
+
+        ajaxPatchedWindows.add(targetWindow);
 
         const originalAjax = $.ajax.bind($);
 
@@ -53,10 +90,10 @@ export function createInterceptors({
                 ? { ...(maybeOptions || {}), url: urlOrOptions }
                 : { ...(urlOrOptions || {}) };
 
-            const requestUrl = toUrl(options.url);
+            const requestUrl = toUrl(options.url, resolveWindowBaseUrl(targetWindow));
             if (!requestUrl || !canHandleRequest(requestUrl, options.url, {
                 method: options.type || options.method || 'GET',
-            })) {
+            }, targetWindow)) {
                 return originalAjax(urlOrOptions, maybeOptions);
             }
 
@@ -73,7 +110,7 @@ export function createInterceptors({
                     body: options.data,
                 };
 
-                const response = await routeRequest(requestUrl, options.url, init);
+                const response = await routeRequest(requestUrl, options.url, init, targetWindow);
                 if (!response) {
                     throw new Error(`Unsupported endpoint: ${requestUrl.pathname}`);
                 }
@@ -125,8 +162,11 @@ export function createInterceptors({
         };
 
         $.ajax = patchedAjax;
-        if (window.$ && window.$ !== $) {
-            window.$.ajax = patchedAjax;
+        if (targetWindow.$ && targetWindow.$ !== $) {
+            targetWindow.$.ajax = patchedAjax;
+        }
+        if (targetWindow.jQuery && targetWindow.jQuery !== $) {
+            targetWindow.jQuery.ajax = patchedAjax;
         }
     }
 

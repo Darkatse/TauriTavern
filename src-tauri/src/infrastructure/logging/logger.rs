@@ -1,5 +1,8 @@
 use std::path::Path;
-use std::sync::Once;
+use std::sync::{Once, OnceLock};
+
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
 use tracing::info;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
@@ -9,6 +12,18 @@ use tracing_subscriber::{
 };
 
 static INIT: Once = Once::new();
+static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+
+pub const BACKEND_ERROR_EVENT: &str = "tauritavern-backend-error";
+
+#[derive(Clone, Serialize)]
+struct BackendErrorEventPayload {
+    message: String,
+}
+
+pub fn bind_app_handle(app_handle: AppHandle) {
+    let _ = APP_HANDLE.set(app_handle);
+}
 
 /// Initialize the logger with file and console output
 pub fn init_logger(log_dir: &Path) -> Result<(), String> {
@@ -72,4 +87,24 @@ pub fn warn(message: &str) {
 /// Log an error message
 pub fn error(message: &str) {
     tracing::error!("{}", message);
+    emit_error_event(message);
+}
+
+fn emit_error_event(message: &str) {
+    let normalized = message.trim();
+    if normalized.is_empty() {
+        return;
+    }
+
+    let Some(app_handle) = APP_HANDLE.get() else {
+        return;
+    };
+
+    let payload = BackendErrorEventPayload {
+        message: normalized.to_string(),
+    };
+
+    if let Err(error) = app_handle.emit(BACKEND_ERROR_EVENT, payload) {
+        eprintln!("Failed to emit backend error event: {}", error);
+    }
 }

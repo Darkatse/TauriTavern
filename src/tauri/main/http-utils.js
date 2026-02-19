@@ -1,15 +1,50 @@
-export function toUrl(input) {
+function getTypeTag(value) {
+    return Object.prototype.toString.call(value);
+}
+
+function isRequestLike(value) {
+    if (!value || typeof value !== 'object') {
+        return false;
+    }
+
+    return typeof value.url === 'string'
+        && typeof value.method === 'string'
+        && typeof value.clone === 'function';
+}
+
+function isFormDataLike(value) {
+    return getTypeTag(value) === '[object FormData]';
+}
+
+function isUrlSearchParamsLike(value) {
+    return getTypeTag(value) === '[object URLSearchParams]';
+}
+
+function isBlobLike(value) {
+    return getTypeTag(value) === '[object Blob]';
+}
+
+function isArrayBufferLike(value) {
+    return getTypeTag(value) === '[object ArrayBuffer]';
+}
+
+function resolveBaseUrl(baseUrl) {
+    return String(baseUrl || window.location.origin);
+}
+
+export function toUrl(input, baseUrl = window.location.origin) {
+    const resolvedBaseUrl = resolveBaseUrl(baseUrl);
     try {
         if (input instanceof URL) {
             return input;
         }
 
-        if (input instanceof Request) {
-            return new URL(input.url, window.location.origin);
+        if (isRequestLike(input)) {
+            return new URL(input.url, resolvedBaseUrl);
         }
 
         if (typeof input === 'string') {
-            return new URL(input, window.location.origin);
+            return new URL(input, resolvedBaseUrl);
         }
     } catch {
         return null;
@@ -23,7 +58,7 @@ export function getMethodHint(input, init) {
         return String(init.method).toUpperCase();
     }
 
-    if (input instanceof Request) {
+    if (isRequestLike(input)) {
         return String(input.method || 'GET').toUpperCase();
     }
 
@@ -39,7 +74,7 @@ export async function readRequestBody(input, init) {
 
     if (init && Object.prototype.hasOwnProperty.call(init, 'body')) {
         rawBody = init.body;
-    } else if (input instanceof Request && !['GET', 'HEAD'].includes(input.method.toUpperCase())) {
+    } else if (isRequestLike(input) && !['GET', 'HEAD'].includes(String(input.method).toUpperCase())) {
         rawBody = await input.clone().text();
     }
 
@@ -47,7 +82,7 @@ export async function readRequestBody(input, init) {
         return null;
     }
 
-    if (rawBody instanceof FormData) {
+    if (isFormDataLike(rawBody)) {
         return rawBody;
     }
 
@@ -55,17 +90,17 @@ export async function readRequestBody(input, init) {
         return parseMaybeJson(rawBody);
     }
 
-    if (rawBody instanceof URLSearchParams) {
+    if (isUrlSearchParamsLike(rawBody)) {
         return Object.fromEntries(rawBody.entries());
     }
 
-    if (rawBody instanceof Blob) {
+    if (isBlobLike(rawBody)) {
         const text = await rawBody.text();
         return parseMaybeJson(text);
     }
 
-    if (ArrayBuffer.isView(rawBody) || rawBody instanceof ArrayBuffer) {
-        const bytes = rawBody instanceof ArrayBuffer ? new Uint8Array(rawBody) : new Uint8Array(rawBody.buffer);
+    if (ArrayBuffer.isView(rawBody) || isArrayBufferLike(rawBody)) {
+        const bytes = isArrayBufferLike(rawBody) ? new Uint8Array(rawBody) : new Uint8Array(rawBody.buffer);
         const text = new TextDecoder().decode(bytes);
         return parseMaybeJson(text);
     }
