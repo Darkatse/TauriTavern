@@ -11,6 +11,7 @@ use crate::domain::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
     ChatCompletionSource, ChatCompletionStreamSender,
 };
+use crate::infrastructure::http_client::build_http_client;
 
 mod claude;
 mod makersuite;
@@ -23,13 +24,14 @@ pub struct HttpChatCompletionRepository {
 
 impl HttpChatCompletionRepository {
     pub fn new() -> Result<Self, DomainError> {
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(120))
-            .build()
-            .map_err(|error| {
-                DomainError::InternalError(format!("Failed to build HTTP client: {error}"))
-            })?;
+        let client = build_http_client(
+            Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(120)),
+        )
+        .map_err(|error| {
+            DomainError::InternalError(format!("Failed to build HTTP client: {error}"))
+        })?;
 
         Ok(Self { client })
     }

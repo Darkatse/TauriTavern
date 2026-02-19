@@ -6,6 +6,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::app::AppState;
+use crate::infrastructure::http_client::build_http_client;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -63,10 +64,7 @@ pub async fn download_external_import_url(
         }
     }
 
-    let client = reqwest::Client::builder()
-        .redirect(Policy::limited(5))
-        .user_agent("TauriTavern")
-        .build()
+    let client = build_http_client(reqwest::Client::builder().redirect(Policy::limited(5)))
         .map_err(|error| CommandError::InternalServerError(error.to_string()))?;
 
     let response = client

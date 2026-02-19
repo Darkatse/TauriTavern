@@ -456,9 +456,7 @@ pub async fn get_chat_payload_text(
         .await
     {
         Ok(text) => Ok(text),
-        Err(ApplicationError::NotFound(_)) if allow_not_found.unwrap_or(false) => {
-            Ok(String::new())
-        }
+        Err(ApplicationError::NotFound(_)) if allow_not_found.unwrap_or(false) => Ok(String::new()),
         Err(error) => {
             let context = format!(
                 "Failed to get chat payload text {}/{}",
@@ -575,15 +573,9 @@ pub async fn get_group_chat_text(
     let chat_id = dto.id.clone();
     log_command(format!("get_group_chat_text {}", chat_id));
 
-    match app_state
-        .chat_service
-        .get_group_chat_text(&chat_id)
-        .await
-    {
+    match app_state.chat_service.get_group_chat_text(&chat_id).await {
         Ok(text) => Ok(text),
-        Err(ApplicationError::NotFound(_)) if allow_not_found.unwrap_or(false) => {
-            Ok(String::new())
-        }
+        Err(ApplicationError::NotFound(_)) if allow_not_found.unwrap_or(false) => Ok(String::new()),
         Err(error) => {
             let context = format!("Failed to get group chat payload text {}", chat_id);
             logger::error(&format!("{}: {}", context, error));

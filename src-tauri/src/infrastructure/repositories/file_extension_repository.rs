@@ -16,6 +16,7 @@ use crate::domain::models::extension::{
     ExtensionUpdateResult, ExtensionVersion,
 };
 use crate::domain::repositories::extension_repository::ExtensionRepository;
+use crate::infrastructure::http_client::build_http_client;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::paths::resolve_app_data_dir;
 use crate::infrastructure::persistence::file_system::read_json_file;
@@ -86,10 +87,8 @@ impl FileExtensionRepository {
         fs::create_dir_all(&system_extensions_dir)
             .expect("Failed to create system extensions directory");
 
-        let http_client = Client::builder()
-            .user_agent("TauriTavern")
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let http_client =
+            build_http_client(Client::builder()).expect("Failed to build extension HTTP client");
 
         Self {
             http_client,

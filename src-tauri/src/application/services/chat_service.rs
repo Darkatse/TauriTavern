@@ -345,7 +345,9 @@ impl ChatService {
         character_name: &str,
         file_name: &str,
     ) -> Result<String, ApplicationError> {
-        let bytes = self.get_chat_payload_bytes(character_name, file_name).await?;
+        let bytes = self
+            .get_chat_payload_bytes(character_name, file_name)
+            .await?;
         String::from_utf8(bytes).map_err(|e| {
             ApplicationError::InternalError(format!("Chat payload is not valid UTF-8: {}", e))
         })
@@ -473,10 +475,7 @@ impl ChatService {
     }
 
     /// Get raw JSONL text for a group chat payload.
-    pub async fn get_group_chat_text(
-        &self,
-        chat_id: &str,
-    ) -> Result<String, ApplicationError> {
+    pub async fn get_group_chat_text(&self, chat_id: &str) -> Result<String, ApplicationError> {
         let bytes = self.get_group_chat_payload_bytes(chat_id).await?;
         String::from_utf8(bytes).map_err(|e| {
             ApplicationError::InternalError(format!("Group chat payload is not valid UTF-8: {}", e))
