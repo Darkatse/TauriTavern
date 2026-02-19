@@ -182,6 +182,7 @@
         touch-action: none;
         overflow: hidden;
         position: fixed;
+        overscroll-behavior: none;
     }
 
     .world_entry_form_control {
@@ -252,8 +253,12 @@
     }
 
     #sheld {
-        height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px) - max(var(--tt-viewport-bottom-inset), 0px));
-        max-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px) - max(var(--tt-viewport-bottom-inset), 0px));
+        --tt-ime-bottom: 0px;
+        --tt-viewport-bottom-inset-local: max(var(--tt-safe-area-bottom), var(--tt-ime-bottom));
+        --tt-keyboard-offset: max(var(--tt-viewport-bottom-inset-local), 0px);
+        height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px));
+        max-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px));
+        overflow-y: hidden;
     }
 
     .wi-settings {
@@ -288,6 +293,10 @@
     }
 
     #form_sheld {
+        position: relative;
+        z-index: 31;
+        transform: translate3d(0, calc(-1 * var(--tt-keyboard-offset)), 0);
+        will-change: transform;
         padding-right: max(var(--tt-safe-area-right), 0px);
         padding-left: max(var(--tt-safe-area-left), 0px);
     }
@@ -299,7 +308,9 @@
         align-items: start;
         align-content: start;
         overflow-y: auto;
-        overflow-x: hidden
+        overflow-x: hidden;
+        padding-bottom: var(--tt-keyboard-offset);
+        overscroll-behavior-y: contain;
     }
 
     .mes_buttons {

@@ -14,7 +14,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import java.util.Locale
 
 class AndroidInsetsBridge(
   private val window: Window,
@@ -34,6 +33,9 @@ class AndroidInsetsBridge(
   private var isInsetsSyncScheduled: Boolean = false
   private var hasPendingInsetsSync: Boolean = false
   private var isInsetsListenerAttached: Boolean = false
+  private val webViewInsetsStyleApplier: WebViewInsetsStyleApplier by lazy {
+    WebViewInsetsStyleApplier(resources)
+  }
 
   fun onCreate() {
     configureImmersiveSystemBars()
@@ -49,6 +51,7 @@ class AndroidInsetsBridge(
   fun onWebViewAvailable() {
     lastPushedInsetsSnapshot = null
     hasReadyPageInsetsInjection = false
+    webViewInsetsStyleApplier.onWebViewContextReset()
     refreshInjection()
   }
 
@@ -150,37 +153,20 @@ class AndroidInsetsBridge(
       val shouldForcePush = hasPendingForcedInsetsPush
       hasPendingForcedInsetsPush = false
 
+      if (!hasReadyPageInsetsInjection && !shouldForcePush) {
+        return@post
+      }
+
       if (!shouldForcePush && snapshot == lastPushedInsetsSnapshot) {
         return@post
       }
 
-      evaluateInsetsOnWebView(activeWebView, snapshot)
+      webViewInsetsStyleApplier.apply(activeWebView, snapshot)
       lastPushedInsetsSnapshot = snapshot
       if (shouldForcePush) {
         hasReadyPageInsetsInjection = true
       }
     }
-  }
-
-  private fun evaluateInsetsOnWebView(targetWebView: WebView, snapshot: InsetsSnapshot) {
-    val density = resources.displayMetrics.density
-
-    fun toCssPx(value: Int): String = String.format(Locale.US, "%.2fpx", value / density)
-
-    val script =
-      """
-      (() => {
-        const root = document.documentElement;
-        if (!root) return;
-        root.style.setProperty('--tt-safe-area-top', '${toCssPx(snapshot.systemBars.top)}');
-        root.style.setProperty('--tt-safe-area-right', '${toCssPx(snapshot.systemBars.right)}');
-        root.style.setProperty('--tt-safe-area-left', '${toCssPx(snapshot.systemBars.left)}');
-        root.style.setProperty('--tt-safe-area-bottom', '${toCssPx(snapshot.systemBars.bottom)}');
-        root.style.setProperty('--tt-ime-bottom', '${toCssPx(snapshot.imeBottom)}');
-      })();
-      """.trimIndent()
-
-    targetWebView.evaluateJavascript(script, null)
   }
 
   private fun scheduleInsetsSyncWhenPageReady() {
@@ -211,8 +197,6 @@ class AndroidInsetsBridge(
       },
     )
   }
-
-  private data class InsetsSnapshot(val systemBars: Insets, val imeBottom: Int)
 
   companion object {
     private val PAGE_READY_SCRIPT =
