@@ -13,6 +13,20 @@
     "fs:allow-resource-read-recursive",
     "fs:default",
     "fs:allow-appcache-write",
-    "fs:allow-temp-write"
+    "fs:allow-temp-write",
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        {
+          "path": "$TEMP/**"
+        },
+        {
+          "path": "$APPCACHE/**"
+        },
+        {
+          "path": "$DOWNLOAD/**"
+        }
+      ]
+    }
   ]
 }

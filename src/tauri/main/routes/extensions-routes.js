@@ -23,6 +23,11 @@ function sanitizeFileName(value, fallback = 'tauritavern-data.zip') {
     return fileName.replace(/[\\/:*?"<>|]+/g, '_');
 }
 
+function parseJobId(value) {
+    const jobId = String(value || '').trim();
+    return jobId || '';
+}
+
 function decodeRoutePath(value) {
     try {
         return decodeURIComponent(String(value || ''));
@@ -178,20 +183,17 @@ export function registerExtensionRoutes(router, context, { jsonResponse, textRes
         }
 
         try {
-            const result = await context.safeInvoke('import_data_archive', {
+            const jobId = parseJobId(await context.safeInvoke('start_import_data_archive', {
                 archive_path: fileInfo.filePath,
-            });
-
-            await Promise.allSettled([
-                context.safeInvoke('clear_character_cache'),
-                context.safeInvoke('clear_chat_cache'),
-                context.safeInvoke('clear_group_cache'),
-            ]);
+                archive_is_temporary: Boolean(fileInfo.isTemporary),
+            }));
+            if (!jobId) {
+                return jsonResponse({ error: 'Import job id is missing' }, 500);
+            }
 
             return jsonResponse({
                 ok: true,
-                source_users: Array.isArray(result?.source_users) ? result.source_users : [],
-                target_user: result?.target_user || 'default-user',
+                job_id: jobId,
             });
         } finally {
             await fileInfo.cleanup?.();
@@ -199,21 +201,93 @@ export function registerExtensionRoutes(router, context, { jsonResponse, textRes
     });
 
     router.post('/api/extensions/data-migration/export', async () => {
-        const result = await context.safeInvoke('export_data_archive');
-        const encodedArchive = String(result?.zip_base64 || '');
-        if (!encodedArchive) {
-            return jsonResponse({ error: 'Exported archive is empty' }, 500);
+        const jobId = parseJobId(await context.safeInvoke('start_export_data_archive'));
+        if (!jobId) {
+            return jsonResponse({ error: 'Export job id is missing' }, 500);
+        }
+        return jsonResponse({
+            ok: true,
+            job_id: jobId,
+        });
+    });
+
+    router.get('/api/extensions/data-migration/job', async ({ url }) => {
+        const jobId = parseJobId(url?.searchParams?.get('id'));
+        if (!jobId) {
+            return jsonResponse({ error: 'Missing job id' }, 400);
         }
 
-        const bytes = decodeBase64ToBytes(encodedArchive);
-        const fileName = sanitizeFileName(result?.file_name, 'tauritavern-data.zip');
+        const status = await context.safeInvoke('get_data_archive_job_status', {
+            job_id: jobId,
+        });
+        return jsonResponse(status || {});
+    });
 
-        return new Response(bytes, {
+    router.post('/api/extensions/data-migration/job/cancel', async ({ body }) => {
+        const jobId = parseJobId(body?.job_id);
+        if (!jobId) {
+            return jsonResponse({ error: 'Missing job id' }, 400);
+        }
+
+        await context.safeInvoke('cancel_data_archive_job', {
+            job_id: jobId,
+        });
+
+        return jsonResponse({ ok: true });
+    });
+
+    router.get('/api/extensions/data-migration/export/download', async ({ url }) => {
+        const jobId = parseJobId(url?.searchParams?.get('id'));
+        if (!jobId) {
+            return jsonResponse({ error: 'Missing job id' }, 400);
+        }
+
+        const status = await context.safeInvoke('get_data_archive_job_status', {
+            job_id: jobId,
+        });
+
+        if (String(status?.kind || '') !== 'export') {
+            return jsonResponse({ error: 'Invalid export job' }, 400);
+        }
+
+        if (String(status?.state || '') !== 'completed') {
+            return jsonResponse({ error: 'Export job is not completed yet' }, 409);
+        }
+
+        const archivePath = String(status?.result?.archive_path || '').trim();
+        if (!archivePath) {
+            return jsonResponse({ error: 'Export archive path is missing' }, 500);
+        }
+
+        const assetUrl = context.toAssetUrl(archivePath);
+        if (!assetUrl) {
+            return jsonResponse({ error: 'Unable to resolve export asset URL' }, 500);
+        }
+
+        const upstream = await fetch(assetUrl, { method: 'GET' });
+        if (!upstream.ok) {
+            return jsonResponse({ error: 'Failed to read export archive file' }, 500);
+        }
+        if (!upstream.body) {
+            return jsonResponse({ error: 'Export archive stream is unavailable' }, 500);
+        }
+
+        const headers = new Headers();
+        headers.set('Content-Type', 'application/zip');
+        headers.set(
+            'Content-Disposition',
+            `attachment; filename="${sanitizeFileName(status?.result?.file_name, 'tauritavern-data.zip')}"`,
+        );
+        headers.set('Cache-Control', 'no-store');
+
+        const contentLength = upstream.headers.get('Content-Length');
+        if (contentLength) {
+            headers.set('Content-Length', contentLength);
+        }
+
+        return new Response(upstream.body, {
             status: 200,
-            headers: {
-                'Content-Type': 'application/zip',
-                'Content-Disposition': `attachment; filename="${fileName}"`,
-            },
+            headers,
         });
     });
 

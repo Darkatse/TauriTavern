@@ -1,4 +1,5 @@
 export function createTauriMainContext({ invoke, convertFileSrc }) {
+    const UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
     let userDirectories = null;
     let characterCache = [];
     let characterByAvatar = new Map();
@@ -969,7 +970,10 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
 
         const directPath = extractNativeFilePath(file);
         if (shouldUseDirectUploadPath(directPath)) {
-            return { filePath: directPath };
+            return {
+                filePath: directPath,
+                isTemporary: false,
+            };
         }
 
         const tauri = window.__TAURI__;
@@ -995,15 +999,15 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             sourceName: file.name,
         });
         const fileName = `tauritavern-upload-${Date.now()}-${Math.random().toString(16).slice(2)}.${extension}`;
-        const data = new Uint8Array(await file.arrayBuffer());
 
         try {
             const uploadDir = await resolveUploadDirectory(pathApi);
             const filePath = await pathApi.join(uploadDir, fileName);
-            await writeTempUploadFile(filePath, data, invokeApi);
+            await writeTempUploadFile(filePath, file, invokeApi);
 
             return {
                 filePath,
+                isTemporary: true,
                 cleanup: async () => {
                     try {
                         await removeTempUploadFile(filePath, invokeApi);
@@ -1017,6 +1021,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             return {
                 filePath: '',
                 error: error?.message || 'Failed to materialize upload file',
+                isTemporary: false,
             };
         }
     }
@@ -1100,13 +1105,52 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         return /android/i.test(navigator.userAgent);
     }
 
-    async function writeTempUploadFile(filePath, data, invokeApi) {
-        await invokeApi('plugin:fs|write_file', data, {
-            headers: {
-                path: encodeURIComponent(filePath),
-                options: '{}',
-            },
-        });
+    async function writeTempUploadFile(filePath, file, invokeApi) {
+        if (typeof file?.stream === 'function' && typeof ReadableStream !== 'undefined') {
+            try {
+                const { writeFile } = await import('@tauri-apps/plugin-fs');
+                await writeFile(filePath, file.stream(), {
+                    create: true,
+                    truncate: true,
+                });
+                return;
+            } catch (error) {
+                console.warn('Streamed temp file write failed; falling back to chunked write:', error);
+            }
+        }
+
+        await writeTempUploadFileChunked(filePath, file, invokeApi);
+    }
+
+    async function writeTempUploadFileChunked(filePath, file, invokeApi) {
+        let offset = 0;
+        let append = false;
+
+        if (file.size === 0) {
+            await invokeApi('plugin:fs|write_file', new Uint8Array(0), {
+                headers: {
+                    path: encodeURIComponent(filePath),
+                    options: JSON.stringify({ append: false, create: true }),
+                },
+            });
+            return;
+        }
+
+        while (offset < file.size) {
+            const end = Math.min(offset + UPLOAD_CHUNK_BYTES, file.size);
+            const chunk = file.slice(offset, end);
+            const bytes = new Uint8Array(await chunk.arrayBuffer());
+
+            await invokeApi('plugin:fs|write_file', bytes, {
+                headers: {
+                    path: encodeURIComponent(filePath),
+                    options: JSON.stringify({ append, create: true }),
+                },
+            });
+
+            offset = end;
+            append = true;
+        }
     }
 
     async function removeTempUploadFile(filePath, invokeApi) {
@@ -1183,5 +1227,6 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         editCharacterFromForm,
         uploadAvatarFromForm,
         materializeUploadFile,
+        toAssetUrl,
     };
 }

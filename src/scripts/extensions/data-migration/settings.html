@@ -23,8 +23,14 @@
                     <i class="fa-solid fa-file-export"></i>
                     <span>Export Current Data</span>
                 </button>
+                <button id="data_migration_cancel_button" class="menu_button menu_button_icon"
+                    data-i18n="Cancel Migration" style="display:none;">
+                    <i class="fa-solid fa-ban"></i>
+                    <span>Cancel Migration</span>
+                </button>
             </div>
             <input id="data_migration_import_input" type="file" accept=".zip,application/zip" hidden />
+            <small id="data_migration_status" class="extensions_info"></small>
             <small class="extensions_info"
                 data-i18n="Warning: importing will replace your current local data directory.">
                 Warning: importing will replace your current local data directory.

@@ -1,30 +1,53 @@
-use std::path::Path;
-
 use tauri::AppHandle;
 
-use crate::infrastructure::persistence::data_archive::{
-    export_data_archive as export_data_archive_impl,
-    import_data_archive as import_data_archive_impl, DataArchiveExportResult,
-    DataArchiveImportResult,
+use crate::infrastructure::persistence::data_archive_jobs::{
+    cancel_data_archive_job as cancel_data_archive_job_impl,
+    get_data_archive_job_status as get_data_archive_job_status_impl,
+    start_export_data_archive_job as start_export_data_archive_job_impl,
+    start_import_data_archive_job as start_import_data_archive_job_impl, DataArchiveJobStatus,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
 #[tauri::command]
-pub async fn import_data_archive(
+pub fn start_import_data_archive(
     app: AppHandle,
     archive_path: String,
-) -> Result<DataArchiveImportResult, CommandError> {
-    log_command(format!("import_data_archive {}", archive_path));
+    archive_is_temporary: bool,
+) -> Result<String, CommandError> {
+    log_command(format!(
+        "start_import_data_archive {} temporary={}",
+        archive_path, archive_is_temporary
+    ));
 
-    import_data_archive_impl(&app, Path::new(&archive_path))
-        .await
-        .map_err(map_command_error("Failed to import data archive"))
+    start_import_data_archive_job_impl(
+        &app,
+        std::path::Path::new(&archive_path),
+        archive_is_temporary,
+    )
+    .map_err(map_command_error("Failed to start data archive import"))
 }
 
 #[tauri::command]
-pub fn export_data_archive(app: AppHandle) -> Result<DataArchiveExportResult, CommandError> {
-    log_command("export_data_archive");
+pub fn start_export_data_archive(app: AppHandle) -> Result<String, CommandError> {
+    log_command("start_export_data_archive");
 
-    export_data_archive_impl(&app).map_err(map_command_error("Failed to export data archive"))
+    start_export_data_archive_job_impl(&app)
+        .map_err(map_command_error("Failed to start data archive export"))
+}
+
+#[tauri::command]
+pub fn get_data_archive_job_status(job_id: String) -> Result<DataArchiveJobStatus, CommandError> {
+    log_command(format!("get_data_archive_job_status {}", job_id));
+
+    get_data_archive_job_status_impl(&job_id)
+        .map_err(map_command_error("Failed to get data archive job status"))
+}
+
+#[tauri::command]
+pub fn cancel_data_archive_job(job_id: String) -> Result<(), CommandError> {
+    log_command(format!("cancel_data_archive_job {}", job_id));
+
+    cancel_data_archive_job_impl(&job_id)
+        .map_err(map_command_error("Failed to cancel data archive job"))
 }
