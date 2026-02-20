@@ -10,7 +10,7 @@ import {
 
 const MODULE_NAME = 'code-render';
 const defaultSettings = {
-    enabled: true,
+    enabled: false,
     replace_last_message_by_default: false,
 };
 

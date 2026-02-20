@@ -226,7 +226,7 @@ export const extension_settings = {
         sort: 'dateAsc',
     },
     code_render: {
-        enabled: true,
+        enabled: false,
         replace_last_message_by_default: false,
     },
 };

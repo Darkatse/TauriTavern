@@ -2460,7 +2460,7 @@ export function appendMediaToMessage(mes, messageElement, scrollBehavior = SCROL
 }
 
 export function addCopyToCodeBlocks(messageElement) {
-    setHtmlCodeRenderEnabled(extension_settings.code_render?.enabled !== false);
+    setHtmlCodeRenderEnabled(extension_settings.code_render?.enabled === true);
     setHtmlCodeRenderReplaceLastMessageByDefault(extension_settings.code_render?.replace_last_message_by_default === true);
     renderInteractiveHtmlCodeBlocks(messageElement);
 
