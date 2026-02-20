@@ -7,14 +7,18 @@ export function createInterceptors({
     jsonResponse,
     safeJson,
 }) {
-    const fetchPatchedWindows = new WeakSet();
-    const ajaxPatchedWindows = new WeakSet();
+    const fetchPatchState = new WeakMap();
+    const ajaxPatchState = new WeakMap();
+    const OPAQUE_BASE_PROTOCOLS = new Set(['about:', 'blob:', 'data:', 'javascript:']);
 
     function resolveWindowBaseUrl(targetWindow) {
         try {
             const href = String(targetWindow?.location?.href || '');
-            if (href && !href.startsWith('about:')) {
-                return href;
+            if (href) {
+                const parsedHref = new URL(href, window.location.origin);
+                if (!OPAQUE_BASE_PROTOCOLS.has(parsedHref.protocol)) {
+                    return parsedHref.href;
+                }
             }
 
             const origin = String(targetWindow?.location?.origin || '');
@@ -22,62 +26,100 @@ export function createInterceptors({
                 return origin;
             }
 
-            return window.location.origin;
         } catch {
-            return window.location.origin;
+            // Ignore cross-origin access failures.
         }
+
+        return window.location.origin;
     }
 
-    function getOriginalFetch(targetWindow) {
-        if (targetWindow === window && typeof originalFetch === 'function') {
-            return originalFetch;
+    function getFetchDelegate(targetWindow) {
+        const state = fetchPatchState.get(targetWindow);
+        let currentFetch;
+        try {
+            currentFetch = targetWindow?.fetch;
+        } catch {
+            return null;
         }
 
-        if (typeof targetWindow?.fetch === 'function') {
-            return targetWindow.fetch.bind(targetWindow);
+        if (state && currentFetch === state.patchedFetch) {
+            return state.delegateFetch;
+        }
+
+        if (typeof currentFetch === 'function') {
+            return currentFetch.bind(targetWindow);
+        }
+
+        if (targetWindow === window && typeof originalFetch === 'function') {
+            return originalFetch;
         }
 
         return null;
     }
 
     function patchFetch(targetWindow = window) {
-        if (!targetWindow || fetchPatchedWindows.has(targetWindow)) {
+        if (!targetWindow) {
             return;
         }
 
-        const fallbackFetch = getOriginalFetch(targetWindow);
-        if (!fallbackFetch) {
+        let currentFetch;
+        try {
+            currentFetch = targetWindow.fetch;
+        } catch {
             return;
         }
 
-        fetchPatchedWindows.add(targetWindow);
+        const state = fetchPatchState.get(targetWindow);
+        if (state && currentFetch === state.patchedFetch) {
+            return;
+        }
 
-        targetWindow.fetch = async function patchedFetch(input, init = {}) {
+        const delegateFetch = getFetchDelegate(targetWindow);
+        if (!delegateFetch) {
+            return;
+        }
+
+        const patchedFetch = async function patchedFetch(input, init = {}) {
             if (!isTauri) {
-                return fallbackFetch(input, init);
+                return delegateFetch(input, init);
             }
 
             const requestUrl = toUrl(input, resolveWindowBaseUrl(targetWindow));
             if (!requestUrl || !canHandleRequest(requestUrl, input, init, targetWindow)) {
-                return fallbackFetch(input, init);
+                return delegateFetch(input, init);
             }
 
             const response = await routeRequest(requestUrl, input, init, targetWindow);
             return response || jsonResponse({ error: `Unsupported endpoint: ${requestUrl.pathname}` }, 404);
         };
+
+        try {
+            targetWindow.fetch = patchedFetch;
+            fetchPatchState.set(targetWindow, { patchedFetch, delegateFetch });
+        } catch {
+            // Ignore non-writable or cross-origin fetch bindings.
+        }
     }
 
     function patchJQueryAjax(targetWindow = window) {
-        if (!targetWindow || ajaxPatchedWindows.has(targetWindow)) {
+        if (!targetWindow) {
             return;
         }
 
-        const $ = targetWindow.jQuery || targetWindow.$;
+        let $;
+        try {
+            $ = targetWindow.jQuery || targetWindow.$;
+        } catch {
+            return;
+        }
         if (!$ || typeof $.ajax !== 'function') {
             return;
         }
 
-        ajaxPatchedWindows.add(targetWindow);
+        const state = ajaxPatchState.get(targetWindow);
+        if (state && state.owner === $ && $.ajax === state.patchedAjax) {
+            return;
+        }
 
         const originalAjax = $.ajax.bind($);
 
@@ -168,6 +210,8 @@ export function createInterceptors({
         if (targetWindow.jQuery && targetWindow.jQuery !== $) {
             targetWindow.jQuery.ajax = patchedAjax;
         }
+
+        ajaxPatchState.set(targetWindow, { owner: $, patchedAjax });
     }
 
     return {

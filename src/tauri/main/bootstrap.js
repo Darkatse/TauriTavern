@@ -236,6 +236,7 @@ async function initializeTauriIntegration(context, interceptors) {
     await installBackendErrorBridge();
     await context.initialize();
 
-    // Try patching jQuery again in case it was not available during bootstrap.
+    // Re-apply runtime patches in case third-party code recreated fetch/jQuery after bootstrap.
+    interceptors.patchFetch();
     interceptors.patchJQueryAjax();
 }
