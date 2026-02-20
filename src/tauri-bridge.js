@@ -128,8 +128,8 @@ export async function getClientVersion() {
         return {
             agent: `SillyTavern:${SILLYTAVERN_COMPAT_VERSION}:TauriTavern`,
             pkgVersion: version,
-            gitRevision: 'tauri',
-            gitBranch: 'main',
+            gitRevision: null,
+            gitBranch: null,
         };
     }
 }

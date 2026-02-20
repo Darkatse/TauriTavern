@@ -1,0 +1,50 @@
+#tauritavern_version_settings .inline-drawer-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#tauritavern_version_settings .ttv-info-table {
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 10px;
+    background-color: var(--black30a);
+}
+
+#tauritavern_version_settings .ttv-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 10px;
+}
+
+#tauritavern_version_settings .ttv-row + .ttv-row {
+    border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+#tauritavern_version_settings .ttv-label {
+    opacity: 0.85;
+    white-space: nowrap;
+}
+
+#tauritavern_version_settings .ttv-row strong {
+    text-align: right;
+    word-break: break-word;
+}
+
+#tauritavern_version_settings .ttv-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+@media (max-width: 600px) {
+    #tauritavern_version_settings .ttv-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    #tauritavern_version_settings .ttv-row strong {
+        text-align: left;
+    }
+}

@@ -1,0 +1,12 @@
+{
+    "display_name": "TauriTavern Version",
+    "loading_order": 24,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Darkatse",
+    "version": "1.0.0",
+    "description": "Built-in information panel for TauriTavern metadata, repository, and update channels.",
+    "homePage": "https://github.com/Darkatse/TauriTavern"
+}

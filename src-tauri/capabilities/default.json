@@ -9,6 +9,7 @@
     "core:default",
     "dialog:default",
     "opener:default",
+    "shell:allow-open",
     "fs:allow-read-text-file",
     "fs:allow-resource-read-recursive",
     "fs:default",

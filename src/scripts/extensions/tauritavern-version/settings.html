@@ -1,0 +1,44 @@
+<div id="tauritavern_version_settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b data-i18n="TauriTavern Version">TauriTavern 版本</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+
+            <div class="ttv-info-table">
+                <div class="ttv-row">
+                    <span class="ttv-label">应用版本</span>
+                    <strong id="tauritavern_version_number">Loading...</strong>
+                </div>
+                <div class="ttv-row">
+                    <span class="ttv-label">兼容基线</span>
+                    <strong id="tauritavern_compat_version">Loading...</strong>
+                </div>
+                <div class="ttv-row">
+                    <span class="ttv-label">Git 信息</span>
+                    <strong id="tauritavern_git_info">Loading...</strong>
+                </div>
+                <div class="ttv-row">
+                    <span class="ttv-label">作者</span>
+                    <strong>{{authorName}}</strong>
+                </div>
+            </div>
+
+            <div class="ttv-actions">
+                <a class="menu_button menu_button_icon" href="{{repositoryUrl}}" target="_blank" rel="noopener noreferrer">
+                    <i class="fa-brands fa-github"></i>
+                    <span>GitHub 仓库</span>
+                </a>
+                <a class="menu_button menu_button_icon" href="{{discordUrl}}" target="_blank" rel="noopener noreferrer">
+                    <i class="fa-brands fa-discord"></i>
+                    <span>Discord 更新页</span>
+                </a>
+                <button id="tauritavern_version_copy" class="menu_button menu_button_icon" type="button">
+                    <i class="fa-solid fa-copy"></i>
+                    <span>复制版本信息</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

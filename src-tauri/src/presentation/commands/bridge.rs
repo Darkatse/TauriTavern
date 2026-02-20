@@ -7,6 +7,8 @@ use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
 const SILLYTAVERN_COMPAT_VERSION: &str = "1.15.0";
+const BUILD_GIT_REVISION: &str = env!("TAURITAVERN_GIT_REVISION");
+const BUILD_GIT_BRANCH: &str = env!("TAURITAVERN_GIT_BRANCH");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EventType {
@@ -65,11 +67,20 @@ pub fn get_client_version() -> Result<VersionInfo, CommandError> {
         // Keep the upstream client-agent shape for extension compatibility checks.
         agent: format!("SillyTavern:{}:TauriTavern", SILLYTAVERN_COMPAT_VERSION),
         pkg_version: pkg_version.to_string(),
-        git_revision: Some("tauri".to_string()),
-        git_branch: Some("main".to_string()),
+        git_revision: normalize_optional_build_value(BUILD_GIT_REVISION),
+        git_branch: normalize_optional_build_value(BUILD_GIT_BRANCH),
     };
 
     Ok(version_info)
+}
+
+fn normalize_optional_build_value(value: &str) -> Option<String> {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized.to_string())
+    }
 }
 
 #[tauri::command]

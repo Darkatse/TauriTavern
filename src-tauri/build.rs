@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=../default/content");
@@ -8,12 +9,75 @@ fn main() {
     println!("cargo:rerun-if-changed=../src/scripts/extensions/regex");
     println!("cargo:rerun-if-changed=../src/scripts/extensions/code-render");
     println!("cargo:rerun-if-changed=../src/scripts/extensions/data-migration");
+    println!("cargo:rerun-if-changed=../.git/HEAD");
+    println!("cargo:rerun-if-changed=../.git/refs");
+    println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
+    println!("cargo:rerun-if-env-changed=GITHUB_SHA");
+
+    emit_git_build_metadata();
 
     if let Err(error) = generate_resource_artifacts() {
         panic!("Failed to generate resource artifacts: {}", error);
     }
 
     tauri_build::build()
+}
+
+fn emit_git_build_metadata() {
+    let git_branch = normalize_git_branch(
+        std::env::var("GITHUB_REF_NAME")
+            .ok()
+            .or_else(|| run_git_command(&["rev-parse", "--abbrev-ref", "HEAD"])),
+    );
+
+    let git_revision = normalize_git_value(
+        std::env::var("GITHUB_SHA")
+            .ok()
+            .map(|sha| shorten_revision(&sha))
+            .or_else(|| run_git_command(&["rev-parse", "--short=12", "HEAD"])),
+    );
+
+    println!(
+        "cargo:rustc-env=TAURITAVERN_GIT_BRANCH={}",
+        git_branch.unwrap_or_default()
+    );
+    println!(
+        "cargo:rustc-env=TAURITAVERN_GIT_REVISION={}",
+        git_revision.unwrap_or_default()
+    );
+}
+
+fn run_git_command(args: &[&str]) -> Option<String> {
+    let output = Command::new("git").args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8(output.stdout).ok()
+}
+
+fn normalize_git_value(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let normalized = value.trim();
+        if normalized.is_empty() {
+            None
+        } else {
+            Some(normalized.to_string())
+        }
+    })
+}
+
+fn normalize_git_branch(value: Option<String>) -> Option<String> {
+    let branch = normalize_git_value(value)?;
+    if branch.eq_ignore_ascii_case("head") {
+        None
+    } else {
+        Some(branch)
+    }
+}
+
+fn shorten_revision(value: &str) -> String {
+    value.trim().chars().take(12).collect()
 }
 
 #[derive(Debug)]
