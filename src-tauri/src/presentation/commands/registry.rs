@@ -99,6 +99,11 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::extension_commands::get_extension_version,
         super::extension_commands::move_extension,
         super::extension_commands::read_third_party_extension_asset,
+        // File commands
+        super::file_commands::upload_user_file,
+        super::file_commands::read_user_file_asset,
+        super::file_commands::delete_user_file,
+        super::file_commands::verify_user_files,
         // Avatar commands
         super::avatar_commands::get_avatars,
         super::avatar_commands::delete_avatar,

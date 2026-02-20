@@ -1,3 +1,35 @@
+function decodeBase64ToBytes(value) {
+    const normalized = String(value || '').replace(/\s+/g, '');
+    if (!normalized) {
+        return new Uint8Array(0);
+    }
+
+    const binary = atob(normalized);
+    const bytes = new Uint8Array(binary.length);
+
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+
+    return bytes;
+}
+
+function decodeRoutePath(value) {
+    try {
+        return decodeURIComponent(String(value || ''));
+    } catch {
+        return String(value || '');
+    }
+}
+
+function isNotFoundError(error) {
+    const message = String(error?.message || error || '').toLowerCase();
+    return message.includes('not found')
+        || message.includes('no such file')
+        || message.includes('enoent')
+        || message.includes('os error 2');
+}
+
 export function registerResourceRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/files/sanitize-filename', async ({ body }) => {
         const input = String(body?.fileName || '');
@@ -11,6 +43,80 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
         }
 
         return jsonResponse({ fileName: sanitized });
+    });
+
+    router.post('/api/files/upload', async ({ body }) => {
+        const name = String(body?.name || '').trim();
+        const data = String(body?.data || '').trim();
+
+        if (!name) {
+            return jsonResponse({ error: 'No upload name specified' }, 400);
+        }
+
+        if (!data) {
+            return jsonResponse({ error: 'No upload data specified' }, 400);
+        }
+
+        const uploaded = await context.safeInvoke('upload_user_file', {
+            name,
+            data_base64: data,
+        });
+        return jsonResponse(uploaded || {});
+    });
+
+    router.post('/api/files/delete', async ({ body }) => {
+        const path = String(body?.path || '').trim();
+        if (!path) {
+            return textResponse('No path specified', 400);
+        }
+
+        try {
+            await context.safeInvoke('delete_user_file', { path });
+            return jsonResponse({ ok: true });
+        } catch (error) {
+            if (isNotFoundError(error)) {
+                return textResponse('File not found', 404);
+            }
+
+            throw error;
+        }
+    });
+
+    router.post('/api/files/verify', async ({ body }) => {
+        if (!Array.isArray(body?.urls)) {
+            return textResponse('No URLs specified', 400);
+        }
+
+        const urls = body.urls.map((url) => String(url || '').trim()).filter(Boolean);
+        const verified = await context.safeInvoke('verify_user_files', { urls });
+        return jsonResponse(verified && typeof verified === 'object' ? verified : {});
+    });
+
+    router.get('/user/files/*', async ({ wildcard }) => {
+        const relativePath = decodeRoutePath(wildcard).replace(/^\/+/, '');
+        if (!relativePath) {
+            return textResponse('Not Found', 404);
+        }
+
+        try {
+            const payload = await context.safeInvoke('read_user_file_asset', {
+                relative_path: relativePath,
+            });
+            const bytes = decodeBase64ToBytes(payload?.content_base64 || '');
+            return new Response(bytes, {
+                status: 200,
+                headers: {
+                    'Content-Type': payload?.mime_type || 'application/octet-stream',
+                    'Cache-Control': 'no-store',
+                },
+            });
+        } catch (error) {
+            if (isNotFoundError(error)) {
+                return textResponse('Not Found', 404);
+            }
+
+            throw error;
+        }
     });
 
     router.post('/api/avatars/get', async () => {
