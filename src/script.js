@@ -11426,7 +11426,6 @@ jQuery(async function () {
                 // success, handle response data
                 console.log(data);
                 await delay(250);
-                toastr.success(data.message);
                 download(data.result, body.exportfilename, mimeType);
             }
         } catch (error) {
@@ -12006,13 +12005,9 @@ jQuery(async function () {
                 throw new Error('Character export returned an empty PNG payload');
             }
 
-            const exportResult = await download(blob, filename, blob.type || (format === 'png' ? 'image/png' : 'application/json'), {
+            await download(blob, filename, blob.type || (format === 'png' ? 'image/png' : 'application/json'), {
                 throwOnFailure: true,
             });
-
-            if (exportResult?.mode === 'mobile-native' && exportResult.savedPath) {
-                console.info(`Character export saved to: ${exportResult.savedPath}`);
-            }
         } catch (error) {
             console.error('Character export failed', error);
             toastr.error(t`Character export failed`);

@@ -395,9 +395,19 @@ export async function download(content, fileName, contentType, options = {}) {
         : new Blob([content], { type: contentType });
 
     try {
-        return await downloadBlobWithRuntime(file, fileName, {
+        const result = await downloadBlobWithRuntime(file, fileName, {
             fallbackName: 'download.bin',
         });
+
+        const savedPath = String(result?.savedPath || '').trim();
+        const savedDirectory = savedPath ? savedPath.replace(/[\\/][^\\/]*$/, '') : '';
+        const destination = savedDirectory || savedPath;
+        const successMessage = destination
+            ? t`Exported to: ${destination}`
+            : t`Export started. Check your default download folder.`;
+
+        toastr.success(successMessage, t`Export completed`, { timeOut: 7000 });
+        return result;
     } catch (error) {
         console.error('Failed to export file:', error);
         if (options.throwOnFailure) {
