@@ -19,6 +19,12 @@ class MainActivity : TauriActivity() {
       Thread(runnable, "tauritavern-main-bg").apply { priority = Thread.NORM_PRIORITY - 1 }
     }
   private var isActivityDestroyed: Boolean = false
+  private val aiGenerationNotifier: AndroidAiGenerationNotifier by lazy {
+    AndroidAiGenerationNotifier(applicationContext)
+  }
+  private val aiGenerationJsBridge: AndroidAiGenerationJsBridge by lazy {
+    AndroidAiGenerationJsBridge(mainHandler, aiGenerationNotifier)
+  }
 
   private val readinessPoller: WebViewReadinessPoller by lazy {
     WebViewReadinessPoller(webViewProvider = { webView }, isDestroyed = { isActivityDestroyed })
@@ -52,6 +58,8 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    // Keep a foreground service for the whole app session to reduce OEM background kills.
+    aiGenerationNotifier.ensureKeepAliveService()
     insetsBridge.onCreate()
     captureShareIntent(intent)
   }
@@ -69,6 +77,7 @@ class MainActivity : TauriActivity() {
 
   override fun onWebViewCreate(webView: WebView) {
     this.webView = webView
+    webView.addJavascriptInterface(aiGenerationJsBridge, AndroidAiGenerationJsBridge.INTERFACE_NAME)
     insetsBridge.onWebViewAvailable()
     sharePayloadDispatcher.requestDispatch()
   }

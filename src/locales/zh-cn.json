@@ -2351,5 +2351,9 @@
     "Exporting data archive...": "正在导出数据压缩包...",
     "Data export failed": "数据导出失败",
     "Data archive exported": "数据压缩包已导出",
-    "Export completed": "导出完成"
+    "Export completed": "导出完成",
+    "tauritavern_ai_notification_success_title": "AI 回复已完成",
+    "tauritavern_ai_notification_success_body": "点击返回 TauriTavern",
+    "tauritavern_ai_notification_failure_title": "AI 回复失败",
+    "tauritavern_ai_notification_failure_body": "生成失败，点击返回 TauriTavern"
 }

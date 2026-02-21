@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Emitter, Window};
+use tauri_plugin_notification::{NotificationExt, PermissionState};
 
 use crate::infrastructure::assets::read_resource_text;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -140,4 +141,71 @@ pub fn read_frontend_extension_template(
     })?;
 
     Ok(content)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowSystemNotificationDto {
+    pub title: String,
+    pub body: String,
+}
+
+fn ensure_notification_permission(app: &tauri::AppHandle) -> Result<bool, CommandError> {
+    let notification = app.notification();
+    let current_state = notification.permission_state().map_err(|error| {
+        CommandError::InternalServerError(format!(
+            "Failed to query notification permission state: {}",
+            error
+        ))
+    })?;
+
+    if matches!(current_state, PermissionState::Granted) {
+        return Ok(true);
+    }
+
+    if matches!(current_state, PermissionState::Denied) {
+        return Ok(false);
+    }
+
+    let requested_state = notification.request_permission().map_err(|error| {
+        CommandError::InternalServerError(format!(
+            "Failed to request notification permission: {}",
+            error
+        ))
+    })?;
+
+    Ok(matches!(requested_state, PermissionState::Granted))
+}
+
+#[tauri::command]
+pub fn show_system_notification(
+    app: tauri::AppHandle,
+    dto: ShowSystemNotificationDto,
+) -> Result<(), CommandError> {
+    log_command("show_system_notification");
+
+    let title = dto.title.trim();
+    let body = dto.body.trim();
+
+    if title.is_empty() && body.is_empty() {
+        return Ok(());
+    }
+
+    if !ensure_notification_permission(&app)? {
+        return Ok(());
+    }
+
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|error| {
+            CommandError::InternalServerError(format!(
+                "Failed to show system notification: {}",
+                error
+            ))
+        })?;
+
+    Ok(())
 }

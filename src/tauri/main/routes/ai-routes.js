@@ -31,6 +31,199 @@ const STREAM_RESPONSE_HEADERS = Object.freeze({
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
 });
+const ANDROID_GENERATION_BRIDGE_NAME = 'TauriTavernAndroidAiBridge';
+const FAILURE_NOTIFICATION_MAX_BODY_LENGTH = 180;
+const i18nNotificationKeys = Object.freeze({
+    successTitle: 'tauritavern_ai_notification_success_title',
+    successBody: 'tauritavern_ai_notification_success_body',
+    failureTitle: 'tauritavern_ai_notification_failure_title',
+    failureBody: 'tauritavern_ai_notification_failure_body',
+});
+const i18nNotificationFallbacks = Object.freeze({
+    successTitle: 'AI reply is ready',
+    successBody: 'Tap to return to TauriTavern',
+    failureTitle: 'AI reply failed',
+    failureBody: 'Generation failed. Tap to return to TauriTavern',
+});
+const mobileGenerationState = {
+    activeCount: 0,
+};
+
+function callAndroidGenerationBridge(methodName, ...args) {
+    const bridge = window?.[ANDROID_GENERATION_BRIDGE_NAME];
+    const method = bridge?.[methodName];
+    if (typeof method !== 'function') {
+        return false;
+    }
+
+    try {
+        method.apply(bridge, args);
+        return true;
+    } catch (error) {
+        console.debug(`Failed to call ${ANDROID_GENERATION_BRIDGE_NAME}.${methodName}:`, error);
+        return false;
+    }
+}
+
+function shouldNotifyCompletion() {
+    if (document.visibilityState === 'hidden') {
+        return true;
+    }
+
+    if (typeof document.hasFocus === 'function') {
+        try {
+            return !document.hasFocus();
+        } catch {
+            return false;
+        }
+    }
+
+    return false;
+}
+
+function translateNotificationText(key, fallback) {
+    const translate = window?.SillyTavern?.i18n?.translate;
+    if (typeof translate !== 'function') {
+        return fallback;
+    }
+
+    try {
+        const translated = translate(fallback, key);
+        if (typeof translated === 'string' && translated.trim()) {
+            return translated;
+        }
+    } catch (error) {
+        console.debug('Failed to translate notification text:', error);
+    }
+
+    return fallback;
+}
+
+function getGenerationNotificationTexts() {
+    return {
+        successTitle: translateNotificationText(i18nNotificationKeys.successTitle, i18nNotificationFallbacks.successTitle),
+        successBody: translateNotificationText(i18nNotificationKeys.successBody, i18nNotificationFallbacks.successBody),
+        failureTitle: translateNotificationText(i18nNotificationKeys.failureTitle, i18nNotificationFallbacks.failureTitle),
+        failureBody: translateNotificationText(i18nNotificationKeys.failureBody, i18nNotificationFallbacks.failureBody),
+    };
+}
+
+function showSystemNotification(context, title, body) {
+    if (typeof context?.safeInvoke !== 'function') {
+        return;
+    }
+
+    void context.safeInvoke('show_system_notification', {
+        dto: {
+            title: String(title || ''),
+            body: String(body || ''),
+        },
+    })
+        .catch((error) => {
+            console.debug('Failed to show system notification:', error);
+        })
+}
+
+function pickFirstStringValue(source) {
+    if (typeof source === 'string') {
+        const value = source.trim();
+        return value || null;
+    }
+
+    if (!source || typeof source !== 'object') {
+        return null;
+    }
+
+    if (Array.isArray(source)) {
+        for (const item of source) {
+            const nested = pickFirstStringValue(item);
+            if (nested) {
+                return nested;
+            }
+        }
+
+        return null;
+    }
+
+    for (const value of Object.values(source)) {
+        const nested = pickFirstStringValue(value);
+        if (nested) {
+            return nested;
+        }
+    }
+
+    return null;
+}
+
+function normalizeFailureNotificationBody(errorMessage) {
+    const raw = String(errorMessage || '').trim();
+    let normalized = stripKnownErrorPrefixes(raw);
+
+    if (normalized.startsWith('{') && normalized.endsWith('}')) {
+        try {
+            const parsed = JSON.parse(normalized);
+            const parsedMessage = pickFirstStringValue(parsed);
+            if (parsedMessage) {
+                normalized = stripKnownErrorPrefixes(parsedMessage);
+            }
+        } catch {
+            // Keep original normalized text.
+        }
+    }
+
+    if (!normalized) {
+        return '';
+    }
+
+    if (normalized.length > FAILURE_NOTIFICATION_MAX_BODY_LENGTH) {
+        return `${normalized.slice(0, FAILURE_NOTIFICATION_MAX_BODY_LENGTH - 3)}...`;
+    }
+
+    return normalized;
+}
+
+function createGenerationLifecycle(context, payload) {
+    const shouldNotifyResult = !isQuietRequest(payload);
+    let active = false;
+
+    return {
+        begin() {
+            if (active) {
+                return;
+            }
+
+            active = true;
+            mobileGenerationState.activeCount += 1;
+
+            if (mobileGenerationState.activeCount === 1) {
+                callAndroidGenerationBridge('onGenerationStart');
+            }
+        },
+        finish({ success = false, errorMessage = '', notifyFailure = true } = {}) {
+            if (!active) {
+                return;
+            }
+
+            active = false;
+
+            if (success && shouldNotifyResult && shouldNotifyCompletion()) {
+                const texts = getGenerationNotificationTexts();
+                showSystemNotification(context, texts.successTitle, texts.successBody);
+            }
+
+            if (!success && notifyFailure && shouldNotifyResult && shouldNotifyCompletion()) {
+                const texts = getGenerationNotificationTexts();
+                const normalizedBody = normalizeFailureNotificationBody(errorMessage) || texts.failureBody;
+                showSystemNotification(context, texts.failureTitle, normalizedBody);
+            }
+
+            mobileGenerationState.activeCount = Math.max(0, mobileGenerationState.activeCount - 1);
+            if (mobileGenerationState.activeCount === 0) {
+                callAndroidGenerationBridge('onGenerationStop');
+            }
+        },
+    };
+}
 
 function getChatCompletionSource(payload) {
     return String(asObject(payload).chat_completion_source || '').trim().toLowerCase();
@@ -213,7 +406,7 @@ function createStreamId() {
     return `${timestamp}-${random}`;
 }
 
-async function createChatCompletionStreamResponse(context, payload, signal) {
+async function createChatCompletionStreamResponse(context, payload, signal, lifecycle) {
     const streamId = createStreamId();
     const eventName = `chat-completion-stream:${streamId}`;
     const encoder = new TextEncoder();
@@ -252,7 +445,12 @@ async function createChatCompletionStreamResponse(context, payload, signal) {
         }, STREAM_FRAME_INTERVAL_MS);
     };
 
-    const closeStream = async ({ cancelUpstream = false, appendDone = false, errorPayload = null } = {}) => {
+    const closeStream = async ({
+        cancelUpstream = false,
+        appendDone = false,
+        errorPayload = null,
+        failureMessage = '',
+    } = {}) => {
         if (isClosed) {
             return;
         }
@@ -304,6 +502,14 @@ async function createChatCompletionStreamResponse(context, payload, signal) {
                 console.debug('Failed to cancel chat completion stream:', error);
             }
         }
+
+        const isSuccessfulCompletion = sawDone && !cancelUpstream && !errorPayload;
+        const shouldNotifyFailure = !isSuccessfulCompletion && !cancelUpstream && Boolean(failureMessage || errorPayload);
+        lifecycle?.finish({
+            success: isSuccessfulCompletion,
+            errorMessage: failureMessage,
+            notifyFailure: shouldNotifyFailure,
+        });
     };
 
     const onStreamEvent = (event) => {
@@ -340,6 +546,7 @@ async function createChatCompletionStreamResponse(context, payload, signal) {
             void closeStream({
                 appendDone: true,
                 errorPayload: buildErrorStreamChunk(message, payload),
+                failureMessage: message,
             });
             return;
         }
@@ -360,6 +567,7 @@ async function createChatCompletionStreamResponse(context, payload, signal) {
                 await closeStream({
                     appendDone: true,
                     errorPayload: buildErrorStreamChunk(message, payload),
+                    failureMessage: message,
                 });
                 return;
             }
@@ -387,6 +595,7 @@ async function createChatCompletionStreamResponse(context, payload, signal) {
                 await closeStream({
                     appendDone: true,
                     errorPayload: buildErrorStreamChunk(message, payload),
+                    failureMessage: message,
                 });
             }
         },
@@ -432,15 +641,19 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
     router.post('/api/backends/chat-completions/generate', async ({ body, init }) => {
         const payload = { ...asObject(body) };
         const wantsStream = Boolean(payload.stream);
+        const lifecycle = createGenerationLifecycle(context, payload);
+        lifecycle.begin();
 
         try {
             if (wantsStream) {
-                return await createChatCompletionStreamResponse(context, payload, init?.signal);
+                return await createChatCompletionStreamResponse(context, payload, init?.signal, lifecycle);
             }
 
             const completion = await context.safeInvoke('generate_chat_completion', { dto: payload });
+            lifecycle.finish({ success: true });
             return jsonResponse(completion || {});
         } catch (error) {
+            lifecycle.finish({ success: false, errorMessage: getErrorMessage(error), notifyFailure: true });
             console.error('Chat completion generation failed:', error);
             const isQuiet = isQuietRequest(payload);
 

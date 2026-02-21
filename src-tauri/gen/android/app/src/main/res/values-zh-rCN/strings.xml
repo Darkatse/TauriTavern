@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">TauriTavern</string>
+    <string name="main_activity_title">TauriTavern</string>
+    <string name="notification_channel_ai_generation_name">AI 生成</string>
+    <string name="notification_channel_ai_generation_description">在后台保持 AI 生成不中断</string>
+    <string name="notification_ai_keepalive_title">少女祈祷中</string>
+    <string name="notification_ai_keepalive_body">TauriTavern 将在后台持续生成，请勿划掉</string>
+</resources>

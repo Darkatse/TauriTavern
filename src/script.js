@@ -236,7 +236,7 @@ import {
     formatInstructModeStoryString,
     getInstructStoppingSequences,
 } from './scripts/instruct-mode.js';
-import { initLocales, t } from './scripts/i18n.js';
+import { initLocales, t, translate } from './scripts/i18n.js';
 import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
 import {
     user_avatar,
@@ -301,6 +301,10 @@ import { addChatBackupsBrowser } from './scripts/chat-backups.js';
 globalThis.SillyTavern = {
     libs,
     getContext,
+    i18n: {
+        t,
+        translate,
+    },
 };
 
 export {
