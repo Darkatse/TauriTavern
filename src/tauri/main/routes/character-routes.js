@@ -1,3 +1,5 @@
+import { normalizeBinaryPayload, sanitizeAttachmentFileName } from '../binary-utils.js';
+
 export function registerCharacterRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/characters/all', async () => {
         const characters = await context.getAllCharacters({ shallow: false, forceRefresh: true });
@@ -225,12 +227,17 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             },
         });
 
-        const payload = Array.isArray(exported?.data) ? Uint8Array.from(exported.data) : new Uint8Array();
+        const payload = normalizeBinaryPayload(exported?.data);
+        if (normalizedFormat === 'png' && payload.byteLength === 0) {
+            return jsonResponse({ error: 'Character export payload is empty' }, 500);
+        }
+
         const contentType = String(
             exported?.mime_type || (normalizedFormat === 'png' ? 'image/png' : 'application/json'),
         );
         const fallbackName = `${characterId}.${normalizedFormat}`;
-        const downloadName = String(avatar || fallbackName).replace(/\.png$/i, `.${normalizedFormat}`);
+        const rawDownloadName = String(avatar || fallbackName).replace(/\.png$/i, `.${normalizedFormat}`);
+        const downloadName = sanitizeAttachmentFileName(rawDownloadName, fallbackName);
 
         return new Response(payload, {
             status: 200,

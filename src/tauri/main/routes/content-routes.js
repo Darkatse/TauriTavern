@@ -1,3 +1,5 @@
+import { normalizeBinaryPayload } from '../binary-utils.js';
+
 const EXTERNAL_IMPORT_ALLOWED_URL_PATTERNS = [
     /^https:\/\/cdn\.discordapp\.com\/attachments\/.+/i,
     /^https:\/\/files\.catbox\.moe\/.+/i,
@@ -99,9 +101,9 @@ export function registerContentRoutes(router, context, { jsonResponse }) {
             || decodeURIComponent(targetUrl.pathname.split('/').pop() || '')
             || 'shared-character.png';
         const fileName = sanitizeFileName(responseFileName);
-        const bytes = Array.isArray(downloadResult?.data) ? downloadResult.data : [];
+        const bytes = normalizeBinaryPayload(downloadResult?.data);
 
-        return new Response(Uint8Array.from(bytes), {
+        return new Response(bytes, {
             status: 200,
             headers: {
                 'Content-Type': 'image/png',

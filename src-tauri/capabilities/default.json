@@ -26,6 +26,15 @@
         },
         {
           "path": "$DOWNLOAD/**"
+        },
+        {
+          "path": "$DOCUMENT/**"
+        },
+        {
+          "path": "/storage/emulated/0/Download/**"
+        },
+        {
+          "path": "/sdcard/Download/**"
         }
       ]
     }

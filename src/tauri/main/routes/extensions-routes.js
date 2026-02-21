@@ -1,18 +1,4 @@
-function decodeBase64ToBytes(value) {
-    const normalized = String(value || '').replace(/\s+/g, '');
-    if (!normalized) {
-        return new Uint8Array(0);
-    }
-
-    const binary = atob(normalized);
-    const bytes = new Uint8Array(binary.length);
-
-    for (let index = 0; index < binary.length; index += 1) {
-        bytes[index] = binary.charCodeAt(index);
-    }
-
-    return bytes;
-}
+import { decodeBase64ToBytes } from '../binary-utils.js';
 
 function sanitizeFileName(value, fallback = 'tauritavern-data.zip') {
     const fileName = String(value || '').trim();

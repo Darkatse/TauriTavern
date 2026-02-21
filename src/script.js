@@ -11948,26 +11948,70 @@ jQuery(async function () {
         isExportPopupOpen = false;
         exportPopper.update();
 
-        // Save before exporting
-        await createOrEditCharacter();
-        const body = { format, avatar_url: characters[this_chid].avatar };
+        try {
+            const selectedCharacter = characters[this_chid];
+            if (!selectedCharacter?.avatar) {
+                toastr.error(t`Character export failed: no selected character`);
+                return;
+            }
 
-        const response = await fetch('/api/characters/export', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify(body),
-        });
+            // Save before exporting
+            await createOrEditCharacter();
+            const body = {
+                format,
+                avatar_url: selectedCharacter.avatar,
+                name: selectedCharacter.name,
+            };
 
-        if (response.ok) {
-            const filename = characters[this_chid].avatar.replace('.png', `.${format}`);
+            const response = await fetch('/api/characters/export', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify(body),
+            });
+
+            if (!response.ok) {
+                let errorText = '';
+                try {
+                    const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
+                    if (contentType.includes('application/json')) {
+                        const payload = await response.json();
+                        errorText = String(payload?.error || payload?.message || '').trim();
+                    } else {
+                        errorText = String(await response.text()).trim();
+                    }
+                } catch {
+                    // Ignore malformed error body payloads.
+                }
+
+                console.error('Character export request failed', {
+                    status: response.status,
+                    format,
+                    avatar: selectedCharacter.avatar,
+                    name: selectedCharacter.name,
+                    error: errorText,
+                });
+
+                toastr.error(errorText ? t`Character export failed: ${errorText}` : t`Character export failed`);
+                return;
+            }
+
+            const filename = selectedCharacter.avatar.replace(/\.png$/i, `.${format}`);
             const blob = await response.blob();
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.setAttribute('download', filename);
-            document.body.appendChild(a);
-            a.click();
-            URL.revokeObjectURL(a.href);
-            document.body.removeChild(a);
+
+            if (format === 'png' && blob.size === 0) {
+                throw new Error('Character export returned an empty PNG payload');
+            }
+
+            const exportResult = await download(blob, filename, blob.type || (format === 'png' ? 'image/png' : 'application/json'), {
+                throwOnFailure: true,
+            });
+
+            if (exportResult?.mode === 'mobile-native' && exportResult.savedPath) {
+                console.info(`Character export saved to: ${exportResult.savedPath}`);
+            }
+        } catch (error) {
+            console.error('Character export failed', error);
+            toastr.error(t`Character export failed`);
         }
     });
     //**************************CHAT IMPORT EXPORT*************************//

@@ -124,7 +124,7 @@ https://v2.tauri.app/develop/resources/#android
 
 当前行为：
 
-- Android：默认启用临时 workaround（从 `document_dir` 推导外部 app data 目录）；
+- Android：优先使用 `app_data_dir`，仅当其落在内部目录（如 `/data/user/0/...`）时，自动回退到从 `document_dir` 推导外部 app data 目录；
 - 其他平台（含 iOS）：回退到标准 `app_data_dir`。
 
 ### 3.3 架构收益
@@ -163,7 +163,7 @@ https://v2.tauri.app/develop/resources/#android
 ## 5. 后续迁移与清理建议
 
 1. **Tauri 官方修复目录 API 后**  
-   仅需调整 `infrastructure/paths.rs` 中 Android workaround 开关/分支，不要在仓储层做分散修补。
+   `infrastructure/paths.rs` 会自动优先使用修复后的 `app_data_dir`，无需在仓储层做分散修补。
 
 2. **Tauri 官方修复 WebView safe-area 注入后**  
    可评估简化 `MainActivity` 的“页面就绪后注入”逻辑，但必须先验证不会回归 `about:blank` 时序竞态。

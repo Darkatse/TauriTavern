@@ -17,6 +17,7 @@ import { getTagsList } from './tags.js';
 import { groups, selected_group } from './group-chats.js';
 import { getCurrentLocale, t } from './i18n.js';
 import { importWorldInfo } from './world-info.js';
+import { downloadBlobWithRuntime } from './file-export.js';
 
 export const shiftUpByOne = (e, i, a) => a[i] = e + 1;
 export const shiftDownByOne = (e, i, a) => a[i] = e - 1;
@@ -386,14 +387,28 @@ export function shuffle(array) {
  * @param {BlobPart} content File content to download.
  * @param {string} fileName File name.
  * @param {string} contentType File content type.
+ * @param {{ throwOnFailure?: boolean }} [options] Download options.
  */
-export function download(content, fileName, contentType) {
-    const a = document.createElement('a');
-    const file = new Blob([content], { type: contentType });
-    a.href = URL.createObjectURL(file);
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(a.href);
+export async function download(content, fileName, contentType, options = {}) {
+    const file = content instanceof Blob
+        ? content
+        : new Blob([content], { type: contentType });
+
+    try {
+        return await downloadBlobWithRuntime(file, fileName, {
+            fallbackName: 'download.bin',
+        });
+    } catch (error) {
+        console.error('Failed to export file:', error);
+        if (options.throwOnFailure) {
+            throw error;
+        }
+
+        return {
+            mode: 'failed',
+            savedPath: '',
+        };
+    }
 }
 
 /**

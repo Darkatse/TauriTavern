@@ -1,5 +1,9 @@
 import { renderExtensionTemplateAsync } from '../../extensions.js';
 import { t } from '../../i18n.js';
+import {
+    isNativeMobileDownloadRuntime,
+    writeReadableStreamToMobileDownloadFolder,
+} from '../../file-export.js';
 
 const MODULE_NAME = 'data-migration';
 const MIGRATED_TARGET_USER = 'default-user';
@@ -49,73 +53,7 @@ function parseJobId(value) {
     return jobId || '';
 }
 
-function isMobileRuntime() {
-    if (typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') {
-        return false;
-    }
-
-    return /android|iphone|ipad|ipod/i.test(navigator.userAgent);
-}
-
-function isTauriRuntime() {
-    return typeof window !== 'undefined'
-        && typeof window.__TAURI__ === 'object'
-        && typeof window.__TAURI__?.core?.invoke === 'function';
-}
-
-function sanitizeExportFileName(value, fallback = 'tauritavern-data.zip') {
-    const fileName = String(value || '').trim();
-    if (!fileName) {
-        return fallback;
-    }
-
-    return fileName.replace(/[\\/:*?"<>|]+/g, '_');
-}
-
-async function resolveUniqueExportPath(pathApi, existsFn, directory, fileName) {
-    const dotIndex = fileName.lastIndexOf('.');
-    const hasExtension = dotIndex > 0;
-    const baseName = hasExtension ? fileName.slice(0, dotIndex) : fileName;
-    const extension = hasExtension ? fileName.slice(dotIndex) : '';
-
-    let suffix = 0;
-    while (suffix < 1000) {
-        const candidateName = suffix === 0
-            ? `${baseName}${extension}`
-            : `${baseName} (${suffix})${extension}`;
-        const candidatePath = await pathApi.join(directory, candidateName);
-        if (!(await existsFn(candidatePath))) {
-            return candidatePath;
-        }
-        suffix += 1;
-    }
-
-    throw new Error(t`Unable to allocate export file name in Download folder`);
-}
-
-async function saveMobileExportArchive(jobId, archivePath, fileName) {
-    const tauri = window.__TAURI__;
-    const pathApi = tauri?.path;
-    if (typeof pathApi?.downloadDir !== 'function' || typeof pathApi?.join !== 'function') {
-        throw new Error(t`Tauri path API is unavailable on mobile`);
-    }
-
-    const { copyFile, exists, writeFile } = await import('@tauri-apps/plugin-fs');
-    const downloadDirectory = await pathApi.downloadDir();
-    if (!downloadDirectory || typeof downloadDirectory !== 'string') {
-        throw new Error(t`Unable to resolve Download folder`);
-    }
-
-    const normalizedName = sanitizeExportFileName(fileName);
-    const destinationPath = await resolveUniqueExportPath(pathApi, exists, downloadDirectory, normalizedName);
-
-    try {
-        await copyFile(archivePath, destinationPath);
-        return destinationPath;
-    } catch (copyError) {
-        console.warn('Mobile export direct copy failed, falling back to streamed write:', copyError);
-    }
-
+async function saveMobileExportArchive(jobId, fileName) {
     const response = await fetch(`/api/extensions/data-migration/export/download?id=${encodeURIComponent(jobId)}`, {
         method: 'GET',
         cache: 'no-store',
@@ -127,12 +65,9 @@ async function saveMobileExportArchive(jobId, archivePath, fileName) {
         throw new Error(t`Export archive stream is unavailable`);
     }
 
-    await writeFile(destinationPath, response.body, {
-        create: true,
-        truncate: true,
+    return writeReadableStreamToMobileDownloadFolder(response.body, fileName, {
+        fallbackName: 'tauritavern-data.zip',
     });
-
-    return destinationPath;
 }
 
 function hasActiveJob() {
@@ -343,16 +278,11 @@ async function runMigrationJob(kind, startJob) {
                 }, 800);
             } else {
                 const fileName = String(finalStatus?.result?.file_name || '').trim();
-                const archivePath = String(finalStatus?.result?.archive_path || '').trim();
-                const useMobileNativeSave = isMobileRuntime() && isTauriRuntime();
+                const useMobileNativeSave = isNativeMobileDownloadRuntime();
 
                 if (useMobileNativeSave) {
-                    if (!archivePath) {
-                        throw new Error(t`Export archive path is missing`);
-                    }
-
                     setStatusText(t`Saving archive to Download folder...`);
-                    const savedPath = await saveMobileExportArchive(jobId, archivePath, fileName);
+                    const savedPath = await saveMobileExportArchive(jobId, fileName);
                     toastr.success(t`Data archive saved: ${savedPath}`, t`Export completed`, { timeOut: 8000 });
                     setStatusText(t`Export completed | ${savedPath}`);
                 } else {
