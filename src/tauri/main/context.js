@@ -897,10 +897,38 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         }
 
         try {
-            return JSON.parse(raw);
+            const crop = JSON.parse(raw);
+            if (!crop || typeof crop !== 'object') {
+                return null;
+            }
+
+            const x = toRoundedInt(crop.x);
+            const y = toRoundedInt(crop.y);
+            const width = toRoundedInt(crop.width);
+            const height = toRoundedInt(crop.height);
+            if (x === null || y === null || width === null || height === null) {
+                return null;
+            }
+
+            return {
+                x,
+                y,
+                width,
+                height,
+                want_resize: Boolean(crop.want_resize),
+            };
         } catch {
             return null;
         }
+    }
+
+    function toRoundedInt(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) {
+            return null;
+        }
+
+        return Math.round(number);
     }
 
     function pickCharacterUpdateFields(payload) {

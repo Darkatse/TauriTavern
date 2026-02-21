@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
+use crate::domain::models::character::sanitize_filename;
 use crate::domain::repositories::chat_repository::ChatRepository;
 
 use super::FileChatRepository;
@@ -175,6 +176,34 @@ async fn chat_payload_bytes_roundtrip_and_path() {
 }
 
 #[tokio::test]
+async fn save_chat_payload_bytes_sanitizes_windows_unsafe_path_segments() {
+    let (repository, root) = setup_repository().await;
+
+    let character_name = "ali:ce";
+    let file_name = "session:2026/02*21?";
+    let raw_payload = payload_to_jsonl(&payload_with_integrity("bytes-safe-path"));
+
+    repository
+        .save_chat_payload_bytes(character_name, file_name, raw_payload.as_bytes(), false)
+        .await
+        .expect("save raw payload bytes with unsafe path segments");
+
+    let expected_path = root
+        .join("chats")
+        .join(sanitize_filename(character_name))
+        .join(format!("{}.jsonl", sanitize_filename(file_name)));
+    assert!(expected_path.exists());
+
+    let loaded_bytes = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("load raw payload bytes via unsanitized identifiers");
+    assert_eq!(loaded_bytes, raw_payload.as_bytes());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn save_chat_payload_from_path_enforces_integrity() {
     let (repository, root) = setup_repository().await;
 
@@ -303,6 +332,32 @@ async fn group_chat_payload_bytes_roundtrip_and_path() {
         payload_path.file_name().and_then(|name| name.to_str()),
         Some("group-session.jsonl")
     );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn save_group_chat_payload_bytes_sanitizes_windows_unsafe_id() {
+    let (repository, root) = setup_repository().await;
+
+    let group_id = "group:one/2026*02?21";
+    let raw_payload = payload_to_jsonl(&payload_with_integrity("group-safe-path"));
+
+    repository
+        .save_group_chat_payload_bytes(group_id, raw_payload.as_bytes(), false)
+        .await
+        .expect("save group raw payload bytes with unsafe id");
+
+    let expected_path = root
+        .join("group chats")
+        .join(format!("{}.jsonl", sanitize_filename(group_id)));
+    assert!(expected_path.exists());
+
+    let loaded_bytes = repository
+        .get_group_chat_payload_bytes(group_id)
+        .await
+        .expect("load group raw payload bytes via unsanitized id");
+    assert_eq!(loaded_bytes, raw_payload.as_bytes());
 
     let _ = fs::remove_dir_all(&root).await;
 }

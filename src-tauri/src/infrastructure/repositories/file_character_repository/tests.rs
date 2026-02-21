@@ -315,3 +315,31 @@ async fn import_json_with_only_alternate_greetings_keeps_payload_for_first_open(
 
     let _ = fs::remove_dir_all(&root).await;
 }
+
+#[tokio::test]
+async fn save_character_cache_exposes_real_avatar_file_name() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Invalid:Name".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+
+    repository
+        .save(&character)
+        .await
+        .expect("save character");
+
+    let loaded = repository
+        .find_all(false)
+        .await
+        .expect("load characters from cache-backed list");
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].avatar, "Invalid_Name.png");
+
+    assert!(root.join("characters").join("Invalid_Name.png").exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}

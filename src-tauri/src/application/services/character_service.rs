@@ -59,7 +59,10 @@ impl CharacterService {
         logger::debug(&format!("Creating character: {}", dto.name));
 
         // Convert DTO to domain model
-        let character = Character::from(dto);
+        let mut character = Character::from(dto);
+        let file_name = character.get_file_name();
+        character.file_name = Some(file_name.clone());
+        character.avatar = format!("{}.png", file_name);
 
         // Validate character
         self.validate_character(&character)?;

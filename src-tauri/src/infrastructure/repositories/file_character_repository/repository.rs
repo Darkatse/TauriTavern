@@ -17,6 +17,15 @@ use crate::infrastructure::persistence::png_utils::{
 
 use super::FileCharacterRepository;
 
+impl FileCharacterRepository {
+    fn with_storage_identity(character: &Character, file_name: &str) -> Character {
+        let mut stored = character.clone();
+        stored.file_name = Some(file_name.to_string());
+        stored.avatar = format!("{}.png", file_name);
+        stored
+    }
+}
+
 #[async_trait]
 impl CharacterRepository for FileCharacterRepository {
     async fn save(&self, character: &Character) -> Result<(), DomainError> {
@@ -48,8 +57,10 @@ impl CharacterRepository for FileCharacterRepository {
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 
+        let cached_character = Self::with_storage_identity(character, &file_name);
+
         let mut cache = self.memory_cache.lock().await;
-        cache.set(file_name, character.clone());
+        cache.set(file_name, cached_character);
 
         Ok(())
     }
@@ -147,7 +158,7 @@ impl CharacterRepository for FileCharacterRepository {
 
         character.name = new_name.to_string();
         character.data.name = new_name.to_string();
-        character.file_name = Some(new_name.to_string());
+        let character = Self::with_storage_identity(&character, new_name);
 
         self.save(&character).await?;
 
@@ -171,7 +182,6 @@ impl CharacterRepository for FileCharacterRepository {
         {
             let mut cache = self.memory_cache.lock().await;
             cache.remove(old_name);
-            cache.set(new_name.to_string(), character.clone());
         }
 
         Ok(character)
@@ -283,10 +293,12 @@ impl CharacterRepository for FileCharacterRepository {
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 
-        let mut cache = self.memory_cache.lock().await;
-        cache.set(file_name.clone(), character.clone());
+        let stored_character = Self::with_storage_identity(character, &file_name);
 
-        Ok(character.clone())
+        let mut cache = self.memory_cache.lock().await;
+        cache.set(file_name, stored_character.clone());
+
+        Ok(stored_character)
     }
 
     async fn update_avatar(

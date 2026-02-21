@@ -4,6 +4,7 @@ use chrono::Local;
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
+use crate::domain::models::character::sanitize_filename;
 
 use super::FileChatRepository;
 
@@ -42,23 +43,39 @@ impl FileChatRepository {
         Ok(())
     }
 
+    fn sanitize_path_component(value: &str, fallback: &str) -> String {
+        let sanitized = sanitize_filename(value.trim());
+        if sanitized.is_empty() {
+            fallback.to_string()
+        } else {
+            sanitized
+        }
+    }
+
+    fn normalize_jsonl_file_stem(file_name: &str) -> String {
+        let stripped = Self::strip_jsonl_extension(file_name);
+        Self::sanitize_path_component(stripped, "chat")
+    }
+
     /// Get the path to a character's chat directory
     pub(super) fn get_character_dir(&self, character_name: &str) -> PathBuf {
-        self.chats_dir.join(character_name)
+        self.chats_dir
+            .join(Self::sanitize_path_component(character_name, "character"))
     }
 
     /// Ensure chat file names always use the JSONL extension
     pub(super) fn normalize_jsonl_file_name(file_name: &str) -> String {
-        if file_name.ends_with(".jsonl") {
-            file_name.to_string()
-        } else {
-            format!("{}.jsonl", file_name)
-        }
+        format!("{}.jsonl", Self::normalize_jsonl_file_stem(file_name))
     }
 
     /// Remove JSONL extension if present
     pub(super) fn strip_jsonl_extension(file_name: &str) -> &str {
-        file_name.strip_suffix(".jsonl").unwrap_or(file_name)
+        if file_name.len() >= 6 && file_name[file_name.len() - 6..].eq_ignore_ascii_case(".jsonl")
+        {
+            &file_name[..file_name.len() - 6]
+        } else {
+            file_name
+        }
     }
 
     /// Build a timestamp that is safe to use in file names on all platforms.
@@ -158,8 +175,8 @@ impl FileChatRepository {
     pub(super) fn get_cache_key(&self, character_name: &str, file_name: &str) -> String {
         format!(
             "{}:{}",
-            character_name,
-            Self::strip_jsonl_extension(file_name)
+            Self::sanitize_path_component(character_name, "character"),
+            Self::normalize_jsonl_file_stem(file_name)
         )
     }
 }
