@@ -125,6 +125,15 @@ pub trait ChatRepository: Send + Sync {
     /// Backup a chat
     async fn backup_chat(&self, character_name: &str, file_name: &str) -> Result<(), DomainError>;
 
+    /// List all chat backup files.
+    async fn list_chat_backups(&self) -> Result<Vec<ChatSearchResult>, DomainError>;
+
+    /// Get raw JSONL bytes for a chat backup file.
+    async fn get_chat_backup_bytes(&self, backup_file_name: &str) -> Result<Vec<u8>, DomainError>;
+
+    /// Delete a chat backup file.
+    async fn delete_chat_backup(&self, backup_file_name: &str) -> Result<(), DomainError>;
+
     /// Get a raw chat JSONL payload for a character chat.
     async fn get_chat_payload(
         &self,

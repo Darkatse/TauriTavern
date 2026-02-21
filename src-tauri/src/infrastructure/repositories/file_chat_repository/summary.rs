@@ -538,6 +538,29 @@ impl FileChatRepository {
             .collect())
     }
 
+    pub(super) async fn list_chat_backup_files(
+        &self,
+    ) -> Result<Vec<ChatFileDescriptor>, DomainError> {
+        self.ensure_directory_exists().await?;
+
+        let files = list_files_with_extension(&self.backups_dir, "jsonl").await?;
+        Ok(files
+            .into_iter()
+            .filter_map(|path| {
+                let file_name = path.file_name()?.to_str()?.to_string();
+                if !file_name.starts_with(Self::CHAT_BACKUP_PREFIX) {
+                    return None;
+                }
+
+                Some(ChatFileDescriptor {
+                    character_name: String::new(),
+                    file_name,
+                    path,
+                })
+            })
+            .collect())
+    }
+
     pub(super) async fn get_chat_summary_entry(
         &self,
         descriptor: &ChatFileDescriptor,

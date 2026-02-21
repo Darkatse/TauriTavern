@@ -70,8 +70,7 @@ impl FileChatRepository {
 
     /// Remove JSONL extension if present
     pub(super) fn strip_jsonl_extension(file_name: &str) -> &str {
-        if file_name.len() >= 6 && file_name[file_name.len() - 6..].eq_ignore_ascii_case(".jsonl")
-        {
+        if file_name.len() >= 6 && file_name[file_name.len() - 6..].eq_ignore_ascii_case(".jsonl") {
             &file_name[..file_name.len() - 6]
         } else {
             file_name
@@ -169,6 +168,52 @@ impl FileChatRepository {
     /// Get the path to a chat backup file
     pub(super) fn get_backup_path(&self, backup_name: &str) -> PathBuf {
         self.backups_dir.join(Self::backup_file_name(backup_name))
+    }
+
+    pub(super) fn resolve_existing_backup_path(
+        &self,
+        backup_file_name: &str,
+    ) -> Result<PathBuf, DomainError> {
+        let normalized = Self::normalize_backup_file_name(backup_file_name)?;
+        let path = self.backups_dir.join(&normalized);
+        if !path.starts_with(&self.backups_dir) {
+            return Err(DomainError::InvalidData(
+                "Invalid backup file name".to_string(),
+            ));
+        }
+
+        Ok(path)
+    }
+
+    pub(super) fn normalize_backup_file_name(
+        backup_file_name: &str,
+    ) -> Result<String, DomainError> {
+        let trimmed = backup_file_name.trim();
+        if trimmed.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Backup file name cannot be empty".to_string(),
+            ));
+        }
+
+        let leaf_name = std::path::Path::new(trimmed)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| DomainError::InvalidData("Invalid backup file name".to_string()))?;
+
+        let sanitized = sanitize_filename(leaf_name).trim().to_string();
+        if sanitized.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Invalid backup file name".to_string(),
+            ));
+        }
+
+        if !sanitized.starts_with(Self::CHAT_BACKUP_PREFIX) {
+            return Err(DomainError::InvalidData(
+                "Invalid chat backup file name".to_string(),
+            ));
+        }
+
+        Ok(sanitized)
     }
 
     /// Get the cache key for a chat

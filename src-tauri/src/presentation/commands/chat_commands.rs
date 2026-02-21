@@ -334,6 +334,48 @@ pub async fn backup_chat(
 }
 
 #[tauri::command]
+pub async fn list_chat_backups(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ChatSearchResultDto>, CommandError> {
+    log_command("list_chat_backups");
+
+    app_state
+        .chat_service
+        .list_chat_backups()
+        .await
+        .map_err(map_command_error("Failed to list chat backups"))
+}
+
+#[tauri::command]
+pub async fn get_chat_backup_raw(
+    name: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<InvokeResponse, CommandError> {
+    log_command(format!("get_chat_backup_raw {}", name));
+
+    app_state
+        .chat_service
+        .get_chat_backup_bytes(&name)
+        .await
+        .map(InvokeResponse::new)
+        .map_err(map_command_error("Failed to get chat backup content"))
+}
+
+#[tauri::command]
+pub async fn delete_chat_backup(
+    name: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command(format!("delete_chat_backup {}", name));
+
+    app_state
+        .chat_service
+        .delete_chat_backup(&name)
+        .await
+        .map_err(map_command_error("Failed to delete chat backup"))
+}
+
+#[tauri::command]
 pub async fn clear_chat_cache(app_state: State<'_, Arc<AppState>>) -> Result<(), CommandError> {
     log_command("clear_chat_cache");
 

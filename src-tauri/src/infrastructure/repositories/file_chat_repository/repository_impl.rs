@@ -515,6 +515,61 @@ impl ChatRepository for FileChatRepository {
             .await
     }
 
+    async fn list_chat_backups(&self) -> Result<Vec<ChatSearchResult>, DomainError> {
+        let descriptors = self.list_chat_backup_files().await?;
+        let mut results = Vec::with_capacity(descriptors.len());
+
+        for descriptor in descriptors {
+            match self.get_chat_summary(&descriptor, false).await {
+                Ok(summary) => results.push(summary),
+                Err(error) => {
+                    logger::warn(&format!(
+                        "Failed to read chat backup summary {:?}: {}",
+                        descriptor.path, error
+                    ));
+                }
+            }
+        }
+
+        results.sort_by(|a, b| b.date.cmp(&a.date));
+        self.flush_summary_index_if_needed().await?;
+        Ok(results)
+    }
+
+    async fn get_chat_backup_bytes(&self, backup_file_name: &str) -> Result<Vec<u8>, DomainError> {
+        self.ensure_directory_exists().await?;
+
+        let path = self.resolve_existing_backup_path(backup_file_name)?;
+        if !path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Chat backup not found: {}",
+                backup_file_name
+            )));
+        }
+
+        self.read_payload_bytes_from_path(&path).await
+    }
+
+    async fn delete_chat_backup(&self, backup_file_name: &str) -> Result<(), DomainError> {
+        self.ensure_directory_exists().await?;
+
+        let path = self.resolve_existing_backup_path(backup_file_name)?;
+        if !path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Chat backup not found: {}",
+                backup_file_name
+            )));
+        }
+
+        fs::remove_file(&path).await.map_err(|error| {
+            DomainError::InternalError(format!("Failed to delete chat backup file: {}", error))
+        })?;
+
+        self.remove_summary_cache_for_path(&path).await;
+        self.flush_summary_index_if_needed().await?;
+        Ok(())
+    }
+
     async fn get_chat_payload(
         &self,
         character_name: &str,

@@ -305,6 +305,45 @@ impl ChatService {
         Ok(())
     }
 
+    /// List chat backups.
+    pub async fn list_chat_backups(&self) -> Result<Vec<ChatSearchResultDto>, ApplicationError> {
+        tracing::info!("Listing chat backups");
+
+        let results = self.chat_repository.list_chat_backups().await?;
+        Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
+    }
+
+    /// Get raw bytes of a chat backup file.
+    pub async fn get_chat_backup_bytes(
+        &self,
+        backup_file_name: &str,
+    ) -> Result<Vec<u8>, ApplicationError> {
+        if backup_file_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Backup file name cannot be empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .get_chat_backup_bytes(backup_file_name)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Delete a chat backup file.
+    pub async fn delete_chat_backup(&self, backup_file_name: &str) -> Result<(), ApplicationError> {
+        if backup_file_name.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "Backup file name cannot be empty".to_string(),
+            ));
+        }
+
+        self.chat_repository
+            .delete_chat_backup(backup_file_name)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Clear the chat cache
     pub async fn clear_cache(&self) -> Result<(), ApplicationError> {
         tracing::info!("Clearing chat cache");

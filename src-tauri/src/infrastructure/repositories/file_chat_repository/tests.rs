@@ -94,6 +94,20 @@ fn backup_file_prefix_matches_sillytavern_pattern() {
     assert_eq!(prefix, "chat_alice_name_");
 }
 
+#[test]
+fn normalize_backup_file_name_rejects_non_chat_prefix() {
+    let result = FileChatRepository::normalize_backup_file_name("notes_20260101.jsonl");
+    assert!(matches!(result, Err(DomainError::InvalidData(_))));
+}
+
+#[test]
+fn normalize_backup_file_name_uses_leaf_name() {
+    let normalized =
+        FileChatRepository::normalize_backup_file_name("../chat_alice_20260101-000000.jsonl")
+            .expect("normalize backup file name");
+    assert_eq!(normalized, "chat_alice_20260101-000000.jsonl");
+}
+
 #[tokio::test]
 async fn save_chat_payload_enforces_integrity_when_not_forced() {
     let (repository, root) = setup_repository().await;
