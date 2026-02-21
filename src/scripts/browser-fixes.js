@@ -11,15 +11,39 @@ const CSS_SAFE_AREA_TOP_REFERENCE_PATTERN = /(?:--tt-safe-area-top|safe-area-ins
 const CSS_NON_NUMERIC_TOP_VALUE_PATTERN = /^(auto|inherit|initial|unset|revert|revert-layer)$/i;
 const CSS_ZERO_TOP_VALUE_PATTERN = /^0(?:\.0+)?(?:[a-z%]+)?$/i;
 const observedDynamicStyles = new WeakSet();
-const MOBILE_SAFE_AREA_SKIP_ELEMENT_IDS = new Set(['top-settings-holder', 'top-bar']);
+const MOBILE_SAFE_AREA_SKIP_ELEMENT_IDS = new Set([
+    'top-settings-holder',
+    'top-bar',
+    'sheld',
+    'form_sheld',
+    'chat',
+    'movingDivs',
+    'left-nav-panel',
+    'right-nav-panel',
+    'character_popup',
+    'world_popup',
+]);
+const MOBILE_SAFE_AREA_SKIP_ANCESTOR_SELECTOR = [
+    '#sheld',
+    '#form_sheld',
+    '#chat',
+    '#movingDivs',
+    '#left-nav-panel',
+    '#right-nav-panel',
+    '#character_popup',
+    '#world_popup',
+].join(', ');
 const MOBILE_FIXED_TOP_CANDIDATE_SELECTOR = [
-    '[style*="top"]',
     '[class*="popup"]',
     '[class*="modal"]',
     '[class*="window"]',
+    '[class*="dialog"]',
+    '[class*="overlay"]',
     '[id*="popup"]',
     '[id*="modal"]',
     '[id*="window"]',
+    '[id*="dialog"]',
+    '[id*="overlay"]',
 ].join(', ');
 
 function defineMissingMethod(target, key, implementation) {
@@ -254,7 +278,19 @@ function getSafeAreaTopPx() {
 }
 
 function shouldSkipSafeAreaPatch(element) {
-    return MOBILE_SAFE_AREA_SKIP_ELEMENT_IDS.has(element.id);
+    if (element === document.body || element === document.documentElement) {
+        return true;
+    }
+
+    if (MOBILE_SAFE_AREA_SKIP_ELEMENT_IDS.has(element.id)) {
+        return true;
+    }
+
+    return Boolean(element.closest(MOBILE_SAFE_AREA_SKIP_ANCESTOR_SELECTOR));
+}
+
+function isFixedTopPatchCandidate(element) {
+    return element.matches(MOBILE_FIXED_TOP_CANDIDATE_SELECTOR);
 }
 
 function resolveElementTopForPatch(element, computedStyle) {
@@ -304,7 +340,7 @@ function patchFixedElementTopInTree(node) {
         return;
     }
 
-    if (node instanceof HTMLElement) {
+    if (node instanceof HTMLElement && isFixedTopPatchCandidate(node)) {
         patchFixedElementTopForSafeArea(node);
     }
 
@@ -326,7 +362,9 @@ function applyMobileDynamicStyleSafeAreaPatch() {
     const observer = new MutationObserver(mutations => {
         for (const mutation of mutations) {
             if (mutation.type === 'attributes' && mutation.target instanceof HTMLElement) {
-                patchFixedElementTopForSafeArea(mutation.target);
+                if (isFixedTopPatchCandidate(mutation.target)) {
+                    patchFixedElementTopForSafeArea(mutation.target);
+                }
                 continue;
             }
 

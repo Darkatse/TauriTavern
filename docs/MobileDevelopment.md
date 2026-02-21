@@ -234,11 +234,12 @@ https://v2.tauri.app/develop/resources/#android
 
 - 在 `src/scripts/browser-fixes.js` 增加移动端动态样式补丁：
   - 监听运行时新增 `<style>`，修正固定定位规则中的 `top`；
-  - 同步监听节点新增与 `class/style` 变更，兜底修正 fixed 元素行内/计算后的 `top`；
+  - 同步监听节点新增与 `class/style` 变更，兜底修正第三方浮层 fixed 元素行内/计算后的 `top`；
   - 把未包含 safe-area 的 `top` 统一重写为 `max(var(--tt-safe-area-top), <原值>)`。
 
 设计约束：
 
 - 仅移动端生效；
-- 仅作用于运行时动态 `<style>`，不改静态主样式文件；
+- 仅作用于第三方浮层与运行时动态 `<style>`，不改静态主样式文件；
+- 明确排除 `body/#sheld/#chat` 等应用核心容器，避免牵连应用本体布局；
 - 不侵入第三方扩展资源加载链路（与 `third-party-runtime.js` 解耦）。
