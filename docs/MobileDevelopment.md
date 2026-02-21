@@ -218,3 +218,27 @@ https://v2.tauri.app/develop/resources/#android
 - 能力检测结果缓存；
 - 预处理结果走现有样式缓存，避免重复计算。
 
+
+### 6.3 JS-Slash-Runner 脚本弹窗贴顶（关闭按钮落入状态栏）
+
+现象：
+
+- 某些脚本运行后弹窗顶部被状态栏遮挡，关闭按钮不可点击。
+
+根因：
+
+- 脚本运行时直接向主文档注入 `<style>`；
+- 规则常见为 `position: fixed` + `top: 0`，绕过了扩展 CSS 资源链路中的现有修正。
+
+已落地方案：
+
+- 在 `src/scripts/browser-fixes.js` 增加移动端动态样式补丁：
+  - 监听运行时新增 `<style>`，修正固定定位规则中的 `top`；
+  - 同步监听节点新增与 `class/style` 变更，兜底修正 fixed 元素行内/计算后的 `top`；
+  - 把未包含 safe-area 的 `top` 统一重写为 `max(var(--tt-safe-area-top), <原值>)`。
+
+设计约束：
+
+- 仅移动端生效；
+- 仅作用于运行时动态 `<style>`，不改静态主样式文件；
+- 不侵入第三方扩展资源加载链路（与 `third-party-runtime.js` 解耦）。

@@ -2,6 +2,25 @@ import { getParsedUA, isMobile } from './RossAscends-mods.js';
 
 const isFirefox = () => /firefox/i.test(navigator.userAgent);
 let runtimeCompatibilityApplied = false;
+let mobileSafeAreaStylePatchApplied = false;
+
+const CSS_RULE_BLOCK_PATTERN = /([^{}]+)\{([^{}]*)\}/g;
+const CSS_FIXED_POSITION_PATTERN = /\bposition\s*:\s*fixed\b/i;
+const CSS_TOP_DECLARATION_PATTERN = /\btop\s*:\s*([^;{}]+)(;?)/gi;
+const CSS_SAFE_AREA_TOP_REFERENCE_PATTERN = /(?:--tt-safe-area-top|safe-area-inset-top)/i;
+const CSS_NON_NUMERIC_TOP_VALUE_PATTERN = /^(auto|inherit|initial|unset|revert|revert-layer)$/i;
+const CSS_ZERO_TOP_VALUE_PATTERN = /^0(?:\.0+)?(?:[a-z%]+)?$/i;
+const observedDynamicStyles = new WeakSet();
+const MOBILE_SAFE_AREA_SKIP_ELEMENT_IDS = new Set(['top-settings-holder', 'top-bar']);
+const MOBILE_FIXED_TOP_CANDIDATE_SELECTOR = [
+    '[style*="top"]',
+    '[class*="popup"]',
+    '[class*="modal"]',
+    '[class*="window"]',
+    '[id*="popup"]',
+    '[id*="modal"]',
+    '[id*="window"]',
+].join(', ');
 
 function defineMissingMethod(target, key, implementation) {
     if (!target || typeof target[key] === 'function') {
@@ -118,6 +137,217 @@ function applyMobileRuntimeCompatibility() {
     defineMissingMethod(Object, 'hasOwn', hasOwnPolyfill);
 }
 
+function normalizeSafeAreaTopValue(rawValue) {
+    const value = String(rawValue || '').trim();
+    if (!value || CSS_SAFE_AREA_TOP_REFERENCE_PATTERN.test(value)) {
+        return null;
+    }
+
+    const importantMatch = value.match(/\s*!important\s*$/i);
+    const importantSuffix = importantMatch ? ' !important' : '';
+    const baseValue = value.replace(/\s*!important\s*$/i, '').trim();
+    if (!baseValue || CSS_NON_NUMERIC_TOP_VALUE_PATTERN.test(baseValue)) {
+        return null;
+    }
+
+    const normalizedBaseValue = CSS_ZERO_TOP_VALUE_PATTERN.test(baseValue) ? '0px' : baseValue;
+    return `max(var(--tt-safe-area-top), ${normalizedBaseValue})${importantSuffix}`;
+}
+
+function rewriteFixedTopDeclarations(declarations) {
+    const source = String(declarations || '');
+    if (!CSS_FIXED_POSITION_PATTERN.test(source) || !/\btop\s*:/i.test(source)) {
+        return source;
+    }
+
+    let changed = false;
+    const rewritten = source.replace(CSS_TOP_DECLARATION_PATTERN, (fullMatch, topValue, semicolon) => {
+        const safeAreaTopValue = normalizeSafeAreaTopValue(topValue);
+        if (!safeAreaTopValue) {
+            return fullMatch;
+        }
+
+        changed = true;
+        return `top: ${safeAreaTopValue}${semicolon || ';'}`;
+    });
+
+    return changed ? rewritten : source;
+}
+
+function rewriteDynamicStyleSafeArea(cssText) {
+    const source = String(cssText || '');
+    if (!source || !CSS_FIXED_POSITION_PATTERN.test(source) || !/\btop\s*:/i.test(source)) {
+        return source;
+    }
+
+    let changed = false;
+    const rewritten = source.replace(CSS_RULE_BLOCK_PATTERN, (fullMatch, selector, declarations) => {
+        const rewrittenDeclarations = rewriteFixedTopDeclarations(declarations);
+        if (rewrittenDeclarations === declarations) {
+            return fullMatch;
+        }
+
+        changed = true;
+        return `${selector}{${rewrittenDeclarations}}`;
+    });
+
+    return changed ? rewritten : source;
+}
+
+function patchDynamicStyleElement(styleElement) {
+    if (!(styleElement instanceof HTMLStyleElement)) {
+        return;
+    }
+
+    const source = String(styleElement.textContent || '');
+    const rewritten = rewriteDynamicStyleSafeArea(source);
+    if (rewritten !== source) {
+        styleElement.textContent = rewritten;
+    }
+}
+
+function observeDynamicStyleElement(styleElement) {
+    if (!(styleElement instanceof HTMLStyleElement) || observedDynamicStyles.has(styleElement)) {
+        return;
+    }
+
+    observedDynamicStyles.add(styleElement);
+    patchDynamicStyleElement(styleElement);
+
+    const observer = new MutationObserver(() => {
+        patchDynamicStyleElement(styleElement);
+    });
+    observer.observe(styleElement, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+    });
+}
+
+function collectDynamicStyleNodes(node) {
+    if (!(node instanceof Element)) {
+        return [];
+    }
+
+    if (node instanceof HTMLStyleElement) {
+        return [node];
+    }
+
+    return Array.from(node.querySelectorAll('style'));
+}
+
+function parsePixelValue(rawValue) {
+    const value = String(rawValue || '').trim();
+    const match = value.match(/^(-?\d+(?:\.\d+)?)px$/i);
+    if (!match) {
+        return null;
+    }
+
+    const parsed = Number(match[1]);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getSafeAreaTopPx() {
+    const rootStyle = getComputedStyle(document.documentElement);
+    const safeAreaTop = parsePixelValue(rootStyle.getPropertyValue('--tt-safe-area-top'));
+    return safeAreaTop === null ? 0 : safeAreaTop;
+}
+
+function shouldSkipSafeAreaPatch(element) {
+    return MOBILE_SAFE_AREA_SKIP_ELEMENT_IDS.has(element.id);
+}
+
+function resolveElementTopForPatch(element, computedStyle) {
+    const inlineTop = String(element.style.getPropertyValue('top') || '').trim();
+    if (inlineTop) {
+        return {
+            value: inlineTop,
+        };
+    }
+
+    const computedTop = String(computedStyle.top || '').trim();
+    const computedTopPx = parsePixelValue(computedTop);
+    const safeAreaTopPx = getSafeAreaTopPx();
+    if (computedTopPx === null || computedTopPx < 0 || computedTopPx >= safeAreaTopPx) {
+        return null;
+    }
+
+    return {
+        value: computedTop,
+    };
+}
+
+function patchFixedElementTopForSafeArea(element) {
+    if (!(element instanceof HTMLElement) || shouldSkipSafeAreaPatch(element)) {
+        return;
+    }
+
+    const computedStyle = getComputedStyle(element);
+    if (computedStyle.position !== 'fixed') {
+        return;
+    }
+
+    const top = resolveElementTopForPatch(element, computedStyle);
+    if (!top) {
+        return;
+    }
+
+    const safeAreaTopValue = normalizeSafeAreaTopValue(top.value);
+    if (!safeAreaTopValue) {
+        return;
+    }
+    element.style.setProperty('top', safeAreaTopValue, 'important');
+}
+
+function patchFixedElementTopInTree(node) {
+    if (!(node instanceof Element)) {
+        return;
+    }
+
+    if (node instanceof HTMLElement) {
+        patchFixedElementTopForSafeArea(node);
+    }
+
+    for (const element of node.querySelectorAll(MOBILE_FIXED_TOP_CANDIDATE_SELECTOR)) {
+        if (element instanceof HTMLElement) {
+            patchFixedElementTopForSafeArea(element);
+        }
+    }
+}
+
+function applyMobileDynamicStyleSafeAreaPatch() {
+    if (mobileSafeAreaStylePatchApplied || !isMobile() || typeof MutationObserver !== 'function') {
+        return;
+    }
+
+    mobileSafeAreaStylePatchApplied = true;
+    patchFixedElementTopInTree(document.body);
+
+    const observer = new MutationObserver(mutations => {
+        for (const mutation of mutations) {
+            if (mutation.type === 'attributes' && mutation.target instanceof HTMLElement) {
+                patchFixedElementTopForSafeArea(mutation.target);
+                continue;
+            }
+
+            for (const node of mutation.addedNodes) {
+                for (const styleElement of collectDynamicStyleNodes(node)) {
+                    observeDynamicStyleElement(styleElement);
+                }
+
+                patchFixedElementTopInTree(node);
+            }
+        }
+    });
+
+    observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style', 'class'],
+    });
+}
+
 function sanitizeInlineQuotationOnCopy() {
     // STRG+C, STRG+V on firefox leads to duplicate double quotes when inline quotation elements are copied.
     // To work around this, take the selection and transform <q> to <span> before calling toString().
@@ -183,6 +413,7 @@ function addSafariPatch() {
 
 function applyBrowserFixes() {
     applyMobileRuntimeCompatibility();
+    applyMobileDynamicStyleSafeAreaPatch();
 
     if (isFirefox()) {
         sanitizeInlineQuotationOnCopy();

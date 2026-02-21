@@ -182,13 +182,28 @@ src/
 
 该策略用于修复移动端插件面板（如 `TH-custom-tailwind`）样式大面积失效导致的布局错乱。
 
-#### 7.7.3 调试建议
+#### 7.7.3 动态 `style` safe-area 修正（移动端）
+
+- 实现位置：`src/scripts/browser-fixes.js`。
+- 入口：`applyBrowserFixes()` 中执行 `applyMobileDynamicStyleSafeAreaPatch()`。
+- 触发条件：仅移动端启用；仅处理运行时新增的 `<style>` 节点。
+- 处理策略：
+  - 监听运行时新增 `<style>` 并修正固定定位规则中的 `top`；
+  - 监听运行时新增节点与 `class/style` 变更，对 `position: fixed` 元素的顶边做 safe-area 兜底；
+  - 将未包含 safe-area 的 `top: <value>` 统一改写为 `top: max(var(--tt-safe-area-top), <value>)`。
+
+该策略用于修复 JS-Slash-Runner 等脚本在运行时注入固定定位弹窗样式时，关闭按钮落入状态栏导致不可点击的问题。
+
+#### 7.7.4 调试建议
 
 - 若看到 `*.at is not a function`：
   - 检查 `applyBrowserFixes()` 是否在应用初始化阶段已执行。
 - 若插件样式错乱但 CSS 已成功请求：
   - 优先检查是否命中 `@layer` 降级分支；
   - 关注 `resolveStylesheetBlobUrl()` 是否返回预处理后的样式文本。
+- 若脚本弹窗贴顶到状态栏：
+  - 检查脚本是否通过 `<style>` 或行内 `style` 设置了固定定位顶边；
+  - 检查是否命中 `applyMobileDynamicStyleSafeAreaPatch()`。
 
 ## 8. 兼容层策略
 
