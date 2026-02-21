@@ -11,6 +11,7 @@ const LINKS = Object.freeze({
 
 const COPY_SUCCESS_TEXT = '版本信息已复制到剪贴板';
 const COPY_FAILURE_TEXT = '复制失败，请手动复制版本信息';
+const UNKNOWN_VALUE = 'UNKNOWN';
 
 function extractCompatVersion(agent) {
     const segments = String(agent || '')
@@ -26,7 +27,30 @@ function getFallbackVersion() {
         .replace(/^TauriTavern\s*/i, '')
         .trim();
 
-    return normalized || 'UNKNOWN';
+    return normalized || UNKNOWN_VALUE;
+}
+
+function getAndroidSystemInfo() {
+    const userAgent = String(globalThis?.navigator?.userAgent || '');
+    if (!/\bAndroid\b/i.test(userAgent)) {
+        return null;
+    }
+
+    const androidVersionMatch = userAgent.match(/\bAndroid\s+([0-9.]+)/i);
+    const androidVersion = androidVersionMatch?.[1] || UNKNOWN_VALUE;
+
+    const modelFromBuild = userAgent.match(/\bAndroid\s+[0-9.]+;\s*([^;]+?)\s+Build\//i);
+    const modelFallback = userAgent.match(/\bAndroid\s+[0-9.]+;\s*([^;]+)/i);
+    const model = (modelFromBuild?.[1] || modelFallback?.[1] || UNKNOWN_VALUE).trim();
+
+    const webViewVersionMatch = userAgent.match(/\bChrome\/([0-9.]+)/i);
+    const webViewVersion = webViewVersionMatch?.[1] || UNKNOWN_VALUE;
+
+    return {
+        androidVersion,
+        model,
+        webViewVersion,
+    };
 }
 
 function buildVersionInfo(payload = null) {
@@ -46,11 +70,20 @@ function buildVersionInfo(payload = null) {
 
     const compatVersion = extractCompatVersion(agent);
     const compatBaseline = `SillyTavern ${compatVersion}`;
-    const summary = [
+    const summaryParts = [
         `TauriTavern ${packageVersion}`,
         `Compat ${compatBaseline}`,
         `Git ${gitInfo}`,
-    ].join(' | ');
+    ];
+
+    const androidInfo = getAndroidSystemInfo();
+    if (androidInfo) {
+        summaryParts.push(`Android ${androidInfo.androidVersion}`);
+        summaryParts.push(`Model ${androidInfo.model}`);
+        summaryParts.push(`WebView ${androidInfo.webViewVersion}`);
+    }
+
+    const summary = summaryParts.join(' | ');
 
     return {
         packageVersion,

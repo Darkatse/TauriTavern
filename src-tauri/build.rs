@@ -6,9 +6,7 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=../default/content");
     println!("cargo:rerun-if-changed=../src/scripts/templates");
-    println!("cargo:rerun-if-changed=../src/scripts/extensions/regex");
-    println!("cargo:rerun-if-changed=../src/scripts/extensions/code-render");
-    println!("cargo:rerun-if-changed=../src/scripts/extensions/data-migration");
+    println!("cargo:rerun-if-changed=../src/scripts/extensions");
     println!("cargo:rerun-if-changed=../.git/HEAD");
     println!("cargo:rerun-if-changed=../.git/refs");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
@@ -89,9 +87,7 @@ struct ResourceEntry {
 fn generate_resource_artifacts() -> Result<(), Box<dyn Error>> {
     let content_root = PathBuf::from("../default/content");
     let template_root = PathBuf::from("../src/scripts/templates");
-    let regex_template_root = PathBuf::from("../src/scripts/extensions/regex");
-    let code_render_template_root = PathBuf::from("../src/scripts/extensions/code-render");
-    let data_migration_template_root = PathBuf::from("../src/scripts/extensions/data-migration");
+    let extension_root = PathBuf::from("../src/scripts/extensions");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
 
     let mut content_files = collect_relative_files(&content_root, &content_root)?;
@@ -124,49 +120,8 @@ fn generate_resource_artifacts() -> Result<(), Box<dyn Error>> {
             .collect::<Vec<_>>(),
     );
 
-    let regex_template_files = collect_relative_files(&regex_template_root, &regex_template_root)?
-        .into_iter()
-        .filter(|relative| relative.ends_with(".html"))
-        .collect::<Vec<_>>();
-    embedded_resources.extend(
-        regex_template_files
-            .iter()
-            .map(|relative| ResourceEntry {
-                virtual_path: format!("frontend-extensions/regex/{}", relative),
-                source_path: regex_template_root.join(relative),
-            })
-            .collect::<Vec<_>>(),
-    );
-
-    let code_render_template_files =
-        collect_relative_files(&code_render_template_root, &code_render_template_root)?
-            .into_iter()
-            .filter(|relative| relative.ends_with(".html"))
-            .collect::<Vec<_>>();
-    embedded_resources.extend(
-        code_render_template_files
-            .iter()
-            .map(|relative| ResourceEntry {
-                virtual_path: format!("frontend-extensions/code-render/{}", relative),
-                source_path: code_render_template_root.join(relative),
-            })
-            .collect::<Vec<_>>(),
-    );
-
-    let data_migration_template_files =
-        collect_relative_files(&data_migration_template_root, &data_migration_template_root)?
-            .into_iter()
-            .filter(|relative| relative.ends_with(".html"))
-            .collect::<Vec<_>>();
-    embedded_resources.extend(
-        data_migration_template_files
-            .iter()
-            .map(|relative| ResourceEntry {
-                virtual_path: format!("frontend-extensions/data-migration/{}", relative),
-                source_path: data_migration_template_root.join(relative),
-            })
-            .collect::<Vec<_>>(),
-    );
+    let extension_template_resources = collect_extension_top_level_html(&extension_root)?;
+    embedded_resources.extend(extension_template_resources);
 
     embedded_resources.sort_by(|a, b| a.virtual_path.cmp(&b.virtual_path));
 
@@ -197,6 +152,52 @@ fn collect_relative_files(root: &Path, current: &Path) -> Result<Vec<String>, Bo
     }
 
     Ok(files)
+}
+
+fn collect_extension_top_level_html(root: &Path) -> Result<Vec<ResourceEntry>, Box<dyn Error>> {
+    let mut resources = Vec::new();
+
+    for extension_entry in fs::read_dir(root)? {
+        let extension_entry = extension_entry?;
+        let extension_type = extension_entry.file_type()?;
+        if !extension_type.is_dir() {
+            continue;
+        }
+
+        let extension_name = extension_entry.file_name().to_string_lossy().to_string();
+        let extension_path = extension_entry.path();
+
+        for file_entry in fs::read_dir(&extension_path)? {
+            let file_entry = file_entry?;
+            let file_type = file_entry.file_type()?;
+            if !file_type.is_file() {
+                continue;
+            }
+
+            let file_path = file_entry.path();
+            let is_html = file_path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("html"))
+                .unwrap_or(false);
+
+            if !is_html {
+                continue;
+            }
+
+            let file_name = match file_path.file_name() {
+                Some(name) => name.to_string_lossy().to_string(),
+                None => continue,
+            };
+
+            resources.push(ResourceEntry {
+                virtual_path: format!("frontend-extensions/{}/{}", extension_name, file_name),
+                source_path: file_path,
+            });
+        }
+    }
+
+    Ok(resources)
 }
 
 fn build_embedded_resources_source(resources: &[ResourceEntry]) -> Result<String, Box<dyn Error>> {
