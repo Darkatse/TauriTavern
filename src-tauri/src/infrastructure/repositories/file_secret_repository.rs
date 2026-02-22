@@ -30,7 +30,7 @@ impl FileSecretRepository {
             .join("default-user")
             .join("secrets.json");
 
-        tracing::info!(
+        tracing::debug!(
             "Secret repository initialized with secrets file: {:?}",
             secrets_file
         );

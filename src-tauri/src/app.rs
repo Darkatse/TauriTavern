@@ -77,16 +77,41 @@ impl AppState {
 }
 
 pub fn resolve_data_root(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    // 优先检查当前目录下是否存在 data 文件夹 (便携模式)
+    if let Ok(cwd) = std::env::current_dir() {
+        let local_data = cwd.join("data");
+        if local_data.exists() {
+            tracing::debug!("Detected portable data directory: {:?}", local_data);
+            return Ok(local_data);
+        }
+    }
+
     let app_data_dir = resolve_app_data_dir(app_handle)?;
 
     let data_root = app_data_dir.join("data");
-    tracing::info!("Data root directory: {:?}", data_root);
+    tracing::debug!("Data root directory: {:?}", data_root);
 
     std::fs::create_dir_all(&data_root)?;
     Ok(data_root)
 }
 
 pub fn resolve_log_root(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    // 优先检查当前目录下是否存在 logs 文件夹或 data 文件夹 (便携模式)
+    if let Ok(cwd) = std::env::current_dir() {
+        let local_logs = cwd.join("logs");
+        let local_data = cwd.join("data");
+        
+        if local_logs.exists() {
+             return Ok(local_logs);
+        }
+        // 如果 data 存在，logs 也放在同级
+        if local_data.exists() {
+             let logs = cwd.join("logs");
+             std::fs::create_dir_all(&logs)?;
+             return Ok(logs);
+        }
+    }
+
     let app_data_dir = resolve_app_data_dir(app_handle)?;
 
     let log_root = app_data_dir.join("logs");
@@ -107,13 +132,13 @@ pub fn spawn_initialization(app_handle: AppHandle, data_root: PathBuf) {
                 {
                     tracing::warn!("Failed to initialize default content: {}", error);
                 } else {
-                    tracing::info!("Successfully initialized default content");
+                    tracing::debug!("Successfully initialized default content");
                 }
 
                 if let Err(error) = app_handle.emit("app-ready", ()) {
                     tracing::error!("Failed to emit app-ready event: {}", error);
                 } else {
-                    tracing::info!("Application is ready");
+                    tracing::debug!("Application is ready");
                 }
             }
             Err(error) => {

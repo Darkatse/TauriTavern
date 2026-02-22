@@ -19,7 +19,7 @@ impl UserDirectoryService {
         &self,
         handle: &str,
     ) -> Result<UserDirectoryDto, ApplicationError> {
-        tracing::info!("Getting user directory for: {}", handle);
+        tracing::debug!("Getting user directory for: {}", handle);
 
         let directory = self
             .user_directory_repository
@@ -30,7 +30,7 @@ impl UserDirectoryService {
     }
 
     pub async fn get_default_user_directory(&self) -> Result<UserDirectoryDto, ApplicationError> {
-        tracing::info!("Getting default user directory");
+        tracing::debug!("Getting default user directory");
 
         let directory = self
             .user_directory_repository

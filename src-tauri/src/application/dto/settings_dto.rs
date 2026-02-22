@@ -68,8 +68,10 @@ pub struct SillyTavernSettingsResponseDto {
     pub textgenerationwebui_presets: Vec<String>,
     pub textgenerationwebui_preset_names: Vec<String>,
     pub themes: Vec<Value>,
-    pub movingUIPresets: Vec<Value>,
-    pub quickReplyPresets: Vec<Value>,
+    #[serde(rename = "movingUIPresets")]
+    pub moving_ui_presets: Vec<Value>,
+    #[serde(rename = "quickReplyPresets")]
+    pub quick_reply_presets: Vec<Value>,
     pub instruct: Vec<Value>,
     pub context: Vec<Value>,
     pub sysprompt: Vec<Value>,

@@ -3,7 +3,6 @@ use std::sync::{Once, OnceLock};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
-use tracing::info;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan},
@@ -63,7 +62,7 @@ pub fn init_logger(log_dir: &Path) -> Result<(), String> {
             eprintln!("Failed to set global default subscriber: {}", e);
         }
 
-        info!("Logger initialized");
+        tracing::debug!("Logger initialized");
     });
 
     Ok(())

@@ -20,7 +20,7 @@ impl SettingsService {
     }
 
     pub async fn get_settings(&self) -> Result<AppSettingsDto, ApplicationError> {
-        tracing::info!("Getting application settings");
+        tracing::debug!("Getting application settings");
 
         let settings = self.settings_repository.load().await?;
 
@@ -31,7 +31,7 @@ impl SettingsService {
         &self,
         dto: UpdateAppSettingsDto,
     ) -> Result<AppSettingsDto, ApplicationError> {
-        tracing::info!("Updating application settings");
+        tracing::debug!("Updating application settings");
 
         let mut settings = self.settings_repository.load().await?;
 
@@ -152,8 +152,8 @@ impl SettingsService {
             textgenerationwebui_presets: textgen_settings,
             textgenerationwebui_preset_names: textgen_setting_names,
             themes: themes_json,
-            movingUIPresets: moving_ui_presets_json,
-            quickReplyPresets: quick_reply_presets_json,
+            moving_ui_presets: moving_ui_presets_json,
+            quick_reply_presets: quick_reply_presets_json,
             instruct: instruct_presets_json,
             context: context_presets_json,
             sysprompt: sysprompt_presets_json,

@@ -40,8 +40,8 @@ pub struct ChatMetadata {
     #[serde(default)]
     pub note_role: u32,
 
-    #[serde(default)]
-    pub timedWorldInfo: TimedWorldInfo,
+    #[serde(default, rename = "timedWorldInfo")]
+    pub timed_world_info: TimedWorldInfo,
 
     #[serde(default)]
     pub variables: HashMap<String, String>,
@@ -49,8 +49,8 @@ pub struct ChatMetadata {
     #[serde(default)]
     pub tainted: bool,
 
-    #[serde(default)]
-    pub lastInContextMessageId: u32,
+    #[serde(default, rename = "lastInContextMessageId")]
+    pub last_in_context_message_id: u32,
 
     #[serde(default)]
     pub chat_instruct: Option<bool>,
@@ -96,8 +96,8 @@ pub struct MessageExtra {
     #[serde(default)]
     pub token_count: Option<u32>,
 
-    #[serde(default)]
-    pub isSmallSys: Option<bool>,
+    #[serde(default, rename = "isSmallSys")]
+    pub is_small_sys: Option<bool>,
 
     #[serde(default)]
     pub gen_started: Option<String>,
@@ -233,11 +233,13 @@ impl Chat {
     }
 
     /// Get the number of messages in the chat
+    #[allow(dead_code)]
     pub fn message_count(&self) -> usize {
         self.messages.len()
     }
 
     /// Get the file name for this chat
+    #[allow(dead_code)]
     pub fn get_file_name(&self) -> String {
         if let Some(file_name) = &self.file_name {
             format!("{}.jsonl", file_name)
@@ -247,6 +249,7 @@ impl Chat {
     }
 
     /// Get a preview of the last message
+    #[allow(dead_code)]
     pub fn get_preview(&self) -> String {
         if let Some(last) = self.last_message() {
             let preview = last.mes.replace("\r", " ").replace("\n", " ");
