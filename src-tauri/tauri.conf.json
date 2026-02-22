@@ -51,8 +51,7 @@
     ],
     "resources": {
       "../default/": "default/",
-      "../src/scripts/templates/": "frontend-templates/",
-      "../FasTools.exe": "FasTools.exe"
+      "../src/scripts/templates/": "frontend-templates/"
     }
   }
 }

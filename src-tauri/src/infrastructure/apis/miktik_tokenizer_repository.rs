@@ -39,10 +39,11 @@ pub struct MiktikTokenizerRepository {
 
 impl MiktikTokenizerRepository {
     pub fn new(cache_dir: PathBuf) -> Result<Self, DomainError> {
-        let http_client = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(10))
-            .timeout(Duration::from_secs(60))
-            .build();
+        let http_client: Agent = Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(10)))
+            .timeout_global(Some(Duration::from_secs(60)))
+            .build()
+            .into();
 
         let repository = Self {
             registry: TokenizerRegistry::new(),
@@ -354,14 +355,14 @@ impl MiktikTokenizerRepository {
     }
 
     fn download_model_bytes(&self, url: &str, gzip: bool) -> Result<Vec<u8>, DomainError> {
-        let response = self.http_client.get(url).call().map_err(|error| {
+        let mut response = self.http_client.get(url).call().map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to download tokenizer resource '{}': {}",
                 url, error
             ))
         })?;
 
-        if !(200..300).contains(&response.status()) {
+        if !response.status().is_success() {
             return Err(DomainError::InternalError(format!(
                 "Tokenizer resource request failed for '{}': HTTP {}",
                 url,
@@ -369,14 +370,17 @@ impl MiktikTokenizerRepository {
             )));
         }
 
-        let mut reader = response.into_reader();
         let mut payload = Vec::new();
-        reader.read_to_end(&mut payload).map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read downloaded tokenizer bytes from '{}': {}",
-                url, error
-            ))
-        })?;
+        response
+            .body_mut()
+            .as_reader()
+            .read_to_end(&mut payload)
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to read downloaded tokenizer bytes from '{}': {}",
+                    url, error
+                ))
+            })?;
 
         if !gzip {
             return Ok(payload);
