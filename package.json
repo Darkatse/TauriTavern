@@ -5,10 +5,20 @@
   "type": "module",
   "scripts": {
     "tauri": "tauri",
-    "build": "node build.js --build-only",
-    "dev": "webpack --config webpack.config.js --watch",
-    "tauri:dev": "node build.js",
-    "tauri:build": "node build.js --prod"
+    "android": "tauri android",
+    "ios": "tauri ios",
+    "build": "pnpm run web:build",
+    "dev": "pnpm run tauri:dev",
+    "web:build": "node build.js --build-only",
+    "web:dev": "webpack --config webpack.config.js --watch",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build",
+    "ios:dev": "tauri ios dev",
+    "ios:build": "tauri ios build",
+    "fastools:build": "cargo build --release --manifest-path fastools/Cargo.toml",
+    "fastools:run": "cargo run --manifest-path fastools/Cargo.toml"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.0",

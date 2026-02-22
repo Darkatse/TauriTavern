@@ -77,9 +77,33 @@ pnpm install
 Common commands:
 
 ```bash
-pnpm run build       # build frontend bundles
-pnpm run tauri:dev   # run desktop app in dev mode
-pnpm run tauri:build # build release installers
+pnpm run build         # build frontend bundles (webpack)
+pnpm run dev           # desktop dev mode (alias of tauri:dev)
+pnpm run tauri:dev     # desktop dev mode
+pnpm run tauri:build   # build desktop installers
+pnpm run android:dev   # Android dev mode
+pnpm run ios:dev       # iOS dev mode
+```
+
+## FasTools (Debug Utility)
+
+`fastools` is an useful toolkit that facilitates debugging during development and desktop deployment.
+
+Build:
+
+```bash
+pnpm run fastools:build
+```
+
+Run:
+
+- `pnpm run fastools:run`
+
+If you prefer cargo directly, run from repository root:
+
+```bash
+cargo build --release --manifest-path fastools/Cargo.toml
+cargo run --manifest-path fastools/Cargo.toml
 ```
 
 ## Documentation

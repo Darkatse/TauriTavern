@@ -359,6 +359,7 @@ fn get_cmd(cmd: &str) -> String {
 fn show_menu() -> Result<bool> {
     let selections = &[
         "🚀 启动开发模式 (Dev)",
+        "📱 启动 Android 开发模式 (Android Dev)",
         "🔨 构建生产版本 (Build)",
         "⭐ 检查更新 (Git Pull)",
         "🧰 工具箱 (Toolbox)",
@@ -378,18 +379,22 @@ fn show_menu() -> Result<bool> {
             Ok(true) // 继续循环
         }
         1 => {
-            run_build()?;
+            run_android_dev()?;
             Ok(true)
         }
         2 => {
-            update_repository()?;
+            run_build()?;
             Ok(true)
         }
         3 => {
-            show_toolbox_menu()?;
+            update_repository()?;
             Ok(true)
         }
         4 => {
+            show_toolbox_menu()?;
+            Ok(true)
+        }
+        5 => {
             show_debug_menu()?;
             Ok(true)
         }
@@ -599,6 +604,22 @@ fn run_dev() -> Result<()> {
 
     if !status.success() {
         log_error("开发服务器启动失败");
+        pause();
+    }
+    Ok(())
+}
+
+fn run_android_dev() -> Result<()> {
+    log_info("正在启动 Android 开发模式...");
+
+    let status = run_sequential_attempts(&[
+        ("pnpm", vec!["run", "android:dev"]),
+        ("corepack", vec!["pnpm", "run", "android:dev"]),
+        ("npm", vec!["run", "android:dev"]),
+    ])?;
+
+    if !status.success() {
+        log_error("Android 开发模式启动失败");
         pause();
     }
     Ok(())
@@ -986,21 +1007,63 @@ fn run_debug() -> Result<()> {
     env::set_var("FORCE_COLOR", "1"); 
     env::set_var("CARGO_TERM_COLOR", "always");
 
-    let (prog, args) = if which("pnpm").is_ok() {
-        ("pnpm", vec!["tauri", "dev"])
-    } else {
-        ("npm", vec!["run", "tauri", "dev"])
-    };
+    // 与 run_sequential_attempts 保持一致的多候选回退策略，避免单条命令 NotFound 直接失败。
+    let candidates = [
+        ("pnpm", vec!["tauri", "dev"]),
+        ("pnpm", vec!["run", "tauri:dev"]),
+        ("corepack", vec!["pnpm", "tauri", "dev"]),
+        ("corepack", vec!["pnpm", "run", "tauri:dev"]),
+        ("npm", vec!["run", "tauri:dev"]),
+    ];
 
-    let cmd_prog = get_cmd(prog);
-    log_info(&format!("执行命令: {} {:?}", cmd_prog, args));
+    let mut last_err: Option<anyhow::Error> = None;
+    let mut child_opt = None;
 
-    let mut child = Command::new(&cmd_prog)
-        .args(&args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("无法启动调试进程")?;
+    for (prog, args) in candidates.iter() {
+        let cmd_prog = get_cmd(prog);
+        log_info(&format!("执行命令: {} {:?}", cmd_prog, args));
+
+        match Command::new(&cmd_prog)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => {
+                child_opt = Some(child);
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Windows 下额外尝试不带 .cmd 的命令名（兼容部分 shell/path 配置）。
+                if cfg!(windows) && *prog != "corepack" {
+                    match Command::new(prog)
+                        .args(args)
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                    {
+                        Ok(child) => {
+                            child_opt = Some(child);
+                            break;
+                        }
+                        Err(e2) => {
+                            last_err = Some(e2.into());
+                        }
+                    }
+                } else {
+                    last_err = Some(e.into());
+                }
+            }
+            Err(e) => {
+                last_err = Some(e.into());
+            }
+        }
+    }
+
+    let mut child = child_opt.ok_or_else(|| {
+        anyhow::anyhow!("无法启动调试进程")
+            .context(last_err.unwrap_or_else(|| anyhow::anyhow!("program not found")))
+    })?;
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();

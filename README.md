@@ -79,9 +79,33 @@ pnpm install
 常用命令：
 
 ```bash
-pnpm run build       # 构建前端资源包
-pnpm run tauri:dev   # 以开发模式运行桌面应用
-pnpm run tauri:build # 构建发行版安装程序
+pnpm run build         # 构建前端资源包（webpack）
+pnpm run dev           # 桌面开发模式（等价 tauri:dev）
+pnpm run tauri:dev     # 桌面开发模式
+pnpm run tauri:build   # 构建桌面发行包
+pnpm run android:dev   # Android 开发模式
+pnpm run ios:dev       # iOS 开发模式
+```
+
+## FasTools（调试工具）
+
+`fastools` 是一个极其有用的小工具箱，方便开发与桌面端部署时的调试。
+
+构建：
+
+```bash
+pnpm run fastools:build
+```
+
+运行：
+
+- `pnpm run fastools:run`
+
+如需直接使用 cargo，也可在仓库根目录执行：
+
+```bash
+cargo build --release --manifest-path fastools/Cargo.toml
+cargo run --manifest-path fastools/Cargo.toml
 ```
 
 ## 项目文档

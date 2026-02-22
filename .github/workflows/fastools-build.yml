@@ -1,0 +1,93 @@
+name: FasTools Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "fastools/**"
+      - ".github/workflows/fastools-build.yml"
+
+concurrency:
+  group: fastools-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-fastools:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            platform: windows-latest
+            target: ""
+            bin_name: fastools.exe
+            out_name: FasTools.exe
+          - name: macos-x64
+            platform: macos-latest
+            target: x86_64-apple-darwin
+            bin_name: fastools
+            out_name: FasTools
+          - name: macos-arm64
+            platform: macos-latest
+            target: aarch64-apple-darwin
+            bin_name: fastools
+            out_name: FasTools
+          - name: linux-x64
+            platform: ubuntu-22.04
+            target: ""
+            bin_name: fastools
+            out_name: FasTools
+          - name: linux-arm64
+            platform: ubuntu-22.04-arm
+            target: ""
+            bin_name: fastools
+            out_name: FasTools
+
+    runs-on: ${{ matrix.platform }}
+    name: build-${{ matrix.name }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (default target)
+        if: matrix.target == ''
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust toolchain (custom target)
+        if: matrix.target != ''
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build artifacts
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "fastools -> target"
+
+      - name: Build FasTools
+        shell: bash
+        run: |
+          cd fastools
+          if [[ -n "${{ matrix.target }}" ]]; then
+            cargo build --release --target "${{ matrix.target }}"
+            BIN_PATH="target/${{ matrix.target }}/release/${{ matrix.bin_name }}"
+          else
+            cargo build --release
+            BIN_PATH="target/release/${{ matrix.bin_name }}"
+          fi
+
+          mkdir -p "../dist-fastools/${{ matrix.name }}"
+          cp "$BIN_PATH" "../dist-fastools/${{ matrix.name }}/${{ matrix.out_name }}"
+
+      - name: Upload FasTools artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fastools-${{ matrix.name }}
+          path: dist-fastools/${{ matrix.name }}/${{ matrix.out_name }}
+
