@@ -43,7 +43,7 @@ impl FileGroupRepository {
 
     /// Format a timestamp as a human-readable date string
     fn format_timestamp(&self, timestamp: i64) -> String {
-        let dt = DateTime::<Utc>::from_timestamp(timestamp / 1000, 0).unwrap_or_else(|| Utc::now());
+        let dt = DateTime::<Utc>::from_timestamp(timestamp / 1000, 0).unwrap_or_else(Utc::now);
         format!(
             "{}-{}-{} @{}h {}m {}s {}ms",
             dt.year(),

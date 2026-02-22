@@ -33,7 +33,7 @@ pub async fn run() {
                 }
             }
 
-            tracing::info!("Starting TauriTavern application");
+            tracing::debug!("Starting TauriTavern application");
 
             let data_root = resolve_data_root(&app_handle)?;
             if let Err(error) = app_handle

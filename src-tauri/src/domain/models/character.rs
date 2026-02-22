@@ -285,7 +285,9 @@ impl Character {
         let formatted_date = humanized_date(now);
         let chat = format!("{} - {}", name, formatted_date);
 
-        let character = Self {
+        
+
+        Self {
             spec: default_spec(),
             spec_version: default_spec_version(),
             name: name.clone(),
@@ -320,9 +322,7 @@ impl Character {
             date_added: timestamp,
             date_last_chat: 0,
             json_data: None,
-        };
-
-        character
+        }
     }
 
     /// Convert character to V2 format

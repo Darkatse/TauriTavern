@@ -49,7 +49,7 @@ impl DataDirectory {
 
     /// Initialize the data directory structure
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        tracing::info!("Initializing data directory at: {:?}", self.root);
+        tracing::debug!("Initializing data directory at: {:?}", self.root);
 
         // Create main directories
         self.create_directory(&self.root).await?;
@@ -92,7 +92,7 @@ impl DataDirectory {
             self.create_directory(&self.default_user.join(dir)).await?;
         }
 
-        tracing::info!("Data directory initialized successfully");
+        tracing::debug!("Data directory initialized successfully");
         Ok(())
     }
 
@@ -246,7 +246,7 @@ pub async fn list_files_with_extension(
         let path = entry.path();
 
         // Check if it's a file with the specified extension
-        if path.is_file() && path.extension().map_or(false, |ext| ext == extension) {
+        if path.is_file() && path.extension().is_some_and(|ext| ext == extension) {
             files.push(path);
         }
     }

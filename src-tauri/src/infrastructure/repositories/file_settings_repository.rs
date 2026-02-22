@@ -41,7 +41,7 @@ impl FileSettingsRepository {
     async fn ensure_directory_exists(&self) -> Result<(), DomainError> {
         if let Some(parent) = self.settings_file.parent() {
             if !parent.exists() {
-                tracing::info!("Creating settings directory: {:?}", parent);
+                tracing::debug!("Creating settings directory: {:?}", parent);
                 fs::create_dir_all(parent).await.map_err(|e| {
                     tracing::error!("Failed to create settings directory: {}", e);
                     DomainError::InternalError(format!(
@@ -105,7 +105,7 @@ impl FileSettingsRepository {
         for entry in entries_vec {
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                 match read_json_file::<UserSettings>(&path).await {
                     Ok(settings) => {
                         result.push(settings);
@@ -310,7 +310,7 @@ impl SettingsRepository for FileSettingsRepository {
         })? {
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                 let file_name = path
                     .file_stem()
                     .and_then(|s| s.to_str())

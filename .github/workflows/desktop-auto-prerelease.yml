@@ -84,6 +84,43 @@ jobs:
       - name: Build frontend assets
         run: pnpm build
 
+      - name: Build FasTools (Windows)
+        if: startsWith(matrix.platform, 'windows-latest')
+        run: |
+           cd fastools
+           cargo build --release
+           mv target/release/fastools.exe ../FasTools.exe
+
+      - name: Build FasTools (Unix)
+        if: runner.os != 'Windows'
+        run: |
+           TARGET_FLAG=""
+           if [[ "${{ matrix.name }}" == "macos-x64" ]]; then
+             TARGET_FLAG="--target x86_64-apple-darwin"
+           elif [[ "${{ matrix.name }}" == "macos-arm64" ]]; then
+             TARGET_FLAG="--target aarch64-apple-darwin"
+           fi
+           
+           cd fastools
+           echo "Building FasTools with target: $TARGET_FLAG"
+           cargo build --release $TARGET_FLAG
+           
+           if [[ -n "$TARGET_FLAG" ]]; then
+             TARGET_NAME=$(echo $TARGET_FLAG | awk '{print $2}')
+             BIN_PATH="target/$TARGET_NAME/release/fastools"
+           else
+             BIN_PATH="target/release/fastools"
+           fi
+           
+           echo "Moving binary from $BIN_PATH"
+           mv "$BIN_PATH" ../FasTools
+           chmod +x ../FasTools
+           cd ..
+           
+           # Update tauri.conf.json
+           echo "Updating tauri.conf.json..."
+           jq '.bundle.resources["../FasTools"] = "FasTools" | del(.bundle.resources["../FasTools.exe"])' src-tauri/tauri.conf.json > src-tauri/tauri.conf.json.tmp && mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
+
       - name: Build and upload desktop pre-release
         uses: tauri-apps/tauri-action@v0
         env:

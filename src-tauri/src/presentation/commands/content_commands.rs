@@ -124,7 +124,7 @@ fn derive_file_name(url: &reqwest::Url, headers: &reqwest::header::HeaderMap) ->
 
     let from_url = url
         .path_segments()
-        .and_then(|segments| segments.last())
+        .and_then(|mut segments| segments.next_back())
         .unwrap_or("shared-character.png");
 
     sanitize_file_name(from_url)

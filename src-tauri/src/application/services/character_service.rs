@@ -93,7 +93,7 @@ impl CharacterService {
         let avatar_path_ref: Option<&Path> = dto.avatar_path.as_deref().map(Path::new);
 
         // Convert crop parameters
-        let crop = dto.crop.map(|c_dto| ImageCrop::from(c_dto));
+        let crop = dto.crop.map(ImageCrop::from);
 
         // Create character with avatar
         let created = self
@@ -311,7 +311,7 @@ impl CharacterService {
     /// Update a character's avatar
     pub async fn update_avatar(&self, dto: UpdateAvatarDto) -> Result<(), ApplicationError> {
         logger::debug(&format!("Updating avatar for character: {}", dto.name));
-        let crop = dto.crop.map(|c_dto| ImageCrop::from(c_dto));
+        let crop = dto.crop.map(ImageCrop::from);
         self.repository
             .update_avatar(&dto.name, Path::new(&dto.avatar_path), crop)
             .await?;

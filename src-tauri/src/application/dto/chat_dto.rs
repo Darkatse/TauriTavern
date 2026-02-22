@@ -23,8 +23,8 @@ pub struct MessageExtraDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_count: Option<u32>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub isSmallSys: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "isSmallSys")]
+    pub is_small_sys: Option<bool>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gen_started: Option<String>,
@@ -214,7 +214,7 @@ impl From<MessageExtra> for MessageExtraDto {
             reasoning: extra.reasoning,
             reasoning_duration: extra.reasoning_duration,
             token_count: extra.token_count,
-            isSmallSys: extra.isSmallSys,
+            is_small_sys: extra.is_small_sys,
             gen_started: extra.gen_started,
             gen_finished: extra.gen_finished,
             swipe_id: extra.swipe_id,
@@ -235,7 +235,7 @@ impl From<MessageExtraDto> for MessageExtra {
             reasoning: dto.reasoning,
             reasoning_duration: dto.reasoning_duration,
             token_count: dto.token_count,
-            isSmallSys: dto.isSmallSys,
+            is_small_sys: dto.is_small_sys,
             gen_started: dto.gen_started,
             gen_finished: dto.gen_finished,
             swipe_id: dto.swipe_id,

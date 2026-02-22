@@ -22,7 +22,7 @@ impl FileUserDirectoryRepository {
         // 构建数据根目录
         let data_root = app_data_dir.join("data");
 
-        tracing::info!(
+        tracing::debug!(
             "User directory repository initialized with data root: {:?}",
             data_root
         );

@@ -90,10 +90,10 @@ impl FileChatRepository {
         // Sort backups by modification time (oldest first)
         matching_backups.sort_by(|(_, a), (_, b)| {
             a.modified()
-                .unwrap_or_else(|_| std::time::SystemTime::UNIX_EPOCH)
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                 .cmp(
                     &b.modified()
-                        .unwrap_or_else(|_| std::time::SystemTime::UNIX_EPOCH),
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
                 )
         });
 

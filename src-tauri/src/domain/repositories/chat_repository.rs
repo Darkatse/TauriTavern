@@ -32,6 +32,7 @@ pub enum ChatImportFormat {
 
 /// Chat export format
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum ChatExportFormat {
     JSONL,
     PlainText,

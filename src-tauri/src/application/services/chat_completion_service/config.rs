@@ -85,6 +85,7 @@ pub(super) async fn resolve_generate_api_config(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn resolve_api_config(
     source: ChatCompletionSource,
     reverse_proxy: &str,
