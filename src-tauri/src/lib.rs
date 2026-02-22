@@ -4,8 +4,9 @@ mod domain;
 mod infrastructure;
 mod presentation;
 
-use app::{resolve_data_root, resolve_log_root, spawn_initialization};
+use app::spawn_initialization;
 use infrastructure::logging::logger;
+use infrastructure::paths::resolve_runtime_paths;
 use presentation::commands::registry::invoke_handler;
 use tauri::Manager;
 
@@ -22,31 +23,25 @@ pub async fn run() {
             let app_handle = app.handle().clone();
             logger::bind_app_handle(app_handle.clone());
 
-            match resolve_log_root(&app_handle) {
-                Ok(log_root) => {
-                    if let Err(error) = logger::init_logger(&log_root) {
-                        eprintln!("Failed to initialize logger: {}", error);
-                    }
-                }
-                Err(error) => {
-                    eprintln!("Failed to resolve log directory: {}", error);
-                }
+            let runtime_paths = resolve_runtime_paths(&app_handle)?;
+
+            if let Err(error) = logger::init_logger(&runtime_paths.log_root) {
+                eprintln!("Failed to initialize logger: {}", error);
             }
 
             tracing::debug!("Starting TauriTavern application");
 
-            let data_root = resolve_data_root(&app_handle)?;
             if let Err(error) = app_handle
                 .asset_protocol_scope()
-                .allow_directory(&data_root, true)
+                .allow_directory(&runtime_paths.data_root, true)
             {
                 tracing::warn!(
                     "Failed to extend asset protocol scope for {:?}: {}",
-                    data_root,
+                    runtime_paths.data_root,
                     error
                 );
             }
-            spawn_initialization(app_handle, data_root);
+            spawn_initialization(app_handle, runtime_paths);
             Ok(())
         })
         .invoke_handler(invoke_handler())

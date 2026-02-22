@@ -5,7 +5,6 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
 use tokio::fs as tokio_fs;
 use url::Url;
 use uuid::Uuid;
@@ -18,7 +17,6 @@ use crate::domain::models::extension::{
 use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::infrastructure::http_client::build_http_client;
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::paths::resolve_app_data_dir;
 use crate::infrastructure::persistence::file_system::read_json_file;
 
 mod github;
@@ -73,17 +71,11 @@ struct GithubRepoLocation {
 }
 
 impl FileExtensionRepository {
-    pub fn new(app_handle: AppHandle) -> Self {
-        // Get app data directory
-        let app_data_dir =
-            resolve_app_data_dir(&app_handle).expect("Failed to get app data directory");
-
-        // Construct extension directories
-        let data_root = app_data_dir.join("data");
-        let user_extensions_dir = data_root.join("default-user").join("extensions");
-        let global_extensions_dir = data_root.join("extensions").join("third-party");
-        let system_extensions_dir = data_root.join("extensions");
-
+    pub fn new(
+        user_extensions_dir: PathBuf,
+        global_extensions_dir: PathBuf,
+        system_extensions_dir: PathBuf,
+    ) -> Self {
         // Create directories if they don't exist
         fs::create_dir_all(&user_extensions_dir)
             .expect("Failed to create user extensions directory");

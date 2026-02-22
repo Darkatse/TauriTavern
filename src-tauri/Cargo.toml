@@ -55,3 +55,4 @@ ureq = "3.2.0"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+portable = []

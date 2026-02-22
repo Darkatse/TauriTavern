@@ -1,12 +1,10 @@
 use async_trait::async_trait;
 use std::path::PathBuf;
-use tauri::AppHandle;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::theme::{sanitize_filename, Theme};
 use crate::domain::repositories::theme_repository::ThemeRepository;
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::paths::resolve_app_data_dir;
 use crate::infrastructure::persistence::file_system::{delete_file, write_json_file};
 
 /// File-based implementation of the ThemeRepository
@@ -17,15 +15,7 @@ pub struct FileThemeRepository {
 
 impl FileThemeRepository {
     /// Create a new FileThemeRepository
-    pub fn new(app_handle: AppHandle) -> Self {
-        // Get the themes directory from the app data directory
-        let app_data_dir =
-            resolve_app_data_dir(&app_handle).expect("Failed to get app data directory");
-        let themes_dir = app_data_dir
-            .join("data")
-            .join("default-user")
-            .join("themes");
-
+    pub fn new(themes_dir: PathBuf) -> Self {
         Self { themes_dir }
     }
 

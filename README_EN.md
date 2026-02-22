@@ -77,13 +77,19 @@ pnpm install
 Common commands:
 
 ```bash
-pnpm run build         # build frontend bundles (webpack)
+pnpm run web:build         # build frontend bundles (webpack)
 pnpm run dev           # desktop dev mode (alias of tauri:dev)
 pnpm run tauri:dev     # desktop dev mode
 pnpm run tauri:build   # build desktop installers
 pnpm run android:dev   # Android dev mode
 pnpm run ios:dev       # iOS dev mode
 ```
+
+Portable build notes:
+
+- `pnpm run tauri:build:portable` outputs to `release/portable/` by default
+- You can force portable runtime mode via `TAURITAVERN_RUNTIME_MODE=portable` or `portable.flag`
+- On Windows, portable users must ensure WebView2 runtime is available
 
 ## FasTools (Debug Utility)
 

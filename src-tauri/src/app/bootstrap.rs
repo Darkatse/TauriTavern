@@ -177,6 +177,9 @@ fn build_repositories(
     app_handle: &AppHandle,
     data_directory: &DataDirectory,
 ) -> Result<AppRepositories, DomainError> {
+    let data_root = data_directory.root().to_path_buf();
+    let default_user_dir = data_directory.default_user().to_path_buf();
+
     let character_repository: Arc<dyn CharacterRepository> =
         Arc::new(FileCharacterRepository::new(
             data_directory.characters().to_path_buf(),
@@ -200,21 +203,27 @@ fn build_repositories(
     ));
 
     let user_directory_repository: Arc<dyn UserDirectoryRepository> =
-        Arc::new(FileUserDirectoryRepository::new(app_handle.clone()));
+        Arc::new(FileUserDirectoryRepository::new(data_root.clone()));
 
-    let secret_repository: Arc<dyn SecretRepository> =
-        Arc::new(FileSecretRepository::new(app_handle.clone()));
+    let secret_repository: Arc<dyn SecretRepository> = Arc::new(FileSecretRepository::new(
+        default_user_dir.join("secrets.json"),
+    ));
 
     let content_repository: Arc<dyn ContentRepository> = Arc::new(FileContentRepository::new(
         app_handle.clone(),
-        data_directory.default_user().to_path_buf(),
+        default_user_dir.clone(),
     ));
 
     let extension_repository: Arc<dyn ExtensionRepository> =
-        Arc::new(FileExtensionRepository::new(app_handle.clone()));
+        Arc::new(FileExtensionRepository::new(
+            default_user_dir.join("extensions"),
+            data_root.join("extensions").join("third-party"),
+            data_root.join("extensions"),
+        ));
 
-    let avatar_repository: Arc<dyn AvatarRepository> =
-        Arc::new(FileAvatarRepository::new(app_handle.clone()));
+    let avatar_repository: Arc<dyn AvatarRepository> = Arc::new(FileAvatarRepository::new(
+        default_user_dir.join("User Avatars"),
+    ));
 
     let group_repository: Arc<dyn GroupRepository> = Arc::new(FileGroupRepository::new(
         data_directory.groups().to_path_buf(),
@@ -226,11 +235,11 @@ fn build_repositories(
     );
 
     let theme_repository: Arc<dyn ThemeRepository> =
-        Arc::new(FileThemeRepository::new(app_handle.clone()));
+        Arc::new(FileThemeRepository::new(default_user_dir.join("themes")));
 
     let preset_repository: Arc<dyn PresetRepository> = Arc::new(FilePresetRepository::new(
         app_handle.clone(),
-        data_directory.default_user().to_path_buf(),
+        default_user_dir.clone(),
         content_repository.clone(),
     ));
     let quick_reply_repository: Arc<dyn QuickReplyRepository> = Arc::new(
@@ -239,12 +248,7 @@ fn build_repositories(
 
     let chat_completion_repository: Arc<dyn ChatCompletionRepository> =
         Arc::new(HttpChatCompletionRepository::new()?);
-    let tokenizer_cache_dir = data_directory
-        .default_user()
-        .parent()
-        .unwrap_or_else(|| data_directory.default_user())
-        .join("_cache")
-        .join("tokenizers");
+    let tokenizer_cache_dir = data_root.join("_cache").join("tokenizers");
     let tokenizer_repository: Arc<dyn TokenizerRepository> =
         Arc::new(MiktikTokenizerRepository::new(tokenizer_cache_dir)?);
     let world_info_repository: Arc<dyn WorldInfoRepository> = Arc::new(

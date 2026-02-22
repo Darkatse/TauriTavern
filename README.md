@@ -79,13 +79,19 @@ pnpm install
 常用命令：
 
 ```bash
-pnpm run build         # 构建前端资源包（webpack）
+pnpm run web:build         # 构建前端资源包（webpack）
 pnpm run dev           # 桌面开发模式（等价 tauri:dev）
 pnpm run tauri:dev     # 桌面开发模式
 pnpm run tauri:build   # 构建桌面发行包
 pnpm run android:dev   # Android 开发模式
 pnpm run ios:dev       # iOS 开发模式
 ```
+
+便携版构建补充说明：
+
+- `pnpm run tauri:build:portable` 默认输出到 `release/portable/`
+- 可通过 `TAURITAVERN_RUNTIME_MODE=portable` 或 `portable.flag` 显式启用便携运行策略
+- Windows 便携版需用户自行确保 WebView2 运行时可用
 
 ## FasTools（调试工具）
 

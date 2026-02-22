@@ -91,10 +91,7 @@ impl FileChatRepository {
         matching_backups.sort_by(|(_, a), (_, b)| {
             a.modified()
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-                .cmp(
-                    &b.modified()
-                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
-                )
+                .cmp(&b.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH))
         });
 
         while matching_backups.len() > max_backups {

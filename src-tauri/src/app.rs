@@ -1,4 +1,3 @@
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager};
@@ -21,7 +20,7 @@ use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
-use crate::infrastructure::paths::resolve_app_data_dir;
+use crate::infrastructure::paths::RuntimePaths;
 
 mod bootstrap;
 
@@ -46,10 +45,17 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(app_handle: AppHandle, data_root: &Path) -> Result<Self, DomainError> {
-        tracing::info!("Initializing application with data root: {:?}", data_root);
+    pub async fn new(
+        app_handle: AppHandle,
+        runtime_paths: RuntimePaths,
+    ) -> Result<Self, DomainError> {
+        tracing::info!(
+            "Initializing application in {:?} mode with data root: {:?}",
+            runtime_paths.mode,
+            runtime_paths.data_root
+        );
 
-        let data_directory = bootstrap::initialize_data_directory(data_root).await?;
+        let data_directory = bootstrap::initialize_data_directory(&runtime_paths.data_root).await?;
         let services = bootstrap::build_services(&app_handle, &data_directory)?;
 
         tracing::info!("Application initialized successfully");
@@ -76,52 +82,9 @@ impl AppState {
     }
 }
 
-pub fn resolve_data_root(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    // 优先检查当前目录下是否存在 data 文件夹 (便携模式)
-    if let Ok(cwd) = std::env::current_dir() {
-        let local_data = cwd.join("data");
-        if local_data.exists() {
-            tracing::debug!("Detected portable data directory: {:?}", local_data);
-            return Ok(local_data);
-        }
-    }
-
-    let app_data_dir = resolve_app_data_dir(app_handle)?;
-
-    let data_root = app_data_dir.join("data");
-    tracing::debug!("Data root directory: {:?}", data_root);
-
-    std::fs::create_dir_all(&data_root)?;
-    Ok(data_root)
-}
-
-pub fn resolve_log_root(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    // 优先检查当前目录下是否存在 logs 文件夹或 data 文件夹 (便携模式)
-    if let Ok(cwd) = std::env::current_dir() {
-        let local_logs = cwd.join("logs");
-        let local_data = cwd.join("data");
-        
-        if local_logs.exists() {
-             return Ok(local_logs);
-        }
-        // 如果 data 存在，logs 也放在同级
-        if local_data.exists() {
-             let logs = cwd.join("logs");
-             std::fs::create_dir_all(&logs)?;
-             return Ok(logs);
-        }
-    }
-
-    let app_data_dir = resolve_app_data_dir(app_handle)?;
-
-    let log_root = app_data_dir.join("logs");
-    std::fs::create_dir_all(&log_root)?;
-    Ok(log_root)
-}
-
-pub fn spawn_initialization(app_handle: AppHandle, data_root: PathBuf) {
+pub fn spawn_initialization(app_handle: AppHandle, runtime_paths: RuntimePaths) {
     tauri::async_runtime::spawn(async move {
-        match AppState::new(app_handle.clone(), &data_root).await {
+        match AppState::new(app_handle.clone(), runtime_paths).await {
             Ok(state) => {
                 app_handle.manage(Arc::new(state));
 

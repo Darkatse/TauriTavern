@@ -3,13 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
-use tauri::AppHandle;
 use uuid::Uuid;
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::domain::errors::DomainError;
-use crate::infrastructure::paths::resolve_app_data_dir;
 use crate::infrastructure::persistence::file_system::DataDirectory;
 
 const DEFAULT_USER_HANDLE: &str = "default-user";
@@ -66,7 +64,7 @@ pub fn is_cancelled_error(error: &DomainError) -> bool {
 }
 
 pub fn run_export_data_archive(
-    app_handle: &AppHandle,
+    data_root: &Path,
     output_path: &Path,
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
@@ -74,7 +72,6 @@ pub fn run_export_data_archive(
     report_progress("preparing", 0.0, "Preparing export");
     ensure_not_cancelled(is_cancelled)?;
 
-    let data_root = resolve_data_root(app_handle)?;
     if !data_root.is_dir() {
         return Err(DomainError::NotFound(format!(
             "Data directory not found: {}",
@@ -87,7 +84,7 @@ pub fn run_export_data_archive(
             .map_err(|error| internal_error("Failed to create export output directory", error))?;
     }
 
-    let total_steps = count_export_entries(&data_root, is_cancelled)?.saturating_add(1);
+    let total_steps = count_export_entries(data_root, is_cancelled)?.saturating_add(1);
     let mut progress = ExportProgress {
         processed_steps: 1,
         total_steps,
@@ -114,8 +111,8 @@ pub fn run_export_data_archive(
     let mut copy_buffer = vec![0u8; COPY_BUFFER_BYTES];
     write_export_entries(
         &mut writer,
-        &data_root,
-        &data_root,
+        data_root,
+        data_root,
         "data",
         file_options,
         dir_options,
@@ -146,7 +143,7 @@ pub fn run_export_data_archive(
 }
 
 pub fn run_import_data_archive(
-    app_handle: &AppHandle,
+    data_root: &Path,
     archive_path: &Path,
     workspace_root: &Path,
     report_progress: &mut dyn FnMut(&str, f32, &str),
@@ -162,9 +159,6 @@ pub fn run_import_data_archive(
         )));
     }
 
-    let app_data_dir = resolve_app_data_dir(app_handle)
-        .map_err(|error| internal_error("Failed to resolve app data directory", error))?;
-    let data_root = app_data_dir.join("data");
     let normalized_root = workspace_root.join("normalized");
 
     if normalized_root.exists() {
@@ -191,10 +185,10 @@ pub fn run_import_data_archive(
     )?;
 
     report_progress("swapping", 95.0, "Replacing data directory");
-    replace_data_root(&data_root, &normalized_root)?;
+    replace_data_root(data_root, &normalized_root)?;
 
     // Ensure required default directories exist after migration.
-    tauri::async_runtime::block_on(DataDirectory::new(data_root.clone()).initialize())?;
+    tauri::async_runtime::block_on(DataDirectory::new(data_root.to_path_buf()).initialize())?;
 
     report_progress("completed", 100.0, "Import completed");
 
@@ -202,12 +196,6 @@ pub fn run_import_data_archive(
         source_users: layout_meta.source_users_meta.users,
         target_user: DEFAULT_USER_HANDLE.to_string(),
     })
-}
-
-fn resolve_data_root(app_handle: &AppHandle) -> Result<PathBuf, DomainError> {
-    let app_data_dir = resolve_app_data_dir(app_handle)
-        .map_err(|error| internal_error("Failed to resolve app data directory", error))?;
-    Ok(app_data_dir.join("data"))
 }
 
 fn count_export_entries(

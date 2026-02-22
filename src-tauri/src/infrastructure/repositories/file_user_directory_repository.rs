@@ -1,27 +1,18 @@
 use async_trait::async_trait;
 use std::path::PathBuf;
-use tauri::AppHandle;
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::user_directory::UserDirectory;
 use crate::domain::repositories::user_directory_repository::UserDirectoryRepository;
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::paths::resolve_app_data_dir;
 
 pub struct FileUserDirectoryRepository {
     data_root: PathBuf,
 }
 
 impl FileUserDirectoryRepository {
-    pub fn new(app_handle: AppHandle) -> Self {
-        // 使用 Tauri 的 app_data_dir 获取应用数据目录
-        let app_data_dir =
-            resolve_app_data_dir(&app_handle).expect("Failed to get app data directory");
-
-        // 构建数据根目录
-        let data_root = app_data_dir.join("data");
-
+    pub fn new(data_root: PathBuf) -> Self {
         tracing::debug!(
             "User directory repository initialized with data root: {:?}",
             data_root

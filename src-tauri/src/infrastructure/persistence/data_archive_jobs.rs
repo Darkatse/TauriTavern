@@ -10,7 +10,7 @@ use tauri::AppHandle;
 use uuid::Uuid;
 
 use crate::domain::errors::DomainError;
-use crate::infrastructure::paths::resolve_app_data_dir;
+use crate::infrastructure::paths::resolve_runtime_paths;
 
 use super::data_archive::{
     default_export_file_name, is_cancelled_error, run_export_data_archive, run_import_data_archive,
@@ -227,10 +227,11 @@ pub fn start_import_data_archive_job(
         )));
     }
 
-    let app_data_dir = resolve_app_data_dir(app_handle).map_err(|error| {
-        DomainError::InternalError(format!("Failed to resolve app data directory: {}", error))
+    let runtime_paths = resolve_runtime_paths(app_handle).map_err(|error| {
+        DomainError::InternalError(format!("Failed to resolve runtime paths: {}", error))
     })?;
-    let jobs_root = app_data_dir.join(".data-archive-jobs");
+    let jobs_root = runtime_paths.archive_jobs_root.clone();
+    let data_root = runtime_paths.data_root.clone();
     fs::create_dir_all(&jobs_root).map_err(|error| {
         DomainError::InternalError(format!("Failed to create job root: {}", error))
     })?;
@@ -247,12 +248,11 @@ pub fn start_import_data_archive_job(
     let job = Arc::new(DataArchiveJob::new(&job_id, KIND_IMPORT));
     register_job(&job_id, job.clone())?;
 
-    let app = app_handle.clone();
     tauri::async_runtime::spawn(async move {
         let _ = job.mark_running("starting", "Import job started");
 
         let blocking_job = job.clone();
-        let blocking_app = app.clone();
+        let blocking_data_root = data_root.clone();
         let blocking_archive = prepared_archive_path.clone();
         let blocking_job_root = job_root.clone();
 
@@ -266,7 +266,7 @@ pub fn start_import_data_archive_job(
             let is_cancelled = move || cancel_job.is_cancel_requested();
 
             run_import_data_archive(
-                &blocking_app,
+                &blocking_data_root,
                 &blocking_archive,
                 &blocking_job_root,
                 &mut report_progress,
@@ -298,11 +298,11 @@ pub fn start_import_data_archive_job(
 }
 
 pub fn start_export_data_archive_job(app_handle: &AppHandle) -> Result<String, DomainError> {
-    let app_data_dir = resolve_app_data_dir(app_handle).map_err(|error| {
-        DomainError::InternalError(format!("Failed to resolve app data directory: {}", error))
+    let runtime_paths = resolve_runtime_paths(app_handle).map_err(|error| {
+        DomainError::InternalError(format!("Failed to resolve runtime paths: {}", error))
     })?;
-
-    let export_root = app_data_dir.join(".data-archive-exports");
+    let data_root = runtime_paths.data_root.clone();
+    let export_root = runtime_paths.archive_exports_root.clone();
     fs::create_dir_all(&export_root).map_err(|error| {
         DomainError::InternalError(format!("Failed to create export directory: {}", error))
     })?;
@@ -313,13 +313,12 @@ pub fn start_export_data_archive_job(app_handle: &AppHandle) -> Result<String, D
     register_job(&job_id, job.clone())?;
 
     let output_path = export_root.join(default_export_file_name());
-    let app = app_handle.clone();
 
     tauri::async_runtime::spawn(async move {
         let _ = job.mark_running("starting", "Export job started");
 
         let blocking_job = job.clone();
-        let blocking_app = app.clone();
+        let blocking_data_root = data_root.clone();
         let blocking_output = output_path.clone();
 
         let blocking_result = tauri::async_runtime::spawn_blocking(move || {
@@ -332,7 +331,7 @@ pub fn start_export_data_archive_job(app_handle: &AppHandle) -> Result<String, D
             let is_cancelled = move || cancel_job.is_cancel_requested();
 
             run_export_data_archive(
-                &blocking_app,
+                &blocking_data_root,
                 &blocking_output,
                 &mut report_progress,
                 &is_cancelled,

@@ -285,8 +285,6 @@ impl Character {
         let formatted_date = humanized_date(now);
         let chat = format!("{} - {}", name, formatted_date);
 
-        
-
         Self {
             spec: default_spec(),
             spec_version: default_spec_version(),

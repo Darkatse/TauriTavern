@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::AppHandle;
 use tokio::fs;
 use tokio::sync::Mutex;
 
@@ -10,7 +9,6 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::secret::{SecretEntry, SecretKeys, Secrets};
 use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::paths::resolve_app_data_dir;
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
 
 pub struct FileSecretRepository {
@@ -19,17 +17,7 @@ pub struct FileSecretRepository {
 }
 
 impl FileSecretRepository {
-    pub fn new(app_handle: AppHandle) -> Self {
-        // 使用 Tauri 的 app_data_dir 获取应用数据目录
-        let app_data_dir =
-            resolve_app_data_dir(&app_handle).expect("Failed to get app data directory");
-
-        // 构建 secrets.json 文件路径
-        let secrets_file = app_data_dir
-            .join("data")
-            .join("default-user")
-            .join("secrets.json");
-
+    pub fn new(secrets_file: PathBuf) -> Self {
         tracing::debug!(
             "Secret repository initialized with secrets file: {:?}",
             secrets_file

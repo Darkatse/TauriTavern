@@ -23,7 +23,11 @@ pub struct MessageExtraDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_count: Option<u32>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "isSmallSys")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "isSmallSys"
+    )]
     pub is_small_sys: Option<bool>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]

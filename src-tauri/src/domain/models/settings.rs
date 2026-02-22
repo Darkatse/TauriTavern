@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// 应用程序设置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppSettings {
     pub server: ServerSettings,
     pub interface: InterfaceSettings,
@@ -48,7 +47,6 @@ pub struct SettingsSnapshot {
     pub name: String,
     pub size: u64,
 }
-
 
 impl Default for ServerSettings {
     fn default() -> Self {

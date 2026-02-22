@@ -113,6 +113,11 @@ impl DataDirectory {
         &self.default_user
     }
 
+    /// Get the data root directory
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// Get the characters directory
     pub fn characters(&self) -> &Path {
         &self.characters

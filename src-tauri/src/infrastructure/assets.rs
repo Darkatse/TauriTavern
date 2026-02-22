@@ -15,7 +15,7 @@ use crate::infrastructure::logging::logger;
 
 static DEFAULT_CONTENT_MANIFEST: OnceLock<Vec<String>> = OnceLock::new();
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", feature = "portable"))]
 mod embedded_resources {
     include!(concat!(env!("OUT_DIR"), "/embedded_resources.rs"));
 }
@@ -59,13 +59,31 @@ pub fn read_resource_bytes(
     #[cfg(not(target_os = "android"))]
     {
         let path = resolve_resource_path(app_handle, &normalized)?;
-        app_handle.fs().read(&path).map_err(|e| {
-            logger::error(&format!(
-                "Failed to read resource bytes {:?} (resolved to {:?}): {}",
-                normalized, path, e
-            ));
-            map_resource_error(&normalized, e)
-        })
+        match app_handle.fs().read(&path) {
+            Ok(bytes) => Ok(bytes),
+            Err(error) => {
+                #[cfg(feature = "portable")]
+                {
+                    if error.kind() == std::io::ErrorKind::NotFound {
+                        if let Some(bytes) = embedded_resources::get_embedded_resource(&normalized)
+                        {
+                            tracing::debug!(
+                                "Resource {:?} not found on disk at {:?}, using embedded fallback",
+                                normalized,
+                                path
+                            );
+                            return Ok(bytes.to_vec());
+                        }
+                    }
+                }
+
+                logger::error(&format!(
+                    "Failed to read resource bytes {:?} (resolved to {:?}): {}",
+                    normalized, path, error
+                ));
+                Err(map_resource_error(&normalized, error))
+            }
+        }
     }
 }
 
