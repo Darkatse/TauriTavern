@@ -48,7 +48,9 @@ zip = "0.6"
 image = "0.24"
 png = "0.17"
 mime_guess = "2.0.5"
-tiktoken-rs = "0.9.1"
+flate2 = "1"
+miktik = "0.1.1"
+ureq = "2.12.1"
 
 [features]
 default = ["custom-protocol"]

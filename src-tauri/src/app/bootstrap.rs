@@ -39,7 +39,7 @@ use crate::domain::repositories::user_directory_repository::UserDirectoryReposit
 use crate::domain::repositories::user_repository::UserRepository;
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::apis::http_chat_completion_repository::HttpChatCompletionRepository;
-use crate::infrastructure::apis::tiktoken_tokenizer_repository::TiktokenTokenizerRepository;
+use crate::infrastructure::apis::miktik_tokenizer_repository::MiktikTokenizerRepository;
 use crate::infrastructure::persistence::file_system::DataDirectory;
 use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
 use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
@@ -239,8 +239,14 @@ fn build_repositories(
 
     let chat_completion_repository: Arc<dyn ChatCompletionRepository> =
         Arc::new(HttpChatCompletionRepository::new()?);
+    let tokenizer_cache_dir = data_directory
+        .default_user()
+        .parent()
+        .unwrap_or_else(|| data_directory.default_user())
+        .join("_cache")
+        .join("tokenizers");
     let tokenizer_repository: Arc<dyn TokenizerRepository> =
-        Arc::new(TiktokenTokenizerRepository::new());
+        Arc::new(MiktikTokenizerRepository::new(tokenizer_cache_dir)?);
     let world_info_repository: Arc<dyn WorldInfoRepository> = Arc::new(
         FileWorldInfoRepository::new(data_directory.default_user().join("worlds")),
     );

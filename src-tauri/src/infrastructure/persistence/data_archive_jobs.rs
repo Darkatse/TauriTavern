@@ -418,12 +418,7 @@ fn cleanup_directory(path: &Path) {
 fn remove_file_if_exists(path: &Path, operation: &str) {
     if let Err(error) = fs::remove_file(path) {
         if error.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!(
-                "Failed to {} {}: {}",
-                operation,
-                path.display(),
-                error
-            );
+            tracing::warn!("Failed to {} {}: {}", operation, path.display(), error);
         }
     }
 }

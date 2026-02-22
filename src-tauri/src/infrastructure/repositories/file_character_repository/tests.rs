@@ -327,10 +327,7 @@ async fn save_character_cache_exposes_real_avatar_file_name() {
         "hello".to_string(),
     );
 
-    repository
-        .save(&character)
-        .await
-        .expect("save character");
+    repository.save(&character).await.expect("save character");
 
     let loaded = repository
         .find_all(false)
