@@ -99,3 +99,4 @@ AGPL-3.0 (same license family as SillyTavern).
 - [Tauri](https://tauri.app/)
 - [Tavern-Helper](https://github.com/N0VI028/JS-Slash-Runner)
 - [LittleWhiteBox](https://github.com/RT15548/LittleWhiteBox)
+- [MikTik](https://github.com/Darkatse/MikTik)
