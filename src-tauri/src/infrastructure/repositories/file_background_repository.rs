@@ -27,9 +27,30 @@ impl FileBackgroundRepository {
         false
     }
 
+    fn normalize_filename(&self, filename: &str) -> Result<String, DomainError> {
+        let sanitized = filename
+            .chars()
+            .map(|ch| match ch {
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+                _ if ch.is_control() => '_',
+                _ => ch,
+            })
+            .collect::<String>();
+        let sanitized = sanitized.trim().trim_end_matches(['.', ' ']).to_string();
+
+        if sanitized.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Invalid background filename".to_string(),
+            ));
+        }
+
+        Ok(sanitized)
+    }
+
     /// Get the full path for a background filename
-    fn get_full_path(&self, filename: &str) -> PathBuf {
-        self.backgrounds_dir.join(filename)
+    fn get_full_path(&self, filename: &str) -> Result<PathBuf, DomainError> {
+        let normalized = self.normalize_filename(filename)?;
+        Ok(self.backgrounds_dir.join(normalized))
     }
 }
 
@@ -89,7 +110,7 @@ impl BackgroundRepository for FileBackgroundRepository {
             filename
         ));
 
-        let file_path = self.get_full_path(filename);
+        let file_path = self.get_full_path(filename)?;
 
         // Check if the file exists
         if !file_path.exists() {
@@ -118,8 +139,8 @@ impl BackgroundRepository for FileBackgroundRepository {
             old_filename, new_filename
         ));
 
-        let old_path = self.get_full_path(old_filename);
-        let new_path = self.get_full_path(new_filename);
+        let old_path = self.get_full_path(old_filename)?;
+        let new_path = self.get_full_path(new_filename)?;
 
         // Check if the source file exists
         if !old_path.exists() {
@@ -170,7 +191,8 @@ impl BackgroundRepository for FileBackgroundRepository {
                 })?;
         }
 
-        let file_path = self.get_full_path(filename);
+        let normalized = self.normalize_filename(filename)?;
+        let file_path = self.backgrounds_dir.join(&normalized);
 
         // Write the file
         fs::write(&file_path, data).await.map_err(|e| {
@@ -178,6 +200,29 @@ impl BackgroundRepository for FileBackgroundRepository {
             DomainError::InternalError(format!("Failed to write background file: {}", e))
         })?;
 
-        Ok(filename.to_string())
+        Ok(normalized)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::FileBackgroundRepository;
+
+    #[test]
+    fn normalize_filename_replaces_unsafe_characters() {
+        let repository = FileBackgroundRepository::new(PathBuf::from("backgrounds"));
+        let normalized = repository
+            .normalize_filename("..\\bad:*name?.png")
+            .expect("filename should be valid after normalization");
+
+        assert_eq!(normalized, ".._bad__name_.png");
+    }
+
+    #[test]
+    fn normalize_filename_rejects_empty_result() {
+        let repository = FileBackgroundRepository::new(PathBuf::from("backgrounds"));
+        assert!(repository.normalize_filename(" ... ").is_err());
     }
 }

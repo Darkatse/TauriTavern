@@ -13,6 +13,8 @@ use super::normalizers;
 use super::HttpChatCompletionRepository;
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+const ANTHROPIC_BETA_OUTPUT_128K: &str = "output-128k-2025-02-19";
+const ANTHROPIC_BETA_CONTEXT_1M: &str = "context-1m-2025-08-07";
 const ANTHROPIC_BETA_PROMPT_CACHING: &str = "prompt-caching-2024-07-31";
 const ANTHROPIC_BETA_EXTENDED_CACHE_TTL: &str = "extended-cache-ttl-2025-04-11";
 
@@ -165,7 +167,29 @@ fn apply_anthropic_beta_header(
     config: &ChatCompletionApiConfig,
     payload: &Value,
 ) -> RequestBuilder {
-    let mut beta_values = configured_anthropic_beta_values(&config.extra_headers);
+    let beta_values = build_anthropic_beta_values(&config.extra_headers, payload);
+
+    if beta_values.is_empty() {
+        return request;
+    }
+
+    request.header("anthropic-beta", beta_values.join(","))
+}
+
+fn build_anthropic_beta_values(
+    extra_headers: &HashMap<String, String>,
+    payload: &Value,
+) -> Vec<String> {
+    let mut beta_values = vec![
+        ANTHROPIC_BETA_OUTPUT_128K.to_string(),
+        ANTHROPIC_BETA_CONTEXT_1M.to_string(),
+    ];
+
+    for value in configured_anthropic_beta_values(extra_headers) {
+        if !beta_values.iter().any(|existing| existing == &value) {
+            beta_values.push(value);
+        }
+    }
 
     if payload_contains_cache_control(payload) {
         for value in [
@@ -178,11 +202,7 @@ fn apply_anthropic_beta_header(
         }
     }
 
-    if beta_values.is_empty() {
-        return request;
-    }
-
-    request.header("anthropic-beta", beta_values.join(","))
+    beta_values
 }
 
 fn configured_anthropic_beta_values(extra_headers: &HashMap<String, String>) -> Vec<String> {
@@ -219,8 +239,10 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        configured_anthropic_beta_values, payload_contains_cache_control,
-        ANTHROPIC_BETA_EXTENDED_CACHE_TTL, ANTHROPIC_BETA_PROMPT_CACHING,
+        build_anthropic_beta_values, configured_anthropic_beta_values,
+        payload_contains_cache_control, ANTHROPIC_BETA_CONTEXT_1M,
+        ANTHROPIC_BETA_EXTENDED_CACHE_TTL, ANTHROPIC_BETA_OUTPUT_128K,
+        ANTHROPIC_BETA_PROMPT_CACHING,
     };
 
     #[test]
@@ -256,5 +278,32 @@ mod tests {
                 ANTHROPIC_BETA_EXTENDED_CACHE_TTL.to_string()
             ]
         );
+    }
+
+    #[test]
+    fn always_includes_default_beta_values() {
+        let headers = HashMap::new();
+        let payload = json!({ "messages": [{"role": "user", "content": "hello"}] });
+
+        let beta_values = build_anthropic_beta_values(&headers, &payload);
+        assert!(beta_values.contains(&ANTHROPIC_BETA_OUTPUT_128K.to_string()));
+        assert!(beta_values.contains(&ANTHROPIC_BETA_CONTEXT_1M.to_string()));
+    }
+
+    #[test]
+    fn cache_control_adds_cache_beta_values() {
+        let headers = HashMap::new();
+        let payload = json!({
+            "messages": [{
+                "content": [{
+                    "type": "text",
+                    "cache_control": { "type": "ephemeral", "ttl": "5m" }
+                }]
+            }]
+        });
+
+        let beta_values = build_anthropic_beta_values(&headers, &payload);
+        assert!(beta_values.contains(&ANTHROPIC_BETA_PROMPT_CACHING.to_string()));
+        assert!(beta_values.contains(&ANTHROPIC_BETA_EXTENDED_CACHE_TTL.to_string()));
     }
 }

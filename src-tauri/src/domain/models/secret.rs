@@ -222,6 +222,9 @@ impl SecretKeys {
     pub const ZAI: &'static str = "api_key_zai";
     pub const SILICONFLOW: &'static str = "api_key_siliconflow";
     pub const ELEVENLABS: &'static str = "api_key_elevenlabs";
+    pub const POLLINATIONS: &'static str = "api_key_pollinations";
+    pub const VOLCENGINE_APP_ID: &'static str = "volcengine_app_id";
+    pub const VOLCENGINE_ACCESS_KEY: &'static str = "volcengine_access_key";
 
     pub fn known_keys() -> &'static [&'static str] {
         &[
@@ -283,6 +286,9 @@ impl SecretKeys {
             Self::ZAI,
             Self::SILICONFLOW,
             Self::ELEVENLABS,
+            Self::POLLINATIONS,
+            Self::VOLCENGINE_APP_ID,
+            Self::VOLCENGINE_ACCESS_KEY,
         ]
     }
 

@@ -16,13 +16,16 @@ function isNotFoundError(error) {
         || message.includes('os error 2');
 }
 
+function sanitizeFileName(value) {
+    return String(value || '')
+        .replace(/[\/\\:*?"<>|\u0000-\u001f]/g, '_')
+        .replace(/[. ]+$/g, '')
+        .trim();
+}
+
 export function registerResourceRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/files/sanitize-filename', async ({ body }) => {
-        const input = String(body?.fileName || '');
-        const sanitized = input
-            .replace(/[\/\\:*?"<>|\u0000-\u001f]/g, '_')
-            .replace(/[. ]+$/g, '')
-            .trim();
+        const sanitized = sanitizeFileName(body?.fileName || '');
 
         if (!sanitized) {
             return jsonResponse({ error: 'Invalid filename' }, 400);
@@ -158,7 +161,12 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             return jsonResponse({ error: 'No background file provided' }, 400);
         }
 
-        const filename = file instanceof File ? file.name : 'background.png';
+        const rawFilename = file instanceof File ? file.name : 'background.png';
+        const filename = sanitizeFileName(rawFilename);
+        if (!filename) {
+            return jsonResponse({ error: 'Invalid filename' }, 400);
+        }
+
         const data = Array.from(new Uint8Array(await file.arrayBuffer()));
         const uploaded = await context.safeInvoke('upload_background', { filename, data });
 
