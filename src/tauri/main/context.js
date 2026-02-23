@@ -29,7 +29,13 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
 
     function installAssetPathHelpers() {
         window.__TAURITAVERN_THUMBNAIL__ = (type, file, useTimestamp = false) => {
-            const filePath = resolveAssetPath(type, file);
+            const normalizedType = String(type || '').trim().toLowerCase();
+
+            if (normalizedType === 'bg') {
+                return `/thumbnail?type=${encodeURIComponent(normalizedType)}&file=${encodeURIComponent(file)}${useTimestamp ? `&t=${Date.now()}` : ''}`;
+            }
+
+            const filePath = resolveAssetPath(normalizedType, file);
 
             if (filePath) {
                 const assetUrl = toAssetUrl(filePath);
@@ -38,7 +44,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
                 }
             }
 
-            return `/thumbnail?type=${encodeURIComponent(type)}&file=${encodeURIComponent(file)}${useTimestamp ? `&t=${Date.now()}` : ''}`;
+            return `/thumbnail?type=${encodeURIComponent(normalizedType)}&file=${encodeURIComponent(file)}${useTimestamp ? `&t=${Date.now()}` : ''}`;
         };
 
         window.__TAURITAVERN_BACKGROUND_PATH__ = (file) => {

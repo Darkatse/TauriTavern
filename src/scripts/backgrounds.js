@@ -35,6 +35,7 @@ const THUMBNAIL_STORAGE = localforage.createInstance({ name: 'SillyTavern_Thumbn
  * @type {Map<string, string>}
  */
 const THUMBNAIL_BLOBS = new Map();
+const SERVER_THUMBNAIL_BLOBS = new Map();
 
 const THUMBNAIL_CONFIG = {
     width: 160,
@@ -425,6 +426,65 @@ async function getThumbnailFromStorage(bg, isCustom) {
     }
 }
 
+function getServerThumbnailCacheKey(bg, animated = false) {
+    return `${bg}::${animated ? 'animated' : 'static'}`;
+}
+
+function revokeThumbnailBlob(cache, key) {
+    const url = cache.get(key);
+    if (!url) {
+        return;
+    }
+
+    URL.revokeObjectURL(url);
+    cache.delete(key);
+}
+
+async function invalidateThumbnailCaches(bg) {
+    await THUMBNAIL_STORAGE.removeItem(bg);
+    revokeThumbnailBlob(THUMBNAIL_BLOBS, bg);
+    revokeThumbnailBlob(SERVER_THUMBNAIL_BLOBS, getServerThumbnailCacheKey(bg, false));
+    revokeThumbnailBlob(SERVER_THUMBNAIL_BLOBS, getServerThumbnailCacheKey(bg, true));
+}
+
+function pruneServerThumbnailBlobCache(backgrounds) {
+    const validKeys = new Set(backgrounds.flatMap((bg) => [
+        getServerThumbnailCacheKey(bg, false),
+        getServerThumbnailCacheKey(bg, true),
+    ]));
+
+    for (const key of SERVER_THUMBNAIL_BLOBS.keys()) {
+        if (!validKeys.has(key)) {
+            revokeThumbnailBlob(SERVER_THUMBNAIL_BLOBS, key);
+        }
+    }
+}
+
+async function getServerThumbnailBlobUrl(bg, animated = false) {
+    const cacheKey = getServerThumbnailCacheKey(bg, animated);
+    const cachedBlobUrl = SERVER_THUMBNAIL_BLOBS.get(cacheKey);
+    if (cachedBlobUrl) {
+        return cachedBlobUrl;
+    }
+
+    try {
+        const thumbnailUrl = getThumbnailUrl('bg', bg);
+        const requestUrl = animated ? `${thumbnailUrl}&animated=true` : thumbnailUrl;
+        const response = await fetch(requestUrl, { cache: 'no-store' });
+        if (!response.ok) {
+            throw new Error('Fetch failed with status: ' + response.status);
+        }
+
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        SERVER_THUMBNAIL_BLOBS.set(cacheKey, blobUrl);
+        return blobUrl;
+    } catch (error) {
+        console.error('Error fetching server thumbnail, falling back to original background:', error);
+        return getBackgroundPath(bg);
+    }
+}
+
 /**
  * Gets the new background name from the user.
  * @param {Element} referenceElement
@@ -652,6 +712,7 @@ export async function getBackgrounds() {
         Object.assign(THUMBNAIL_CONFIG, config);
 
         cachedSystemBackgrounds = images;
+        pruneServerThumbnailBlobCache(images);
 
         await metadataPromise;
 
@@ -751,7 +812,7 @@ async function resolveImageUrl(bg, isCustom) {
         ? await getThumbnailFromStorage(bg, isCustom)
         : isCustom
             ? bg
-            : getThumbnailUrl('bg', bg);
+            : await getServerThumbnailBlobUrl(bg, isAnimated && background_settings.animation);
 
     return `url("${thumbnailUrl}")`;
 }
@@ -775,11 +836,7 @@ async function delBackground(bg) {
         }),
     });
 
-    await THUMBNAIL_STORAGE.removeItem(bg);
-    if (THUMBNAIL_BLOBS.has(bg)) {
-        URL.revokeObjectURL(THUMBNAIL_BLOBS.get(bg));
-        THUMBNAIL_BLOBS.delete(bg);
-    }
+    await invalidateThumbnailCaches(bg);
 }
 
 /**
@@ -883,6 +940,7 @@ async function uploadBackground(formData) {
         }
 
         const bg = await response.text();
+        await invalidateThumbnailCaches(bg);
         setBackground(bg, generateUrlParameter(bg, false));
         await getBackgrounds();
         highlightNewBackground(bg);

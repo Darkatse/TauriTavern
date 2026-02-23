@@ -81,6 +81,38 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
         return jsonResponse(verified && typeof verified === 'object' ? verified : {});
     });
 
+    router.get('/thumbnail', async ({ url }) => {
+        const type = String(url.searchParams.get('type') || '').trim().toLowerCase();
+        const file = decodeRoutePath(url.searchParams.get('file') || '').trim();
+        const animated = String(url.searchParams.get('animated') || '').toLowerCase() === 'true';
+
+        if (!type || !file || !['bg', 'avatar', 'persona'].includes(type)) {
+            return textResponse('Bad Request', 400);
+        }
+
+        try {
+            const payload = await context.safeInvoke('read_thumbnail_asset', {
+                thumbnail_type: type,
+                file,
+                animated,
+            });
+            const bytes = decodeBase64ToBytes(payload?.content_base64 || '');
+            return new Response(bytes, {
+                status: 200,
+                headers: {
+                    'Content-Type': payload?.mime_type || 'application/octet-stream',
+                    'Cache-Control': 'no-store',
+                },
+            });
+        } catch (error) {
+            if (isNotFoundError(error)) {
+                return textResponse('Not Found', 404);
+            }
+
+            throw error;
+        }
+    });
+
     router.get('/user/files/*', async ({ wildcard }) => {
         const relativePath = decodeRoutePath(wildcard).replace(/^\/+/, '');
         if (!relativePath) {
@@ -133,6 +165,14 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             images: Array.isArray(images) ? images : [],
             config: { width: 160, height: 90 },
         });
+    });
+
+    router.post('/api/image-metadata/all', async ({ body }) => {
+        const prefix = typeof body?.prefix === 'string' ? body.prefix : '';
+        const payload = await context.safeInvoke('get_all_background_metadata', { prefix });
+        return jsonResponse(payload && typeof payload === 'object'
+            ? payload
+            : { version: 1, images: {} });
     });
 
     router.post('/api/backgrounds/delete', async ({ body }) => {

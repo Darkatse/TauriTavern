@@ -1,5 +1,7 @@
 use crate::domain::errors::DomainError;
-use crate::domain::models::background::Background;
+use crate::domain::models::background::{
+    Background, BackgroundAsset, BackgroundImageMetadataIndex,
+};
 use async_trait::async_trait;
 
 /// Repository interface for background images
@@ -20,4 +22,16 @@ pub trait BackgroundRepository: Send + Sync {
 
     /// Upload a new background image
     async fn upload_background(&self, filename: &str, data: &[u8]) -> Result<String, DomainError>;
+
+    /// Read a background thumbnail asset.
+    async fn read_background_thumbnail(
+        &self,
+        filename: &str,
+        animated: bool,
+    ) -> Result<BackgroundAsset, DomainError>;
+
+    /// Get metadata for all system backgrounds.
+    async fn get_all_background_metadata(
+        &self,
+    ) -> Result<BackgroundImageMetadataIndex, DomainError>;
 }
