@@ -1,6 +1,6 @@
 # fastools upsync analyze summary
 
-- Generated at: `2026-02-23T10:30:07.222331300+08:00`
+- Generated at: `2026-02-23T12:02:21.971657500+08:00`
 - Base dir: `D:/Code/Github/TauriTavern/sillytavern-1.15.0/public`
 - Target dir: `D:/Code/Github/TauriTavern/sillytavern-1.16.0/public`
 - Local dir: `D:/Code/Github/TauriTavern/src`
@@ -11,42 +11,59 @@
 ## File Classification
 
 - Upstream changed: **97**
-- Local changed: **300**
-- Both changed: **23**
-- Upstream-only changed: **74**
+- Local changed: **374**
+- Both changed: **97**
+- Upstream-only changed: **0**
 - Local-only changed: **277**
 
 ### Both Changed (top 40)
 
+- `css/backgrounds.css`
 - `css/extensions-panel.css`
+- `css/macros.css`
+- `css/tags.css`
+- `css/toggle-dependent.css`
+- `css/user.css`
+- `css/welcome.css`
+- `error/forbidden-by-whitelist.html`
+- `error/host-not-allowed.html`
+- `error/unauthorized.html`
+- `error/url-not-found.html`
+- `global.d.ts`
 - `index.html`
+- `locales/fr-fr.json`
 - `locales/zh-cn.json`
 - `script.js`
+- `scripts/PromptManager.js`
+- `scripts/RossAscends-mods.js`
+- `scripts/authors-note.js`
+- `scripts/autocomplete/AutoComplete.js`
 - `scripts/autocomplete/AutoCompleteNameResultBase.js`
 - `scripts/autocomplete/AutoCompleteOption.js`
+- `scripts/autocomplete/EnhancedMacroAutoCompleteOption.js`
+- `scripts/autocomplete/MacroAutoComplete.js`
+- `scripts/autocomplete/MacroAutoCompleteHelper.js`
 - `scripts/backgrounds.js`
+- `scripts/bookmarks.js`
+- `scripts/cfg-scale.js`
+- `scripts/chat-templates.js`
+- `scripts/chats.js`
+- `scripts/events.js`
+- `scripts/extensions-slashcommands.js`
 - `scripts/extensions.js`
-- `scripts/extensions/tts/coqui.js`
-- `scripts/group-chats.js`
-- `scripts/itemized-prompts.js`
-- `scripts/macros/engine/MacroRegistry.js`
-- `scripts/personas.js`
-- `scripts/power-user.js`
-- `scripts/secrets.js`
-- `scripts/slash-commands/SlashCommandClosure.js`
-- `scripts/slash-commands/SlashCommandParser.js`
-- `scripts/templates/welcomePanel.html`
-- `scripts/util/AccountStorage.js`
-- `scripts/utils.js`
-- `scripts/welcome-screen.js`
-- `scripts/world-info.js`
-- `style.css`
+- `scripts/extensions/assets/index.js`
+- `scripts/extensions/caption/index.js`
+- `scripts/extensions/caption/settings.html`
+- `scripts/extensions/memory/index.js`
+- `scripts/extensions/quick-reply/index.js`
+- `scripts/extensions/quick-reply/src/SlashCommandHandler.js`
+- `scripts/extensions/shared.js`
 
 ## Injection Conflicts
 
-- Total both-changed files: **23**
+- Total both-changed files: **97**
 - Injection conflicts: **3**
-- Conflict ratio: **13.04%**
+- Conflict ratio: **3.09%**
 
 ### Injection Conflict Files (top 40)
 

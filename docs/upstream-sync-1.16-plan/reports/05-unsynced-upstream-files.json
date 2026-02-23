@@ -1,0 +1,14 @@
+[
+  {
+    "path": "index.html",
+    "reason": "content-diff"
+  },
+  {
+    "path": "script.js",
+    "reason": "content-diff"
+  },
+  {
+    "path": "scripts/extensions.js",
+    "reason": "content-diff"
+  }
+]

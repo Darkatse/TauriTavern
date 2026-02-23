@@ -1,0 +1,29 @@
+[
+  {
+    "path": "script.js",
+    "reason": "content-diff",
+    "added": 104,
+    "deleted": 347,
+    "total": 451,
+    "injection_conflict": true,
+    "injection_reasons": "keyword_delta:APP_INITIALIZED,keyword_delta:CHAT_LOADED,keyword_delta:chatLoaded,script_event_and_transport"
+  },
+  {
+    "path": "scripts/extensions.js",
+    "reason": "content-diff",
+    "added": 78,
+    "deleted": 64,
+    "total": 142,
+    "injection_conflict": true,
+    "injection_reasons": "extension_runtime_integration"
+  },
+  {
+    "path": "index.html",
+    "reason": "content-diff",
+    "added": 1,
+    "deleted": 5,
+    "total": 6,
+    "injection_conflict": true,
+    "injection_reasons": "entrypoint_bootstrap,keyword_delta:init.js,keyword_delta:tauri-main.js"
+  }
+]

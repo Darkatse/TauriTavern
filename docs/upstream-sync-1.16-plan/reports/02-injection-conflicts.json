@@ -1,13 +1,68 @@
 {
-  "generated_at": "2026-02-23T10:30:07.316511200+08:00",
+  "generated_at": "2026-02-23T12:02:22.061970400+08:00",
   "summary": {
-    "both_changed_total": 23,
+    "both_changed_total": 97,
     "injection_conflicts": 3,
-    "conflict_ratio": 0.13043478260869565
+    "conflict_ratio": 0.030927835051546393
   },
   "conflicts": [
     {
+      "path": "css/backgrounds.css",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
       "path": "css/extensions-panel.css",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "css/macros.css",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "css/tags.css",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "css/toggle-dependent.css",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "css/user.css",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "css/welcome.css",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "error/forbidden-by-whitelist.html",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "error/host-not-allowed.html",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "error/unauthorized.html",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "error/url-not-found.html",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "global.d.ts",
       "injection_conflict": false,
       "reasons": []
     },
@@ -19,6 +74,11 @@
         "keyword_delta:init.js",
         "keyword_delta:tauri-main.js"
       ]
+    },
+    {
+      "path": "locales/fr-fr.json",
+      "injection_conflict": false,
+      "reasons": []
     },
     {
       "path": "locales/zh-cn.json",
@@ -36,6 +96,26 @@
       ]
     },
     {
+      "path": "scripts/PromptManager.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/RossAscends-mods.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/authors-note.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/autocomplete/AutoComplete.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
       "path": "scripts/autocomplete/AutoCompleteNameResultBase.js",
       "injection_conflict": false,
       "reasons": []
@@ -46,7 +126,52 @@
       "reasons": []
     },
     {
+      "path": "scripts/autocomplete/EnhancedMacroAutoCompleteOption.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/autocomplete/MacroAutoComplete.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/autocomplete/MacroAutoCompleteHelper.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
       "path": "scripts/backgrounds.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/bookmarks.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/cfg-scale.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/chat-templates.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/chats.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/events.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions-slashcommands.js",
       "injection_conflict": false,
       "reasons": []
     },
@@ -58,7 +183,92 @@
       ]
     },
     {
+      "path": "scripts/extensions/assets/index.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/caption/index.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/caption/settings.html",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/memory/index.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/quick-reply/index.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/quick-reply/src/SlashCommandHandler.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/shared.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/stable-diffusion/index.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/stable-diffusion/settings.html",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
       "path": "scripts/extensions/tts/coqui.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/tts/cosyvoice.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/tts/elevenlabs.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/tts/gpt-sovits-adapter.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/tts/index.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/tts/settings.html",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/tts/volcengine.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/vectors/index.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions/vectors/settings.html",
       "injection_conflict": false,
       "reasons": []
     },
@@ -68,12 +278,112 @@
       "reasons": []
     },
     {
+      "path": "scripts/horde.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/i18n.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/instruct-mode.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
       "path": "scripts/itemized-prompts.js",
       "injection_conflict": false,
       "reasons": []
     },
     {
+      "path": "scripts/macros.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/MacroBrowser.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/definitions/chat-macros.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/definitions/core-macros.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/definitions/state-macros.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/definitions/variable-macros.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/engine/MacroBrowser.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/engine/MacroCstWalker.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/engine/MacroDiagnostics.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/engine/MacroEngine.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/engine/MacroEnv.types.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/engine/MacroEnvBuilder.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/engine/MacroFlags.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/engine/MacroLexer.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/engine/MacroParser.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
       "path": "scripts/macros/engine/MacroRegistry.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/macro-system.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/openai.js",
       "injection_conflict": false,
       "reasons": []
     },
@@ -88,7 +398,27 @@
       "reasons": []
     },
     {
+      "path": "scripts/preset-manager.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/reasoning.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/samplerSelect.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
       "path": "scripts/secrets.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/slash-commands.js",
       "injection_conflict": false,
       "reasons": []
     },
@@ -103,7 +433,42 @@
       "reasons": []
     },
     {
+      "path": "scripts/st-context.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/system-messages.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/tags.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
       "path": "scripts/templates/welcomePanel.html",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/textgen-models.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/textgen-settings.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/tokenizers.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/tool-calling.js",
       "injection_conflict": false,
       "reasons": []
     },
@@ -114,6 +479,11 @@
     },
     {
       "path": "scripts/utils.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/variables.js",
       "injection_conflict": false,
       "reasons": []
     },

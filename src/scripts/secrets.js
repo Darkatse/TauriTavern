@@ -73,6 +73,9 @@ export const SECRET_KEYS = {
     ZAI: 'api_key_zai',
     SILICONFLOW: 'api_key_siliconflow',
     ELEVENLABS: 'api_key_elevenlabs',
+    POLLINATIONS: 'api_key_pollinations',
+    VOLCENGINE_APP_ID: 'volcengine_app_id',
+    VOLCENGINE_ACCESS_KEY: 'volcengine_access_key',
 };
 
 const FRIENDLY_NAMES = {
@@ -134,6 +137,9 @@ const FRIENDLY_NAMES = {
     [SECRET_KEYS.ZAI]: 'Z.AI',
     [SECRET_KEYS.SILICONFLOW]: 'SiliconFlow',
     [SECRET_KEYS.ELEVENLABS]: 'ElevenLabs TTS',
+    [SECRET_KEYS.POLLINATIONS]: 'Pollinations',
+    [SECRET_KEYS.VOLCENGINE_APP_ID]: 'Volcengine App ID',
+    [SECRET_KEYS.VOLCENGINE_ACCESS_KEY]: 'Volcengine Access Key',
 };
 
 const INPUT_MAP = {
@@ -177,31 +183,10 @@ const INPUT_MAP = {
     [SECRET_KEYS.ZAI]: '#api_key_zai',
     [SECRET_KEYS.SILICONFLOW]: '#api_key_siliconflow',
     [SECRET_KEYS.COMFY_RUNPOD]: '#api_key_comfy_runpod',
+    [SECRET_KEYS.POLLINATIONS]: '#api_key_pollinations',
 };
 
-const KNOWN_SECRET_KEYS = new Set(Object.values(SECRET_KEYS));
-const SECRET_STATE_MAX_RETRIES = 10;
-const SECRET_STATE_RETRY_DELAY_MS = 350;
-
 const getLabel = () => moment().format('L LT');
-
-function isSecretStateResponse(state) {
-    if (!state || typeof state !== 'object' || Array.isArray(state)) {
-        return false;
-    }
-
-    for (const key of KNOWN_SECRET_KEYS) {
-        if (Object.prototype.hasOwnProperty.call(state, key)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 /**
  * Resolves the secret key based on the selected API, chat completion source, and text completion type.
@@ -396,38 +381,21 @@ export async function deleteSecret(key, id) {
  * @returns {Promise<void>}
  */
 export async function readSecretState() {
-    const applyState = async (state) => {
-        secret_state = isSecretStateResponse(state) ? state : {};
-        updateSecretDisplay();
-        updateInputDataLists();
-        await checkOpenRouterAuth();
-    };
+    try {
+        const response = await fetch('/api/secrets/read', {
+            method: 'POST',
+            headers: getRequestHeaders({ omitContentType: true }),
+        });
 
-    for (let attempt = 0; attempt <= SECRET_STATE_MAX_RETRIES; attempt++) {
-        try {
-            const response = await fetch('/api/secrets/read', {
-                method: 'POST',
-                headers: getRequestHeaders({ omitContentType: true }),
-            });
-
-            if (response.ok) {
-                const state = await response.json().catch(() => null);
-                if (isSecretStateResponse(state)) {
-                    await applyState(state);
-                    return;
-                }
-            }
-        } catch {
-            // Ignore transient startup errors and retry.
+        if (response.ok) {
+            secret_state = await response.json();
+            updateSecretDisplay();
+            updateInputDataLists();
+            await checkOpenRouterAuth();
         }
-
-        if (attempt < SECRET_STATE_MAX_RETRIES) {
-            await sleep(SECRET_STATE_RETRY_DELAY_MS);
-        }
+    } catch {
+        console.error('Could not read secrets file');
     }
-
-    console.warn('Failed to read secret state after retries; using empty fallback state.');
-    await applyState({});
 }
 
 /**
@@ -614,11 +582,11 @@ async function openKeyManagerDialog(key) {
     template.find('button[data-action="add-secret"]').on('click', async function () {
         let label = '';
         let result = POPUP_RESULT.CANCELLED;
-        const value = await Popup.show.input(t`Add Secret`, t`Enter the secret value (can be empty):`, '', {
+        const value = await Popup.show.input(t`Add Secret`, t`Secret value (can be empty):`, '', {
             customInputs: [{
                 id: 'newSecretLabel',
                 type: 'text',
-                label: t`Enter a label for the secret (optional):`,
+                label: t`Label (optional):`,
             }],
             onClose: popup => {
                 if (popup.result) {
