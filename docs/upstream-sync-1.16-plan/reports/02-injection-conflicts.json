@@ -1,0 +1,136 @@
+{
+  "generated_at": "2026-02-23T10:30:07.316511200+08:00",
+  "summary": {
+    "both_changed_total": 23,
+    "injection_conflicts": 3,
+    "conflict_ratio": 0.13043478260869565
+  },
+  "conflicts": [
+    {
+      "path": "css/extensions-panel.css",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "index.html",
+      "injection_conflict": true,
+      "reasons": [
+        "entrypoint_bootstrap",
+        "keyword_delta:init.js",
+        "keyword_delta:tauri-main.js"
+      ]
+    },
+    {
+      "path": "locales/zh-cn.json",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "script.js",
+      "injection_conflict": true,
+      "reasons": [
+        "keyword_delta:APP_INITIALIZED",
+        "keyword_delta:CHAT_LOADED",
+        "keyword_delta:chatLoaded",
+        "script_event_and_transport"
+      ]
+    },
+    {
+      "path": "scripts/autocomplete/AutoCompleteNameResultBase.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/autocomplete/AutoCompleteOption.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/backgrounds.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/extensions.js",
+      "injection_conflict": true,
+      "reasons": [
+        "extension_runtime_integration"
+      ]
+    },
+    {
+      "path": "scripts/extensions/tts/coqui.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/group-chats.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/itemized-prompts.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/macros/engine/MacroRegistry.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/personas.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/power-user.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/secrets.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/slash-commands/SlashCommandClosure.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/slash-commands/SlashCommandParser.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/templates/welcomePanel.html",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/util/AccountStorage.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/utils.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/welcome-screen.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "scripts/world-info.js",
+      "injection_conflict": false,
+      "reasons": []
+    },
+    {
+      "path": "style.css",
+      "injection_conflict": false,
+      "reasons": []
+    }
+  ]
+}
