@@ -404,7 +404,7 @@ async function changeUserAvatar(e) {
         // If the user uploaded a new avatar, we want to make sure it's not cached
         if (overwriteName && dataPath) {
             await fetch(getUserAvatar(String(dataPath)), { cache: 'reload' });
-            await fetch(getThumbnailUrl('persona', String(dataPath)), { cache: 'reload' });
+            await fetch(getThumbnailUrl('persona', String(dataPath), true), { cache: 'reload' });
             reloadUserAvatar(true);
         }
 

@@ -4,13 +4,19 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use serde::Serialize;
 use tauri::State;
-use tokio::fs;
 
 use crate::app::AppState;
 use crate::application::dto::background_dto::{DeleteBackgroundDto, RenameBackgroundDto};
 use crate::domain::models::background::BackgroundImageMetadataIndex;
+use crate::infrastructure::persistence::thumbnail_cache::{
+    read_thumbnail_or_original, ThumbnailConfig, ThumbnailResizeMode,
+};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+
+const AVATAR_THUMBNAIL_WIDTH: u32 = 96;
+const AVATAR_THUMBNAIL_HEIGHT: u32 = 144;
+const AVATAR_THUMBNAIL_QUALITY: u8 = 90;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ThumbnailAssetPayload {
@@ -80,9 +86,9 @@ async fn read_non_background_thumbnail_asset(
         ))?;
     let safe_file_name = sanitize_thumbnail_filename(file)?;
 
-    let base_directory = match thumbnail_type {
-        ThumbnailType::Avatar => directories.characters,
-        ThumbnailType::Persona => directories.avatars,
+    let (source_directory, thumbnail_directory) = match thumbnail_type {
+        ThumbnailType::Avatar => (directories.characters, directories.thumbnails_avatar),
+        ThumbnailType::Persona => (directories.avatars, directories.thumbnails_persona),
         ThumbnailType::Bg => {
             return Err(CommandError::BadRequest(
                 "Unsupported non-background thumbnail type".to_string(),
@@ -90,28 +96,24 @@ async fn read_non_background_thumbnail_asset(
         }
     };
 
-    let file_path = std::path::PathBuf::from(base_directory).join(safe_file_name);
-    let bytes = fs::read(&file_path)
-        .await
-        .map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => {
-                CommandError::NotFound("Thumbnail source not found".to_string())
-            }
-            _ => CommandError::InternalServerError(format!(
-                "Failed to read thumbnail source '{}': {}",
-                file_path.display(),
-                error
-            )),
-        })?;
-
-    let mime_type = mime_guess::from_path(&file_path)
-        .first_or_octet_stream()
-        .essence_str()
-        .to_string();
+    let original_path = std::path::PathBuf::from(source_directory).join(&safe_file_name);
+    let thumbnail_path = std::path::PathBuf::from(thumbnail_directory).join(&safe_file_name);
+    let asset = read_thumbnail_or_original(
+        &original_path,
+        &thumbnail_path,
+        ThumbnailConfig {
+            width: AVATAR_THUMBNAIL_WIDTH,
+            height: AVATAR_THUMBNAIL_HEIGHT,
+            quality: AVATAR_THUMBNAIL_QUALITY,
+            resize_mode: ThumbnailResizeMode::Cover,
+        },
+    )
+    .await
+    .map_err(map_command_error("Failed to read non-background thumbnail"))?;
 
     Ok(ThumbnailAssetPayload {
-        content_base64: BASE64_STANDARD.encode(bytes),
-        mime_type,
+        content_base64: BASE64_STANDARD.encode(asset.bytes),
+        mime_type: asset.mime_type,
     })
 }
 

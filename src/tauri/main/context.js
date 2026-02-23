@@ -1,14 +1,22 @@
 export function createTauriMainContext({ invoke, convertFileSrc }) {
     const UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
+    const THUMBNAIL_ROUTE_TYPES = new Set(['bg', 'avatar', 'persona']);
+    const IMAGE_THUMBNAIL_ROUTE_TYPES = new Set(['avatar', 'persona']);
+    const TRANSPARENT_PIXEL_DATA_URL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+    const THUMBNAIL_BLOB_CACHE_LIMIT = 300;
+    const THUMBNAIL_SRC_GUARD = Symbol('tauritavern-thumbnail-src-guard');
+    const THUMBNAIL_REQUEST_TOKEN = Symbol('tauritavern-thumbnail-request-token');
     let userDirectories = null;
     let characterCache = [];
     let characterByAvatar = new Map();
     let characterByDisplayName = new Map();
     let characterById = new Map();
+    let thumbnailImageBridgeInstalled = false;
+    const thumbnailBlobCache = new Map();
+    const thumbnailBlobInFlight = new Map();
 
     async function initialize() {
         await loadUserDirectories();
-        installAssetPathHelpers();
     }
 
     async function loadUserDirectories() {
@@ -31,8 +39,10 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         window.__TAURITAVERN_THUMBNAIL__ = (type, file, useTimestamp = false) => {
             const normalizedType = String(type || '').trim().toLowerCase();
 
-            if (normalizedType === 'bg') {
-                return `/thumbnail?type=${encodeURIComponent(normalizedType)}&file=${encodeURIComponent(file)}${useTimestamp ? `&t=${Date.now()}` : ''}`;
+            if (THUMBNAIL_ROUTE_TYPES.has(normalizedType)) {
+                return buildThumbnailRouteUrl(normalizedType, file, {
+                    cacheBust: useTimestamp ? Date.now() : null,
+                });
             }
 
             const filePath = resolveAssetPath(normalizedType, file);
@@ -44,7 +54,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
                 }
             }
 
-            return `/thumbnail?type=${encodeURIComponent(normalizedType)}&file=${encodeURIComponent(file)}${useTimestamp ? `&t=${Date.now()}` : ''}`;
+            return buildThumbnailRouteUrl(normalizedType, file);
         };
 
         window.__TAURITAVERN_BACKGROUND_PATH__ = (file) => {
@@ -53,12 +63,269 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             return assetUrl || `backgrounds/${encodeURIComponent(file)}`;
         };
 
+        window.__TAURITAVERN_AVATAR_PATH__ = (file) => {
+            const filePath = resolveAssetPath('avatar', file);
+            const assetUrl = filePath ? toAssetUrl(filePath) : null;
+            return assetUrl || null;
+        };
+
         window.__TAURITAVERN_PERSONA_PATH__ = (file) => {
             const filePath = resolveAssetPath('persona', file);
             const assetUrl = filePath ? toAssetUrl(filePath) : null;
             return assetUrl || `User Avatars/${file}`;
         };
 
+        window.__TAURITAVERN_THUMBNAIL_BLOB_URL__ = (type, file, options = {}) =>
+            resolveThumbnailBlobUrl(type, file, options);
+
+        installThumbnailImageBridge();
+    }
+
+    function buildThumbnailRouteUrl(type, file, { cacheBust = null, animated = false } = {}) {
+        const normalizedType = String(type || '').trim().toLowerCase();
+        const normalizedFile = String(file || '');
+        const searchParams = new URLSearchParams({
+            type: normalizedType,
+            file: normalizedFile,
+        });
+
+        if (animated) {
+            searchParams.set('animated', 'true');
+        }
+
+        if (cacheBust !== null && cacheBust !== undefined && cacheBust !== '') {
+            searchParams.set('t', String(cacheBust));
+        }
+
+        return `/thumbnail?${searchParams.toString()}`;
+    }
+
+    function parseThumbnailRouteUrl(rawUrl) {
+        try {
+            const url = new URL(String(rawUrl || ''), window.location.origin);
+            if (url.pathname !== '/thumbnail') {
+                return null;
+            }
+
+            const type = String(url.searchParams.get('type') || '').trim().toLowerCase();
+            const file = String(url.searchParams.get('file') || '').trim();
+            if (!type || !file || !THUMBNAIL_ROUTE_TYPES.has(type)) {
+                return null;
+            }
+
+            const animated = String(url.searchParams.get('animated') || '').toLowerCase() === 'true';
+            const cacheBust = String(url.searchParams.get('t') || '').trim();
+            return {
+                type,
+                file,
+                animated,
+                cacheBust,
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    function makeThumbnailBlobCachePrefix(type, file, animated) {
+        return `${type}|${animated ? 1 : 0}|${encodeURIComponent(file)}|`;
+    }
+
+    function makeThumbnailBlobCacheKey(type, file, animated, cacheBust) {
+        return `${makeThumbnailBlobCachePrefix(type, file, animated)}${cacheBust || ''}`;
+    }
+
+    function setThumbnailBlobCache(cacheKey, blobUrl) {
+        if (thumbnailBlobCache.has(cacheKey)) {
+            const previousBlobUrl = thumbnailBlobCache.get(cacheKey);
+            if (previousBlobUrl && previousBlobUrl !== blobUrl) {
+                URL.revokeObjectURL(previousBlobUrl);
+            }
+            thumbnailBlobCache.delete(cacheKey);
+        }
+
+        thumbnailBlobCache.set(cacheKey, blobUrl);
+
+        if (thumbnailBlobCache.size <= THUMBNAIL_BLOB_CACHE_LIMIT) {
+            return;
+        }
+
+        const oldestKey = thumbnailBlobCache.keys().next().value;
+        const oldestBlobUrl = thumbnailBlobCache.get(oldestKey);
+        if (oldestBlobUrl) {
+            URL.revokeObjectURL(oldestBlobUrl);
+        }
+        thumbnailBlobCache.delete(oldestKey);
+    }
+
+    function invalidateThumbnailBlobCache(type, file, animated) {
+        const prefix = makeThumbnailBlobCachePrefix(type, file, animated);
+
+        for (const [key, blobUrl] of thumbnailBlobCache.entries()) {
+            if (!key.startsWith(prefix)) {
+                continue;
+            }
+
+            if (blobUrl) {
+                URL.revokeObjectURL(blobUrl);
+            }
+            thumbnailBlobCache.delete(key);
+        }
+
+        for (const key of thumbnailBlobInFlight.keys()) {
+            if (key.startsWith(prefix)) {
+                thumbnailBlobInFlight.delete(key);
+            }
+        }
+    }
+
+    async function resolveThumbnailBlobUrlFromSpec({ type, file, animated = false, cacheBust = '' } = {}) {
+        const normalizedType = String(type || '').trim().toLowerCase();
+        const normalizedFile = String(file || '').trim();
+
+        if (!THUMBNAIL_ROUTE_TYPES.has(normalizedType) || !normalizedFile) {
+            throw new Error(`Unsupported thumbnail request: ${normalizedType}`);
+        }
+
+        const normalizedAnimated = Boolean(animated);
+        const normalizedCacheBust = String(cacheBust || '').trim();
+        if (normalizedCacheBust) {
+            invalidateThumbnailBlobCache(normalizedType, normalizedFile, normalizedAnimated);
+        }
+
+        const cacheKey = makeThumbnailBlobCacheKey(
+            normalizedType,
+            normalizedFile,
+            normalizedAnimated,
+            normalizedCacheBust,
+        );
+
+        const cachedBlobUrl = thumbnailBlobCache.get(cacheKey);
+        if (cachedBlobUrl) {
+            thumbnailBlobCache.delete(cacheKey);
+            thumbnailBlobCache.set(cacheKey, cachedBlobUrl);
+            return cachedBlobUrl;
+        }
+
+        const inflight = thumbnailBlobInFlight.get(cacheKey);
+        if (inflight) {
+            return inflight;
+        }
+
+        const requestUrl = buildThumbnailRouteUrl(normalizedType, normalizedFile, {
+            animated: normalizedAnimated,
+            cacheBust: normalizedCacheBust || null,
+        });
+
+        const fetchPromise = fetch(requestUrl, { cache: 'no-store' })
+            .then(async (response) => {
+                if (!response.ok) {
+                    throw new Error(`Failed to load thumbnail: ${response.status}`);
+                }
+
+                const blob = await response.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                setThumbnailBlobCache(cacheKey, blobUrl);
+                return blobUrl;
+            })
+            .finally(() => {
+                thumbnailBlobInFlight.delete(cacheKey);
+            });
+
+        thumbnailBlobInFlight.set(cacheKey, fetchPromise);
+        return fetchPromise;
+    }
+
+    async function resolveThumbnailBlobUrl(type, file, options = {}) {
+        const cacheBust = options?.useTimestamp ? Date.now() : '';
+        return resolveThumbnailBlobUrlFromSpec({
+            type,
+            file,
+            animated: Boolean(options?.animated),
+            cacheBust,
+        });
+    }
+
+    function installThumbnailImageBridge() {
+        if (thumbnailImageBridgeInstalled) {
+            return;
+        }
+
+        const imagePrototype = window.HTMLImageElement?.prototype;
+        if (!imagePrototype) {
+            return;
+        }
+
+        const srcDescriptor = Object.getOwnPropertyDescriptor(imagePrototype, 'src');
+        if (!srcDescriptor?.get || !srcDescriptor?.set || typeof imagePrototype.setAttribute !== 'function') {
+            return;
+        }
+
+        const originalSetAttribute = imagePrototype.setAttribute;
+
+        const setSourceDirectly = (image, value) => {
+            image[THUMBNAIL_SRC_GUARD] = true;
+            try {
+                srcDescriptor.set.call(image, value);
+            } finally {
+                image[THUMBNAIL_SRC_GUARD] = false;
+            }
+        };
+
+        const handleThumbnailRouteSource = (image, rawValue) => {
+            const value = String(rawValue ?? '');
+            const parsed = parseThumbnailRouteUrl(value);
+            if (!parsed || !IMAGE_THUMBNAIL_ROUTE_TYPES.has(parsed.type)) {
+                setSourceDirectly(image, value);
+                return;
+            }
+
+            const requestToken = `${parsed.type}|${parsed.file}|${parsed.cacheBust}|${Date.now()}|${Math.random()}`;
+            image[THUMBNAIL_REQUEST_TOKEN] = requestToken;
+            setSourceDirectly(image, TRANSPARENT_PIXEL_DATA_URL);
+
+            void resolveThumbnailBlobUrlFromSpec(parsed)
+                .then((blobUrl) => {
+                    if (image[THUMBNAIL_REQUEST_TOKEN] !== requestToken) {
+                        return;
+                    }
+                    setSourceDirectly(image, blobUrl);
+                })
+                .catch(() => {
+                    if (image[THUMBNAIL_REQUEST_TOKEN] !== requestToken) {
+                        return;
+                    }
+                    setSourceDirectly(image, value);
+                });
+        };
+
+        Object.defineProperty(imagePrototype, 'src', {
+            configurable: true,
+            enumerable: srcDescriptor.enumerable,
+            get() {
+                return srcDescriptor.get.call(this);
+            },
+            set(value) {
+                if (this[THUMBNAIL_SRC_GUARD]) {
+                    srcDescriptor.set.call(this, value);
+                    return;
+                }
+                handleThumbnailRouteSource(this, value);
+            },
+        });
+
+        imagePrototype.setAttribute = function patchedImageSetAttribute(name, value) {
+            if (String(name || '').toLowerCase() === 'src') {
+                if (this[THUMBNAIL_SRC_GUARD]) {
+                    return originalSetAttribute.call(this, name, value);
+                }
+                handleThumbnailRouteSource(this, value);
+                return;
+            }
+
+            return originalSetAttribute.call(this, name, value);
+        };
+
+        thumbnailImageBridgeInstalled = true;
     }
 
     function resolveAssetPath(type, file) {
@@ -1238,6 +1505,8 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
     function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
+
+    installAssetPathHelpers();
 
     return {
         initialize,

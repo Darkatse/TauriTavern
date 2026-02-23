@@ -7440,7 +7440,7 @@ async function read_avatar_load(input) {
         await delay(DEFAULT_SAVE_EDIT_TIMEOUT);
 
         const formData = new FormData(/** @type {HTMLFormElement} */($('#form_create').get(0)));
-        await fetch(getThumbnailUrl('avatar', formData.get('avatar_url').toString()), {
+        await fetch(getThumbnailUrl('avatar', formData.get('avatar_url').toString(), true), {
             method: 'GET',
             cache: 'reload',
         });
@@ -10507,7 +10507,7 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
 
             // Refresh existing thumbnail
             if (exists && this_chid !== undefined) {
-                await fetch(getThumbnailUrl('avatar', avatarFileName), { cache: 'reload' });
+                await fetch(getThumbnailUrl('avatar', avatarFileName, true), { cache: 'reload' });
             }
 
             $('#character_search_bar').val('').trigger('input');

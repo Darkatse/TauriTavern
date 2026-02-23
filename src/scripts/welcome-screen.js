@@ -297,10 +297,11 @@ async function sendWelcomePanel(chats, expand = false) {
             });
         });
         fragment.querySelectorAll('.recentChat').forEach((item) => {
-            const thumbnail = item.getAttribute('data-thumbnail') || '';
-            if (thumbnail) {
-                const image = item.querySelector('.avatar img');
-                if (image instanceof HTMLImageElement) {
+            const image = item.querySelector('.avatar img');
+            if (image instanceof HTMLImageElement) {
+                // Re-apply the same src via JS so Tauri thumbnail bridge can normalize /thumbnail URLs.
+                const thumbnail = item.getAttribute('data-thumbnail') || image.getAttribute('src') || '';
+                if (thumbnail) {
                     image.src = thumbnail;
                 }
             }
