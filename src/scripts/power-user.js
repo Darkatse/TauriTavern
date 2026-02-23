@@ -27,10 +27,10 @@ import {
     doNewChat,
     online_status,
     messageFormatting,
-    extension_prompt_types,
-    extension_prompt_roles,
     deleteMessage,
+    settingsReady,
 } from '../script.js';
+import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { isMobile, initMovingUI, favsToHotswap } from './RossAscends-mods.js';
 import {
     groups,
@@ -329,6 +329,8 @@ export const power_user = {
                 right: AUTOCOMPLETE_WIDTH.CHAT,
             },
             select: AUTOCOMPLETE_SELECT_KEY.TAB + AUTOCOMPLETE_SELECT_KEY.ENTER,
+            /** Whether to show macro autocomplete in all macro-enabled fields (not just expanded editors) */
+            showInAllMacroFields: false,
         },
         parser: {
             /**@type {Object.<PARSER_FLAG,boolean>} */
@@ -352,6 +354,7 @@ export const power_user = {
 
 let themes = [];
 let movingUIPresets = [];
+/** @type {ContextSettings[]} */
 export let context_presets = [];
 
 const storage_keys = {
@@ -380,12 +383,19 @@ const debug_functions = [];
 
 const setHotswapsDebounced = debounce(favsToHotswap);
 
-export function playMessageSound() {
-    if (!power_user.play_message_sound) {
+/**
+ * Plays the message sound if enabled in power user settings.
+ * Passes through the `force` parameter to override settings.
+ * @param {object} [param] Arguments object.
+ * @param {boolean} [param.force] Whether to force play the sound.
+ * @returns {void}
+ */
+export function playMessageSound({ force } = {}) {
+    if (!power_user.play_message_sound && !force) {
         return;
     }
 
-    if (power_user.play_sound_unfocused && browser_has_focus) {
+    if (power_user.play_sound_unfocused && browser_has_focus && !force) {
         return;
     }
 
@@ -1622,6 +1632,9 @@ export async function loadPowerUserSettings(settings, data) {
             if (power_user.stscript.autocomplete.select === undefined) {
                 power_user.stscript.autocomplete.select = defaultStscript.autocomplete.select;
             }
+            if (power_user.stscript.autocomplete.showInAllMacroFields === undefined) {
+                power_user.stscript.autocomplete.showInAllMacroFields = defaultStscript.autocomplete.showInAllMacroFields;
+            }
         }
         if (power_user.stscript.parser === undefined) {
             power_user.stscript.parser = defaultStscript.parser;
@@ -1759,6 +1772,7 @@ export async function loadPowerUserSettings(settings, data) {
 
     $('#stscript_autocomplete_state').val(power_user.stscript.autocomplete.state).trigger('input');
     $('#stscript_autocomplete_autoHide').prop('checked', power_user.stscript.autocomplete.autoHide ?? false).trigger('input');
+    $('#stscript_autocomplete_showInAllMacroFields').prop('checked', power_user.stscript.autocomplete.showInAllMacroFields ?? false).trigger('input');
     $('#stscript_matching').val(power_user.stscript.matching ?? 'fuzzy');
     $('#stscript_autocomplete_style').val(power_user.stscript.autocomplete.style ?? 'theme');
     document.body.setAttribute('data-stscript-style', power_user.stscript.autocomplete.style);
@@ -4048,6 +4062,23 @@ jQuery(() => {
     $('#experimental_macro_engine').on('input', function () {
         power_user.experimental_macro_engine = !!$(this).prop('checked');
         saveSettingsDebounced();
+
+        // Check if the app is ready before showing the toast
+        if (!settingsReady) {
+            return;
+        }
+
+        eventSource.once(event_types.SETTINGS_UPDATED, function() {
+            toastr.warning(
+                t`Click here to reload.`,
+                t`Toggling the Experimental Macro Engine requires a reload.`,
+                {
+                    onclick: () => window.location.reload(),
+                    timeOut: 10000,
+                    preventDuplicates: true,
+                },
+            );
+        });
     });
 
     $('#disable_group_trimming').on('input', function () {
@@ -4091,6 +4122,11 @@ jQuery(() => {
 
     $('#stscript_autocomplete_autoHide').on('input', function () {
         power_user.stscript.autocomplete.autoHide = !!$(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
+    $('#stscript_autocomplete_showInAllMacroFields').on('input', function () {
+        power_user.stscript.autocomplete.showInAllMacroFields = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
 

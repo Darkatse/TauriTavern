@@ -221,10 +221,8 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
 }
 
 export function findItemizedPromptSet(itemizedPrompts, incomingMesId) {
-    PromptArrayItemForRawPromptDisplay = null;
-    priorPromptArrayItemForRawPromptDisplay = null;
-
     let thisPromptSet = undefined;
+    priorPromptArrayItemForRawPromptDisplay = -1;
 
     for (let i = 0; i < itemizedPrompts.length; i++) {
         console.log(`looking for ${incomingMesId} vs ${itemizedPrompts[i].mesId}`);
@@ -261,90 +259,70 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         ? await renderTemplateAsync('itemizationChat', params)
         : await renderTemplateAsync('itemizationText', params);
 
-    if (typeof template !== 'string' || !template.trim()) {
-        console.warn('Failed to render itemization template.');
-        return null;
-    }
-
     const popup = new Popup(template, POPUP_TYPE.TEXT);
 
-    /** @type {HTMLElement | null} */
+    /** @type {HTMLElement} */
     const diffPrevPrompt = popup.dlg.querySelector('#diffPrevPrompt');
-    if (diffPrevPrompt) {
-        if (typeof priorPromptArrayItemForRawPromptDisplay === 'number') {
-            diffPrevPrompt.style.display = '';
-            diffPrevPrompt.addEventListener('click', function () {
-                const dmp = new DiffMatchPatch();
-                const text1 = flatten(itemizedPrompts[priorPromptArrayItemForRawPromptDisplay].rawPrompt);
-                const text2 = flatten(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
+    if (priorPromptArrayItemForRawPromptDisplay >= 0) {
+        diffPrevPrompt.style.display = '';
+        diffPrevPrompt.addEventListener('click', function () {
+            const dmp = new DiffMatchPatch();
+            const text1 = flatten(itemizedPrompts[priorPromptArrayItemForRawPromptDisplay].rawPrompt);
+            const text2 = flatten(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
 
-                dmp.Diff_Timeout = 2.0;
+            dmp.Diff_Timeout = 2.0;
 
-                const d = dmp.diff_main(text1, text2);
-                let ds = dmp.diff_prettyHtml(d);
-                // make it readable
-                ds = ds.replaceAll('background:#e6ffe6;', 'background:#b9f3b9; color:black;');
-                ds = ds.replaceAll('background:#ffe6e6;', 'background:#f5b4b4; color:black;');
-                ds = ds.replaceAll('&para;', '');
-                const container = document.createElement('div');
-                container.innerHTML = DOMPurify.sanitize(ds);
-                const rawPromptWrapper = document.getElementById('rawPromptWrapper');
-                if (!rawPromptWrapper) {
-                    return;
-                }
-                rawPromptWrapper.replaceChildren(container);
-                $('#rawPromptPopup').slideToggle();
-            });
-        } else {
-            diffPrevPrompt.style.display = 'none';
-        }
-    }
-
-    const copyPromptToClipboard = popup.dlg.querySelector('#copyPromptToClipboard');
-    if (copyPromptToClipboard) {
-        copyPromptToClipboard.addEventListener('pointerup', async function () {
-            let rawPrompt = itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt;
-            let rawPromptValues = rawPrompt;
-
-            if (Array.isArray(rawPrompt)) {
-                rawPromptValues = rawPrompt.map(x => x.content).join('\n');
-            }
-
-            await copyText(rawPromptValues);
-            toastr.info(t`Copied!`);
-        });
-    }
-
-    const showRawPrompt = popup.dlg.querySelector('#showRawPrompt');
-    if (showRawPrompt) {
-        showRawPrompt.addEventListener('click', async function () {
-            //console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
-            console.log(PromptArrayItemForRawPromptDisplay);
-            console.log(itemizedPrompts);
-            console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
-
-            const rawPrompt = flatten(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
-
-            // Mobile needs special handholding. The side-view on the popup wouldn't work,
-            // so we just show an additional popup for this.
-            if (isMobile()) {
-                const content = document.createElement('div');
-                content.classList.add('tokenItemizingMaintext');
-                content.innerText = rawPrompt;
-                const popup = new Popup(content, POPUP_TYPE.TEXT, null, { allowVerticalScrolling: true, leftAlign: true });
-                await popup.show();
-                return;
-            }
-
-            //let DisplayStringifiedPrompt = JSON.stringify(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt).replace(/\n+/g, '<br>');
+            const d = dmp.diff_main(text1, text2);
+            let ds = dmp.diff_prettyHtml(d);
+            // make it readable
+            ds = ds.replaceAll('background:#e6ffe6;', 'background:#b9f3b9; color:black;');
+            ds = ds.replaceAll('background:#ffe6e6;', 'background:#f5b4b4; color:black;');
+            ds = ds.replaceAll('&para;', '');
+            const container = document.createElement('div');
+            container.innerHTML = DOMPurify.sanitize(ds);
             const rawPromptWrapper = document.getElementById('rawPromptWrapper');
-            if (!rawPromptWrapper) {
-                return;
-            }
-            rawPromptWrapper.innerText = rawPrompt;
+            rawPromptWrapper.replaceChildren(container);
             $('#rawPromptPopup').slideToggle();
         });
+    } else {
+        diffPrevPrompt.style.display = 'none';
     }
+    popup.dlg.querySelector('#copyPromptToClipboard').addEventListener('pointerup', async function () {
+        let rawPrompt = itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt;
+        let rawPromptValues = rawPrompt;
+
+        if (Array.isArray(rawPrompt)) {
+            rawPromptValues = rawPrompt.map(x => x.content).join('\n');
+        }
+
+        await copyText(rawPromptValues);
+        toastr.info(t`Copied!`);
+    });
+
+    popup.dlg.querySelector('#showRawPrompt').addEventListener('click', async function () {
+        //console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
+        console.log(PromptArrayItemForRawPromptDisplay);
+        console.log(itemizedPrompts);
+        console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
+
+        const rawPrompt = flatten(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
+
+        // Mobile needs special handholding. The side-view on the popup wouldn't work,
+        // so we just show an additional popup for this.
+        if (isMobile()) {
+            const content = document.createElement('div');
+            content.classList.add('tokenItemizingMaintext');
+            content.innerText = rawPrompt;
+            const popup = new Popup(content, POPUP_TYPE.TEXT, null, { allowVerticalScrolling: true, leftAlign: true });
+            await popup.show();
+            return;
+        }
+
+        //let DisplayStringifiedPrompt = JSON.stringify(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt).replace(/\n+/g, '<br>');
+        const rawPromptWrapper = document.getElementById('rawPromptWrapper');
+        rawPromptWrapper.innerText = rawPrompt;
+        $('#rawPromptPopup').slideToggle();
+    });
 
     await popup.show();
 }
@@ -372,4 +350,45 @@ export function initItemizedPrompts() {
     eventSource.on(event_types.GROUP_CHAT_DELETED, async (name) => {
         await deleteItemizedPrompts(name);
     });
+}
+
+/**
+ * Swaps the itemized prompts between two messages. Useful when moving messages around in the chat.
+ * @param {number} sourceMessageId Source message ID
+ * @param {number} targetMessageId Target message ID
+ */
+export function swapItemizedPrompts(sourceMessageId, targetMessageId) {
+    if (!Array.isArray(itemizedPrompts)) {
+        return;
+    }
+
+    const sourcePrompts = itemizedPrompts.filter(x => x.mesId === sourceMessageId);
+    const targetPrompts = itemizedPrompts.filter(x => x.mesId === targetMessageId);
+
+    sourcePrompts.forEach(prompt => {
+        prompt.mesId = targetMessageId;
+    });
+
+    targetPrompts.forEach(prompt => {
+        prompt.mesId = sourceMessageId;
+    });
+
+    itemizedPrompts.sort((a, b) => a.mesId - b.mesId);
+}
+
+/**
+ * Deletes the itemized prompt for a specific message.
+ * Shifts down other itemized prompts as necessary.
+ * @param {number} messageId Message ID to delete itemized prompt for
+ */
+export function deleteItemizedPromptForMessage(messageId) {
+    if (!Array.isArray(itemizedPrompts)) {
+        return;
+    }
+
+    itemizedPrompts = itemizedPrompts.filter(x => x.mesId !== messageId);
+
+    for (const prompt of itemizedPrompts.filter(x => x.mesId > messageId)) {
+        prompt.mesId -= 1;
+    }
 }

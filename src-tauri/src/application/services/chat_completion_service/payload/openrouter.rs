@@ -133,18 +133,32 @@ fn map_provider_preferences(source_payload: &Map<String, Value>) -> Option<Value
     let order = source_payload
         .get("provider")
         .and_then(Value::as_array)
-        .filter(|providers| !providers.is_empty())?
-        .clone();
+        .filter(|providers| !providers.is_empty())
+        .cloned();
+    let quantizations = source_payload
+        .get("quantizations")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty())
+        .cloned();
 
-    let allow_fallbacks = source_payload
-        .get("allow_fallbacks")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
+    if order.is_none() && quantizations.is_none() {
+        return None;
+    }
 
-    Some(json!({
-        "allow_fallbacks": allow_fallbacks,
-        "order": order,
-    }))
+    let mut provider = Map::new();
+    if let Some(order) = order {
+        let allow_fallbacks = source_payload
+            .get("allow_fallbacks")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        provider.insert("allow_fallbacks".to_string(), Value::Bool(allow_fallbacks));
+        provider.insert("order".to_string(), Value::Array(order));
+    }
+    if let Some(quantizations) = quantizations {
+        provider.insert("quantizations".to_string(), Value::Array(quantizations));
+    }
+
+    Some(Value::Object(provider))
 }
 
 #[cfg(test)]
@@ -225,6 +239,36 @@ mod tests {
             .unwrap_or_default();
 
         assert_eq!(transforms_len, 0);
+    }
+
+    #[test]
+    fn openrouter_quantizations_are_forwarded_without_provider_order() {
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-4.1-mini",
+            "messages": [{"role": "user", "content": "hello"}],
+            "quantizations": ["int8", "fp16"]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload);
+        let quantizations = upstream
+            .as_object()
+            .and_then(|body| body.get("provider"))
+            .and_then(Value::as_object)
+            .and_then(|provider| provider.get("quantizations"))
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<&str>>()
+            })
+            .unwrap_or_default();
+
+        assert_eq!(quantizations, vec!["int8", "fp16"]);
     }
 
     #[test]

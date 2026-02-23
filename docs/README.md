@@ -10,6 +10,7 @@
 4. [后端结构](./BackendStructure.md) - 后端架构和模块说明
 5. [实施计划](./ImplementationPlan.md) - 项目实施的阶段和里程碑
 6. [移动端开发说明](./MobileDevelopment.md) - Android/iOS 关键坑位、资源访问与路径解析方案
+7. [上游 1.16.0 同步计划](./upstream-sync-1.16-plan/README.md) - 上游升级分阶段计划、冲突矩阵与执行清单
 
 ## 项目概述
 

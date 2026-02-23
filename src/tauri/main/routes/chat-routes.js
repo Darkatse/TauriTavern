@@ -57,6 +57,29 @@ function matchesSearch(fileStem, payload, query) {
     return fragments.every((fragment) => searchText.includes(fragment));
 }
 
+function normalizePinnedChats(value) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .filter((entry) => entry && typeof entry === 'object')
+        .map((entry) => ({
+            file_name: String(entry.file_name || ''),
+            avatar: String(entry.avatar || ''),
+            group: String(entry.group || ''),
+        }))
+        .filter((entry) => entry.file_name);
+}
+
+function isPinnedRecentChat(chat, pinnedChats) {
+    return pinnedChats.some((pinned) =>
+        pinned.file_name === String(chat?.file_name || '')
+        && pinned.avatar === String(chat?.avatar || '')
+        && pinned.group === String(chat?.group || ''),
+    );
+}
+
 export function registerChatRoutes(router, context, { jsonResponse }) {
     const isChatNotFoundError = (error) => {
         const serialized = (() => {
@@ -281,7 +304,13 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/chats/recent', async ({ body }) => {
-        const max = Number(body?.max || Number.MAX_SAFE_INTEGER);
+        const pinnedChats = normalizePinnedChats(body?.pinned);
+        const requestedMax = Number.parseInt(body?.max, 10);
+        const max = (
+            Number.isFinite(requestedMax)
+                ? Math.max(0, requestedMax)
+                : Number.MAX_SAFE_INTEGER
+        ) + pinnedChats.length;
         const withMetadata = Boolean(body?.metadata);
         const [chats, groups] = await Promise.all([
             context.safeInvoke('list_chat_summaries', {
@@ -371,7 +400,18 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             : [];
 
         const allEntries = [...characterEntries.filter(Boolean), ...groupEntries.filter(Boolean)];
-        allEntries.sort((a, b) => Number(b.last_mes || 0) - Number(a.last_mes || 0));
+        allEntries.sort((a, b) => {
+            const aPinned = isPinnedRecentChat(a, pinnedChats);
+            const bPinned = isPinnedRecentChat(b, pinnedChats);
+            if (aPinned && !bPinned) {
+                return -1;
+            }
+            if (!aPinned && bPinned) {
+                return 1;
+            }
+
+            return Number(b.last_mes || 0) - Number(a.last_mes || 0);
+        });
 
         return jsonResponse(allEntries.slice(0, Math.max(0, max)));
     });

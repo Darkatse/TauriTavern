@@ -1,7 +1,8 @@
-import { chat_metadata, characters, substituteParams, chat, extension_prompt_roles, extension_prompt_types, name2, neutralCharacterName } from '../../script.js';
+import { chat_metadata, characters, substituteParams, chat, name2, neutralCharacterName } from '../../script.js';
 import { extension_settings } from '../extensions.js';
 import { getGroupMembers, groups } from '../group-chats.js';
 import { power_user } from '../power-user.js';
+import { extension_prompt_roles, extension_prompt_types } from '../extension-prompts.js';
 import { searchCharByName, getTagsList, tags, tag_map } from '../tags.js';
 import { onlyUniqueJson, sortIgnoreCaseAndAccents } from '../utils.js';
 import { world_names } from '../world-info.js';

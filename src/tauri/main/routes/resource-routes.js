@@ -16,13 +16,16 @@ function isNotFoundError(error) {
         || message.includes('os error 2');
 }
 
+function sanitizeFileName(value) {
+    return String(value || '')
+        .replace(/[\/\\:*?"<>|\u0000-\u001f]/g, '_')
+        .replace(/[. ]+$/g, '')
+        .trim();
+}
+
 export function registerResourceRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/files/sanitize-filename', async ({ body }) => {
-        const input = String(body?.fileName || '');
-        const sanitized = input
-            .replace(/[\/\\:*?"<>|\u0000-\u001f]/g, '_')
-            .replace(/[. ]+$/g, '')
-            .trim();
+        const sanitized = sanitizeFileName(body?.fileName || '');
 
         if (!sanitized) {
             return jsonResponse({ error: 'Invalid filename' }, 400);
@@ -76,6 +79,38 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
         const urls = body.urls.map((url) => String(url || '').trim()).filter(Boolean);
         const verified = await context.safeInvoke('verify_user_files', { urls });
         return jsonResponse(verified && typeof verified === 'object' ? verified : {});
+    });
+
+    router.get('/thumbnail', async ({ url }) => {
+        const type = String(url.searchParams.get('type') || '').trim().toLowerCase();
+        const file = decodeRoutePath(url.searchParams.get('file') || '').trim();
+        const animated = String(url.searchParams.get('animated') || '').toLowerCase() === 'true';
+
+        if (!type || !file || !['bg', 'avatar', 'persona'].includes(type)) {
+            return textResponse('Bad Request', 400);
+        }
+
+        try {
+            const payload = await context.safeInvoke('read_thumbnail_asset', {
+                thumbnail_type: type,
+                file,
+                animated,
+            });
+            const bytes = decodeBase64ToBytes(payload?.content_base64 || '');
+            return new Response(bytes, {
+                status: 200,
+                headers: {
+                    'Content-Type': payload?.mime_type || 'application/octet-stream',
+                    'Cache-Control': 'no-store',
+                },
+            });
+        } catch (error) {
+            if (isNotFoundError(error)) {
+                return textResponse('Not Found', 404);
+            }
+
+            throw error;
+        }
     });
 
     router.get('/user/files/*', async ({ wildcard }) => {
@@ -132,6 +167,14 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
         });
     });
 
+    router.post('/api/image-metadata/all', async ({ body }) => {
+        const prefix = typeof body?.prefix === 'string' ? body.prefix : '';
+        const payload = await context.safeInvoke('get_all_background_metadata', { prefix });
+        return jsonResponse(payload && typeof payload === 'object'
+            ? payload
+            : { version: 1, images: {} });
+    });
+
     router.post('/api/backgrounds/delete', async ({ body }) => {
         await context.safeInvoke('delete_background', { dto: { bg: body?.bg || '' } });
         return jsonResponse({ ok: true });
@@ -158,7 +201,12 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             return jsonResponse({ error: 'No background file provided' }, 400);
         }
 
-        const filename = file instanceof File ? file.name : 'background.png';
+        const rawFilename = file instanceof File ? file.name : 'background.png';
+        const filename = sanitizeFileName(rawFilename);
+        if (!filename) {
+            return jsonResponse({ error: 'Invalid filename' }, 400);
+        }
+
         const data = Array.from(new Uint8Array(await file.arrayBuffer()));
         const uploaded = await context.safeInvoke('upload_background', { filename, data });
 

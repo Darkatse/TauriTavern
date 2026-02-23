@@ -6,6 +6,7 @@ use crate::domain::repositories::chat_completion_repository::ChatCompletionSourc
 mod claude;
 mod custom;
 mod makersuite;
+mod moonshot;
 mod openai;
 mod openrouter;
 mod prompt_cache;
@@ -20,8 +21,8 @@ pub(super) fn build_payload(
     match source {
         ChatCompletionSource::OpenAi
         | ChatCompletionSource::DeepSeek
-        | ChatCompletionSource::Moonshot
         | ChatCompletionSource::SiliconFlow => Ok(openai::build(payload)),
+        ChatCompletionSource::Moonshot => Ok(moonshot::build(payload)),
         ChatCompletionSource::OpenRouter => Ok(openrouter::build(payload)),
         ChatCompletionSource::Zai => Ok(zai::build(payload)),
         ChatCompletionSource::Custom => custom::build(payload),

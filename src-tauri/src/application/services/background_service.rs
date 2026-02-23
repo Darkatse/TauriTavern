@@ -1,5 +1,7 @@
 use crate::domain::errors::DomainError;
-use crate::domain::models::background::Background;
+use crate::domain::models::background::{
+    Background, BackgroundAsset, BackgroundImageMetadataIndex,
+};
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::infrastructure::logging::logger;
 use std::sync::Arc;
@@ -92,5 +94,41 @@ impl BackgroundService {
         }
 
         self.repository.upload_background(filename, data).await
+    }
+
+    pub async fn read_background_thumbnail(
+        &self,
+        filename: &str,
+        animated: bool,
+    ) -> Result<BackgroundAsset, DomainError> {
+        logger::debug(&format!(
+            "BackgroundService: Reading thumbnail for '{}' (animated: {})",
+            filename, animated
+        ));
+
+        if filename.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Background filename cannot be empty".to_string(),
+            ));
+        }
+
+        self.repository
+            .read_background_thumbnail(filename, animated)
+            .await
+    }
+
+    pub async fn get_all_background_metadata(
+        &self,
+        prefix: Option<&str>,
+    ) -> Result<BackgroundImageMetadataIndex, DomainError> {
+        logger::debug("BackgroundService: Getting all background metadata");
+        let mut metadata = self.repository.get_all_background_metadata().await?;
+
+        let prefix = prefix.unwrap_or_default().trim();
+        if !prefix.is_empty() {
+            metadata.images.retain(|key, _| key.starts_with(prefix));
+        }
+
+        Ok(metadata)
     }
 }

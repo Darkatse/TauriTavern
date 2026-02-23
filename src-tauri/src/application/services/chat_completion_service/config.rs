@@ -258,6 +258,8 @@ fn supports_reverse_proxy(source: ChatCompletionSource) -> bool {
             | ChatCompletionSource::Claude
             | ChatCompletionSource::Makersuite
             | ChatCompletionSource::DeepSeek
+            | ChatCompletionSource::Moonshot
+            | ChatCompletionSource::Zai
     )
 }
 
@@ -284,8 +286,8 @@ mod tests {
     use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
 
     use super::{
-        default_base_url, source_extra_headers, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE,
-        OPENROUTER_API_BASE, ZAI_API_BASE_CODING,
+        default_base_url, source_extra_headers, supports_reverse_proxy, ApiConfigPurpose,
+        DEEPSEEK_STATUS_API_BASE, OPENROUTER_API_BASE, ZAI_API_BASE_CODING,
     };
 
     #[test]
@@ -321,5 +323,11 @@ mod tests {
         let headers = source_extra_headers(ChatCompletionSource::OpenRouter);
         assert!(headers.contains_key("HTTP-Referer"));
         assert!(headers.contains_key("X-Title"));
+    }
+
+    #[test]
+    fn moonshot_and_zai_support_reverse_proxy() {
+        assert!(supports_reverse_proxy(ChatCompletionSource::Moonshot));
+        assert!(supports_reverse_proxy(ChatCompletionSource::Zai));
     }
 }

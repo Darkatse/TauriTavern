@@ -6,8 +6,6 @@ import {
     animation_duration,
     eventSource,
     event_types,
-    extension_prompt_roles,
-    extension_prompt_types,
     generateQuietPrompt,
     is_send_press,
     saveSettingsDebounced,
@@ -18,6 +16,7 @@ import {
     streamingProcessor,
     animation_easing,
 } from '../../../script.js';
+import { extension_prompt_roles, extension_prompt_types } from '../../extension-prompts.js';
 import { is_group_generating, selected_group } from '../../group-chats.js';
 import { loadMovingUIState, power_user } from '../../power-user.js';
 import { dragElement } from '../../RossAscends-mods.js';
@@ -437,9 +436,13 @@ async function onChatEvent() {
 
     const context = getContext();
     const chat = context.chat;
+    // Chat can't be empty.
+    if (chat.length === 0) return;
+
+    const lastMessage = chat[chat.length - 1];
 
     // No new messages - do nothing
-    if (chat.length === 0 || (lastMessageId === chat.length && getStringHash(chat[chat.length - 1].mes) === lastMessageHash)) {
+    if ((lastMessageId === chat.length && getStringHash(lastMessage.mes) === lastMessageHash)) {
         return;
     }
 
@@ -451,18 +454,18 @@ async function onChatEvent() {
 
     // Message has been edited / regenerated - delete the saved memory
     if (chat.length
-        && chat[chat.length - 1].extra
-        && chat[chat.length - 1].extra.memory
+        && lastMessage.extra
+        && lastMessage.extra.memory
         && lastMessageId === chat.length
-        && getStringHash(chat[chat.length - 1].mes) !== lastMessageHash) {
-        delete chat[chat.length - 1].extra.memory;
+        && getStringHash(lastMessage.mes) !== lastMessageHash) {
+        delete lastMessage.extra.memory;
     }
 
     summarizeChat(context)
         .catch(console.error)
         .finally(() => {
             lastMessageId = context.chat?.length ?? null;
-            lastMessageHash = getStringHash((context.chat.length && context.chat[context.chat.length - 1]['mes']) ?? '');
+            lastMessageHash = getStringHash((context.chat.length && context.chat[context.chat.length - 1].mes) ?? '');
         });
 }
 

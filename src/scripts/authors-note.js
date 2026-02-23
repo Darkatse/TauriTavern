@@ -4,11 +4,10 @@ import {
     chat_metadata,
     eventSource,
     event_types,
-    extension_prompt_roles,
-    extension_prompt_types,
     saveSettingsDebounced,
     this_chid,
 } from '../script.js';
+import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { selected_group } from './group-chats.js';
 import { extension_settings, getContext, saveMetadataDebounced } from './extensions.js';
 import { getCharaFilename, debounce, delay } from './utils.js';
@@ -594,7 +593,7 @@ function registerAuthorsNoteMacros() {
             handler: () => chat_metadata[metadata_keys.prompt] ?? '',
         });
         macros.register('charAuthorsNote', {
-            category: MacroCategory.CHARACTER,
+            category: MacroCategory.PROMPTS,
             description: t`The contents of the Character Author's Note`,
             handler: () => this_chid !== undefined ? (extension_settings.note.chara.find((e) => e.name === getCharaFilename())?.prompt ?? '') : '',
         });

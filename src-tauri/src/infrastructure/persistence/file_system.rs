@@ -64,6 +64,7 @@ impl DataDirectory {
             "thumbnails",
             "thumbnails/bg",
             "thumbnails/avatar",
+            "thumbnails/persona",
             "worlds",
             "user",
             "user/images",

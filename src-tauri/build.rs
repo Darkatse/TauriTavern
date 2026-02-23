@@ -3,7 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn main() {
+fn main() {    
+    // Ensure embedded frontend assets are regenerated whenever anything under frontendDist changes.
+    println!("cargo:rerun-if-changed=../src");
     println!("cargo:rerun-if-changed=../default/content");
     println!("cargo:rerun-if-changed=../src/scripts/templates");
     println!("cargo:rerun-if-changed=../src/scripts/extensions");

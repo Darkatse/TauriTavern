@@ -3,44 +3,75 @@ use chrono::Local;
 use colored::*;
 use dialoguer::{theme::ColorfulTheme, Select};
 use indicatif::{ProgressBar, ProgressStyle};
+use regex::Regex;
 use std::env;
 use std::fs;
+use std::io::{BufRead, BufReader};
+use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::Duration;
-use which::which;
 use sysinfo::System;
-use std::net::TcpListener;
-use std::io::{BufRead, BufReader};
-use regex::Regex;
+use which::which;
+
+mod upsync;
 
 const TAOBAO_REGISTRY: &str = "https://registry.npmmirror.com";
 
 // 日志辅助函数
 fn log_info(msg: &str) {
     let time = Local::now().format("%H:%M:%S").to_string();
-    println!("{} {} {}", format!("[{}]", time).dimmed(), "INFO".cyan().bold(), msg);
+    println!(
+        "{} {} {}",
+        format!("[{}]", time).dimmed(),
+        "INFO".cyan().bold(),
+        msg
+    );
 }
 
 fn log_success(msg: &str) {
     let time = Local::now().format("%H:%M:%S").to_string();
-    println!("{} {} {}", format!("[{}]", time).dimmed(), "SUCCESS".green().bold(), msg);
+    println!(
+        "{} {} {}",
+        format!("[{}]", time).dimmed(),
+        "SUCCESS".green().bold(),
+        msg
+    );
 }
 
 fn log_warn(msg: &str) {
     let time = Local::now().format("%H:%M:%S").to_string();
-    println!("{} {} {}", format!("[{}]", time).dimmed(), "WARN".yellow().bold(), msg);
+    println!(
+        "{} {} {}",
+        format!("[{}]", time).dimmed(),
+        "WARN".yellow().bold(),
+        msg
+    );
 }
 
 fn log_error(msg: &str) {
     let time = Local::now().format("%H:%M:%S").to_string();
-    println!("{} {} {}", format!("[{}]", time).dimmed(), "ERROR".red().bold(), msg);
+    println!(
+        "{} {} {}",
+        format!("[{}]", time).dimmed(),
+        "ERROR".red().bold(),
+        msg
+    );
 }
 
 fn main() -> Result<()> {
     // 启用 Windows 下的 ANSI 颜色支持
     #[cfg(windows)]
     let _ = colored::control::set_virtual_terminal(true);
+
+    let cli_args: Vec<String> = env::args().skip(1).collect();
+    if !cli_args.is_empty() {
+        if let Err(error) = run_cli_command(&cli_args) {
+            eprintln!("ERROR: {:#}", error);
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
 
     clear_terminal();
     print_banner();
@@ -55,11 +86,51 @@ fn main() -> Result<()> {
     }
 }
 
+fn run_cli_command(args: &[String]) -> Result<()> {
+    match args {
+        [command, subcommand, rest @ ..] if command == "upsync" && subcommand == "analyze" => {
+            upsync::run_upsync_analyze_cli(rest)
+        }
+        [flag] if flag == "--help" || flag == "-h" => {
+            print_cli_help();
+            Ok(())
+        }
+        _ => {
+            print_cli_help();
+            Err(anyhow::anyhow!("Unsupported command: {}", args.join(" ")))
+        }
+    }
+}
+
+fn print_cli_help() {
+    println!("FasTools CLI");
+    println!();
+    println!("Usage:");
+    println!("  fastools upsync analyze [options]");
+    println!();
+    println!("Run `fastools upsync analyze --help` for detailed options.");
+}
+
 fn handle_error(e: anyhow::Error) {
     println!();
-    println!("{}", "┌──────────────────────────────────────────────────────┐".red().bold());
-    println!("{} {:^52} {}", "│".red().bold(), "🛑 启动器发生错误 (Launcher Error) 🛑".white().bold(), "│".red().bold());
-    println!("{}", "└──────────────────────────────────────────────────────┘".red().bold());
+    println!(
+        "{}",
+        "┌──────────────────────────────────────────────────────┐"
+            .red()
+            .bold()
+    );
+    println!(
+        "{} {:^52} {}",
+        "│".red().bold(),
+        "🛑 启动器发生错误 (Launcher Error) 🛑".white().bold(),
+        "│".red().bold()
+    );
+    println!(
+        "{}",
+        "└──────────────────────────────────────────────────────┘"
+            .red()
+            .bold()
+    );
     println!();
     log_error(&format!("错误详情: {:?}", e));
     println!();
@@ -114,8 +185,16 @@ fn print_banner() {
     }
 
     println!();
-    println!("{}", "        >>> FasTools (TauriTavern Manager) <<<        ".truecolor(220, 220, 220).bold());
-    println!("{}", "   -----------------------------------------------------   ".dimmed());
+    println!(
+        "{}",
+        "        >>> FasTools (TauriTavern Manager) <<<        "
+            .truecolor(220, 220, 220)
+            .bold()
+    );
+    println!(
+        "{}",
+        "   -----------------------------------------------------   ".dimmed()
+    );
     println!();
 }
 
@@ -125,9 +204,10 @@ fn step_header(current: usize, total: usize, title: &str, subtitle: &str) {
     let bar = "█".repeat(filled) + &"░".repeat(bar_len - filled);
 
     println!();
-    println!("{} {} {} {} {} {}",
-        "🔵".blue(), 
-        bar.blue().bold(), 
+    println!(
+        "{} {} {} {} {} {}",
+        "🔵".blue(),
+        bar.blue().bold(),
         "".clear(),
         format!("{}/{}", current, total).bold(),
         title.white().bold(),
@@ -163,8 +243,8 @@ fn check_environment() -> Result<()> {
     // 检查 WebView2 (仅 Windows)
     #[cfg(windows)]
     if !check_webview2()? {
-         pause();
-         std::process::exit(1);
+        pause();
+        std::process::exit(1);
     }
 
     // 检查 pnpm
@@ -187,9 +267,11 @@ fn check_webview2() -> Result<bool> {
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let subkey_path = "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
-    let subkey_path_64 = "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
+    let subkey_path_64 =
+        "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
 
-    let has_webview2 = hklm.open_subkey(subkey_path).is_ok() || hklm.open_subkey(subkey_path_64).is_ok();
+    let has_webview2 =
+        hklm.open_subkey(subkey_path).is_ok() || hklm.open_subkey(subkey_path_64).is_ok();
 
     if has_webview2 {
         log_success("WebView2 Runtime 已安装");
@@ -239,10 +321,10 @@ fn check_and_install_dependencies() -> Result<()> {
             root_dir = root_dir.parent().unwrap().to_path_buf();
             env::set_current_dir(&root_dir)?;
         } else {
-             if root_dir.ends_with("launcher") {
-                 root_dir = root_dir.parent().unwrap().to_path_buf();
-                 env::set_current_dir(&root_dir)?;
-             }
+            if root_dir.ends_with("launcher") {
+                root_dir = root_dir.parent().unwrap().to_path_buf();
+                env::set_current_dir(&root_dir)?;
+            }
         }
     }
 
@@ -253,7 +335,7 @@ fn check_and_install_dependencies() -> Result<()> {
     // 检查 node_modules
     if !Path::new("node_modules").exists() {
         log_warn("检测到依赖缺失，准备安装...");
-        
+
         if which("npm").is_ok() {
             log_info("设置 npm 镜像源为淘宝源...");
             let _ = Command::new(get_cmd("npm"))
@@ -300,7 +382,7 @@ fn run_sequential_attempts(candidates: &[(&str, Vec<&str>)]) -> Result<ExitStatu
     for (prog, args) in candidates {
         // 在 Windows 上自动处理 .cmd 后缀
         let cmd_prog = get_cmd(prog);
-        
+
         match Command::new(&cmd_prog)
             .args(args)
             .stdout(Stdio::inherit())
@@ -315,12 +397,13 @@ fn run_sequential_attempts(candidates: &[(&str, Vec<&str>)]) -> Result<ExitStatu
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // 如果加上 .cmd 还没找到，尝试不加后缀（可能用户用的 git bash 或 cygwin）
-                if cfg!(windows) && *prog != "corepack" { // corepack 通常也是 cmd
-                     match Command::new(prog)
+                if cfg!(windows) && *prog != "corepack" {
+                    // corepack 通常也是 cmd
+                    match Command::new(prog)
                         .args(args)
                         .stdout(Stdio::inherit())
                         .stderr(Stdio::inherit())
-                        .status() 
+                        .status()
                     {
                         Ok(status) => return Ok(status),
                         Err(_) => {}
@@ -337,10 +420,10 @@ fn run_sequential_attempts(candidates: &[(&str, Vec<&str>)]) -> Result<ExitStatu
             }
         }
     }
-    Err(anyhow::anyhow!(
-        "未找到可用的包管理器或执行失败，请安装 pnpm 或 npm 后重试"
+    Err(
+        anyhow::anyhow!("未找到可用的包管理器或执行失败，请安装 pnpm 或 npm 后重试")
+            .context(last_err.unwrap_or_else(|| anyhow::anyhow!("未知错误"))),
     )
-    .context(last_err.unwrap_or_else(|| anyhow::anyhow!("未知错误"))))
 }
 
 // 辅助函数：在 Windows 上自动添加 .cmd 后缀
@@ -445,14 +528,23 @@ fn backup_data() -> Result<()> {
     } else {
         // 全局路径检测
         let global_path = if cfg!(target_os = "windows") {
-             env::var("APPDATA").ok().map(|p| Path::new(&p).join("com.tauritavern.client").join("data"))
+            env::var("APPDATA")
+                .ok()
+                .map(|p| Path::new(&p).join("com.tauritavern.client").join("data"))
         } else if cfg!(target_os = "macos") {
-             env::var("HOME").ok().map(|p| Path::new(&p).join("Library/Application Support/com.tauritavern.client/data"))
+            env::var("HOME").ok().map(|p| {
+                Path::new(&p).join("Library/Application Support/com.tauritavern.client/data")
+            })
         } else {
-             // Linux: XDG_CONFIG_HOME or ~/.config
-             env::var("XDG_CONFIG_HOME").ok()
+            // Linux: XDG_CONFIG_HOME or ~/.config
+            env::var("XDG_CONFIG_HOME")
+                .ok()
                 .map(|p| Path::new(&p).join("com.tauritavern.client/data"))
-                .or_else(|| env::var("HOME").ok().map(|p| Path::new(&p).join(".config/com.tauritavern.client/data")))
+                .or_else(|| {
+                    env::var("HOME")
+                        .ok()
+                        .map(|p| Path::new(&p).join(".config/com.tauritavern.client/data"))
+                })
         };
 
         if let Some(path) = global_path {
@@ -481,7 +573,11 @@ fn backup_data() -> Result<()> {
 
     // 获取 data_dir 的绝对路径以便显示和压缩
     let abs_data_dir = fs::canonicalize(&data_dir)?;
-    log_info(&format!("正在创建备份: {} -> {}", abs_data_dir.display(), backup_file));
+    log_info(&format!(
+        "正在创建备份: {} -> {}",
+        abs_data_dir.display(),
+        backup_file
+    ));
 
     #[cfg(windows)]
     {
@@ -513,7 +609,7 @@ fn backup_data() -> Result<()> {
     {
         // Linux/macOS 使用 tar 打包 (tar -czf backup.tar.gz -C parent_dir dir_name)
         let backup_file_tar = format!("backups/backup_{}.tar.gz", timestamp);
-        
+
         // 获取父目录和目录名
         let parent = abs_data_dir.parent().unwrap_or(Path::new("/"));
         let dirname = abs_data_dir.file_name().unwrap();
@@ -535,7 +631,7 @@ fn backup_data() -> Result<()> {
                 }
             }
             Err(e) => {
-                 log_error(&format!("无法执行 tar: {}", e));
+                log_error(&format!("无法执行 tar: {}", e));
             }
         }
     }
@@ -554,16 +650,23 @@ fn clean_webview2_cache() -> Result<()> {
     println!("请确保 TauriTavern 已经完全关闭，否则清理将失败。");
 
     let cache_path = if cfg!(target_os = "windows") {
-         env::var("LOCALAPPDATA").ok()
+        env::var("LOCALAPPDATA")
+            .ok()
             .map(|p| Path::new(&p).join("com.tauritavern.client/EBWebView"))
     } else if cfg!(target_os = "macos") {
-         env::var("HOME").ok()
-            .map(|p| Path::new(&p).join("Library/Caches/com.tauritavern.client")) 
+        env::var("HOME")
+            .ok()
+            .map(|p| Path::new(&p).join("Library/Caches/com.tauritavern.client"))
     } else {
         // Linux
-        env::var("XDG_CACHE_HOME").ok()
-             .map(|p| Path::new(&p).join("com.tauritavern.client"))
-             .or_else(|| env::var("HOME").ok().map(|p| Path::new(&p).join(".cache/com.tauritavern.client")))
+        env::var("XDG_CACHE_HOME")
+            .ok()
+            .map(|p| Path::new(&p).join("com.tauritavern.client"))
+            .or_else(|| {
+                env::var("HOME")
+                    .ok()
+                    .map(|p| Path::new(&p).join(".cache/com.tauritavern.client"))
+            })
     };
 
     if let Some(path) = cache_path {
@@ -588,14 +691,14 @@ fn clean_webview2_cache() -> Result<()> {
         #[cfg(windows)]
         log_error("无法定位缓存目录。");
     }
-    
+
     pause();
     Ok(())
 }
 
 fn run_dev() -> Result<()> {
     log_info("正在启动 Tauri 开发模式...");
-    
+
     let status = run_sequential_attempts(&[
         ("pnpm", vec!["run", "tauri:dev"]),
         ("corepack", vec!["pnpm", "run", "tauri:dev"]),
@@ -627,7 +730,7 @@ fn run_android_dev() -> Result<()> {
 
 fn run_build() -> Result<()> {
     log_info("正在构建生产版本...");
-    
+
     let status = run_sequential_attempts(&[
         ("pnpm", vec!["run", "tauri:build"]),
         ("corepack", vec!["pnpm", "run", "tauri:build"]),
@@ -674,11 +777,11 @@ fn clean_environment() -> Result<()> {
     } else {
         log_info("src-tauri/target 不存在，跳过。");
     }
-    
+
     // 清理后需要重新安装依赖
     log_info("清理完成，正在重新安装依赖...");
     check_and_install_dependencies()?;
-    
+
     pause();
     Ok(())
 }
@@ -692,9 +795,7 @@ fn update_repository() -> Result<()> {
         return Ok(());
     }
 
-    let status = Command::new("git")
-        .args(&["pull"])
-        .status();
+    let status = Command::new("git").args(&["pull"]).status();
 
     match status {
         Ok(s) => {
@@ -754,7 +855,7 @@ fn show_debug_menu() -> Result<()> {
 
 fn inspect_config() -> Result<()> {
     log_info("正在读取 Tauri 配置文件...");
-    
+
     // Check paths
     let config_path = if Path::new("src-tauri/tauri.conf.json").exists() {
         Path::new("src-tauri/tauri.conf.json").to_path_buf()
@@ -767,12 +868,12 @@ fn inspect_config() -> Result<()> {
     };
 
     let content = fs::read_to_string(&config_path)?;
-    let json: serde_json::Value = serde_json::from_str(&content)
-        .context("解析 tauri.conf.json 失败")?;
+    let json: serde_json::Value =
+        serde_json::from_str(&content).context("解析 tauri.conf.json 失败")?;
 
     println!();
     println!("{}", "--- Tauri 配置概览 ---".cyan().bold());
-    
+
     if let Some(name) = json.get("productName").and_then(|v| v.as_str()) {
         println!("📦 产品名称:   {}", name.green());
     }
@@ -782,27 +883,27 @@ fn inspect_config() -> Result<()> {
     if let Some(id) = json.get("identifier").and_then(|v| v.as_str()) {
         println!("🆔 包名:       {}", id);
     }
-    
+
     // Build config
     if let Some(build) = json.get("build") {
         if let Some(dist) = build.get("frontendDist").and_then(|v| v.as_str()) {
             println!("📂 前端输出:   {}", dist);
         }
         if let Some(dev) = build.get("devUrl").and_then(|v| v.as_str()) {
-             println!("🌐 开发地址:   {}", dev);
+            println!("🌐 开发地址:   {}", dev);
         }
     }
 
     println!();
     log_success(&format!("配置文件路径: {:?}", config_path));
-    
+
     pause();
     Ok(())
 }
 
 fn view_logs() -> Result<()> {
     log_info("正在查找日志文件...");
-    
+
     // 智能检测 logs 目录位置
     let mut log_dir = Path::new("logs").to_path_buf();
     let mut found = false;
@@ -815,14 +916,23 @@ fn view_logs() -> Result<()> {
     } else {
         // 全局路径检测
         let global_path = if cfg!(target_os = "windows") {
-             env::var("APPDATA").ok().map(|p| Path::new(&p).join("com.tauritavern.client").join("logs"))
+            env::var("APPDATA")
+                .ok()
+                .map(|p| Path::new(&p).join("com.tauritavern.client").join("logs"))
         } else if cfg!(target_os = "macos") {
-             env::var("HOME").ok().map(|p| Path::new(&p).join("Library/Logs/com.tauritavern.client"))
+            env::var("HOME")
+                .ok()
+                .map(|p| Path::new(&p).join("Library/Logs/com.tauritavern.client"))
         } else {
-             // Linux: XDG_DATA_HOME or ~/.local/share
-             env::var("XDG_DATA_HOME").ok()
+            // Linux: XDG_DATA_HOME or ~/.local/share
+            env::var("XDG_DATA_HOME")
+                .ok()
                 .map(|p| Path::new(&p).join("com.tauritavern.client/logs"))
-                .or_else(|| env::var("HOME").ok().map(|p| Path::new(&p).join(".local/share/com.tauritavern.client/logs")))
+                .or_else(|| {
+                    env::var("HOME")
+                        .ok()
+                        .map(|p| Path::new(&p).join(".local/share/com.tauritavern.client/logs"))
+                })
         };
 
         if let Some(path) = global_path {
@@ -858,7 +968,15 @@ fn view_logs() -> Result<()> {
     }
 
     // 按修改时间降序排序
-    entries.sort_by_key(|entry| std::cmp::Reverse(entry.metadata().ok().and_then(|m| m.modified().ok()).unwrap_or(std::time::SystemTime::UNIX_EPOCH)));
+    entries.sort_by_key(|entry| {
+        std::cmp::Reverse(
+            entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+        )
+    });
 
     let log_file_path = entries[0].path();
     log_success(&format!("打开最新日志: {:?}", log_file_path));
@@ -867,15 +985,19 @@ fn view_logs() -> Result<()> {
     let file = fs::File::open(&log_file_path)?;
     let reader = BufReader::new(file);
     let lines: Vec<String> = reader.lines().filter_map(Result::ok).collect();
-    
-    let start = if lines.len() > 50 { lines.len() - 50 } else { 0 };
+
+    let start = if lines.len() > 50 {
+        lines.len() - 50
+    } else {
+        0
+    };
     println!();
     println!("{}", "--- 日志末尾 50 行 ---".dimmed());
     for line in &lines[start..] {
         println!("{}", line);
     }
     println!("{}", "---------------------".dimmed());
-    
+
     pause();
     Ok(())
 }
@@ -884,20 +1006,20 @@ fn kill_process() -> Result<()> {
     log_warn("正在扫描相关进程...");
     let mut sys = System::new_all();
     sys.refresh_all();
-    
+
     let target_names = if cfg!(windows) {
         vec!["TauriTavern.exe", "tauritavern.exe"]
     } else {
         vec!["tauritavern", "TauriTavern"]
     };
-    
+
     let mut killed = 0;
     for process in sys.processes().values() {
         let name = process.name().to_string_lossy();
         // 在 Windows 上 process.name() 可能包含 .exe
-        let match_found = target_names.iter().any(|&target| {
-             name.eq_ignore_ascii_case(target)
-        });
+        let match_found = target_names
+            .iter()
+            .any(|&target| name.eq_ignore_ascii_case(target));
 
         if match_found {
             println!("发现进程: {} (PID: {}) - 正在终止...", name, process.pid());
@@ -908,13 +1030,13 @@ fn kill_process() -> Result<()> {
             }
         }
     }
-    
+
     if killed > 0 {
         log_success(&format!("成功终止了 {} 个进程。", killed));
     } else {
         log_info("未发现运行中的 TauriTavern 进程。");
     }
-    
+
     pause();
     Ok(())
 }
@@ -922,18 +1044,18 @@ fn kill_process() -> Result<()> {
 fn check_port() -> Result<()> {
     let port = 1420;
     log_info(&format!("正在检查端口 {} (前端开发服务)...", port));
-    
+
     match TcpListener::bind(format!("127.0.0.1:{}", port)) {
         Ok(_listener) => {
-             log_success(&format!("端口 {} 未被占用 (空闲)", port));
-             println!("  这意味着开发服务器目前没有运行。");
-        },
+            log_success(&format!("端口 {} 未被占用 (空闲)", port));
+            println!("  这意味着开发服务器目前没有运行。");
+        }
         Err(_) => {
-             log_warn(&format!("端口 {} 已被占用", port));
-             println!("  这意味着开发服务器正在运行，或者其他程序占用了该端口。");
+            log_warn(&format!("端口 {} 已被占用", port));
+            println!("  这意味着开发服务器正在运行，或者其他程序占用了该端口。");
         }
     }
-    
+
     pause();
     Ok(())
 }
@@ -946,8 +1068,8 @@ fn get_tool_version(tool: &str) -> String {
             } else {
                 "Unknown".to_string()
             }
-        },
-        Err(_) => "Not Found".to_string()
+        }
+        Err(_) => "Not Found".to_string(),
     }
 }
 
@@ -955,17 +1077,27 @@ fn sys_info() -> Result<()> {
     log_info("正在获取系统信息...");
     let mut sys = System::new_all();
     sys.refresh_all();
-    
+
     println!();
     println!("{}", "--- 系统概览 ---".cyan().bold());
-    println!("🖥️ 系统:       {} {}", System::name().unwrap_or("Unknown".into()), System::os_version().unwrap_or("".into()));
-    println!("⚙️ 内核:       {}", System::kernel_version().unwrap_or("Unknown".into()));
-    println!("🏠 主机名:     {}", System::host_name().unwrap_or("Unknown".into()));
-    
+    println!(
+        "🖥️ 系统:       {} {}",
+        System::name().unwrap_or("Unknown".into()),
+        System::os_version().unwrap_or("".into())
+    );
+    println!(
+        "⚙️ 内核:       {}",
+        System::kernel_version().unwrap_or("Unknown".into())
+    );
+    println!(
+        "🏠 主机名:     {}",
+        System::host_name().unwrap_or("Unknown".into())
+    );
+
     let used_mem = sys.used_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
     let total_mem = sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
     println!("💾 内存:       {:.2} GB / {:.2} GB", used_mem, total_mem);
-    
+
     let cpus = sys.cpus();
     if !cpus.is_empty() {
         println!("🧠 CPU:        {} ({} 核心)", cpus[0].brand(), cpus.len());
@@ -986,11 +1118,11 @@ fn sys_info() -> Result<()> {
         // 为了不让它报错退出，我们需要稍微修改一下 check_webview2 或者在这里捕获它的输出
         // 由于 check_webview2 返回 Result<()>，我们可以直接调用
         match check_webview2() {
-            Ok(_) => {}, // 它会打印 "WebView2 Runtime 已安装"
+            Ok(_) => {} // 它会打印 "WebView2 Runtime 已安装"
             Err(_) => println!("WebView2 Runtime 未检测到或检查失败"),
         }
     }
-    
+
     println!();
     pause();
     Ok(())
@@ -999,12 +1131,12 @@ fn sys_info() -> Result<()> {
 fn run_debug() -> Result<()> {
     log_info("正在启动调试模式 (Debug Mode)...");
     log_info("已启用: RUST_LOG=debug, RUST_BACKTRACE=1");
-    
+
     // Set environment variables
     env::set_var("RUST_LOG", "debug");
     env::set_var("RUST_BACKTRACE", "1");
     // Force colors
-    env::set_var("FORCE_COLOR", "1"); 
+    env::set_var("FORCE_COLOR", "1");
     env::set_var("CARGO_TERM_COLOR", "always");
 
     // 与 run_sequential_attempts 保持一致的多候选回退策略，避免单条命令 NotFound 直接失败。
@@ -1089,7 +1221,7 @@ fn run_debug() -> Result<()> {
 
     // Wait for child
     let status = child.wait()?;
-    
+
     stdout_handle.join().unwrap();
     stderr_handle.join().unwrap();
 
@@ -1106,21 +1238,26 @@ fn process_log_line(line: &str, is_stderr: bool) {
     let re = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
     let clean_line = re.replace_all(line, "");
     let upper = clean_line.to_uppercase();
-    
+
     let timestamp = Local::now().format("%H:%M:%S").to_string();
     let prefix = format!("[{}]", timestamp).dimmed();
 
     // Check for errors/warnings
-    if upper.contains("ERROR") || (is_stderr && !upper.contains("WARN") && !upper.contains("INFO") && !upper.contains("DEBUG")) {
+    if upper.contains("ERROR")
+        || (is_stderr
+            && !upper.contains("WARN")
+            && !upper.contains("INFO")
+            && !upper.contains("DEBUG"))
+    {
         // Treat generic stderr as error unless it looks like other levels
         // Note: Some tools print normal info to stderr, so be careful.
         // If line contains "ERROR", definitely red.
         if upper.contains("ERROR") {
-             println!("{} {} {}", prefix, "ERR".red().bold(), line);
+            println!("{} {} {}", prefix, "ERR".red().bold(), line);
         } else {
-             // Maybe just yellow for unknown stderr? Or just print it.
-             // Let's just print stderr as is but with prefix, unless it has specific keywords.
-             println!("{} {}", prefix, line);
+            // Maybe just yellow for unknown stderr? Or just print it.
+            // Let's just print stderr as is but with prefix, unless it has specific keywords.
+            println!("{} {}", prefix, line);
         }
     } else if upper.contains("WARN") {
         println!("{} {} {}", prefix, "WARN".yellow().bold(), line);

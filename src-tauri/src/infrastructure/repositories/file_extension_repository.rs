@@ -29,11 +29,10 @@ pub struct FileExtensionRepository {
     http_client: Client,
     user_extensions_dir: PathBuf,
     global_extensions_dir: PathBuf,
-    system_extensions_dir: PathBuf,
 }
 
 /// Built-in extensions enabled in TauriTavern.
-/// Keep this list explicit so unsupported built-ins stay disabled by default.
+/// Keep this list explicit so custom built-ins remain predictable after upstream sync.
 const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "regex",
     "code-render",
@@ -71,18 +70,12 @@ struct GithubRepoLocation {
 }
 
 impl FileExtensionRepository {
-    pub fn new(
-        user_extensions_dir: PathBuf,
-        global_extensions_dir: PathBuf,
-        system_extensions_dir: PathBuf,
-    ) -> Self {
+    pub fn new(user_extensions_dir: PathBuf, global_extensions_dir: PathBuf) -> Self {
         // Create directories if they don't exist
         fs::create_dir_all(&user_extensions_dir)
             .expect("Failed to create user extensions directory");
         fs::create_dir_all(&global_extensions_dir)
             .expect("Failed to create global extensions directory");
-        fs::create_dir_all(&system_extensions_dir)
-            .expect("Failed to create system extensions directory");
 
         let http_client =
             build_http_client(Client::builder()).expect("Failed to build extension HTTP client");
@@ -91,7 +84,6 @@ impl FileExtensionRepository {
             http_client,
             user_extensions_dir,
             global_extensions_dir,
-            system_extensions_dir,
         }
     }
 
@@ -191,15 +183,14 @@ impl ExtensionRepository for FileExtensionRepository {
 
         let mut extensions = Vec::new();
 
-        // Built-in extensions are explicitly allowlisted; unsupported modules remain disabled.
+        // Built-in extensions are explicitly allowlisted; unsupported modules stay disabled.
         for &name in ENABLED_SYSTEM_EXTENSIONS {
-            let path = self.system_extensions_dir.join(name);
-            let manifest = self.get_manifest(&path).await.ok().flatten();
+            let path = PathBuf::from(format!("scripts/extensions/{}", name));
 
             extensions.push(Extension {
                 name: name.to_string(),
                 extension_type: ExtensionType::System,
-                manifest,
+                manifest: None,
                 path,
                 remote_url: None,
                 commit_hash: None,

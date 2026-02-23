@@ -156,6 +156,7 @@ fn build_claude_payload(
         }
     }
 
+    let mut should_convert_prefill_to_user = requires_claude_prefill_role_fix(model);
     if supports_claude_thinking(model) {
         let reasoning_effort = payload.get("reasoning_effort").and_then(Value::as_str);
         if let Some(budget_tokens) =
@@ -175,9 +176,12 @@ fn build_claude_payload(
             request.remove("temperature");
             request.remove("top_p");
             request.remove("top_k");
-
-            convert_thinking_prefill_to_user(&mut messages);
+            should_convert_prefill_to_user = true;
         }
+    }
+
+    if should_convert_prefill_to_user {
+        convert_thinking_prefill_to_user(&mut messages);
     }
 
     request.insert("messages".to_string(), Value::Array(messages));
@@ -404,9 +408,17 @@ fn supports_claude_thinking(model: &str) -> bool {
         "claude-sonnet-4",
         "claude-haiku-4-5",
         "claude-opus-4-5",
+        "claude-opus-4-6",
     ]
     .iter()
     .any(|prefix| model.starts_with(prefix))
+}
+
+fn requires_claude_prefill_role_fix(model: &str) -> bool {
+    model
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("claude-opus-4-6")
 }
 
 fn calculate_claude_budget_tokens(
@@ -491,6 +503,36 @@ mod tests {
         assert!(body.get("temperature").is_none());
         assert!(body.get("top_p").is_none());
         assert!(body.get("top_k").is_none());
+
+        let last_role = body
+            .get("messages")
+            .and_then(Value::as_array)
+            .and_then(|messages| messages.last())
+            .and_then(Value::as_object)
+            .and_then(|message| message.get("role"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(last_role, "user");
+    }
+
+    #[test]
+    fn claude_opus_4_6_prefill_is_converted_to_user_without_thinking() {
+        let payload = json!({
+            "model": "claude-opus-4-6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "assistant_prefill": "prefill",
+            "max_tokens": 1000,
+            "reasoning_effort": "auto",
+            "stream": false
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert!(body.get("thinking").is_none());
 
         let last_role = body
             .get("messages")
