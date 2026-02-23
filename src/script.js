@@ -18,6 +18,8 @@ import {
     loadCharacterChatPayload,
     saveCharacterChatPayload,
 } from './scripts/chat-payload-transport.js';
+import { extension_prompt_roles, extension_prompt_types } from './scripts/extension-prompts.js';
+import { waitForTauriMainReady } from './scripts/extensions/runtime/tauri-ready.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -536,24 +538,7 @@ export const saveCharacterDebounced = debounce(() => $('#create_button').trigger
  */
 export const printCharactersDebounced = debounce(() => { printCharacters(false); }, DEFAULT_PRINT_TIMEOUT);
 
-/**
- * @enum {number} Extension prompt types
- */
-export const extension_prompt_types = {
-    NONE: -1,
-    IN_PROMPT: 0,
-    IN_CHAT: 1,
-    BEFORE_PROMPT: 2,
-};
-
-/**
- * @enum {number} Extension prompt roles
- */
-export const extension_prompt_roles = {
-    SYSTEM: 0,
-    USER: 1,
-    ASSISTANT: 2,
-};
+export { extension_prompt_types, extension_prompt_roles };
 
 export const MAX_INJECTION_DEPTH = 10000;
 
@@ -750,6 +735,9 @@ export async function pingServer() {
 
 //MARK: firstLoadInit
 async function firstLoadInit() {
+    // Ensure bridge/interceptors are installed before first /api/* calls.
+    await waitForTauriMainReady();
+
     try {
         const tokenResponse = await fetch('/csrf-token');
         if (!tokenResponse.ok) {

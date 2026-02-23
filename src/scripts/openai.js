@@ -11,8 +11,6 @@ import {
     characters,
     event_types,
     eventSource,
-    extension_prompt_roles,
-    extension_prompt_types,
     Generate,
     getExtensionPrompt,
     getExtensionPromptMaxDepth,
@@ -33,6 +31,7 @@ import {
     this_chid,
 } from '../script.js';
 import { getGroupNames, selected_group } from './group-chats.js';
+import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 
 import {
     chatCompletionDefaultPrompts,

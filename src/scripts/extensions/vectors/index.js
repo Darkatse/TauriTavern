@@ -1,8 +1,6 @@
 import {
     eventSource,
     event_types,
-    extension_prompt_types,
-    extension_prompt_roles,
     getCurrentChatId,
     getRequestHeaders,
     is_send_press,
@@ -12,6 +10,7 @@ import {
     generateRaw,
     substituteParamsExtended,
 } from '../../../script.js';
+import { extension_prompt_roles, extension_prompt_types } from '../../extension-prompts.js';
 import {
     ModuleWorkerWrapper,
     extension_settings,

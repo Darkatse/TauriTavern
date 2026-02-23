@@ -1,6 +1,3 @@
-import { registerDebugFunction } from './power-user.js';
-import { updateSecretDisplay } from './secrets.js';
-
 const storageKey = 'language';
 const overrideLanguage = localStorage.getItem(storageKey);
 const localeFile = String(overrideLanguage || navigator.language || navigator.userLanguage || 'en').toLowerCase();
@@ -13,6 +10,30 @@ var localeData;
 let trackMissingDynamicTranslate = null;
 
 export const getCurrentLocale = () => localeFile;
+
+async function updateSecretDisplayAfterLocaleApplied() {
+    try {
+        const module = await import('./secrets.js');
+        if (typeof module?.updateSecretDisplay === 'function') {
+            module.updateSecretDisplay();
+        }
+    } catch (error) {
+        console.warn('Failed to update secret display after locale init:', error);
+    }
+}
+
+async function loadRegisterDebugFunction() {
+    try {
+        const module = await import('./power-user.js');
+        if (typeof module?.registerDebugFunction === 'function') {
+            return module.registerDebugFunction;
+        }
+    } catch (error) {
+        console.warn('Failed to load debug function registry:', error);
+    }
+
+    return null;
+}
 
 /**
  * Adds additional localization data to the current locale file.
@@ -275,7 +296,7 @@ export async function initLocales() {
     document.documentElement.lang = localeFile;
     applyLocale();
     addLanguagesToDropdown();
-    updateSecretDisplay();
+    await updateSecretDisplayAfterLocaleApplied();
 
     $('#ui_language_select, #onboarding_ui_language_select').on('change', async function () {
         const language = String($(this).val());
@@ -300,27 +321,30 @@ export async function initLocales() {
         trackMissingDynamicTranslate = new Set();
     }
 
-    registerDebugFunction('getMissingTranslations', 'Get missing translations',
-        'Detects missing localization data in the current locale and dumps the data into the browser console. ' +
-        'If the current locale is English, searches all other locales.',
-        getMissingTranslations);
-    registerDebugFunction('trackDynamicTranslate', 'Track dynamic translation',
-        'Toggles tracking of dynamic translations, which will be dumped into the missing translations translations too. ' +
-        'This includes things translated via the t`...` function and translate(). It will only track strings translated <b>after</b> this is toggled on, '
-        + 'and when they actually pop up, so refreshing the page and opening popups, etc, is needed. Will only track if the current locale is not English.',
-        () => {
-            const isTracking = localStorage.getItem('trackDynamicTranslate') !== 'true';
-            localStorage.setItem('trackDynamicTranslate', isTracking ? 'true' : 'false');
-            if (isTracking && isSupportedNonEnglish()) {
-                trackMissingDynamicTranslate = new Set();
-                toastr.success('Dynamic translation tracking enabled.');
-            } else if (isTracking) {
-                trackMissingDynamicTranslate = null;
-                toastr.warning('Dynamic translation tracking enabled, but will not be tracked with locale English.');
-            } else {
-                trackMissingDynamicTranslate = null;
-                toastr.info('Dynamic translation tracking disabled.');
-            }
-        });
-    registerDebugFunction('applyLocale', 'Apply locale', 'Reapplies the currently selected locale to the page.', applyLocale);
+    const registerDebugFunction = await loadRegisterDebugFunction();
+    if (typeof registerDebugFunction === 'function') {
+        registerDebugFunction('getMissingTranslations', 'Get missing translations',
+            'Detects missing localization data in the current locale and dumps the data into the browser console. ' +
+            'If the current locale is English, searches all other locales.',
+            getMissingTranslations);
+        registerDebugFunction('trackDynamicTranslate', 'Track dynamic translation',
+            'Toggles tracking of dynamic translations, which will be dumped into the missing translations translations too. ' +
+            'This includes things translated via the t`...` function and translate(). It will only track strings translated <b>after</b> this is toggled on, '
+            + 'and when they actually pop up, so refreshing the page and opening popups, etc, is needed. Will only track if the current locale is not English.',
+            () => {
+                const isTracking = localStorage.getItem('trackDynamicTranslate') !== 'true';
+                localStorage.setItem('trackDynamicTranslate', isTracking ? 'true' : 'false');
+                if (isTracking && isSupportedNonEnglish()) {
+                    trackMissingDynamicTranslate = new Set();
+                    toastr.success('Dynamic translation tracking enabled.');
+                } else if (isTracking) {
+                    trackMissingDynamicTranslate = null;
+                    toastr.warning('Dynamic translation tracking enabled, but will not be tracked with locale English.');
+                } else {
+                    trackMissingDynamicTranslate = null;
+                    toastr.info('Dynamic translation tracking disabled.');
+                }
+            });
+        registerDebugFunction('applyLocale', 'Apply locale', 'Reapplies the currently selected locale to the page.', applyLocale);
+    }
 }

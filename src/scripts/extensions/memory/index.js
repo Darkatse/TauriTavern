@@ -6,8 +6,6 @@ import {
     animation_duration,
     eventSource,
     event_types,
-    extension_prompt_roles,
-    extension_prompt_types,
     generateQuietPrompt,
     is_send_press,
     saveSettingsDebounced,
@@ -18,6 +16,7 @@ import {
     streamingProcessor,
     animation_easing,
 } from '../../../script.js';
+import { extension_prompt_roles, extension_prompt_types } from '../../extension-prompts.js';
 import { is_group_generating, selected_group } from '../../group-chats.js';
 import { loadMovingUIState, power_user } from '../../power-user.js';
 import { dragElement } from '../../RossAscends-mods.js';

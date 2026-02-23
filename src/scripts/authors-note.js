@@ -4,11 +4,10 @@ import {
     chat_metadata,
     eventSource,
     event_types,
-    extension_prompt_roles,
-    extension_prompt_types,
     saveSettingsDebounced,
     this_chid,
 } from '../script.js';
+import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { selected_group } from './group-chats.js';
 import { extension_settings, getContext, saveMetadataDebounced } from './extensions.js';
 import { getCharaFilename, debounce, delay } from './utils.js';

@@ -17,8 +17,6 @@ import {
     duplicateCharacter,
     eventSource,
     event_types,
-    extension_prompt_roles,
-    extension_prompt_types,
     extractMessageBias,
     generateQuietPrompt,
     generateRaw,
@@ -56,6 +54,7 @@ import {
     this_chid,
     updateMessageElement,
 } from '../script.js';
+import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommandParserError } from './slash-commands/SlashCommandParserError.js';
 import { getMessageTimeStamp, isMobile } from './RossAscends-mods.js';

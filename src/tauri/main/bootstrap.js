@@ -1,4 +1,4 @@
-import { initializeBridge, invoke, isTauriEnv, convertFileSrc } from '../../tauri-bridge.js';
+import { initializeBridge, invoke, isTauri as isTauriRuntime, convertFileSrc } from '../../tauri-bridge.js';
 import { createTauriMainContext } from './context.js';
 import { createInterceptors } from './interceptors.js';
 import { createRouteRegistry } from './router.js';
@@ -14,7 +14,6 @@ import {
 } from './http-utils.js';
 import { registerRoutes } from './routes/index.js';
 
-const isTauri = isTauriEnv;
 let bootstrapped = false;
 const TAURI_BACKEND_ERROR_EVENT = 'tauritavern-backend-error';
 const FRONTEND_BACKEND_ERROR_EVENT = 'tauritavern:backend-error';
@@ -178,7 +177,7 @@ function installSameOriginWindowInterceptors(interceptors) {
 }
 
 export function bootstrapTauriMain() {
-    if (!isTauri || bootstrapped) {
+    if (!isTauriRuntime() || bootstrapped) {
         return;
     }
     bootstrapped = true;
@@ -212,7 +211,7 @@ export function bootstrapTauriMain() {
     };
 
     const interceptors = createInterceptors({
-        isTauri,
+        isTauri: true,
         originalFetch: window.fetch.bind(window),
         canHandleRequest,
         toUrl,

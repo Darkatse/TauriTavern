@@ -2,8 +2,19 @@
 
 import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
 
-export const isTauriEnv = typeof window !== 'undefined'
-    && (window.__TAURI_INTERNALS__ !== undefined || typeof window.__TAURI__?.core?.invoke === 'function');
+function detectTauriEnv() {
+    if (typeof window === 'undefined') {
+        return false;
+    }
+
+    // __TAURI_RUNNING__ is set in init.js before dynamic imports to avoid
+    // startup races where mobile bridge internals are injected a bit later.
+    return window.__TAURI_RUNNING__ === true
+        || window.__TAURI_INTERNALS__ !== undefined
+        || typeof window.__TAURI__?.core?.invoke === 'function';
+}
+
+export const isTauriEnv = detectTauriEnv();
 
 function getTauri() {
     if (typeof window === 'undefined') {
@@ -42,43 +53,37 @@ function withTauriArgumentAliases(args) {
     return aliased;
 }
 
-export const invoke = isTauriEnv
-    ? (...args) => {
-        const fn = getTauri()?.core?.invoke;
-        if (typeof fn !== 'function') {
-            throw new Error('Tauri invoke is unavailable');
-        }
-
-        if (args.length === 2 && isPlainObject(args[1])) {
-            return fn(args[0], withTauriArgumentAliases(args[1]));
-        }
-
-        return fn(...args);
+export const invoke = (...args) => {
+    const fn = getTauri()?.core?.invoke;
+    if (typeof fn !== 'function') {
+        throw new Error('Tauri invoke is unavailable');
     }
-    : null;
 
-export const listen = isTauriEnv
-    ? (...args) => {
-        const fn = getTauri()?.event?.listen;
-        if (typeof fn !== 'function') {
-            throw new Error('Tauri listen is unavailable');
-        }
-        return fn(...args);
+    if (args.length === 2 && isPlainObject(args[1])) {
+        return fn(args[0], withTauriArgumentAliases(args[1]));
     }
-    : null;
 
-export const convertFileSrc = isTauriEnv
-    ? (path, protocol = 'asset') => {
-        const fn = getTauri()?.core?.convertFileSrc;
-        if (typeof fn !== 'function') {
-            throw new Error('Tauri convertFileSrc is unavailable');
-        }
-        return fn(path, protocol);
+    return fn(...args);
+};
+
+export const listen = (...args) => {
+    const fn = getTauri()?.event?.listen;
+    if (typeof fn !== 'function') {
+        throw new Error('Tauri listen is unavailable');
     }
-    : null;
+    return fn(...args);
+};
+
+export const convertFileSrc = (path, protocol = 'asset') => {
+    const fn = getTauri()?.core?.convertFileSrc;
+    if (typeof fn !== 'function') {
+        throw new Error('Tauri convertFileSrc is unavailable');
+    }
+    return fn(path, protocol);
+};
 
 export function isTauri() {
-    return isTauriEnv;
+    return detectTauriEnv();
 }
 
 export async function initializeBridge() {
@@ -139,5 +144,9 @@ export function getAssetUrl(path) {
         return path;
     }
 
-    return convertFileSrc(path, 'asset');
+    try {
+        return convertFileSrc(path, 'asset');
+    } catch {
+        return path;
+    }
 }

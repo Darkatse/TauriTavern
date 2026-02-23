@@ -27,11 +27,10 @@ import {
     doNewChat,
     online_status,
     messageFormatting,
-    extension_prompt_types,
-    extension_prompt_roles,
     deleteMessage,
     settingsReady,
 } from '../script.js';
+import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { isMobile, initMovingUI, favsToHotswap } from './RossAscends-mods.js';
 import {
     groups,
