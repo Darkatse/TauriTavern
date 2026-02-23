@@ -7,7 +7,7 @@ use crate::infrastructure::assets::read_resource_text;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
-const SILLYTAVERN_COMPAT_VERSION: &str = "1.15.0";
+const SILLYTAVERN_COMPAT_VERSION: &str = "1.16.0";
 const BUILD_GIT_REVISION: &str = env!("TAURITAVERN_GIT_REVISION");
 const BUILD_GIT_BRANCH: &str = env!("TAURITAVERN_GIT_BRANCH");
 
