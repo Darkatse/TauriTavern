@@ -9,6 +9,7 @@ const DOCUMENT_FILE_PATTERN = /\.html?(?:[?#].*)?$/i;
 const DOM_PATCH_PENDING_ATTR = 'data-tauritavern-pending-url';
 const DOM_PATCH_INTERNAL_FLAG = Symbol('tauritavern.thirdParty.domPatch');
 const DOM_PATCH_QUERY_SELECTOR = 'script[src*="scripts/extensions/third-party/"],link[href*="scripts/extensions/third-party/"],iframe[src*="scripts/extensions/third-party/"]';
+const THIRD_PARTY_IMPORT_BRIDGE_KEY = '__TAURITAVERN_THIRD_PARTY_IMPORT_MODULE__';
 
 function ensureModuleLexerReady() {
     if (!moduleLexerReadyPromise) {
@@ -77,12 +78,12 @@ function getImportSpecifierReplaceRange(source, importRecord) {
     return { start, end };
 }
 
-function isDynamicImportRecord(importRecord) {
-    return importRecord?.t === 2 || Number(importRecord?.d) >= 0;
-}
-
 function looksLikeHtmlPayload(text) {
     return /^\s*</.test(String(text || ''));
+}
+
+function normalizeModuleSource(source) {
+    return String(source || '').replace(/^\uFEFF+/, '');
 }
 
 function resolveRouteThirdPartyUrl(url, baseUrl = window.location.origin) {
@@ -134,6 +135,86 @@ function collectImportSpecifierRanges(source, imports) {
         .map(importRecord => getImportSpecifierReplaceRange(source, importRecord))
         .filter(range => Number.isInteger(range.start) && Number.isInteger(range.end) && range.start < range.end)
         .sort((left, right) => left.start - right.start);
+}
+
+function collectModuleExportNames(exportRecords) {
+    if (!Array.isArray(exportRecords) || exportRecords.length === 0) {
+        return [];
+    }
+
+    const names = [];
+    for (const record of exportRecords) {
+        if (typeof record === 'string') {
+            if (record) {
+                names.push(record);
+            }
+            continue;
+        }
+
+        if (!record || typeof record !== 'object') {
+            continue;
+        }
+
+        const primaryName = typeof record.n === 'string' ? record.n : '';
+        const localName = typeof record.ln === 'string' ? record.ln : '';
+        const candidate = primaryName || localName;
+        if (candidate) {
+            names.push(candidate);
+        }
+    }
+
+    return [...new Set(names)];
+}
+
+function buildCircularModuleShimSource(routeUrl, exportNames) {
+    const uniqueNames = [...new Set(
+        (Array.isArray(exportNames) ? exportNames : [])
+            .map(name => String(name || '').trim())
+            .filter(Boolean),
+    )];
+    const nonDefaultNames = uniqueNames.filter(name => name !== 'default');
+    const hasDefaultExport = uniqueNames.includes('default');
+    const namedExports = nonDefaultNames.map((name, index) => ({
+        name,
+        local: `__tt_export_${index}`,
+    }));
+
+    const lines = [
+        `const __ttImportBridge = globalThis[${JSON.stringify(THIRD_PARTY_IMPORT_BRIDGE_KEY)}];`,
+        'if (typeof __ttImportBridge !== "function") {',
+        '    throw new Error("[TauriTavern] Third-party import bridge is unavailable");',
+        '}',
+    ];
+
+    for (const binding of namedExports) {
+        lines.push(`let ${binding.local};`);
+    }
+    if (hasDefaultExport) {
+        lines.push('let __tt_default_export;');
+    }
+
+    const exportSpecifiers = namedExports.map(binding => `${binding.local} as ${binding.name}`);
+    if (hasDefaultExport) {
+        exportSpecifiers.push('__tt_default_export as default');
+    }
+    if (exportSpecifiers.length > 0) {
+        lines.push(`export { ${exportSpecifiers.join(', ')} };`);
+    }
+
+    lines.push(`Promise.resolve(__ttImportBridge(${JSON.stringify(routeUrl)}))`);
+    lines.push('    .then((__ttNamespace) => {');
+    for (const binding of namedExports) {
+        lines.push(`        ${binding.local} = __ttNamespace?.[${JSON.stringify(binding.name)}];`);
+    }
+    if (hasDefaultExport) {
+        lines.push('        __tt_default_export = __ttNamespace?.default;');
+    }
+    lines.push('    })');
+    lines.push('    .catch((error) => {');
+    lines.push(`        console.error("[TauriTavern] Failed to hydrate circular module shim:", ${JSON.stringify(routeUrl)}, error);`);
+    lines.push('    });');
+
+    return lines.join('\n');
 }
 
 function supportsCssCascadeLayers() {
@@ -267,6 +348,8 @@ function resolveFetchImpl(fetchImpl) {
 
 export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
     const moduleBlobCache = new Map();
+    const moduleNamespaceCache = new Map();
+    const moduleCircularShimCache = new Map();
     const moduleBlobUrls = new Set();
     const stylesheetSourceCache = new Map();
     const styleBlobCache = new Map();
@@ -292,6 +375,8 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
         }
         moduleBlobUrls.clear();
         moduleBlobCache.clear();
+        moduleNamespaceCache.clear();
+        moduleCircularShimCache.clear();
         stylesheetSourceCache.clear();
         styleBlobUrls.clear();
         styleBlobCache.clear();
@@ -612,9 +697,80 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
         domAssetPatchInstalled = true;
     }
 
+    async function importThirdPartyModuleNamespace(routeUrl) {
+        const normalizedUrl = normalizeThirdPartyModuleUrl(routeUrl);
+        if (!isRouteThirdPartyModuleUrl(normalizedUrl)) {
+            return import(toBrowserModuleSpecifier(normalizedUrl));
+        }
+
+        const cachedTask = moduleNamespaceCache.get(normalizedUrl);
+        if (cachedTask) {
+            return cachedTask;
+        }
+
+        const task = (async () => {
+            const moduleBlobUrl = await resolveModuleBlobUrl(normalizedUrl, new Set());
+            return import(moduleBlobUrl);
+        })();
+        moduleNamespaceCache.set(normalizedUrl, task);
+
+        try {
+            return await task;
+        } catch (error) {
+            moduleNamespaceCache.delete(normalizedUrl);
+            throw error;
+        }
+    }
+
+    function installThirdPartyImportBridge() {
+        if (typeof globalThis === 'undefined') {
+            return;
+        }
+
+        globalThis[THIRD_PARTY_IMPORT_BRIDGE_KEY] = importThirdPartyModuleNamespace;
+    }
+
+    async function resolveCircularModuleShimUrl(moduleUrl) {
+        const doFetch = resolveFetchImpl(fetchImpl);
+        const normalizedUrl = normalizeThirdPartyModuleUrl(moduleUrl);
+        const cachedTask = moduleCircularShimCache.get(normalizedUrl);
+        if (cachedTask) {
+            return cachedTask;
+        }
+
+        const task = (async () => {
+            const response = await doFetch(normalizedUrl, { cache: 'no-store' });
+            if (!response.ok) {
+                throw new Error(`Failed to fetch circular extension module: ${response.status} ${response.statusText}`);
+            }
+
+            const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+            const source = normalizeModuleSource(await response.text());
+            if (contentType.includes('text/html') || looksLikeHtmlPayload(source)) {
+                throw new Error(`Circular extension module is not JavaScript: ${normalizedUrl}`);
+            }
+
+            await ensureModuleLexerReady();
+            const [, exportRecords] = moduleLexerParse(source);
+            const exportNames = collectModuleExportNames(exportRecords);
+            const shimSource = buildCircularModuleShimSource(normalizedUrl, exportNames);
+            const shimBlobUrl = URL.createObjectURL(new Blob([shimSource], { type: 'text/javascript' }));
+            moduleBlobUrls.add(shimBlobUrl);
+            return shimBlobUrl;
+        })();
+
+        moduleCircularShimCache.set(normalizedUrl, task);
+        try {
+            return await task;
+        } catch (error) {
+            moduleCircularShimCache.delete(normalizedUrl);
+            throw error;
+        }
+    }
+
     async function rewriteThirdPartyModuleSource(source, moduleUrl, processingChain = new Set()) {
         await ensureModuleLexerReady();
-        const sourceText = String(source);
+        const sourceText = normalizeModuleSource(source);
         const [imports] = moduleLexerParse(sourceText);
         const chain = new Set(processingChain);
         chain.add(normalizeThirdPartyModuleUrl(moduleUrl));
@@ -636,10 +792,9 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
                 if (isRouteThirdPartyModuleUrl(resolved)) {
                     const normalizedResolved = normalizeThirdPartyModuleUrl(resolved);
                     const isCircularDependency = chain.has(normalizedResolved);
-                    const isDynamicImport = isDynamicImportRecord(importRecord);
 
-                    replacement = (isCircularDependency || isDynamicImport)
-                        ? toBrowserModuleSpecifier(resolved)
+                    replacement = isCircularDependency
+                        ? await resolveCircularModuleShimUrl(resolved)
                         : await resolveModuleBlobUrl(resolved, chain);
                 } else {
                     replacement = toBrowserModuleSpecifier(resolved);
@@ -697,6 +852,7 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
         return resolveAssetBlobUrl(normalized);
     }
 
+    installThirdPartyImportBridge();
     installDomAssetPatch();
 
     async function rewriteEmbeddedThirdPartyAssetUrls(source, moduleUrl, processingChain = new Set()) {
@@ -990,7 +1146,7 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
             }
 
             const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-            const source = await response.text();
+            const source = normalizeModuleSource(await response.text());
             if (contentType.includes('text/html') || looksLikeHtmlPayload(source)) {
                 throw new Error(`Extension module is not JavaScript: ${normalizedUrl}`);
             }
