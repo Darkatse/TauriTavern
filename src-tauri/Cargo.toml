@@ -22,37 +22,42 @@ serde_json = "1"
 tauri = { version = "2.10.2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-fs = "2.4.5"
-tauri-plugin-http = "2.5.7"
-tauri-plugin-dialog = "2.6.0"
-tauri-plugin-shell = "2.3.5"
 tauri-plugin-notification = "2.3.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1.0"
-log = "0.4"
-env_logger = "0.10"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "std"] }
 tracing-appender = "0.2"
-chrono = { version = "0.4", features = ["serde"] }
-tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "rt-multi-thread", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
 base64 = "0.21"
 sha2 = "0.10"
 hmac = "0.12"
 rand = "0.8"
-uuid = { version = "1.4", features = ["v4", "serde"] }
+uuid = { version = "1.4", default-features = false, features = ["serde", "std", "v4"] }
 async-trait = "0.1"
 url = "2.4"
-zip = "0.6"
-image = "0.24"
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+image = { version = "0.24", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
 png = "0.17"
 mime_guess = "2.0.5"
 flate2 = "1.1.9"
-miktik = "0.1.1"
-ureq = "3.2.0"
+miktik = { version = "0.1.2", default-features = false, features = ["openai", "huggingface", "sentencepiece"] }
+ureq = { version = "3.2.0", default-features = false, features = ["rustls"] }
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 portable = []
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = "symbols"

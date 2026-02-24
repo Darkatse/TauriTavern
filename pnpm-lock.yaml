@@ -92,9 +92,6 @@ importers:
       '@tauri-apps/plugin-fs':
         specifier: ~2.4.5
         version: 2.4.5
-      '@tauri-apps/plugin-opener':
-        specifier: ~2.5.3
-        version: 2.5.3
       '@zeldafan0225/ai_horde':
         specifier: ^5.2.0
         version: 5.2.0
@@ -936,9 +933,6 @@ packages:
 
   '@tauri-apps/plugin-fs@2.4.5':
     resolution: {integrity: sha512-dVxWWGE6VrOxC7/jlhyE+ON/Cc2REJlM35R3PJX3UvFw2XwYhLGQVAIyrehenDdKjotipjYEVc4YjOl3qq90fA==}
-
-  '@tauri-apps/plugin-opener@2.5.3':
-    resolution: {integrity: sha512-CCcUltXMOfUEArbf3db3kCE7Ggy1ExBEBl51Ko2ODJ6GDYHRp1nSNlQm5uNCFY5k7/ufaK5Ib3Du/Zir19IYQQ==}
 
   '@thunder04/supermap@3.0.5':
     resolution: {integrity: sha512-dVlKfY/+Kiy3Vyy7zUj/X2ZB+6e+2QWsEqMOVAQc15FYNV1lmw4sHn3YE4VBsfmm0Iu/0MABUla8WZMGIdMYwg==}
@@ -4039,10 +4033,6 @@ snapshots:
       '@tauri-apps/cli-win32-x64-msvc': 2.10.0
 
   '@tauri-apps/plugin-fs@2.4.5':
-    dependencies:
-      '@tauri-apps/api': 2.10.1
-
-  '@tauri-apps/plugin-opener@2.5.3':
     dependencies:
       '@tauri-apps/api': 2.10.1
 

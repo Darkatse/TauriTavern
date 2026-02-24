@@ -4,7 +4,8 @@
   "version": "1.2.0-beta",
   "identifier": "com.tauritavern.client",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../src",
+    "removeUnusedCommands": true
   },
   "app": {
     "withGlobalTauri": true,
