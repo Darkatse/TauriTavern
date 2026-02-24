@@ -1,6 +1,6 @@
 [package]
 name = "tauritavern"
-version = "1.2.0-beta"
+version = "1.2.0"
 description = "SillyTavern backend rebuilt with Tauri and Rust"
 authors = ["TauriTavern Team"]
 edition = "2021"
