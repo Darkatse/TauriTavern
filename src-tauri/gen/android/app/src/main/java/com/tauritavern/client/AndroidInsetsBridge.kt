@@ -24,6 +24,7 @@ class AndroidInsetsBridge(
   private val mainHandler: Handler,
   private val readinessPoller: WebViewReadinessPoller,
 ) {
+  private var immersiveFullscreenEnabled: Boolean = true
   private var systemBarInsets: Insets = Insets.NONE
   private var imeBottomInset: Int = 0
   private var lastPushedInsetsSnapshot: InsetsSnapshot? = null
@@ -56,8 +57,17 @@ class AndroidInsetsBridge(
   }
 
   fun onResume() {
+    configureImmersiveSystemBars()
     refreshInjection()
   }
+
+  fun setImmersiveFullscreenEnabled(enabled: Boolean) {
+    immersiveFullscreenEnabled = enabled
+    configureImmersiveSystemBars()
+    refreshInjection()
+  }
+
+  fun isImmersiveFullscreenEnabled(): Boolean = immersiveFullscreenEnabled
 
   fun refreshInjection() {
     attachSystemInsetsListenerIfNeeded()
@@ -87,9 +97,18 @@ class AndroidInsetsBridge(
       (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
         Configuration.UI_MODE_NIGHT_YES
 
-    WindowInsetsControllerCompat(window, window.decorView).apply {
-      isAppearanceLightStatusBars = !isDarkMode
-      isAppearanceLightNavigationBars = !isDarkMode
+    val insetsController = WindowInsetsControllerCompat(window, window.decorView)
+    insetsController.isAppearanceLightStatusBars = !isDarkMode
+    insetsController.isAppearanceLightNavigationBars = !isDarkMode
+    insetsController.systemBarsBehavior =
+      WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
+    val systemBarsType =
+      WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars()
+    if (immersiveFullscreenEnabled) {
+      insetsController.hide(systemBarsType)
+    } else {
+      insetsController.show(systemBarsType)
     }
   }
 
@@ -117,6 +136,11 @@ class AndroidInsetsBridge(
   }
 
   private fun updateSystemBarInsets(insets: WindowInsetsCompat) {
+    if (immersiveFullscreenEnabled) {
+      systemBarInsets = Insets.NONE
+      return
+    }
+
     val insetTypes = WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
     val visibleInsets = insets.getInsets(insetTypes)
     val stableInsets = insets.getInsetsIgnoringVisibility(insetTypes)

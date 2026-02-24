@@ -281,6 +281,10 @@ import { registerExtensionSlashCommands as initExtensionSlashCommands } from './
 import { ToolManager } from './scripts/tool-calling.js';
 import { addShowdownPatch } from './scripts/util/showdown-patch.js';
 import { applyBrowserFixes } from './scripts/browser-fixes.js';
+import {
+    isMobileImmersiveFullscreenSupported,
+    setMobileImmersiveFullscreenEnabled,
+} from './scripts/mobile-system-ui.js';
 import { initServerHistory } from './scripts/server-history.js';
 import { initSettingsSearch } from './scripts/setting-search.js';
 import { initBulkEdit } from './scripts/bulk-edit.js';
@@ -542,6 +546,18 @@ export { extension_prompt_types, extension_prompt_roles };
 
 export const MAX_INJECTION_DEPTH = 10000;
 
+function syncMobileImmersiveFullscreenUi() {
+    const option = $('#option_toggle_fullscreen');
+    const supported = isMobileImmersiveFullscreenSupported();
+    option.toggleClass('displayNone', !supported);
+
+    if (!supported) {
+        return;
+    }
+
+    setMobileImmersiveFullscreenEnabled(power_user.mobile_immersive_fullscreen);
+}
+
 async function getClientVersion() {
     try {
         const data = await getBridgeClientVersion();
@@ -785,6 +801,7 @@ async function firstLoadInit() {
     await initPresetManager();
     await initSystemMessages();
     await getSettings();
+    syncMobileImmersiveFullscreenUi();
     initKeyboard();
     initDynamicStyles();
     initTags();
@@ -11035,7 +11052,7 @@ jQuery(async function () {
     });
     $(document).on('click', event => {
         if ($(':focus').attr('id') !== 'send_textarea') {
-            var validIDs = ['options_button', 'send_but', 'mes_impersonate', 'mes_continue', 'send_textarea', 'option_regenerate', 'option_continue'];
+            var validIDs = ['options_button', 'send_but', 'mes_impersonate', 'mes_continue', 'send_textarea', 'option_regenerate', 'option_continue', 'option_toggle_fullscreen'];
             if (!validIDs.includes($(event.target).attr('id'))) {
                 S_TAPreviouslyFocused = false;
             }
@@ -11579,6 +11596,13 @@ jQuery(async function () {
 
         else if (id == 'option_close_chat') {
             await closeCurrentChat();
+        }
+
+        else if (id === 'option_toggle_fullscreen') {
+            const nextMode = !power_user.mobile_immersive_fullscreen;
+            power_user.mobile_immersive_fullscreen = nextMode;
+            setMobileImmersiveFullscreenEnabled(nextMode);
+            saveSettingsDebounced();
         }
 
         else if (id === 'option_settings') {

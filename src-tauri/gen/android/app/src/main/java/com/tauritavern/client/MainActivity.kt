@@ -25,6 +25,9 @@ class MainActivity : TauriActivity() {
   private val aiGenerationJsBridge: AndroidAiGenerationJsBridge by lazy {
     AndroidAiGenerationJsBridge(mainHandler, aiGenerationNotifier)
   }
+  private val systemUiJsBridge: AndroidSystemUiJsBridge by lazy {
+    AndroidSystemUiJsBridge(mainHandler, insetsBridge)
+  }
 
   private val readinessPoller: WebViewReadinessPoller by lazy {
     WebViewReadinessPoller(webViewProvider = { webView }, isDestroyed = { isActivityDestroyed })
@@ -78,6 +81,7 @@ class MainActivity : TauriActivity() {
   override fun onWebViewCreate(webView: WebView) {
     this.webView = webView
     webView.addJavascriptInterface(aiGenerationJsBridge, AndroidAiGenerationJsBridge.INTERFACE_NAME)
+    webView.addJavascriptInterface(systemUiJsBridge, AndroidSystemUiJsBridge.INTERFACE_NAME)
     insetsBridge.onWebViewAvailable()
     sharePayloadDispatcher.requestDispatch()
   }
