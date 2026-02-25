@@ -1,0 +1,41 @@
+<div id="lan_sync_settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b data-i18n="LAN Data Sync">局域网数据同步</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+            <p>开启后，您可以在同一局域网下的手机浏览器或移动版酒馆中同步数据。</p>
+            
+            <div class="lan-sync-controls">
+                <div class="lan-sync-stat">
+                    <span>状态: </span>
+                    <b id="lan-sync-status-text">检查中...</b>
+                </div>
+                
+                <div id="lan-sync-info-box" style="display: none; margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 5px;">
+                    <p>请在移动端访问以下地址进行同步：</p>
+                    <code id="lan-sync-address-text" style="display: block; padding: 5px; background: #222; color: #0f0; margin: 5px 0;">N/A</code>
+                    <div class="lan-sync-qr-container" style="text-align: center; margin: 10px 0;">
+                        <img id="lan-sync-qr-img" style="display: none; max-width: 200px; margin: 0 auto; border: 5px solid white; border-radius: 5px;" />
+                        <div id="lan-sync-qr-loading" style="display: none;">正在生成二维码...</div>
+                    </div>
+                    <small>注：请确保手机和电脑连接在同一个 Wi-Fi 下。</small>
+                </div>
+
+                <button id="lan-sync-toggle-btn" class="menu_button" style="margin-top: 15px;">启动服务</button>
+            </div>
+
+            <hr>
+            
+            <div class="lan-sync-help">
+                <h4>使用说明：</h4>
+                <ul>
+                    <li><b>推送 (Push)</b>: 将当前电脑的数据同步到手机。</li>
+                    <li><b>拉取 (Pull)</b>: 从手机获取数据并覆盖当前电脑。</li>
+                    <li>同步完成后，可能需要重启应用以加载新数据。</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>

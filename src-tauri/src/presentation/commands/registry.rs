@@ -104,6 +104,10 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::extension_commands::get_extension_version,
         super::extension_commands::move_extension,
         super::extension_commands::read_third_party_extension_asset,
+        super::sync_commands::plugin_lan_sync_start,
+        super::sync_commands::plugin_lan_sync_stop,
+        super::sync_commands::plugin_lan_sync_status,
+        super::sync_commands::plugin_lan_sync_qr,
         // File commands
         super::file_commands::upload_user_file,
         super::file_commands::read_user_file_asset,

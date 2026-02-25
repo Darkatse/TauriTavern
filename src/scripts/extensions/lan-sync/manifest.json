@@ -1,0 +1,12 @@
+{
+    "display_name": "局域网同步 (LAN Sync)",
+    "loading_order": 30,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "YoKONcy",
+    "version": "1.0.0",
+    "description": "在局域网内同步手机与电脑的酒馆数据。",
+    "homePage": "https://github.com/Darkatse/TauriTavern"
+}

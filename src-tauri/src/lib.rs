@@ -7,6 +7,7 @@ mod presentation;
 use app::spawn_initialization;
 use infrastructure::logging::logger;
 use infrastructure::paths::resolve_runtime_paths;
+use infrastructure::sync::lan_server::LanSyncServer;
 use presentation::commands::registry::invoke_handler;
 use tauri::Manager;
 
@@ -37,7 +38,8 @@ pub async fn run() {
                     error
                 );
             }
-            spawn_initialization(app_handle, runtime_paths);
+            spawn_initialization(app_handle.clone(), runtime_paths.clone());
+            app.manage(LanSyncServer::new(runtime_paths.data_root.clone()));
             Ok(())
         })
         .invoke_handler(invoke_handler())

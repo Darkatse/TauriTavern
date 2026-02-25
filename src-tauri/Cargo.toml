@@ -44,8 +44,13 @@ image = { version = "0.24", default-features = false, features = ["bmp", "gif", 
 png = "0.17"
 mime_guess = "2.0.5"
 flate2 = "1.1.9"
-miktik = { version = "0.1.2", default-features = false, features = ["openai", "huggingface", "sentencepiece"] }
-ureq = { version = "3.2.0", default-features = false, features = ["rustls"] }
+miktik = { version = "0.1.2", default_features = false, features = ["openai", "huggingface", "sentencepiece"] }
+ureq = { version = "3.2.0", default_features = false, features = ["rustls"] }
+axum = { version = "0.7", features = ["multipart"] }
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+local-ip-address = "0.6"
+tower = "0.4"
+qrcode = "0.14"
 
 [features]
 default = ["custom-protocol"]

@@ -1,0 +1,21 @@
+.lan-sync-settings {
+    padding: 10px;
+    min-width: 300px;
+}
+
+.lan-sync-stat {
+    margin-bottom: 10px;
+}
+
+.lan-sync-help {
+    font-size: 0.9em;
+    opacity: 0.8;
+}
+
+.lan-sync-help ul {
+    padding-left: 20px;
+}
+
+#lan-sync-toggle-btn {
+    width: 100%;
+}
