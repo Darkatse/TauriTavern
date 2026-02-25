@@ -29,15 +29,19 @@ pub async fn get_chat_completions_status(
 #[tauri::command]
 pub async fn generate_chat_completion(
     dto: ChatCompletionGenerateRequestDto,
+    request_id: String,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Value, CommandError> {
-    log_command("generate_chat_completion");
+    let request_id = request_id.trim().to_string();
+    validate_stream_id(&request_id)?;
+    log_command(format!("generate_chat_completion {}", request_id));
 
-    app_state
-        .chat_completion_service
-        .generate(dto)
-        .await
-        .map_err(map_command_error("Failed to generate chat completion"))
+    let service = app_state.chat_completion_service.clone();
+    let cancel = service.register_generation(&request_id).await;
+    let result = service.generate_with_cancel(dto, cancel).await;
+    service.complete_generation(&request_id).await;
+
+    result.map_err(map_command_error("Failed to generate chat completion"))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -79,6 +83,21 @@ pub async fn cancel_chat_completion_stream(
     app_state
         .chat_completion_service
         .cancel_stream(&stream_id)
+        .await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_chat_completion_generation(
+    request_id: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    validate_stream_id(&request_id)?;
+    log_command(format!("cancel_chat_completion_generation {}", request_id));
+
+    app_state
+        .chat_completion_service
+        .cancel_generation(&request_id)
         .await;
     Ok(())
 }

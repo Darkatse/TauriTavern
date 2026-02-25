@@ -23,7 +23,8 @@ const OPENAI_SOURCE: &str = "openai";
 pub struct ChatCompletionService {
     chat_completion_repository: Arc<dyn ChatCompletionRepository>,
     secret_repository: Arc<dyn SecretRepository>,
-    active_streams: Arc<RwLock<HashMap<String, watch::Sender<bool>>>>,
+    active_streams: CancellationRegistry,
+    active_generations: CancellationRegistry,
 }
 
 impl ChatCompletionService {
@@ -34,7 +35,8 @@ impl ChatCompletionService {
         Self {
             chat_completion_repository,
             secret_repository,
-            active_streams: Arc::new(RwLock::new(HashMap::new())),
+            active_streams: CancellationRegistry::default(),
+            active_generations: CancellationRegistry::default(),
         }
     }
 
@@ -78,6 +80,28 @@ impl ChatCompletionService {
             .map_err(ApplicationError::from)
     }
 
+    pub async fn generate_with_cancel(
+        &self,
+        dto: ChatCompletionGenerateRequestDto,
+        mut cancel: ChatCompletionCancelReceiver,
+    ) -> Result<Value, ApplicationError> {
+        let generation = self.generate(dto);
+        tokio::pin!(generation);
+
+        tokio::select! {
+            result = &mut generation => result,
+            _ = cancel.changed() => {
+                if *cancel.borrow() {
+                    return Err(ApplicationError::InternalError(
+                        "Generation cancelled by user".to_string(),
+                    ));
+                }
+
+                generation.await
+            }
+        }
+    }
+
     pub async fn generate_stream(
         &self,
         dto: ChatCompletionGenerateRequestDto,
@@ -107,29 +131,27 @@ impl ChatCompletionService {
     }
 
     pub async fn register_stream(&self, stream_id: &str) -> watch::Receiver<bool> {
-        let (sender, receiver) = watch::channel(false);
-        let mut active_streams = self.active_streams.write().await;
-
-        if let Some(previous_sender) = active_streams.insert(stream_id.to_string(), sender) {
-            let _ = previous_sender.send(true);
-        }
-
-        receiver
+        self.active_streams.register(stream_id).await
     }
 
     pub async fn cancel_stream(&self, stream_id: &str) -> bool {
-        let mut active_streams = self.active_streams.write().await;
-        let Some(sender) = active_streams.remove(stream_id) else {
-            return false;
-        };
-
-        let _ = sender.send(true);
-        true
+        self.active_streams.cancel(stream_id).await
     }
 
     pub async fn complete_stream(&self, stream_id: &str) {
-        let mut active_streams = self.active_streams.write().await;
-        active_streams.remove(stream_id);
+        self.active_streams.complete(stream_id).await;
+    }
+
+    pub async fn register_generation(&self, request_id: &str) -> watch::Receiver<bool> {
+        self.active_generations.register(request_id).await
+    }
+
+    pub async fn cancel_generation(&self, request_id: &str) -> bool {
+        self.active_generations.cancel(request_id).await
+    }
+
+    pub async fn complete_generation(&self, request_id: &str) {
+        self.active_generations.complete(request_id).await;
     }
 
     fn resolve_source(&self, raw: &str) -> Result<ChatCompletionSource, ApplicationError> {
@@ -139,5 +161,38 @@ impl ChatCompletionService {
                 raw
             ))
         })
+    }
+}
+
+#[derive(Default)]
+struct CancellationRegistry {
+    active: RwLock<HashMap<String, watch::Sender<bool>>>,
+}
+
+impl CancellationRegistry {
+    async fn register(&self, request_id: &str) -> watch::Receiver<bool> {
+        let (sender, receiver) = watch::channel(false);
+        let mut active = self.active.write().await;
+
+        if let Some(previous_sender) = active.insert(request_id.to_string(), sender) {
+            let _ = previous_sender.send(true);
+        }
+
+        receiver
+    }
+
+    async fn cancel(&self, request_id: &str) -> bool {
+        let mut active = self.active.write().await;
+        let Some(sender) = active.remove(request_id) else {
+            return false;
+        };
+
+        let _ = sender.send(true);
+        true
+    }
+
+    async fn complete(&self, request_id: &str) {
+        let mut active = self.active.write().await;
+        active.remove(request_id);
     }
 }

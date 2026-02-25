@@ -14,6 +14,25 @@ function getErrorMessage(error) {
     return error.message || error.toString?.() || 'Unknown error';
 }
 
+function createAbortError() {
+    const message = 'The operation was aborted.';
+    if (typeof DOMException === 'function') {
+        return new DOMException(message, 'AbortError');
+    }
+
+    const error = new Error(message);
+    error.name = 'AbortError';
+    return error;
+}
+
+function isAbortError(error) {
+    if (!error || typeof error !== 'object') {
+        return false;
+    }
+
+    return error.name === 'AbortError';
+}
+
 const DEFAULT_COMPLETION_MODEL = 'tauritavern-error';
 const DEFAULT_ERROR_MESSAGE = 'Chat completion request failed';
 const ERROR_LABEL = '[API Error]';
@@ -406,6 +425,43 @@ function createStreamId() {
     return `${timestamp}-${random}`;
 }
 
+async function invokeChatCompletionWithAbort(context, payload, signal) {
+    if (signal?.aborted) {
+        throw createAbortError();
+    }
+
+    const requestId = createStreamId();
+    let abortRequested = false;
+    let abortHandler = null;
+    if (signal) {
+        abortHandler = () => {
+            abortRequested = true;
+            void context.safeInvoke('cancel_chat_completion_generation', { requestId })
+                .catch((error) => {
+                    console.debug('Failed to cancel chat completion generation:', error);
+                });
+        };
+        signal.addEventListener('abort', abortHandler, { once: true });
+    }
+
+    try {
+        const result = await context.safeInvoke('generate_chat_completion', {
+            requestId,
+            dto: payload,
+        });
+
+        if (abortRequested) {
+            throw createAbortError();
+        }
+
+        return result;
+    } finally {
+        if (signal && abortHandler) {
+            signal.removeEventListener('abort', abortHandler);
+        }
+    }
+}
+
 async function createChatCompletionStreamResponse(context, payload, signal, lifecycle) {
     const streamId = createStreamId();
     const eventName = `chat-completion-stream:${streamId}`;
@@ -422,7 +478,17 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
     let flushTimer = null;
     let abortHandler = null;
     let controllerRef = null;
+    let streamStartSettled = false;
+    let cancelAfterStart = false;
     const pendingFrames = [];
+
+    const requestUpstreamCancel = async () => {
+        try {
+            await context.safeInvoke('cancel_chat_completion_stream', { streamId });
+        } catch (error) {
+            console.debug('Failed to cancel chat completion stream:', error);
+        }
+    };
 
     const flushFrames = () => {
         if (!controllerRef || pendingFrames.length === 0) {
@@ -496,11 +562,11 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
         }
 
         if (cancelUpstream) {
-            try {
-                await context.safeInvoke('cancel_chat_completion_stream', { streamId });
-            } catch (error) {
-                console.debug('Failed to cancel chat completion stream:', error);
+            if (!streamStartSettled) {
+                cancelAfterStart = true;
             }
+
+            await requestUpstreamCancel();
         }
 
         const isSuccessfulCompletion = sawDone && !cancelUpstream && !errorPayload;
@@ -590,6 +656,13 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                     streamId,
                     dto: payload,
                 });
+
+                // If abort happened while stream registration was in-flight, run cancellation again
+                // after start settles to avoid a missed pre-registration cancel race.
+                if (cancelAfterStart) {
+                    cancelAfterStart = false;
+                    await requestUpstreamCancel();
+                }
             } catch (error) {
                 const message = getErrorMessage(error);
                 await closeStream({
@@ -597,6 +670,8 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                     errorPayload: buildErrorStreamChunk(message, payload),
                     failureMessage: message,
                 });
+            } finally {
+                streamStartSettled = true;
             }
         },
         async cancel() {
@@ -649,11 +724,24 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
                 return await createChatCompletionStreamResponse(context, payload, init?.signal, lifecycle);
             }
 
-            const completion = await context.safeInvoke('generate_chat_completion', { dto: payload });
+            const completion = await invokeChatCompletionWithAbort(context, payload, init?.signal);
             lifecycle.finish({ success: true });
             return jsonResponse(completion || {});
         } catch (error) {
-            lifecycle.finish({ success: false, errorMessage: getErrorMessage(error), notifyFailure: true });
+            const errorMessage = getErrorMessage(error);
+            const aborted = isAbortError(error)
+                || /generation cancelled by user/i.test(errorMessage);
+
+            lifecycle.finish({
+                success: false,
+                errorMessage: aborted ? '' : errorMessage,
+                notifyFailure: !aborted,
+            });
+
+            if (aborted) {
+                throw createAbortError();
+            }
+
             console.error('Chat completion generation failed:', error);
             const isQuiet = isQuietRequest(payload);
 
