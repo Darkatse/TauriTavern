@@ -317,6 +317,60 @@ async fn import_json_with_only_alternate_greetings_keeps_payload_for_first_open(
 }
 
 #[tokio::test]
+async fn import_json_with_lone_surrogate_escape_sequence_succeeds() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = r#"{
+        "name": "Surrogate Character",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "Hello \uD83D"
+    }"#;
+
+    let import_path = root.join("surrogate.json");
+    fs::write(&import_path, card_payload.as_bytes())
+        .await
+        .expect("write import json");
+
+    let imported = repository
+        .import_character(&import_path, None)
+        .await
+        .expect("import json character");
+
+    assert_eq!(imported.first_mes, "Hello \u{FFFD}");
+    assert_eq!(imported.data.first_mes, "Hello \u{FFFD}");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn import_json_with_valid_surrogate_pair_preserves_emoji() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = r#"{
+        "name": "Emoji Character",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "Hello \uD83D\uDE00"
+    }"#;
+
+    let import_path = root.join("emoji.json");
+    fs::write(&import_path, card_payload.as_bytes())
+        .await
+        .expect("write import json");
+
+    let imported = repository
+        .import_character(&import_path, None)
+        .await
+        .expect("import json character");
+
+    assert_eq!(imported.first_mes, "Hello 😀");
+    assert_eq!(imported.data.first_mes, "Hello 😀");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn save_character_cache_exposes_real_avatar_file_name() {
     let (repository, root) = setup_repository().await;
 

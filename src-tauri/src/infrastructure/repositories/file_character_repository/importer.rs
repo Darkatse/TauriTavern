@@ -1,5 +1,6 @@
 use chrono::Utc;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use tokio::fs;
@@ -14,6 +15,106 @@ use crate::infrastructure::persistence::png_utils::{
 use super::FileCharacterRepository;
 
 impl FileCharacterRepository {
+    fn parse_hex_escape(digits: &[u8]) -> Option<u16> {
+        if digits.len() != 4 {
+            return None;
+        }
+
+        let mut value = 0u16;
+        for digit in digits {
+            let nibble = match digit {
+                b'0'..=b'9' => digit - b'0',
+                b'a'..=b'f' => digit - b'a' + 10,
+                b'A'..=b'F' => digit - b'A' + 10,
+                _ => return None,
+            };
+            value = (value << 4) | nibble as u16;
+        }
+
+        Some(value)
+    }
+
+    fn normalize_json_surrogate_escapes(json_data: &str) -> Cow<'_, str> {
+        let bytes = json_data.as_bytes();
+        let mut output: Option<String> = None;
+        let mut copy_start = 0usize;
+        let mut index = 0usize;
+
+        while index < bytes.len() {
+            if index + 6 <= bytes.len()
+                && bytes[index] == b'\\'
+                && bytes[index + 1] == b'u'
+                && Self::is_unescaped_backslash(bytes, index)
+            {
+                if let Some(code) = Self::parse_hex_escape(&bytes[index + 2..index + 6]) {
+                    let is_high_surrogate = (0xD800..=0xDBFF).contains(&code);
+                    let is_low_surrogate = (0xDC00..=0xDFFF).contains(&code);
+
+                    if is_high_surrogate {
+                        let has_valid_low_pair = if index + 12 <= bytes.len()
+                            && bytes[index + 6] == b'\\'
+                            && bytes[index + 7] == b'u'
+                        {
+                            match Self::parse_hex_escape(&bytes[index + 8..index + 12]) {
+                                Some(next) => (0xDC00..=0xDFFF).contains(&next),
+                                None => false,
+                            }
+                        } else {
+                            false
+                        };
+
+                        if has_valid_low_pair {
+                            index += 12;
+                            continue;
+                        }
+
+                        let out =
+                            output.get_or_insert_with(|| String::with_capacity(json_data.len()));
+                        out.push_str(&json_data[copy_start..index]);
+                        out.push_str("\\uFFFD");
+                        index += 6;
+                        copy_start = index;
+                        continue;
+                    }
+
+                    if is_low_surrogate {
+                        let out =
+                            output.get_or_insert_with(|| String::with_capacity(json_data.len()));
+                        out.push_str(&json_data[copy_start..index]);
+                        out.push_str("\\uFFFD");
+                        index += 6;
+                        copy_start = index;
+                        continue;
+                    }
+                }
+            }
+
+            index += 1;
+        }
+
+        if let Some(mut out) = output {
+            out.push_str(&json_data[copy_start..]);
+            Cow::Owned(out)
+        } else {
+            Cow::Borrowed(json_data)
+        }
+    }
+
+    fn is_unescaped_backslash(bytes: &[u8], index: usize) -> bool {
+        let mut preceding = 0usize;
+        let mut cursor = index;
+
+        while cursor > 0 {
+            cursor -= 1;
+            if bytes[cursor] != b'\\' {
+                break;
+            }
+            preceding += 1;
+        }
+
+        preceding % 2 == 0
+    }
+
     fn parse_alternate_greetings(value: Option<&Value>) -> Vec<String> {
         match value {
             Some(Value::Array(items)) => items
@@ -39,7 +140,9 @@ impl FileCharacterRepository {
         &self,
         json_data: &str,
     ) -> Result<Character, DomainError> {
-        let raw_value: Value = serde_json::from_str(json_data).map_err(|e| {
+        let normalized_json = Self::normalize_json_surrogate_escapes(json_data);
+
+        let raw_value: Value = serde_json::from_str(&normalized_json).map_err(|e| {
             DomainError::InvalidData(format!("Failed to parse character JSON: {}", e))
         })?;
         let has_talkativeness = raw_value.get("talkativeness").is_some()
@@ -345,5 +448,42 @@ impl FileCharacterRepository {
             .await?;
 
         self.read_character_from_file(&target_path).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FileCharacterRepository;
+
+    #[test]
+    fn normalize_json_surrogate_escapes_replaces_lone_high_surrogate() {
+        let input = r#"{"first_mes":"Hello \uD83D"}"#;
+        let normalized = FileCharacterRepository::normalize_json_surrogate_escapes(input);
+
+        assert_eq!(normalized.as_ref(), r#"{"first_mes":"Hello \uFFFD"}"#);
+    }
+
+    #[test]
+    fn normalize_json_surrogate_escapes_replaces_lone_low_surrogate() {
+        let input = r#"{"first_mes":"Hello \uDE00"}"#;
+        let normalized = FileCharacterRepository::normalize_json_surrogate_escapes(input);
+
+        assert_eq!(normalized.as_ref(), r#"{"first_mes":"Hello \uFFFD"}"#);
+    }
+
+    #[test]
+    fn normalize_json_surrogate_escapes_keeps_valid_surrogate_pair() {
+        let input = r#"{"first_mes":"Hello \uD83D\uDE00"}"#;
+        let normalized = FileCharacterRepository::normalize_json_surrogate_escapes(input);
+
+        assert_eq!(normalized.as_ref(), input);
+    }
+
+    #[test]
+    fn normalize_json_surrogate_escapes_skips_escaped_unicode_literal() {
+        let input = r#"{"first_mes":"Literal \\uD83D marker"}"#;
+        let normalized = FileCharacterRepository::normalize_json_surrogate_escapes(input);
+
+        assert_eq!(normalized.as_ref(), input);
     }
 }
