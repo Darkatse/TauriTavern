@@ -39,6 +39,7 @@ const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "data-migration",
     "quick-reply",
     "tauritavern-version",
+    "lan-sync",
 ];
 const GITHUB_API_BASE: &str = "https://api.github.com";
 const SOURCE_METADATA_FILE: &str = ".tauritavern-source.json";
@@ -227,6 +228,10 @@ impl ExtensionRepository for FileExtensionRepository {
                     None => continue,
                 };
 
+                if name.starts_with('.') {
+                    continue;
+                }
+
                 let manifest = self.get_manifest(&path).await.ok().flatten();
                 let source = self.read_source_metadata(&path).await.ok().flatten();
 
@@ -272,6 +277,10 @@ impl ExtensionRepository for FileExtensionRepository {
                     Some(value) => value.to_string_lossy().to_string(),
                     None => continue,
                 };
+
+                if name.starts_with('.') {
+                    continue;
+                }
 
                 // In case of conflict, the extension in user scope takes precedence.
                 if extensions
@@ -623,11 +632,26 @@ impl ExtensionRepository for FileExtensionRepository {
         location_hint: Option<&str>,
     ) -> Result<ExtensionAssetPayload, DomainError> {
         let extension_folder_name = self.normalize_extension_name(extension_name)?;
-        let normalized_relative = Self::normalize_asset_relative_path(relative_path)?;
+        let mut normalized_relative = Self::normalize_asset_relative_path(relative_path)?;
 
         for base_dir in self.third_party_candidate_dirs(location_hint) {
             let extension_root = base_dir.join(&extension_folder_name);
-            let asset_path = extension_root.join(&normalized_relative);
+            let mut asset_path = extension_root.join(&normalized_relative);
+
+            // 如果路径中包含 ${locale} 占位符，且文件不存在，尝试常见的语言代码
+            let relative_str = normalized_relative.to_string_lossy();
+            if relative_str.contains("${locale}") && !asset_path.is_file() {
+                let locales = ["zh-cn", "en", "zh-tw", "ja"];
+                for locale in locales {
+                    let tried_relative_str = relative_str.replace("${locale}", locale);
+                    let tried_path = extension_root.join(&tried_relative_str);
+                    if tried_path.is_file() {
+                        asset_path = tried_path;
+                        normalized_relative = PathBuf::from(tried_relative_str);
+                        break;
+                    }
+                }
+            }
 
             if !asset_path.starts_with(&extension_root) || !asset_path.is_file() {
                 continue;
