@@ -22,6 +22,7 @@ impl FileCharacterRepository {
         let mut stored = character.clone();
         stored.file_name = Some(file_name.to_string());
         stored.avatar = format!("{}.png", file_name);
+        stored.shallow = false;
         stored
     }
 }
@@ -66,9 +67,13 @@ impl CharacterRepository for FileCharacterRepository {
     }
 
     async fn find_by_name(&self, name: &str) -> Result<Character, DomainError> {
-        {
+        let cached = {
             let cache = self.memory_cache.lock().await;
-            if let Some(character) = cache.get(name) {
+            cache.get(name)
+        };
+
+        if let Some(character) = cached {
+            if !character.shallow {
                 return Ok(character);
             }
         }

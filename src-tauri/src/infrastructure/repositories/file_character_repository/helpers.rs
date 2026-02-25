@@ -105,6 +105,7 @@ impl FileCharacterRepository {
             DomainError::InvalidData(format!("Failed to parse character data: {}", e))
         })?;
         self.normalize_imported_character(&mut character)?;
+        character.shallow = false;
 
         let file_name = path
             .file_stem()
@@ -119,7 +120,7 @@ impl FileCharacterRepository {
             .unwrap_or("")
             .to_string();
 
-        character.json_data = Some(json_data);
+        character.json_data = None;
 
         let metadata = fs::metadata(path).await.map_err(|e| {
             logger::error(&format!("Failed to read file metadata: {}", e));
@@ -144,14 +145,21 @@ impl FileCharacterRepository {
         file_name: &str,
         shallow: bool,
     ) -> Result<Character, DomainError> {
-        {
+        let cached = {
             let cache = self.memory_cache.lock().await;
-            if let Some(character) = cache.get(file_name) {
-                if shallow {
+            cache.get(file_name)
+        };
+
+        if let Some(character) = cached {
+            if shallow {
+                if character.shallow {
                     return Ok(character);
                 }
+                return Ok(character.to_shallow());
+            }
 
-                let mut character = character.clone();
+            if !character.shallow {
+                let mut character = character;
                 let (chat_size, date_last_chat) = self.calculate_chat_stats(file_name).await?;
                 character.chat_size = chat_size;
                 character.date_last_chat = date_last_chat;
@@ -161,13 +169,18 @@ impl FileCharacterRepository {
 
         let path = self.get_character_path(file_name);
         let character = self.read_character_from_file(&path).await?;
+        let result = if shallow {
+            character.to_shallow()
+        } else {
+            character
+        };
 
         {
             let mut cache = self.memory_cache.lock().await;
-            cache.set(file_name.to_string(), character.clone());
+            cache.set(file_name.to_string(), result.clone());
         }
 
-        Ok(character)
+        Ok(result)
     }
 
     pub(crate) async fn load_all_characters(

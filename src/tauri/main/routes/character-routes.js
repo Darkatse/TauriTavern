@@ -2,7 +2,7 @@ import { normalizeBinaryPayload, sanitizeAttachmentFileName } from '../binary-ut
 
 export function registerCharacterRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/characters/all', async () => {
-        const characters = await context.getAllCharacters({ shallow: false, forceRefresh: true });
+        const characters = await context.getAllCharacters({ shallow: true, forceRefresh: true });
         return jsonResponse(characters);
     });
 
@@ -52,7 +52,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         }
 
         const created = await context.createCharacterFromForm(body, url);
-        await context.getAllCharacters({ shallow: false, forceRefresh: true });
+        await context.getAllCharacters({ shallow: true, forceRefresh: true });
         return textResponse(created?.avatar || '');
     });
 
@@ -62,7 +62,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         }
 
         await context.editCharacterFromForm(body, url);
-        await context.getAllCharacters({ shallow: false, forceRefresh: true });
+        await context.getAllCharacters({ shallow: true, forceRefresh: true });
         return textResponse('ok');
     });
 
@@ -81,7 +81,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             },
         });
 
-        await context.getAllCharacters({ shallow: false, forceRefresh: true });
+        await context.getAllCharacters({ shallow: true, forceRefresh: true });
         return jsonResponse({ ok: true });
     });
 
@@ -102,7 +102,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         });
 
         const normalized = context.normalizeCharacter(renamed);
-        await context.getAllCharacters({ shallow: false, forceRefresh: true });
+        await context.getAllCharacters({ shallow: true, forceRefresh: true });
         return jsonResponse(normalized);
     });
 
@@ -139,7 +139,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
 
         const created = await context.safeInvoke('create_character', { dto });
         const normalized = context.normalizeCharacter(created);
-        await context.getAllCharacters({ shallow: false, forceRefresh: true });
+        await context.getAllCharacters({ shallow: true, forceRefresh: true });
 
         return jsonResponse({ path: normalized.avatar });
     });
@@ -155,7 +155,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         const dto = context.pickCharacterUpdateFields(body || {});
         if (Object.keys(dto).length > 0) {
             await context.safeInvoke('update_character', { name: characterId, dto });
-            await context.getAllCharacters({ shallow: false, forceRefresh: true });
+            await context.getAllCharacters({ shallow: true, forceRefresh: true });
         }
 
         return jsonResponse({ ok: true });
@@ -199,7 +199,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         }
 
         const normalized = context.normalizeCharacter(imported);
-        await context.getAllCharacters({ shallow: false, forceRefresh: true });
+        await context.getAllCharacters({ shallow: true, forceRefresh: true });
 
         return jsonResponse({
             file_name: String(normalized.avatar || '').replace(/\.png$/i, ''),

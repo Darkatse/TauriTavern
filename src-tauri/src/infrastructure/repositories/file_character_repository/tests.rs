@@ -394,3 +394,104 @@ async fn save_character_cache_exposes_real_avatar_file_name() {
 
     let _ = fs::remove_dir_all(&root).await;
 }
+
+#[tokio::test]
+async fn find_all_shallow_returns_projected_character() {
+    let (repository, root) = setup_repository().await;
+
+    let mut character = Character::new(
+        "Shallow Target".to_string(),
+        "very long description".to_string(),
+        "very long personality".to_string(),
+        "hello there".to_string(),
+    );
+    character.scenario = "scenario".to_string();
+    character.mes_example = "example".to_string();
+    character.creator = "tester".to_string();
+    character.creator_notes = "notes".to_string();
+    character.character_version = "1.0".to_string();
+    character.tags = vec!["tag-a".to_string(), "tag-b".to_string()];
+    character.fav = true;
+    character.talkativeness = 0.7;
+    character.data.system_prompt = "system".to_string();
+    character.data.post_history_instructions = "post-history".to_string();
+    character.data.alternate_greetings = vec!["alt".to_string()];
+    character.data.character_book = Some(json!({
+        "entries": [
+            { "id": 1, "content": "book-entry" }
+        ]
+    }));
+
+    repository.save(&character).await.expect("save character");
+
+    let characters = repository
+        .find_all(true)
+        .await
+        .expect("load shallow characters");
+    assert_eq!(characters.len(), 1);
+
+    let shallow = &characters[0];
+    assert!(shallow.shallow, "expected shallow projection");
+    assert_eq!(shallow.name, "Shallow Target");
+    assert_eq!(shallow.avatar, "Shallow Target.png");
+    assert_eq!(shallow.creator, "tester");
+    assert_eq!(shallow.creator_notes, "notes");
+    assert_eq!(shallow.tags, vec!["tag-a".to_string(), "tag-b".to_string()]);
+    assert!(shallow.fav);
+    assert_eq!(shallow.talkativeness, 0.7);
+
+    assert_eq!(shallow.description, "");
+    assert_eq!(shallow.personality, "");
+    assert_eq!(shallow.scenario, "");
+    assert_eq!(shallow.first_mes, "");
+    assert_eq!(shallow.mes_example, "");
+    assert_eq!(shallow.data.system_prompt, "");
+    assert_eq!(shallow.data.post_history_instructions, "");
+    assert!(shallow.data.alternate_greetings.is_empty());
+    assert!(shallow.data.character_book.is_none());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn find_by_name_promotes_cached_shallow_character_to_full() {
+    let (repository, root) = setup_repository().await;
+
+    let mut character = Character::new(
+        "cache_promotion".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    character.data.character_book = Some(json!({
+        "entries": [
+            { "id": 1, "content": "keep me" }
+        ]
+    }));
+    character.data.system_prompt = "system".to_string();
+    character.data.alternate_greetings = vec!["alt".to_string()];
+
+    repository.save(&character).await.expect("save character");
+
+    let shallow = repository
+        .find_all(true)
+        .await
+        .expect("load shallow character list");
+    assert_eq!(shallow.len(), 1);
+    assert!(shallow[0].shallow, "list should be shallow");
+    assert_eq!(shallow[0].description, "");
+
+    let full = repository
+        .find_by_name("cache_promotion")
+        .await
+        .expect("load full character");
+    assert!(!full.shallow, "find_by_name should return full character");
+    assert_eq!(full.description, "desc");
+    assert_eq!(full.personality, "persona");
+    assert_eq!(full.first_mes, "hello");
+    assert_eq!(full.data.system_prompt, "system");
+    assert_eq!(full.data.alternate_greetings, vec!["alt".to_string()]);
+    assert!(full.data.character_book.is_some());
+
+    let _ = fs::remove_dir_all(&root).await;
+}

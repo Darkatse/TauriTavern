@@ -69,6 +69,8 @@ pub struct Character {
     pub date_last_chat: i64,
     #[serde(skip)]
     pub json_data: Option<String>,
+    #[serde(skip)]
+    pub shallow: bool,
 }
 
 /// Character data structure for V2 character cards
@@ -320,6 +322,7 @@ impl Character {
             date_added: timestamp,
             date_last_chat: 0,
             json_data: None,
+            shallow: false,
         }
     }
 
@@ -352,6 +355,67 @@ impl Character {
             file_name.clone()
         } else {
             sanitize_filename(&self.name)
+        }
+    }
+
+    /// Build a shallow projection for character list rendering.
+    pub fn to_shallow(&self) -> Self {
+        fn pick_non_empty(primary: &str, fallback: &str) -> String {
+            if primary.trim().is_empty() {
+                fallback.to_string()
+            } else {
+                primary.to_string()
+            }
+        }
+
+        let data_name = pick_non_empty(&self.data.name, &self.name);
+        let data_creator = pick_non_empty(&self.data.creator, &self.creator);
+        let data_creator_notes = pick_non_empty(&self.data.creator_notes, &self.creator_notes);
+        let data_character_version =
+            pick_non_empty(&self.data.character_version, &self.character_version);
+        let top_tags = if self.tags.is_empty() {
+            self.data.tags.clone()
+        } else {
+            self.tags.clone()
+        };
+
+        Self {
+            spec: self.spec.clone(),
+            spec_version: self.spec_version.clone(),
+            name: self.name.clone(),
+            description: String::new(),
+            personality: String::new(),
+            scenario: String::new(),
+            first_mes: String::new(),
+            mes_example: String::new(),
+            avatar: self.avatar.clone(),
+            chat: self.chat.clone(),
+            creator: self.creator.clone(),
+            creator_notes: self.creator_notes.clone(),
+            character_version: self.character_version.clone(),
+            tags: top_tags.clone(),
+            create_date: self.create_date.clone(),
+            talkativeness: self.talkativeness,
+            fav: self.fav,
+            data: CharacterData {
+                name: data_name,
+                creator: data_creator,
+                creator_notes: data_creator_notes,
+                character_version: data_character_version,
+                tags: top_tags,
+                extensions: CharacterExtensions {
+                    talkativeness: self.talkativeness,
+                    fav: self.fav,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            file_name: self.file_name.clone(),
+            chat_size: self.chat_size,
+            date_added: self.date_added,
+            date_last_chat: self.date_last_chat,
+            json_data: None,
+            shallow: true,
         }
     }
 }

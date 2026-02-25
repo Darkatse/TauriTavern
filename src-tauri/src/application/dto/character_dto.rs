@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 /// Character response DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharacterDto {
+    pub shallow: bool,
     pub name: String,
     pub description: String,
     pub personality: String,
@@ -162,6 +163,7 @@ pub struct GetCharacterChatsDto {
 impl From<Character> for CharacterDto {
     fn from(character: Character) -> Self {
         Self {
+            shallow: character.shallow,
             name: character.name,
             description: character.description,
             personality: character.personality,

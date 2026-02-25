@@ -318,7 +318,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             }),
             context.safeInvoke('get_all_groups'),
         ]);
-        await context.getAllCharacters({ shallow: false });
+        await context.getAllCharacters({ shallow: true });
 
         const characterEntries = Array.isArray(chats)
             ? chats.map((chat) => {

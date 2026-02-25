@@ -570,7 +570,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             post_history_instructions: postHistoryInstructions,
             creatorcomment: creatorNotes,
             data,
-            shallow: false,
+            shallow: Boolean(character.shallow),
         };
     }
 
@@ -620,8 +620,20 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         }
     }
 
-    async function getAllCharacters({ shallow = false, forceRefresh = false } = {}) {
-        if (!forceRefresh && characterCache.length > 0) {
+    function canReuseCharacterCache(requestShallow) {
+        if (characterCache.length === 0) {
+            return false;
+        }
+
+        if (requestShallow) {
+            return true;
+        }
+
+        return characterCache.every((character) => !Boolean(character?.shallow));
+    }
+
+    async function getAllCharacters({ shallow = true, forceRefresh = false } = {}) {
+        if (!forceRefresh && canReuseCharacterCache(shallow)) {
             return characterCache;
         }
 
@@ -669,7 +681,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
                 return cached;
             }
 
-            await getAllCharacters({ shallow: false });
+            await getAllCharacters({ shallow: true });
             const refreshed = resolveFromCache();
             if (refreshed) {
                 return refreshed;
@@ -698,7 +710,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             return cachedByInternalIdValue;
         }
 
-        await getAllCharacters({ shallow: false });
+        await getAllCharacters({ shallow: true });
         const refreshedByName = characterByDisplayName.get(fallback);
         const refreshedByNameId = getCharacterId(refreshedByName);
         if (refreshedByNameId) {
@@ -786,6 +798,13 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
 
         const character = await safeInvoke('get_character', { name: characterId });
         const normalized = normalizeCharacter(character);
+        const normalizedAvatar = normalized?.avatar ? String(normalized.avatar) : '';
+        if (normalizedAvatar) {
+            const index = characterCache.findIndex((item) => String(item?.avatar || '') === normalizedAvatar);
+            if (index >= 0) {
+                characterCache[index] = normalized;
+            }
+        }
         if (normalized?.avatar) {
             characterByAvatar.set(String(normalized.avatar), normalized);
         }
@@ -963,7 +982,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
     }
 
     async function uniqueCharacterName(baseName) {
-        await getAllCharacters({ shallow: false });
+        await getAllCharacters({ shallow: true });
 
         if (!characterByDisplayName.has(baseName)) {
             return baseName;

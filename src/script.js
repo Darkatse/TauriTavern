@@ -1382,7 +1382,7 @@ export async function getCharacters() {
         console.error('Failed to fetch characters:', response.statusText);
         const errorData = await response.json();
         if (errorData?.overflow) {
-            await Popup.show.text(t`Character data length limit reached`, t`To resolve this, set "performance.lazyLoadCharacters" to "true" in config.yaml and restart the server.`);
+            await Popup.show.text(t`Character data length limit reached`, t`The character list payload is too large. Restart the app and report this issue if it persists.`);
         }
     }
 }
