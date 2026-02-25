@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use async_trait::async_trait;
@@ -7,7 +8,8 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage};
 use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatRepository, ChatSearchResult,
+    ChatExportFormat, ChatImportFormat, ChatRepository, ChatSearchResult, PinnedCharacterChat,
+    PinnedGroupChat,
 };
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::chat_format_importers::{
@@ -19,6 +21,88 @@ use crate::infrastructure::persistence::jsonl_utils::{
 };
 
 use super::FileChatRepository;
+use super::summary::ChatFileDescriptor;
+
+#[derive(Clone)]
+struct RankedChatDescriptor {
+    modified_millis: i64,
+    descriptor: ChatFileDescriptor,
+}
+
+impl FileChatRepository {
+    fn character_recent_pin_key(character_name: &str, file_name: &str) -> Option<String> {
+        let normalized_character = character_name.trim();
+        let normalized_file = file_name.trim();
+        if normalized_character.is_empty() || normalized_file.is_empty() {
+            return None;
+        }
+
+        Some(format!(
+            "{}/{}",
+            normalized_character,
+            Self::normalize_jsonl_file_name(normalized_file)
+        ))
+    }
+
+    fn group_recent_pin_key(chat_id: &str) -> Option<String> {
+        let normalized_chat_id = chat_id.trim();
+        if normalized_chat_id.is_empty() {
+            return None;
+        }
+
+        let normalized_file = Self::normalize_jsonl_file_name(normalized_chat_id);
+        Some(Self::strip_jsonl_extension(&normalized_file).to_string())
+    }
+
+    async fn select_recent_descriptors<F>(
+        &self,
+        descriptors: Vec<ChatFileDescriptor>,
+        max_entries: usize,
+        is_pinned: F,
+    ) -> Result<Vec<ChatFileDescriptor>, DomainError>
+    where
+        F: Fn(&ChatFileDescriptor) -> bool,
+    {
+        let mut pinned = Vec::new();
+        let mut non_pinned = Vec::new();
+
+        for descriptor in descriptors {
+            let metadata = fs::metadata(&descriptor.path).await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to read chat metadata {:?}: {}",
+                    descriptor.path, error
+                ))
+            })?;
+            let modified_millis = Self::file_signature_from_metadata(&metadata).modified_millis;
+
+            let ranked = RankedChatDescriptor {
+                modified_millis,
+                descriptor,
+            };
+
+            if is_pinned(&ranked.descriptor) {
+                pinned.push(ranked);
+            } else {
+                non_pinned.push(ranked);
+            }
+        }
+
+        pinned.sort_by(|a, b| b.modified_millis.cmp(&a.modified_millis));
+        non_pinned.sort_by(|a, b| b.modified_millis.cmp(&a.modified_millis));
+
+        let non_pinned_limit = max_entries.saturating_sub(pinned.len());
+        let mut selected: Vec<ChatFileDescriptor> =
+            pinned.into_iter().map(|entry| entry.descriptor).collect();
+        selected.extend(
+            non_pinned
+                .into_iter()
+                .take(non_pinned_limit)
+                .map(|entry| entry.descriptor),
+        );
+
+        Ok(selected)
+    }
+}
 
 #[async_trait]
 impl ChatRepository for FileChatRepository {
@@ -310,7 +394,7 @@ impl ChatRepository for FileChatRepository {
         let mut results = Vec::new();
 
         for descriptor in descriptors {
-            let entry = self.get_chat_summary_entry(&descriptor).await?;
+            let entry = self.get_chat_summary_entry(&descriptor, true).await?;
             let mut summary = entry.summary.clone();
             summary.chat_metadata = None;
             if fragments.is_empty() {
@@ -324,7 +408,12 @@ impl ChatRepository for FileChatRepository {
                 continue;
             }
 
-            if !entry.fingerprint.might_match_fragments(&fragments) {
+            if !entry
+                .fingerprint
+                .as_ref()
+                .expect("fingerprint is required for search")
+                .might_match_fragments(&fragments)
+            {
                 continue;
             }
 
@@ -373,6 +462,68 @@ impl ChatRepository for FileChatRepository {
         Ok(results)
     }
 
+    async fn list_recent_chat_summaries(
+        &self,
+        character_filter: Option<&str>,
+        include_metadata: bool,
+        max_entries: usize,
+        pinned: &[PinnedCharacterChat],
+    ) -> Result<Vec<ChatSearchResult>, DomainError> {
+        let descriptors = self.list_character_chat_files(character_filter).await?;
+        let pinned_keys: HashSet<String> = pinned
+            .iter()
+            .filter_map(|entry| {
+                Self::character_recent_pin_key(&entry.character_name, &entry.file_name)
+            })
+            .collect();
+
+        let selected = self
+            .select_recent_descriptors(descriptors, max_entries, |descriptor| {
+                Self::character_recent_pin_key(&descriptor.character_name, &descriptor.file_name)
+                    .map(|key| pinned_keys.contains(&key))
+                    .unwrap_or(false)
+            })
+            .await?;
+
+        let mut results = Vec::with_capacity(selected.len());
+        for descriptor in selected {
+            results.push(self.get_chat_summary(&descriptor, include_metadata).await?);
+        }
+        results.sort_by(|a, b| b.date.cmp(&a.date));
+        self.flush_summary_index_if_needed().await?;
+        Ok(results)
+    }
+
+    async fn list_recent_group_chat_summaries(
+        &self,
+        chat_ids: Option<&[String]>,
+        include_metadata: bool,
+        max_entries: usize,
+        pinned: &[PinnedGroupChat],
+    ) -> Result<Vec<ChatSearchResult>, DomainError> {
+        let descriptors = self.list_group_chat_files(chat_ids).await?;
+        let pinned_keys: HashSet<String> = pinned
+            .iter()
+            .filter_map(|entry| Self::group_recent_pin_key(&entry.chat_id))
+            .collect();
+
+        let selected = self
+            .select_recent_descriptors(descriptors, max_entries, |descriptor| {
+                Self::group_recent_pin_key(&descriptor.file_name)
+                    .map(|key| pinned_keys.contains(&key))
+                    .unwrap_or(false)
+            })
+            .await?;
+
+        let mut results = Vec::with_capacity(selected.len());
+        for descriptor in selected {
+            results.push(self.get_chat_summary(&descriptor, include_metadata).await?);
+        }
+        results.sort_by(|a, b| b.date.cmp(&a.date));
+        self.flush_summary_index_if_needed().await?;
+        Ok(results)
+    }
+
     async fn search_group_chats(
         &self,
         query: &str,
@@ -391,7 +542,7 @@ impl ChatRepository for FileChatRepository {
         let mut results = Vec::new();
 
         for descriptor in descriptors {
-            let entry = self.get_chat_summary_entry(&descriptor).await?;
+            let entry = self.get_chat_summary_entry(&descriptor, true).await?;
             let mut summary = entry.summary.clone();
             summary.chat_metadata = None;
             if fragments.is_empty() {
@@ -405,7 +556,12 @@ impl ChatRepository for FileChatRepository {
                 continue;
             }
 
-            if !entry.fingerprint.might_match_fragments(&fragments) {
+            if !entry
+                .fingerprint
+                .as_ref()
+                .expect("fingerprint is required for search")
+                .might_match_fragments(&fragments)
+            {
                 continue;
             }
 

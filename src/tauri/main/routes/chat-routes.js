@@ -306,22 +306,103 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     router.post('/api/chats/recent', async ({ body }) => {
         const pinnedChats = normalizePinnedChats(body?.pinned);
         const requestedMax = Number.parseInt(body?.max, 10);
-        const max = (
+        const requestedRecentLimit = (
             Number.isFinite(requestedMax)
                 ? Math.max(0, requestedMax)
                 : Number.MAX_SAFE_INTEGER
-        ) + pinnedChats.length;
+        );
+        const responseLimit = requestedRecentLimit + pinnedChats.length;
         const withMetadata = Boolean(body?.metadata);
-        const [chats, groups] = await Promise.all([
-            context.safeInvoke('list_chat_summaries', {
-                include_metadata: withMetadata,
-            }),
+        const [groups] = await Promise.all([
             context.safeInvoke('get_all_groups'),
+            context.getAllCharacters({ shallow: true }),
         ]);
-        await context.getAllCharacters({ shallow: true });
 
-        const characterEntries = Array.isArray(chats)
-            ? chats.map((chat) => {
+        const groupChatToGroup = new Map();
+        if (Array.isArray(groups)) {
+            groups.forEach((group) => {
+                const groupId = String(group?.id || '').trim();
+                const chatIds = Array.isArray(group?.chats) ? group.chats : [];
+                if (!groupId) {
+                    return;
+                }
+
+                chatIds.forEach((chatId) => {
+                    const id = context.stripJsonl(chatId);
+                    if (!id || groupChatToGroup.has(id)) {
+                        return;
+                    }
+                    groupChatToGroup.set(id, groupId);
+                });
+            });
+        }
+
+        const pinnedCharacterRefs = [];
+        const pinnedCharacterRefKeys = new Set();
+        await Promise.all(pinnedChats.map(async (chat) => {
+            const avatar = String(chat?.avatar || '').trim();
+            const fileStem = context.stripJsonl(chat?.file_name || '');
+            if (!avatar || !fileStem || chat?.group) {
+                return;
+            }
+
+            const characterId = await context.resolveCharacterId({ avatar });
+            if (!characterId) {
+                return;
+            }
+
+            const key = `${characterId}/${fileStem}`;
+            if (pinnedCharacterRefKeys.has(key)) {
+                return;
+            }
+            pinnedCharacterRefKeys.add(key);
+            pinnedCharacterRefs.push({
+                character_name: characterId,
+                file_name: fileStem,
+            });
+        }));
+
+        const pinnedGroupRefs = [];
+        const pinnedGroupRefKeys = new Set();
+        pinnedChats.forEach((chat) => {
+            const groupId = String(chat?.group || '').trim();
+            const fileStem = context.stripJsonl(chat?.file_name || '');
+            if (!groupId || !fileStem) {
+                return;
+            }
+
+            if (groupChatToGroup.get(fileStem) !== groupId) {
+                return;
+            }
+
+            if (pinnedGroupRefKeys.has(fileStem)) {
+                return;
+            }
+            pinnedGroupRefKeys.add(fileStem);
+            pinnedGroupRefs.push({ chat_id: fileStem });
+        });
+
+        const characterQueryLimit = requestedRecentLimit + pinnedCharacterRefs.length;
+        const groupChatIds = Array.from(groupChatToGroup.keys());
+        const groupQueryLimit = requestedRecentLimit + pinnedGroupRefs.length;
+        const [characterSummaries, groupSummaries] = await Promise.all([
+            context.safeInvoke('list_recent_chat_summaries', {
+                include_metadata: withMetadata,
+                max_entries: characterQueryLimit,
+                pinned: pinnedCharacterRefs,
+            }),
+            groupChatIds.length > 0
+                ? context.safeInvoke('list_recent_group_chat_summaries', {
+                    chat_ids: groupChatIds,
+                    include_metadata: withMetadata,
+                    max_entries: groupQueryLimit,
+                    pinned: pinnedGroupRefs,
+                })
+                : Promise.resolve([]),
+        ]);
+
+        const characterEntries = Array.isArray(characterSummaries)
+            ? characterSummaries.map((chat) => {
                 const characterId = String(chat?.character_name || '').trim();
                 const fileStem = context.stripJsonl(chat?.file_name || '');
                 if (!characterId || !fileStem) {
@@ -343,33 +424,6 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
                 }
 
                 return result;
-            })
-            : [];
-
-        const groupChatToGroup = new Map();
-        if (Array.isArray(groups)) {
-            groups.forEach((group) => {
-                const groupId = String(group?.id || '').trim();
-                const chatIds = Array.isArray(group?.chats) ? group.chats : [];
-                if (!groupId) {
-                    return;
-                }
-
-                chatIds.forEach((chatId) => {
-                    const id = context.stripJsonl(chatId);
-                    if (!id || groupChatToGroup.has(id)) {
-                        return;
-                    }
-                    groupChatToGroup.set(id, groupId);
-                });
-            });
-        }
-
-        const groupChatIds = Array.from(groupChatToGroup.keys());
-        const groupSummaries = groupChatIds.length > 0
-            ? await context.safeInvoke('list_group_chat_summaries', {
-                chat_ids: groupChatIds,
-                include_metadata: withMetadata,
             })
             : [];
 
@@ -413,7 +467,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return Number(b.last_mes || 0) - Number(a.last_mes || 0);
         });
 
-        return jsonResponse(allEntries.slice(0, Math.max(0, max)));
+        return jsonResponse(allEntries.slice(0, Math.max(0, responseLimit)));
     });
 
     router.post('/api/chats/export', async ({ body }) => {

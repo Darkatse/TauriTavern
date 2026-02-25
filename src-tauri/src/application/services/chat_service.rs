@@ -11,7 +11,7 @@ use crate::application::errors::ApplicationError;
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatRepository,
+    ChatExportFormat, ChatImportFormat, ChatRepository, PinnedCharacterChat, PinnedGroupChat,
 };
 use serde_json::Value;
 
@@ -219,6 +219,42 @@ impl ChatService {
         let results = self
             .chat_repository
             .list_group_chat_summaries(chat_ids, include_metadata)
+            .await?;
+
+        Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
+    }
+
+    /// List recent character chat summaries without full summary scan.
+    pub async fn list_recent_chat_summaries(
+        &self,
+        character_filter: Option<&str>,
+        include_metadata: bool,
+        max_entries: usize,
+        pinned: &[PinnedCharacterChat],
+    ) -> Result<Vec<ChatSearchResultDto>, ApplicationError> {
+        tracing::info!("Listing recent character chat summaries");
+
+        let results = self
+            .chat_repository
+            .list_recent_chat_summaries(character_filter, include_metadata, max_entries, pinned)
+            .await?;
+
+        Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
+    }
+
+    /// List recent group chat summaries without full summary scan.
+    pub async fn list_recent_group_chat_summaries(
+        &self,
+        chat_ids: Option<&[String]>,
+        include_metadata: bool,
+        max_entries: usize,
+        pinned: &[PinnedGroupChat],
+    ) -> Result<Vec<ChatSearchResultDto>, ApplicationError> {
+        tracing::info!("Listing recent group chat summaries");
+
+        let results = self
+            .chat_repository
+            .list_recent_group_chat_summaries(chat_ids, include_metadata, max_entries, pinned)
             .await?;
 
         Ok(results.into_iter().map(ChatSearchResultDto::from).collect())

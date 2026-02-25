@@ -7,9 +7,9 @@ use tauri::State;
 use crate::app::AppState;
 use crate::application::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, DeleteGroupChatDto, ExportChatDto,
-    GetGroupChatDto, ImportCharacterChatsDto, ImportChatDto, ImportGroupChatDto, RenameChatDto,
-    RenameGroupChatDto, SaveChatDto, SaveChatFromFileDto, SaveGroupChatDto,
-    SaveGroupChatFromFileDto,
+    GetGroupChatDto, ImportCharacterChatsDto, ImportChatDto, ImportGroupChatDto,
+    PinnedCharacterChatDto, PinnedGroupChatDto, RenameChatDto, RenameGroupChatDto, SaveChatDto,
+    SaveChatFromFileDto, SaveGroupChatDto, SaveGroupChatFromFileDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::infrastructure::logging::logger;
@@ -264,6 +264,56 @@ pub async fn list_group_chat_summaries(
         .list_group_chat_summaries(chat_ids.as_deref(), include_metadata.unwrap_or(false))
         .await
         .map_err(map_command_error("Failed to list group chat summaries"))
+}
+
+#[tauri::command]
+pub async fn list_recent_chat_summaries(
+    character_filter: Option<String>,
+    include_metadata: Option<bool>,
+    max_entries: Option<usize>,
+    pinned: Option<Vec<PinnedCharacterChatDto>>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ChatSearchResultDto>, CommandError> {
+    log_command("list_recent_chat_summaries");
+    let pinned = pinned.unwrap_or_default();
+    let pinned_refs = pinned.into_iter().map(Into::into).collect::<Vec<_>>();
+
+    app_state
+        .chat_service
+        .list_recent_chat_summaries(
+            character_filter.as_deref(),
+            include_metadata.unwrap_or(false),
+            max_entries.unwrap_or(usize::MAX),
+            &pinned_refs,
+        )
+        .await
+        .map_err(map_command_error("Failed to list recent chat summaries"))
+}
+
+#[tauri::command]
+pub async fn list_recent_group_chat_summaries(
+    chat_ids: Option<Vec<String>>,
+    include_metadata: Option<bool>,
+    max_entries: Option<usize>,
+    pinned: Option<Vec<PinnedGroupChatDto>>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ChatSearchResultDto>, CommandError> {
+    log_command("list_recent_group_chat_summaries");
+    let pinned = pinned.unwrap_or_default();
+    let pinned_refs = pinned.into_iter().map(Into::into).collect::<Vec<_>>();
+
+    app_state
+        .chat_service
+        .list_recent_group_chat_summaries(
+            chat_ids.as_deref(),
+            include_metadata.unwrap_or(false),
+            max_entries.unwrap_or(usize::MAX),
+            &pinned_refs,
+        )
+        .await
+        .map_err(map_command_error(
+            "Failed to list recent group chat summaries",
+        ))
 }
 
 #[tauri::command]

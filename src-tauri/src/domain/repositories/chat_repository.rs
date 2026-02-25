@@ -19,6 +19,19 @@ pub struct ChatSearchResult {
     pub chat_metadata: Option<Value>,
 }
 
+/// Pinned character chat reference used by recent-chat queries.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub struct PinnedCharacterChat {
+    pub character_name: String,
+    pub file_name: String,
+}
+
+/// Pinned group chat reference used by recent-chat queries.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub struct PinnedGroupChat {
+    pub chat_id: String,
+}
+
 /// Chat import format
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ChatImportFormat {
@@ -97,6 +110,24 @@ pub trait ChatRepository: Send + Sync {
         &self,
         chat_ids: Option<&[String]>,
         include_metadata: bool,
+    ) -> Result<Vec<ChatSearchResult>, DomainError>;
+
+    /// List recent character chat summaries using non-full scan selection.
+    async fn list_recent_chat_summaries(
+        &self,
+        character_filter: Option<&str>,
+        include_metadata: bool,
+        max_entries: usize,
+        pinned: &[PinnedCharacterChat],
+    ) -> Result<Vec<ChatSearchResult>, DomainError>;
+
+    /// List recent group chat summaries using non-full scan selection.
+    async fn list_recent_group_chat_summaries(
+        &self,
+        chat_ids: Option<&[String]>,
+        include_metadata: bool,
+        max_entries: usize,
+        pinned: &[PinnedGroupChat],
     ) -> Result<Vec<ChatSearchResult>, DomainError>;
 
     /// Search group chats with optional chat id filter.

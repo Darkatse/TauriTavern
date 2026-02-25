@@ -6,7 +6,9 @@ use tokio::fs;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::character::sanitize_filename;
-use crate::domain::repositories::chat_repository::ChatRepository;
+use crate::domain::repositories::chat_repository::{
+    ChatRepository, PinnedCharacterChat, PinnedGroupChat,
+};
 
 use super::FileChatRepository;
 
@@ -45,6 +47,25 @@ fn payload_with_integrity(integrity: &str) -> Vec<Value> {
             "is_user": true,
             "send_date": "2026-01-01T00:00:00.000Z",
             "mes": "hello",
+            "extra": {},
+        }),
+    ]
+}
+
+fn payload_with_message(integrity: &str, send_date: &str, message: &str, character_name: &str) -> Vec<Value> {
+    vec![
+        json!({
+            "chat_metadata": {
+                "integrity": integrity,
+            },
+            "user_name": "unused",
+            "character_name": character_name,
+        }),
+        json!({
+            "name": character_name,
+            "is_user": false,
+            "send_date": send_date,
+            "mes": message,
             "extra": {},
         }),
     ]
@@ -935,6 +956,183 @@ async fn list_chat_summaries_without_filter_keeps_character_directories_with_car
 
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].file_name, "session.jsonl");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn list_recent_chat_summaries_limits_results_and_keeps_pinned() {
+    let (repository, root) = setup_repository().await;
+    let characters_dir = root.join("characters");
+    fs::create_dir_all(&characters_dir)
+        .await
+        .expect("create characters directory");
+    fs::write(characters_dir.join("alice.png"), b"")
+        .await
+        .expect("create alice card");
+    fs::write(characters_dir.join("bob.png"), b"")
+        .await
+        .expect("create bob card");
+
+    repository
+        .save_chat_payload(
+            "alice",
+            "session-old",
+            &payload_with_message("recent-old", "2026-01-01T00:00:00.000Z", "old", "Alice"),
+            false,
+        )
+        .await
+        .expect("save old chat");
+    repository
+        .save_chat_payload(
+            "alice",
+            "session-mid",
+            &payload_with_message("recent-mid", "2026-01-02T00:00:00.000Z", "mid", "Alice"),
+            false,
+        )
+        .await
+        .expect("save middle chat");
+    repository
+        .save_chat_payload(
+            "bob",
+            "session-new",
+            &payload_with_message("recent-new", "2026-01-03T00:00:00.000Z", "new", "Bob"),
+            false,
+        )
+        .await
+        .expect("save new chat");
+
+    let pinned = vec![PinnedCharacterChat {
+        character_name: "alice".to_string(),
+        file_name: "session-old".to_string(),
+    }];
+    let results = repository
+        .list_recent_chat_summaries(None, false, 2, &pinned)
+        .await
+        .expect("list recent summaries");
+
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().any(|entry| entry.file_name == "session-old.jsonl"));
+    assert!(results.iter().any(|entry| entry.file_name == "session-new.jsonl"));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn list_recent_group_chat_summaries_limits_results_and_keeps_pinned() {
+    let (repository, root) = setup_repository().await;
+
+    repository
+        .save_group_chat_payload(
+            "group-old",
+            &payload_with_message(
+                "group-recent-old",
+                "2026-01-01T00:00:00.000Z",
+                "old group",
+                "Group",
+            ),
+            false,
+        )
+        .await
+        .expect("save old group chat");
+    repository
+        .save_group_chat_payload(
+            "group-new",
+            &payload_with_message(
+                "group-recent-new",
+                "2026-01-03T00:00:00.000Z",
+                "new group",
+                "Group",
+            ),
+            false,
+        )
+        .await
+        .expect("save new group chat");
+
+    let pinned = vec![PinnedGroupChat {
+        chat_id: "group-old".to_string(),
+    }];
+    let results = repository
+        .list_recent_group_chat_summaries(None, false, 2, &pinned)
+        .await
+        .expect("list recent group summaries");
+
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().any(|entry| entry.file_name == "group-old.jsonl"));
+    assert!(results.iter().any(|entry| entry.file_name == "group-new.jsonl"));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn recent_summary_skips_fingerprint_and_search_builds_it_lazily() {
+    let (repository, root) = setup_repository().await;
+
+    repository
+        .save_chat_payload(
+            "alice",
+            "session",
+            &payload_with_message(
+                "lazy-fingerprint",
+                "2026-01-05T00:00:00.000Z",
+                "dragon keyword",
+                "Alice",
+            ),
+            false,
+        )
+        .await
+        .expect("save payload");
+
+    let recent = repository
+        .list_recent_chat_summaries(Some("alice"), false, 1, &[])
+        .await
+        .expect("list recent summaries");
+    assert_eq!(recent.len(), 1);
+
+    let index_path = root
+        .join("user")
+        .join("cache")
+        .join("chat_summary_index_v1.json");
+    let index_before_search = fs::read_to_string(&index_path)
+        .await
+        .expect("read summary index after recent list");
+    let parsed_before: Value =
+        serde_json::from_str(&index_before_search).expect("parse summary index before search");
+    let before_entries = parsed_before
+        .get("entries")
+        .and_then(Value::as_array)
+        .expect("entries should exist");
+    assert_eq!(before_entries.len(), 1);
+    assert!(
+        before_entries[0]
+            .get("fingerprint")
+            .map(Value::is_null)
+            .unwrap_or(true),
+        "recent listing should not materialize fingerprint"
+    );
+
+    let search = repository
+        .search_chats("dragon", Some("alice"))
+        .await
+        .expect("search chats");
+    assert_eq!(search.len(), 1);
+
+    let index_after_search = fs::read_to_string(&index_path)
+        .await
+        .expect("read summary index after search");
+    let parsed_after: Value =
+        serde_json::from_str(&index_after_search).expect("parse summary index after search");
+    let after_entries = parsed_after
+        .get("entries")
+        .and_then(Value::as_array)
+        .expect("entries should exist");
+    assert_eq!(after_entries.len(), 1);
+    assert!(
+        after_entries[0]
+            .get("fingerprint")
+            .is_some_and(|value| !value.is_null()),
+        "search should materialize fingerprint lazily"
+    );
 
     let _ = fs::remove_dir_all(&root).await;
 }

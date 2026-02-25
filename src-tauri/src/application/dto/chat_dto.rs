@@ -1,6 +1,6 @@
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatSearchResult,
+    ChatExportFormat, ChatImportFormat, ChatSearchResult, PinnedCharacterChat, PinnedGroupChat,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -94,6 +94,19 @@ pub struct ChatSearchResultDto {
     pub chat_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_metadata: Option<serde_json::Value>,
+}
+
+/// DTO for pinned character chat references in recent-chat queries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinnedCharacterChatDto {
+    pub character_name: String,
+    pub file_name: String,
+}
+
+/// DTO for pinned group chat references in recent-chat queries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinnedGroupChatDto {
+    pub chat_id: String,
 }
 
 /// DTO for creating a chat
@@ -323,6 +336,23 @@ impl From<ChatSearchResult> for ChatSearchResultDto {
             date: result.date,
             chat_id: result.chat_id,
             chat_metadata: result.chat_metadata,
+        }
+    }
+}
+
+impl From<PinnedCharacterChatDto> for PinnedCharacterChat {
+    fn from(dto: PinnedCharacterChatDto) -> Self {
+        Self {
+            character_name: dto.character_name,
+            file_name: dto.file_name,
+        }
+    }
+}
+
+impl From<PinnedGroupChatDto> for PinnedGroupChat {
+    fn from(dto: PinnedGroupChatDto) -> Self {
+        Self {
+            chat_id: dto.chat_id,
         }
     }
 }

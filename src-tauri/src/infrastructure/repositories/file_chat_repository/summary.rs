@@ -121,7 +121,7 @@ impl SearchFingerprint {
 pub(super) struct SummaryCacheEntry {
     pub signature: FileSignature,
     pub summary: ChatSearchResult,
-    pub fingerprint: SearchFingerprint,
+    pub fingerprint: Option<SearchFingerprint>,
 }
 
 #[derive(Clone)]
@@ -151,7 +151,8 @@ struct SummaryIndexSnapshotEntry {
     key: String,
     signature: FileSignature,
     summary: ChatSearchResult,
-    fingerprint: SearchFingerprint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fingerprint: Option<SearchFingerprint>,
 }
 
 impl SummaryCache {
@@ -230,7 +231,9 @@ impl SummaryCache {
         self.version = snapshot.version;
         for entry in snapshot.entries {
             let mut fingerprint = entry.fingerprint;
-            fingerprint.normalize_len();
+            if let Some(value) = fingerprint.as_mut() {
+                value.normalize_len();
+            }
             self.entries.insert(
                 entry.key,
                 SummaryCacheEntry {
@@ -564,6 +567,7 @@ impl FileChatRepository {
     pub(super) async fn get_chat_summary_entry(
         &self,
         descriptor: &ChatFileDescriptor,
+        require_fingerprint: bool,
     ) -> Result<SummaryCacheEntry, DomainError> {
         self.ensure_summary_index_loaded().await?;
 
@@ -579,7 +583,8 @@ impl FileChatRepository {
         {
             let cache = self.summary_cache.lock().await;
             if let Some(entry) = cache.get(&cache_key) {
-                if entry.signature == signature {
+                let has_required_fingerprint = !require_fingerprint || entry.fingerprint.is_some();
+                if entry.signature == signature && has_required_fingerprint {
                     return Ok(entry.clone());
                 }
             }
@@ -591,6 +596,7 @@ impl FileChatRepository {
                 &descriptor.character_name,
                 &descriptor.file_name,
                 signature,
+                require_fingerprint,
             )
             .await?;
 
@@ -607,7 +613,10 @@ impl FileChatRepository {
         descriptor: &ChatFileDescriptor,
         include_metadata: bool,
     ) -> Result<ChatSearchResult, DomainError> {
-        let mut summary = self.get_chat_summary_entry(descriptor).await?.summary;
+        let mut summary = self
+            .get_chat_summary_entry(descriptor, false)
+            .await?
+            .summary;
         if !include_metadata {
             summary.chat_metadata = None;
         }
@@ -695,7 +704,7 @@ impl FileChatRepository {
         path.to_string_lossy().to_string()
     }
 
-    fn file_signature_from_metadata(metadata: &std::fs::Metadata) -> FileSignature {
+    pub(super) fn file_signature_from_metadata(metadata: &std::fs::Metadata) -> FileSignature {
         let modified_millis = metadata
             .modified()
             .ok()
@@ -714,6 +723,7 @@ impl FileChatRepository {
         fallback_character_name: &str,
         fallback_file_name: &str,
         signature: FileSignature,
+        include_fingerprint: bool,
     ) -> Result<SummaryCacheEntry, DomainError> {
         let file = File::open(path).await.map_err(|error| {
             DomainError::InternalError(format!("Failed to open chat file {:?}: {}", path, error))
@@ -724,8 +734,10 @@ impl FileChatRepository {
         let mut line_count: usize = 0;
         let mut first_non_empty: Option<String> = None;
         let mut last_non_empty: Option<String> = None;
-        let mut fingerprint = SearchFingerprint::new();
-        fingerprint.add_text(Self::strip_jsonl_extension(fallback_file_name));
+        let mut fingerprint = include_fingerprint.then(SearchFingerprint::new);
+        if let Some(value) = fingerprint.as_mut() {
+            value.add_text(Self::strip_jsonl_extension(fallback_file_name));
+        }
 
         while let Some(line) = lines.next_line().await.map_err(|error| {
             DomainError::InternalError(format!("Failed to read chat file {:?}: {}", path, error))
@@ -738,7 +750,9 @@ impl FileChatRepository {
             if first_non_empty.is_none() {
                 first_non_empty = Some(line.clone());
             }
-            fingerprint.add_text(&line);
+            if let Some(value) = fingerprint.as_mut() {
+                value.add_text(&line);
+            }
             last_non_empty = Some(line);
         }
 
