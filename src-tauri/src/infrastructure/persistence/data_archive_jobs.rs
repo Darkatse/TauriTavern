@@ -372,6 +372,46 @@ pub fn cancel_data_archive_job(job_id: &str) -> Result<(), DomainError> {
     Ok(())
 }
 
+pub fn cleanup_export_data_archive(job_id: &str) -> Result<(), DomainError> {
+    let status = get_job(job_id)?.snapshot()?;
+    if status.kind != KIND_EXPORT || status.state != STATE_COMPLETED {
+        return Err(DomainError::InvalidData(format!(
+            "Export job is not completed: {}",
+            job_id
+        )));
+    }
+
+    let archive_path = status
+        .result
+        .and_then(|result| result.archive_path)
+        .ok_or_else(|| {
+            DomainError::InvalidData(format!(
+                "Export archive path is missing for job: {}",
+                job_id
+            ))
+        })?;
+
+    remove_file_if_exists(Path::new(&archive_path), "cleanup export archive");
+    Ok(())
+}
+
+pub fn read_data_archive_file(archive_path: &Path) -> Result<Vec<u8>, DomainError> {
+    if !archive_path.is_file() {
+        return Err(DomainError::NotFound(format!(
+            "Data archive file not found: {}",
+            archive_path.display()
+        )));
+    }
+
+    fs::read(archive_path).map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to read data archive file {}: {}",
+            archive_path.display(),
+            error
+        ))
+    })
+}
+
 fn prepare_import_archive_path(
     source_archive_path: &Path,
     job_root: &Path,

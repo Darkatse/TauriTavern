@@ -232,49 +232,47 @@ export function registerExtensionRoutes(router, context, { jsonResponse, textRes
             job_id: jobId,
         });
 
-        if (String(status?.kind || '') !== 'export') {
+        if (status.kind !== 'export') {
             return jsonResponse({ error: 'Invalid export job' }, 400);
         }
 
-        if (String(status?.state || '') !== 'completed') {
+        if (status.state !== 'completed') {
             return jsonResponse({ error: 'Export job is not completed yet' }, 409);
         }
 
-        const archivePath = String(status?.result?.archive_path || '').trim();
-        if (!archivePath) {
-            return jsonResponse({ error: 'Export archive path is missing' }, 500);
-        }
+        const archivePath = status.result.archive_path;
 
-        const assetUrl = context.toAssetUrl(archivePath);
-        if (!assetUrl) {
-            return jsonResponse({ error: 'Unable to resolve export asset URL' }, 500);
-        }
-
-        const upstream = await fetch(assetUrl, { method: 'GET' });
-        if (!upstream.ok) {
-            return jsonResponse({ error: 'Failed to read export archive file' }, 500);
-        }
-        if (!upstream.body) {
-            return jsonResponse({ error: 'Export archive stream is unavailable' }, 500);
-        }
+        const payload = await context.safeInvoke('read_data_archive_file', {
+            archive_path: archivePath,
+        });
+        const bytes = Uint8Array.from(payload);
 
         const headers = new Headers();
         headers.set('Content-Type', 'application/zip');
         headers.set(
             'Content-Disposition',
-            `attachment; filename="${sanitizeFileName(status?.result?.file_name, 'tauritavern-data.zip')}"`,
+            `attachment; filename="${sanitizeFileName(status.result.file_name, 'tauritavern-data.zip')}"`,
         );
         headers.set('Cache-Control', 'no-store');
+        headers.set('Content-Length', String(bytes.byteLength));
 
-        const contentLength = upstream.headers.get('Content-Length');
-        if (contentLength) {
-            headers.set('Content-Length', contentLength);
-        }
-
-        return new Response(upstream.body, {
+        return new Response(bytes, {
             status: 200,
             headers,
         });
+    });
+
+    router.post('/api/extensions/data-migration/export/cleanup', async ({ body }) => {
+        const jobId = parseJobId(body?.job_id);
+        if (!jobId) {
+            return jsonResponse({ error: 'Missing job id' }, 400);
+        }
+
+        await context.safeInvoke('cleanup_export_data_archive', {
+            job_id: jobId,
+        });
+
+        return jsonResponse({ ok: true });
     });
 
     router.post('/api/extensions/branches', async () => jsonResponse([]));

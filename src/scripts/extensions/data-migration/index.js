@@ -1,12 +1,8 @@
 import { renderExtensionTemplateAsync } from '../../extensions.js';
 import { t } from '../../i18n.js';
-import {
-    isNativeMobileDownloadRuntime,
-    writeReadableStreamToMobileDownloadFolder,
-} from '../../file-export.js';
+import { downloadBlobWithRuntime } from '../../file-export.js';
 
 const MODULE_NAME = 'data-migration';
-const MIGRATED_TARGET_USER = 'default-user';
 const JOB_POLL_INTERVAL_MS = 1200;
 const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'cancelled']);
 
@@ -48,12 +44,15 @@ function normalizeCaughtError(error) {
     return extractErrorMessage(String(error || ''));
 }
 
-function parseJobId(value) {
-    const jobId = String(value || '').trim();
-    return jobId || '';
+function requireJobId(payload, errorMessage) {
+    if (typeof payload?.job_id !== 'string' || !payload.job_id.trim()) {
+        throw new Error(errorMessage);
+    }
+
+    return payload.job_id.trim();
 }
 
-async function saveMobileExportArchive(jobId, fileName) {
+async function downloadExportArchive(jobId, fileName) {
     const response = await fetch(`/api/extensions/data-migration/export/download?id=${encodeURIComponent(jobId)}`, {
         method: 'GET',
         cache: 'no-store',
@@ -61,13 +60,22 @@ async function saveMobileExportArchive(jobId, fileName) {
     if (!response.ok) {
         throw new Error(await readFailureMessage(response));
     }
-    if (!response.body) {
-        throw new Error(t`Export archive stream is unavailable`);
-    }
 
-    return writeReadableStreamToMobileDownloadFolder(response.body, fileName, {
-        fallbackName: 'tauritavern-data.zip',
+    const blob = await response.blob();
+    return downloadBlobWithRuntime(blob, fileName, { fallbackName: 'tauritavern-data.zip' });
+}
+
+async function cleanupExportArchive(jobId) {
+    const response = await fetch('/api/extensions/data-migration/export/cleanup', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ job_id: jobId }),
     });
+    if (!response.ok) {
+        throw new Error(await readFailureMessage(response));
+    }
 }
 
 function hasActiveJob() {
@@ -128,12 +136,7 @@ async function startImportJob(file) {
     }
 
     const payload = await response.json();
-    const jobId = parseJobId(payload?.job_id);
-    if (!jobId) {
-        throw new Error(t`Import job id is missing`);
-    }
-
-    return jobId;
+    return requireJobId(payload, t`Import job id is missing`);
 }
 
 async function startExportJob() {
@@ -145,12 +148,7 @@ async function startExportJob() {
     }
 
     const payload = await response.json();
-    const jobId = parseJobId(payload?.job_id);
-    if (!jobId) {
-        throw new Error(t`Export job id is missing`);
-    }
-
-    return jobId;
+    return requireJobId(payload, t`Export job id is missing`);
 }
 
 async function fetchJobStatus(jobId) {
@@ -193,25 +191,13 @@ async function pollUntilTerminal(jobId) {
         const status = await fetchJobStatus(jobId);
         updateStatusFromJob(status);
 
-        const state = String(status?.state || '').toLowerCase();
+        const state = status.state;
         if (TERMINAL_JOB_STATES.has(state)) {
             return status;
         }
 
         await sleep(JOB_POLL_INTERVAL_MS);
     }
-}
-
-function triggerExportDownload(jobId, fileName) {
-    const anchor = document.createElement('a');
-    anchor.href = `/api/extensions/data-migration/export/download?id=${encodeURIComponent(jobId)}`;
-    if (fileName) {
-        anchor.download = fileName;
-    }
-
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
 }
 
 async function requestCancelActiveJob() {
@@ -256,15 +242,13 @@ async function runMigrationJob(kind, startJob) {
         startJobTracking(jobId);
 
         const finalStatus = await pollUntilTerminal(jobId);
-        const finalState = String(finalStatus?.state || '').toLowerCase();
+        const finalState = finalStatus.state;
 
         if (finalState === 'completed') {
             if (kind === 'import') {
-                const sourceUsers = Array.isArray(finalStatus?.result?.source_users)
-                    ? finalStatus.result.source_users.filter((value) => typeof value === 'string' && value.trim())
-                    : [];
-                const targetUser = String(finalStatus?.result?.target_user || MIGRATED_TARGET_USER);
-                const userSummary = sourceUsers.length > 0 ? sourceUsers.join(', ') : t`Unknown`;
+                const sourceUsers = finalStatus.result.source_users;
+                const targetUser = finalStatus.result.target_user;
+                const userSummary = sourceUsers.join(', ');
 
                 toastr.success(
                     t`Imported users: ${userSummary}. Migrated target: ${targetUser}. Reloading...`,
@@ -277,16 +261,17 @@ async function runMigrationJob(kind, startJob) {
                     location.reload();
                 }, 800);
             } else {
-                const fileName = String(finalStatus?.result?.file_name || '').trim();
-                const useMobileNativeSave = isNativeMobileDownloadRuntime();
+                const fileName = finalStatus.result.file_name;
+                const downloadResult = await downloadExportArchive(jobId, fileName);
+                void cleanupExportArchive(jobId).catch((error) => {
+                    console.warn('Failed to cleanup export archive:', error);
+                });
 
-                if (useMobileNativeSave) {
-                    setStatusText(t`Saving archive to Download folder...`);
-                    const savedPath = await saveMobileExportArchive(jobId, fileName);
+                if (downloadResult.mode === 'mobile-native') {
+                    const savedPath = downloadResult.savedPath;
                     toastr.success(t`Data archive saved: ${savedPath}`, t`Export completed`, { timeOut: 8000 });
                     setStatusText(t`Export completed | ${savedPath}`);
                 } else {
-                    triggerExportDownload(jobId, fileName);
                     toastr.success(t`Data archive exported`, t`Export completed`);
                     setStatusText(t`Export completed`);
                 }
@@ -300,7 +285,7 @@ async function runMigrationJob(kind, startJob) {
             return;
         }
 
-        throw new Error(String(finalStatus?.error || t`Unknown error`));
+        throw new Error(finalStatus.error || t`Unknown error`);
     } catch (error) {
         const failureMessage = normalizeCaughtError(error);
         toastr.error(failureMessage, failureTitle);
