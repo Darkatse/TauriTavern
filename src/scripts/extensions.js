@@ -669,28 +669,17 @@ function updateStatus(success) {
  * @param {object} manifest Manifest object
  */
 function addExtensionLocale(name, manifest) {
-    // 清单中没有 i18n 数据
     if (!manifest.i18n || typeof manifest.i18n !== 'object') {
         return Promise.resolve();
     }
 
     const currentLocale = getCurrentLocale();
-    let localeFile = manifest.i18n[currentLocale];
-
-    // 如果清单没有为当前语言提供特定的语言文件，尝试查找默认配置
-    if (!localeFile && manifest.i18n['default']) {
-        localeFile = manifest.i18n['default'];
-    }
-
-    // 如果清单没有提供任何可用的语言文件，则跳过
+    const localeFile = manifest.i18n[currentLocale] || manifest.i18n.default;
     if (!localeFile) {
         return Promise.resolve();
     }
 
-    // 解析占位符，例如将 "${locale}" 替换为当前语言 ID
-    const resolvedLocaleFile = String(localeFile).replace(/\$\{locale\}/g, currentLocale);
-
-    return fetch(getExtensionResourceUrl(name, resolvedLocaleFile))
+    return fetch(getExtensionResourceUrl(name, localeFile))
         .then(async response => {
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -703,7 +692,7 @@ function addExtensionLocale(name, manifest) {
             }
         })
         .catch(err => {
-            console.log('无法加载扩展 ' + name + ' 的语言包数据', err);
+            console.log('Could not load extension locale data for ' + name, err);
         });
 }
 

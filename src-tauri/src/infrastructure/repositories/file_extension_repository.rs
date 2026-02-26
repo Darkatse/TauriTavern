@@ -632,28 +632,13 @@ impl ExtensionRepository for FileExtensionRepository {
         location_hint: Option<&str>,
     ) -> Result<ExtensionAssetPayload, DomainError> {
         let extension_folder_name = self.normalize_extension_name(extension_name)?;
-        let mut normalized_relative = Self::normalize_asset_relative_path(relative_path)?;
+        let normalized_relative = Self::normalize_asset_relative_path(relative_path)?;
 
         for base_dir in self.third_party_candidate_dirs(location_hint) {
             let extension_root = base_dir.join(&extension_folder_name);
-            let mut asset_path = extension_root.join(&normalized_relative);
+            let asset_path = extension_root.join(&normalized_relative);
 
-            // 如果路径中包含 ${locale} 占位符，且文件不存在，尝试常见的语言代码
-            let relative_str = normalized_relative.to_string_lossy();
-            if relative_str.contains("${locale}") && !asset_path.is_file() {
-                let locales = ["zh-cn", "en", "zh-tw", "ja"];
-                for locale in locales {
-                    let tried_relative_str = relative_str.replace("${locale}", locale);
-                    let tried_path = extension_root.join(&tried_relative_str);
-                    if tried_path.is_file() {
-                        asset_path = tried_path;
-                        normalized_relative = PathBuf::from(tried_relative_str);
-                        break;
-                    }
-                }
-            }
-
-            if !asset_path.starts_with(&extension_root) || !asset_path.is_file() {
+            if !asset_path.is_file() {
                 continue;
             }
 

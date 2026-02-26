@@ -877,6 +877,9 @@ export function createThirdPartyBlobResolver({ fetchImpl } = {}) {
             if (!candidate || !Number.isInteger(start) || isOffsetWithinRanges(start, importSpecifierRanges)) {
                 continue;
             }
+            if (candidate.includes('${')) {
+                continue;
+            }
 
             const resolved = resolveModuleSpecifier(moduleUrl, candidate);
             if (!resolved || !isRouteThirdPartyModuleUrl(resolved)) {
