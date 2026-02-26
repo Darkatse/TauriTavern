@@ -1,14 +1,14 @@
-use serde_json::{json, Map, Number, Value};
+use serde_json::{Map, Number, Value, json};
 
 use crate::application::errors::ApplicationError;
 
 use super::prompt_cache::{
-    append_cache_control_to_last, apply_depth_cache_for_claude, PromptCacheConfig,
-    PromptCacheProvider,
+    PromptCacheConfig, PromptCacheProvider, append_cache_control_to_last,
+    apply_depth_cache_for_claude,
 };
 use super::shared::{insert_if_present, message_content_to_text};
 use super::tool_calls::{
-    extract_openai_tool_calls, message_tool_call_id, message_tool_result_text, OpenAiToolCall,
+    OpenAiToolCall, extract_openai_tool_calls, message_tool_call_id, message_tool_result_text,
 };
 
 const CLAUDE_THINKING_MIN_TOKENS: i64 = 1024;
@@ -462,7 +462,7 @@ fn convert_thinking_prefill_to_user(messages: &mut [Value]) {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::build;
 

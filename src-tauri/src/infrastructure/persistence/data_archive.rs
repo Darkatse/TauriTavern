@@ -841,7 +841,7 @@ fn sanitize_zip_entry_path(raw_path: &str) -> Result<PathBuf, DomainError> {
                 return Err(DomainError::InvalidData(format!(
                     "Invalid archive entry path: {}",
                     raw_path
-                )))
+                )));
             }
         }
     }

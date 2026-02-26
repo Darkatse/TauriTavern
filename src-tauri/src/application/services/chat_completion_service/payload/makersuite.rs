@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::application::errors::ApplicationError;
 
 use super::shared::{message_content_to_text, parse_data_url};
 use super::tool_calls::{
-    extract_openai_tool_calls, fallback_tool_name, message_tool_call_id, message_tool_name,
-    message_tool_result_text, normalize_tool_result_payload, OpenAiToolCall,
+    OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
+    message_tool_name, message_tool_result_text, normalize_tool_result_payload,
 };
 
 const GOOGLE_FLASH_MAX_BUDGET: i64 = 24_576;
@@ -576,7 +576,7 @@ fn value_to_i64(value: &Value) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::build;
 

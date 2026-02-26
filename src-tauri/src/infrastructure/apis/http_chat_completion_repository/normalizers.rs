@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 pub(super) fn normalize_claude_response(response: Value) -> Value {
     let content_blocks = response
@@ -371,7 +371,7 @@ fn to_openai_arguments(value: Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::{normalize_claude_response, normalize_gemini_response};
 

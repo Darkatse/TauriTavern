@@ -704,12 +704,16 @@ mod tests {
         let repository = MiktikTokenizerRepository::new(cache_dir.clone())
             .expect("repository should initialize");
 
-        assert!(!repository
-            .is_model_registered("claude")
-            .expect("registration state should be readable"));
-        assert!(!repository
-            .is_model_registered("gemma")
-            .expect("registration state should be readable"));
+        assert!(
+            !repository
+                .is_model_registered("claude")
+                .expect("registration state should be readable")
+        );
+        assert!(
+            !repository
+                .is_model_registered("gemma")
+                .expect("registration state should be readable")
+        );
         let _ = std::fs::remove_dir_all(cache_dir);
     }
 

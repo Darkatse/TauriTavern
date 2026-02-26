@@ -1,9 +1,9 @@
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::character_repository::ImageCrop;
 use crate::infrastructure::logging::logger;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use image::ImageFormat;
-use png::{text_metadata::TEXtChunk, BitDepth, ColorType, Transformations};
+use png::{BitDepth, ColorType, Transformations, text_metadata::TEXtChunk};
 use std::io::Cursor;
 
 /// PNG text keys used for character data.
@@ -310,8 +310,8 @@ fn encode_png_with_text_chunks(
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_base64, decode_png_frame, encode_base64, read_character_data_from_png,
-        read_text_chunks_from_png, write_character_data_to_png, TextChunk,
+        TextChunk, decode_base64, decode_png_frame, encode_base64, read_character_data_from_png,
+        read_text_chunks_from_png, write_character_data_to_png,
     };
     use image::{DynamicImage, ImageFormat, RgbaImage};
     use png::text_metadata::{ITXtChunk, TEXtChunk};

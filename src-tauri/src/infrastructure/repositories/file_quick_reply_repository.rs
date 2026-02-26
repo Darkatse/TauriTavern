@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::quick_reply::{sanitize_filename, QuickReplySet};
+use crate::domain::models::quick_reply::{QuickReplySet, sanitize_filename};
 use crate::domain::repositories::quick_reply_repository::QuickReplyRepository;
 use crate::infrastructure::persistence::file_system::{delete_file, write_json_file};
 

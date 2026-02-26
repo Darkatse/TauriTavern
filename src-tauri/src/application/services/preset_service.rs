@@ -360,10 +360,12 @@ mod tests {
         service.save_preset(&preset).await.unwrap();
 
         // Verify it exists
-        assert!(service
-            .preset_exists("Test Preset", &PresetType::OpenAI)
-            .await
-            .unwrap());
+        assert!(
+            service
+                .preset_exists("Test Preset", &PresetType::OpenAI)
+                .await
+                .unwrap()
+        );
 
         // Delete preset
         service
@@ -372,10 +374,12 @@ mod tests {
             .unwrap();
 
         // Verify it's gone
-        assert!(!service
-            .preset_exists("Test Preset", &PresetType::OpenAI)
-            .await
-            .unwrap());
+        assert!(
+            !service
+                .preset_exists("Test Preset", &PresetType::OpenAI)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]

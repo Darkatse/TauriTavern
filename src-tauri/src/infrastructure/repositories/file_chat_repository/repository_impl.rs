@@ -1026,7 +1026,7 @@ impl ChatRepository for FileChatRepository {
                 return Err(DomainError::InvalidData(format!(
                     "Unsupported chat import format: {}",
                     other
-                )))
+                )));
             }
         };
 

@@ -1,20 +1,22 @@
 use axum::{
+    Router,
     extract::{DefaultBodyLimit, Multipart, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Router,
 };
 use local_ip_address::local_ip;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::oneshot;
 use tokio::sync::Mutex;
+use tokio::sync::oneshot;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 
-use crate::infrastructure::persistence::data_archive::{run_export_data_archive, run_import_data_archive};
+use crate::infrastructure::persistence::data_archive::{
+    run_export_data_archive, run_import_data_archive,
+};
 
 use qrcode::QrCode;
 
@@ -118,7 +120,8 @@ impl LanSyncServer {
     /// 生成二维码的 SVG 字符串
     pub fn generate_qr_code(&self, text: &str) -> Result<String, String> {
         let code = QrCode::new(text.as_bytes()).map_err(|e| format!("生成二维码失败: {}", e))?;
-        let svg = code.render::<qrcode::render::svg::Color>()
+        let svg = code
+            .render::<qrcode::render::svg::Color>()
             .min_dimensions(200, 200)
             .build();
         Ok(svg)
@@ -137,9 +140,10 @@ async fn handle_status(State(state): State<Arc<ServerState>>) -> impl IntoRespon
 
 async fn handle_download(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     info!("收到局域网同步下载请求");
-    
-    let temp_zip = std::env::temp_dir().join(format!("tauritavern_sync_{}.zip", uuid::Uuid::new_v4()));
-    
+
+    let temp_zip =
+        std::env::temp_dir().join(format!("tauritavern_sync_{}.zip", uuid::Uuid::new_v4()));
+
     // 调用现有的导出逻辑
     let result = run_export_data_archive(
         &state.data_root,
@@ -152,20 +156,33 @@ async fn handle_download(State(state): State<Arc<ServerState>>) -> impl IntoResp
         Ok(_) => {
             let file_content = match tokio::fs::read(&temp_zip).await {
                 Ok(c) => c,
-                Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("读取备份文件失败: {}", e)).into_response(),
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("读取备份文件失败: {}", e),
+                    )
+                        .into_response();
+                }
             };
-            
+
             // 删除临时文件
             let _ = tokio::fs::remove_file(&temp_zip).await;
 
             axum::response::Response::builder()
                 .header("Content-Type", "application/zip")
-                .header("Content-Disposition", "attachment; filename=\"tauritavern_backup.zip\"")
+                .header(
+                    "Content-Disposition",
+                    "attachment; filename=\"tauritavern_backup.zip\"",
+                )
                 .body(axum::body::Body::from(file_content))
                 .unwrap()
                 .into_response()
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("导出数据失败: {}", e)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("导出数据失败: {}", e),
+        )
+            .into_response(),
     }
 }
 
@@ -175,34 +192,67 @@ async fn handle_upload(
 ) -> impl IntoResponse {
     info!("收到局域网同步上传请求");
 
-    while let Some(field) = multipart.next_field().await.unwrap() {
-        let name = field.name().unwrap().to_string();
-        if name == "file" {
-            let data = field.bytes().await.unwrap();
-            let temp_zip = std::env::temp_dir().join(format!("tauritavern_upload_{}.zip", uuid::Uuid::new_v4()));
-            
-            if let Err(e) = tokio::fs::write(&temp_zip, data).await {
-                return (StatusCode::INTERNAL_SERVER_ERROR, format!("保存上传文件失败: {}", e)).into_response();
+    loop {
+        let next_field = match multipart.next_field().await {
+            Ok(field) => field,
+            Err(e) => {
+                return (StatusCode::BAD_REQUEST, format!("解析上传表单失败: {}", e))
+                    .into_response();
             }
+        };
 
-            // 调用现有的导入逻辑
-            let workspace = state.data_root.parent().unwrap_or(&state.data_root).join("sync_workspace");
-            let result = run_import_data_archive(
-                &state.data_root,
-                &temp_zip,
-                &workspace,
-                &mut |_, _, _| {},
-                &|| false,
-            );
+        let Some(field) = next_field else {
+            break;
+        };
 
-            // 删除临时文件
-            let _ = tokio::fs::remove_file(&temp_zip).await;
-
-            return match result {
-                Ok(_) => (StatusCode::OK, "数据同步导入成功！请重启应用以生效。").into_response(),
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("导入数据失败: {}", e)).into_response(),
-            };
+        if field.name() != Some("file") {
+            continue;
         }
+
+        let data = match field.bytes().await {
+            Ok(data) => data,
+            Err(e) => {
+                return (StatusCode::BAD_REQUEST, format!("读取上传文件失败: {}", e))
+                    .into_response();
+            }
+        };
+
+        let temp_zip =
+            std::env::temp_dir().join(format!("tauritavern_upload_{}.zip", uuid::Uuid::new_v4()));
+
+        if let Err(e) = tokio::fs::write(&temp_zip, data).await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("保存上传文件失败: {}", e),
+            )
+                .into_response();
+        }
+
+        // 调用现有的导入逻辑
+        let workspace = state
+            .data_root
+            .parent()
+            .unwrap_or(&state.data_root)
+            .join("sync_workspace");
+        let result = run_import_data_archive(
+            &state.data_root,
+            &temp_zip,
+            &workspace,
+            &mut |_, _, _| {},
+            &|| false,
+        );
+
+        // 删除临时文件
+        let _ = tokio::fs::remove_file(&temp_zip).await;
+
+        return match result {
+            Ok(_) => (StatusCode::OK, "数据同步导入成功！请重启应用以生效。").into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("导入数据失败: {}", e),
+            )
+                .into_response(),
+        };
     }
 
     (StatusCode::BAD_REQUEST, "未找到上传的文件").into_response()

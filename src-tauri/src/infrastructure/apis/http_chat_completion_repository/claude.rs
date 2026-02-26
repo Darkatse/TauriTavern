@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use reqwest::RequestBuilder;
+use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::Value;
 
 use crate::domain::errors::DomainError;
@@ -9,8 +9,8 @@ use crate::domain::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
 };
 
-use super::normalizers;
 use super::HttpChatCompletionRepository;
+use super::normalizers;
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const ANTHROPIC_BETA_OUTPUT_128K: &str = "output-128k-2025-02-19";
@@ -239,10 +239,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        build_anthropic_beta_values, configured_anthropic_beta_values,
-        payload_contains_cache_control, ANTHROPIC_BETA_CONTEXT_1M,
-        ANTHROPIC_BETA_EXTENDED_CACHE_TTL, ANTHROPIC_BETA_OUTPUT_128K,
-        ANTHROPIC_BETA_PROMPT_CACHING,
+        ANTHROPIC_BETA_CONTEXT_1M, ANTHROPIC_BETA_EXTENDED_CACHE_TTL, ANTHROPIC_BETA_OUTPUT_128K,
+        ANTHROPIC_BETA_PROMPT_CACHING, build_anthropic_beta_values,
+        configured_anthropic_beta_values, payload_contains_cache_control,
     };
 
     #[test]

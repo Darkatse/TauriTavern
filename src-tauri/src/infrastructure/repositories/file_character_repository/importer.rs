@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::character::{sanitize_filename, Character};
+use crate::domain::models::character::{Character, sanitize_filename};
 use crate::domain::models::chat::humanized_date as humanized_chat_date;
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,

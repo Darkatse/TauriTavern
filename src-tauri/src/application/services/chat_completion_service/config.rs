@@ -286,8 +286,8 @@ mod tests {
     use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
 
     use super::{
-        default_base_url, source_extra_headers, supports_reverse_proxy, ApiConfigPurpose,
-        DEEPSEEK_STATUS_API_BASE, OPENROUTER_API_BASE, ZAI_API_BASE_CODING,
+        ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, OPENROUTER_API_BASE, ZAI_API_BASE_CODING,
+        default_base_url, source_extra_headers, supports_reverse_proxy,
     };
 
     #[test]

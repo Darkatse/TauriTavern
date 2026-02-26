@@ -35,7 +35,7 @@ pub trait ExtensionRepository: Send + Sync {
 
     /// Delete an extension
     async fn delete_extension(&self, extension_name: &str, global: bool)
-        -> Result<(), DomainError>;
+    -> Result<(), DomainError>;
 
     /// Get extension version information
     async fn get_extension_version(

@@ -1,4 +1,4 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 const CACHE_TTL_DEFAULT: &str = "5m";
 const CACHE_TTL_EXTENDED: &str = "1h";
@@ -317,8 +317,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        apply_depth_cache_for_openrouter_claude, apply_system_prompt_cache_for_openrouter,
-        PromptCacheConfig, PromptCacheProvider,
+        PromptCacheConfig, PromptCacheProvider, apply_depth_cache_for_openrouter_claude,
+        apply_system_prompt_cache_for_openrouter,
     };
 
     #[test]

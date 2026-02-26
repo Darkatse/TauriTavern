@@ -35,10 +35,7 @@ impl ChatService {
 
     /// Create a new chat
     pub async fn create_chat(&self, dto: CreateChatDto) -> Result<ChatDto, ApplicationError> {
-        tracing::info!(
-            "{}",
-            &format!("Creating chat for character: {}", dto.character_name)
-        );
+        tracing::info!("Creating chat for character: {}", dto.character_name);
 
         // Verify that the character exists
         self.character_repository

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tauri::AppHandle;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::preset::{sanitize_filename, DefaultPreset, Preset, PresetType};
+use crate::domain::models::preset::{DefaultPreset, Preset, PresetType, sanitize_filename};
 use crate::domain::repositories::content_repository::ContentRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::infrastructure::assets::read_resource_json;

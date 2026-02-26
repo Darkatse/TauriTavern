@@ -1,6 +1,6 @@
 use crate::domain::errors::DomainError;
 use crate::infrastructure::logging::logger;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::path::{Path, PathBuf};
 use tokio::fs::{self as tokio_fs, create_dir_all, read_to_string};
 

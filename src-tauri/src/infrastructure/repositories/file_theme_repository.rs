@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::theme::{sanitize_filename, Theme};
+use crate::domain::models::theme::{Theme, sanitize_filename};
 use crate::domain::repositories::theme_repository::ThemeRepository;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{delete_file, write_json_file};

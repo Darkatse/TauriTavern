@@ -1,11 +1,11 @@
 use serde::de::DeserializeOwned;
 use std::path::Path;
 use std::sync::OnceLock;
-#[cfg(not(target_os = "android"))]
-use tauri::path::BaseDirectory;
 use tauri::AppHandle;
 #[cfg(not(target_os = "android"))]
 use tauri::Manager;
+#[cfg(not(target_os = "android"))]
+use tauri::path::BaseDirectory;
 #[cfg(not(target_os = "android"))]
 use tauri_plugin_fs::FsExt;
 use tokio::fs;

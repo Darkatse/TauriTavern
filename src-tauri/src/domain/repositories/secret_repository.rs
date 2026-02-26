@@ -21,7 +21,7 @@ pub trait SecretRepository: Send + Sync {
 
     /// 读取单个密钥（按 ID 或当前 active）
     async fn read_secret(&self, key: &str, id: Option<&str>)
-        -> Result<Option<String>, DomainError>;
+    -> Result<Option<String>, DomainError>;
 
     /// 删除单个密钥（按 ID 或当前 active）
     async fn delete_secret(&self, key: &str, id: Option<&str>) -> Result<(), DomainError>;

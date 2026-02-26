@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::{json, Value};
-use tokio::sync::{watch, RwLock};
+use serde_json::{Value, json};
+use tokio::sync::{RwLock, watch};
 
 use crate::application::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,

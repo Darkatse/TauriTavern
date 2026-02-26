@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use tauri::State;
 use tauri::http::HeaderMap;
 use tauri::ipc::{InvokeBody, Request as InvokeRequest, Response as InvokeResponse};
-use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::chat_dto::{

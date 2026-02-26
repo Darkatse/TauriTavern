@@ -11,7 +11,7 @@ use crate::domain::models::world_info::sanitize_world_info_name;
 use crate::domain::repositories::character_repository::{CharacterRepository, ImageCrop};
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::logging::logger;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -528,55 +528,69 @@ impl CharacterService {
         );
         result.insert(
             "constant".to_string(),
-            json!(entry
-                .get("constant")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .get("constant")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert(
             "selective".to_string(),
-            json!(entry
-                .get("selective")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .get("selective")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert(
             "order".to_string(),
-            json!(entry
-                .get("insertion_order")
-                .and_then(Value::as_i64)
-                .unwrap_or(100)),
+            json!(
+                entry
+                    .get("insertion_order")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(100)
+            ),
         );
         result.insert("position".to_string(), json!(position));
         result.insert(
             "excludeRecursion".to_string(),
-            json!(entry
-                .pointer("/extensions/exclude_recursion")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .pointer("/extensions/exclude_recursion")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert(
             "preventRecursion".to_string(),
-            json!(entry
-                .pointer("/extensions/prevent_recursion")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .pointer("/extensions/prevent_recursion")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert(
             "delayUntilRecursion".to_string(),
-            json!(entry
-                .pointer("/extensions/delay_until_recursion")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .pointer("/extensions/delay_until_recursion")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert("disable".to_string(), json!(!enabled));
         result.insert("addMemo".to_string(), json!(!comment.is_empty()));
         result.insert(
             "displayIndex".to_string(),
-            json!(entry
-                .pointer("/extensions/display_index")
-                .and_then(Value::as_i64)
-                .unwrap_or(index as i64)),
+            json!(
+                entry
+                    .pointer("/extensions/display_index")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(index as i64)
+            ),
         );
         result.insert(
             "probability".to_string(),
@@ -587,52 +601,66 @@ impl CharacterService {
         );
         result.insert(
             "useProbability".to_string(),
-            json!(entry
-                .pointer("/extensions/useProbability")
-                .and_then(Value::as_bool)
-                .unwrap_or(true)),
+            json!(
+                entry
+                    .pointer("/extensions/useProbability")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true)
+            ),
         );
         result.insert(
             "depth".to_string(),
-            json!(entry
-                .pointer("/extensions/depth")
-                .and_then(Value::as_i64)
-                .unwrap_or(4)),
+            json!(
+                entry
+                    .pointer("/extensions/depth")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(4)
+            ),
         );
         result.insert(
             "selectiveLogic".to_string(),
-            json!(entry
-                .pointer("/extensions/selectiveLogic")
-                .and_then(Value::as_i64)
-                .unwrap_or(0)),
+            json!(
+                entry
+                    .pointer("/extensions/selectiveLogic")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0)
+            ),
         );
         result.insert(
             "outletName".to_string(),
-            json!(entry
-                .pointer("/extensions/outlet_name")
-                .and_then(Value::as_str)
-                .unwrap_or("")),
+            json!(
+                entry
+                    .pointer("/extensions/outlet_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+            ),
         );
         result.insert(
             "group".to_string(),
-            json!(entry
-                .pointer("/extensions/group")
-                .and_then(Value::as_str)
-                .unwrap_or("")),
+            json!(
+                entry
+                    .pointer("/extensions/group")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+            ),
         );
         result.insert(
             "groupOverride".to_string(),
-            json!(entry
-                .pointer("/extensions/group_override")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .pointer("/extensions/group_override")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert(
             "groupWeight".to_string(),
-            json!(entry
-                .pointer("/extensions/group_weight")
-                .and_then(Value::as_i64)
-                .unwrap_or(100)),
+            json!(
+                entry
+                    .pointer("/extensions/group_weight")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(100)
+            ),
         );
         result.insert(
             "scanDepth".to_string(),
@@ -664,24 +692,30 @@ impl CharacterService {
         );
         result.insert(
             "automationId".to_string(),
-            json!(entry
-                .pointer("/extensions/automation_id")
-                .and_then(Value::as_str)
-                .unwrap_or("")),
+            json!(
+                entry
+                    .pointer("/extensions/automation_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+            ),
         );
         result.insert(
             "role".to_string(),
-            json!(entry
-                .pointer("/extensions/role")
-                .and_then(Value::as_i64)
-                .unwrap_or(0)),
+            json!(
+                entry
+                    .pointer("/extensions/role")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0)
+            ),
         );
         result.insert(
             "vectorized".to_string(),
-            json!(entry
-                .pointer("/extensions/vectorized")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .pointer("/extensions/vectorized")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert(
             "sticky".to_string(),
@@ -706,45 +740,57 @@ impl CharacterService {
         );
         result.insert(
             "matchPersonaDescription".to_string(),
-            json!(entry
-                .pointer("/extensions/match_persona_description")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .pointer("/extensions/match_persona_description")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert(
             "matchCharacterDescription".to_string(),
-            json!(entry
-                .pointer("/extensions/match_character_description")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .pointer("/extensions/match_character_description")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert(
             "matchCharacterPersonality".to_string(),
-            json!(entry
-                .pointer("/extensions/match_character_personality")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .pointer("/extensions/match_character_personality")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert(
             "matchCharacterDepthPrompt".to_string(),
-            json!(entry
-                .pointer("/extensions/match_character_depth_prompt")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .pointer("/extensions/match_character_depth_prompt")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert(
             "matchScenario".to_string(),
-            json!(entry
-                .pointer("/extensions/match_scenario")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .pointer("/extensions/match_scenario")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert(
             "matchCreatorNotes".to_string(),
-            json!(entry
-                .pointer("/extensions/match_creator_notes")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .pointer("/extensions/match_creator_notes")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         result.insert("extensions".to_string(), Value::Object(extensions));
         result.insert(
@@ -756,10 +802,12 @@ impl CharacterService {
         );
         result.insert(
             "ignoreBudget".to_string(),
-            json!(entry
-                .pointer("/extensions/ignore_budget")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .pointer("/extensions/ignore_budget")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
 
         Value::Object(result)

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde::Serialize;
 use tauri::State;
 
@@ -9,7 +9,7 @@ use crate::app::AppState;
 use crate::application::dto::background_dto::{DeleteBackgroundDto, RenameBackgroundDto};
 use crate::domain::models::background::BackgroundImageMetadataIndex;
 use crate::infrastructure::persistence::thumbnail_cache::{
-    read_thumbnail_or_original, ThumbnailConfig, ThumbnailResizeMode,
+    ThumbnailConfig, ThumbnailResizeMode, read_thumbnail_or_original,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;

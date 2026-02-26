@@ -5,9 +5,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
+    EnvFilter,
     fmt::{self, format::FmtSpan},
     prelude::*,
-    EnvFilter,
 };
 
 static INIT: Once = Once::new();

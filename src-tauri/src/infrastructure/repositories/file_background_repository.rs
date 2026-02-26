@@ -12,8 +12,8 @@ use crate::domain::models::background::{
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::thumbnail_cache::{
-    invalidate_thumbnail_cache, is_animated_image, read_thumbnail_or_original, ThumbnailConfig,
-    ThumbnailResizeMode,
+    ThumbnailConfig, ThumbnailResizeMode, invalidate_thumbnail_cache, is_animated_image,
+    read_thumbnail_or_original,
 };
 
 const THUMBNAIL_WIDTH: u32 = 160;

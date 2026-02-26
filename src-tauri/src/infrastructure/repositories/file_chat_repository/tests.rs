@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use rand::random;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
@@ -52,7 +52,12 @@ fn payload_with_integrity(integrity: &str) -> Vec<Value> {
     ]
 }
 
-fn payload_with_message(integrity: &str, send_date: &str, message: &str, character_name: &str) -> Vec<Value> {
+fn payload_with_message(
+    integrity: &str,
+    send_date: &str,
+    message: &str,
+    character_name: &str,
+) -> Vec<Value> {
     vec![
         json!({
             "chat_metadata": {
@@ -88,10 +93,12 @@ fn backup_file_name_uses_windows_safe_timestamp() {
 
     assert_eq!(timestamp.len(), 15);
     assert_eq!(timestamp.chars().nth(8), Some('-'));
-    assert!(timestamp
-        .chars()
-        .enumerate()
-        .all(|(index, ch)| (index == 8 && ch == '-') || ch.is_ascii_digit()));
+    assert!(
+        timestamp
+            .chars()
+            .enumerate()
+            .all(|(index, ch)| (index == 8 && ch == '-') || ch.is_ascii_digit())
+    );
 }
 
 #[test]
@@ -1012,8 +1019,16 @@ async fn list_recent_chat_summaries_limits_results_and_keeps_pinned() {
         .expect("list recent summaries");
 
     assert_eq!(results.len(), 2);
-    assert!(results.iter().any(|entry| entry.file_name == "session-old.jsonl"));
-    assert!(results.iter().any(|entry| entry.file_name == "session-new.jsonl"));
+    assert!(
+        results
+            .iter()
+            .any(|entry| entry.file_name == "session-old.jsonl")
+    );
+    assert!(
+        results
+            .iter()
+            .any(|entry| entry.file_name == "session-new.jsonl")
+    );
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -1058,8 +1073,16 @@ async fn list_recent_group_chat_summaries_limits_results_and_keeps_pinned() {
         .expect("list recent group summaries");
 
     assert_eq!(results.len(), 2);
-    assert!(results.iter().any(|entry| entry.file_name == "group-old.jsonl"));
-    assert!(results.iter().any(|entry| entry.file_name == "group-new.jsonl"));
+    assert!(
+        results
+            .iter()
+            .any(|entry| entry.file_name == "group-old.jsonl")
+    );
+    assert!(
+        results
+            .iter()
+            .any(|entry| entry.file_name == "group-new.jsonl")
+    );
 
     let _ = fs::remove_dir_all(&root).await;
 }

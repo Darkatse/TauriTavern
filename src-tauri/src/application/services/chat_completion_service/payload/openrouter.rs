@@ -1,9 +1,9 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::openai;
 use super::prompt_cache::{
-    apply_depth_cache_for_openrouter_claude, apply_system_prompt_cache_for_openrouter,
-    PromptCacheConfig, PromptCacheProvider,
+    PromptCacheConfig, PromptCacheProvider, apply_depth_cache_for_openrouter_claude,
+    apply_system_prompt_cache_for_openrouter,
 };
 use super::shared::insert_if_present;
 
@@ -163,7 +163,7 @@ fn map_provider_preferences(source_payload: &Map<String, Value>) -> Option<Value
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::build;
 

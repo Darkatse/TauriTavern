@@ -26,7 +26,8 @@ pub async fn read_jsonl_file(path: &Path) -> Result<Vec<Value>, DomainError> {
 
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
-    parse_jsonl_lines(&mut lines).await
+    let values = parse_jsonl_lines(&mut lines).await?;
+    Ok(values)
 }
 
 /// Parse JSONL payload bytes into JSON values.

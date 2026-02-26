@@ -1,10 +1,10 @@
 use tauri::AppHandle;
 
 use crate::infrastructure::persistence::data_archive_jobs::{
-    cancel_data_archive_job as cancel_data_archive_job_impl,
+    DataArchiveJobStatus, cancel_data_archive_job as cancel_data_archive_job_impl,
     get_data_archive_job_status as get_data_archive_job_status_impl,
     start_export_data_archive_job as start_export_data_archive_job_impl,
-    start_import_data_archive_job as start_import_data_archive_job_impl, DataArchiveJobStatus,
+    start_import_data_archive_job as start_import_data_archive_job_impl,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;

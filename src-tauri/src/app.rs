@@ -89,26 +89,27 @@ pub fn spawn_initialization(app_handle: AppHandle, runtime_paths: RuntimePaths) 
                 app_handle.manage(Arc::new(state));
 
                 let content_service = app_handle.state::<Arc<AppState>>().content_service.clone();
-                if let Err(error) = content_service
+                match content_service
                     .initialize_default_content("default-user")
                     .await
                 {
-                    tracing::warn!("Failed to initialize default content: {}", error);
-                } else {
-                    tracing::debug!("Successfully initialized default content");
+                    Ok(_) => tracing::debug!("Successfully initialized default content"),
+                    Err(error) => tracing::warn!("Failed to initialize default content: {}", error),
                 }
 
-                if let Err(error) = app_handle.emit("app-ready", ()) {
-                    tracing::error!("Failed to emit app-ready event: {}", error);
-                } else {
-                    tracing::debug!("Application is ready");
+                match app_handle.emit("app-ready", ()) {
+                    Ok(_) => tracing::debug!("Application is ready"),
+                    Err(error) => tracing::error!("Failed to emit app-ready event: {}", error),
                 }
             }
             Err(error) => {
                 tracing::error!("Failed to initialize application state: {}", error);
 
-                if let Err(emit_error) = app_handle.emit("app-error", error.to_string()) {
-                    tracing::error!("Failed to emit app-error event: {}", emit_error);
+                match app_handle.emit("app-error", error.to_string()) {
+                    Ok(_) => {}
+                    Err(emit_error) => {
+                        tracing::error!("Failed to emit app-error event: {}", emit_error);
+                    }
                 }
             }
         }

@@ -1,13 +1,13 @@
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
 };
 
-use super::normalizers;
 use super::HttpChatCompletionRepository;
+use super::normalizers;
 
 const GEMINI_API_VERSION: &str = "v1beta";
 
