@@ -44,6 +44,55 @@ function parseThirdPartyAssetRoutePath(wildcard) {
 }
 
 export function registerExtensionRoutes(router, context, { jsonResponse, textResponse }) {
+    async function startImportJobFromFileInfo(fileInfo) {
+        if (!fileInfo?.filePath) {
+            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
+            return jsonResponse({ error: `Unable to access uploaded archive${reason}` }, 400);
+        }
+
+        try {
+            const jobId = parseJobId(await context.safeInvoke('start_import_data_archive', {
+                archive_path: fileInfo.filePath,
+                archive_is_temporary: Boolean(fileInfo.isTemporary),
+            }));
+            if (!jobId) {
+                return jsonResponse({ error: 'Import job id is missing' }, 500);
+            }
+
+            return jsonResponse({
+                ok: true,
+                job_id: jobId,
+            });
+        } finally {
+            await fileInfo.cleanup?.();
+        }
+    }
+
+    async function loadCompletedExportJobStatus(jobId) {
+        const status = await context.safeInvoke('get_data_archive_job_status', {
+            job_id: jobId,
+        });
+
+        if (status.kind !== 'export') {
+            return {
+                error: jsonResponse({ error: 'Invalid export job' }, 400),
+                status: null,
+            };
+        }
+
+        if (status.state !== 'completed') {
+            return {
+                error: jsonResponse({ error: 'Export job is not completed yet' }, 409),
+                status: null,
+            };
+        }
+
+        return {
+            error: null,
+            status,
+        };
+    }
+
     router.get('/scripts/extensions/third-party/*', async ({ wildcard }) => {
         const parsed = parseThirdPartyAssetRoutePath(wildcard);
         if (!parsed) {
@@ -163,27 +212,25 @@ export function registerExtensionRoutes(router, context, { jsonResponse, textRes
             preferredExtension: 'zip',
         });
 
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            return jsonResponse({ error: `Unable to access uploaded archive${reason}` }, 400);
+        return startImportJobFromFileInfo(fileInfo);
+    });
+
+    router.post('/api/extensions/data-migration/import/android', async ({ body }) => {
+        const contentUri = String(body?.content_uri || '').trim();
+        if (!contentUri) {
+            return jsonResponse({ error: 'Missing content_uri' }, 400);
         }
 
-        try {
-            const jobId = parseJobId(await context.safeInvoke('start_import_data_archive', {
-                archive_path: fileInfo.filePath,
-                archive_is_temporary: Boolean(fileInfo.isTemporary),
-            }));
-            if (!jobId) {
-                return jsonResponse({ error: 'Import job id is missing' }, 500);
-            }
+        const fileInfo = await context.materializeAndroidContentUriUpload(contentUri);
+        return startImportJobFromFileInfo(fileInfo);
+    });
 
-            return jsonResponse({
-                ok: true,
-                job_id: jobId,
-            });
-        } finally {
-            await fileInfo.cleanup?.();
-        }
+    router.post('/api/extensions/data-migration/import/android/pick', async () => {
+        const contentUri = await context.pickAndroidImportArchive();
+        return jsonResponse({
+            ok: true,
+            content_uri: String(contentUri),
+        });
     });
 
     router.post('/api/extensions/data-migration/export', async () => {
@@ -194,6 +241,33 @@ export function registerExtensionRoutes(router, context, { jsonResponse, textRes
         return jsonResponse({
             ok: true,
             job_id: jobId,
+        });
+    });
+
+    router.post('/api/extensions/data-migration/export/android/save', async ({ body }) => {
+        const jobId = parseJobId(body?.job_id);
+        if (!jobId) {
+            return jsonResponse({ error: 'Missing job id' }, 400);
+        }
+
+        const { error, status } = await loadCompletedExportJobStatus(jobId);
+        if (error) {
+            return error;
+        }
+
+        const archivePath = String(status?.result?.archive_path || '').trim();
+        if (!archivePath) {
+            return jsonResponse({ error: 'Export archive path is missing' }, 500);
+        }
+
+        const saved = await context.saveAndroidExportArchive(
+            archivePath,
+            String(status?.result?.file_name || 'tauritavern-data.zip'),
+        );
+
+        return jsonResponse({
+            ok: true,
+            saved_target: String(saved?.savedTarget || ''),
         });
     });
 
@@ -228,16 +302,9 @@ export function registerExtensionRoutes(router, context, { jsonResponse, textRes
             return jsonResponse({ error: 'Missing job id' }, 400);
         }
 
-        const status = await context.safeInvoke('get_data_archive_job_status', {
-            job_id: jobId,
-        });
-
-        if (status.kind !== 'export') {
-            return jsonResponse({ error: 'Invalid export job' }, 400);
-        }
-
-        if (status.state !== 'completed') {
-            return jsonResponse({ error: 'Export job is not completed yet' }, 409);
+        const { error, status } = await loadCompletedExportJobStatus(jobId);
+        if (error) {
+            return error;
         }
 
         const archivePath = status.result.archive_path;

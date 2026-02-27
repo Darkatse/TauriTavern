@@ -8,6 +8,9 @@ use tauri::{AppHandle, Manager};
 
 const RUNTIME_MODE_ENV: &str = "TAURITAVERN_RUNTIME_MODE";
 const PORTABLE_MARKER_FILE: &str = "portable.flag";
+const DATA_ARCHIVE_ROOT_DIR: &str = ".data-archive";
+const DATA_ARCHIVE_IMPORTS_DIR: &str = "imports";
+const DATA_ARCHIVE_EXPORTS_DIR: &str = "exports";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeMode {
@@ -20,7 +23,7 @@ pub struct RuntimePaths {
     pub mode: RuntimeMode,
     pub data_root: PathBuf,
     pub log_root: PathBuf,
-    pub archive_jobs_root: PathBuf,
+    pub archive_imports_root: PathBuf,
     pub archive_exports_root: PathBuf,
 }
 
@@ -28,14 +31,15 @@ impl RuntimePaths {
     fn new(mode: RuntimeMode, app_root: PathBuf) -> Self {
         let data_root = app_root.join("data");
         let log_root = app_root.join("logs");
-        let archive_jobs_root = app_root.join(".data-archive-jobs");
-        let archive_exports_root = app_root.join(".data-archive-exports");
+        let archive_root = app_root.join(DATA_ARCHIVE_ROOT_DIR);
+        let archive_imports_root = archive_root.join(DATA_ARCHIVE_IMPORTS_DIR);
+        let archive_exports_root = archive_root.join(DATA_ARCHIVE_EXPORTS_DIR);
 
         Self {
             mode,
             data_root,
             log_root,
-            archive_jobs_root,
+            archive_imports_root,
             archive_exports_root,
         }
     }

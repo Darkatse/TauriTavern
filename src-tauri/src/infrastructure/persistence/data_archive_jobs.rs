@@ -230,14 +230,14 @@ pub fn start_import_data_archive_job(
     let runtime_paths = resolve_runtime_paths(app_handle).map_err(|error| {
         DomainError::InternalError(format!("Failed to resolve runtime paths: {}", error))
     })?;
-    let jobs_root = runtime_paths.archive_jobs_root.clone();
+    let imports_root = runtime_paths.archive_imports_root.clone();
     let data_root = runtime_paths.data_root.clone();
-    fs::create_dir_all(&jobs_root).map_err(|error| {
+    fs::create_dir_all(&imports_root).map_err(|error| {
         DomainError::InternalError(format!("Failed to create job root: {}", error))
     })?;
 
     let job_id = Uuid::new_v4().simple().to_string();
-    let job_root = jobs_root.join(&job_id);
+    let job_root = imports_root.join(&job_id);
     fs::create_dir_all(&job_root).map_err(|error| {
         DomainError::InternalError(format!("Failed to create job workspace: {}", error))
     })?;

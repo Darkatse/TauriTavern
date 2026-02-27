@@ -5,9 +5,12 @@ import { downloadBlobWithRuntime } from '../../file-export.js';
 const MODULE_NAME = 'data-migration';
 const JOB_POLL_INTERVAL_MS = 1200;
 const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'cancelled']);
+const PREPARING_PROGRESS_INTERVAL_MS = 320;
+const PREPARING_PROGRESS_MAX_BEFORE_JOB = 96;
 
 const jobState = {
     jobId: '',
+    starting: false,
     cancelRequested: false,
 };
 
@@ -52,7 +55,82 @@ function requireJobId(payload, errorMessage) {
     return payload.job_id.trim();
 }
 
+function isAndroidRuntime() {
+    if (typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') {
+        return false;
+    }
+
+    return /android/i.test(navigator.userAgent);
+}
+
+async function requestImportJob(url, init) {
+    const response = await fetch(url, init);
+    if (!response.ok) {
+        throw new Error(await readFailureMessage(response));
+    }
+
+    const payload = await response.json();
+    return requireJobId(payload, t`Import job id is missing`);
+}
+
+async function startImportJobFromMultipart(file) {
+    const formData = new FormData();
+    formData.append('archive', file);
+    return requestImportJob('/api/extensions/data-migration/import', {
+        method: 'POST',
+        body: formData,
+    });
+}
+
+async function startImportJobFromAndroidContentUri(contentUri) {
+    return requestImportJob('/api/extensions/data-migration/import/android', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            content_uri: contentUri,
+        }),
+    });
+}
+
+async function pickAndroidImportArchive() {
+    const response = await fetch('/api/extensions/data-migration/import/android/pick', {
+        method: 'POST',
+    });
+    if (!response.ok) {
+        throw new Error(await readFailureMessage(response));
+    }
+
+    const payload = await response.json();
+    const contentUri = String(payload?.content_uri || '').trim();
+    if (!contentUri) {
+        throw new Error(t`Android import picker did not return a content URI`);
+    }
+
+    return contentUri;
+}
+
 async function downloadExportArchive(jobId, fileName) {
+    if (isAndroidRuntime()) {
+        const response = await fetch('/api/extensions/data-migration/export/android/save', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ job_id: jobId }),
+        });
+        if (!response.ok) {
+            throw new Error(await readFailureMessage(response));
+        }
+
+        const payload = await response.json();
+        return {
+            mode: 'mobile-native',
+            savedPath: String(payload?.saved_target || ''),
+        };
+    }
+
     const response = await fetch(`/api/extensions/data-migration/export/download?id=${encodeURIComponent(jobId)}`, {
         method: 'GET',
         cache: 'no-store',
@@ -79,7 +157,7 @@ async function cleanupExportArchive(jobId) {
 }
 
 function hasActiveJob() {
-    return Boolean(jobState.jobId);
+    return jobState.starting || Boolean(jobState.jobId);
 }
 
 function setStatusText(message) {
@@ -87,12 +165,12 @@ function setStatusText(message) {
 }
 
 function refreshControls() {
-    const active = hasActiveJob();
-    $('#data_migration_import_button').prop('disabled', active);
-    $('#data_migration_export_button').prop('disabled', active);
+    const busy = hasActiveJob();
+    $('#data_migration_import_button').prop('disabled', busy);
+    $('#data_migration_export_button').prop('disabled', busy);
 
     const cancelButton = $('#data_migration_cancel_button');
-    if (active) {
+    if (jobState.jobId) {
         cancelButton.show();
         cancelButton.prop('disabled', jobState.cancelRequested);
         return;
@@ -102,41 +180,39 @@ function refreshControls() {
     cancelButton.prop('disabled', false);
 }
 
+function markJobStarting() {
+    jobState.jobId = '';
+    jobState.starting = true;
+    jobState.cancelRequested = false;
+    refreshControls();
+}
+
 function startJobTracking(jobId) {
     jobState.jobId = jobId;
+    jobState.starting = false;
     jobState.cancelRequested = false;
     refreshControls();
 }
 
 function stopJobTracking() {
     jobState.jobId = '';
+    jobState.starting = false;
     jobState.cancelRequested = false;
     refreshControls();
 }
 
-function onImportButtonClick() {
+async function onImportButtonClick() {
     if (hasActiveJob()) {
         toastr.warning(t`A migration job is already running`);
         return;
     }
 
-    $('#data_migration_import_input').trigger('click');
-}
-
-async function startImportJob(file) {
-    const formData = new FormData();
-    formData.append('archive', file);
-
-    const response = await fetch('/api/extensions/data-migration/import', {
-        method: 'POST',
-        body: formData,
-    });
-    if (!response.ok) {
-        throw new Error(await readFailureMessage(response));
+    if (isAndroidRuntime()) {
+        await onAndroidImportButtonClick();
+        return;
     }
 
-    const payload = await response.json();
-    return requireJobId(payload, t`Import job id is missing`);
+    $('#data_migration_import_input').trigger('click');
 }
 
 async function startExportJob() {
@@ -201,7 +277,7 @@ async function pollUntilTerminal(jobId) {
 }
 
 async function requestCancelActiveJob() {
-    if (!hasActiveJob() || jobState.cancelRequested) {
+    if (!hasRunningJob() || jobState.cancelRequested) {
         return;
     }
 
@@ -234,11 +310,51 @@ async function requestCancelActiveJob() {
     }
 }
 
+function createPreparingImportProgress() {
+    let progress = 0;
+    let timerId = null;
+
+    const render = () => {
+        setStatusText(`${t`Preparing import...`} ${progress}%`);
+    };
+
+    return {
+        start() {
+            progress = 0;
+            render();
+
+            timerId = window.setInterval(() => {
+                const step = progress < 60 ? 4 : progress < 85 ? 2 : 1;
+                progress = Math.min(PREPARING_PROGRESS_MAX_BEFORE_JOB, progress + step);
+                render();
+            }, PREPARING_PROGRESS_INTERVAL_MS);
+        },
+        complete() {
+            if (timerId !== null) {
+                clearInterval(timerId);
+                timerId = null;
+            }
+            progress = 100;
+            render();
+        },
+        stop() {
+            if (timerId !== null) {
+                clearInterval(timerId);
+                timerId = null;
+            }
+        },
+    };
+}
+
 async function runMigrationJob(kind, startJob) {
     const failureTitle = kind === 'import' ? t`Data import failed` : t`Data export failed`;
+    const preparingProgress = kind === 'import' ? createPreparingImportProgress() : null;
 
     try {
+        markJobStarting();
+        preparingProgress?.start();
         const jobId = await startJob();
+        preparingProgress?.complete();
         startJobTracking(jobId);
 
         const finalStatus = await pollUntilTerminal(jobId);
@@ -291,6 +407,7 @@ async function runMigrationJob(kind, startJob) {
         toastr.error(failureMessage, failureTitle);
         setStatusText(failureMessage);
     } finally {
+        preparingProgress?.stop();
         stopJobTracking();
     }
 }
@@ -309,6 +426,17 @@ async function onImportInputChange(event) {
         return;
     }
 
+    await runConfirmedImport(() => startImportJobFromMultipart(file));
+}
+
+async function onAndroidImportButtonClick() {
+    await runConfirmedImport(async () => {
+        const contentUri = await pickAndroidImportArchive();
+        return startImportJobFromAndroidContentUri(contentUri);
+    });
+}
+
+async function runConfirmedImport(startJob) {
     const confirmed = window.confirm(
         t`Importing will replace the current local data directory. Continue?`,
     );
@@ -317,8 +445,7 @@ async function onImportInputChange(event) {
     }
 
     toastr.info(t`Importing data archive...`);
-    setStatusText(t`Preparing import...`);
-    await runMigrationJob('import', () => startImportJob(file));
+    await runMigrationJob('import', startJob);
 }
 
 async function onExportClick() {

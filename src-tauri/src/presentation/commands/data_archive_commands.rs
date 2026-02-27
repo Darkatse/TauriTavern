@@ -8,6 +8,7 @@ use crate::infrastructure::persistence::data_archive_jobs::{
     start_export_data_archive_job as start_export_data_archive_job_impl,
     start_import_data_archive_job as start_import_data_archive_job_impl,
 };
+use crate::infrastructure::paths::resolve_runtime_paths;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -36,6 +37,20 @@ pub fn start_export_data_archive(app: AppHandle) -> Result<String, CommandError>
 
     start_export_data_archive_job_impl(&app)
         .map_err(map_command_error("Failed to start data archive export"))
+}
+
+#[tauri::command]
+pub fn get_data_archive_imports_root(app: AppHandle) -> Result<String, CommandError> {
+    log_command("get_data_archive_imports_root");
+
+    let runtime_paths = resolve_runtime_paths(&app).map_err(|error| {
+        CommandError::InternalServerError(format!("Failed to resolve runtime paths: {}", error))
+    })?;
+
+    Ok(runtime_paths
+        .archive_imports_root
+        .to_string_lossy()
+        .to_string())
 }
 
 #[tauri::command]
