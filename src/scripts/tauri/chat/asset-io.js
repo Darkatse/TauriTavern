@@ -1,4 +1,4 @@
-import { convertFileSrc } from '../../tauri-bridge.js';
+import { convertFileSrc } from '../../../tauri-bridge.js';
 import { isAndroidRuntime } from './platform.js';
 
 function requireTauri() {

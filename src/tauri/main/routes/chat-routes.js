@@ -3,8 +3,8 @@ import {
     loadGroupChatPayload,
     saveCharacterChatPayload,
     saveGroupChatPayload,
-} from '../../../scripts/chat/transport.js';
-import { payloadToJsonl } from '../../../scripts/chat/jsonl.js';
+} from '../../../scripts/tauri/chat/transport.js';
+import { payloadToJsonl } from '../../../scripts/tauri/chat/jsonl.js';
 
 function payloadMessages(payload) {
     if (!Array.isArray(payload)) {

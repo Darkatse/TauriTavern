@@ -1,8 +1,8 @@
-export { payloadToJsonl, jsonlToPayload } from './chat/jsonl.js';
+export { payloadToJsonl, jsonlToPayload } from './tauri/chat/jsonl.js';
 export {
     isTauriChatPayloadTransportEnabled,
     loadCharacterChatPayload,
     saveCharacterChatPayload,
     loadGroupChatPayload,
     saveGroupChatPayload,
-} from './chat/transport.js';
+} from './tauri/chat/transport.js';

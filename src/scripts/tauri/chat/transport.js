@@ -1,4 +1,4 @@
-import { invoke, isTauriEnv } from '../../tauri-bridge.js';
+import { invoke, isTauriEnv } from '../../../tauri-bridge.js';
 import { fetchAssetStream, writeTempFileFromBytesIterable } from './asset-io.js';
 import { jsonlStreamToPayload, payloadToJsonlByteChunks } from './jsonl.js';
 
