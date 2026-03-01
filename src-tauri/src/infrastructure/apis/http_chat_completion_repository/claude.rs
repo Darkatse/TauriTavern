@@ -127,7 +127,7 @@ pub(super) async fn generate_stream(
     let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
 
     let request = repository
-        .client
+        .stream_client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "text/event-stream")

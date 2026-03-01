@@ -174,7 +174,7 @@ pub(super) async fn generate_stream(
     let url = build_gemini_url(&config.base_url, &model_path);
 
     let request = repository
-        .client
+        .stream_client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "text/event-stream")

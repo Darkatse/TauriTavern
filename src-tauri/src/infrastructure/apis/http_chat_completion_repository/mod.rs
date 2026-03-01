@@ -19,10 +19,11 @@ mod normalizers;
 mod openai;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 pub struct HttpChatCompletionRepository {
     client: Client,
+    stream_client: Client,
 }
 
 impl HttpChatCompletionRepository {
@@ -30,13 +31,23 @@ impl HttpChatCompletionRepository {
         let client = build_http_client(
             Client::builder()
                 .connect_timeout(CONNECT_TIMEOUT)
-                .timeout(REQUEST_TIMEOUT),
+                .timeout(NON_STREAM_REQUEST_TIMEOUT),
         )
         .map_err(|error| {
             DomainError::InternalError(format!("Failed to build HTTP client: {error}"))
         })?;
 
-        Ok(Self { client })
+        let stream_client = build_http_client(Client::builder().connect_timeout(CONNECT_TIMEOUT))
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to build streaming HTTP client: {error}"
+                ))
+            })?;
+
+        Ok(Self {
+            client,
+            stream_client,
+        })
     }
 
     fn build_url(base_url: &str, path: &str) -> String {
@@ -134,10 +145,18 @@ impl HttpChatCompletionRepository {
                     }
                     continue;
                 }
-                chunk = response.chunk() => {
-                    chunk.map_err(|error| DomainError::InternalError(format!(
-                        "{provider_name} stream read failed: {error}"
-                    )))?
+                chunk = tokio::time::timeout(CONNECT_TIMEOUT, response.chunk()) => {
+                    match chunk {
+                        Ok(chunk) => chunk.map_err(|error| DomainError::InternalError(format!(
+                            "{provider_name} stream read failed: {error}"
+                        )))?,
+                        Err(_) => {
+                            return Err(DomainError::InternalError(format!(
+                                "{provider_name} stream read failed: idle timeout after {}s",
+                                CONNECT_TIMEOUT.as_secs()
+                            )));
+                        }
+                    }
                 }
             };
 
