@@ -107,7 +107,7 @@ impl FileChatRepository {
 #[async_trait]
 impl ChatRepository for FileChatRepository {
     async fn save(&self, chat: &Chat) -> Result<(), DomainError> {
-        self.save_with_options(chat, true).await
+        self.save_with_options(chat, false).await
     }
 
     async fn save_with_options(&self, chat: &Chat, force: bool) -> Result<(), DomainError> {
@@ -163,22 +163,12 @@ impl ChatRepository for FileChatRepository {
                 .unwrap_or("")
                 .to_string();
 
-            match self.get_chat(character_name, &file_name).await {
-                Ok(mut chat) => {
-                    // Keep the internal character ID stable for list/read-model flows.
-                    // Chat metadata may contain a mutable display name, but filesystem
-                    // layout and routing logic are keyed by directory (character_name).
-                    chat.character_name = character_name.to_string();
-                    chats.push(chat);
-                }
-                Err(e) => {
-                    logger::error(&format!(
-                        "Failed to load chat {}/{}: {}",
-                        character_name, file_name, e
-                    ));
-                    // Continue loading other chats
-                }
-            }
+            let mut chat = self.get_chat(character_name, &file_name).await?;
+            // Keep the internal character ID stable for list/read-model flows.
+            // Chat metadata may contain a mutable display name, but filesystem
+            // layout and routing logic are keyed by directory (character_name).
+            chat.character_name = character_name.to_string();
+            chats.push(chat);
         }
 
         // Sort chats by last message date (newest first)
@@ -217,17 +207,8 @@ impl ChatRepository for FileChatRepository {
                     .unwrap_or("")
                     .to_string();
 
-                match self.get_character_chats(&character_name).await {
-                    Ok(chats) => {
-                        all_chats.extend(chats);
-                    }
-                    Err(e) => {
-                        logger::error(&format!(
-                            "Failed to load chats for character {}: {}",
-                            character_name, e
-                        ));
-                    }
-                }
+                let chats = self.get_character_chats(&character_name).await?;
+                all_chats.extend(chats);
             } else if path
                 .extension()
                 .and_then(|ext| ext.to_str())
@@ -240,19 +221,9 @@ impl ChatRepository for FileChatRepository {
                     .unwrap_or("")
                     .to_string();
 
-                match read_jsonl_file(&path).await {
-                    Ok(payload) => {
-                        if let Ok(chat) = self.parse_chat_from_payload("", &file_name, &payload) {
-                            all_chats.push(chat);
-                        }
-                    }
-                    Err(e) => {
-                        logger::error(&format!(
-                            "Failed to read root chat file {}: {}",
-                            file_name, e
-                        ));
-                    }
-                }
+                let payload = read_jsonl_file(&path).await?;
+                let chat = self.parse_chat_from_payload("", &file_name, &payload)?;
+                all_chats.push(chat);
             }
         }
 
@@ -769,72 +740,6 @@ impl ChatRepository for FileChatRepository {
         Ok(path)
     }
 
-    async fn save_chat_payload(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        payload: &[Value],
-        force: bool,
-    ) -> Result<(), DomainError> {
-        self.ensure_directory_exists().await?;
-
-        let character_dir = self.get_character_dir(character_name);
-        if !character_dir.exists() {
-            fs::create_dir_all(&character_dir).await.map_err(|e| {
-                DomainError::InternalError(format!(
-                    "Failed to create character chat directory: {}",
-                    e
-                ))
-            })?;
-        }
-
-        let path = self.get_chat_path(character_name, file_name);
-        let backup_key = self.get_cache_key(character_name, file_name);
-        self.write_payload_to_path(&path, payload, force, character_name, &backup_key)
-            .await?;
-
-        {
-            let mut cache = self.memory_cache.lock().await;
-            cache.remove(&backup_key);
-        }
-        self.remove_summary_cache_for_path(&path).await;
-
-        Ok(())
-    }
-
-    async fn save_chat_payload_bytes(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        payload: &[u8],
-        force: bool,
-    ) -> Result<(), DomainError> {
-        self.ensure_directory_exists().await?;
-
-        let character_dir = self.get_character_dir(character_name);
-        if !character_dir.exists() {
-            fs::create_dir_all(&character_dir).await.map_err(|e| {
-                DomainError::InternalError(format!(
-                    "Failed to create character chat directory: {}",
-                    e
-                ))
-            })?;
-        }
-
-        let path = self.get_chat_path(character_name, file_name);
-        let backup_key = self.get_cache_key(character_name, file_name);
-        self.write_payload_bytes_to_path(&path, payload, force, character_name, &backup_key)
-            .await?;
-
-        {
-            let mut cache = self.memory_cache.lock().await;
-            cache.remove(&backup_key);
-        }
-        self.remove_summary_cache_for_path(&path).await;
-
-        Ok(())
-    }
-
     async fn save_chat_payload_from_path(
         &self,
         character_name: &str,
@@ -868,23 +773,6 @@ impl ChatRepository for FileChatRepository {
         Ok(())
     }
 
-    async fn get_group_chat_payload(&self, chat_id: &str) -> Result<Vec<Value>, DomainError> {
-        let bytes = self.get_group_chat_payload_bytes(chat_id).await?;
-        parse_jsonl_bytes(&bytes)
-    }
-
-    async fn get_group_chat_payload_bytes(&self, chat_id: &str) -> Result<Vec<u8>, DomainError> {
-        let path = self.get_group_chat_path(chat_id);
-        if !path.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Group chat not found: {}",
-                chat_id
-            )));
-        }
-
-        self.read_payload_bytes_from_path(&path).await
-    }
-
     async fn get_group_chat_payload_path(
         &self,
         chat_id: &str,
@@ -898,36 +786,6 @@ impl ChatRepository for FileChatRepository {
         }
 
         Ok(path)
-    }
-
-    async fn save_group_chat_payload(
-        &self,
-        chat_id: &str,
-        payload: &[Value],
-        force: bool,
-    ) -> Result<(), DomainError> {
-        self.ensure_directory_exists().await?;
-        let path = self.get_group_chat_path(chat_id);
-        let backup_key = format!("group:{}", Self::strip_jsonl_extension(chat_id));
-        self.write_payload_to_path(&path, payload, force, chat_id, &backup_key)
-            .await?;
-        self.remove_summary_cache_for_path(&path).await;
-        Ok(())
-    }
-
-    async fn save_group_chat_payload_bytes(
-        &self,
-        chat_id: &str,
-        payload: &[u8],
-        force: bool,
-    ) -> Result<(), DomainError> {
-        self.ensure_directory_exists().await?;
-        let path = self.get_group_chat_path(chat_id);
-        let backup_key = format!("group:{}", Self::strip_jsonl_extension(chat_id));
-        self.write_payload_bytes_to_path(&path, payload, force, chat_id, &backup_key)
-            .await?;
-        self.remove_summary_cache_for_path(&path).await;
-        Ok(())
     }
 
     async fn save_group_chat_payload_from_path(

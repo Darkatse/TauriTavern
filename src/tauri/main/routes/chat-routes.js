@@ -1,18 +1,17 @@
-function normalizePayload(payload) {
-    if (!Array.isArray(payload)) {
-        return [];
-    }
-
-    return payload.filter((entry) => entry && typeof entry === 'object');
-}
-
-function payloadToJsonl(payload) {
-    return normalizePayload(payload).map((entry) => JSON.stringify(entry)).join('\n');
-}
+import {
+    loadCharacterChatPayload,
+    loadGroupChatPayload,
+    saveCharacterChatPayload,
+    saveGroupChatPayload,
+} from '../../../scripts/chat/transport.js';
+import { payloadToJsonl } from '../../../scripts/chat/jsonl.js';
 
 function payloadMessages(payload) {
-    const normalized = normalizePayload(payload);
-    return normalized.filter((entry, index) => index > 0 && typeof entry?.mes === 'string');
+    if (!Array.isArray(payload)) {
+        throw new Error('Chat payload must be an array');
+    }
+
+    return payload.filter((entry, index) => index > 0 && typeof entry?.mes === 'string');
 }
 
 function previewMessage(messages) {
@@ -81,30 +80,6 @@ function isPinnedRecentChat(chat, pinnedChats) {
 }
 
 export function registerChatRoutes(router, context, { jsonResponse }) {
-    const isChatNotFoundError = (error) => {
-        const serialized = (() => {
-            try {
-                return JSON.stringify(error);
-            } catch {
-                return '';
-            }
-        })();
-
-        const message = [error?.message, error, serialized]
-            .map((value) => String(value || ''))
-            .join(' ')
-            .toLowerCase();
-        return (
-            message.includes('not found') ||
-            message.includes('no such file') ||
-            message.includes('enoent') ||
-            message.includes('os error 2') ||
-            message.includes('failed to open jsonl file') ||
-            message.includes('没有那个文件或目录') ||
-            message.includes('找不到')
-        );
-    };
-
     const isIntegrityError = (error) => {
         const serialized = (() => {
             try {
@@ -133,17 +108,14 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         }
 
         try {
-            const payload = await context.safeInvoke('get_chat_payload', {
-                character_name: characterId,
-                file_name: fileName,
-                allow_not_found: true,
+            const payload = await loadCharacterChatPayload({
+                characterName: characterId,
+                avatarUrl: body?.avatar_url,
+                fileName,
+                allowNotFound: true,
             });
-            return jsonResponse(Array.isArray(payload) ? payload : []);
+            return jsonResponse(payload);
         } catch (error) {
-            if (isChatNotFoundError(error)) {
-                return jsonResponse([]);
-            }
-
             return jsonResponse(
                 {
                     error: 'Failed to load chat',
@@ -166,13 +138,12 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         }
 
         try {
-            await context.safeInvoke('save_chat', {
-                dto: {
-                    ch_name: characterId,
-                    file_name: fileName,
-                    chat: body.chat,
-                    force: Boolean(body?.force),
-                },
+            await saveCharacterChatPayload({
+                characterName: characterId,
+                avatarUrl: body?.avatar_url,
+                fileName,
+                payload: body.chat,
+                force: Boolean(body?.force),
             });
             return jsonResponse({ ok: true });
         } catch (error) {
@@ -483,9 +454,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         let payload;
         try {
             if (isGroup) {
-                payload = await context.safeInvoke('get_group_chat', {
-                    dto: { id: fileName },
-                });
+                payload = await loadGroupChatPayload({ id: fileName, allowNotFound: false });
             } else {
                 const characterId = await context.resolveCharacterId({
                     avatar: body?.avatar_url,
@@ -496,22 +465,26 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
                     return jsonResponse({ message: 'Invalid export payload' }, 400);
                 }
 
-                payload = await context.safeInvoke('get_chat_payload', {
-                    character_name: characterId,
-                    file_name: fileName,
+                payload = await loadCharacterChatPayload({
+                    characterName: characterId,
+                    avatarUrl: body?.avatar_url,
+                    fileName,
+                    allowNotFound: false,
                 });
             }
-        } catch {
+        } catch (error) {
+            const details = String(error?.message || error || '');
             return jsonResponse(
-                { message: `Could not find JSONL file to export. Source chat file: ${fileName}.` },
-                404,
+                {
+                    message: details ? `Failed to export chat: ${details}` : 'Failed to export chat',
+                },
+                500,
             );
         }
 
-        const normalizedPayload = normalizePayload(payload);
         const result = format === 'jsonl'
-            ? payloadToJsonl(normalizedPayload)
-            : context.exportChatAsText(normalizedPayload);
+            ? payloadToJsonl(payload)
+            : context.exportChatAsText(payload);
 
         return jsonResponse({
             message: exportFilename ? `Chat saved to ${exportFilename}` : 'Chat exported',
@@ -582,16 +555,16 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         }
 
         try {
-            const payload = await context.safeInvoke('get_group_chat', {
-                dto: { id },
-                allow_not_found: true,
-            });
-            return jsonResponse(Array.isArray(payload) ? payload : []);
+            const payload = await loadGroupChatPayload({ id, allowNotFound: true });
+            return jsonResponse(payload);
         } catch (error) {
-            if (isChatNotFoundError(error)) {
-                return jsonResponse([]);
-            }
-            return jsonResponse([], 500);
+            return jsonResponse(
+                {
+                    error: 'Failed to load group chat',
+                    details: String(error?.message || error || ''),
+                },
+                500,
+            );
         }
     });
 
@@ -602,12 +575,10 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         }
 
         try {
-            await context.safeInvoke('save_group_chat', {
-                dto: {
-                    id,
-                    chat: body.chat,
-                    force: Boolean(body?.force),
-                },
+            await saveGroupChatPayload({
+                id,
+                payload: body.chat,
+                force: Boolean(body?.force),
             });
             return jsonResponse({ ok: true });
         } catch (error) {

@@ -137,66 +137,18 @@ fn normalize_backup_file_name_uses_leaf_name() {
 }
 
 #[tokio::test]
-async fn save_chat_payload_enforces_integrity_when_not_forced() {
-    let (repository, root) = setup_repository().await;
-
-    let first_payload = payload_with_integrity("slug-a");
-    repository
-        .save_chat_payload("alice", "session", &first_payload, false)
-        .await
-        .expect("initial save should succeed");
-
-    let second_payload = payload_with_integrity("slug-b");
-    let error = repository
-        .save_chat_payload("alice", "session", &second_payload, false)
-        .await
-        .expect_err("save should fail on integrity mismatch");
-
-    assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
-
-    repository
-        .save_chat_payload("alice", "session", &second_payload, true)
-        .await
-        .expect("forced overwrite should bypass integrity check");
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn save_chat_payload_bytes_enforces_integrity_when_not_forced() {
-    let (repository, root) = setup_repository().await;
-
-    let first_payload = payload_to_jsonl(&payload_with_integrity("slug-a"));
-    repository
-        .save_chat_payload_bytes("alice", "session", first_payload.as_bytes(), false)
-        .await
-        .expect("initial save should succeed");
-
-    let second_payload = payload_to_jsonl(&payload_with_integrity("slug-b"));
-    let error = repository
-        .save_chat_payload_bytes("alice", "session", second_payload.as_bytes(), false)
-        .await
-        .expect_err("save should fail on integrity mismatch");
-
-    assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
-
-    repository
-        .save_chat_payload_bytes("alice", "session", second_payload.as_bytes(), true)
-        .await
-        .expect("forced overwrite should bypass integrity check");
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
 async fn chat_payload_bytes_roundtrip_and_path() {
     let (repository, root) = setup_repository().await;
 
     let raw_payload = payload_to_jsonl(&payload_with_integrity("bytes-a"));
-    repository
-        .save_chat_payload_bytes("alice", "session", raw_payload.as_bytes(), false)
+    let source = root.join("chat-source.jsonl");
+    fs::write(&source, &raw_payload)
         .await
-        .expect("save raw payload bytes");
+        .expect("write chat source payload");
+    repository
+        .save_chat_payload_from_path("alice", "session", &source, false)
+        .await
+        .expect("save payload from source file");
 
     let loaded_bytes = repository
         .get_chat_payload_bytes("alice", "session")
@@ -218,17 +170,21 @@ async fn chat_payload_bytes_roundtrip_and_path() {
 }
 
 #[tokio::test]
-async fn save_chat_payload_bytes_sanitizes_windows_unsafe_path_segments() {
+async fn save_chat_payload_from_path_sanitizes_windows_unsafe_path_segments() {
     let (repository, root) = setup_repository().await;
 
     let character_name = "ali:ce";
     let file_name = "session:2026/02*21?";
     let raw_payload = payload_to_jsonl(&payload_with_integrity("bytes-safe-path"));
+    let source = root.join("unsafe-path-source.jsonl");
+    fs::write(&source, &raw_payload)
+        .await
+        .expect("write unsafe chat payload source");
 
     repository
-        .save_chat_payload_bytes(character_name, file_name, raw_payload.as_bytes(), false)
+        .save_chat_payload_from_path(character_name, file_name, &source, false)
         .await
-        .expect("save raw payload bytes with unsafe path segments");
+        .expect("save payload from source file with unsafe path segments");
 
     let expected_path = root
         .join("chats")
@@ -312,8 +268,7 @@ async fn save_and_load_chat_preserves_additional_fields() {
         }),
     ];
 
-    repository
-        .save_chat_payload("alice", "session", &payload, false)
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
         .await
         .expect("save payload");
 
@@ -354,22 +309,25 @@ async fn group_chat_payload_bytes_roundtrip_and_path() {
     let (repository, root) = setup_repository().await;
 
     let raw_payload = payload_to_jsonl(&payload_with_integrity("group-bytes-a"));
+    let source = root.join("group-source.jsonl");
+    fs::write(&source, &raw_payload)
+        .await
+        .expect("write group source payload");
     repository
-        .save_group_chat_payload_bytes("group-session", raw_payload.as_bytes(), false)
+        .save_group_chat_payload_from_path("group-session", &source, false)
         .await
-        .expect("save group raw payload bytes");
-
-    let loaded_bytes = repository
-        .get_group_chat_payload_bytes("group-session")
-        .await
-        .expect("load group raw payload bytes");
-    assert_eq!(loaded_bytes, raw_payload.as_bytes());
+        .expect("save group payload from source file");
 
     let payload_path = repository
         .get_group_chat_payload_path("group-session")
         .await
         .expect("get group payload path");
     assert!(payload_path.exists());
+
+    let loaded_bytes = fs::read(&payload_path)
+        .await
+        .expect("load group payload bytes");
+    assert_eq!(loaded_bytes, raw_payload.as_bytes());
     assert_eq!(
         payload_path.file_name().and_then(|name| name.to_str()),
         Some("group-session.jsonl")
@@ -379,26 +337,29 @@ async fn group_chat_payload_bytes_roundtrip_and_path() {
 }
 
 #[tokio::test]
-async fn save_group_chat_payload_bytes_sanitizes_windows_unsafe_id() {
+async fn save_group_chat_payload_from_path_sanitizes_windows_unsafe_id() {
     let (repository, root) = setup_repository().await;
 
     let group_id = "group:one/2026*02?21";
     let raw_payload = payload_to_jsonl(&payload_with_integrity("group-safe-path"));
+    let source = root.join("group-unsafe-id-source.jsonl");
+    fs::write(&source, &raw_payload)
+        .await
+        .expect("write group payload source");
 
     repository
-        .save_group_chat_payload_bytes(group_id, raw_payload.as_bytes(), false)
+        .save_group_chat_payload_from_path(group_id, &source, false)
         .await
-        .expect("save group raw payload bytes with unsafe id");
+        .expect("save group payload from source file with unsafe id");
 
     let expected_path = root
         .join("group chats")
         .join(format!("{}.jsonl", sanitize_filename(group_id)));
     assert!(expected_path.exists());
 
-    let loaded_bytes = repository
-        .get_group_chat_payload_bytes(group_id)
+    let loaded_bytes = fs::read(&expected_path)
         .await
-        .expect("load group raw payload bytes via unsanitized id");
+        .expect("load group payload bytes via unsanitized id");
     assert_eq!(loaded_bytes, raw_payload.as_bytes());
 
     let _ = fs::remove_dir_all(&root).await;
@@ -436,8 +397,11 @@ async fn save_group_chat_payload_from_path_enforces_integrity() {
         .await
         .expect("forced group save should bypass integrity check");
 
-    let loaded_bytes = repository
-        .get_group_chat_payload_bytes("group-session")
+    let payload_path = repository
+        .get_group_chat_payload_path("group-session")
+        .await
+        .expect("get group payload path");
+    let loaded_bytes = fs::read(&payload_path)
         .await
         .expect("load group payload bytes");
     assert_eq!(loaded_bytes, payload_b.as_bytes());
@@ -450,15 +414,24 @@ async fn group_chat_payload_roundtrip_and_delete() {
     let (repository, root) = setup_repository().await;
     let payload = payload_with_integrity("group-a");
 
+    let source = root.join("group-roundtrip.jsonl");
+    fs::write(&source, payload_to_jsonl(&payload))
+        .await
+        .expect("write group payload source");
     repository
-        .save_group_chat_payload("group-session", &payload, false)
+        .save_group_chat_payload_from_path("group-session", &source, false)
         .await
-        .expect("save group chat payload");
+        .expect("save group payload from source file");
 
-    let saved = repository
-        .get_group_chat_payload("group-session")
+    let payload_path = repository
+        .get_group_chat_payload_path("group-session")
         .await
-        .expect("read group chat payload");
+        .expect("get group payload path");
+    let bytes = fs::read(&payload_path)
+        .await
+        .expect("read group payload bytes");
+    let saved = crate::infrastructure::persistence::jsonl_utils::parse_jsonl_bytes(&bytes)
+        .expect("parse group payload");
     assert_eq!(saved.len(), payload.len());
 
     repository
@@ -466,7 +439,7 @@ async fn group_chat_payload_roundtrip_and_delete() {
         .await
         .expect("delete group chat payload");
 
-    let deleted = repository.get_group_chat_payload("group-session").await;
+    let deleted = repository.get_group_chat_payload_path("group-session").await;
     assert!(matches!(deleted, Err(DomainError::NotFound(_))));
 
     let _ = fs::remove_dir_all(&root).await;
@@ -523,8 +496,7 @@ async fn rename_chat_keeps_raw_header_fields_intact() {
         }),
     ];
 
-    repository
-        .save_chat_payload("alice", "session", &payload, false)
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
         .await
         .expect("save payload");
 
@@ -581,8 +553,7 @@ async fn list_chat_summaries_returns_streamed_metadata() {
         }),
     ];
 
-    repository
-        .save_chat_payload("alice", "session", &payload, false)
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
         .await
         .expect("save payload");
 
@@ -646,12 +617,10 @@ async fn search_group_chats_respects_query_and_chat_filter() {
         }),
     ];
 
-    repository
-        .save_group_chat_payload("group-one", &group_one, false)
+    save_group_chat_payload_from_values(&repository, &root, "group-one", &group_one, false)
         .await
         .expect("save group one");
-    repository
-        .save_group_chat_payload("group-two", &group_two, false)
+    save_group_chat_payload_from_values(&repository, &root, "group-two", &group_two, false)
         .await
         .expect("save group two");
 
@@ -691,8 +660,7 @@ async fn summary_cache_is_invalidated_after_payload_save() {
             "extra": {},
         }),
     ];
-    repository
-        .save_chat_payload("alice", "session", &first_payload, false)
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &first_payload, false)
         .await
         .expect("save first payload");
 
@@ -718,8 +686,7 @@ async fn summary_cache_is_invalidated_after_payload_save() {
             "extra": {},
         }),
     ];
-    repository
-        .save_chat_payload("alice", "session", &updated_payload, true)
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &updated_payload, true)
         .await
         .expect("save updated payload");
 
@@ -752,8 +719,7 @@ async fn search_cache_is_invalidated_when_new_chat_file_is_saved() {
             "extra": {},
         }),
     ];
-    repository
-        .save_chat_payload("alice", "session-a", &first_payload, false)
+    save_chat_payload_from_values(&repository, &root, "alice", "session-a", &first_payload, false)
         .await
         .expect("save first payload");
 
@@ -779,8 +745,7 @@ async fn search_cache_is_invalidated_when_new_chat_file_is_saved() {
             "extra": {},
         }),
     ];
-    repository
-        .save_chat_payload("alice", "session-b", &second_payload, false)
+    save_chat_payload_from_values(&repository, &root, "alice", "session-b", &second_payload, false)
         .await
         .expect("save second payload");
 
@@ -859,8 +824,7 @@ async fn summary_index_is_persisted_and_reloaded() {
             "extra": {},
         }),
     ];
-    repository
-        .save_chat_payload("alice", "session", &payload, false)
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
         .await
         .expect("save payload");
 
@@ -946,13 +910,8 @@ async fn list_chat_summaries_without_filter_keeps_character_directories_with_car
         .await
         .expect("create character card");
 
-    repository
-        .save_chat_payload(
-            "alice",
-            "session",
-            &payload_with_integrity("normal-a"),
-            false,
-        )
+    let payload = payload_with_integrity("normal-a");
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
         .await
         .expect("save normal character chat");
 
@@ -981,31 +940,21 @@ async fn list_recent_chat_summaries_limits_results_and_keeps_pinned() {
         .await
         .expect("create bob card");
 
-    repository
-        .save_chat_payload(
-            "alice",
-            "session-old",
-            &payload_with_message("recent-old", "2026-01-01T00:00:00.000Z", "old", "Alice"),
-            false,
-        )
+    let old_payload =
+        payload_with_message("recent-old", "2026-01-01T00:00:00.000Z", "old", "Alice");
+    save_chat_payload_from_values(&repository, &root, "alice", "session-old", &old_payload, false)
         .await
         .expect("save old chat");
-    repository
-        .save_chat_payload(
-            "alice",
-            "session-mid",
-            &payload_with_message("recent-mid", "2026-01-02T00:00:00.000Z", "mid", "Alice"),
-            false,
-        )
+
+    let mid_payload =
+        payload_with_message("recent-mid", "2026-01-02T00:00:00.000Z", "mid", "Alice");
+    save_chat_payload_from_values(&repository, &root, "alice", "session-mid", &mid_payload, false)
         .await
         .expect("save middle chat");
-    repository
-        .save_chat_payload(
-            "bob",
-            "session-new",
-            &payload_with_message("recent-new", "2026-01-03T00:00:00.000Z", "new", "Bob"),
-            false,
-        )
+
+    let new_payload =
+        payload_with_message("recent-new", "2026-01-03T00:00:00.000Z", "new", "Bob");
+    save_chat_payload_from_values(&repository, &root, "bob", "session-new", &new_payload, false)
         .await
         .expect("save new chat");
 
@@ -1037,30 +986,23 @@ async fn list_recent_chat_summaries_limits_results_and_keeps_pinned() {
 async fn list_recent_group_chat_summaries_limits_results_and_keeps_pinned() {
     let (repository, root) = setup_repository().await;
 
-    repository
-        .save_group_chat_payload(
-            "group-old",
-            &payload_with_message(
-                "group-recent-old",
-                "2026-01-01T00:00:00.000Z",
-                "old group",
-                "Group",
-            ),
-            false,
-        )
+    let old_group_payload = payload_with_message(
+        "group-recent-old",
+        "2026-01-01T00:00:00.000Z",
+        "old group",
+        "Group",
+    );
+    save_group_chat_payload_from_values(&repository, &root, "group-old", &old_group_payload, false)
         .await
         .expect("save old group chat");
-    repository
-        .save_group_chat_payload(
-            "group-new",
-            &payload_with_message(
-                "group-recent-new",
-                "2026-01-03T00:00:00.000Z",
-                "new group",
-                "Group",
-            ),
-            false,
-        )
+
+    let new_group_payload = payload_with_message(
+        "group-recent-new",
+        "2026-01-03T00:00:00.000Z",
+        "new group",
+        "Group",
+    );
+    save_group_chat_payload_from_values(&repository, &root, "group-new", &new_group_payload, false)
         .await
         .expect("save new group chat");
 
@@ -1091,18 +1033,13 @@ async fn list_recent_group_chat_summaries_limits_results_and_keeps_pinned() {
 async fn recent_summary_skips_fingerprint_and_search_builds_it_lazily() {
     let (repository, root) = setup_repository().await;
 
-    repository
-        .save_chat_payload(
-            "alice",
-            "session",
-            &payload_with_message(
-                "lazy-fingerprint",
-                "2026-01-05T00:00:00.000Z",
-                "dragon keyword",
-                "Alice",
-            ),
-            false,
-        )
+    let payload = payload_with_message(
+        "lazy-fingerprint",
+        "2026-01-05T00:00:00.000Z",
+        "dragon keyword",
+        "Alice",
+    );
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
         .await
         .expect("save payload");
 
@@ -1158,6 +1095,41 @@ async fn recent_summary_skips_fingerprint_and_search_builds_it_lazily() {
     );
 
     let _ = fs::remove_dir_all(&root).await;
+}
+
+async fn save_chat_payload_from_values(
+    repository: &FileChatRepository,
+    root: &PathBuf,
+    character_name: &str,
+    file_name: &str,
+    payload: &[Value],
+    force: bool,
+) -> Result<(), DomainError> {
+    let source_path = root.join(format!("chat-payload-{}.jsonl", random::<u64>()));
+    fs::write(&source_path, payload_to_jsonl(payload))
+        .await
+        .expect("write chat payload source file");
+
+    repository
+        .save_chat_payload_from_path(character_name, file_name, &source_path, force)
+        .await
+}
+
+async fn save_group_chat_payload_from_values(
+    repository: &FileChatRepository,
+    root: &PathBuf,
+    chat_id: &str,
+    payload: &[Value],
+    force: bool,
+) -> Result<(), DomainError> {
+    let source_path = root.join(format!("group-chat-payload-{}.jsonl", random::<u64>()));
+    fs::write(&source_path, payload_to_jsonl(payload))
+        .await
+        .expect("write group chat payload source file");
+
+    repository
+        .save_group_chat_payload_from_path(chat_id, &source_path, force)
+        .await
 }
 
 fn payload_to_jsonl(payload: &[Value]) -> String {

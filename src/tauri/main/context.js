@@ -1603,19 +1603,6 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
     }
 
     async function writeTempUploadFile(filePath, file, invokeApi) {
-        if (typeof file?.stream === 'function' && typeof ReadableStream !== 'undefined') {
-            try {
-                const { writeFile } = await import('@tauri-apps/plugin-fs');
-                await writeFile(filePath, file.stream(), {
-                    create: true,
-                    truncate: true,
-                });
-                return;
-            } catch (error) {
-                console.warn('Streamed temp file write failed; falling back to chunked write:', error);
-            }
-        }
-
         await writeTempUploadFileChunked(filePath, file, invokeApi);
     }
 

@@ -7,7 +7,7 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::chat::Chat;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::jsonl_utils::{
-    parse_jsonl_bytes, read_first_non_empty_jsonl_line, write_jsonl_bytes_file, write_jsonl_file,
+    parse_jsonl_bytes, read_first_non_empty_jsonl_line, write_jsonl_file,
 };
 
 use super::FileChatRepository;
@@ -49,21 +49,30 @@ impl FileChatRepository {
         };
 
         if let Some(chat_metadata) = metadata.get("chat_metadata") {
-            if let Ok(parsed) = serde_json::from_value(chat_metadata.clone()) {
-                chat.chat_metadata = parsed;
-            }
+            chat.chat_metadata = serde_json::from_value(chat_metadata.clone()).map_err(|error| {
+                DomainError::InvalidData(format!(
+                    "Failed to parse chat metadata for {}: {}",
+                    file_name, error
+                ))
+            })?;
         }
 
-        for obj in objects.iter().skip(1) {
-            if let Ok(message) = serde_json::from_value(obj.clone()) {
-                chat.add_message(message);
-            }
+        for (index, obj) in objects.iter().enumerate().skip(1) {
+            let message = serde_json::from_value(obj.clone()).map_err(|error| {
+                DomainError::InvalidData(format!(
+                    "Failed to parse chat message at line {} for {}: {}",
+                    index + 1,
+                    file_name,
+                    error
+                ))
+            })?;
+            chat.add_message(message);
         }
 
         Ok(chat)
     }
 
-    pub(super) fn build_payload_from_chat(chat: &Chat) -> Vec<Value> {
+    pub(super) fn build_payload_from_chat(chat: &Chat) -> Result<Vec<Value>, DomainError> {
         let mut objects = Vec::with_capacity(chat.messages.len() + 1);
         objects.push(serde_json::json!({
             "user_name": chat.user_name,
@@ -73,12 +82,12 @@ impl FileChatRepository {
         }));
 
         for message in &chat.messages {
-            if let Ok(value) = serde_json::to_value(message) {
-                objects.push(value);
-            }
+            objects.push(serde_json::to_value(message).map_err(|error| {
+                DomainError::InternalError(format!("Failed to serialize chat message: {}", error))
+            })?);
         }
 
-        objects
+        Ok(objects)
     }
 
     fn extract_integrity_slug_from_header(header: &Value) -> Option<String> {
@@ -90,11 +99,11 @@ impl FileChatRepository {
             .map(ToString::to_string)
     }
 
-    fn extract_integrity_slug_from_jsonl_line(line: &str) -> Option<String> {
-        serde_json::from_str::<Value>(line)
-            .ok()
-            .as_ref()
-            .and_then(Self::extract_integrity_slug_from_header)
+    fn extract_integrity_slug_from_jsonl_line(line: &str) -> Result<Option<String>, DomainError> {
+        let header: Value = serde_json::from_str(line).map_err(|error| {
+            DomainError::InvalidData(format!("Failed to parse chat payload header: {}", error))
+        })?;
+        Ok(Self::extract_integrity_slug_from_header(&header))
     }
 
     async fn read_integrity_slug_from_existing_file(
@@ -106,7 +115,7 @@ impl FileChatRepository {
         }
 
         if let Some(line) = read_first_non_empty_jsonl_line(path).await? {
-            return Ok(Self::extract_integrity_slug_from_jsonl_line(&line));
+            return Self::extract_integrity_slug_from_jsonl_line(&line);
         }
 
         Ok(None)
@@ -142,48 +151,6 @@ impl FileChatRepository {
         Ok(())
     }
 
-    fn read_incoming_integrity_from_bytes(payload: &[u8]) -> Result<Option<String>, DomainError> {
-        if payload.is_empty() {
-            return Err(DomainError::InvalidData(
-                "Chat payload is empty".to_string(),
-            ));
-        }
-
-        let text = std::str::from_utf8(payload)
-            .map_err(|e| DomainError::InvalidData(format!("Invalid UTF-8 payload: {}", e)))?;
-        let Some(first_line) = text.lines().find(|line| !line.trim().is_empty()) else {
-            return Err(DomainError::InvalidData(
-                "Chat payload is empty".to_string(),
-            ));
-        };
-
-        Ok(Self::extract_integrity_slug_from_jsonl_line(first_line))
-    }
-
-    async fn verify_chat_integrity_bytes_if_needed(
-        &self,
-        path: &Path,
-        payload: &[u8],
-        force: bool,
-    ) -> Result<(), DomainError> {
-        if force {
-            return Ok(());
-        }
-
-        let Some(incoming_integrity) = Self::read_incoming_integrity_from_bytes(payload)? else {
-            return Ok(());
-        };
-
-        let existing_integrity = self.read_integrity_slug_from_existing_file(path).await?;
-        if let Some(existing) = existing_integrity {
-            if existing != incoming_integrity {
-                return Err(DomainError::InvalidData("integrity".to_string()));
-            }
-        }
-
-        Ok(())
-    }
-
     async fn read_incoming_integrity_from_file(
         payload_path: &Path,
     ) -> Result<Option<String>, DomainError> {
@@ -193,7 +160,7 @@ impl FileChatRepository {
             ));
         };
 
-        Ok(Self::extract_integrity_slug_from_jsonl_line(&line))
+        Self::extract_integrity_slug_from_jsonl_line(&line)
     }
 
     async fn verify_chat_integrity_file_if_needed(
@@ -244,28 +211,6 @@ impl FileChatRepository {
         Ok(())
     }
 
-    pub(super) async fn write_payload_bytes_to_path(
-        &self,
-        path: &Path,
-        payload: &[u8],
-        force: bool,
-        backup_name: &str,
-        backup_key: &str,
-    ) -> Result<(), DomainError> {
-        if payload.is_empty() {
-            return Err(DomainError::InvalidData(
-                "Chat payload is empty".to_string(),
-            ));
-        }
-
-        self.verify_chat_integrity_bytes_if_needed(path, payload, force)
-            .await?;
-        write_jsonl_bytes_file(path, payload).await?;
-        self.backup_chat_file(path, backup_name, backup_key).await?;
-
-        Ok(())
-    }
-
     pub(super) async fn write_payload_file_to_path(
         &self,
         path: &Path,
@@ -309,7 +254,7 @@ impl FileChatRepository {
         path: &Path,
     ) -> Result<Vec<u8>, DomainError> {
         fs::read(path).await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to read chat payload bytes: {}", e))
+            DomainError::InternalError(format!("Failed to read chat payload bytes {:?}: {}", path, e))
         })
     }
 
@@ -358,7 +303,7 @@ impl FileChatRepository {
         }
 
         let path = self.get_chat_path(&chat.character_name, file_name);
-        let objects = Self::build_payload_from_chat(chat);
+        let objects = Self::build_payload_from_chat(chat)?;
         let backup_key = self.get_cache_key(&chat.character_name, file_name);
 
         self.write_payload_to_path(&path, &objects, force, &chat.character_name, &backup_key)

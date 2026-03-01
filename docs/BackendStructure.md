@@ -406,18 +406,18 @@ tauri::Builder::default()
 
 这样可以避免在 `lib.rs` 中直接维护超长命令列表，命令增减时只需更新 `registry.rs`。
 
-### 3.5 聊天后端链路（Payload-First + Byte Transport，2026-02重构）
+### 3.5 聊天后端链路（Payload-First + Path/From-File Transport，2026-02重构）
 
 本次聊天链路重构目标是对齐 SillyTavern 上游业务逻辑与文件系统语义，同时降低字段漂移/数据丢失风险。
 
 #### 3.5.1 设计原则
 
 - **Payload First**：聊天保存/读取优先以 JSONL 原始 payload 为边界，而非先强制转领域模型再落盘。
-- **Control/Data Plane 分离**：小参数走 JSON invoke（control plane），大 payload 走 raw bytes / 文件路径（data plane）。
+- **Control/Data Plane 分离**：小参数走 JSON invoke（control plane），大 payload 走文件路径（data plane）。
 - **字段保真**：`ChatMetadata`、`ChatMessage`、`MessageExtra` 通过 `#[serde(flatten)] additional` 保留未知字段。
 - **完整性优先**：保存链路内置 `chat_metadata.integrity` 校验；冲突时返回 `integrity`，由前端决定是否 `force` 覆盖。
 - **兼容上游文件系统**：目录与命名策略对齐 SillyTavern，便于用户无损迁移。
-- **移动端优先规避峰值内存**：Android 读走 `asset://` 路径，写走“前端临时文件 -> 后端按路径原子落盘”。
+- **移动端优先规避峰值内存**：Android 读走 fs plugin 流式读（`open/read`），写走“前端临时文件 -> 后端按路径原子落盘”。
 
 #### 3.5.2 分层职责
 
@@ -425,40 +425,30 @@ tauri::Builder::default()
   - 保留 typed API（`get_chat` / `save` / `search_chats` 等）用于领域操作。
   - payload API 扩展为三类：对象数组（`*_payload`）、字节流（`*_payload_bytes`）、路径/文件直通（`*_payload_path`、`*_payload_from_path`）。
 - `application/services/chat_service.rs`
-  - `save_chat` 直接调用 payload 写接口，不做 typed -> payload 二次构建。
-  - 新增 character/group 的 bytes、path、from-file 服务方法；`save_*_from_file` 走仓库路径直通，避免整文件读入内存。
+  - 新增 character/group 的 path/from-file 服务方法；`save_*_from_file` 走仓库路径直通，避免整文件通过 IPC。
 - `presentation/commands/chat_commands.rs`
-  - 保留 JSON payload 命令：`get_chat_payload` / `save_chat` / `get_group_chat` / `save_group_chat` 等。
-  - 新增 raw/path/from-file 命令：`get_chat_payload_raw`、`get_chat_payload_path`、`save_chat_payload_raw`、`save_chat_payload_from_file`、`get_group_chat_raw`、`get_group_chat_path`、`save_group_chat_raw`、`save_group_chat_from_file`。
-  - raw 保存命令通过 header 传递元信息；后端对 header 值执行 percent decode，兼容非 ASCII 名称。
+  - 前端大 payload 不再通过命令传输；仅读取 payload path、保存 from-file：
+    - `get_chat_payload_path` / `save_chat_payload_from_file`
+    - `get_group_chat_path` / `save_group_chat_from_file`
 - `infrastructure/repositories/file_chat_repository/`
   - `repository_impl.rs`：统一编排 typed/payload/bytes/path 写入入口。
   - `payload.rs`：完整性校验、字节写入、文件路径直通写入（原子替换 + 备份）。
-  - `jsonl_utils.rs`：`parse_jsonl_bytes`、`write_jsonl_bytes_file`、`read_first_non_empty_jsonl_line` 等基础能力。
+  - `jsonl_utils.rs`：`parse_jsonl_bytes`、`write_jsonl_file`、`read_first_non_empty_jsonl_line` 等基础能力。
   - 完整性校验改为“首个非空行”解析，避免为校验反序列化整个文件。
 
 #### 3.5.3 关键链路
 
-1. 桌面/iOS 角色聊天读取（高性能路径）  
-前端 `invoke(get_chat_payload_raw)` -> 命令返回 bytes -> 前端按 JSONL 解析。
+1. 角色聊天读取（Path-First）  
+前端 `invoke(get_chat_payload_path)` -> 获取绝对路径 ->（Android：fs plugin 流式读；其他平台：`convertFileSrc(..., 'asset')` + `fetch`）-> 前端 JSONL 流式解析。
 
-2. Android 角色聊天读取  
-前端 `invoke(get_chat_payload_path)` -> `convertFileSrc(..., 'asset')` -> `fetch(asset://...)`。
+2. 角色聊天保存（From-File）  
+前端 payload 分块编码 -> 写入临时 JSONL 文件 -> `save_chat_payload_from_file` -> `ChatService::save_chat_from_file` -> `save_chat_payload_from_path`（原子替换 + 备份）。
 
-3. 桌面/iOS 角色聊天保存（高性能路径）  
-前端 raw bytes + headers -> `save_chat_payload_raw` -> `ChatService::save_chat_payload_bytes` -> 仓库原子写入 + 备份。
+3. 群聊读写链路  
+与角色聊天对称：`get_group_chat_path` / `save_group_chat_from_file`。
 
-4. Android 角色聊天保存  
-前端先落临时 JSONL 文件 -> `save_chat_payload_from_file` -> `ChatService::save_chat_from_file` -> `save_chat_payload_from_path`。
-
-5. 群聊读写链路  
-与角色聊天完全对称：`get_group_chat_raw/get_group_chat_path/save_group_chat_raw/save_group_chat_from_file`。
-
-6. 完整性冲突  
+4. 完整性冲突  
 当现有文件的 `chat_metadata.integrity` 与待写入 payload 不一致且 `force=false` 时，仓库返回 `DomainError::InvalidData("integrity")`，前端映射为冲突提示并可二次 `force` 覆盖。
-
-7. Header 编码约定（raw 保存）  
-`x-character-name` / `x-file-name` / `x-chat-id` 在前端使用 URI 百分号编码（ASCII 安全），后端解码后再进入服务层。
 
 #### 3.5.4 文件系统与备份语义
 
@@ -666,34 +656,26 @@ TauriTavern的后端API通过Tauri命令暴露给前端。以下是主要API类�
 | 命令 | 描述 | 参数 | 返回值 |
 |------|------|------|--------|
 | `get_all_chats` | 获取所有聊天 | 无 | `Vec<ChatDto>` |
-| `get_character_chats` | 获取角色的聊天 | `character_name: String` | `Vec<ChatDto>` |
-| `get_chat` | 获取单个聊天 | `character_name: String, file_name: String` | `ChatDto` |
-| `get_chat_payload` | 获取角色聊天原始JSONL对象数组 | `character_name: String, file_name: String` | `Vec<Value>` |
-| `get_chat_payload_raw` | 获取角色聊天原始JSONL字节流 | `characterName: String, fileName: String, allowNotFound?: bool` | `InvokeResponse(bytes)` |
-| `get_chat_payload_path` | 获取角色聊天文件绝对路径 | `characterName: String, fileName: String` | `String` |
+| `get_character_chats` | 获取角色的聊天 | `characterName: String` | `Vec<ChatDto>` |
+| `get_chat` | 获取单个聊天 | `characterName: String, fileName: String` | `ChatDto` |
+| `get_chat_payload_path` | 获取角色聊天文件绝对路径 | `characterName: String, fileName: String, allowNotFound?: bool` | `String` |
 | `create_chat` | 创建新聊天 | `CreateChatDto` | `ChatDto` |
-| `delete_chat` | 删除聊天 | `character_name: String, file_name: String` | `()` |
+| `delete_chat` | 删除聊天 | `characterName: String, fileName: String` | `()` |
 | `add_message` | 添加消息 | `AddMessageDto` | `ChatDto` |
 | `rename_chat` | 重命名聊天 | `RenameChatDto` | `()` |
 | `search_chats` | 搜索聊天 | `query: String, character_filter: Option<String>` | `Vec<ChatSearchResultDto>` |
 | `import_chat` | 导入聊天（legacy typed） | `ImportChatDto` | `ChatDto` |
 | `import_character_chats` | 导入角色聊天（payload链路） | `ImportCharacterChatsDto` | `Vec<String>` |
 | `export_chat` | 导出聊天 | `ExportChatDto` | `()` |
-| `save_chat` | 保存角色聊天payload（含 integrity/force） | `SaveChatDto` | `()` |
-| `save_chat_payload_raw` | 以 raw bytes 保存角色聊天 | `body: bytes, headers: x-character-name/x-file-name/x-force` | `()` |
 | `save_chat_payload_from_file` | 从现有JSONL文件路径保存角色聊天 | `SaveChatFromFileDto` | `()` |
-| `backup_chat` | 触发聊天备份 | `character_name: String, file_name: String` | `()` |
+| `backup_chat` | 触发聊天备份 | `characterName: String, fileName: String` | `()` |
 | `clear_chat_cache` | 清理聊天缓存 | 无 | `()` |
 
 ### 5.2.1 群聊Payload命令
 
 | 命令 | 描述 | 参数 | 返回值 |
 |------|------|------|--------|
-| `get_group_chat` | 获取群聊原始JSONL对象数组 | `GetGroupChatDto` | `Vec<Value>` |
-| `get_group_chat_raw` | 获取群聊原始JSONL字节流 | `GetGroupChatDto, allowNotFound?: bool` | `InvokeResponse(bytes)` |
-| `get_group_chat_path` | 获取群聊文件绝对路径 | `GetGroupChatDto` | `String` |
-| `save_group_chat` | 保存群聊payload（含 integrity/force） | `SaveGroupChatDto` | `()` |
-| `save_group_chat_raw` | 以 raw bytes 保存群聊 | `body: bytes, headers: x-chat-id/x-force` | `()` |
+| `get_group_chat_path` | 获取群聊文件绝对路径 | `id: String, allowNotFound?: bool` | `String` |
 | `save_group_chat_from_file` | 从现有JSONL文件路径保存群聊 | `SaveGroupChatFromFileDto` | `()` |
 | `delete_group_chat` | 删除群聊聊天文件 | `DeleteGroupChatDto` | `()` |
 | `rename_group_chat` | 重命名群聊聊天文件 | `RenameGroupChatDto` | `()` |

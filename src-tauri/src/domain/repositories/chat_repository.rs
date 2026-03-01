@@ -58,8 +58,7 @@ pub trait ChatRepository: Send + Sync {
     async fn save(&self, chat: &Chat) -> Result<(), DomainError>;
 
     /// Save a chat with explicit overwrite/integrity options.
-    async fn save_with_options(&self, chat: &Chat, force: bool) -> Result<(), DomainError> {
-        let _ = force;
+    async fn save_with_options(&self, chat: &Chat, _force: bool) -> Result<(), DomainError> {
         self.save(chat).await
     }
 
@@ -187,24 +186,6 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
     ) -> Result<PathBuf, DomainError>;
 
-    /// Save a raw chat JSONL payload for a character chat.
-    async fn save_chat_payload(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        payload: &[Value],
-        force: bool,
-    ) -> Result<(), DomainError>;
-
-    /// Save raw JSONL bytes for a character chat payload.
-    async fn save_chat_payload_bytes(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        payload: &[u8],
-        force: bool,
-    ) -> Result<(), DomainError>;
-
     /// Save raw JSONL bytes for a character chat payload from an existing file path.
     async fn save_chat_payload_from_path(
         &self,
@@ -214,30 +195,8 @@ pub trait ChatRepository: Send + Sync {
         force: bool,
     ) -> Result<(), DomainError>;
 
-    /// Get a raw chat JSONL payload for a group chat.
-    async fn get_group_chat_payload(&self, chat_id: &str) -> Result<Vec<Value>, DomainError>;
-
-    /// Get raw JSONL bytes for a group chat payload.
-    async fn get_group_chat_payload_bytes(&self, chat_id: &str) -> Result<Vec<u8>, DomainError>;
-
     /// Get the absolute path to a group chat payload file.
     async fn get_group_chat_payload_path(&self, chat_id: &str) -> Result<PathBuf, DomainError>;
-
-    /// Save a raw chat JSONL payload for a group chat.
-    async fn save_group_chat_payload(
-        &self,
-        chat_id: &str,
-        payload: &[Value],
-        force: bool,
-    ) -> Result<(), DomainError>;
-
-    /// Save raw JSONL bytes for a group chat payload.
-    async fn save_group_chat_payload_bytes(
-        &self,
-        chat_id: &str,
-        payload: &[u8],
-        force: bool,
-    ) -> Result<(), DomainError>;
 
     /// Save raw JSONL bytes for a group chat payload from an existing file path.
     async fn save_group_chat_payload_from_path(

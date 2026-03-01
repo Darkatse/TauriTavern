@@ -204,16 +204,11 @@ async function loadGroupChat(chatId) {
     }
 
     if (isTauriChatPayloadTransportEnabled()) {
-        try {
-            const data = await loadGroupChatPayload({
-                id: normalizedChatId,
-                allowNotFound: true,
-            });
-            return Array.isArray(data) ? data : [];
-        } catch (error) {
-            console.error('Failed to load group chat payload from Tauri transport', error);
-            return [];
-        }
+        const data = await loadGroupChatPayload({
+            id: normalizedChatId,
+            allowNotFound: true,
+        });
+        return data;
     }
 
     const response = await fetch('/api/chats/group/get', {

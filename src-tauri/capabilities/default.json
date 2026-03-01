@@ -9,11 +9,20 @@
     "core:default",
     "opener:default",
     "notification:allow-is-permission-granted",
+    "fs:allow-open",
+    "fs:allow-read",
     "fs:allow-read-text-file",
     "fs:allow-resource-read-recursive",
     "fs:default",
     "fs:allow-appcache-write",
     "fs:allow-temp-write",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        "/storage/emulated/0/Android/data/com.tauritavern.client/**",
+        "/sdcard/Android/data/com.tauritavern.client/**"
+      ]
+    },
     {
       "identifier": "fs:allow-write-file",
       "allow": [
