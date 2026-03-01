@@ -770,8 +770,15 @@ impl ChatRepository for FileChatRepository {
         lines: Vec<String>,
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError> {
-        self.save_character_payload_windowed(character_name, file_name, cursor, header, lines, force)
-            .await
+        self.save_character_payload_windowed(
+            character_name,
+            file_name,
+            cursor,
+            header,
+            lines,
+            force,
+        )
+        .await
     }
 
     async fn save_chat_payload_from_path(

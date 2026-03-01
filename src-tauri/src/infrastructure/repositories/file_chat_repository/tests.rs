@@ -439,7 +439,9 @@ async fn group_chat_payload_roundtrip_and_delete() {
         .await
         .expect("delete group chat payload");
 
-    let deleted = repository.get_group_chat_payload_path("group-session").await;
+    let deleted = repository
+        .get_group_chat_payload_path("group-session")
+        .await;
     assert!(matches!(deleted, Err(DomainError::NotFound(_))));
 
     let _ = fs::remove_dir_all(&root).await;
@@ -660,9 +662,16 @@ async fn summary_cache_is_invalidated_after_payload_save() {
             "extra": {},
         }),
     ];
-    save_chat_payload_from_values(&repository, &root, "alice", "session", &first_payload, false)
-        .await
-        .expect("save first payload");
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session",
+        &first_payload,
+        false,
+    )
+    .await
+    .expect("save first payload");
 
     let initial = repository
         .list_chat_summaries(Some("alice"), false)
@@ -686,9 +695,16 @@ async fn summary_cache_is_invalidated_after_payload_save() {
             "extra": {},
         }),
     ];
-    save_chat_payload_from_values(&repository, &root, "alice", "session", &updated_payload, true)
-        .await
-        .expect("save updated payload");
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session",
+        &updated_payload,
+        true,
+    )
+    .await
+    .expect("save updated payload");
 
     let refreshed = repository
         .list_chat_summaries(Some("alice"), false)
@@ -719,9 +735,16 @@ async fn search_cache_is_invalidated_when_new_chat_file_is_saved() {
             "extra": {},
         }),
     ];
-    save_chat_payload_from_values(&repository, &root, "alice", "session-a", &first_payload, false)
-        .await
-        .expect("save first payload");
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session-a",
+        &first_payload,
+        false,
+    )
+    .await
+    .expect("save first payload");
 
     let cached_empty = repository
         .search_chats("dragon", Some("alice"))
@@ -745,9 +768,16 @@ async fn search_cache_is_invalidated_when_new_chat_file_is_saved() {
             "extra": {},
         }),
     ];
-    save_chat_payload_from_values(&repository, &root, "alice", "session-b", &second_payload, false)
-        .await
-        .expect("save second payload");
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session-b",
+        &second_payload,
+        false,
+    )
+    .await
+    .expect("save second payload");
 
     let refreshed = repository
         .search_chats("dragon", Some("alice"))
@@ -942,21 +972,41 @@ async fn list_recent_chat_summaries_limits_results_and_keeps_pinned() {
 
     let old_payload =
         payload_with_message("recent-old", "2026-01-01T00:00:00.000Z", "old", "Alice");
-    save_chat_payload_from_values(&repository, &root, "alice", "session-old", &old_payload, false)
-        .await
-        .expect("save old chat");
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session-old",
+        &old_payload,
+        false,
+    )
+    .await
+    .expect("save old chat");
 
     let mid_payload =
         payload_with_message("recent-mid", "2026-01-02T00:00:00.000Z", "mid", "Alice");
-    save_chat_payload_from_values(&repository, &root, "alice", "session-mid", &mid_payload, false)
-        .await
-        .expect("save middle chat");
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session-mid",
+        &mid_payload,
+        false,
+    )
+    .await
+    .expect("save middle chat");
 
-    let new_payload =
-        payload_with_message("recent-new", "2026-01-03T00:00:00.000Z", "new", "Bob");
-    save_chat_payload_from_values(&repository, &root, "bob", "session-new", &new_payload, false)
-        .await
-        .expect("save new chat");
+    let new_payload = payload_with_message("recent-new", "2026-01-03T00:00:00.000Z", "new", "Bob");
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "bob",
+        "session-new",
+        &new_payload,
+        false,
+    )
+    .await
+    .expect("save new chat");
 
     let pinned = vec![PinnedCharacterChat {
         character_name: "alice".to_string(),

@@ -1,5 +1,6 @@
 use tauri::AppHandle;
 
+use crate::infrastructure::paths::resolve_runtime_paths;
 use crate::infrastructure::persistence::data_archive_jobs::{
     DataArchiveJobStatus, cancel_data_archive_job as cancel_data_archive_job_impl,
     cleanup_export_data_archive as cleanup_export_data_archive_impl,
@@ -8,7 +9,6 @@ use crate::infrastructure::persistence::data_archive_jobs::{
     start_export_data_archive_job as start_export_data_archive_job_impl,
     start_import_data_archive_job as start_import_data_archive_job_impl,
 };
-use crate::infrastructure::paths::resolve_runtime_paths;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 

@@ -6,7 +6,9 @@ use tokio::fs::{self, File, OpenOptions};
 use tokio::io::{self, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
 use crate::domain::errors::DomainError;
-use crate::domain::repositories::chat_repository::{ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail};
+use crate::domain::repositories::chat_repository::{
+    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
+};
 use crate::infrastructure::logging::logger;
 
 use super::FileChatRepository;
@@ -58,12 +60,14 @@ fn file_signature_from_metadata(metadata: &std::fs::Metadata) -> Result<(u64, i6
             error
         ))
     })?;
-    let duration = modified.duration_since(std::time::UNIX_EPOCH).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Chat payload modified time is before UNIX_EPOCH: {}",
-            error
-        ))
-    })?;
+    let duration = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| {
+            DomainError::InternalError(format!(
+                "Chat payload modified time is before UNIX_EPOCH: {}",
+                error
+            ))
+        })?;
 
     let modified_millis: i64 = duration.as_millis().try_into().map_err(|_| {
         DomainError::InternalError("Chat payload modified time overflows i64 millis".to_string())
@@ -85,8 +89,9 @@ fn cursor_from_metadata(
 }
 
 fn decode_jsonl_line_bytes(bytes: &[u8]) -> Result<String, DomainError> {
-    let text = str::from_utf8(bytes)
-        .map_err(|error| DomainError::InvalidData(format!("JSONL payload is not valid UTF-8: {}", error)))?;
+    let text = str::from_utf8(bytes).map_err(|error| {
+        DomainError::InvalidData(format!("JSONL payload is not valid UTF-8: {}", error))
+    })?;
     Ok(text.trim_end_matches(['\r', '\n']).to_string())
 }
 
@@ -292,9 +297,11 @@ async fn write_jsonl_lines_to_file(
         ));
     }
 
-    file.write_all(first_line.as_bytes()).await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to write chat payload header: {}", error))
-    })?;
+    file.write_all(first_line.as_bytes())
+        .await
+        .map_err(|error| {
+            DomainError::InternalError(format!("Failed to write chat payload header: {}", error))
+        })?;
     file.write_all(b"\n").await.map_err(|error| {
         DomainError::InternalError(format!("Failed to write chat payload header: {}", error))
     })?;
@@ -309,7 +316,10 @@ async fn write_jsonl_lines_to_file(
             first = false;
         } else {
             file.write_all(b"\n").await.map_err(|error| {
-                DomainError::InternalError(format!("Failed to write chat payload newline: {}", error))
+                DomainError::InternalError(format!(
+                    "Failed to write chat payload newline: {}",
+                    error
+                ))
             })?;
         }
 
@@ -321,10 +331,7 @@ async fn write_jsonl_lines_to_file(
     Ok(())
 }
 
-async fn write_jsonl_lines_at_end(
-    file: &mut File,
-    lines: &[String],
-) -> Result<(), DomainError> {
+async fn write_jsonl_lines_at_end(file: &mut File, lines: &[String]) -> Result<(), DomainError> {
     let mut first = true;
     for line in lines {
         if line.trim().is_empty() {
@@ -335,7 +342,10 @@ async fn write_jsonl_lines_at_end(
             first = false;
         } else {
             file.write_all(b"\n").await.map_err(|error| {
-                DomainError::InternalError(format!("Failed to write chat payload newline: {}", error))
+                DomainError::InternalError(format!(
+                    "Failed to write chat payload newline: {}",
+                    error
+                ))
             })?;
         }
 
@@ -506,7 +516,10 @@ impl FileChatRepository {
     }
 }
 
-async fn read_payload_tail_lines(path: &Path, max_lines: usize) -> Result<ChatPayloadTail, DomainError> {
+async fn read_payload_tail_lines(
+    path: &Path,
+    max_lines: usize,
+) -> Result<ChatPayloadTail, DomainError> {
     let metadata = read_existing_payload_metadata(path).await?;
 
     let (header, header_end_offset) = read_first_line_and_end_offset(path).await?;
@@ -617,7 +630,8 @@ async fn save_payload_windowed_internal(
     let metadata = existing_metadata.unwrap();
     verify_cursor_signature(path, cursor, &metadata)?;
 
-    let (existing_header, existing_header_end_offset) = read_first_line_and_end_offset(path).await?;
+    let (existing_header, existing_header_end_offset) =
+        read_first_line_and_end_offset(path).await?;
     let header_only = existing_header_end_offset == metadata.len();
     if cursor.offset > metadata.len() {
         return Err(DomainError::InvalidData(format!(
@@ -643,7 +657,10 @@ async fn save_payload_windowed_internal(
         }
     }
 
-    let header_changed = match (serde_json::from_str::<Value>(&existing_header), serde_json::from_str::<Value>(&header)) {
+    let header_changed = match (
+        serde_json::from_str::<Value>(&existing_header),
+        serde_json::from_str::<Value>(&header),
+    ) {
         (Ok(a), Ok(b)) => a != b,
         _ => existing_header != header,
     };

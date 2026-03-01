@@ -39,10 +39,8 @@ impl HttpChatCompletionRepository {
 
         let stream_client = build_http_client(Client::builder().connect_timeout(CONNECT_TIMEOUT))
             .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to build streaming HTTP client: {error}"
-                ))
-            })?;
+            DomainError::InternalError(format!("Failed to build streaming HTTP client: {error}"))
+        })?;
 
         Ok(Self {
             client,

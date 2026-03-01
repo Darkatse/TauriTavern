@@ -49,12 +49,13 @@ impl FileChatRepository {
         };
 
         if let Some(chat_metadata) = metadata.get("chat_metadata") {
-            chat.chat_metadata = serde_json::from_value(chat_metadata.clone()).map_err(|error| {
-                DomainError::InvalidData(format!(
-                    "Failed to parse chat metadata for {}: {}",
-                    file_name, error
-                ))
-            })?;
+            chat.chat_metadata =
+                serde_json::from_value(chat_metadata.clone()).map_err(|error| {
+                    DomainError::InvalidData(format!(
+                        "Failed to parse chat metadata for {}: {}",
+                        file_name, error
+                    ))
+                })?;
         }
 
         for (index, obj) in objects.iter().enumerate().skip(1) {
@@ -254,7 +255,10 @@ impl FileChatRepository {
         path: &Path,
     ) -> Result<Vec<u8>, DomainError> {
         fs::read(path).await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to read chat payload bytes {:?}: {}", path, e))
+            DomainError::InternalError(format!(
+                "Failed to read chat payload bytes {:?}: {}",
+                path, e
+            ))
         })
     }
 

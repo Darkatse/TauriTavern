@@ -6,12 +6,14 @@ use tauri::ipc::Response as InvokeResponse;
 use crate::app::AppState;
 use crate::application::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, DeleteGroupChatDto, ExportChatDto,
-    ImportCharacterChatsDto, ImportChatDto, ImportGroupChatDto,
-    PinnedCharacterChatDto, PinnedGroupChatDto, RenameChatDto, RenameGroupChatDto,
-    SaveChatFromFileDto, SaveChatWindowedDto, SaveGroupChatFromFileDto, SaveGroupChatWindowedDto,
+    ImportCharacterChatsDto, ImportChatDto, ImportGroupChatDto, PinnedCharacterChatDto,
+    PinnedGroupChatDto, RenameChatDto, RenameGroupChatDto, SaveChatFromFileDto,
+    SaveChatWindowedDto, SaveGroupChatFromFileDto, SaveGroupChatWindowedDto,
 };
 use crate::application::errors::ApplicationError;
-use crate::domain::repositories::chat_repository::{ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail};
+use crate::domain::repositories::chat_repository::{
+    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
+};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -354,7 +356,10 @@ pub async fn get_chat_payload_path(
     allow_not_found: Option<bool>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<String, CommandError> {
-    log_command(format!("get_chat_payload_path {}/{}", character_name, file_name));
+    log_command(format!(
+        "get_chat_payload_path {}/{}",
+        character_name, file_name
+    ));
 
     let allow_not_found = allow_not_found.unwrap_or(false);
     match app_state
@@ -481,7 +486,11 @@ pub async fn get_group_chat_path(
     log_command(format!("get_group_chat_path {}", id));
 
     let allow_not_found = allow_not_found.unwrap_or(false);
-    match app_state.chat_service.get_group_chat_payload_path(&id).await {
+    match app_state
+        .chat_service
+        .get_group_chat_payload_path(&id)
+        .await
+    {
         Ok(path) => Ok(path),
         Err(ApplicationError::NotFound(_)) if allow_not_found => Ok(String::new()),
         Err(error) => Err(map_command_error(format!(
@@ -560,7 +569,9 @@ pub async fn save_group_chat_payload_windowed(
             dto.force.unwrap_or(false),
         )
         .await
-        .map_err(map_command_error("Failed to save windowed group chat payload"))
+        .map_err(map_command_error(
+            "Failed to save windowed group chat payload",
+        ))
 }
 
 #[tauri::command]
