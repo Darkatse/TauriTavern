@@ -18,6 +18,9 @@ mod makersuite;
 mod normalizers;
 mod openai;
 
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
 pub struct HttpChatCompletionRepository {
     client: Client,
 }
@@ -26,8 +29,8 @@ impl HttpChatCompletionRepository {
     pub fn new() -> Result<Self, DomainError> {
         let client = build_http_client(
             Client::builder()
-                .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(120)),
+                .connect_timeout(CONNECT_TIMEOUT)
+                .timeout(REQUEST_TIMEOUT),
         )
         .map_err(|error| {
             DomainError::InternalError(format!("Failed to build HTTP client: {error}"))
