@@ -8,9 +8,10 @@ use crate::application::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, DeleteGroupChatDto, ExportChatDto,
     ImportCharacterChatsDto, ImportChatDto, ImportGroupChatDto,
     PinnedCharacterChatDto, PinnedGroupChatDto, RenameChatDto, RenameGroupChatDto,
-    SaveChatFromFileDto, SaveGroupChatFromFileDto,
+    SaveChatFromFileDto, SaveChatWindowedDto, SaveGroupChatFromFileDto, SaveGroupChatWindowedDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::domain::repositories::chat_repository::{ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -371,6 +372,90 @@ pub async fn get_chat_payload_path(
 }
 
 #[tauri::command]
+pub async fn get_chat_payload_tail(
+    character_name: String,
+    file_name: String,
+    max_lines: usize,
+    allow_not_found: Option<bool>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ChatPayloadTail, CommandError> {
+    log_command(format!(
+        "get_chat_payload_tail {}/{}",
+        character_name, file_name
+    ));
+
+    let allow_not_found = allow_not_found.unwrap_or(false);
+    match app_state
+        .chat_service
+        .get_chat_payload_tail_lines(&character_name, &file_name, max_lines)
+        .await
+    {
+        Ok(result) => Ok(result),
+        Err(ApplicationError::NotFound(_)) if allow_not_found => Ok(ChatPayloadTail {
+            header: String::new(),
+            lines: Vec::new(),
+            cursor: ChatPayloadCursor {
+                offset: 0,
+                size: 0,
+                modified_millis: 0,
+            },
+            has_more_before: false,
+        }),
+        Err(error) => Err(map_command_error(format!(
+            "Failed to get chat payload tail {}/{}",
+            character_name, file_name
+        ))(error)),
+    }
+}
+
+#[tauri::command]
+pub async fn get_chat_payload_before(
+    character_name: String,
+    file_name: String,
+    cursor: ChatPayloadCursor,
+    max_lines: usize,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ChatPayloadChunk, CommandError> {
+    log_command(format!(
+        "get_chat_payload_before {}/{}",
+        character_name, file_name
+    ));
+
+    app_state
+        .chat_service
+        .get_chat_payload_before_lines(&character_name, &file_name, cursor, max_lines)
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to get chat payload before {}/{}",
+            character_name, file_name
+        )))
+}
+
+#[tauri::command]
+pub async fn save_chat_payload_windowed(
+    dto: SaveChatWindowedDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ChatPayloadCursor, CommandError> {
+    log_command(format!(
+        "save_chat_payload_windowed {}/{}",
+        dto.character_name, dto.file_name
+    ));
+
+    app_state
+        .chat_service
+        .save_chat_payload_windowed(
+            &dto.character_name,
+            &dto.file_name,
+            dto.cursor,
+            dto.header,
+            dto.lines,
+            dto.force.unwrap_or(false),
+        )
+        .await
+        .map_err(map_command_error("Failed to save windowed chat payload"))
+}
+
+#[tauri::command]
 pub async fn save_chat_payload_from_file(
     dto: SaveChatFromFileDto,
     app_state: State<'_, Arc<AppState>>,
@@ -404,6 +489,78 @@ pub async fn get_group_chat_path(
             id
         ))(error)),
     }
+}
+
+#[tauri::command]
+pub async fn get_group_chat_payload_tail(
+    id: String,
+    max_lines: usize,
+    allow_not_found: Option<bool>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ChatPayloadTail, CommandError> {
+    log_command(format!("get_group_chat_payload_tail {}", id));
+
+    let allow_not_found = allow_not_found.unwrap_or(false);
+    match app_state
+        .chat_service
+        .get_group_chat_payload_tail_lines(&id, max_lines)
+        .await
+    {
+        Ok(result) => Ok(result),
+        Err(ApplicationError::NotFound(_)) if allow_not_found => Ok(ChatPayloadTail {
+            header: String::new(),
+            lines: Vec::new(),
+            cursor: ChatPayloadCursor {
+                offset: 0,
+                size: 0,
+                modified_millis: 0,
+            },
+            has_more_before: false,
+        }),
+        Err(error) => Err(map_command_error(format!(
+            "Failed to get group chat payload tail {}",
+            id
+        ))(error)),
+    }
+}
+
+#[tauri::command]
+pub async fn get_group_chat_payload_before(
+    id: String,
+    cursor: ChatPayloadCursor,
+    max_lines: usize,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ChatPayloadChunk, CommandError> {
+    log_command(format!("get_group_chat_payload_before {}", id));
+
+    app_state
+        .chat_service
+        .get_group_chat_payload_before_lines(&id, cursor, max_lines)
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to get group chat payload before {}",
+            id
+        )))
+}
+
+#[tauri::command]
+pub async fn save_group_chat_payload_windowed(
+    dto: SaveGroupChatWindowedDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ChatPayloadCursor, CommandError> {
+    log_command(format!("save_group_chat_payload_windowed {}", dto.id));
+
+    app_state
+        .chat_service
+        .save_group_chat_payload_windowed(
+            &dto.id,
+            dto.cursor,
+            dto.header,
+            dto.lines,
+            dto.force.unwrap_or(false),
+        )
+        .await
+        .map_err(map_command_error("Failed to save windowed group chat payload"))
 }
 
 #[tauri::command]

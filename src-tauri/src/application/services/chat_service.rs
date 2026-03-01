@@ -10,7 +10,8 @@ use crate::application::errors::ApplicationError;
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatRepository, PinnedCharacterChat, PinnedGroupChat,
+    ChatExportFormat, ChatImportFormat, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
+    ChatRepository, PinnedCharacterChat, PinnedGroupChat,
 };
 
 /// Service for managing chats
@@ -397,6 +398,50 @@ impl ChatService {
         Ok(path.to_string_lossy().to_string())
     }
 
+    /// Get the tail window for a character chat JSONL payload.
+    pub async fn get_chat_payload_tail_lines(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        max_lines: usize,
+    ) -> Result<ChatPayloadTail, ApplicationError> {
+        self.chat_repository
+            .get_chat_payload_tail_lines(character_name, file_name, max_lines)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Get JSONL lines before the current character chat window cursor.
+    pub async fn get_chat_payload_before_lines(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        max_lines: usize,
+    ) -> Result<ChatPayloadChunk, ApplicationError> {
+        self.chat_repository
+            .get_chat_payload_before_lines(character_name, file_name, cursor, max_lines)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Save a windowed character chat payload by preserving bytes before cursor.offset and
+    /// overwriting from cursor.offset using the provided JSONL lines.
+    pub async fn save_chat_payload_windowed(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        lines: Vec<String>,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, ApplicationError> {
+        self.chat_repository
+            .save_chat_payload_windowed(character_name, file_name, cursor, header, lines, force)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Save a character chat payload from a JSONL file path.
     pub async fn save_chat_from_file(
         &self,
@@ -435,6 +480,47 @@ impl ChatService {
             .get_group_chat_payload_path(chat_id)
             .await?;
         Ok(path.to_string_lossy().to_string())
+    }
+
+    /// Get the tail window for a group chat JSONL payload.
+    pub async fn get_group_chat_payload_tail_lines(
+        &self,
+        chat_id: &str,
+        max_lines: usize,
+    ) -> Result<ChatPayloadTail, ApplicationError> {
+        self.chat_repository
+            .get_group_chat_payload_tail_lines(chat_id, max_lines)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Get JSONL lines before the current group chat window cursor.
+    pub async fn get_group_chat_payload_before_lines(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        max_lines: usize,
+    ) -> Result<ChatPayloadChunk, ApplicationError> {
+        self.chat_repository
+            .get_group_chat_payload_before_lines(chat_id, cursor, max_lines)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Save a windowed group chat payload by preserving bytes before cursor.offset and
+    /// overwriting from cursor.offset using the provided JSONL lines.
+    pub async fn save_group_chat_payload_windowed(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        lines: Vec<String>,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, ApplicationError> {
+        self.chat_repository
+            .save_group_chat_payload_windowed(chat_id, cursor, header, lines, force)
+            .await
+            .map_err(Into::into)
     }
 
     /// Save a group chat payload from a JSONL file path.

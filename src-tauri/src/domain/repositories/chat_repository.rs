@@ -51,6 +51,34 @@ pub enum ChatExportFormat {
     PlainText,
 }
 
+/// Cursor for windowed JSONL chat payload operations.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatPayloadCursor {
+    pub offset: u64,
+    pub size: u64,
+    pub modified_millis: i64,
+}
+
+/// Tail window for a chat JSONL payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatPayloadTail {
+    pub header: String,
+    pub lines: Vec<String>,
+    pub cursor: ChatPayloadCursor,
+    pub has_more_before: bool,
+}
+
+/// Window chunk returned for pagination requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatPayloadChunk {
+    pub lines: Vec<String>,
+    pub cursor: ChatPayloadCursor,
+    pub has_more_before: bool,
+}
+
 /// Repository interface for chat management
 #[async_trait]
 pub trait ChatRepository: Send + Sync {
@@ -186,6 +214,35 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
     ) -> Result<PathBuf, DomainError>;
 
+    /// Get the tail window for a character chat JSONL payload (excluding the header line).
+    async fn get_chat_payload_tail_lines(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        max_lines: usize,
+    ) -> Result<ChatPayloadTail, DomainError>;
+
+    /// Get JSONL lines before the current window cursor (excluding the header line).
+    async fn get_chat_payload_before_lines(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        max_lines: usize,
+    ) -> Result<ChatPayloadChunk, DomainError>;
+
+    /// Save a windowed character chat payload by preserving bytes before cursor.offset and
+    /// overwriting the tail from cursor.offset using the provided JSONL lines.
+    async fn save_chat_payload_windowed(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        lines: Vec<String>,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, DomainError>;
+
     /// Save raw JSONL bytes for a character chat payload from an existing file path.
     async fn save_chat_payload_from_path(
         &self,
@@ -197,6 +254,32 @@ pub trait ChatRepository: Send + Sync {
 
     /// Get the absolute path to a group chat payload file.
     async fn get_group_chat_payload_path(&self, chat_id: &str) -> Result<PathBuf, DomainError>;
+
+    /// Get the tail window for a group chat JSONL payload (excluding the header line).
+    async fn get_group_chat_payload_tail_lines(
+        &self,
+        chat_id: &str,
+        max_lines: usize,
+    ) -> Result<ChatPayloadTail, DomainError>;
+
+    /// Get JSONL lines before the current group chat window cursor (excluding the header line).
+    async fn get_group_chat_payload_before_lines(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        max_lines: usize,
+    ) -> Result<ChatPayloadChunk, DomainError>;
+
+    /// Save a windowed group chat payload by preserving bytes before cursor.offset and
+    /// overwriting the tail from cursor.offset using the provided JSONL lines.
+    async fn save_group_chat_payload_windowed(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        lines: Vec<String>,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, DomainError>;
 
     /// Save raw JSONL bytes for a group chat payload from an existing file path.
     async fn save_group_chat_payload_from_path(

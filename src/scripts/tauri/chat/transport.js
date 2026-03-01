@@ -1,6 +1,6 @@
 import { invoke, isTauriEnv } from '../../../tauri-bridge.js';
 import { fetchAssetStream, writeTempFileFromBytesIterable } from './asset-io.js';
-import { jsonlStreamToPayload, payloadToJsonlByteChunks } from './jsonl.js';
+import { jsonlStreamToPayload, jsonlToPayload, payloadToJsonlByteChunks } from './jsonl.js';
 
 function normalizeChatFileName(fileName) {
     const value = String(fileName || '').trim();
@@ -94,7 +94,7 @@ export async function loadCharacterChatPayload({ characterName, avatarUrl, fileN
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
     if (!normalizedCharacter || !normalizedFile) {
-        return [];
+        throw new Error('Invalid character chat payload request');
     }
 
     const path = await invoke('get_chat_payload_path', {
@@ -112,6 +112,48 @@ export async function loadCharacterChatPayload({ characterName, avatarUrl, fileN
 
     const stream = await fetchAssetStream(path);
     return jsonlStreamToPayload(stream);
+}
+
+export async function loadCharacterChatPayloadTail({ characterName, avatarUrl, fileName, maxLines, allowNotFound = true }) {
+    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
+    const normalizedFile = normalizeChatFileName(fileName);
+    if (!normalizedCharacter || !normalizedFile) {
+        throw new Error('Invalid character chat tail request');
+    }
+
+    const result = await invoke('get_chat_payload_tail', {
+        characterName: normalizedCharacter,
+        fileName: normalizedFile,
+        maxLines: Number(maxLines),
+        allowNotFound,
+    });
+
+    if (!result?.header) {
+        return { payload: [], cursor: null, hasMoreBefore: false };
+    }
+
+    const text = [result.header, ...(result.lines || [])].join('\n');
+    const payload = jsonlToPayload(text);
+    return { payload, cursor: result.cursor, hasMoreBefore: Boolean(result.hasMoreBefore) };
+}
+
+export async function loadCharacterChatPayloadBefore({ characterName, avatarUrl, fileName, cursor, maxLines }) {
+    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
+    const normalizedFile = normalizeChatFileName(fileName);
+    if (!normalizedCharacter || !normalizedFile) {
+        throw new Error('Invalid character chat before request');
+    }
+
+    const result = await invoke('get_chat_payload_before', {
+        characterName: normalizedCharacter,
+        fileName: normalizedFile,
+        cursor,
+        maxLines: Number(maxLines),
+    });
+
+    const text = (result?.lines || []).join('\n');
+    const messages = jsonlToPayload(text);
+    return { messages, cursor: result.cursor, hasMoreBefore: Boolean(result.hasMoreBefore) };
 }
 
 export async function saveCharacterChatPayload({ characterName, avatarUrl, fileName, payload, force = false }) {
@@ -134,10 +176,32 @@ export async function saveCharacterChatPayload({ characterName, avatarUrl, fileN
     }));
 }
 
+export async function saveCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, payload, force = false }) {
+    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
+    const normalizedFile = normalizeChatFileName(fileName);
+    if (!Array.isArray(payload) || payload.length === 0 || !normalizedCharacter || !normalizedFile) {
+        throw new Error('Invalid chat payload');
+    }
+
+    const header = JSON.stringify(payload[0]);
+    const lines = payload.slice(1).map((entry) => JSON.stringify(entry));
+
+    return invoke('save_chat_payload_windowed', {
+        dto: {
+            ch_name: normalizedCharacter,
+            file_name: normalizedFile,
+            cursor,
+            header,
+            lines,
+            force,
+        },
+    });
+}
+
 export async function loadGroupChatPayload({ id, allowNotFound = true }) {
     const normalizedId = normalizeChatFileName(id);
     if (!normalizedId) {
-        return [];
+        throw new Error('Invalid group chat payload request');
     }
 
     const path = await invoke('get_group_chat_path', {
@@ -156,6 +220,44 @@ export async function loadGroupChatPayload({ id, allowNotFound = true }) {
     return jsonlStreamToPayload(stream);
 }
 
+export async function loadGroupChatPayloadTail({ id, maxLines, allowNotFound = true }) {
+    const normalizedId = normalizeChatFileName(id);
+    if (!normalizedId) {
+        throw new Error('Invalid group chat tail request');
+    }
+
+    const result = await invoke('get_group_chat_payload_tail', {
+        id: normalizedId,
+        maxLines: Number(maxLines),
+        allowNotFound,
+    });
+
+    if (!result?.header) {
+        return { payload: [], cursor: null, hasMoreBefore: false };
+    }
+
+    const text = [result.header, ...(result.lines || [])].join('\n');
+    const payload = jsonlToPayload(text);
+    return { payload, cursor: result.cursor, hasMoreBefore: Boolean(result.hasMoreBefore) };
+}
+
+export async function loadGroupChatPayloadBefore({ id, cursor, maxLines }) {
+    const normalizedId = normalizeChatFileName(id);
+    if (!normalizedId) {
+        throw new Error('Invalid group chat before request');
+    }
+
+    const result = await invoke('get_group_chat_payload_before', {
+        id: normalizedId,
+        cursor,
+        maxLines: Number(maxLines),
+    });
+
+    const text = (result?.lines || []).join('\n');
+    const messages = jsonlToPayload(text);
+    return { messages, cursor: result.cursor, hasMoreBefore: Boolean(result.hasMoreBefore) };
+}
+
 export async function saveGroupChatPayload({ id, payload, force = false }) {
     const normalizedId = normalizeChatFileName(id);
     if (!Array.isArray(payload) || payload.length === 0 || !normalizedId) {
@@ -172,4 +274,24 @@ export async function saveGroupChatPayload({ id, payload, force = false }) {
             force,
         },
     }));
+}
+
+export async function saveGroupChatPayloadWindowed({ id, cursor, payload, force = false }) {
+    const normalizedId = normalizeChatFileName(id);
+    if (!Array.isArray(payload) || payload.length === 0 || !normalizedId) {
+        throw new Error('Invalid group chat payload');
+    }
+
+    const header = JSON.stringify(payload[0]);
+    const lines = payload.slice(1).map((entry) => JSON.stringify(entry));
+
+    return invoke('save_group_chat_payload_windowed', {
+        dto: {
+            id: normalizedId,
+            cursor,
+            header,
+            lines,
+            force,
+        },
+    });
 }

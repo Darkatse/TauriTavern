@@ -14,10 +14,20 @@ import { getClientVersion as getBridgeClientVersion } from './tauri-bridge.js';
 import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
 import {
     isTauriChatPayloadTransportEnabled,
-    loadGroupChatPayload,
     loadCharacterChatPayload,
+    loadCharacterChatPayloadTail,
+    loadCharacterChatPayloadBefore,
+    loadGroupChatPayload,
+    loadGroupChatPayloadBefore,
     saveCharacterChatPayload,
+    saveCharacterChatPayloadWindowed,
 } from './scripts/chat-payload-transport.js';
+import {
+    clearWindowedChatState,
+    DEFAULT_CHAT_WINDOW_LINES,
+    getWindowedChatState,
+    setWindowedChatState,
+} from './scripts/tauri/chat/windowed-state.js';
 import { extension_prompt_roles, extension_prompt_types } from './scripts/extension-prompts.js';
 import { waitForTauriMainReady } from './scripts/extensions/runtime/tauri-ready.js';
 
@@ -1485,6 +1495,86 @@ export async function replaceCurrentChat() {
 }
 
 export async function showMoreMessages(messagesToLoad = null) {
+    const windowState = getWindowedChatState();
+    if (windowState && isTauriChatPayloadTransportEnabled()) {
+        if (!windowState.cursor) {
+            throw new Error('Windowed chat cursor is missing');
+        }
+
+        const count = Number(messagesToLoad || DEFAULT_CHAT_WINDOW_LINES);
+        const prevHeight = chatElement.prop('scrollHeight');
+        const showMoreButton = $('#show_more_messages');
+        const isButtonInView = showMoreButton[0] && isElementInViewport(showMoreButton[0]);
+
+        const result = windowState.kind === 'group'
+            ? await loadGroupChatPayloadBefore({
+                id: windowState.id,
+                cursor: windowState.cursor,
+                maxLines: count,
+            })
+            : await loadCharacterChatPayloadBefore({
+                characterName: windowState.characterName,
+                avatarUrl: windowState.avatarUrl,
+                fileName: windowState.fileName,
+                cursor: windowState.cursor,
+                maxLines: count,
+            });
+
+        const messages = result?.messages;
+        if (!Array.isArray(messages) || messages.length === 0) {
+            showMoreButton.remove();
+            setWindowedChatState({
+                ...windowState,
+                cursor: result?.cursor ?? windowState.cursor,
+                hasMoreBefore: false,
+            });
+            await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
+            return;
+        }
+
+        messages.forEach(ensureMessageMediaIsArray);
+        chat.splice(0, 0, ...messages);
+        if (this_edit_mes_id >= 0) {
+            this_edit_mes_id = Number(this_edit_mes_id) + messages.length;
+        }
+
+        const fragment = document.createDocumentFragment();
+        for (let id = 0; id < messages.length; id += 1) {
+            const messageElement = updateMessageElement(chat[id], { messageId: id });
+            fragment.appendChild(messageElement[0]);
+        }
+
+        if (showMoreButton[0]) {
+            showMoreButton[0].after(fragment);
+        } else {
+            chatElement[0].prepend(fragment);
+        }
+
+        updateViewMessageIds(0);
+        refreshSwipeButtons();
+
+        const hasMoreBefore = Boolean(result?.hasMoreBefore);
+        setWindowedChatState({
+            ...windowState,
+            cursor: result.cursor,
+            hasMoreBefore,
+        });
+
+        if (!hasMoreBefore) {
+            showMoreButton.remove();
+        }
+
+        if (isButtonInView) {
+            const newHeight = chatElement.prop('scrollHeight');
+            chatElement.scrollTop(newHeight - prevHeight);
+        }
+
+        applyStylePins();
+        applyCharacterTagsToMessageDivs();
+        await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
+        return;
+    }
+
     const firstDisplayedMesId = chatElement.children('.mes').first().attr('mesid');
     let messageId = Number(firstDisplayedMesId);
     let count = messagesToLoad || power_user.chat_truncation || Number.MAX_SAFE_INTEGER;
@@ -1501,16 +1591,16 @@ export async function showMoreMessages(messagesToLoad = null) {
     const isButtonInView = isElementInViewport(showMoreButton[0]);
 
     const firstId = clamp(messageId - count, 0, Infinity);
-    const messageElements = [];
-    chat.slice(firstId, messageId).forEach((message, id) => {
-        messageElements.push(updateMessageElement(message, { messageId: firstId + id }));
-    });
-    // This could be faster: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentElement
-    // Fallback to chatElement if the button isn't where it's expected to be.
+    const fragment = document.createDocumentFragment();
+    for (let id = firstId; id < messageId; id += 1) {
+        const messageElement = updateMessageElement(chat[id], { messageId: id });
+        fragment.appendChild(messageElement[0]);
+    }
+
     if (showMoreButton[0]) {
-        showMoreButton.after(messageElements);
+        showMoreButton[0].after(fragment);
     } else {
-        chatElement.prepend(messageElements);
+        chatElement[0].prepend(fragment);
     }
 
     refreshSwipeButtons();
@@ -1525,16 +1615,27 @@ export async function showMoreMessages(messagesToLoad = null) {
     }
 
     applyStylePins();
+    applyCharacterTagsToMessageDivs();
     await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
 }
 
 export async function printMessages() {
-    let startIndex = 0;
-    let count = power_user.chat_truncation || Number.MAX_SAFE_INTEGER;
+    const windowState = getWindowedChatState();
+    const isWindowed = Boolean(windowState);
 
-    if (chat.length > count) {
-        startIndex = chat.length - count;
-        chatElement.append('<div id="show_more_messages">Show more messages</div>');
+    let startIndex = 0;
+
+    if (isWindowed) {
+        if (windowState.hasMoreBefore) {
+            chatElement.append('<div id="show_more_messages">Show more messages</div>');
+        }
+    } else {
+        const count = power_user.chat_truncation || Number.MAX_SAFE_INTEGER;
+
+        if (chat.length > count) {
+            startIndex = chat.length - count;
+            chatElement.append('<div id="show_more_messages">Show more messages</div>');
+        }
     }
 
     await redisplayChat({ startIndex, fade: false });
@@ -1559,23 +1660,31 @@ export async function redisplayChat({ targetChat = chat, startIndex = 0, fade = 
 
     const t1 = performance.now();
 
-    const messages = targetChat.slice(startIndex);
+    if (startIndex < targetChat.length) {
+        const appendTarget = chatElement[0];
+        const batchSize = 20;
+        let lastMessageElement = null;
 
-    if (messages.length > 0) {
-        const newMessageElements = messages.map((message, offset) => {
-            const i = startIndex + offset;
-            const messageElement = updateMessageElement(message, { messageId: i });
+        for (let batchStart = startIndex; batchStart < targetChat.length; batchStart += batchSize) {
+            const batchEnd = Math.min(batchStart + batchSize, targetChat.length);
+            const fragment = document.createDocumentFragment();
 
-            return messageElement[0];
-        });
+            for (let id = batchStart; id < batchEnd; id += 1) {
+                const messageElement = updateMessageElement(targetChat[id], { messageId: id });
+                const element = messageElement[0];
+                fragment.appendChild(element);
+                lastMessageElement = element;
+            }
 
-        //The last_mes has been removed, add it to the new last message.
-        newMessageElements.at(-1).classList.add('last_mes');
+            appendTarget.appendChild(fragment);
 
-        //Append to chat in one DOM update.
-        chatElement.append(newMessageElements);
+            if (batchEnd < targetChat.length) {
+                await new Promise((resolve) => requestAnimationFrame(resolve));
+            }
+        }
 
-        applyCharacterTagsToMessageDivs({ mesIds: lodash.range(startIndex, targetChat.length, 1) });
+        lastMessageElement.classList.add('last_mes');
+        applyCharacterTagsToMessageDivs();
     }
 
     refreshSwipeButtons(false, fade);
@@ -1808,6 +1917,36 @@ export async function sendTextareaMessage() {
  * @param {boolean} [isReasoning] If the message is reasoning output
  * @returns {string} HTML string
  */
+let nonSystemDepthByMesId = null;
+
+function rebuildNonSystemDepthByMesId() {
+    const depthByMesId = new Int32Array(chat.length);
+    depthByMesId.fill(-1);
+
+    let depth = 0;
+    for (let id = chat.length - 1; id >= 0; id -= 1) {
+        if (!chat[id].is_system) {
+            depthByMesId[id] = depth;
+            depth += 1;
+        }
+    }
+
+    nonSystemDepthByMesId = depthByMesId;
+}
+
+function getNonSystemDepth(messageId) {
+    if (!Number.isInteger(messageId) || messageId < 0) {
+        return undefined;
+    }
+
+    if (!nonSystemDepthByMesId || nonSystemDepthByMesId.length !== chat.length) {
+        rebuildNonSystemDepthByMesId();
+    }
+
+    const depth = nonSystemDepthByMesId[messageId];
+    return depth >= 0 ? depth : undefined;
+}
+
 export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides = {}, isReasoning = false) {
     if (!mes) {
         return '';
@@ -1841,27 +1980,15 @@ export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, san
     }
 
     if (!isSystem) {
-        function getRegexPlacement() {
-            try {
-                if (isReasoning) {
-                    return regex_placement.REASONING;
-                }
-                if (isUser) {
-                    return regex_placement.USER_INPUT;
-                } else if (chat[messageId]?.extra?.type === 'narrator') {
-                    return regex_placement.SLASH_COMMAND;
-                } else {
-                    return regex_placement.AI_OUTPUT;
-                }
-            } catch {
-                return regex_placement.AI_OUTPUT;
-            }
-        }
-
-        const regexPlacement = getRegexPlacement();
-        const usableMessages = chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
-        const indexOf = usableMessages.findIndex(x => x.index === Number(messageId));
-        const depth = messageId >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
+        const numericMessageId = Number(messageId);
+        const regexPlacement = isReasoning
+            ? regex_placement.REASONING
+            : (isUser
+                ? regex_placement.USER_INPUT
+                : (chat[numericMessageId]?.extra?.type === 'narrator'
+                    ? regex_placement.SLASH_COMMAND
+                    : regex_placement.AI_OUTPUT));
+        const depth = getNonSystemDepth(numericMessageId);
 
         // Always override the character name
         mes = getRegexedString(mes, regexPlacement, {
@@ -7314,6 +7441,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
     }
 
     const metadata = { ...chat_metadata, ...(withMetadata || {}) };
+    delete metadata.lastInContextMessageId;
     const fileName = chatName ?? characters[this_chid]?.chat;
 
     if (!fileName && name2 === neutralCharacterName) {
@@ -7345,13 +7473,30 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
 
     try {
         if (isTauriChatPayloadTransportEnabled()) {
-            await saveCharacterChatPayload({
-                characterName: characters[this_chid].name,
-                avatarUrl: characters[this_chid].avatar,
-                fileName: fileName,
-                payload,
-                force: Boolean(force),
-            });
+            const windowState = getWindowedChatState();
+            if (windowState?.kind === 'character' && windowState.cursor && windowState.fileName === fileName) {
+                const cursor = await saveCharacterChatPayloadWindowed({
+                    characterName: characters[this_chid].name,
+                    avatarUrl: characters[this_chid].avatar,
+                    fileName: fileName,
+                    cursor: windowState.cursor,
+                    payload,
+                    force: Boolean(force),
+                });
+
+                setWindowedChatState({
+                    ...windowState,
+                    cursor,
+                });
+            } else {
+                await saveCharacterChatPayload({
+                    characterName: characters[this_chid].name,
+                    avatarUrl: characters[this_chid].avatar,
+                    fileName: fileName,
+                    payload,
+                    force: Boolean(force),
+                });
+            }
             return;
         }
 
@@ -7579,13 +7724,30 @@ export async function getChat() {
         let data;
 
         if (usePayloadTransport) {
-            data = await loadCharacterChatPayload({
+            const window = await loadCharacterChatPayloadTail({
                 characterName: characters[this_chid].name,
                 avatarUrl: characters[this_chid].avatar,
                 fileName: characters[this_chid].chat,
+                maxLines: DEFAULT_CHAT_WINDOW_LINES,
                 allowNotFound: true,
             });
+
+            data = window.payload;
+
+            if (window.cursor) {
+                setWindowedChatState({
+                    kind: 'character',
+                    characterName: characters[this_chid].name,
+                    avatarUrl: characters[this_chid].avatar,
+                    fileName: characters[this_chid].chat,
+                    cursor: window.cursor,
+                    hasMoreBefore: window.hasMoreBefore,
+                });
+            } else {
+                clearWindowedChatState();
+            }
         } else {
+            clearWindowedChatState();
             const response = await fetch('/api/chats/get', {
                 method: 'POST',
                 headers: getRequestHeaders(),

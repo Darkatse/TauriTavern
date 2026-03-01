@@ -8,8 +8,8 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage};
 use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatRepository, ChatSearchResult, PinnedCharacterChat,
-    PinnedGroupChat,
+    ChatExportFormat, ChatImportFormat, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
+    ChatRepository, ChatSearchResult, PinnedCharacterChat, PinnedGroupChat,
 };
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::chat_format_importers::{
@@ -740,6 +740,40 @@ impl ChatRepository for FileChatRepository {
         Ok(path)
     }
 
+    async fn get_chat_payload_tail_lines(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        max_lines: usize,
+    ) -> Result<ChatPayloadTail, DomainError> {
+        self.get_character_payload_tail_lines(character_name, file_name, max_lines)
+            .await
+    }
+
+    async fn get_chat_payload_before_lines(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        max_lines: usize,
+    ) -> Result<ChatPayloadChunk, DomainError> {
+        self.get_character_payload_before_lines(character_name, file_name, cursor, max_lines)
+            .await
+    }
+
+    async fn save_chat_payload_windowed(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        lines: Vec<String>,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, DomainError> {
+        self.save_character_payload_windowed(character_name, file_name, cursor, header, lines, force)
+            .await
+    }
+
     async fn save_chat_payload_from_path(
         &self,
         character_name: &str,
@@ -786,6 +820,36 @@ impl ChatRepository for FileChatRepository {
         }
 
         Ok(path)
+    }
+
+    async fn get_group_chat_payload_tail_lines(
+        &self,
+        chat_id: &str,
+        max_lines: usize,
+    ) -> Result<ChatPayloadTail, DomainError> {
+        self.get_group_payload_tail_lines(chat_id, max_lines).await
+    }
+
+    async fn get_group_chat_payload_before_lines(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        max_lines: usize,
+    ) -> Result<ChatPayloadChunk, DomainError> {
+        self.get_group_payload_before_lines(chat_id, cursor, max_lines)
+            .await
+    }
+
+    async fn save_group_chat_payload_windowed(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        lines: Vec<String>,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, DomainError> {
+        self.save_group_payload_windowed(chat_id, cursor, header, lines, force)
+            .await
     }
 
     async fn save_group_chat_payload_from_path(

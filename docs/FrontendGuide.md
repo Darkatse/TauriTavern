@@ -96,6 +96,19 @@ src/
 | `chat-routes.js` | 聊天读写、搜索、最近记录、导出 |
 | `ai-routes.js` | Chat Completion（OpenAI / Claude / Gemini(MakerSuite)）与 tokenizer（count/encode/decode/bias） |
 
+## 6.1 聊天分段加载（Windowed Loading，Phase 2-C）
+
+- 只在 Tauri 环境启用：以 `isTauriChatPayloadTransportEnabled()` 为准。
+- 上游接管点：`src/script.js`（character chat）与 `src/scripts/group-chats.js`（group chat）。
+- 统一入口：上游只 import `src/scripts/chat-payload-transport.js`（不要直接依赖 `src/scripts/tauri/chat/*`）。
+- window state：`src/scripts/tauri/chat/windowed-state.js`
+  - 桌面：`DEFAULT_CHAT_WINDOW_LINES_DESKTOP = 100`
+  - 移动端（Android/iOS runtime）：`DEFAULT_CHAT_WINDOW_LINES_MOBILE = 50`
+- 初次加载：`load*PayloadTail({ maxLines }) -> { payload, cursor, hasMoreBefore }`。
+- 翻页：`load*PayloadBefore({ cursor, maxLines }) -> { messages, cursor, hasMoreBefore }`；prepend 后必须 `updateViewMessageIds(0)`。
+- 保存：`save*PayloadWindowed({ cursor, payload }) -> cursor` 并回写 window state；保存前不要落盘 `chat_metadata.lastInContextMessageId`。
+- 错误策略：cursor 签名/边界失效直接抛错；不要写“静默回退到全量加载/全量保存”的 fallback。
+
 ## 7. 插件系统前端适配
 
 ### 7.1 设计目标

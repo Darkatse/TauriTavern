@@ -423,16 +423,17 @@ tauri::Builder::default()
 
 - `domain/repositories/chat_repository.rs`
   - 保留 typed API（`get_chat` / `save` / `search_chats` 等）用于领域操作。
-  - payload API 扩展为三类：对象数组（`*_payload`）、字节流（`*_payload_bytes`）、路径/文件直通（`*_payload_path`、`*_payload_from_path`）。
+  - payload API：path/from-file（大文件，data plane）+ windowed（tail/before/windowed-save，小窗口，control plane）。
+  - windowed 数据结构：`ChatPayloadCursor` / `ChatPayloadTail` / `ChatPayloadChunk`。
 - `application/services/chat_service.rs`
-  - 新增 character/group 的 path/from-file 服务方法；`save_*_from_file` 走仓库路径直通，避免整文件通过 IPC。
+  - path/from-file（导入/全量保存）+ windowed（tail/before/windowed-save）。
 - `presentation/commands/chat_commands.rs`
-  - 前端大 payload 不再通过命令传输；仅读取 payload path、保存 from-file：
-    - `get_chat_payload_path` / `save_chat_payload_from_file`
-    - `get_group_chat_path` / `save_group_chat_from_file`
+  - 大 payload：仅读取 payload path、保存 from-file（避免整文件通过 IPC）。
+  - windowed：提供 tail/before/windowed-save 命令（传输有上限的 header/lines）。
 - `infrastructure/repositories/file_chat_repository/`
   - `repository_impl.rs`：统一编排 typed/payload/bytes/path 写入入口。
   - `payload.rs`：完整性校验、字节写入、文件路径直通写入（原子替换 + 备份）。
+  - `windowed_payload.rs`：tail/before/windowed-save（保留 prefix + 覆写 tail）。
   - `jsonl_utils.rs`：`parse_jsonl_bytes`、`write_jsonl_file`、`read_first_non_empty_jsonl_line` 等基础能力。
   - 完整性校验改为“首个非空行”解析，避免为校验反序列化整个文件。
 
@@ -450,7 +451,18 @@ tauri::Builder::default()
 4. 完整性冲突  
 当现有文件的 `chat_metadata.integrity` 与待写入 payload 不一致且 `force=false` 时，仓库返回 `DomainError::InvalidData("integrity")`，前端映射为冲突提示并可二次 `force` 覆盖。
 
-#### 3.5.4 文件系统与备份语义
+5. 分段加载/保存（Windowed，Phase 2-C）  
+前端通过 `get_*_payload_tail` / `get_*_payload_before` 分页读取小窗口行；保存走 `save_*_payload_windowed`（保留 `cursor.offset` 前缀 + 覆写 tail，带签名校验）。
+
+#### 3.5.4 聊天分段加载/保存（Windowed Payload，2026-03）
+
+- Cursor：`{ offset, size, modifiedMillis }`；签名不匹配/offset 非行边界直接 `InvalidData`（不做隐式 fallback）。
+- Tail：`get_chat_payload_tail` / `get_group_chat_payload_tail` -> `{ header, lines, cursor, hasMoreBefore }`。
+- Before：`get_chat_payload_before` / `get_group_chat_payload_before`（不含 header，向前分页）。
+- Windowed Save：保留 prefix + 覆写 tail；header 变化则 tmp 重写 header + copy prefix + append -> rename。
+- 代码入口：`infrastructure/repositories/file_chat_repository/windowed_payload.rs` + `presentation/commands/chat_commands.rs`。
+
+#### 3.5.5 文件系统与备份语义
 
 - 角色聊天：`default-user/chats/<character_id>/*.jsonl`
 - 群聊：`default-user/group chats/*.jsonl`
@@ -659,6 +671,8 @@ TauriTavern的后端API通过Tauri命令暴露给前端。以下是主要API类�
 | `get_character_chats` | 获取角色的聊天 | `characterName: String` | `Vec<ChatDto>` |
 | `get_chat` | 获取单个聊天 | `characterName: String, fileName: String` | `ChatDto` |
 | `get_chat_payload_path` | 获取角色聊天文件绝对路径 | `characterName: String, fileName: String, allowNotFound?: bool` | `String` |
+| `get_chat_payload_tail` | 获取角色聊天尾部窗口（header+lines+cursor） | `characterName: String, fileName: String, maxLines: usize, allowNotFound?: bool` | `ChatPayloadTail` |
+| `get_chat_payload_before` | 获取 cursor 之前窗口（不含 header） | `characterName: String, fileName: String, cursor: ChatPayloadCursor, maxLines: usize` | `ChatPayloadChunk` |
 | `create_chat` | 创建新聊天 | `CreateChatDto` | `ChatDto` |
 | `delete_chat` | 删除聊天 | `characterName: String, fileName: String` | `()` |
 | `add_message` | 添加消息 | `AddMessageDto` | `ChatDto` |
@@ -668,6 +682,7 @@ TauriTavern的后端API通过Tauri命令暴露给前端。以下是主要API类�
 | `import_character_chats` | 导入角色聊天（payload链路） | `ImportCharacterChatsDto` | `Vec<String>` |
 | `export_chat` | 导出聊天 | `ExportChatDto` | `()` |
 | `save_chat_payload_from_file` | 从现有JSONL文件路径保存角色聊天 | `SaveChatFromFileDto` | `()` |
+| `save_chat_payload_windowed` | windowed 保存角色聊天（保留 prefix + 覆写 tail） | `SaveChatWindowedDto` | `ChatPayloadCursor` |
 | `backup_chat` | 触发聊天备份 | `characterName: String, fileName: String` | `()` |
 | `clear_chat_cache` | 清理聊天缓存 | 无 | `()` |
 
@@ -676,7 +691,10 @@ TauriTavern的后端API通过Tauri命令暴露给前端。以下是主要API类�
 | 命令 | 描述 | 参数 | 返回值 |
 |------|------|------|--------|
 | `get_group_chat_path` | 获取群聊文件绝对路径 | `id: String, allowNotFound?: bool` | `String` |
+| `get_group_chat_payload_tail` | 获取群聊尾部窗口（header+lines+cursor） | `id: String, maxLines: usize, allowNotFound?: bool` | `ChatPayloadTail` |
+| `get_group_chat_payload_before` | 获取 cursor 之前窗口（不含 header） | `id: String, cursor: ChatPayloadCursor, maxLines: usize` | `ChatPayloadChunk` |
 | `save_group_chat_from_file` | 从现有JSONL文件路径保存群聊 | `SaveGroupChatFromFileDto` | `()` |
+| `save_group_chat_payload_windowed` | windowed 保存群聊（保留 prefix + 覆写 tail） | `SaveGroupChatWindowedDto` | `ChatPayloadCursor` |
 | `delete_group_chat` | 删除群聊聊天文件 | `DeleteGroupChatDto` | `()` |
 | `rename_group_chat` | 重命名群聊聊天文件 | `RenameGroupChatDto` | `()` |
 | `import_group_chat_payload` | 导入群聊JSONL文件 | `ImportGroupChatDto` | `String` |

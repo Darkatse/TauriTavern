@@ -11,6 +11,7 @@ mod paths;
 mod payload;
 mod repository_impl;
 mod summary;
+mod windowed_payload;
 
 #[cfg(test)]
 mod tests;

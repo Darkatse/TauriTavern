@@ -88,9 +88,16 @@ import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import {
     isTauriChatPayloadTransportEnabled,
-    loadGroupChatPayload,
+    loadGroupChatPayloadTail,
     saveGroupChatPayload,
+    saveGroupChatPayloadWindowed,
 } from './chat-payload-transport.js';
+import {
+    clearWindowedChatState,
+    DEFAULT_CHAT_WINDOW_LINES,
+    getWindowedChatState,
+    setWindowedChatState,
+} from './tauri/chat/windowed-state.js';
 
 export {
     selected_group,
@@ -204,13 +211,27 @@ async function loadGroupChat(chatId) {
     }
 
     if (isTauriChatPayloadTransportEnabled()) {
-        const data = await loadGroupChatPayload({
+        const window = await loadGroupChatPayloadTail({
             id: normalizedChatId,
+            maxLines: DEFAULT_CHAT_WINDOW_LINES,
             allowNotFound: true,
         });
-        return data;
+
+        if (window.cursor) {
+            setWindowedChatState({
+                kind: 'group',
+                id: normalizedChatId,
+                cursor: window.cursor,
+                hasMoreBefore: window.hasMoreBefore,
+            });
+        } else {
+            clearWindowedChatState();
+        }
+
+        return window.payload;
     }
 
+    clearWindowedChatState();
     const response = await fetch('/api/chats/group/get', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -647,9 +668,11 @@ async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
     }
     const chatId = group.chat_id;
     group.date_last_chat = Date.now();
+    const metadata = { ...chat_metadata };
+    delete metadata.lastInContextMessageId;
     /** @type {ChatHeader} */
     const chatHeader = {
-        chat_metadata: { ...chat_metadata },
+        chat_metadata: metadata,
         user_name: 'unused',
         character_name: 'unused',
     };
@@ -660,11 +683,26 @@ async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
 
     try {
         if (isTauriChatPayloadTransportEnabled()) {
-            await saveGroupChatPayload({
-                id: chatId,
-                payload,
-                force: Boolean(force),
-            });
+            const windowState = getWindowedChatState();
+            if (windowState?.kind === 'group' && windowState.cursor && windowState.id === chatId) {
+                const cursor = await saveGroupChatPayloadWindowed({
+                    id: chatId,
+                    cursor: windowState.cursor,
+                    payload,
+                    force: Boolean(force),
+                });
+
+                setWindowedChatState({
+                    ...windowState,
+                    cursor,
+                });
+            } else {
+                await saveGroupChatPayload({
+                    id: chatId,
+                    payload,
+                    force: Boolean(force),
+                });
+            }
         } else {
             const response = await fetch('/api/chats/group/save', {
                 method: 'POST',

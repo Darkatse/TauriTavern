@@ -1,6 +1,7 @@
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatSearchResult, PinnedCharacterChat, PinnedGroupChat,
+    ChatExportFormat, ChatImportFormat, ChatPayloadCursor, ChatSearchResult, PinnedCharacterChat,
+    PinnedGroupChat,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -162,11 +163,33 @@ pub struct SaveChatFromFileDto {
     pub force: Option<bool>,
 }
 
+/// DTO for saving a windowed character chat payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveChatWindowedDto {
+    #[serde(rename = "ch_name")]
+    pub character_name: String,
+    pub file_name: String,
+    pub cursor: ChatPayloadCursor,
+    pub header: String,
+    pub lines: Vec<String>,
+    pub force: Option<bool>,
+}
+
 /// DTO for saving a group chat payload from an existing JSONL file path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveGroupChatFromFileDto {
     pub id: String,
     pub file_path: String,
+    pub force: Option<bool>,
+}
+
+/// DTO for saving a windowed group chat payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveGroupChatWindowedDto {
+    pub id: String,
+    pub cursor: ChatPayloadCursor,
+    pub header: String,
+    pub lines: Vec<String>,
     pub force: Option<bool>,
 }
 
