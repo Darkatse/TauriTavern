@@ -198,6 +198,25 @@ export async function saveCharacterChatPayloadWindowed({ characterName, avatarUr
     });
 }
 
+export async function patchCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, header, patch, force = false }) {
+    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
+    const normalizedFile = normalizeChatFileName(fileName);
+    if (!normalizedCharacter || !normalizedFile) {
+        throw new Error('Invalid chat payload patch request');
+    }
+
+    return invoke('patch_chat_payload_windowed', {
+        dto: {
+            ch_name: normalizedCharacter,
+            file_name: normalizedFile,
+            cursor,
+            header: String(header),
+            patch,
+            force,
+        },
+    });
+}
+
 export async function loadGroupChatPayload({ id, allowNotFound = true }) {
     const normalizedId = normalizeChatFileName(id);
     if (!normalizedId) {
@@ -291,6 +310,23 @@ export async function saveGroupChatPayloadWindowed({ id, cursor, payload, force 
             cursor,
             header,
             lines,
+            force,
+        },
+    });
+}
+
+export async function patchGroupChatPayloadWindowed({ id, cursor, header, patch, force = false }) {
+    const normalizedId = normalizeChatFileName(id);
+    if (!normalizedId) {
+        throw new Error('Invalid group chat payload patch request');
+    }
+
+    return invoke('patch_group_chat_payload_windowed', {
+        dto: {
+            id: normalizedId,
+            cursor,
+            header: String(header),
+            patch,
             force,
         },
     });

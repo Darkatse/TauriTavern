@@ -7,7 +7,7 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::character::sanitize_filename;
 use crate::domain::repositories::chat_repository::{
-    ChatRepository, PinnedCharacterChat, PinnedGroupChat,
+    ChatPayloadPatchOp, ChatRepository, PinnedCharacterChat, PinnedGroupChat,
 };
 
 use super::FileChatRepository;
@@ -1163,6 +1163,141 @@ async fn save_chat_payload_from_values(
     repository
         .save_chat_payload_from_path(character_name, file_name, &source_path, force)
         .await
+}
+
+#[tokio::test]
+async fn patch_chat_payload_windowed_appends_and_rewrites_tail() {
+    let (repository, root) = setup_repository().await;
+
+    let character_name = "alice";
+    let file_name = "session";
+
+    let payload = vec![
+        payload_with_integrity("patch-a")[0].clone(),
+        json!({
+            "name": "User",
+            "is_user": true,
+            "send_date": "2026-01-01T00:00:00.000Z",
+            "mes": "hello",
+            "extra": {},
+        }),
+        json!({
+            "name": "Alice",
+            "is_user": false,
+            "send_date": "2026-01-01T00:00:01.000Z",
+            "mes": "hi",
+            "extra": {},
+        }),
+    ];
+
+    save_chat_payload_from_values(&repository, &root, character_name, file_name, &payload, false)
+        .await
+        .expect("save initial payload");
+
+    let tail = repository
+        .get_chat_payload_tail_lines(character_name, file_name, 100)
+        .await
+        .expect("get tail");
+    assert_eq!(tail.lines.len(), 2);
+
+    let new_message = json!({
+        "name": "User",
+        "is_user": true,
+        "send_date": "2026-01-01T00:00:02.000Z",
+        "mes": "more",
+        "extra": {},
+    });
+    let new_line = serde_json::to_string(&new_message).expect("serialize new line");
+
+    let cursor = repository
+        .patch_chat_payload_windowed(
+            character_name,
+            file_name,
+            tail.cursor,
+            tail.header.clone(),
+            ChatPayloadPatchOp::Append {
+                lines: vec![new_line.clone()],
+            },
+            false,
+        )
+        .await
+        .expect("append patch");
+
+    let bytes = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("read patched payload bytes");
+    let text = String::from_utf8(bytes).expect("payload should be utf8");
+    let values = text
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse json line"))
+        .collect::<Vec<_>>();
+    assert_eq!(values.len(), 4);
+    assert_eq!(values[3], new_message);
+
+    let updated_message = json!({
+        "name": "User",
+        "is_user": true,
+        "send_date": "2026-01-01T00:00:02.000Z",
+        "mes": "more!",
+        "extra": {},
+    });
+    let updated_line = serde_json::to_string(&updated_message).expect("serialize updated line");
+
+    let cursor = repository
+        .patch_chat_payload_windowed(
+            character_name,
+            file_name,
+            cursor,
+            tail.header,
+            ChatPayloadPatchOp::RewriteFromIndex {
+                start_index: 2,
+                lines: vec![updated_line],
+            },
+            false,
+        )
+        .await
+        .expect("rewrite tail from index");
+
+    let bytes = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("read rewritten payload bytes");
+    let text = String::from_utf8(bytes).expect("payload should be utf8");
+    let values = text
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse json line"))
+        .collect::<Vec<_>>();
+    assert_eq!(values.len(), 4);
+    assert_eq!(values[3], updated_message);
+
+    repository
+        .patch_chat_payload_windowed(
+            character_name,
+            file_name,
+            cursor,
+            serde_json::to_string(&values[0]).expect("serialize header"),
+            ChatPayloadPatchOp::RewriteFromIndex {
+                start_index: 1,
+                lines: Vec::new(),
+            },
+            false,
+        )
+        .await
+        .expect("truncate tail from index");
+
+    let bytes = repository
+        .get_chat_payload_bytes(character_name, file_name)
+        .await
+        .expect("read truncated payload bytes");
+    let text = String::from_utf8(bytes).expect("payload should be utf8");
+    let values = text
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse json line"))
+        .collect::<Vec<_>>();
+    assert_eq!(values.len(), 2);
+
+    let _ = fs::remove_dir_all(&root).await;
 }
 
 async fn save_group_chat_payload_from_values(

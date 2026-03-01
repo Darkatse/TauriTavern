@@ -10,8 +10,8 @@ use crate::application::errors::ApplicationError;
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
-    ChatRepository, PinnedCharacterChat, PinnedGroupChat,
+    ChatExportFormat, ChatImportFormat, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp,
+    ChatPayloadTail, ChatRepository, PinnedCharacterChat, PinnedGroupChat,
 };
 
 /// Service for managing chats
@@ -442,6 +442,22 @@ impl ChatService {
             .map_err(Into::into)
     }
 
+    /// Patch a windowed character chat payload.
+    pub async fn patch_chat_payload_windowed(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        op: ChatPayloadPatchOp,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, ApplicationError> {
+        self.chat_repository
+            .patch_chat_payload_windowed(character_name, file_name, cursor, header, op, force)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Save a character chat payload from a JSONL file path.
     pub async fn save_chat_from_file(
         &self,
@@ -519,6 +535,21 @@ impl ChatService {
     ) -> Result<ChatPayloadCursor, ApplicationError> {
         self.chat_repository
             .save_group_chat_payload_windowed(chat_id, cursor, header, lines, force)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Patch a windowed group chat payload.
+    pub async fn patch_group_chat_payload_windowed(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        op: ChatPayloadPatchOp,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, ApplicationError> {
+        self.chat_repository
+            .patch_group_chat_payload_windowed(chat_id, cursor, header, op, force)
             .await
             .map_err(Into::into)
     }

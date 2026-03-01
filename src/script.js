@@ -20,13 +20,15 @@ import {
     loadGroupChatPayload,
     loadGroupChatPayloadBefore,
     saveCharacterChatPayload,
-    saveCharacterChatPayloadWindowed,
+    patchCharacterChatPayloadWindowed,
 } from './scripts/chat-payload-transport.js';
 import {
+    buildWindowedPayloadPatch,
     clearWindowedChatState,
     DEFAULT_CHAT_WINDOW_LINES,
     getWindowedChatState,
     setWindowedChatState,
+    shiftWindowedMessageSaveState,
 } from './scripts/tauri/chat/windowed-state.js';
 import { extension_prompt_roles, extension_prompt_types } from './scripts/extension-prompts.js';
 import { waitForTauriMainReady } from './scripts/extensions/runtime/tauri-ready.js';
@@ -1554,8 +1556,9 @@ export async function showMoreMessages(messagesToLoad = null) {
         refreshSwipeButtons();
 
         const hasMoreBefore = Boolean(result?.hasMoreBefore);
+        const shiftedState = shiftWindowedMessageSaveState(windowState, messages.length, 'chat');
         setWindowedChatState({
-            ...windowState,
+            ...shiftedState,
             cursor: result.cursor,
             hasMoreBefore,
         });
@@ -1770,6 +1773,7 @@ export async function clearChat({ clearData = false } = {}) {
 export async function deleteLastMessage() {
     deleteItemizedPromptForMessage(chat.length - 1);
     chat.length = chat.length - 1;
+    markWindowedChatDirtyFromIndex(chat.length);
     chatElement.children('.mes').last().remove();
     await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
 }
@@ -1826,6 +1830,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     const startIndex = [0, minId].includes(id) ? id : null;
     deleteItemizedPromptForMessage(id);
     updateViewMessageIds(startIndex);
+    markWindowedChatDirtyFromIndex(id);
     saveChatDebounced();
 
     if (this_edit_mes_id === id) {
@@ -3793,6 +3798,7 @@ class StreamingProcessor {
             this.#updateMessageBlockVisibility();
             const currentTime = new Date();
             chat[messageId].mes = processedText;
+            markWindowedChatDirtyFromIndex(messageId);
             chat[messageId].gen_started = this.timeStarted;
             chat[messageId].gen_finished = currentTime;
             if (!chat[messageId].extra) {
@@ -5977,6 +5983,7 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
 
     if (typeof insertAt === 'number' && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);
+        markWindowedChatDirtyFromIndex(insertAt);
         await saveChatConditional();
         await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
         await reloadCurrentChat();
@@ -7419,6 +7426,22 @@ export function saveChatDebounced() {
     }, DEFAULT_SAVE_EDIT_TIMEOUT);
 }
 
+function markWindowedChatDirtyFromIndex(messageId) {
+    const windowState = getWindowedChatState();
+    if (!windowState) {
+        return;
+    }
+
+    const normalized = Number(messageId);
+    if (!Number.isFinite(normalized) || normalized < 0) {
+        windowState.dirtyFromIndex = 0;
+        return;
+    }
+
+    const current = Number(windowState.dirtyFromIndex);
+    windowState.dirtyFromIndex = Number.isFinite(current) ? Math.min(current, normalized) : normalized;
+}
+
 /**
  * Saves the chat to the server.
  * @param {object} [options] - Additional options.
@@ -7475,18 +7498,27 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
         if (isTauriChatPayloadTransportEnabled()) {
             const windowState = getWindowedChatState();
             if (windowState?.kind === 'character' && windowState.cursor && windowState.fileName === fileName) {
-                const cursor = await saveCharacterChatPayloadWindowed({
+                const {
+                    patch,
+                    savedMessageCount: nextSavedMessageCount,
+                    dirtyFromIndex: nextDirtyFromIndex,
+                } = buildWindowedPayloadPatch(trimmedChat, windowState, 'chat');
+
+                const cursor = await patchCharacterChatPayloadWindowed({
                     characterName: characters[this_chid].name,
                     avatarUrl: characters[this_chid].avatar,
                     fileName: fileName,
                     cursor: windowState.cursor,
-                    payload,
+                    header: JSON.stringify(chatHeader),
+                    patch,
                     force: Boolean(force),
                 });
 
                 setWindowedChatState({
                     ...windowState,
                     cursor,
+                    savedMessageCount: nextSavedMessageCount,
+                    dirtyFromIndex: nextDirtyFromIndex,
                 });
             } else {
                 await saveCharacterChatPayload({
@@ -7722,6 +7754,8 @@ export async function getChat() {
         await unshallowCharacter(this_chid);
         const usePayloadTransport = isTauriChatPayloadTransportEnabled();
         let data;
+        let windowedCursor = null;
+        let windowedHasMoreBefore = false;
 
         if (usePayloadTransport) {
             const window = await loadCharacterChatPayloadTail({
@@ -7733,19 +7767,8 @@ export async function getChat() {
             });
 
             data = window.payload;
-
-            if (window.cursor) {
-                setWindowedChatState({
-                    kind: 'character',
-                    characterName: characters[this_chid].name,
-                    avatarUrl: characters[this_chid].avatar,
-                    fileName: characters[this_chid].chat,
-                    cursor: window.cursor,
-                    hasMoreBefore: window.hasMoreBefore,
-                });
-            } else {
-                clearWindowedChatState();
-            }
+            windowedCursor = window.cursor ?? null;
+            windowedHasMoreBefore = Boolean(window.hasMoreBefore);
         } else {
             clearWindowedChatState();
             const response = await fetch('/api/chats/get', {
@@ -7776,6 +7799,21 @@ export async function getChat() {
             // An empty/corrupted chat file
             chat.splice(0, chat.length);
             chat_metadata = {};
+        }
+
+        if (usePayloadTransport && windowedCursor) {
+            setWindowedChatState({
+                kind: 'character',
+                characterName: characters[this_chid].name,
+                avatarUrl: characters[this_chid].avatar,
+                fileName: characters[this_chid].chat,
+                cursor: windowedCursor,
+                hasMoreBefore: windowedHasMoreBefore,
+                savedMessageCount: chat.length,
+                dirtyFromIndex: chat.length,
+            });
+        } else if (usePayloadTransport) {
+            clearWindowedChatState();
         }
         if (!chat_metadata.integrity) {
             chat_metadata.integrity = uuidv4();
@@ -8292,6 +8330,7 @@ function updateMessage(div) {
     }
 
     chat_metadata.tainted = true;
+    markWindowedChatDirtyFromIndex(mesElement.attr('mesid'));
 
     return { mesBlock, text, mes, bias };
 }
@@ -8495,6 +8534,7 @@ async function messageEditMove(sourceId, targetId) {
     swapItemizedPrompts(sourceId, targetId);
     updateViewMessageIds();
     refreshSwipeButtons();
+    markWindowedChatDirtyFromIndex(Math.min(sourceId, targetId));
     await saveChatConditional();
     return true;
 }
@@ -10174,6 +10214,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
             //Out of bounds swipes should not be saved.
         } else if (source != SWIPE_SOURCE.BACK) {
             //Save the chat if swipe_id has changed.
+            markWindowedChatDirtyFromIndex(mesId);
             saveChatDebounced();
         }
 

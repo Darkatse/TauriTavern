@@ -90,9 +90,10 @@ import {
     isTauriChatPayloadTransportEnabled,
     loadGroupChatPayloadTail,
     saveGroupChatPayload,
-    saveGroupChatPayloadWindowed,
+    patchGroupChatPayloadWindowed,
 } from './chat-payload-transport.js';
 import {
+    buildWindowedPayloadPatch,
     clearWindowedChatState,
     DEFAULT_CHAT_WINDOW_LINES,
     getWindowedChatState,
@@ -218,11 +219,14 @@ async function loadGroupChat(chatId) {
         });
 
         if (window.cursor) {
+            const messageCount = Array.isArray(window.payload) ? Math.max(0, window.payload.length - 1) : 0;
             setWindowedChatState({
                 kind: 'group',
                 id: normalizedChatId,
                 cursor: window.cursor,
                 hasMoreBefore: window.hasMoreBefore,
+                savedMessageCount: messageCount,
+                dirtyFromIndex: messageCount,
             });
         } else {
             clearWindowedChatState();
@@ -346,6 +350,15 @@ export async function getGroupChat(groupId, reload = false) {
         chat.forEach(ensureMessageMediaIsArray);
         chatElement.find('.mes').remove();
         await printMessages();
+
+        const windowState = getWindowedChatState();
+        if (windowState?.kind === 'group' && windowState.cursor && windowState.id === chat_id) {
+            setWindowedChatState({
+                ...windowState,
+                savedMessageCount: chat.length,
+                dirtyFromIndex: chat.length,
+            });
+        }
     }
 
     updateChatMetadata(metadata, true);
@@ -685,16 +698,25 @@ async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
         if (isTauriChatPayloadTransportEnabled()) {
             const windowState = getWindowedChatState();
             if (windowState?.kind === 'group' && windowState.cursor && windowState.id === chatId) {
-                const cursor = await saveGroupChatPayloadWindowed({
+                const {
+                    patch,
+                    savedMessageCount: nextSavedMessageCount,
+                    dirtyFromIndex: nextDirtyFromIndex,
+                } = buildWindowedPayloadPatch(chat, windowState, 'group chat');
+
+                const cursor = await patchGroupChatPayloadWindowed({
                     id: chatId,
                     cursor: windowState.cursor,
-                    payload,
+                    header: JSON.stringify(chatHeader),
+                    patch,
                     force: Boolean(force),
                 });
 
                 setWindowedChatState({
                     ...windowState,
                     cursor,
+                    savedMessageCount: nextSavedMessageCount,
+                    dirtyFromIndex: nextDirtyFromIndex,
                 });
             } else {
                 await saveGroupChatPayload({

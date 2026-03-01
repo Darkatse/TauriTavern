@@ -8,8 +8,8 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage};
 use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
-    ChatRepository, ChatSearchResult, PinnedCharacterChat, PinnedGroupChat,
+    ChatExportFormat, ChatImportFormat, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp,
+    ChatPayloadTail, ChatRepository, ChatSearchResult, PinnedCharacterChat, PinnedGroupChat,
 };
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::chat_format_importers::{
@@ -781,6 +781,19 @@ impl ChatRepository for FileChatRepository {
         .await
     }
 
+    async fn patch_chat_payload_windowed(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        op: ChatPayloadPatchOp,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, DomainError> {
+        self.patch_character_payload_windowed(character_name, file_name, cursor, header, op, force)
+            .await
+    }
+
     async fn save_chat_payload_from_path(
         &self,
         character_name: &str,
@@ -856,6 +869,18 @@ impl ChatRepository for FileChatRepository {
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.save_group_payload_windowed(chat_id, cursor, header, lines, force)
+            .await
+    }
+
+    async fn patch_group_chat_payload_windowed(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        op: ChatPayloadPatchOp,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, DomainError> {
+        self.patch_group_payload_windowed(chat_id, cursor, header, op, force)
             .await
     }
 

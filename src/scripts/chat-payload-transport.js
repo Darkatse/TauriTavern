@@ -6,9 +6,11 @@ export {
     loadCharacterChatPayloadBefore,
     saveCharacterChatPayload,
     saveCharacterChatPayloadWindowed,
+    patchCharacterChatPayloadWindowed,
     loadGroupChatPayload,
     loadGroupChatPayloadTail,
     loadGroupChatPayloadBefore,
     saveGroupChatPayload,
     saveGroupChatPayloadWindowed,
+    patchGroupChatPayloadWindowed,
 } from './tauri/chat/transport.js';

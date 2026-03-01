@@ -1,7 +1,7 @@
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatPayloadCursor, ChatSearchResult, PinnedCharacterChat,
-    PinnedGroupChat,
+    ChatExportFormat, ChatImportFormat, ChatPayloadCursor, ChatPayloadPatchOp, ChatSearchResult,
+    PinnedCharacterChat, PinnedGroupChat,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -175,6 +175,18 @@ pub struct SaveChatWindowedDto {
     pub force: Option<bool>,
 }
 
+/// DTO for patching a windowed character chat payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchChatWindowedDto {
+    #[serde(rename = "ch_name")]
+    pub character_name: String,
+    pub file_name: String,
+    pub cursor: ChatPayloadCursor,
+    pub header: String,
+    pub patch: ChatPayloadPatchOp,
+    pub force: Option<bool>,
+}
+
 /// DTO for saving a group chat payload from an existing JSONL file path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveGroupChatFromFileDto {
@@ -190,6 +202,16 @@ pub struct SaveGroupChatWindowedDto {
     pub cursor: ChatPayloadCursor,
     pub header: String,
     pub lines: Vec<String>,
+    pub force: Option<bool>,
+}
+
+/// DTO for patching a windowed group chat payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchGroupChatWindowedDto {
+    pub id: String,
+    pub cursor: ChatPayloadCursor,
+    pub header: String,
+    pub patch: ChatPayloadPatchOp,
     pub force: Option<bool>,
 }
 

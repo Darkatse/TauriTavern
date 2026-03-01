@@ -79,6 +79,21 @@ pub struct ChatPayloadChunk {
     pub has_more_before: bool,
 }
 
+/// Operation-based patch for windowed JSONL payload writes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum ChatPayloadPatchOp {
+    /// Append message lines at the end of the payload (excluding the header line).
+    Append { lines: Vec<String> },
+    /// Rewrite the payload tail starting at `start_index` (0-based, relative to cursor.offset),
+    /// replacing everything from that line through EOF with `lines`.
+    RewriteFromIndex {
+        #[serde(rename = "startIndex")]
+        start_index: usize,
+        lines: Vec<String>,
+    },
+}
+
 /// Repository interface for chat management
 #[async_trait]
 pub trait ChatRepository: Send + Sync {
@@ -243,6 +258,17 @@ pub trait ChatRepository: Send + Sync {
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError>;
 
+    /// Patch a windowed character chat payload by applying an operation at the tail.
+    async fn patch_chat_payload_windowed(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        op: ChatPayloadPatchOp,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, DomainError>;
+
     /// Save raw JSONL bytes for a character chat payload from an existing file path.
     async fn save_chat_payload_from_path(
         &self,
@@ -281,6 +307,16 @@ pub trait ChatRepository: Send + Sync {
         force: bool,
     ) -> Result<ChatPayloadCursor, DomainError>;
 
+    /// Patch a windowed group chat payload by applying an operation at the tail.
+    async fn patch_group_chat_payload_windowed(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        header: String,
+        op: ChatPayloadPatchOp,
+        force: bool,
+    ) -> Result<ChatPayloadCursor, DomainError>;
+
     /// Save raw JSONL bytes for a group chat payload from an existing file path.
     async fn save_group_chat_payload_from_path(
         &self,
@@ -314,4 +350,28 @@ pub trait ChatRepository: Send + Sync {
 
     /// Clear the chat cache
     async fn clear_cache(&self) -> Result<(), DomainError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ChatPayloadPatchOp;
+    use serde_json::json;
+
+    #[test]
+    fn chat_payload_patch_op_deserializes_camel_case_start_index() {
+        let op: ChatPayloadPatchOp = serde_json::from_value(json!({
+            "kind": "rewriteFromIndex",
+            "startIndex": 7,
+            "lines": ["{\"hello\":\"world\"}"],
+        }))
+        .unwrap();
+
+        match op {
+            ChatPayloadPatchOp::RewriteFromIndex { start_index, lines } => {
+                assert_eq!(start_index, 7);
+                assert_eq!(lines, vec![String::from("{\"hello\":\"world\"}")]);
+            }
+            _ => panic!("Expected rewriteFromIndex op"),
+        }
+    }
 }

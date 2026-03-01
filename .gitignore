@@ -29,3 +29,6 @@ FasTools.exe
 
 # Portable build artifacts
 release/portable/
+
+# Local upstream checkout (junction/symlink)
+sillytavern-*/
