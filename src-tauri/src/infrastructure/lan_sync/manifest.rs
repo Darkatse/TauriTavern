@@ -58,7 +58,11 @@ fn scan_dir_recursive(
     entries: &mut Vec<LanSyncManifestEntry>,
 ) -> Result<(), DomainError> {
     for entry in std::fs::read_dir(dir).map_err(|error| {
-        DomainError::InternalError(format!("Failed to read directory {}: {}", dir.display(), error))
+        DomainError::InternalError(format!(
+            "Failed to read directory {}: {}",
+            dir.display(),
+            error
+        ))
     })? {
         let entry = entry.map_err(|error| {
             DomainError::InternalError(format!(
@@ -86,7 +90,8 @@ fn scan_dir_recursive(
         }
 
         if file_type.is_dir() {
-            let relative = entry_path.strip_prefix(data_root)
+            let relative = entry_path
+                .strip_prefix(data_root)
                 .map_err(|error| DomainError::InternalError(error.to_string()))?;
             let relative = normalize_relative_path(relative)?;
 
@@ -99,7 +104,8 @@ fn scan_dir_recursive(
         }
 
         if file_type.is_file() {
-            let relative = entry_path.strip_prefix(data_root)
+            let relative = entry_path
+                .strip_prefix(data_root)
                 .map_err(|error| DomainError::InternalError(error.to_string()))?;
             let relative = normalize_relative_path(relative)?;
 
@@ -143,10 +149,21 @@ fn make_entry(data_root: &Path, file_path: &Path) -> Result<LanSyncManifestEntry
 }
 
 pub fn diff_manifests(source: &LanSyncManifest, target: &LanSyncManifest) -> LanSyncDiffPlan {
+    let source_index: HashMap<&str, ()> = source
+        .entries
+        .iter()
+        .map(|entry| (entry.relative_path.as_str(), ()))
+        .collect();
+
     let target_index: HashMap<&str, (u64, u64)> = target
         .entries
         .iter()
-        .map(|entry| (entry.relative_path.as_str(), (entry.size_bytes, entry.modified_ms)))
+        .map(|entry| {
+            (
+                entry.relative_path.as_str(),
+                (entry.size_bytes, entry.modified_ms),
+            )
+        })
         .collect();
 
     let mut download = Vec::new();
@@ -168,6 +185,12 @@ pub fn diff_manifests(source: &LanSyncManifest, target: &LanSyncManifest) -> Lan
 
     LanSyncDiffPlan {
         download,
+        delete: target
+            .entries
+            .iter()
+            .filter(|entry| !source_index.contains_key(entry.relative_path.as_str()))
+            .map(|entry| entry.relative_path.clone())
+            .collect(),
         files_total,
         bytes_total,
     }

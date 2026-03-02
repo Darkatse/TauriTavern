@@ -4,7 +4,9 @@ use rand::Rng;
 use uuid::Uuid;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::lan_sync::{LanSyncConfig, LanSyncDeviceIdentity, LanSyncPairedDevice};
+use crate::domain::models::lan_sync::{
+    LanSyncConfig, LanSyncDeviceIdentity, LanSyncPairedDevice, LanSyncSyncMode,
+};
 use crate::infrastructure::persistence::file_system::{read_json_file, write_json_file};
 
 pub struct LanSyncStore {
@@ -37,9 +39,17 @@ impl LanSyncStore {
         }
 
         let port = rand::thread_rng().gen_range(49152..=65535);
-        let config = LanSyncConfig { port };
+        let config = LanSyncConfig {
+            port,
+            sync_mode: LanSyncSyncMode::Incremental,
+        };
         write_json_file(&path, &config).await?;
         Ok(config)
+    }
+
+    pub async fn save_config(&self, config: &LanSyncConfig) -> Result<(), DomainError> {
+        let path = self.config_path();
+        write_json_file(&path, config).await
     }
 
     pub async fn load_or_create_identity(&self) -> Result<LanSyncDeviceIdentity, DomainError> {
@@ -79,7 +89,9 @@ impl LanSyncStore {
     ) -> Result<(), DomainError> {
         let mut devices = self.load_paired_devices().await?;
 
-        if let Some(existing) = devices.iter_mut().find(|item| item.device_id == device.device_id)
+        if let Some(existing) = devices
+            .iter_mut()
+            .find(|item| item.device_id == device.device_id)
         {
             *existing = device;
         } else {

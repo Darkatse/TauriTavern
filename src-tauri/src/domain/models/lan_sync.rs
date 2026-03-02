@@ -1,8 +1,22 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LanSyncSyncMode {
+    Incremental,
+    Mirror,
+}
+
+impl Default for LanSyncSyncMode {
+    fn default() -> Self {
+        Self::Incremental
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanSyncConfig {
     pub port: u16,
+    #[serde(default)]
+    pub sync_mode: LanSyncSyncMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,9 +39,13 @@ pub struct LanSyncPairedDevice {
 pub struct LanSyncStatus {
     pub running: bool,
     pub address: Option<String>,
+    pub available_addresses: Vec<String>,
     pub port: u16,
     pub pairing_enabled: bool,
     pub pairing_expires_at_ms: Option<u64>,
+    pub sync_mode: LanSyncSyncMode,
+    pub sync_mode_persistent: LanSyncSyncMode,
+    pub sync_mode_overridden: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +84,8 @@ pub struct LanSyncManifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanSyncDiffPlan {
     pub download: Vec<LanSyncManifestEntry>,
+    #[serde(default)]
+    pub delete: Vec<String>,
     pub files_total: usize,
     pub bytes_total: u64,
 }
@@ -75,6 +95,7 @@ pub enum LanSyncSyncPhase {
     Scanning,
     Diffing,
     Downloading,
+    Deleting,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -91,6 +112,7 @@ pub struct LanSyncSyncProgressEvent {
 pub struct LanSyncSyncCompletedEvent {
     pub files_total: usize,
     pub bytes_total: u64,
+    pub files_deleted: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -8,7 +8,8 @@ use url::Url;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
-    LanSyncDiffPlan, LanSyncSyncCompletedEvent, LanSyncSyncPhase, LanSyncSyncProgressEvent,
+    LanSyncDiffPlan, LanSyncSyncCompletedEvent, LanSyncSyncMode, LanSyncSyncPhase,
+    LanSyncSyncProgressEvent,
 };
 use crate::infrastructure::lan_sync::crypto::sign_request;
 use crate::infrastructure::lan_sync::manifest::scan_manifest;
@@ -20,6 +21,10 @@ pub async fn merge_sync_from_device(
     http_client: &Client,
     device_id: &str,
 ) -> Result<LanSyncSyncCompletedEvent, DomainError> {
+    let config = runtime.store.load_or_create_config().await?;
+    let sync_mode_override = runtime.get_sync_mode_override().await;
+    let sync_mode = sync_mode_override.unwrap_or(config.sync_mode);
+
     let peer = runtime.get_paired_device(device_id).await?;
     let address = peer.last_known_address.clone().ok_or_else(|| {
         DomainError::InvalidData(format!("Paired device address is missing: {}", device_id))
@@ -79,6 +84,7 @@ pub async fn merge_sync_from_device(
         .await
         .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
+    let delete_total = plan.delete.len();
     let mut files_done = 0usize;
     let mut bytes_done = 0u64;
     let files_total = plan.files_total;
@@ -151,6 +157,37 @@ pub async fn merge_sync_from_device(
         }
     }
 
+    let mut files_deleted = 0usize;
+    if sync_mode == LanSyncSyncMode::Mirror && delete_total > 0 {
+        runtime.emit_sync_progress(LanSyncSyncProgressEvent {
+            phase: LanSyncSyncPhase::Deleting,
+            files_done: 0,
+            files_total: delete_total,
+            bytes_done: 0,
+            bytes_total: 0,
+            current_path: None,
+        })?;
+
+        for relative_path in plan.delete {
+            let full_path = resolve_relative_path(&runtime.data_root, &relative_path)?;
+            tokio::fs::remove_file(&full_path)
+                .await
+                .map_err(|error| DomainError::InternalError(error.to_string()))?;
+
+            files_deleted += 1;
+            if should_emit_progress(files_deleted, delete_total) {
+                runtime.emit_sync_progress(LanSyncSyncProgressEvent {
+                    phase: LanSyncSyncPhase::Deleting,
+                    files_done: files_deleted,
+                    files_total: delete_total,
+                    bytes_done: 0,
+                    bytes_total: 0,
+                    current_path: Some(relative_path),
+                })?;
+            }
+        }
+    }
+
     let mut updated_peer = peer;
     updated_peer.last_sync_ms = Some(now_ms());
     runtime.upsert_paired_device(updated_peer).await?;
@@ -158,6 +195,7 @@ pub async fn merge_sync_from_device(
     Ok(LanSyncSyncCompletedEvent {
         files_total,
         bytes_total,
+        files_deleted,
     })
 }
 
@@ -277,7 +315,8 @@ async fn download_one(
 }
 
 fn build_source_url(address: &str, segments: &[&str]) -> Result<Url, DomainError> {
-    let mut url = Url::parse(address).map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    let mut url =
+        Url::parse(address).map_err(|error| DomainError::InvalidData(error.to_string()))?;
 
     {
         let mut path_segments = url
@@ -291,7 +330,8 @@ fn build_source_url(address: &str, segments: &[&str]) -> Result<Url, DomainError
 }
 
 fn build_source_file_url(address: &str, relative_path: &str) -> Result<Url, DomainError> {
-    let mut url = Url::parse(address).map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    let mut url =
+        Url::parse(address).map_err(|error| DomainError::InvalidData(error.to_string()))?;
 
     {
         let mut path_segments = url

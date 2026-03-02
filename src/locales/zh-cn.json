@@ -2393,5 +2393,19 @@
     "Files: ${0}/${1}": "文件：${0}/${1}",
     "Bytes: ${0}": "数据：${0}",
     "Bytes: ${0}/${1}": "数据：${0}/${1}",
-    "Current: ${0}": "当前：${0}"
+    "Current: ${0}": "当前：${0}",
+    "Sync mode": "同步模式",
+    "Incremental Mode": "增量模式",
+    "Mirror Mode": "镜像模式",
+    "Mirror Mode (session)": "镜像模式（会话）",
+    "Switch": "切换",
+    "Always Mirror": "始终镜像",
+    "Always mirror mode?": "是否始终使用镜像模式？",
+    "Switch to incremental mode?": "是否切换到增量模式？",
+    "Incremental mode will not delete files on the target device during sync.": "增量模式在同步时不会删除目标设备上的文件。",
+    "Mirror mode can delete files": "警告：镜像模式可能会删除文件",
+    "Mirror mode will delete files on the target device that do not exist on the source device. This is risky and may cause data loss.": "镜像模式会删除目标设备上源设备不存在的文件。请悉知这可能导致数据丢失。",
+    "This will set LAN Sync to mirror mode by default. All future syncs may delete files on the target device.\n\nContinue?": "LAN Sync 的默认同步模式设将会设置为镜像模式。之后所有同步都可能删除目标设备上的文件。\n\n是否继续？",
+    "Deleted: ${0}": "已删除：${0}",
+    "Deleting": "删除中"
 }

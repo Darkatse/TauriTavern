@@ -2831,5 +2831,19 @@
     "Bytes: ${0}/${1}": "資料：${0}/${1}",
     "Current: ${0}": "目前：${0}",
     "Start": "啟動",
-    "Stop": "停止"
+    "Stop": "停止",
+    "Sync mode": "同步模式",
+    "Incremental Mode": "增量模式",
+    "Mirror Mode": "鏡像模式",
+    "Mirror Mode (session)": "鏡像模式（工作階段）",
+    "Switch": "切換",
+    "Always Mirror": "一律鏡像",
+    "Always mirror mode?": "一律使用鏡像模式？",
+    "Switch to incremental mode?": "切換到增量模式？",
+    "Incremental mode will not delete files on the target device during sync.": "增量模式在同步時不會刪除目標裝置上的檔案。",
+    "Mirror mode can delete files": "警告：鏡像模式可能會刪除檔案",
+    "Mirror mode will delete files on the target device that do not exist on the source device. This is risky and may cause data loss.": "鏡像模式會刪除目標裝置上源裝置不存在的檔案。請悉知可能造成資料遺失。",
+    "This will set LAN Sync to mirror mode by default. All future syncs may delete files on the target device.\n\nContinue?": "這會將 LAN Sync 預設同步模式設為鏡像模式。之後所有同步都可能刪除目標裝置上的檔案。\n\n繼續？",
+    "Deleted: ${0}": "已刪除：${0}",
+    "Deleting": "刪除中"
 }

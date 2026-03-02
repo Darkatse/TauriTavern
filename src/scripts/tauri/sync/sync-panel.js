@@ -5,6 +5,7 @@ import { t, translate } from '../../i18n.js';
 const TAURITAVERN_SETTINGS_BUTTON_ID = 'tauritavern_settings_button';
 const LAN_SYNC_DEVICES_CHANGED_EVENT = 'tauritavern:lan_sync_devices_changed';
 const DEVICE_ALIAS_STORAGE_PREFIX = 'tauritavern:lan_sync_device_alias:';
+const LAN_SYNC_ADVERTISE_ADDRESS_STORAGE_KEY = 'tauritavern:lan_sync_advertise_address';
 let pairingListenerInstalled = false;
 let syncListenerInstalled = false;
 let syncProgressPopup = null;
@@ -13,7 +14,7 @@ let syncProgressElements = null;
 async function showErrorPopup(error) {
     const message = error?.message ? String(error.message) : String(error);
     await callGenericPopup(translate(message), POPUP_TYPE.TEXT, '', {
-        okButton: 'OK',
+        okButton: translate('OK'),
         allowVerticalScrolling: true,
         wide: false,
         large: false,
@@ -93,8 +94,8 @@ function installPairingListener() {
             content.appendChild(details);
 
             const result = await callGenericPopup(content, POPUP_TYPE.CONFIRM, '', {
-                okButton: 'Allow',
-                cancelButton: 'Deny',
+                okButton: translate('Allow'),
+                cancelButton: translate('Deny'),
                 allowVerticalScrolling: true,
                 wide: false,
                 large: false,
@@ -136,15 +137,17 @@ function installSyncListeners() {
 
             const files = payload.files_total;
             const bytes = payload.bytes_total;
+            const deleted = payload.files_deleted;
             const message = [
                 translate('LAN Sync completed.'),
                 t`Files: ${files}`,
+                typeof deleted === 'number' && deleted > 0 ? t`Deleted: ${deleted}` : null,
                 t`Bytes: ${formatBytes(bytes)}`,
                 '',
                 translate('The app will now reload to refresh data.'),
-            ].join('\n');
+            ].filter(Boolean).join('\n');
             await callGenericPopup(message, POPUP_TYPE.TEXT, '', {
-                okButton: 'OK',
+                okButton: translate('OK'),
                 allowVerticalScrolling: true,
                 wide: false,
                 large: false,
@@ -164,7 +167,7 @@ function installSyncListeners() {
 
             const message = translate(payload.message);
             await callGenericPopup(String(message), POPUP_TYPE.TEXT, '', {
-                okButton: 'OK',
+                okButton: translate('OK'),
                 allowVerticalScrolling: true,
                 wide: false,
                 large: false,
@@ -257,18 +260,31 @@ function clearDeviceAlias(deviceId) {
     localStorage.removeItem(`${DEVICE_ALIAS_STORAGE_PREFIX}${deviceId}`);
 }
 
+function getLanSyncAdvertiseAddress() {
+    return localStorage.getItem(LAN_SYNC_ADVERTISE_ADDRESS_STORAGE_KEY) || '';
+}
+
+function setLanSyncAdvertiseAddress(value) {
+    if (!value) {
+        localStorage.removeItem(LAN_SYNC_ADVERTISE_ADDRESS_STORAGE_KEY);
+        return;
+    }
+
+    localStorage.setItem(LAN_SYNC_ADVERTISE_ADDRESS_STORAGE_KEY, value);
+}
+
 async function scanPairUriFromCamera() {
     const barcodeScanner = window.__TAURI__.barcodeScanner;
     const granted = await barcodeScanner.requestPermissions();
     if (!granted) {
-        throw new Error('Camera permission is required to scan QR codes');
+        throw new Error(translate('Camera permission is required to scan QR codes'));
     }
 
     const result = await barcodeScanner.scan({ formats: [barcodeScanner.Format.QRCode] });
 
     const content = String(result?.content ?? '').trim();
     if (!content) {
-        throw new Error('Scanned Pair URI is empty');
+        throw new Error(translate('Scanned Pair URI is empty'));
     }
 
     return content;
@@ -283,7 +299,7 @@ async function openLanSyncPopup() {
     window.addEventListener(LAN_SYNC_DEVICES_CHANGED_EVENT, onDevicesChanged);
 
     await callGenericPopup(panel.root, POPUP_TYPE.TEXT, '', {
-        okButton: 'Close',
+        okButton: translate('Close'),
         allowVerticalScrolling: true,
         wide: false,
         large: false,
@@ -298,15 +314,22 @@ function buildLanSyncPopup() {
     root.className = 'flex-container flexFlowColumn';
     root.innerHTML = `
         <div class="flex-container flexFlowColumn" style="gap: 10px;">
-            <div class="flex-container alignItemsBaseline">
+            <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
                 <b data-i18n="LAN Sync">LAN Sync</b>
+                <div class="flex-container" style="gap: 10px;">
+                    <div id="lan-sync-mode-button" class="menu_button menu_button_icon margin0" title="Sync mode" data-i18n="[title]Sync mode">
+                        <i class="fa-solid fa-code-branch"></i>
+                        <span id="lan-sync-mode-text" style="margin-left: 6px;"></span>
+                    </div>
+                </div>
             </div>
             <div class="flex-container flexFlowColumn" style="gap: 6px;">
                 <div>
                     <span data-i18n="Status">Status</span>: <b id="lan-sync-status-text">...</b>
                 </div>
-                <div>
-                    <span data-i18n="Address">Address</span>: <code id="lan-sync-address-text">...</code>
+                <div class="flex-container alignItemsBaseline" style="gap: 6px; flex-wrap: wrap;">
+                    <span data-i18n="Address">Address</span>:
+                    <select id="lan-sync-address-select" class="text_pole" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;"></select>
                 </div>
                 <div>
                     <span data-i18n="Pairing">Pairing</span>: <b id="lan-sync-pairing-text">...</b>
@@ -362,8 +385,10 @@ function buildLanSyncPopup() {
     `.trim();
 
     const statusText = root.querySelector('#lan-sync-status-text');
-    const addressText = root.querySelector('#lan-sync-address-text');
+    const addressSelect = root.querySelector('#lan-sync-address-select');
     const pairingText = root.querySelector('#lan-sync-pairing-text');
+    const modeButton = root.querySelector('#lan-sync-mode-button');
+    const modeButtonText = root.querySelector('#lan-sync-mode-text');
     const startButton = root.querySelector('#lan-sync-start');
     const stopButton = root.querySelector('#lan-sync-stop');
     const enablePairingButton = root.querySelector('#lan-sync-enable-pairing');
@@ -384,6 +409,148 @@ function buildLanSyncPopup() {
     const invoke = window.__TAURI__.core.invoke;
     let currentStatus = null;
     let currentDevices = [];
+    let currentAdvertiseAddress = null;
+
+    const getModeLabel = (status) => {
+        const effective = status?.sync_mode ?? 'Incremental';
+        const overridden = Boolean(status?.sync_mode_overridden);
+
+        if (effective === 'Mirror') {
+            return overridden ? translate('Mirror Mode (session)') : translate('Mirror Mode');
+        }
+
+        return translate('Incremental Mode');
+    };
+
+    const updateModeButton = (status) => {
+        modeButtonText.textContent = getModeLabel(status);
+        modeButton.title = translate('Sync mode');
+
+        if (status?.sync_mode === 'Mirror') {
+            modeButton.classList.add('red_button');
+        } else {
+            modeButton.classList.remove('red_button');
+        }
+    };
+
+    const buildMirrorWarningContent = (titleText, detailText) => {
+        const content = document.createElement('div');
+        content.className = 'flex-container flexFlowColumn';
+        content.style.gap = '10px';
+
+        const header = document.createElement('div');
+        header.className = 'flex-container alignItemsBaseline';
+        header.style.gap = '8px';
+
+        const icon = document.createElement('i');
+        icon.className = 'fa-solid fa-triangle-exclamation';
+        icon.style.color = 'var(--fullred)';
+        header.appendChild(icon);
+
+        const title = document.createElement('b');
+        title.textContent = translate(titleText);
+        header.appendChild(title);
+
+        content.appendChild(header);
+
+        const details = document.createElement('div');
+        details.style.opacity = '0.95';
+        details.style.whiteSpace = 'pre-wrap';
+        details.textContent = translate(detailText);
+        content.appendChild(details);
+
+        return content;
+    };
+
+    modeButton.addEventListener('click', () => runOrPopup(async () => {
+        if (!currentStatus) {
+            await refresh();
+        }
+
+        const effective = currentStatus?.sync_mode ?? 'Incremental';
+        const overridden = Boolean(currentStatus?.sync_mode_overridden);
+
+        if (effective === 'Mirror') {
+            if (overridden) {
+                await invoke('lan_sync_clear_sync_mode_override');
+                await refresh();
+                return;
+            }
+
+            const content = buildMirrorWarningContent(
+                'Switch to incremental mode?',
+                'Incremental mode will not delete files on the target device during sync.',
+            );
+
+            const result = await callGenericPopup(content, POPUP_TYPE.CONFIRM, '', {
+                okButton: translate('Switch'),
+                cancelButton: translate('Cancel'),
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+                defaultResult: POPUP_RESULT.NEGATIVE,
+            });
+
+            if (result !== POPUP_RESULT.AFFIRMATIVE) {
+                return;
+            }
+
+            await invoke('lan_sync_set_sync_mode', { mode: 'Incremental', persist: true });
+            await refresh();
+            return;
+        }
+
+        const content = buildMirrorWarningContent(
+            'Mirror mode can delete files',
+            'Mirror mode will delete files on the target device that do not exist on the source device. This is risky and may cause data loss.',
+        );
+
+        const result = await callGenericPopup(content, POPUP_TYPE.CONFIRM, '', {
+            okButton: translate('Switch'),
+            cancelButton: translate('Cancel'),
+            customButtons: [
+                {
+                    text: translate('Always Mirror'),
+                    result: POPUP_RESULT.CUSTOM1,
+                    classes: ['red_button'],
+                },
+            ],
+            allowVerticalScrolling: true,
+            wide: false,
+            large: false,
+            defaultResult: POPUP_RESULT.NEGATIVE,
+        });
+
+        if (result === POPUP_RESULT.AFFIRMATIVE) {
+            await invoke('lan_sync_set_sync_mode', { mode: 'Mirror', persist: false });
+            await refresh();
+            return;
+        }
+
+        if (result === POPUP_RESULT.CUSTOM1) {
+            const confirmContent = buildMirrorWarningContent(
+                'Always mirror mode?',
+                'This will set LAN Sync to mirror mode by default. All future syncs may delete files on the target device.\n\nContinue?',
+            );
+
+            const confirmResult = await callGenericPopup(confirmContent, POPUP_TYPE.CONFIRM, '', {
+                okButton: translate('Confirm'),
+                cancelButton: translate('Cancel'),
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+                defaultResult: POPUP_RESULT.NEGATIVE,
+            });
+
+            if (confirmResult !== POPUP_RESULT.AFFIRMATIVE) {
+                return;
+            }
+
+            await invoke('lan_sync_set_sync_mode', { mode: 'Mirror', persist: true });
+            await refresh();
+            return;
+        }
+    }));
 
     const renderPairingInfo = (pairingInfo) => {
         if (!pairingInfo) {
@@ -449,8 +616,8 @@ function buildLanSyncPopup() {
                     const existing = getDeviceAlias(deviceId);
                     const initial = existing || deviceName;
                     const result = await callGenericPopup(translate('Rename paired device (local only). Leave empty to reset.'), POPUP_TYPE.INPUT, initial, {
-                        okButton: 'Save',
-                        cancelButton: 'Cancel',
+                        okButton: translate('Save'),
+                        cancelButton: translate('Cancel'),
                         rows: 1,
                         allowVerticalScrolling: true,
                         wide: false,
@@ -555,7 +722,39 @@ function buildLanSyncPopup() {
         currentStatus = status;
         statusText.textContent = translate(status.running ? 'Running' : 'Stopped');
         statusText.style.color = status.running ? '#0f0' : '#f00';
-        addressText.textContent = status.address || translate('N/A');
+
+        const availableAddresses = status.available_addresses;
+
+        const stored = getLanSyncAdvertiseAddress();
+        const defaultAddress = status.address && availableAddresses.includes(status.address)
+            ? status.address
+            : availableAddresses[0] || status.address || null;
+
+        const selected = stored && availableAddresses.includes(stored) ? stored : defaultAddress;
+        currentAdvertiseAddress = selected;
+        setLanSyncAdvertiseAddress(selected);
+
+        addressSelect.innerHTML = '';
+        addressSelect.disabled = availableAddresses.length === 0;
+        addressSelect.title = translate('Address');
+
+        if (availableAddresses.length === 0) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = translate('N/A');
+            addressSelect.appendChild(option);
+            addressSelect.value = '';
+        } else {
+            for (const address of availableAddresses) {
+                const option = document.createElement('option');
+                option.value = address;
+                option.textContent = address;
+                addressSelect.appendChild(option);
+            }
+            addressSelect.value = selected || availableAddresses[0];
+        }
+
+        updateModeButton(status);
 
         if (status.pairing_enabled) {
             pairingText.textContent = t`Enabled (expires ${formatTimestamp(status.pairing_expires_at_ms)})`;
@@ -588,14 +787,14 @@ function buildLanSyncPopup() {
         await refresh();
     }));
     enablePairingButton.addEventListener('click', () => runOrPopup(async () => {
-        const pairingInfo = await invoke('lan_sync_enable_pairing');
+        const pairingInfo = await invoke('lan_sync_enable_pairing', { address: currentAdvertiseAddress });
         renderPairingInfo(pairingInfo);
         await refresh();
     }));
     copyUriButton.addEventListener('click', () => runOrPopup(async () => {
         const value = pairUriTextArea.value.trim();
         if (!value) {
-            throw new Error('Pair URI is empty');
+            throw new Error(translate('Pair URI is empty'));
         }
         await navigator.clipboard.writeText(value);
     }));
@@ -619,9 +818,20 @@ function buildLanSyncPopup() {
     requestPairingButton.addEventListener('click', () => runOrPopup(async () => {
         const value = requestPairUriTextArea.value.trim();
         if (!value) {
-            throw new Error('Pair URI is empty');
+            throw new Error(translate('Pair URI is empty'));
         }
         await requestPairing(value);
+    }));
+
+    addressSelect.addEventListener('change', () => runOrPopup(async () => {
+        const next = String(addressSelect.value || '').trim();
+        currentAdvertiseAddress = next || null;
+        setLanSyncAdvertiseAddress(next);
+
+        if (currentStatus?.pairing_enabled && next) {
+            const pairingInfo = await invoke('lan_sync_get_pairing_info', { address: next });
+            renderPairingInfo(pairingInfo);
+        }
     }));
 
     void refresh();

@@ -8,8 +8,8 @@ use uuid::Uuid;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
-    LanSyncPairedDevice, LanSyncPairRequestEvent, LanSyncSyncCompletedEvent,
-    LanSyncSyncErrorEvent, LanSyncSyncProgressEvent,
+    LanSyncPairRequestEvent, LanSyncPairedDevice, LanSyncSyncCompletedEvent, LanSyncSyncErrorEvent,
+    LanSyncSyncMode, LanSyncSyncProgressEvent,
 };
 use crate::infrastructure::lan_sync::store::LanSyncStore;
 
@@ -25,6 +25,7 @@ pub struct LanSyncRuntime {
     pub store: LanSyncStore,
     sync_permit: Arc<Semaphore>,
     pairing_session: Mutex<Option<LanSyncPairingSession>>,
+    sync_mode_override: Mutex<Option<LanSyncSyncMode>>,
     pending_pairings: Mutex<HashMap<String, oneshot::Sender<bool>>>,
     paired_devices_cache: Mutex<Option<HashMap<String, LanSyncPairedDevice>>>,
 }
@@ -37,6 +38,7 @@ impl LanSyncRuntime {
             store: LanSyncStore::new(default_user_dir),
             sync_permit: Arc::new(Semaphore::new(1)),
             pairing_session: Mutex::new(None),
+            sync_mode_override: Mutex::new(None),
             pending_pairings: Mutex::new(HashMap::new()),
             paired_devices_cache: Mutex::new(None),
         }
@@ -63,11 +65,24 @@ impl LanSyncRuntime {
         *pairing_session = None;
     }
 
-    pub async fn load_paired_devices(&self) -> Result<Vec<LanSyncPairedDevice>, DomainError> {
-        let mut cache = self.paired_devices_cache.lock().await;
+    pub async fn get_sync_mode_override(&self) -> Option<LanSyncSyncMode> {
+        self.sync_mode_override.lock().await.clone()
+    }
 
-        if let Some(devices) = cache.as_ref() {
-            return Ok(devices.values().cloned().collect());
+    pub async fn set_sync_mode_override(&self, mode: Option<LanSyncSyncMode>) {
+        let mut sync_mode_override = self.sync_mode_override.lock().await;
+        *sync_mode_override = mode;
+    }
+
+    pub async fn load_paired_devices(&self) -> Result<Vec<LanSyncPairedDevice>, DomainError> {
+        let cached = {
+            let cache = self.paired_devices_cache.lock().await;
+            cache
+                .as_ref()
+                .map(|devices| devices.values().cloned().collect::<Vec<_>>())
+        };
+        if let Some(devices) = cached {
+            return Ok(devices);
         }
 
         let devices = self.store.load_paired_devices().await?;
@@ -76,7 +91,12 @@ impl LanSyncRuntime {
             .cloned()
             .map(|device| (device.device_id.clone(), device))
             .collect::<HashMap<_, _>>();
-        *cache = Some(map);
+        {
+            let mut cache = self.paired_devices_cache.lock().await;
+            if cache.is_none() {
+                *cache = Some(map);
+            }
+        }
 
         Ok(devices)
     }
@@ -85,13 +105,12 @@ impl LanSyncRuntime {
         &self,
         device_id: &str,
     ) -> Result<LanSyncPairedDevice, DomainError> {
-        let mut cache = self.paired_devices_cache.lock().await;
-
-        if let Some(map) = cache.as_ref() {
-            return map
-                .get(device_id)
-                .cloned()
-                .ok_or_else(|| DomainError::NotFound(format!("Paired device not found: {}", device_id)));
+        let cached = {
+            let cache = self.paired_devices_cache.lock().await;
+            cache.as_ref().and_then(|map| map.get(device_id).cloned())
+        };
+        if let Some(device) = cached {
+            return Ok(device);
         }
 
         let devices = self.store.load_paired_devices().await?;
@@ -100,16 +119,23 @@ impl LanSyncRuntime {
             .map(|device| (device.device_id.clone(), device))
             .collect::<HashMap<_, _>>();
 
-        let result = map
-            .get(device_id)
-            .cloned()
-            .ok_or_else(|| DomainError::NotFound(format!("Paired device not found: {}", device_id)))?;
+        let result = map.get(device_id).cloned().ok_or_else(|| {
+            DomainError::NotFound(format!("Paired device not found: {}", device_id))
+        })?;
 
-        *cache = Some(map);
+        {
+            let mut cache = self.paired_devices_cache.lock().await;
+            if cache.is_none() {
+                *cache = Some(map);
+            }
+        }
         Ok(result)
     }
 
-    pub async fn upsert_paired_device(&self, device: LanSyncPairedDevice) -> Result<(), DomainError> {
+    pub async fn upsert_paired_device(
+        &self,
+        device: LanSyncPairedDevice,
+    ) -> Result<(), DomainError> {
         self.store.upsert_paired_device(device.clone()).await?;
 
         let mut cache = self.paired_devices_cache.lock().await;
@@ -164,13 +190,14 @@ impl LanSyncRuntime {
     pub async fn confirm_pairing(&self, request_id: &str, accept: bool) -> Result<(), DomainError> {
         let tx = {
             let mut pending = self.pending_pairings.lock().await;
-            pending
-                .remove(request_id)
-                .ok_or_else(|| DomainError::NotFound(format!("Pair request not found: {}", request_id)))?
+            pending.remove(request_id).ok_or_else(|| {
+                DomainError::NotFound(format!("Pair request not found: {}", request_id))
+            })?
         };
 
-        tx.send(accept)
-            .map_err(|_| DomainError::InternalError("Pairing decision receiver dropped".to_string()))
+        tx.send(accept).map_err(|_| {
+            DomainError::InternalError("Pairing decision receiver dropped".to_string())
+        })
     }
 
     pub fn emit_sync_progress(&self, payload: LanSyncSyncProgressEvent) -> Result<(), DomainError> {
@@ -179,7 +206,10 @@ impl LanSyncRuntime {
             .map_err(|error| DomainError::InternalError(error.to_string()))
     }
 
-    pub fn emit_sync_completed(&self, payload: LanSyncSyncCompletedEvent) -> Result<(), DomainError> {
+    pub fn emit_sync_completed(
+        &self,
+        payload: LanSyncSyncCompletedEvent,
+    ) -> Result<(), DomainError> {
         self.app_handle
             .emit("lan_sync:completed", payload)
             .map_err(|error| DomainError::InternalError(error.to_string()))

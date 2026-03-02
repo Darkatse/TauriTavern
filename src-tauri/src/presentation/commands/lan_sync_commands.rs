@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::domain::models::lan_sync::{LanSyncPairedDevice, LanSyncStatus};
+use crate::domain::models::lan_sync::{LanSyncPairedDevice, LanSyncStatus, LanSyncSyncMode};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -56,12 +56,13 @@ pub struct LanSyncPairingInfoDto {
 #[tauri::command]
 pub async fn lan_sync_enable_pairing(
     app_state: State<'_, Arc<AppState>>,
+    address: Option<String>,
 ) -> Result<LanSyncPairingInfoDto, CommandError> {
     log_command("lan_sync_enable_pairing");
 
     app_state
         .lan_sync_service
-        .enable_pairing()
+        .enable_pairing(address)
         .await
         .map(|info| LanSyncPairingInfoDto {
             address: info.address,
@@ -70,6 +71,26 @@ pub async fn lan_sync_enable_pairing(
             expires_at_ms: info.expires_at_ms,
         })
         .map_err(map_command_error("Failed to enable LAN sync pairing"))
+}
+
+#[tauri::command]
+pub async fn lan_sync_get_pairing_info(
+    app_state: State<'_, Arc<AppState>>,
+    address: String,
+) -> Result<LanSyncPairingInfoDto, CommandError> {
+    log_command("lan_sync_get_pairing_info");
+
+    app_state
+        .lan_sync_service
+        .get_pairing_info(&address)
+        .await
+        .map(|info| LanSyncPairingInfoDto {
+            address: info.address,
+            pair_uri: info.pair_uri,
+            qr_svg: info.qr_svg,
+            expires_at_ms: info.expires_at_ms,
+        })
+        .map_err(map_command_error("Failed to get LAN sync pairing info"))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -133,7 +154,12 @@ pub async fn lan_sync_list_devices(
         .lan_sync_service
         .list_paired_devices()
         .await
-        .map(|devices| devices.into_iter().map(LanSyncPairedDeviceDto::from).collect())
+        .map(|devices| {
+            devices
+                .into_iter()
+                .map(LanSyncPairedDeviceDto::from)
+                .collect()
+        })
         .map_err(map_command_error("Failed to list LAN sync devices"))
 }
 
@@ -177,4 +203,29 @@ pub async fn lan_sync_push_to_device(
         .push_to_device(&device_id)
         .await
         .map_err(map_command_error("Failed to request LAN sync push"))
+}
+
+#[tauri::command]
+pub async fn lan_sync_set_sync_mode(
+    app_state: State<'_, Arc<AppState>>,
+    mode: LanSyncSyncMode,
+    persist: bool,
+) -> Result<(), CommandError> {
+    log_command("lan_sync_set_sync_mode");
+
+    app_state
+        .lan_sync_service
+        .set_sync_mode(mode, persist)
+        .await
+        .map_err(map_command_error("Failed to set LAN sync mode"))
+}
+
+#[tauri::command]
+pub async fn lan_sync_clear_sync_mode_override(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("lan_sync_clear_sync_mode_override");
+
+    app_state.lan_sync_service.clear_sync_mode_override().await;
+    Ok(())
 }

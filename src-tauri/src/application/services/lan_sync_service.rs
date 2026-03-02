@@ -1,23 +1,23 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::path::PathBuf;
 
+use local_ip_address::{list_afinet_netifas, local_ip};
 use qrcode::QrCode;
 use reqwest::Client;
-use local_ip_address::local_ip;
 use tauri::AppHandle;
 use tokio::sync::Mutex;
 use url::Url;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
-    LanSyncPairedDevice, LanSyncPairRequest, LanSyncPairResponse, LanSyncStatus,
-    LanSyncSyncCompletedEvent, LanSyncSyncErrorEvent,
+    LanSyncPairRequest, LanSyncPairResponse, LanSyncPairedDevice, LanSyncStatus,
+    LanSyncSyncCompletedEvent, LanSyncSyncErrorEvent, LanSyncSyncMode,
 };
 use crate::infrastructure::http_client::build_http_client;
 use crate::infrastructure::lan_sync::crypto::{derive_pair_secret, random_base64url, sign_request};
 use crate::infrastructure::lan_sync::runtime::{LanSyncPairingSession, LanSyncRuntime};
-use crate::infrastructure::lan_sync::server::{spawn_lan_sync_server, LanSyncServerHandle};
+use crate::infrastructure::lan_sync::server::{LanSyncServerHandle, spawn_lan_sync_server};
 
 pub struct LanSyncService {
     runtime: Arc<LanSyncRuntime>,
@@ -27,8 +27,8 @@ pub struct LanSyncService {
 
 impl LanSyncService {
     pub fn new(app_handle: AppHandle, default_user_dir: PathBuf) -> Self {
-        let http_client = build_http_client(Client::builder())
-            .expect("Failed to build LAN sync HTTP client");
+        let http_client =
+            build_http_client(Client::builder()).expect("Failed to build LAN sync HTTP client");
 
         Self {
             runtime: Arc::new(LanSyncRuntime::new(app_handle, default_user_dir)),
@@ -39,80 +39,109 @@ impl LanSyncService {
 
     pub async fn get_status(&self) -> Result<LanSyncStatus, DomainError> {
         let config = self.runtime.store.load_or_create_config().await?;
+        let sync_mode_override = self.runtime.get_sync_mode_override().await;
+        let sync_mode_persistent = config.sync_mode;
+        let sync_mode_overridden = sync_mode_override.is_some();
+        let sync_mode = sync_mode_override.unwrap_or(sync_mode_persistent);
+
         let pairing = self.runtime.get_pairing_session().await;
         let now_ms = now_ms();
 
         let pairing_enabled = pairing
             .as_ref()
             .is_some_and(|session| session.expires_at_ms > now_ms);
-        let pairing_expires_at_ms = pairing
-            .as_ref()
-            .map(|session| session.expires_at_ms);
+        let pairing_expires_at_ms = pairing.as_ref().map(|session| session.expires_at_ms);
 
-        let server = self.server.lock().await;
-
-        let Some(handle) = server.as_ref() else {
-            return Ok(LanSyncStatus {
-                running: false,
-                address: None,
-                port: config.port,
-                pairing_enabled,
-                pairing_expires_at_ms,
-            });
+        let running_port = {
+            let server = self.server.lock().await;
+            server.as_ref().map(|handle| handle.addr.port())
+        };
+        let (running, port) = match running_port {
+            Some(port) => (true, port),
+            None => (false, config.port),
         };
 
+        let available_addresses = list_available_addresses(port)?;
+        let address = default_advertise_address(port, &available_addresses);
         Ok(LanSyncStatus {
-            running: true,
-            address: Some(format!("http://{}", handle.addr)),
-            port: handle.addr.port(),
+            running,
+            address,
+            available_addresses,
+            port,
             pairing_enabled,
             pairing_expires_at_ms,
+            sync_mode,
+            sync_mode_persistent,
+            sync_mode_overridden,
         })
     }
 
     pub async fn start_server(&self) -> Result<LanSyncStatus, DomainError> {
         let config = self.runtime.store.load_or_create_config().await?;
+        let sync_mode_override = self.runtime.get_sync_mode_override().await;
+        let sync_mode_persistent = config.sync_mode;
+        let sync_mode_overridden = sync_mode_override.is_some();
+        let sync_mode = sync_mode_override.unwrap_or(sync_mode_persistent);
+
         let pairing = self.runtime.get_pairing_session().await;
         let now_ms = now_ms();
         let pairing_enabled = pairing
             .as_ref()
             .is_some_and(|session| session.expires_at_ms > now_ms);
-        let pairing_expires_at_ms = pairing
-            .as_ref()
-            .map(|session| session.expires_at_ms);
+        let pairing_expires_at_ms = pairing.as_ref().map(|session| session.expires_at_ms);
 
-        let mut server = self.server.lock().await;
-        if let Some(handle) = server.as_ref() {
+        let running_port = {
+            let server = self.server.lock().await;
+            server.as_ref().map(|handle| handle.addr.port())
+        };
+        if let Some(port) = running_port {
+            let available_addresses = list_available_addresses(port)?;
+            let address = default_advertise_address(port, &available_addresses);
             return Ok(LanSyncStatus {
                 running: true,
-                address: Some(format!("http://{}", handle.addr)),
-                port: handle.addr.port(),
+                address,
+                available_addresses,
+                port,
                 pairing_enabled,
                 pairing_expires_at_ms,
+                sync_mode,
+                sync_mode_persistent,
+                sync_mode_overridden,
             });
         }
 
-        let ip = local_ip().map_err(|error| DomainError::InternalError(error.to_string()))?;
-        let addr = std::net::SocketAddr::from((ip, config.port));
+        let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, config.port));
         let handle = spawn_lan_sync_server(addr, self.runtime.clone())
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
+        let port = handle.addr.port();
+        let available_addresses = list_available_addresses(port)?;
+        let address = default_advertise_address(port, &available_addresses);
+
         let status = LanSyncStatus {
             running: true,
-            address: Some(format!("http://{}", handle.addr)),
-            port: handle.addr.port(),
+            address,
+            available_addresses,
+            port,
             pairing_enabled,
             pairing_expires_at_ms,
+            sync_mode,
+            sync_mode_persistent,
+            sync_mode_overridden,
         };
 
+        let mut server = self.server.lock().await;
         *server = Some(handle);
         Ok(status)
     }
 
     pub async fn stop_server(&self) -> Result<(), DomainError> {
-        let mut server = self.server.lock().await;
-        let Some(handle) = server.take() else {
+        let handle = {
+            let mut server = self.server.lock().await;
+            server.take()
+        };
+        let Some(handle) = handle else {
             return Ok(());
         };
 
@@ -121,15 +150,46 @@ impl LanSyncService {
         Ok(())
     }
 
-    pub async fn enable_pairing(&self) -> Result<LanSyncPairingInfo, DomainError> {
-        let server = self.server.lock().await;
-        let Some(handle) = server.as_ref() else {
-            return Err(DomainError::InvalidData(
-                "LAN sync server is not running".to_string(),
-            ));
-        };
+    pub async fn set_sync_mode(
+        &self,
+        mode: LanSyncSyncMode,
+        persist: bool,
+    ) -> Result<(), DomainError> {
+        if persist {
+            let mut config = self.runtime.store.load_or_create_config().await?;
+            config.sync_mode = mode;
+            self.runtime.store.save_config(&config).await?;
+            self.runtime.set_sync_mode_override(None).await;
+            return Ok(());
+        }
 
-        let address = format!("http://{}", handle.addr);
+        self.runtime.set_sync_mode_override(Some(mode)).await;
+        Ok(())
+    }
+
+    pub async fn clear_sync_mode_override(&self) {
+        self.runtime.set_sync_mode_override(None).await;
+    }
+
+    pub async fn enable_pairing(
+        &self,
+        advertise_address: Option<String>,
+    ) -> Result<LanSyncPairingInfo, DomainError> {
+        let port = {
+            let server = self.server.lock().await;
+            server.as_ref().map(|handle| handle.addr.port())
+        }
+        .ok_or_else(|| DomainError::InvalidData("LAN sync server is not running".to_string()))?;
+
+        let address = match advertise_address {
+            Some(value) => value,
+            None => {
+                let available_addresses = list_available_addresses(port)?;
+                default_advertise_address(port, &available_addresses).ok_or_else(|| {
+                    DomainError::InvalidData("No available LAN sync addresses".to_string())
+                })?
+            }
+        };
 
         let expires_at_ms = now_ms() + 5 * 60 * 1000;
         let pair_code = random_base64url(16);
@@ -140,15 +200,7 @@ impl LanSyncService {
             })
             .await;
 
-        let mut uri = Url::parse("tauritavern://lan-sync/pair")
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-        uri.query_pairs_mut()
-            .append_pair("v", "1")
-            .append_pair("addr", &address)
-            .append_pair("pair_code", &pair_code)
-            .append_pair("exp", &expires_at_ms.to_string());
-
-        let pair_uri = uri.to_string();
+        let pair_uri = build_pair_uri(&address, &pair_code, expires_at_ms)?;
         let qr_svg = generate_qr_svg(&pair_uri)?;
 
         Ok(LanSyncPairingInfo {
@@ -159,7 +211,46 @@ impl LanSyncService {
         })
     }
 
-    pub async fn request_pairing(&self, pair_uri: &str) -> Result<LanSyncPairedDevice, DomainError> {
+    pub async fn get_pairing_info(
+        &self,
+        advertise_address: &str,
+    ) -> Result<LanSyncPairingInfo, DomainError> {
+        let server_running = {
+            let server = self.server.lock().await;
+            server.is_some()
+        };
+        if !server_running {
+            return Err(DomainError::InvalidData(
+                "LAN sync server is not running".to_string(),
+            ));
+        }
+
+        let session = self.runtime.get_pairing_session().await.ok_or_else(|| {
+            DomainError::InvalidData("LAN sync pairing is not enabled".to_string())
+        })?;
+
+        if now_ms() > session.expires_at_ms {
+            return Err(DomainError::InvalidData(
+                "LAN sync pairing expired".to_string(),
+            ));
+        }
+
+        let pair_uri =
+            build_pair_uri(advertise_address, &session.pair_code, session.expires_at_ms)?;
+        let qr_svg = generate_qr_svg(&pair_uri)?;
+
+        Ok(LanSyncPairingInfo {
+            address: advertise_address.to_string(),
+            pair_uri,
+            qr_svg,
+            expires_at_ms: session.expires_at_ms,
+        })
+    }
+
+    pub async fn request_pairing(
+        &self,
+        pair_uri: &str,
+    ) -> Result<LanSyncPairedDevice, DomainError> {
         let parsed = parse_pair_uri(pair_uri)?;
         let identity = self.runtime.store.load_or_create_identity().await?;
         let config = self.runtime.store.load_or_create_config().await?;
@@ -216,7 +307,9 @@ impl LanSyncService {
             last_sync_ms: None,
         };
 
-        self.runtime.upsert_paired_device(paired_device.clone()).await?;
+        self.runtime
+            .upsert_paired_device(paired_device.clone())
+            .await?;
 
         Ok(paired_device)
     }
@@ -326,6 +419,57 @@ pub struct LanSyncPairingInfo {
     pub expires_at_ms: u64,
 }
 
+fn list_available_addresses(port: u16) -> Result<Vec<String>, DomainError> {
+    let ifas =
+        list_afinet_netifas().map_err(|error| DomainError::InternalError(error.to_string()))?;
+
+    let mut addresses = ifas
+        .into_iter()
+        .filter_map(|(_name, ip)| match ip {
+            std::net::IpAddr::V4(ip) => {
+                if ip.is_loopback() || ip.is_unspecified() {
+                    None
+                } else {
+                    Some(format!("http://{}:{}", ip, port))
+                }
+            }
+            std::net::IpAddr::V6(_) => None,
+        })
+        .collect::<Vec<_>>();
+
+    addresses.sort();
+    addresses.dedup();
+    Ok(addresses)
+}
+
+fn default_advertise_address(port: u16, available_addresses: &[String]) -> Option<String> {
+    let route_ip = local_ip().ok().and_then(|ip| match ip {
+        std::net::IpAddr::V4(v4) => Some(format!("http://{}:{}", v4, port)),
+        std::net::IpAddr::V6(_) => None,
+    });
+
+    route_ip
+        .filter(|addr| available_addresses.contains(addr))
+        .or_else(|| available_addresses.first().cloned())
+}
+
+fn build_pair_uri(
+    address: &str,
+    pair_code: &str,
+    expires_at_ms: u64,
+) -> Result<String, DomainError> {
+    let mut uri = Url::parse("tauritavern://lan-sync/pair")
+        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+
+    uri.query_pairs_mut()
+        .append_pair("v", "1")
+        .append_pair("addr", address)
+        .append_pair("pair_code", pair_code)
+        .append_pair("exp", &expires_at_ms.to_string());
+
+    Ok(uri.to_string())
+}
+
 struct ParsedPairUri {
     address: String,
     pair_code: String,
@@ -346,12 +490,14 @@ fn parse_pair_uri(pair_uri: &str) -> Result<ParsedPairUri, DomainError> {
 
     Ok(ParsedPairUri {
         address: address.ok_or_else(|| DomainError::InvalidData("Missing addr".to_string()))?,
-        pair_code: pair_code.ok_or_else(|| DomainError::InvalidData("Missing pair_code".to_string()))?,
+        pair_code: pair_code
+            .ok_or_else(|| DomainError::InvalidData("Missing pair_code".to_string()))?,
     })
 }
 
 fn generate_qr_svg(text: &str) -> Result<String, DomainError> {
-    let code = QrCode::new(text.as_bytes()).map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let code = QrCode::new(text.as_bytes())
+        .map_err(|error| DomainError::InternalError(error.to_string()))?;
     Ok(code
         .render::<qrcode::render::svg::Color>()
         .min_dimensions(200, 200)
