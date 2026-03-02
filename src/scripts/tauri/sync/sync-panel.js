@@ -1,5 +1,6 @@
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 import { isMobile } from '../../RossAscends-mods.js';
+import { t, translate } from '../../i18n.js';
 
 const TAURITAVERN_SETTINGS_BUTTON_ID = 'tauritavern_settings_button';
 const LAN_SYNC_DEVICES_CHANGED_EVENT = 'tauritavern:lan_sync_devices_changed';
@@ -11,7 +12,7 @@ let syncProgressElements = null;
 
 async function showErrorPopup(error) {
     const message = error?.message ? String(error.message) : String(error);
-    await callGenericPopup(message, POPUP_TYPE.TEXT, '', {
+    await callGenericPopup(translate(message), POPUP_TYPE.TEXT, '', {
         okButton: 'OK',
         allowVerticalScrolling: true,
         wide: false,
@@ -74,7 +75,7 @@ function installPairingListener() {
             content.style.gap = '10px';
 
             const title = document.createElement('b');
-            title.textContent = 'LAN Sync pairing request';
+            title.textContent = translate('LAN Sync pairing request');
             content.appendChild(title);
 
             const details = document.createElement('div');
@@ -82,11 +83,11 @@ function installPairingListener() {
             details.style.gap = '6px';
 
             const deviceLine = document.createElement('div');
-            deviceLine.textContent = `Device: ${peerDeviceName} (${peerDeviceId})`;
+            deviceLine.textContent = `${translate('Device')}: ${peerDeviceName} (${peerDeviceId})`;
             details.appendChild(deviceLine);
 
             const ipLine = document.createElement('div');
-            ipLine.textContent = `IP: ${peerIp}`;
+            ipLine.textContent = `${translate('IP')}: ${peerIp}`;
             details.appendChild(ipLine);
 
             content.appendChild(details);
@@ -135,7 +136,14 @@ function installSyncListeners() {
 
             const files = payload.files_total;
             const bytes = payload.bytes_total;
-            await callGenericPopup(`LAN Sync completed.\nFiles: ${files}\nBytes: ${bytes}\n\nThe app will now reload to refresh data.`, POPUP_TYPE.TEXT, '', {
+            const message = [
+                translate('LAN Sync completed.'),
+                t`Files: ${files}`,
+                t`Bytes: ${formatBytes(bytes)}`,
+                '',
+                translate('The app will now reload to refresh data.'),
+            ].join('\n');
+            await callGenericPopup(message, POPUP_TYPE.TEXT, '', {
                 okButton: 'OK',
                 allowVerticalScrolling: true,
                 wide: false,
@@ -154,7 +162,7 @@ function installSyncListeners() {
             syncProgressPopup = null;
             syncProgressElements = null;
 
-            const message = payload.message;
+            const message = translate(payload.message);
             await callGenericPopup(String(message), POPUP_TYPE.TEXT, '', {
                 okButton: 'OK',
                 allowVerticalScrolling: true,
@@ -175,7 +183,7 @@ function ensureSyncProgressPopup() {
     root.style.gap = '10px';
 
     const title = document.createElement('b');
-    title.textContent = 'LAN Sync progress';
+    title.textContent = translate('LAN Sync progress');
     root.appendChild(title);
 
     const phase = document.createElement('div');
@@ -231,10 +239,10 @@ function updateSyncProgressPopup(payload) {
     const bytesTotal = payload.bytes_total;
     const currentPath = payload.current_path;
 
-    syncProgressElements.phase.textContent = `Phase: ${phase}`;
-    syncProgressElements.counts.textContent = `Files: ${filesDone}/${filesTotal}`;
-    syncProgressElements.bytes.textContent = `Bytes: ${formatBytes(bytesDone)}/${formatBytes(bytesTotal)}`;
-    syncProgressElements.current.textContent = currentPath ? `Current: ${currentPath}` : '';
+    syncProgressElements.phase.textContent = t`Phase: ${translate(phase)}`;
+    syncProgressElements.counts.textContent = t`Files: ${filesDone}/${filesTotal}`;
+    syncProgressElements.bytes.textContent = t`Bytes: ${formatBytes(bytesDone)}/${formatBytes(bytesTotal)}`;
+    syncProgressElements.current.textContent = currentPath ? t`Current: ${currentPath}` : '';
 }
 
 function getDeviceAlias(deviceId) {
@@ -313,16 +321,16 @@ function buildLanSyncPopup() {
             <div class="flex-container flexFlowColumn" style="gap: 6px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
                 <b data-i18n="Pair via QR">Pair via QR</b>
                 <div class="flex-container flexFlowRow" style="gap: 10px; align-items: flex-start;">
-                    <div id="lan-sync-qr-wrap" style="width: 210px; height: 210px; background: rgba(255,255,255,0.03); display: flex; align-items: center; justify-content: center;">
-                        <span style="opacity: 0.7;">No QR</span>
+                <div id="lan-sync-qr-wrap" style="width: 210px; height: 210px; background: rgba(255,255,255,0.03); display: flex; align-items: center; justify-content: center;">
+                        <span style="opacity: 0.7;" data-i18n="No QR">No QR</span>
                     </div>
                     <div class="flex-container flexFlowColumn" style="gap: 6px; flex: 1;">
                         <div>
                             <span data-i18n="Expires">Expires</span>: <code id="lan-sync-pair-expiry">N/A</code>
                         </div>
-                        <textarea id="lan-sync-pair-uri" rows="4" style="width: 100%; resize: vertical;" placeholder="Pair URI (scan QR or copy)"></textarea>
+                        <textarea id="lan-sync-pair-uri" rows="4" style="width: 100%; resize: vertical;" placeholder="Pair URI (scan QR or copy)" data-i18n="[placeholder]Pair URI (scan QR or copy)"></textarea>
                         <div class="flex-container flexFlowRow" style="gap: 10px;">
-                            <div id="lan-sync-copy-uri" class="menu_button">Copy URI</div>
+                            <div id="lan-sync-copy-uri" class="menu_button" data-i18n="Copy URI">Copy URI</div>
                         </div>
                     </div>
                 </div>
@@ -331,7 +339,7 @@ function buildLanSyncPopup() {
             <div class="flex-container flexFlowColumn" style="gap: 6px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
                 <b data-i18n="Connect device">Connect device</b>
                 <div class="flex-container flexFlowColumn" style="gap: 6px;">
-                    <textarea id="lan-sync-request-uri" rows="3" style="width: 100%; resize: vertical;" placeholder="Paste Pair URI here (pairs new or reconnects existing)"></textarea>
+                    <textarea id="lan-sync-request-uri" rows="3" style="width: 100%; resize: vertical;" placeholder="Paste Pair URI here (pairs new or reconnects existing)" data-i18n="[placeholder]Paste Pair URI here (pairs new or reconnects existing)"></textarea>
                     <div class="flex-container flexFlowRow" style="gap: 10px;">
                         <div id="lan-sync-scan-pairing" class="menu_button" data-i18n="Scan">Scan</div>
                         <div id="lan-sync-request-pairing" class="menu_button" data-i18n="Connect">Connect</div>
@@ -364,6 +372,7 @@ function buildLanSyncPopup() {
     const pairUriTextArea = root.querySelector('#lan-sync-pair-uri');
     const pairExpiryText = root.querySelector('#lan-sync-pair-expiry');
     const copyUriButton = root.querySelector('#lan-sync-copy-uri');
+    pairExpiryText.textContent = translate(pairExpiryText.textContent);
 
     const requestPairUriTextArea = root.querySelector('#lan-sync-request-uri');
     const scanPairingButton = root.querySelector('#lan-sync-scan-pairing');
@@ -379,19 +388,19 @@ function buildLanSyncPopup() {
     const renderPairingInfo = (pairingInfo) => {
         if (!pairingInfo) {
             pairUriTextArea.value = '';
-            pairExpiryText.textContent = 'N/A';
-            qrWrap.innerHTML = '<span style="opacity: 0.7;">No QR</span>';
+            pairExpiryText.textContent = translate('N/A');
+            qrWrap.innerHTML = '<span style="opacity: 0.7;" data-i18n="No QR">No QR</span>';
             return;
         }
 
         pairUriTextArea.value = pairingInfo.pair_uri || '';
         pairExpiryText.textContent = pairingInfo.expires_at_ms
             ? formatTimestamp(pairingInfo.expires_at_ms)
-            : 'N/A';
+            : translate('N/A');
 
         const svg = pairingInfo.qr_svg || '';
         if (!svg) {
-            qrWrap.innerHTML = '<span style="opacity: 0.7;">No QR</span>';
+            qrWrap.innerHTML = '<span style="opacity: 0.7;" data-i18n="No QR">No QR</span>';
             return;
         }
 
@@ -412,7 +421,7 @@ function buildLanSyncPopup() {
         if (devices.length === 0) {
             const empty = document.createElement('div');
             empty.style.opacity = '0.7';
-            empty.textContent = 'No paired devices';
+            empty.textContent = translate('No paired devices');
             devicesContainer.appendChild(empty);
             return;
         }
@@ -434,12 +443,12 @@ function buildLanSyncPopup() {
             const alias = getDeviceAlias(deviceId);
             name.textContent = alias || deviceName;
             name.style.cursor = 'pointer';
-            name.title = 'Click to rename';
+            name.title = translate('Click to rename');
             name.addEventListener('click', () => {
                 runOrPopup(async () => {
                     const existing = getDeviceAlias(deviceId);
                     const initial = existing || deviceName;
-                    const result = await callGenericPopup('Rename paired device (local only). Leave empty to reset.', POPUP_TYPE.INPUT, initial, {
+                    const result = await callGenericPopup(translate('Rename paired device (local only). Leave empty to reset.'), POPUP_TYPE.INPUT, initial, {
                         okButton: 'Save',
                         cancelButton: 'Cancel',
                         rows: 1,
@@ -475,14 +484,14 @@ function buildLanSyncPopup() {
             addressLine.style.fontSize = '0.9em';
             addressLine.textContent = device.last_known_address
                 ? device.last_known_address
-                : 'Address: N/A (reconnect needed)';
+                : translate('Address: N/A (reconnect needed)');
             meta.appendChild(addressLine);
 
             const syncInfo = document.createElement('div');
             syncInfo.style.opacity = '0.8';
             syncInfo.style.fontSize = '0.9em';
-            const lastSync = device.last_sync_ms ? formatTimestamp(device.last_sync_ms) : 'Never';
-            syncInfo.textContent = `Last sync: ${lastSync}`;
+            const lastSync = device.last_sync_ms ? formatTimestamp(device.last_sync_ms) : translate('Never');
+            syncInfo.textContent = t`Last sync: ${lastSync}`;
             meta.appendChild(syncInfo);
 
             row.appendChild(meta);
@@ -493,7 +502,7 @@ function buildLanSyncPopup() {
 
             const download = document.createElement('div');
             download.className = 'menu_button menu_button_icon margin0';
-            download.title = 'Download (pull from this device)';
+            download.title = translate('Download (pull from this device)');
             download.innerHTML = '<i class="fa-solid fa-download"></i>';
             download.addEventListener('click', () => runOrPopup(async () => {
                 await invoke('lan_sync_sync_from_device', { deviceId });
@@ -501,31 +510,31 @@ function buildLanSyncPopup() {
 
             const upload = document.createElement('div');
             upload.className = 'menu_button menu_button_icon margin0';
-            upload.title = 'Upload (request device to pull from you)';
+            upload.title = translate('Upload (request device to pull from you)');
             upload.innerHTML = '<i class="fa-solid fa-upload"></i>';
             upload.addEventListener('click', () => runOrPopup(async () => {
                 await invoke('lan_sync_push_to_device', { deviceId });
-                toastr.success('Upload request sent.');
+                toastr.success(translate('Upload request sent.'));
             }));
 
             if (!device.last_known_address) {
                 download.style.opacity = '0.6';
                 download.style.pointerEvents = 'none';
-                download.title = 'Address missing. Reconnect using Pair URI.';
+                download.title = translate('Address missing. Reconnect using Pair URI.');
                 upload.style.opacity = '0.6';
                 upload.style.pointerEvents = 'none';
-                upload.title = 'Address missing. Reconnect using Pair URI.';
+                upload.title = translate('Address missing. Reconnect using Pair URI.');
             }
 
             if (!currentStatus.running) {
                 upload.style.opacity = '0.6';
                 upload.style.pointerEvents = 'none';
-                upload.title = 'Start LAN Sync server first (peer needs to download from you).';
+                upload.title = translate('Start LAN Sync server first (peer needs to download from you).');
             }
 
             const remove = document.createElement('div');
             remove.className = 'menu_button menu_button_icon margin0';
-            remove.title = 'Remove device';
+            remove.title = translate('Remove device');
             remove.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
             remove.addEventListener('click', () => runOrPopup(async () => {
                 await invoke('lan_sync_remove_device', { deviceId });
@@ -544,15 +553,15 @@ function buildLanSyncPopup() {
     const refresh = async () => {
         const status = await invoke('lan_sync_get_status');
         currentStatus = status;
-        statusText.textContent = status.running ? 'Running' : 'Stopped';
+        statusText.textContent = translate(status.running ? 'Running' : 'Stopped');
         statusText.style.color = status.running ? '#0f0' : '#f00';
-        addressText.textContent = status.address || 'N/A';
+        addressText.textContent = status.address || translate('N/A');
 
         if (status.pairing_enabled) {
-            pairingText.textContent = `Enabled (expires ${formatTimestamp(status.pairing_expires_at_ms)})`;
+            pairingText.textContent = t`Enabled (expires ${formatTimestamp(status.pairing_expires_at_ms)})`;
             pairingText.style.color = '#0f0';
         } else {
-            pairingText.textContent = 'Disabled';
+            pairingText.textContent = translate('Disabled');
             pairingText.style.color = '#f00';
         }
 
@@ -621,12 +630,12 @@ function buildLanSyncPopup() {
 
 function formatTimestamp(ms) {
     if (!ms) {
-        return 'N/A';
+        return translate('N/A');
     }
 
     const date = new Date(Number(ms));
     if (Number.isNaN(date.getTime())) {
-        return 'Invalid time';
+        return translate('Invalid time');
     }
 
     return date.toLocaleString();
