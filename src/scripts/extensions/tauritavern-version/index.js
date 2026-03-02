@@ -1,6 +1,8 @@
-import { CLIENT_VERSION, displayVersion } from '../../../script.js';
-import { getClientVersion as getBridgeClientVersion } from '../../../tauri-bridge.js';
+import { DOMPurify } from '../../../lib.js';
+import { CLIENT_VERSION, converter, displayVersion, reloadMarkdownProcessor } from '../../../script.js';
+import { checkForUpdate, getClientVersion as getBridgeClientVersion, listen } from '../../../tauri-bridge.js';
 import { renderExtensionTemplateAsync } from '../../extensions.js';
+import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 
 const MODULE_NAME = 'tauritavern-version';
 const LINKS = Object.freeze({
@@ -12,6 +14,8 @@ const LINKS = Object.freeze({
 const COPY_SUCCESS_TEXT = '版本信息已复制到剪贴板';
 const COPY_FAILURE_TEXT = '复制失败，请手动复制版本信息';
 const UNKNOWN_VALUE = 'UNKNOWN';
+const UPDATE_CHECKING_TEXT = '检查中…';
+const UPDATE_NO_UPDATE_TEXT = '当前已是最新版本';
 
 function extractCompatVersion(agent) {
     const segments = String(agent || '')
@@ -136,15 +140,129 @@ async function onCopyVersionClick() {
     }
 }
 
+function ensureMarkdownConverter() {
+    return converter || reloadMarkdownProcessor();
+}
+
+function renderChangelogHtml(markdown) {
+    const normalized = String(markdown || '').trim();
+    if (!normalized) {
+        return '<p>无变更日志</p>';
+    }
+
+    const html = ensureMarkdownConverter().makeHtml(normalized);
+    return DOMPurify.sanitize(html);
+}
+
+function showUpdateResult(result) {
+    const release = result?.latest_release;
+    if (!release) {
+        return;
+    }
+
+    $('#tauritavern_update_version').text(release.version || release.tag_name || UNKNOWN_VALUE);
+    $('#tauritavern_update_changelog').html(renderChangelogHtml(release.body));
+    $('#tauritavern_update_download').attr('href', release.html_url);
+    $('#tauritavern_update_result').slideDown(200);
+}
+
+function hideUpdateResult() {
+    $('#tauritavern_update_result').slideUp(200);
+}
+
+async function onCheckUpdateClick() {
+    const $btn = $('#tauritavern_check_update');
+    const $icon = $btn.find('i');
+    const $text = $btn.find('span');
+
+    $icon.addClass('fa-spin');
+    $text.text(UPDATE_CHECKING_TEXT);
+    $btn.prop('disabled', true);
+
+    try {
+        const result = await checkForUpdate();
+        if (result?.has_update && result?.latest_release) {
+            showUpdateResult(result);
+        } else {
+            globalThis.toastr?.info(UPDATE_NO_UPDATE_TEXT);
+            hideUpdateResult();
+        }
+    } catch (error) {
+        globalThis.toastr?.error(`检查更新失败: ${error}`);
+    } finally {
+        $icon.removeClass('fa-spin');
+        $text.text('检查更新');
+        $btn.prop('disabled', false);
+    }
+}
+
+function buildStartupUpdatePopupContent(release) {
+    const root = document.createElement('div');
+    root.className = 'ttv-update-popup';
+
+    const title = document.createElement('h3');
+    title.textContent = `TauriTavern ${release.version} 已发布`;
+    root.appendChild(title);
+
+    const body = document.createElement('div');
+    body.className = 'ttv-update-popup-body';
+    body.innerHTML = renderChangelogHtml(release.body);
+    root.appendChild(body);
+
+    return root;
+}
+
+async function showStartupUpdatePopup(release) {
+    const popup = new Popup(buildStartupUpdatePopupContent(release), POPUP_TYPE.CONFIRM, '', {
+        okButton: '前往下载',
+        cancelButton: '稍后',
+        allowVerticalScrolling: true,
+        wide: true,
+        large: true,
+    });
+
+    const result = await popup.show();
+    if (result === POPUP_RESULT.AFFIRMATIVE) {
+        window.open(release.html_url, '_blank', 'noopener,noreferrer');
+    }
+}
+
+let startupUpdatePopupShown = false;
+
+async function listenForStartupUpdate() {
+    try {
+        await listen('update-available', (event) => {
+            const result = event?.payload;
+            if (!result?.has_update || !result?.latest_release) {
+                return;
+            }
+
+            showUpdateResult(result);
+
+            if (startupUpdatePopupShown) {
+                return;
+            }
+            startupUpdatePopupShown = true;
+            void showStartupUpdatePopup(result.latest_release);
+        });
+    } catch (error) {
+        console.warn('Failed to listen for update-available event:', error);
+    }
+}
+
 jQuery(async () => {
     const container = $('#tauritavern_version_container');
     if (!container.length) {
         return;
     }
 
+    void listenForStartupUpdate();
+
     const html = await renderExtensionTemplateAsync(MODULE_NAME, 'settings', LINKS);
     container.append(html);
     $('#tauritavern_version_copy').on('click', onCopyVersionClick);
+    $('#tauritavern_check_update').on('click', onCheckUpdateClick);
+    $('#tauritavern_update_dismiss').on('click', hideUpdateResult);
 
     const versionInfo = await resolveVersionInfo();
     renderVersionInfo(versionInfo);

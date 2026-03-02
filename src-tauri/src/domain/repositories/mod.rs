@@ -13,6 +13,7 @@ pub mod secret_repository;
 pub mod settings_repository;
 pub mod theme_repository;
 pub mod tokenizer_repository;
+pub mod update_repository;
 pub mod user_directory_repository;
 pub mod user_repository;
 pub mod world_info_repository;

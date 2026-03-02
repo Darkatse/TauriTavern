@@ -38,6 +38,29 @@
                     <i class="fa-solid fa-copy"></i>
                     <span>复制版本信息</span>
                 </button>
+                <button id="tauritavern_check_update" class="menu_button menu_button_icon" type="button">
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                    <span>检查更新</span>
+                </button>
+            </div>
+
+            <div id="tauritavern_update_result" class="ttv-update-result">
+                <div class="ttv-update-header">
+                    <div class="ttv-update-title">
+                        <span class="ttv-update-label">发现新版本</span>
+                        <strong id="tauritavern_update_version">Loading...</strong>
+                    </div>
+                    <button id="tauritavern_update_dismiss" class="menu_button menu_button_icon margin0" type="button" title="忽略">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+
+                <div id="tauritavern_update_changelog" class="ttv-update-changelog"></div>
+
+                <a id="tauritavern_update_download" class="menu_button menu_button_icon" href="{{repositoryUrl}}" target="_blank" rel="noopener noreferrer">
+                    <i class="fa-solid fa-download"></i>
+                    <span>前往下载</span>
+                </a>
             </div>
         </div>
     </div>

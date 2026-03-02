@@ -139,6 +139,15 @@ export async function getClientVersion() {
     }
 }
 
+export async function checkForUpdate() {
+    const invokeFn = getInvokeFn();
+    if (!invokeFn) {
+        throw new Error('Tauri invoke is unavailable');
+    }
+
+    return invokeFn('check_for_update');
+}
+
 export function getAssetUrl(path) {
     if (!isTauriEnv || !convertFileSrc || !path) {
         return path;

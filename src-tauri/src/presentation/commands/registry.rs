@@ -165,6 +165,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::tokenizer_commands::encode_openai_tokens,
         super::tokenizer_commands::decode_openai_tokens,
         super::tokenizer_commands::build_openai_logit_bias,
+        // Update commands
+        super::update_commands::check_for_update,
         // Bridge commands
         super::bridge::emit_event,
         super::bridge::get_version,

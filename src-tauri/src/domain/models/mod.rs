@@ -11,6 +11,7 @@ pub mod quick_reply;
 pub mod secret;
 pub mod settings;
 pub mod theme;
+pub mod update;
 pub mod user;
 pub mod user_directory;
 pub mod world_info;
