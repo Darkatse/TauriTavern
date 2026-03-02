@@ -12,16 +12,64 @@ class AndroidAiGenerationNotifier(
   private val context: Context,
 ) {
   fun ensureKeepAliveService() {
-    ensureNotificationChannels(context)
+    ContextCompat.startForegroundService(
+      context,
+      Intent(context, AiGenerationForegroundService::class.java).apply {
+        action = AiGenerationForegroundService.ACTION_ENSURE_KEEPALIVE
+      },
+    )
+  }
 
-    val intent = Intent(context, AiGenerationForegroundService::class.java).apply {
-      action = AiGenerationForegroundService.ACTION_START
-    }
-    ContextCompat.startForegroundService(context, intent)
+  fun onGenerationStart() {
+    ContextCompat.startForegroundService(
+      context,
+      Intent(context, AiGenerationForegroundService::class.java).apply {
+        action = AiGenerationForegroundService.ACTION_GENERATION_START
+      },
+    )
+  }
+
+  fun onGenerationProgress(outputTokens: Long) {
+    ContextCompat.startForegroundService(
+      context,
+      Intent(context, AiGenerationForegroundService::class.java).apply {
+        action = AiGenerationForegroundService.ACTION_GENERATION_PROGRESS
+        putExtra(AiGenerationForegroundService.EXTRA_OUTPUT_TOKENS, outputTokens)
+      },
+    )
+  }
+
+  fun onGenerationFinish(
+    success: Boolean,
+    statusCode: Int,
+    showCompletionNotification: Boolean,
+  ) {
+    ContextCompat.startForegroundService(
+      context,
+      Intent(context, AiGenerationForegroundService::class.java).apply {
+        action = AiGenerationForegroundService.ACTION_GENERATION_FINISH
+        putExtra(AiGenerationForegroundService.EXTRA_SUCCESS, success)
+        putExtra(AiGenerationForegroundService.EXTRA_STATUS_CODE, statusCode)
+        putExtra(
+          AiGenerationForegroundService.EXTRA_SHOW_COMPLETION_NOTIFICATION,
+          showCompletionNotification,
+        )
+      },
+    )
+  }
+
+  fun onGenerationStop() {
+    ContextCompat.startForegroundService(
+      context,
+      Intent(context, AiGenerationForegroundService::class.java).apply {
+        action = AiGenerationForegroundService.ACTION_GENERATION_STOP
+      },
+    )
   }
 
   companion object {
     internal const val KEEPALIVE_CHANNEL_ID = "tauritavern_ai_generation_keepalive"
+    internal const val LIVE_UPDATE_CHANNEL_ID = "tauritavern_ai_generation_live_updates"
 
     internal fun ensureNotificationChannels(context: Context) {
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
@@ -29,7 +77,7 @@ class AndroidAiGenerationNotifier(
       }
 
       val notificationManager =
-        context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
       val keepAliveChannel =
         NotificationChannel(
@@ -39,9 +87,25 @@ class AndroidAiGenerationNotifier(
         ).apply {
           description = context.getString(R.string.notification_channel_ai_generation_description)
           setSound(null, null)
+          enableVibration(false)
+          setShowBadge(false)
+        }
+
+      val liveUpdateChannel =
+        NotificationChannel(
+          LIVE_UPDATE_CHANNEL_ID,
+          context.getString(R.string.notification_channel_ai_live_updates_name),
+          NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply {
+          description =
+            context.getString(R.string.notification_channel_ai_live_updates_description)
+          setSound(null, null)
+          enableVibration(false)
+          setShowBadge(false)
         }
 
       notificationManager.createNotificationChannel(keepAliveChannel)
+      notificationManager.createNotificationChannel(liveUpdateChannel)
     }
 
     internal fun buildLaunchIntent(context: Context): PendingIntent {

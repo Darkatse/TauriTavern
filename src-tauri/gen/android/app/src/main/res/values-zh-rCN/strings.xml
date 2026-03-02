@@ -3,6 +3,22 @@
     <string name="main_activity_title">TauriTavern</string>
     <string name="notification_channel_ai_generation_name">AI 生成</string>
     <string name="notification_channel_ai_generation_description">在后台保持 AI 生成不中断</string>
+    <string name="notification_channel_ai_live_updates_name">AI 实时更新</string>
+    <string name="notification_channel_ai_live_updates_description">用于 AI 生成过程的实时通知更新</string>
+
     <string name="notification_ai_keepalive_title">少女祈祷中</string>
     <string name="notification_ai_keepalive_body">TauriTavern 将在后台持续生成，请勿划掉</string>
+
+    <string name="notification_ai_live_title">AI 生成中</string>
+    <string name="notification_ai_live_body">已输出 Token：%1$d</string>
+    <string name="notification_ai_live_short">生成中</string>
+
+    <string name="notification_ai_done_title">AI 回复已就绪</string>
+    <string name="notification_ai_done_body">点按返回 TauriTavern</string>
+    <string name="notification_ai_done_short">已完成</string>
+
+    <string name="notification_ai_failed_title">AI 生成失败</string>
+    <string name="notification_ai_failed_body">点按返回 TauriTavern</string>
+    <string name="notification_ai_failed_body_with_code">错误 %1$d • 点按返回 TauriTavern</string>
+    <string name="notification_ai_failed_short">失败</string>
 </resources>

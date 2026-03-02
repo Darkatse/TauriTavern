@@ -3,6 +3,22 @@
     <string name="main_activity_title">TauriTavern</string>
     <string name="notification_channel_ai_generation_name">AI Generation</string>
     <string name="notification_channel_ai_generation_description">Keeps AI generation alive in background</string>
+    <string name="notification_channel_ai_live_updates_name">AI Live Updates</string>
+    <string name="notification_channel_ai_live_updates_description">Live updates for AI generation</string>
+
     <string name="notification_ai_keepalive_title">Generating AI reply</string>
     <string name="notification_ai_keepalive_body">TauriTavern will keep running in background</string>
+
+    <string name="notification_ai_live_title">Generating AI reply</string>
+    <string name="notification_ai_live_body">Tokens: %1$d</string>
+    <string name="notification_ai_live_short">Generating</string>
+
+    <string name="notification_ai_done_title">AI reply is ready</string>
+    <string name="notification_ai_done_body">Tap to return to TauriTavern</string>
+    <string name="notification_ai_done_short">Ready</string>
+
+    <string name="notification_ai_failed_title">AI reply failed</string>
+    <string name="notification_ai_failed_body">Tap to return to TauriTavern</string>
+    <string name="notification_ai_failed_body_with_code">Error %1$d • Tap to return to TauriTavern</string>
+    <string name="notification_ai_failed_short">Failed</string>
 </resources>

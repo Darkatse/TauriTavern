@@ -52,6 +52,8 @@ const STREAM_RESPONSE_HEADERS = Object.freeze({
 });
 const ANDROID_GENERATION_BRIDGE_NAME = 'TauriTavernAndroidAiBridge';
 const FAILURE_NOTIFICATION_MAX_BODY_LENGTH = 180;
+const ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS = 4000;
+const ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA = 160;
 const i18nNotificationKeys = Object.freeze({
     successTitle: 'tauritavern_ai_notification_success_title',
     successBody: 'tauritavern_ai_notification_success_body',
@@ -82,6 +84,44 @@ function callAndroidGenerationBridge(methodName, ...args) {
         console.debug(`Failed to call ${ANDROID_GENERATION_BRIDGE_NAME}.${methodName}:`, error);
         return false;
     }
+}
+
+function getAndroidGenerationBridgeResult(methodName, ...args) {
+    const bridge = window?.[ANDROID_GENERATION_BRIDGE_NAME];
+    const method = bridge?.[methodName];
+    if (typeof method !== 'function') {
+        return null;
+    }
+
+    try {
+        return method.apply(bridge, args);
+    } catch (error) {
+        console.debug(`Failed to call ${ANDROID_GENERATION_BRIDGE_NAME}.${methodName}:`, error);
+        return null;
+    }
+}
+
+function hasAndroidGenerationBridgeMethod(methodName) {
+    const bridge = window?.[ANDROID_GENERATION_BRIDGE_NAME];
+    return typeof bridge?.[methodName] === 'function';
+}
+
+function extractHttpStatusCode(errorMessage) {
+    const text = String(errorMessage || '');
+    const explicit = text.match(/\b(?:status|http)\s*[:=]?\s*(\d{3})\b/i);
+    if (explicit) {
+        const value = Number(explicit[1]);
+        if (Number.isInteger(value) && value >= 400 && value <= 599) {
+            return value;
+        }
+    }
+
+    const common = text.match(/\b(429|503)\b/);
+    if (common) {
+        return Number(common[1]);
+    }
+
+    return 0;
 }
 
 function shouldNotifyCompletion() {
@@ -194,6 +234,11 @@ function normalizeFailureNotificationBody(errorMessage) {
         return '';
     }
 
+    const statusCode = extractHttpStatusCode(normalized);
+    if (statusCode) {
+        return `Error ${statusCode}`;
+    }
+
     if (normalized.length > FAILURE_NOTIFICATION_MAX_BODY_LENGTH) {
         return `${normalized.slice(0, FAILURE_NOTIFICATION_MAX_BODY_LENGTH - 3)}...`;
     }
@@ -225,19 +270,35 @@ function createGenerationLifecycle(context, payload) {
 
             active = false;
 
-            if (success && shouldNotifyResult && shouldNotifyCompletion()) {
-                const texts = getGenerationNotificationTexts();
-                showSystemNotification(context, texts.successTitle, texts.successBody);
-            }
-
-            if (!success && notifyFailure && shouldNotifyResult && shouldNotifyCompletion()) {
-                const texts = getGenerationNotificationTexts();
-                const normalizedBody = normalizeFailureNotificationBody(errorMessage) || texts.failureBody;
-                showSystemNotification(context, texts.failureTitle, normalizedBody);
-            }
-
             mobileGenerationState.activeCount = Math.max(0, mobileGenerationState.activeCount - 1);
             if (mobileGenerationState.activeCount === 0) {
+                const shouldNotify = shouldNotifyResult && shouldNotifyCompletion();
+                const statusCode = notifyFailure ? extractHttpStatusCode(errorMessage) : 0;
+                const supportsLiveUpdates = getAndroidGenerationBridgeResult('supportsLiveUpdates') === true;
+
+                if (supportsLiveUpdates && hasAndroidGenerationBridgeMethod('onGenerationFinish')) {
+                    callAndroidGenerationBridge(
+                        'onGenerationFinish',
+                        JSON.stringify({
+                            success: Boolean(success),
+                            status_code: statusCode,
+                            show_completion_notification: Boolean(shouldNotify && (success || notifyFailure)),
+                        }),
+                    );
+                    return;
+                }
+
+                if (success && shouldNotify) {
+                    const texts = getGenerationNotificationTexts();
+                    showSystemNotification(context, texts.successTitle, texts.successBody);
+                }
+
+                if (!success && notifyFailure && shouldNotify) {
+                    const texts = getGenerationNotificationTexts();
+                    const normalizedBody = normalizeFailureNotificationBody(errorMessage) || texts.failureBody;
+                    showSystemNotification(context, texts.failureTitle, normalizedBody);
+                }
+
                 callAndroidGenerationBridge('onGenerationStop');
             }
         },
@@ -466,6 +527,15 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
     const streamId = createStreamId();
     const eventName = `chat-completion-stream:${streamId}`;
     const encoder = new TextEncoder();
+    const androidSupportsLiveUpdates = getAndroidGenerationBridgeResult('supportsLiveUpdates') === true;
+    const androidCanReportTokens = androidSupportsLiveUpdates && hasAndroidGenerationBridgeMethod('onGenerationProgress');
+    const androidModel = getCompletionModel(payload);
+    const androidOutputChunks = [];
+    let androidOutputChars = 0;
+    let androidLastTokenCount = 0;
+    let androidLastTokenCharCount = 0;
+    let androidLastTokenReportAt = 0;
+    let androidTokenCountInFlight = false;
 
     const tauriEvent = window.__TAURI__?.event;
     if (typeof tauriEvent?.listen !== 'function') {
@@ -599,6 +669,67 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                 flushFrames();
                 void closeStream();
                 return;
+            }
+
+            if (androidCanReportTokens) {
+                try {
+                    const parsed = JSON.parse(data);
+                    const delta = asObject(parsed?.choices?.[0]?.delta);
+                    const chunkText = typeof delta.content === 'string' ? delta.content : '';
+                    if (chunkText) {
+                        androidOutputChunks.push(chunkText);
+                        androidOutputChars += chunkText.length;
+
+                        const now = Date.now();
+                        const shouldCompute = shouldNotifyCompletion()
+                            && !androidTokenCountInFlight
+                            && now - androidLastTokenReportAt >= ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS
+                            && androidOutputChars - androidLastTokenCharCount >= ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA;
+
+                        if (shouldCompute) {
+                            androidLastTokenReportAt = now;
+                            androidTokenCountInFlight = true;
+                            const charCountAtRequest = androidOutputChars;
+                            const textSnapshot = androidOutputChunks.join('');
+                            androidOutputChunks.length = 0;
+                            androidOutputChunks.push(textSnapshot);
+
+                            void context.safeInvoke('count_openai_tokens', {
+                                dto: {
+                                    model: androidModel,
+                                    messages: [textSnapshot],
+                                },
+                            })
+                                .then((result) => {
+                                    if (isClosed) {
+                                        return;
+                                    }
+
+                                    const count = Number(asObject(result).token_count || 0);
+                                    if (!Number.isFinite(count) || count < 0) {
+                                        return;
+                                    }
+
+                                    const normalized = Math.floor(count);
+                                    androidLastTokenCharCount = charCountAtRequest;
+                                    if (normalized === androidLastTokenCount) {
+                                        return;
+                                    }
+
+                                    androidLastTokenCount = normalized;
+                                    callAndroidGenerationBridge('onGenerationProgress', normalized);
+                                })
+                                .catch((error) => {
+                                    console.debug('Failed to count stream tokens:', error);
+                                })
+                                .finally(() => {
+                                    androidTokenCountInFlight = false;
+                                });
+                        }
+                    }
+                } catch {
+                    // Ignore non-JSON chunks (e.g. keep-alives).
+                }
             }
 
             scheduleFlush();
