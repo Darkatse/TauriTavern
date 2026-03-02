@@ -5,6 +5,7 @@ pub mod character;
 pub mod chat;
 pub mod extension;
 pub mod group;
+pub mod lan_sync;
 pub mod preset;
 pub mod quick_reply;
 pub mod secret;

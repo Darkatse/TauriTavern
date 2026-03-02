@@ -7,9 +7,18 @@ window.__TAURI_RUNNING__ = true;
  * to serve modules via the asset protocol while first-launch I/O is in progress.
  */
 async function importWithRetry(specifier, retries = 8, delay = 500) {
+    const buildSpecifier = (attempt) => {
+        if (attempt === 0) {
+            return specifier;
+        }
+
+        const separator = specifier.includes('?') ? '&' : '?';
+        return `${specifier}${separator}tt_retry=${attempt}&t=${Date.now()}`;
+    };
+
     for (let i = 0; i <= retries; i++) {
         try {
-            return await import(specifier);
+            return await import(buildSpecifier(i));
         } catch (error) {
             if (i === retries) throw error;
             console.warn(`TauriTavern: import('${specifier}') attempt ${i + 1} failed, retrying in ${delay}ms…`);

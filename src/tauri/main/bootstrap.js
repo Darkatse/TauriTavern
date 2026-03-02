@@ -3,6 +3,7 @@ import { createTauriMainContext } from './context.js';
 import { createInterceptors } from './interceptors.js';
 import { createRouteRegistry } from './router.js';
 import { installNativeShareBridge } from './share-target-bridge.js';
+import { installLanSyncPanel } from '../../scripts/tauri/sync/sync-panel.js';
 import {
     getMethod,
     getMethodHint,
@@ -183,6 +184,7 @@ export function bootstrapTauriMain() {
     bootstrapped = true;
 
     installNativeShareBridge();
+    installLanSyncPanel();
 
     const context = createTauriMainContext({ invoke, convertFileSrc });
     const router = createRouteRegistry();

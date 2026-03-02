@@ -20,6 +20,7 @@ serde_json = "1"
 
 [dependencies]
 tauri = { version = "2.10.2", features = ["protocol-asset"] }
+tauri-plugin-barcode-scanner = "2.4.4"
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-fs = "2.4.5"
 tauri-plugin-notification = "2.3.1"
@@ -31,6 +32,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["a
 tracing-appender = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "rt-multi-thread", "sync"] }
+tokio-util = { version = "0.7", default-features = false, features = ["io"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
 base64 = "0.21"
 sha2 = "0.10"
@@ -44,6 +46,7 @@ image = { version = "0.24", default-features = false, features = ["bmp", "gif", 
 png = "0.17"
 mime_guess = "2.0.5"
 flate2 = "1.1.9"
+filetime = "0.2"
 miktik = { version = "0.1.2", default-features = false, features = ["openai", "huggingface", "sentencepiece"] }
 ureq = { version = "3.2.0", default-features = false, features = ["rustls"] }
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "multipart", "tokio"] }

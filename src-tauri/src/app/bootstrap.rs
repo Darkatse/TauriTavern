@@ -11,6 +11,7 @@ use crate::application::services::chat_service::ChatService;
 use crate::application::services::content_service::ContentService;
 use crate::application::services::extension_service::ExtensionService;
 use crate::application::services::group_service::GroupService;
+use crate::application::services::lan_sync_service::LanSyncService;
 use crate::application::services::preset_service::PresetService;
 use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
@@ -75,6 +76,7 @@ pub(super) struct AppServices {
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
     pub world_info_service: Arc<WorldInfoService>,
+    pub lan_sync_service: Arc<LanSyncService>,
 }
 
 struct AppRepositories {
@@ -148,6 +150,10 @@ pub(super) fn build_services(
     let user_directory_service = Arc::new(UserDirectoryService::new(
         repositories.user_directory_repository,
     ));
+    let lan_sync_service = Arc::new(LanSyncService::new(
+        app_handle.clone(),
+        data_directory.default_user().to_path_buf(),
+    ));
 
     // Do not expose secrets by default; this can be enabled by configuration later.
     let secret_service = Arc::new(SecretService::new(repositories.secret_repository, false));
@@ -170,6 +176,7 @@ pub(super) fn build_services(
         chat_completion_service,
         tokenization_service,
         world_info_service,
+        lan_sync_service,
     })
 }
 

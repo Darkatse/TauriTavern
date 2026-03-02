@@ -44,9 +44,7 @@
     <link rel="stylesheet" type="text/css" href="css/mobile-styles.css">
     <link rel="stylesheet" type="text/css" href="css/macros.css">
     <link rel="stylesheet" type="text/css" href="css/user.css">
-    <link rel="modulepreload" href="dist/lib.bundle.js">
-    <link rel="modulepreload" href="tauri-main.js">
-    <link rel="modulepreload" href="script.js">
+    <!-- Module scripts are loaded by init.js; avoid modulepreload on mobile WebView to prevent cached preload failures. -->
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     <!-- Scripts are loaded at the end of the body to improve page load speed -->
 </head>
@@ -4798,18 +4796,12 @@
                         <small id="version_display"></small>
                     </div>
                     <div name="UserSettingsRowTwo" class="flex-container flexFlowRow">
-                        <div id="account_controls" class="flex-container">
-                            <div id="account_button" class="margin0 menu_button_icon menu_button">
-                                <i class="fa-fw fa-solid fa-user-shield"></i>
-                                <span data-i18n="Account">Account</span>
-                            </div>
-                            <div id="admin_button" class="margin0 menu_button_icon menu_button">
-                                <i class="fa-fw fa-solid fa-user-tie"></i>
-                                <span data-i18n="Admin Panel">Admin Panel</span>
-                            </div>
-                            <div id="logout_button" class="margin0 menu_button_icon menu_button">
-                                <i class="fa-fw fa-solid fa-right-from-bracket"></i>
-                                <span data-i18n="Logout">Logout</span>
+                        <div id="tauritavern_settings" class="flex-container">
+                            <div id="tauritavern_settings_button" class="margin0 menu_button_icon menu_button" title="TauriTavern Settings" data-i18n="[title]TauriTavern Settings">
+                                <i class="fa-fw fa-solid fa-gear"></i>
+                                <div class="flex-container flexFlowColumn" style="gap: 0; align-items: flex-start;">
+                                    <span data-i18n="TauriTavern">TauriTavern Settings</span>
+                                </div>
                             </div>
                         </div>
                         <textarea id="settingsSearch" class="textarea_compact flex1" rows="1" placeholder="Search Settings" data-i18n="[placeholder]Search Settings"></textarea>
@@ -5674,7 +5666,6 @@
                         <div id="message_limit_container" class="extension_container"></div>
                         <div id="code_render_container" class="extension_container"></div>
                         <div id="data_migration_container" class="extension_container"></div>
-                        <div id="lan_sync_container" class="extension_container"></div>
                         <div id="tauritavern_version_container" class="extension_container"></div>
                         <div id="injects_container" class="extension_container"></div>
                         <div id="accuweather_container" class="extension_container"></div>

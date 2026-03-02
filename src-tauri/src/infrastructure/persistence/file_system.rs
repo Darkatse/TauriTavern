@@ -188,7 +188,7 @@ pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, Domai
 ///
 /// This is an async function that serializes data to JSON and writes it to a file.
 /// It uses tokio's async file I/O operations for better performance and non-blocking behavior.
-pub async fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), DomainError> {
+pub async fn write_json_file<T: Serialize + ?Sized>(path: &Path, data: &T) -> Result<(), DomainError> {
     logger::debug(&format!("Writing JSON file: {:?}", path));
 
     // Ensure the parent directory exists

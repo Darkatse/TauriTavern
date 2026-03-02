@@ -7,16 +7,20 @@ mod presentation;
 use app::spawn_initialization;
 use infrastructure::logging::logger;
 use infrastructure::paths::resolve_runtime_paths;
-use infrastructure::sync::lan_server::LanSyncServer;
 use presentation::commands::registry::invoke_handler;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub async fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+
+    builder
         .setup(move |app| {
             let app_handle = app.handle().clone();
             logger::bind_app_handle(app_handle.clone());
@@ -40,7 +44,6 @@ pub async fn run() {
                 );
             }
             spawn_initialization(app_handle.clone(), runtime_paths.clone());
-            app.manage(LanSyncServer::new(runtime_paths.data_root.clone()));
             Ok(())
         })
         .invoke_handler(invoke_handler())

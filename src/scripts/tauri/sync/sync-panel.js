@@ -1,0 +1,647 @@
+import { callGenericPopup, POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
+import { isMobile } from '../../RossAscends-mods.js';
+
+const TAURITAVERN_SETTINGS_BUTTON_ID = 'tauritavern_settings_button';
+const LAN_SYNC_DEVICES_CHANGED_EVENT = 'tauritavern:lan_sync_devices_changed';
+const DEVICE_ALIAS_STORAGE_PREFIX = 'tauritavern:lan_sync_device_alias:';
+let pairingListenerInstalled = false;
+let syncListenerInstalled = false;
+let syncProgressPopup = null;
+let syncProgressElements = null;
+
+async function showErrorPopup(error) {
+    const message = error?.message ? String(error.message) : String(error);
+    await callGenericPopup(message, POPUP_TYPE.TEXT, '', {
+        okButton: 'OK',
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+    });
+}
+
+function runOrPopup(task) {
+    void (async () => {
+        try {
+            await task();
+        } catch (error) {
+            await showErrorPopup(error);
+        }
+    })();
+}
+
+export function installLanSyncPanel() {
+    installPairingListener();
+    installSyncListeners();
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bindLanSyncButton, { once: true });
+        return;
+    }
+
+    bindLanSyncButton();
+}
+
+function bindLanSyncButton() {
+    const button = document.getElementById(TAURITAVERN_SETTINGS_BUTTON_ID);
+    if (!button) {
+        return;
+    }
+
+    button.addEventListener('click', () => {
+        void openLanSyncPopup();
+    });
+}
+
+function installPairingListener() {
+    if (pairingListenerInstalled) {
+        return;
+    }
+    pairingListenerInstalled = true;
+
+    const invoke = window.__TAURI__.core.invoke;
+    const listen = window.__TAURI__.event.listen;
+
+    void (async () => {
+        await listen('lan_sync:pair_request', async (event) => {
+            const payload = event.payload;
+            const requestId = payload.request_id;
+            const peerDeviceName = payload.peer_device_name;
+            const peerDeviceId = payload.peer_device_id;
+            const peerIp = payload.peer_ip;
+
+            const content = document.createElement('div');
+            content.className = 'flex-container flexFlowColumn';
+            content.style.gap = '10px';
+
+            const title = document.createElement('b');
+            title.textContent = 'LAN Sync pairing request';
+            content.appendChild(title);
+
+            const details = document.createElement('div');
+            details.className = 'flex-container flexFlowColumn';
+            details.style.gap = '6px';
+
+            const deviceLine = document.createElement('div');
+            deviceLine.textContent = `Device: ${peerDeviceName} (${peerDeviceId})`;
+            details.appendChild(deviceLine);
+
+            const ipLine = document.createElement('div');
+            ipLine.textContent = `IP: ${peerIp}`;
+            details.appendChild(ipLine);
+
+            content.appendChild(details);
+
+            const result = await callGenericPopup(content, POPUP_TYPE.CONFIRM, '', {
+                okButton: 'Allow',
+                cancelButton: 'Deny',
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+            });
+
+            const accept = result === POPUP_RESULT.AFFIRMATIVE;
+            await invoke('lan_sync_confirm_pairing', { requestId, accept });
+            if (accept) {
+                window.dispatchEvent(new Event(LAN_SYNC_DEVICES_CHANGED_EVENT));
+            }
+        });
+    })();
+}
+
+function installSyncListeners() {
+    if (syncListenerInstalled) {
+        return;
+    }
+    syncListenerInstalled = true;
+
+    const listen = window.__TAURI__.event.listen;
+
+    void (async () => {
+        await listen('lan_sync:progress', (event) => {
+            const payload = event.payload;
+
+            ensureSyncProgressPopup();
+            updateSyncProgressPopup(payload);
+        });
+
+        await listen('lan_sync:completed', async (event) => {
+            const payload = event.payload;
+
+            if (syncProgressPopup) {
+                await syncProgressPopup.completeAffirmative();
+            }
+            syncProgressPopup = null;
+            syncProgressElements = null;
+
+            const files = payload.files_total;
+            const bytes = payload.bytes_total;
+            await callGenericPopup(`LAN Sync completed.\nFiles: ${files}\nBytes: ${bytes}\n\nThe app will now reload to refresh data.`, POPUP_TYPE.TEXT, '', {
+                okButton: 'OK',
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+            });
+
+            window.location.reload();
+        });
+
+        await listen('lan_sync:error', async (event) => {
+            const payload = event.payload;
+
+            if (syncProgressPopup) {
+                await syncProgressPopup.completeAffirmative();
+            }
+            syncProgressPopup = null;
+            syncProgressElements = null;
+
+            const message = payload.message;
+            await callGenericPopup(String(message), POPUP_TYPE.TEXT, '', {
+                okButton: 'OK',
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+            });
+        });
+    })();
+}
+
+function ensureSyncProgressPopup() {
+    if (syncProgressPopup) {
+        return syncProgressPopup;
+    }
+
+    const root = document.createElement('div');
+    root.className = 'flex-container flexFlowColumn';
+    root.style.gap = '10px';
+
+    const title = document.createElement('b');
+    title.textContent = 'LAN Sync progress';
+    root.appendChild(title);
+
+    const phase = document.createElement('div');
+    root.appendChild(phase);
+
+    const counts = document.createElement('div');
+    root.appendChild(counts);
+
+    const bytes = document.createElement('div');
+    root.appendChild(bytes);
+
+    const current = document.createElement('div');
+    current.style.wordBreak = 'break-word';
+    current.style.opacity = '0.9';
+    root.appendChild(current);
+
+    syncProgressElements = { phase, counts, bytes, current };
+    updateSyncProgressPopup({
+        phase: 'Starting',
+        files_done: 0,
+        files_total: 0,
+        bytes_done: 0,
+        bytes_total: 0,
+        current_path: null,
+    });
+
+    const popup = new Popup(root, POPUP_TYPE.DISPLAY, '', {
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+    });
+
+    syncProgressPopup = popup;
+    void popup.show().finally(() => {
+        if (syncProgressPopup === popup) {
+            syncProgressPopup = null;
+            syncProgressElements = null;
+        }
+    });
+
+    return popup;
+}
+
+function updateSyncProgressPopup(payload) {
+    if (!syncProgressElements) {
+        return;
+    }
+
+    const phase = payload.phase;
+    const filesDone = payload.files_done;
+    const filesTotal = payload.files_total;
+    const bytesDone = payload.bytes_done;
+    const bytesTotal = payload.bytes_total;
+    const currentPath = payload.current_path;
+
+    syncProgressElements.phase.textContent = `Phase: ${phase}`;
+    syncProgressElements.counts.textContent = `Files: ${filesDone}/${filesTotal}`;
+    syncProgressElements.bytes.textContent = `Bytes: ${formatBytes(bytesDone)}/${formatBytes(bytesTotal)}`;
+    syncProgressElements.current.textContent = currentPath ? `Current: ${currentPath}` : '';
+}
+
+function getDeviceAlias(deviceId) {
+    return localStorage.getItem(`${DEVICE_ALIAS_STORAGE_PREFIX}${deviceId}`) || '';
+}
+
+function setDeviceAlias(deviceId, alias) {
+    localStorage.setItem(`${DEVICE_ALIAS_STORAGE_PREFIX}${deviceId}`, alias);
+}
+
+function clearDeviceAlias(deviceId) {
+    localStorage.removeItem(`${DEVICE_ALIAS_STORAGE_PREFIX}${deviceId}`);
+}
+
+async function scanPairUriFromCamera() {
+    const barcodeScanner = window.__TAURI__.barcodeScanner;
+    const granted = await barcodeScanner.requestPermissions();
+    if (!granted) {
+        throw new Error('Camera permission is required to scan QR codes');
+    }
+
+    const result = await barcodeScanner.scan({ formats: [barcodeScanner.Format.QRCode] });
+
+    const content = String(result?.content ?? '').trim();
+    if (!content) {
+        throw new Error('Scanned Pair URI is empty');
+    }
+
+    return content;
+}
+
+async function openLanSyncPopup() {
+    const panel = buildLanSyncPopup();
+
+    const onDevicesChanged = () => {
+        void panel.refresh();
+    };
+    window.addEventListener(LAN_SYNC_DEVICES_CHANGED_EVENT, onDevicesChanged);
+
+    await callGenericPopup(panel.root, POPUP_TYPE.TEXT, '', {
+        okButton: 'Close',
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+        onClose: () => {
+            window.removeEventListener(LAN_SYNC_DEVICES_CHANGED_EVENT, onDevicesChanged);
+        },
+    });
+}
+
+function buildLanSyncPopup() {
+    const root = document.createElement('div');
+    root.className = 'flex-container flexFlowColumn';
+    root.innerHTML = `
+        <div class="flex-container flexFlowColumn" style="gap: 10px;">
+            <div class="flex-container alignItemsBaseline">
+                <b data-i18n="LAN Sync">LAN Sync</b>
+            </div>
+            <div class="flex-container flexFlowColumn" style="gap: 6px;">
+                <div>
+                    <span data-i18n="Status">Status</span>: <b id="lan-sync-status-text">...</b>
+                </div>
+                <div>
+                    <span data-i18n="Address">Address</span>: <code id="lan-sync-address-text">...</code>
+                </div>
+                <div>
+                    <span data-i18n="Pairing">Pairing</span>: <b id="lan-sync-pairing-text">...</b>
+                </div>
+            </div>
+            <div class="flex-container flexFlowRow" style="gap: 10px;">
+                <div id="lan-sync-start" class="menu_button" data-i18n="Start">Start</div>
+                <div id="lan-sync-stop" class="menu_button" data-i18n="Stop">Stop</div>
+                <div id="lan-sync-enable-pairing" class="menu_button" data-i18n="Enable Pairing">Enable Pairing</div>
+            </div>
+
+            <div class="flex-container flexFlowColumn" style="gap: 6px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
+                <b data-i18n="Pair via QR">Pair via QR</b>
+                <div class="flex-container flexFlowRow" style="gap: 10px; align-items: flex-start;">
+                    <div id="lan-sync-qr-wrap" style="width: 210px; height: 210px; background: rgba(255,255,255,0.03); display: flex; align-items: center; justify-content: center;">
+                        <span style="opacity: 0.7;">No QR</span>
+                    </div>
+                    <div class="flex-container flexFlowColumn" style="gap: 6px; flex: 1;">
+                        <div>
+                            <span data-i18n="Expires">Expires</span>: <code id="lan-sync-pair-expiry">N/A</code>
+                        </div>
+                        <textarea id="lan-sync-pair-uri" rows="4" style="width: 100%; resize: vertical;" placeholder="Pair URI (scan QR or copy)"></textarea>
+                        <div class="flex-container flexFlowRow" style="gap: 10px;">
+                            <div id="lan-sync-copy-uri" class="menu_button">Copy URI</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-container flexFlowColumn" style="gap: 6px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
+                <b data-i18n="Connect device">Connect device</b>
+                <div class="flex-container flexFlowColumn" style="gap: 6px;">
+                    <textarea id="lan-sync-request-uri" rows="3" style="width: 100%; resize: vertical;" placeholder="Paste Pair URI here (pairs new or reconnects existing)"></textarea>
+                    <div class="flex-container flexFlowRow" style="gap: 10px;">
+                        <div id="lan-sync-scan-pairing" class="menu_button" data-i18n="Scan">Scan</div>
+                        <div id="lan-sync-request-pairing" class="menu_button" data-i18n="Connect">Connect</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-container flexFlowColumn" style="gap: 6px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
+                <div class="flex-container alignItemsBaseline" style="justify-content: space-between;">
+                    <b data-i18n="Paired devices">Paired devices</b>
+                    <div class="flex-container">
+                        <div id="lan-sync-devices-refresh" class="menu_button menu_button_icon margin0" title="Refresh" data-i18n="[title]Refresh">
+                            <i class="fa-solid fa-arrows-rotate"></i>
+                        </div>
+                    </div>
+                </div>
+                <div id="lan-sync-devices" class="flex-container flexFlowColumn" style="gap: 6px;"></div>
+            </div>
+        </div>
+    `.trim();
+
+    const statusText = root.querySelector('#lan-sync-status-text');
+    const addressText = root.querySelector('#lan-sync-address-text');
+    const pairingText = root.querySelector('#lan-sync-pairing-text');
+    const startButton = root.querySelector('#lan-sync-start');
+    const stopButton = root.querySelector('#lan-sync-stop');
+    const enablePairingButton = root.querySelector('#lan-sync-enable-pairing');
+
+    const qrWrap = root.querySelector('#lan-sync-qr-wrap');
+    const pairUriTextArea = root.querySelector('#lan-sync-pair-uri');
+    const pairExpiryText = root.querySelector('#lan-sync-pair-expiry');
+    const copyUriButton = root.querySelector('#lan-sync-copy-uri');
+
+    const requestPairUriTextArea = root.querySelector('#lan-sync-request-uri');
+    const scanPairingButton = root.querySelector('#lan-sync-scan-pairing');
+    const requestPairingButton = root.querySelector('#lan-sync-request-pairing');
+
+    const devicesRefreshButton = root.querySelector('#lan-sync-devices-refresh');
+    const devicesContainer = root.querySelector('#lan-sync-devices');
+
+    const invoke = window.__TAURI__.core.invoke;
+    let currentStatus = null;
+    let currentDevices = [];
+
+    const renderPairingInfo = (pairingInfo) => {
+        if (!pairingInfo) {
+            pairUriTextArea.value = '';
+            pairExpiryText.textContent = 'N/A';
+            qrWrap.innerHTML = '<span style="opacity: 0.7;">No QR</span>';
+            return;
+        }
+
+        pairUriTextArea.value = pairingInfo.pair_uri || '';
+        pairExpiryText.textContent = pairingInfo.expires_at_ms
+            ? formatTimestamp(pairingInfo.expires_at_ms)
+            : 'N/A';
+
+        const svg = pairingInfo.qr_svg || '';
+        if (!svg) {
+            qrWrap.innerHTML = '<span style="opacity: 0.7;">No QR</span>';
+            return;
+        }
+
+        const img = document.createElement('img');
+        img.alt = 'LAN Sync Pair QR';
+        img.width = 200;
+        img.height = 200;
+        img.style.background = '#fff';
+        img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+
+        qrWrap.innerHTML = '';
+        qrWrap.appendChild(img);
+    };
+
+    const renderDevices = (devices) => {
+        devicesContainer.innerHTML = '';
+
+        if (devices.length === 0) {
+            const empty = document.createElement('div');
+            empty.style.opacity = '0.7';
+            empty.textContent = 'No paired devices';
+            devicesContainer.appendChild(empty);
+            return;
+        }
+
+        for (const device of devices) {
+            const deviceId = device.device_id;
+            const deviceName = device.device_name;
+
+            const row = document.createElement('div');
+            row.className = 'flex-container alignItemsBaseline';
+            row.style.justifyContent = 'space-between';
+            row.style.gap = '10px';
+
+            const meta = document.createElement('div');
+            meta.className = 'flex-container flexFlowColumn';
+            meta.style.gap = '2px';
+
+            const name = document.createElement('b');
+            const alias = getDeviceAlias(deviceId);
+            name.textContent = alias || deviceName;
+            name.style.cursor = 'pointer';
+            name.title = 'Click to rename';
+            name.addEventListener('click', () => {
+                runOrPopup(async () => {
+                    const existing = getDeviceAlias(deviceId);
+                    const initial = existing || deviceName;
+                    const result = await callGenericPopup('Rename paired device (local only). Leave empty to reset.', POPUP_TYPE.INPUT, initial, {
+                        okButton: 'Save',
+                        cancelButton: 'Cancel',
+                        rows: 1,
+                        allowVerticalScrolling: true,
+                        wide: false,
+                        large: false,
+                    });
+
+                    if (typeof result !== 'string') {
+                        return;
+                    }
+
+                    const trimmed = result.trim();
+                    if (!trimmed) {
+                        clearDeviceAlias(deviceId);
+                    } else {
+                        setDeviceAlias(deviceId, trimmed);
+                    }
+
+                    renderDevices(currentDevices);
+                });
+            });
+            meta.appendChild(name);
+
+            const deviceIdLine = document.createElement('div');
+            deviceIdLine.style.opacity = '0.8';
+            deviceIdLine.style.fontSize = '0.9em';
+            deviceIdLine.textContent = deviceId;
+            meta.appendChild(deviceIdLine);
+
+            const addressLine = document.createElement('div');
+            addressLine.style.opacity = '0.8';
+            addressLine.style.fontSize = '0.9em';
+            addressLine.textContent = device.last_known_address
+                ? device.last_known_address
+                : 'Address: N/A (reconnect needed)';
+            meta.appendChild(addressLine);
+
+            const syncInfo = document.createElement('div');
+            syncInfo.style.opacity = '0.8';
+            syncInfo.style.fontSize = '0.9em';
+            const lastSync = device.last_sync_ms ? formatTimestamp(device.last_sync_ms) : 'Never';
+            syncInfo.textContent = `Last sync: ${lastSync}`;
+            meta.appendChild(syncInfo);
+
+            row.appendChild(meta);
+
+            const actions = document.createElement('div');
+            actions.className = 'flex-container';
+            actions.style.gap = '10px';
+
+            const download = document.createElement('div');
+            download.className = 'menu_button menu_button_icon margin0';
+            download.title = 'Download (pull from this device)';
+            download.innerHTML = '<i class="fa-solid fa-download"></i>';
+            download.addEventListener('click', () => runOrPopup(async () => {
+                await invoke('lan_sync_sync_from_device', { deviceId });
+            }));
+
+            const upload = document.createElement('div');
+            upload.className = 'menu_button menu_button_icon margin0';
+            upload.title = 'Upload (request device to pull from you)';
+            upload.innerHTML = '<i class="fa-solid fa-upload"></i>';
+            upload.addEventListener('click', () => runOrPopup(async () => {
+                await invoke('lan_sync_push_to_device', { deviceId });
+                toastr.success('Upload request sent.');
+            }));
+
+            if (!device.last_known_address) {
+                download.style.opacity = '0.6';
+                download.style.pointerEvents = 'none';
+                download.title = 'Address missing. Reconnect using Pair URI.';
+                upload.style.opacity = '0.6';
+                upload.style.pointerEvents = 'none';
+                upload.title = 'Address missing. Reconnect using Pair URI.';
+            }
+
+            if (!currentStatus.running) {
+                upload.style.opacity = '0.6';
+                upload.style.pointerEvents = 'none';
+                upload.title = 'Start LAN Sync server first (peer needs to download from you).';
+            }
+
+            const remove = document.createElement('div');
+            remove.className = 'menu_button menu_button_icon margin0';
+            remove.title = 'Remove device';
+            remove.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+            remove.addEventListener('click', () => runOrPopup(async () => {
+                await invoke('lan_sync_remove_device', { deviceId });
+                await refresh();
+            }));
+
+            actions.appendChild(download);
+            actions.appendChild(upload);
+            actions.appendChild(remove);
+            row.appendChild(actions);
+
+            devicesContainer.appendChild(row);
+        }
+    };
+
+    const refresh = async () => {
+        const status = await invoke('lan_sync_get_status');
+        currentStatus = status;
+        statusText.textContent = status.running ? 'Running' : 'Stopped';
+        statusText.style.color = status.running ? '#0f0' : '#f00';
+        addressText.textContent = status.address || 'N/A';
+
+        if (status.pairing_enabled) {
+            pairingText.textContent = `Enabled (expires ${formatTimestamp(status.pairing_expires_at_ms)})`;
+            pairingText.style.color = '#0f0';
+        } else {
+            pairingText.textContent = 'Disabled';
+            pairingText.style.color = '#f00';
+        }
+
+        startButton.style.display = status.running ? 'none' : '';
+        stopButton.style.display = status.running ? '' : 'none';
+        enablePairingButton.style.display = status.running ? '' : 'none';
+
+        const devices = await invoke('lan_sync_list_devices');
+        if (!Array.isArray(devices)) {
+            throw new Error('lan_sync_list_devices returned non-array');
+        }
+        currentDevices = devices;
+        renderDevices(currentDevices);
+    };
+
+    devicesRefreshButton.addEventListener('click', () => runOrPopup(refresh));
+    startButton.addEventListener('click', () => runOrPopup(async () => {
+        await invoke('lan_sync_start_server');
+        await refresh();
+    }));
+    stopButton.addEventListener('click', () => runOrPopup(async () => {
+        await invoke('lan_sync_stop_server');
+        renderPairingInfo(null);
+        await refresh();
+    }));
+    enablePairingButton.addEventListener('click', () => runOrPopup(async () => {
+        const pairingInfo = await invoke('lan_sync_enable_pairing');
+        renderPairingInfo(pairingInfo);
+        await refresh();
+    }));
+    copyUriButton.addEventListener('click', () => runOrPopup(async () => {
+        const value = pairUriTextArea.value.trim();
+        if (!value) {
+            throw new Error('Pair URI is empty');
+        }
+        await navigator.clipboard.writeText(value);
+    }));
+
+    const requestPairing = async (pairUri) => {
+        await invoke('lan_sync_request_pairing', { pairUri });
+        requestPairUriTextArea.value = '';
+        await refresh();
+    };
+
+    if (!isMobile() || !window.__TAURI__?.barcodeScanner?.scan) {
+        scanPairingButton.style.display = 'none';
+    } else {
+        scanPairingButton.addEventListener('click', () => runOrPopup(async () => {
+            const pairUri = await scanPairUriFromCamera();
+            requestPairUriTextArea.value = pairUri;
+            await requestPairing(pairUri);
+        }));
+    }
+
+    requestPairingButton.addEventListener('click', () => runOrPopup(async () => {
+        const value = requestPairUriTextArea.value.trim();
+        if (!value) {
+            throw new Error('Pair URI is empty');
+        }
+        await requestPairing(value);
+    }));
+
+    void refresh();
+    return { root, refresh };
+}
+
+function formatTimestamp(ms) {
+    if (!ms) {
+        return 'N/A';
+    }
+
+    const date = new Date(Number(ms));
+    if (Number.isNaN(date.getTime())) {
+        return 'Invalid time';
+    }
+
+    return date.toLocaleString();
+}
+
+function formatBytes(value) {
+    const bytes = Number(value) || 0;
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let size = bytes;
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex += 1;
+    }
+
+    return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}

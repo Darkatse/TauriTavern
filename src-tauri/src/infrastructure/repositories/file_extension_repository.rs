@@ -39,7 +39,6 @@ const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "data-migration",
     "quick-reply",
     "tauritavern-version",
-    "lan-sync",
 ];
 const GITHUB_API_BASE: &str = "https://api.github.com";
 const SOURCE_METADATA_FILE: &str = ".tauritavern-source.json";

@@ -7,6 +7,8 @@
   ],
   "permissions": [
     "core:default",
+    "barcode-scanner:allow-scan",
+    "barcode-scanner:allow-request-permissions",
     "opener:default",
     "notification:allow-is-permission-granted",
     "fs:allow-open",
