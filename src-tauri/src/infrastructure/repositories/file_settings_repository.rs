@@ -25,7 +25,7 @@ pub struct FileSettingsRepository {
 impl FileSettingsRepository {
     pub fn new(settings_dir: PathBuf) -> Self {
         // 在default-user目录下创建settings.json文件
-        let settings_file = settings_dir.join("settings.json");
+        let settings_file = settings_dir.join("app-settings.json");
         let user_settings_file = settings_dir.join("settings.json");
         let base_directory = settings_dir;
 

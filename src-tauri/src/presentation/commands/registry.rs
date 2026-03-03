@@ -127,6 +127,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::avatar_commands::get_avatars,
         super::avatar_commands::delete_avatar,
         super::avatar_commands::upload_avatar,
+        super::avatar_commands::read_user_avatar_asset,
         // Group commands
         super::group_commands::get_all_groups,
         super::group_commands::get_group,

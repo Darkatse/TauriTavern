@@ -24,6 +24,33 @@ function sanitizeFileName(value) {
 }
 
 export function registerResourceRoutes(router, context, { jsonResponse, textResponse }) {
+    const serveUserAvatarAsset = async ({ wildcard }) => {
+        const relativePath = decodeRoutePath(wildcard).replace(/^\/+/, '');
+        if (!relativePath) {
+            return textResponse('Not Found', 404);
+        }
+
+        try {
+            const payload = await context.safeInvoke('read_user_avatar_asset', {
+                file: relativePath,
+            });
+            const bytes = decodeBase64ToBytes(payload?.content_base64 || '');
+            return new Response(bytes, {
+                status: 200,
+                headers: {
+                    'Content-Type': payload?.mime_type || 'application/octet-stream',
+                    'Cache-Control': 'no-store',
+                },
+            });
+        } catch (error) {
+            if (isNotFoundError(error)) {
+                return textResponse('Not Found', 404);
+            }
+
+            throw error;
+        }
+    };
+
     router.post('/api/files/sanitize-filename', async ({ body }) => {
         const sanitized = sanitizeFileName(body?.fileName || '');
 
@@ -139,6 +166,9 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             throw error;
         }
     });
+
+    router.get('/User%20Avatars/*', serveUserAvatarAsset);
+    router.get('/User Avatars/*', serveUserAvatarAsset);
 
     router.post('/api/avatars/get', async () => {
         const avatars = await context.safeInvoke('get_avatars');

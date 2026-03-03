@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 /// 应用程序设置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -34,7 +34,7 @@ pub struct SecuritySettings {
 
 /// SillyTavern 用户设置
 /// 这是一个通用的设置结构，可以存储任何 JSON 数据
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSettings {
     #[serde(flatten)]
     pub data: Value,
@@ -73,6 +73,14 @@ impl Default for SecuritySettings {
         Self {
             enable_authentication: false,
             session_timeout_minutes: 60,
+        }
+    }
+}
+
+impl Default for UserSettings {
+    fn default() -> Self {
+        Self {
+            data: Value::Object(Map::new()),
         }
     }
 }

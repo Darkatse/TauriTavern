@@ -93,17 +93,22 @@ function switchPersonaGridView() {
 /**
  * Returns the URL of the avatar for the given user avatar Id.
  * @param {string} avatarImg User avatar Id
+ * @param {{ forFetch?: boolean }} [options]
  * @returns {string} User avatar URL
  */
-export function getUserAvatar(avatarImg) {
-        if (typeof window.__TAURITAVERN_PERSONA_PATH__ === 'function') {
+export function getUserAvatar(avatarImg, { forFetch = false } = {}) {
+    if (forFetch) {
+        return `${USER_AVATAR_PATH}${avatarImg}`;
+    }
+
+    if (typeof window.__TAURITAVERN_PERSONA_PATH__ === 'function') {
         try {
             return window.__TAURITAVERN_PERSONA_PATH__(avatarImg);
         } catch (error) {
             console.warn('Tauri persona helper failed:', error);
         }
     }
-    
+
     return `${USER_AVATAR_PATH}${avatarImg}`;
 }
 
@@ -403,7 +408,7 @@ async function changeUserAvatar(e) {
 
         // If the user uploaded a new avatar, we want to make sure it's not cached
         if (overwriteName && dataPath) {
-            await fetch(getUserAvatar(String(dataPath)), { cache: 'reload' });
+            await fetch(getUserAvatar(String(dataPath), { forFetch: true }), { cache: 'reload' });
             await fetch(getThumbnailUrl('persona', String(dataPath), true), { cache: 'reload' });
             reloadUserAvatar(true);
         }
@@ -1803,7 +1808,7 @@ async function duplicatePersona(avatarId) {
         title: descriptor?.title ?? '',
     };
 
-    await uploadUserAvatar(getUserAvatar(avatarId), newAvatarId);
+    await uploadUserAvatar(getUserAvatar(avatarId, { forFetch: true }), newAvatarId);
     await getUserAvatars(true, newAvatarId);
     saveSettingsDebounced();
 }

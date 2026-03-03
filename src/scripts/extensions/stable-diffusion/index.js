@@ -3209,7 +3209,7 @@ function getCharacterAvatarUrl() {
 }
 
 function getUserAvatarUrl() {
-    return getUserAvatar(user_avatar);
+    return getUserAvatar(user_avatar, { forFetch: true });
 }
 
 /**
