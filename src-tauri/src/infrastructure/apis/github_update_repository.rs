@@ -110,4 +110,3 @@ mod tests {
         assert_eq!(parse_version_from_tag("v1.4.0-beta.1"), "1.4.0");
     }
 }
-

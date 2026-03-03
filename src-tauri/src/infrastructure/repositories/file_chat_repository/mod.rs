@@ -12,8 +12,8 @@ mod payload;
 mod repository_impl;
 mod summary;
 mod windowed_patch;
-mod windowed_payload_io;
 mod windowed_payload;
+mod windowed_payload_io;
 
 #[cfg(test)]
 mod tests;

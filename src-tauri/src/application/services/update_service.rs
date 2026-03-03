@@ -92,4 +92,3 @@ mod tests {
         assert!(!is_newer_version("1.3.1", "1.3"));
     }
 }
-

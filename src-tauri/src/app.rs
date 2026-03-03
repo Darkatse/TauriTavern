@@ -114,17 +114,13 @@ pub fn spawn_initialization(app_handle: AppHandle, runtime_paths: RuntimePaths) 
                     match update_service.check_for_update().await {
                         Ok(result) if result.has_update => {
                             if let Err(error) = emitter.emit("update-available", &result) {
-                                tracing::warn!(
-                                    "Failed to emit update-available event: {}",
-                                    error
-                                );
+                                tracing::warn!("Failed to emit update-available event: {}", error);
                             }
                         }
                         Ok(_) => tracing::debug!("No update available"),
-                        Err(error) => tracing::debug!(
-                            "Startup update check failed (non-fatal): {}",
-                            error
-                        ),
+                        Err(error) => {
+                            tracing::debug!("Startup update check failed (non-fatal): {}", error)
+                        }
                     }
                 });
             }

@@ -29,4 +29,3 @@ pub struct UpdateCheckResult {
     /// 最新版本的 Release 信息，仅当 has_update 为 true 时有值。
     pub latest_release: Option<ReleaseInfo>,
 }
-

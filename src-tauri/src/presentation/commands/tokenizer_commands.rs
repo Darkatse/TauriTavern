@@ -21,6 +21,7 @@ pub async fn count_openai_tokens(
     app_state
         .tokenization_service
         .count_openai_tokens(dto)
+        .await
         .map_err(map_command_error("Failed to count OpenAI tokens"))
 }
 
@@ -34,6 +35,7 @@ pub async fn encode_openai_tokens(
     app_state
         .tokenization_service
         .encode_openai_tokens(dto)
+        .await
         .map_err(map_command_error("Failed to encode OpenAI tokens"))
 }
 
@@ -47,6 +49,7 @@ pub async fn decode_openai_tokens(
     app_state
         .tokenization_service
         .decode_openai_tokens(dto)
+        .await
         .map_err(map_command_error("Failed to decode OpenAI tokens"))
 }
 
@@ -60,5 +63,6 @@ pub async fn build_openai_logit_bias(
     app_state
         .tokenization_service
         .build_openai_logit_bias(dto)
+        .await
         .map_err(map_command_error("Failed to build OpenAI logit bias"))
 }

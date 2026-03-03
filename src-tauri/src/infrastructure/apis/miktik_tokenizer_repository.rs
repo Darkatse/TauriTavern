@@ -1,19 +1,20 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
-use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use flate2::read::GzDecoder;
 use miktik::{TokenizerError, TokenizerRegistry};
+use reqwest::Client;
 use serde_json::Value;
-use ureq::Agent;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
+use crate::infrastructure::http_client::build_http_client;
 
-const DEFAULT_FALLBACK_MODEL: &str = "gpt-3.5-turbo";
 const CLAUDE_JSON_BYTES: &[u8] = include_bytes!("../../../resources/tokenizers/claude.json");
 const GEMMA_MODEL_BYTES: &[u8] = include_bytes!("../../../resources/tokenizers/gemma.model");
 
@@ -30,170 +31,37 @@ struct ModelResourceSpec {
 }
 
 pub struct MiktikTokenizerRepository {
-    registry: TokenizerRegistry,
+    registry: Arc<TokenizerRegistry>,
     cache_dir: PathBuf,
-    http_client: Agent,
-    registered_hf_models: RwLock<HashSet<String>>,
+    http_client: Client,
+    ready_hf_models: RwLock<HashSet<&'static str>>,
     registration_guard: Mutex<()>,
 }
 
 impl MiktikTokenizerRepository {
     pub fn new(cache_dir: PathBuf) -> Result<Self, DomainError> {
-        let http_client: Agent = Agent::config_builder()
-            .timeout_connect(Some(Duration::from_secs(10)))
-            .timeout_global(Some(Duration::from_secs(60)))
-            .build()
-            .into();
+        let http_client = build_http_client(
+            Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(60)),
+        )
+        .map_err(|error| {
+            DomainError::InternalError(format!("Failed to build HTTP client: {error}"))
+        })?;
 
         let repository = Self {
-            registry: TokenizerRegistry::new(),
+            registry: Arc::new(TokenizerRegistry::new()),
             cache_dir,
             http_client,
-            registered_hf_models: RwLock::new(HashSet::new()),
+            ready_hf_models: RwLock::new(HashSet::new()),
             registration_guard: Mutex::new(()),
         };
 
         Ok(repository)
     }
 
-    fn prepare_model(&self, requested_model: &str) -> Result<String, DomainError> {
-        let canonical = Self::canonical_model(requested_model);
-        if Self::is_huggingface_model(&canonical) {
-            self.ensure_hf_model_registered(&canonical)?;
-        }
-        Ok(canonical)
-    }
-
-    fn canonical_model(requested_model: &str) -> String {
-        let model = requested_model.trim().to_ascii_lowercase();
-
-        if model.is_empty() {
-            return DEFAULT_FALLBACK_MODEL.to_string();
-        }
-
-        // Keep OpenAI aliases aligned with SillyTavern tokenizer routing.
-        if model == "o1"
-            || model.contains("o1-preview")
-            || model.contains("o1-mini")
-            || model.contains("o3-mini")
-        {
-            return "o1".to_string();
-        }
-
-        if model.contains("gpt-5") || model.contains("o3") || model.contains("o4-mini") {
-            return "o1".to_string();
-        }
-
-        if model.contains("gpt-4o")
-            || model.contains("chatgpt-4o-latest")
-            || model.contains("gpt-4.1")
-            || model.contains("gpt-4.5")
-        {
-            return "gpt-4o".to_string();
-        }
-
-        if model.contains("gpt-4-32k") {
-            return "gpt-4-32k".to_string();
-        }
-
-        if model.contains("gpt-4") {
-            return "gpt-4".to_string();
-        }
-
-        if model.contains("gpt-3.5-turbo-0301") {
-            return "gpt-3.5-turbo-0301".to_string();
-        }
-
-        if model.contains("gpt-3.5-turbo") {
-            return "gpt-3.5-turbo".to_string();
-        }
-
-        if model.contains("claude") {
-            return "claude".to_string();
-        }
-
-        if model.contains("llama3") || model.contains("llama-3") {
-            return "llama3".to_string();
-        }
-
-        if model.contains("llama") {
-            return "llama".to_string();
-        }
-
-        if model.contains("mistral") {
-            return "mistral".to_string();
-        }
-
-        if model.contains("yi") {
-            return "yi".to_string();
-        }
-
-        if model.contains("deepseek") {
-            return "deepseek".to_string();
-        }
-
-        if model.contains("gemma") || model.contains("gemini") || model.contains("learnlm") {
-            return "gemma".to_string();
-        }
-
-        if model.contains("jamba") {
-            return "jamba".to_string();
-        }
-
-        if model.contains("qwen2") || model.contains("qwen") {
-            return "qwen2".to_string();
-        }
-
-        if model.contains("command-r") {
-            return "command-r".to_string();
-        }
-
-        if model.contains("command-a") {
-            return "command-a".to_string();
-        }
-
-        if model.contains("nemo") || model.contains("pixtral") {
-            return "nemo".to_string();
-        }
-
-        if model.contains("nerdstash") {
-            return "nerdstash".to_string();
-        }
-
-        TokenizerRegistry::resolve_model(&model)
-    }
-
-    fn is_huggingface_model(canonical: &str) -> bool {
-        matches!(
-            canonical,
-            "claude"
-                | "llama3"
-                | "llama"
-                | "mistral"
-                | "yi"
-                | "gemma"
-                | "jamba"
-                | "nerdstash"
-                | "command-r"
-                | "command-a"
-                | "qwen2"
-                | "nemo"
-                | "deepseek"
-        )
-    }
-
-    fn is_sentencepiece_model(canonical: &str) -> bool {
-        matches!(
-            canonical,
-            "llama" | "mistral" | "yi" | "gemma" | "jamba" | "nerdstash"
-        )
-    }
-
-    fn is_web_tokenizer_model(canonical: &str) -> bool {
-        matches!(
-            canonical,
-            "claude" | "llama3" | "command-r" | "command-a" | "qwen2" | "nemo" | "deepseek"
-        )
+    fn canonical_model(requested_model: &str) -> &'static str {
+        TokenizerRegistry::resolve_model_ref(requested_model)
     }
 
     fn model_resource_spec(canonical: &str) -> Option<ModelResourceSpec> {
@@ -287,19 +155,14 @@ impl MiktikTokenizerRepository {
         }
     }
 
-    fn ensure_hf_model_registered(&self, canonical: &str) -> Result<(), DomainError> {
-        if self.is_model_registered(canonical)? {
+    async fn ensure_hf_model_ready(&self, canonical: &'static str) -> Result<(), DomainError> {
+        if self.is_model_ready(canonical).await {
             return Ok(());
         }
 
-        let _guard = self.registration_guard.lock().map_err(|error| {
-            DomainError::InternalError(format!(
-                "Tokenizer registration lock poisoned for model '{}': {}",
-                canonical, error
-            ))
-        })?;
+        let _guard = self.registration_guard.lock().await;
 
-        if self.is_model_registered(canonical)? {
+        if self.is_model_ready(canonical).await {
             return Ok(());
         }
 
@@ -319,7 +182,7 @@ impl MiktikTokenizerRepository {
                     Self::map_tokenizer_error("register bundled model bytes", canonical, error)
                 })?,
             ModelSource::Remote { .. } => {
-                let model_path = self.ensure_model_file(canonical)?;
+                let model_path = self.ensure_model_file(canonical).await?;
                 self.registry
                     .register_model_file(canonical, &model_path)
                     .map_err(|error| {
@@ -328,11 +191,27 @@ impl MiktikTokenizerRepository {
             }
         }
 
-        self.mark_model_registered(canonical)?;
+        self.warm_model(canonical).await?;
+        self.mark_model_ready(canonical).await;
         Ok(())
     }
 
-    fn ensure_model_file(&self, canonical: &str) -> Result<PathBuf, DomainError> {
+    async fn warm_model(&self, canonical: &'static str) -> Result<(), DomainError> {
+        let registry = Arc::clone(&self.registry);
+
+        tokio::task::spawn_blocking(move || registry.get_canonical(canonical))
+            .await
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Tokenizer warm-up task failed for '{canonical}': {error}"
+                ))
+            })?
+            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
+
+        Ok(())
+    }
+
+    async fn ensure_model_file(&self, canonical: &'static str) -> Result<PathBuf, DomainError> {
         let spec = Self::model_resource_spec(canonical).ok_or_else(|| {
             DomainError::NotFound(format!(
                 "Tokenizer resource spec is missing for model '{}'",
@@ -347,41 +226,41 @@ impl MiktikTokenizerRepository {
 
         let bytes = match spec.source {
             ModelSource::Bundled(bytes) => bytes.to_vec(),
-            ModelSource::Remote { url, gzip } => self.download_model_bytes(url, gzip)?,
+            ModelSource::Remote { url, gzip } => self.download_model_bytes(url, gzip).await?,
         };
 
-        self.write_bytes(&path, &bytes)?;
+        self.write_bytes(&path, &bytes).await?;
         Ok(path)
     }
 
-    fn download_model_bytes(&self, url: &str, gzip: bool) -> Result<Vec<u8>, DomainError> {
-        let mut response = self.http_client.get(url).call().map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to download tokenizer resource '{}': {}",
-                url, error
-            ))
-        })?;
-
-        if !response.status().is_success() {
-            return Err(DomainError::InternalError(format!(
-                "Tokenizer resource request failed for '{}': HTTP {}",
-                url,
-                response.status()
-            )));
-        }
-
-        let mut payload = Vec::new();
-        response
-            .body_mut()
-            .as_reader()
-            .read_to_end(&mut payload)
+    async fn download_model_bytes(&self, url: &str, gzip: bool) -> Result<Vec<u8>, DomainError> {
+        let response = self
+            .http_client
+            .get(url)
+            .send()
+            .await
             .map_err(|error| {
                 DomainError::InternalError(format!(
-                    "Failed to read downloaded tokenizer bytes from '{}': {}",
+                    "Failed to download tokenizer resource '{}': {}",
+                    url, error
+                ))
+            })?
+            .error_for_status()
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Tokenizer resource request failed for '{}': {}",
                     url, error
                 ))
             })?;
 
+        let payload = response.bytes().await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to read downloaded tokenizer bytes from '{}': {}",
+                url, error
+            ))
+        })?;
+
+        let payload = payload.to_vec();
         if !gzip {
             return Ok(payload);
         }
@@ -398,9 +277,9 @@ impl MiktikTokenizerRepository {
         Ok(decompressed)
     }
 
-    fn write_bytes(&self, path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
+    async fn write_bytes(&self, path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
+            tokio::fs::create_dir_all(parent).await.map_err(|error| {
                 DomainError::InternalError(format!(
                     "Failed to create tokenizer cache directory '{}': {}",
                     parent.display(),
@@ -409,34 +288,23 @@ impl MiktikTokenizerRepository {
             })?;
         }
 
-        fs::write(path, bytes).map_err(|error| {
+        tokio::fs::write(path, bytes).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to persist tokenizer resource to '{}': {}",
                 path.display(),
                 error
             ))
-        })
-    }
-
-    fn is_model_registered(&self, canonical: &str) -> Result<bool, DomainError> {
-        let registered = self.registered_hf_models.read().map_err(|error| {
-            DomainError::InternalError(format!(
-                "Tokenizer registration cache read lock failed: {}",
-                error
-            ))
         })?;
-        Ok(registered.contains(canonical))
-    }
 
-    fn mark_model_registered(&self, canonical: &str) -> Result<(), DomainError> {
-        let mut registered = self.registered_hf_models.write().map_err(|error| {
-            DomainError::InternalError(format!(
-                "Tokenizer registration cache write lock failed: {}",
-                error
-            ))
-        })?;
-        registered.insert(canonical.to_string());
         Ok(())
+    }
+
+    async fn is_model_ready(&self, canonical: &'static str) -> bool {
+        self.ready_hf_models.read().await.contains(canonical)
+    }
+
+    async fn mark_model_ready(&self, canonical: &'static str) {
+        self.ready_hf_models.write().await.insert(canonical);
     }
 
     fn map_tokenizer_error(action: &str, model: &str, error: TokenizerError) -> DomainError {
@@ -453,10 +321,10 @@ impl MiktikTokenizerRepository {
         }
     }
 
-    fn value_to_text(value: &Value) -> String {
+    fn value_to_text(value: &Value) -> Cow<'_, str> {
         match value {
-            Value::String(text) => text.clone(),
-            _ => value.to_string(),
+            Value::String(text) => Cow::Borrowed(text),
+            _ => Cow::Owned(value.to_string()),
         }
     }
 
@@ -466,10 +334,10 @@ impl MiktikTokenizerRepository {
             match message {
                 Value::Object(map) => {
                     for value in map.values() {
-                        values.push(Self::value_to_text(value));
+                        values.push(Self::value_to_text(value).into_owned());
                     }
                 }
-                _ => values.push(Self::value_to_text(message)),
+                _ => values.push(Self::value_to_text(message).into_owned()),
             }
         }
         values.join("\n\n")
@@ -496,6 +364,7 @@ impl MiktikTokenizerRepository {
                     let mut content = map
                         .get("content")
                         .map(Self::value_to_text)
+                        .map(Cow::into_owned)
                         .unwrap_or_default();
                     if let Some(tool_calls) = map.get("tool_calls") {
                         content.push_str(&tool_calls.to_string());
@@ -509,7 +378,7 @@ impl MiktikTokenizerRepository {
                 _ => PromptMessage {
                     role: "system".to_string(),
                     name: None,
-                    content: Self::value_to_text(value),
+                    content: Self::value_to_text(value).into_owned(),
                 },
             })
             .collect::<Vec<_>>();
@@ -572,10 +441,18 @@ impl MiktikTokenizerRepository {
         prompt
     }
 
-    fn count_openai_messages(&self, model: &str, messages: &[Value]) -> Result<usize, DomainError> {
-        let is_legacy = model.contains("gpt-3.5-turbo-0301");
+    fn count_openai_messages(
+        &self,
+        canonical: &'static str,
+        messages: &[Value],
+    ) -> Result<usize, DomainError> {
+        let is_legacy = canonical == "gpt-3.5-turbo-0301";
         let tokens_per_message = if is_legacy { 4_i32 } else { 3_i32 };
         let tokens_per_name = if is_legacy { -1_i32 } else { 1_i32 };
+        let tokenizer = self
+            .registry
+            .get_canonical(canonical)
+            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
         let mut total = 0_i32;
 
         for message in messages {
@@ -585,8 +462,8 @@ impl MiktikTokenizerRepository {
                 Value::Object(map) => {
                     for (key, value) in map {
                         let text = Self::value_to_text(value);
-                        let count = self.registry.count_tokens(model, &text).map_err(|error| {
-                            Self::map_tokenizer_error("count tokens", model, error)
+                        let count = tokenizer.count_tokens(text.as_ref()).map_err(|error| {
+                            Self::map_tokenizer_error("count tokens", canonical, error)
                         })?;
                         total += count as i32;
                         if key == "name" {
@@ -596,10 +473,9 @@ impl MiktikTokenizerRepository {
                 }
                 _ => {
                     let text = Self::value_to_text(message);
-                    let count = self
-                        .registry
-                        .count_tokens(model, &text)
-                        .map_err(|error| Self::map_tokenizer_error("count tokens", model, error))?;
+                    let count = tokenizer.count_tokens(text.as_ref()).map_err(|error| {
+                        Self::map_tokenizer_error("count tokens", canonical, error)
+                    })?;
                     total += count as i32;
                 }
             }
@@ -679,12 +555,19 @@ mod tests {
         ))
     }
 
-    #[test]
-    fn bundled_models_are_usable_without_network() {
+    #[tokio::test]
+    async fn bundled_models_are_usable_without_network() {
         let cache_dir = unique_temp_cache_dir();
         let repository = MiktikTokenizerRepository::new(cache_dir.clone())
             .expect("repository should initialize with bundled models");
         let messages = vec![json!({"role": "user", "content": "hello world"})];
+
+        TokenizerRepository::ensure_model_ready(&repository, "claude-3-7-sonnet")
+            .await
+            .expect("claude bundled tokenizer should prepare");
+        TokenizerRepository::ensure_model_ready(&repository, "gemini-2.0-flash")
+            .await
+            .expect("gemma bundled tokenizer should prepare");
 
         let claude =
             TokenizerRepository::count_messages(&repository, "claude-3-7-sonnet", &messages)
@@ -698,31 +581,30 @@ mod tests {
         assert!(gemini > 0);
     }
 
-    #[test]
-    fn new_does_not_eagerly_register_bundled_models() {
+    #[tokio::test]
+    async fn new_does_not_eagerly_register_bundled_models() {
         let cache_dir = unique_temp_cache_dir();
         let repository = MiktikTokenizerRepository::new(cache_dir.clone())
             .expect("repository should initialize");
 
-        assert!(
-            !repository
-                .is_model_registered("claude")
-                .expect("registration state should be readable")
-        );
-        assert!(
-            !repository
-                .is_model_registered("gemma")
-                .expect("registration state should be readable")
-        );
+        assert!(!repository.is_model_ready("claude").await);
+        assert!(!repository.is_model_ready("gemma").await);
         let _ = std::fs::remove_dir_all(cache_dir);
     }
 
-    #[test]
-    fn bundled_models_do_not_write_cache_files_on_first_use() {
+    #[tokio::test]
+    async fn bundled_models_do_not_write_cache_files_on_first_use() {
         let cache_dir = unique_temp_cache_dir();
         let repository = MiktikTokenizerRepository::new(cache_dir.clone())
             .expect("repository should initialize");
         let messages = vec![json!({"role": "user", "content": "hello world"})];
+
+        TokenizerRepository::ensure_model_ready(&repository, "claude")
+            .await
+            .expect("claude bundled tokenizer should prepare");
+        TokenizerRepository::ensure_model_ready(&repository, "gemma")
+            .await
+            .expect("gemma bundled tokenizer should prepare");
 
         TokenizerRepository::count_messages(&repository, "claude", &messages)
             .expect("claude bundled tokenizer should count");
@@ -748,54 +630,63 @@ impl Default for MiktikTokenizerRepository {
     }
 }
 
+#[async_trait::async_trait]
 impl TokenizerRepository for MiktikTokenizerRepository {
+    async fn ensure_model_ready(&self, model: &str) -> Result<(), DomainError> {
+        let canonical = Self::canonical_model(model);
+        if TokenizerRegistry::is_huggingface_model(canonical) {
+            self.ensure_hf_model_ready(canonical).await?;
+        }
+        Ok(())
+    }
+
     fn encode(&self, model: &str, text: &str) -> Result<Vec<u32>, DomainError> {
-        let canonical = self.prepare_model(model)?;
+        let canonical = Self::canonical_model(model);
         let tokenizer = self
             .registry
-            .get(&canonical)
-            .map_err(|error| Self::map_tokenizer_error("load tokenizer", &canonical, error))?;
+            .get_canonical(canonical)
+            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
 
         tokenizer
             .encode(text)
-            .map_err(|error| Self::map_tokenizer_error("encode text", &canonical, error))
+            .map_err(|error| Self::map_tokenizer_error("encode text", canonical, error))
     }
 
     fn decode(&self, model: &str, token_ids: &[u32]) -> Result<String, DomainError> {
-        let canonical = self.prepare_model(model)?;
+        let canonical = Self::canonical_model(model);
         let tokenizer = self
             .registry
-            .get(&canonical)
-            .map_err(|error| Self::map_tokenizer_error("load tokenizer", &canonical, error))?;
+            .get_canonical(canonical)
+            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
 
         tokenizer
             .decode(token_ids)
-            .map_err(|error| Self::map_tokenizer_error("decode token ids", &canonical, error))
+            .map_err(|error| Self::map_tokenizer_error("decode token ids", canonical, error))
     }
 
     fn count_messages(&self, model: &str, messages: &[Value]) -> Result<usize, DomainError> {
-        let canonical = self.prepare_model(model)?;
+        let canonical = Self::canonical_model(model);
 
-        if Self::is_sentencepiece_model(&canonical) {
+        if TokenizerRegistry::is_sentencepiece_model(canonical) {
             let text = Self::to_sentencepiece_count_input(messages);
             return self
                 .registry
-                .count_tokens(&canonical, &text)
+                .count_tokens_canonical(canonical, &text)
                 .map_err(|error| {
-                    Self::map_tokenizer_error("count sentencepiece messages", &canonical, error)
+                    Self::map_tokenizer_error("count sentencepiece messages", canonical, error)
                 });
         }
 
-        if Self::is_web_tokenizer_model(&canonical) {
+        if TokenizerRegistry::is_web_tokenizer_model(canonical) {
             let prompt = Self::to_web_tokenizer_prompt(messages);
             return self
                 .registry
-                .count_tokens(&canonical, &prompt)
+                .count_tokens_canonical(canonical, &prompt)
                 .map_err(|error| {
-                    Self::map_tokenizer_error("count web-tokenizer messages", &canonical, error)
+                    Self::map_tokenizer_error("count web-tokenizer messages", canonical, error)
                 });
         }
 
-        self.count_openai_messages(&canonical, messages)
+        self.count_openai_messages(canonical, messages)
     }
 }

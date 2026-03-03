@@ -33,7 +33,7 @@ tracing-appender = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "rt-multi-thread", "sync"] }
 tokio-util = { version = "0.7", default-features = false, features = ["io"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
 base64 = "0.21"
 sha2 = "0.10"
 hmac = "0.12"
@@ -47,8 +47,7 @@ png = "0.17"
 mime_guess = "2.0.5"
 flate2 = "1.1.9"
 filetime = "0.2"
-miktik = { version = "0.1.2", default-features = false, features = ["openai", "huggingface", "sentencepiece"] }
-ureq = { version = "3.2.0", default-features = false, features = ["rustls"] }
+miktik = { version = "0.2.0", default-features = false, features = ["openai", "huggingface", "sentencepiece"] }
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "multipart", "tokio"] }
 tower-http = { version = "0.5", default-features = false, features = ["cors"] }
 local-ip-address = "0.6"

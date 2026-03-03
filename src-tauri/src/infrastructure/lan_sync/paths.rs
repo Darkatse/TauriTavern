@@ -32,7 +32,9 @@ pub fn is_excluded_relative_path(relative_path: &str) -> bool {
 pub fn validate_relative_path(relative_path: &str) -> Result<(), DomainError> {
     let value = relative_path.trim();
     if value.is_empty() {
-        return Err(DomainError::InvalidData("Relative path is empty".to_string()));
+        return Err(DomainError::InvalidData(
+            "Relative path is empty".to_string(),
+        ));
     }
 
     if value.starts_with('/') {
@@ -55,7 +57,10 @@ pub fn validate_relative_path(relative_path: &str) -> Result<(), DomainError> {
     }
 
     let parts: Vec<&str> = value.split('/').collect();
-    if parts.iter().any(|part| part.is_empty() || *part == "." || *part == "..") {
+    if parts
+        .iter()
+        .any(|part| part.is_empty() || *part == "." || *part == "..")
+    {
         return Err(DomainError::InvalidData(format!(
             "Relative path contains invalid components: {}",
             value
@@ -83,7 +88,10 @@ pub fn validate_relative_path(relative_path: &str) -> Result<(), DomainError> {
     Ok(())
 }
 
-pub fn resolve_relative_path(data_root: &Path, relative_path: &str) -> Result<PathBuf, DomainError> {
+pub fn resolve_relative_path(
+    data_root: &Path,
+    relative_path: &str,
+) -> Result<PathBuf, DomainError> {
     validate_relative_path(relative_path)?;
 
     let mut full_path = PathBuf::from(data_root);

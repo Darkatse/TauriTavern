@@ -58,10 +58,10 @@ pub async fn spawn_lan_sync_server(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
         )
-            .with_graceful_shutdown(async move {
-                let _ = shutdown_rx.await;
-            })
-            .await
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.await;
+        })
+        .await
         {
             tracing::error!("LAN Sync server failed: {}", error);
         }
@@ -126,13 +126,16 @@ async fn handle_sync_plan_inner(
         validate_relative_path(&entry.relative_path).map_err(map_domain_error)?;
     }
 
-    let paired_device = runtime
-        .get_paired_device(device_id)
-        .await
-        .map_err(|error| match error {
-            DomainError::NotFound(_) => (StatusCode::UNAUTHORIZED, "Unknown device".to_string()),
-            other => map_domain_error(other),
-        })?;
+    let paired_device =
+        runtime
+            .get_paired_device(device_id)
+            .await
+            .map_err(|error| match error {
+                DomainError::NotFound(_) => {
+                    (StatusCode::UNAUTHORIZED, "Unknown device".to_string())
+                }
+                other => map_domain_error(other),
+            })?;
 
     let body = serde_json::to_vec(&target_manifest)
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
@@ -174,13 +177,16 @@ async fn handle_sync_file_inner(
 
     let (device_id, signature) = require_auth_headers(&headers)?;
 
-    let paired_device = runtime
-        .get_paired_device(device_id)
-        .await
-        .map_err(|error| match error {
-            DomainError::NotFound(_) => (StatusCode::UNAUTHORIZED, "Unknown device".to_string()),
-            other => map_domain_error(other),
-        })?;
+    let paired_device =
+        runtime
+            .get_paired_device(device_id)
+            .await
+            .map_err(|error| match error {
+                DomainError::NotFound(_) => {
+                    (StatusCode::UNAUTHORIZED, "Unknown device".to_string())
+                }
+                other => map_domain_error(other),
+            })?;
 
     let canonical_path = format!("/v1/sync/file/{}", path);
     if !verify_request_signature(
@@ -272,8 +278,11 @@ async fn handle_pair_inner(
         return Err((StatusCode::FORBIDDEN, "Pairing rejected".to_string()));
     }
 
-    let pair_secret =
-        derive_pair_secret(&session.pair_code, &identity.device_id, &payload.target_device_id);
+    let pair_secret = derive_pair_secret(
+        &session.pair_code,
+        &identity.device_id,
+        &payload.target_device_id,
+    );
 
     let target_addr = SocketAddr::from((peer_addr.ip(), payload.target_port));
 
@@ -313,13 +322,16 @@ async fn handle_sync_pull_inner(
 ) -> Result<(), (StatusCode, String)> {
     let (device_id, signature) = require_auth_headers(&headers)?;
 
-    let paired_device = runtime
-        .get_paired_device(device_id)
-        .await
-        .map_err(|error| match error {
-            DomainError::NotFound(_) => (StatusCode::UNAUTHORIZED, "Unknown device".to_string()),
-            other => map_domain_error(other),
-        })?;
+    let paired_device =
+        runtime
+            .get_paired_device(device_id)
+            .await
+            .map_err(|error| match error {
+                DomainError::NotFound(_) => {
+                    (StatusCode::UNAUTHORIZED, "Unknown device".to_string())
+                }
+                other => map_domain_error(other),
+            })?;
 
     if !verify_request_signature(
         paired_device.pair_secret.as_bytes(),
@@ -340,8 +352,8 @@ async fn handle_sync_pull_inner(
     tokio::spawn(async move {
         let _permit = permit;
 
-        let http_client = build_http_client(Client::builder())
-            .expect("Failed to build LAN sync HTTP client");
+        let http_client =
+            build_http_client(Client::builder()).expect("Failed to build LAN sync HTTP client");
 
         match crate::infrastructure::lan_sync::client::merge_sync_from_device(
             runtime_for_task.clone(),

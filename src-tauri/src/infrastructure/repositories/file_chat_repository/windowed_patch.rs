@@ -8,6 +8,7 @@ use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_repository::{ChatPayloadCursor, ChatPayloadPatchOp};
 use crate::infrastructure::logging::logger;
 
+use super::FileChatRepository;
 use super::windowed_payload_io::{
     WINDOW_READ_CHUNK_BYTES, cursor_from_metadata, ensure_parent_dir,
     extract_integrity_slug_from_header_line, map_open_existing_error, open_existing_payload_file,
@@ -15,7 +16,6 @@ use super::windowed_payload_io::{
     verify_cursor_offset_is_line_boundary, verify_cursor_signature, write_jsonl_lines_at_end,
     write_jsonl_lines_to_file,
 };
-use super::FileChatRepository;
 
 impl FileChatRepository {
     pub(super) async fn patch_character_payload_windowed(
@@ -206,7 +206,8 @@ async fn patch_payload_windowed_internal(
     let metadata = existing_metadata.unwrap();
     verify_cursor_signature(path, cursor, &metadata)?;
 
-    let (existing_header, existing_header_end_offset) = read_first_line_and_end_offset(path).await?;
+    let (existing_header, existing_header_end_offset) =
+        read_first_line_and_end_offset(path).await?;
 
     if cursor.offset > metadata.len() {
         return Err(DomainError::InvalidData(format!(
@@ -276,7 +277,10 @@ async fn patch_payload_windowed_internal(
 
                 write_jsonl_lines_at_end(&mut file, &lines).await?;
                 file.flush().await.map_err(|error| {
-                    DomainError::InternalError(format!("Failed to flush chat payload file: {}", error))
+                    DomainError::InternalError(format!(
+                        "Failed to flush chat payload file: {}",
+                        error
+                    ))
                 })?;
             } else {
                 ensure_parent_dir(path).await?;
@@ -290,10 +294,16 @@ async fn patch_payload_windowed_internal(
                 })?;
 
                 out.write_all(header.as_bytes()).await.map_err(|error| {
-                    DomainError::InternalError(format!("Failed to write chat payload header: {}", error))
+                    DomainError::InternalError(format!(
+                        "Failed to write chat payload header: {}",
+                        error
+                    ))
                 })?;
                 out.write_all(b"\n").await.map_err(|error| {
-                    DomainError::InternalError(format!("Failed to write chat payload header: {}", error))
+                    DomainError::InternalError(format!(
+                        "Failed to write chat payload header: {}",
+                        error
+                    ))
                 })?;
 
                 if metadata.len() > existing_header_end_offset {
@@ -330,7 +340,10 @@ async fn patch_payload_windowed_internal(
 
                 write_jsonl_lines_at_end(&mut out, &lines).await?;
                 out.flush().await.map_err(|error| {
-                    DomainError::InternalError(format!("Failed to flush chat payload file: {}", error))
+                    DomainError::InternalError(format!(
+                        "Failed to flush chat payload file: {}",
+                        error
+                    ))
                 })?;
 
                 replace_file(&temp_path, path).await?;
@@ -390,7 +403,10 @@ async fn patch_payload_windowed_internal(
 
                 write_jsonl_lines_at_end(&mut file, &lines).await?;
                 file.flush().await.map_err(|error| {
-                    DomainError::InternalError(format!("Failed to flush chat payload file: {}", error))
+                    DomainError::InternalError(format!(
+                        "Failed to flush chat payload file: {}",
+                        error
+                    ))
                 })?;
             } else {
                 ensure_parent_dir(path).await?;
@@ -404,10 +420,16 @@ async fn patch_payload_windowed_internal(
                 })?;
 
                 out.write_all(header.as_bytes()).await.map_err(|error| {
-                    DomainError::InternalError(format!("Failed to write chat payload header: {}", error))
+                    DomainError::InternalError(format!(
+                        "Failed to write chat payload header: {}",
+                        error
+                    ))
                 })?;
                 out.write_all(b"\n").await.map_err(|error| {
-                    DomainError::InternalError(format!("Failed to write chat payload header: {}", error))
+                    DomainError::InternalError(format!(
+                        "Failed to write chat payload header: {}",
+                        error
+                    ))
                 })?;
 
                 if start_offset > existing_header_end_offset {
@@ -446,7 +468,10 @@ async fn patch_payload_windowed_internal(
 
                 write_jsonl_lines_at_end(&mut out, &lines).await?;
                 out.flush().await.map_err(|error| {
-                    DomainError::InternalError(format!("Failed to flush chat payload file: {}", error))
+                    DomainError::InternalError(format!(
+                        "Failed to flush chat payload file: {}",
+                        error
+                    ))
                 })?;
 
                 replace_file(&temp_path, path).await?;
@@ -467,4 +492,3 @@ async fn patch_payload_windowed_internal(
 
     cursor_from_metadata(new_cursor_offset, &metadata)
 }
-

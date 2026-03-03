@@ -1190,9 +1190,16 @@ async fn patch_chat_payload_windowed_appends_and_rewrites_tail() {
         }),
     ];
 
-    save_chat_payload_from_values(&repository, &root, character_name, file_name, &payload, false)
-        .await
-        .expect("save initial payload");
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        character_name,
+        file_name,
+        &payload,
+        false,
+    )
+    .await
+    .expect("save initial payload");
 
     let tail = repository
         .get_chat_payload_tail_lines(character_name, file_name, 100)

@@ -271,8 +271,7 @@ fn build_repositories(
         FileWorldInfoRepository::new(data_directory.default_user().join("worlds")),
     );
 
-    let update_repository: Arc<dyn UpdateRepository> =
-        Arc::new(GitHubUpdateRepository::new()?);
+    let update_repository: Arc<dyn UpdateRepository> = Arc::new(GitHubUpdateRepository::new()?);
 
     Ok(AppRepositories {
         character_repository,

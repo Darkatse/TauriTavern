@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -22,33 +23,37 @@ impl TokenizationService {
         }
     }
 
-    pub fn count_openai_tokens(
+    pub async fn count_openai_tokens(
         &self,
         dto: OpenAiTokenCountRequestDto,
     ) -> Result<OpenAiTokenCountResponseDto, ApplicationError> {
         let model = self.normalize_model(&dto.model);
+        self.tokenizer_repository
+            .ensure_model_ready(model.as_ref())
+            .await?;
         let token_count = self
             .tokenizer_repository
-            .count_messages(&model, &dto.messages)?;
+            .count_messages(model.as_ref(), &dto.messages)?;
 
         Ok(OpenAiTokenCountResponseDto { token_count })
     }
 
-    pub fn encode_openai_tokens(
+    pub async fn encode_openai_tokens(
         &self,
         dto: OpenAiEncodeRequestDto,
     ) -> Result<OpenAiEncodeResponseDto, ApplicationError> {
         let model = self.normalize_model(&dto.model);
-        let ids = self.tokenizer_repository.encode(&model, &dto.text)?;
+        self.tokenizer_repository
+            .ensure_model_ready(model.as_ref())
+            .await?;
+        let ids = self
+            .tokenizer_repository
+            .encode(model.as_ref(), &dto.text)?;
 
-        let chunks = ids
-            .iter()
-            .map(|id| {
-                self.tokenizer_repository
-                    .decode(&model, &[*id])
-                    .unwrap_or_default()
-            })
-            .collect::<Vec<_>>();
+        let mut chunks = Vec::with_capacity(ids.len());
+        for id in &ids {
+            chunks.push(self.tokenizer_repository.decode(model.as_ref(), &[*id])?);
+        }
 
         Ok(OpenAiEncodeResponseDto {
             count: ids.len(),
@@ -57,34 +62,36 @@ impl TokenizationService {
         })
     }
 
-    pub fn decode_openai_tokens(
+    pub async fn decode_openai_tokens(
         &self,
         dto: OpenAiDecodeRequestDto,
     ) -> Result<OpenAiDecodeResponseDto, ApplicationError> {
         let model = self.normalize_model(&dto.model);
-        let text = self.tokenizer_repository.decode(&model, &dto.ids)?;
-        let chunks = dto
-            .ids
-            .iter()
-            .map(|id| {
-                self.tokenizer_repository
-                    .decode(&model, &[*id])
-                    .unwrap_or_default()
-            })
-            .collect::<Vec<_>>();
+        self.tokenizer_repository
+            .ensure_model_ready(model.as_ref())
+            .await?;
+        let text = self.tokenizer_repository.decode(model.as_ref(), &dto.ids)?;
+
+        let mut chunks = Vec::with_capacity(dto.ids.len());
+        for id in &dto.ids {
+            chunks.push(self.tokenizer_repository.decode(model.as_ref(), &[*id])?);
+        }
 
         Ok(OpenAiDecodeResponseDto { text, chunks })
     }
 
-    pub fn build_openai_logit_bias(
+    pub async fn build_openai_logit_bias(
         &self,
         dto: OpenAiLogitBiasRequestDto,
     ) -> Result<OpenAiLogitBiasResponseDto, ApplicationError> {
         let model = self.normalize_model(&dto.model);
+        self.tokenizer_repository
+            .ensure_model_ready(model.as_ref())
+            .await?;
         let mut bias: HashMap<String, f32> = HashMap::new();
 
         for entry in dto.entries {
-            for token_id in self.resolve_entry_tokens(&model, &entry)? {
+            for token_id in self.resolve_entry_tokens(model.as_ref(), &entry)? {
                 bias.insert(token_id.to_string(), entry.value);
             }
         }
@@ -128,12 +135,12 @@ impl TokenizationService {
         Some(ids)
     }
 
-    fn normalize_model(&self, model: &str) -> String {
-        let normalized = model.trim();
-        if normalized.is_empty() {
-            DEFAULT_MODEL.to_string()
+    fn normalize_model<'a>(&self, model: &'a str) -> Cow<'a, str> {
+        let trimmed = model.trim();
+        if trimmed.is_empty() {
+            Cow::Borrowed(DEFAULT_MODEL)
         } else {
-            normalized.to_string()
+            Cow::Borrowed(trimmed)
         }
     }
 }

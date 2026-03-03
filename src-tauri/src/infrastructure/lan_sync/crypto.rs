@@ -36,7 +36,11 @@ pub fn verify_request_signature(
     sign_request(key, method, path, body) == signature
 }
 
-pub fn derive_pair_secret(pair_code: &str, source_device_id: &str, target_device_id: &str) -> String {
+pub fn derive_pair_secret(
+    pair_code: &str,
+    source_device_id: &str,
+    target_device_id: &str,
+) -> String {
     let mut mac = HmacSha256::new_from_slice(pair_code.as_bytes())
         .expect("HMAC key length is not accepted by Sha256");
     mac.update(b"TT-LANSYNC-PAIR-SECRET");

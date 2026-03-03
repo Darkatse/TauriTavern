@@ -42,13 +42,17 @@ pub(super) async fn open_existing_payload_file(path: &Path) -> Result<File, Doma
         .map_err(|error| map_open_existing_error(path, error))
 }
 
-pub(super) async fn read_existing_payload_metadata(path: &Path) -> Result<std::fs::Metadata, DomainError> {
+pub(super) async fn read_existing_payload_metadata(
+    path: &Path,
+) -> Result<std::fs::Metadata, DomainError> {
     fs::metadata(path)
         .await
         .map_err(|error| map_existing_metadata_error(path, error))
 }
 
-pub(super) fn file_signature_from_metadata(metadata: &std::fs::Metadata) -> Result<(u64, i64), DomainError> {
+pub(super) fn file_signature_from_metadata(
+    metadata: &std::fs::Metadata,
+) -> Result<(u64, i64), DomainError> {
     let modified = metadata.modified().map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to read chat payload modified time: {}",
@@ -90,7 +94,9 @@ pub(super) fn decode_jsonl_line_bytes(bytes: &[u8]) -> Result<String, DomainErro
     Ok(text.trim_end_matches(['\r', '\n']).to_string())
 }
 
-pub(super) async fn read_first_line_and_end_offset(path: &Path) -> Result<(String, u64), DomainError> {
+pub(super) async fn read_first_line_and_end_offset(
+    path: &Path,
+) -> Result<(String, u64), DomainError> {
     let mut file = open_existing_payload_file(path).await?;
 
     let mut buffer = [0u8; 8192];
@@ -137,7 +143,9 @@ pub(super) async fn read_first_line_and_end_offset(path: &Path) -> Result<(Strin
     }
 }
 
-pub(super) fn extract_integrity_slug_from_header_line(line: &str) -> Result<Option<String>, DomainError> {
+pub(super) fn extract_integrity_slug_from_header_line(
+    line: &str,
+) -> Result<Option<String>, DomainError> {
     let header: Value = serde_json::from_str(line).map_err(|error| {
         DomainError::InvalidData(format!(
             "Failed to parse chat payload header JSON: {}",
@@ -211,7 +219,10 @@ pub(super) async fn write_jsonl_lines_to_file(
     Ok(())
 }
 
-pub(super) async fn write_jsonl_lines_at_end(file: &mut File, lines: &[String]) -> Result<(), DomainError> {
+pub(super) async fn write_jsonl_lines_at_end(
+    file: &mut File,
+    lines: &[String],
+) -> Result<(), DomainError> {
     let mut first = true;
     for line in lines {
         if line.trim().is_empty() {
@@ -298,4 +309,3 @@ pub(super) async fn verify_cursor_offset_is_line_boundary(
 
     Ok(())
 }
-

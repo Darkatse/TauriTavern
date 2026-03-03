@@ -14,7 +14,6 @@ use crate::infrastructure::logging::logger;
 use super::FileChatRepository;
 use super::windowed_payload_io::*;
 
-
 async fn read_tail_lines_with_offsets(
     path: &Path,
     start_bound: u64,
@@ -231,7 +230,6 @@ impl FileChatRepository {
 
         Ok(result)
     }
-
 }
 
 async fn read_payload_tail_lines(

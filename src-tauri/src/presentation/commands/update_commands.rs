@@ -19,4 +19,3 @@ pub async fn check_for_update(
         .await
         .map_err(map_command_error("Failed to check for update"))
 }
-
