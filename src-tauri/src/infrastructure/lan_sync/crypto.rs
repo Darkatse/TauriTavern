@@ -7,7 +7,7 @@ type HmacSha256 = Hmac<Sha256>;
 
 pub fn random_base64url(byte_len: usize) -> String {
     let mut bytes = vec![0u8; byte_len];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 

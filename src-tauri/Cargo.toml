@@ -26,18 +26,18 @@ tauri-plugin-fs = "2.4.5"
 tauri-plugin-notification = "2.3.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "1.0"
+thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "std"] }
 tracing-appender = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
-tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", default-features = false, features = ["io"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
-base64 = "0.21"
+base64 = "0.22"
 sha2 = "0.10"
 hmac = "0.12"
-rand = "0.8"
+rand = "0.9"
 uuid = { version = "1.4", default-features = false, features = ["serde", "std", "v4"] }
 async-trait = "0.1"
 url = "2.4"
@@ -49,7 +49,6 @@ flate2 = "1.1.9"
 filetime = "0.2"
 miktik = { version = "0.2.0", default-features = false, features = ["openai", "huggingface", "sentencepiece"] }
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "multipart", "tokio"] }
-tower-http = { version = "0.5", default-features = false, features = ["cors"] }
 local-ip-address = "0.6"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 

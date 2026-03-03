@@ -38,7 +38,7 @@ impl LanSyncStore {
             return read_json_file(&path).await;
         }
 
-        let port = rand::thread_rng().gen_range(49152..=65535);
+        let port = rand::rng().random_range(49152..=65535);
         let config = LanSyncConfig {
             port,
             sync_mode: LanSyncSyncMode::Incremental,

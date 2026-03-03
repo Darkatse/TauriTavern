@@ -196,7 +196,7 @@ jobs:
             Source commit: ${{ github.sha }}
           releaseDraft: false
           prerelease: true
+          includeUpdaterJson: false
           args: ${{ matrix.args }} --no-bundle --features portable
-          uploadWorkflowArtifacts: true
           uploadPlainBinary: true
-          uploadUpdaterSignatures: false
+          assetNamePattern: '[name]-[version]-[platform]-[arch]-portable[ext]'

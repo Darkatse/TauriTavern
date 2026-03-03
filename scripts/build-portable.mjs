@@ -182,7 +182,7 @@ function main() {
     mkdirSync(outputDirectory, { recursive: true });
 
     const extension = process.platform === "win32" ? ".exe" : "";
-    const artifactName = `${PRODUCT_NAME}_${buildPlatformTag(options.target)}_portable${extension}`;
+    const artifactName = `${PRODUCT_NAME}-${buildPlatformTag(options.target)}-portable${extension}`;
     const artifactPath = path.join(outputDirectory, artifactName);
     copyFileSync(binaryPath, artifactPath);
 
