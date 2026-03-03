@@ -132,7 +132,8 @@ export async function getClientVersion() {
         const version = await invokeFn('get_version');
         return {
             agent: `SillyTavern:${SILLYTAVERN_COMPAT_VERSION}:TauriTavern`,
-            pkgVersion: version,
+            pkgVersion: SILLYTAVERN_COMPAT_VERSION,
+            tauriVersion: version,
             gitRevision: null,
             gitBranch: null,
         };

@@ -574,8 +574,9 @@ async function getClientVersion() {
     try {
         const data = await getBridgeClientVersion();
         CLIENT_VERSION = data.agent || `SillyTavern:${SILLYTAVERN_COMPAT_VERSION}:TauriTavern`;
-        displayVersion = `TauriTavern ${data.pkgVersion || 'UNKNOWN'}`;
-        currentVersion = data.pkgVersion || '0.0.0';
+        const tauriVersion = data.tauriVersion || data.pkgVersion;
+        displayVersion = `TauriTavern ${tauriVersion || 'UNKNOWN'}`;
+        currentVersion = tauriVersion || '0.0.0';
 
         if (data.gitRevision && data.gitBranch) {
             displayVersion += ` '${data.gitBranch}' (${data.gitRevision})`;

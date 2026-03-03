@@ -288,9 +288,6 @@ importers:
         specifier: ^2.10.0
         version: 2.10.0
     devDependencies:
-      '@fortawesome/fontawesome-free':
-        specifier: ^7.2.0
-        version: 7.2.0
       '@tauri-apps/cli':
         specifier: ^2.10.0
         version: 2.10.0
@@ -454,10 +451,6 @@ packages:
   '@eslint/js@8.57.1':
     resolution: {integrity: sha512-d9zaMRSTIKDLhctzH12MtXvJKSSUhaHcjV+2Z+GK+EEY7XKpP5yR4x+N3TAcHTcu963nIr+TMcCb4DBCYX1z6Q==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
-
-  '@fortawesome/fontawesome-free@7.2.0':
-    resolution: {integrity: sha512-3DguDv/oUE+7vjMeTSOjCSG+KeawgVQOHrKRnvUuqYh1mfArrh7s+s8hXW3e4RerBA1+Wh+hBqf8sJNpqNrBWg==}
-    engines: {node: '>=6'}
 
   '@huggingface/jinja@0.1.3':
     resolution: {integrity: sha512-9KsiorsdIK8+7VmlamAT7Uh90zxAhC/SeKaKc80v58JhtPYuwaJpmR/ST7XAUxrHAFqHTCoTH5aJnJDwSL6xIQ==}
@@ -3482,8 +3475,6 @@ snapshots:
       - supports-color
 
   '@eslint/js@8.57.1': {}
-
-  '@fortawesome/fontawesome-free@7.2.0': {}
 
   '@huggingface/jinja@0.1.3': {}
 

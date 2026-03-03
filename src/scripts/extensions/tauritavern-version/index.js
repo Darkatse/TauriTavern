@@ -62,9 +62,11 @@ function buildVersionInfo(payload = null) {
         ? payload.agent.trim()
         : (String(CLIENT_VERSION || '').trim() || 'SillyTavern:UNKNOWN:TauriTavern');
 
-    const packageVersion = typeof payload?.pkgVersion === 'string' && payload.pkgVersion.trim()
-        ? payload.pkgVersion.trim()
-        : getFallbackVersion();
+    const packageVersion = typeof payload?.tauriVersion === 'string' && payload.tauriVersion.trim()
+        ? payload.tauriVersion.trim()
+        : (typeof payload?.pkgVersion === 'string' && payload.pkgVersion.trim()
+            ? payload.pkgVersion.trim()
+            : getFallbackVersion());
 
     const gitBranch = typeof payload?.gitBranch === 'string' ? payload.gitBranch.trim() : '';
     const gitRevision = typeof payload?.gitRevision === 'string' ? payload.gitRevision.trim() : '';
