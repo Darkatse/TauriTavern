@@ -313,6 +313,33 @@
         overscroll-behavior-y: contain;
     }
 
+    /* Enforce mobile safe-area + IME layout even when themes override core containers. */
+    body #top-settings-holder,
+    body #top-bar {
+        top: max(var(--tt-safe-area-top), var(--top-distance, 0px)) !important;
+        padding-right: max(var(--tt-safe-area-right), 0px) !important;
+        padding-left: max(var(--tt-safe-area-left), 0px) !important;
+    }
+
+    body #sheld {
+        top: calc(var(--topBarBlockSize) + max(var(--tt-safe-area-top), 0px)) !important;
+        height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px)) !important;
+        height: calc(100dvh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px)) !important;
+        max-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px)) !important;
+        max-height: calc(100dvh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px)) !important;
+    }
+
+    body #form_sheld {
+        position: relative !important;
+        transform: translate3d(0, calc(-1 * var(--tt-keyboard-offset)), 0) !important;
+        padding-right: max(var(--tt-safe-area-right), 0px) !important;
+        padding-left: max(var(--tt-safe-area-left), 0px) !important;
+    }
+
+    body #chat {
+        padding-bottom: var(--tt-keyboard-offset) !important;
+    }
+
     .mes_buttons {
         font-size: calc(var(--mainFontSize)*1.2);
     }
