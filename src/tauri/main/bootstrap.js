@@ -2,6 +2,7 @@ import { initializeBridge, invoke, isTauri as isTauriRuntime, convertFileSrc } f
 import { createTauriMainContext } from './context.js';
 import { createInterceptors } from './interceptors.js';
 import { createRouteRegistry } from './router.js';
+import { installBackNavigationBridge } from './back-navigation.js';
 import { installNativeShareBridge } from './share-target-bridge.js';
 import { installLanSyncPanel } from '../../scripts/tauri/sync/sync-panel.js';
 import {
@@ -183,6 +184,7 @@ export function bootstrapTauriMain() {
     }
     bootstrapped = true;
 
+    installBackNavigationBridge();
     installNativeShareBridge();
     installLanSyncPanel();
 

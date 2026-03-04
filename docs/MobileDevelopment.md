@@ -243,3 +243,33 @@ https://v2.tauri.app/develop/resources/#android
 - 仅作用于第三方浮层与运行时动态 `<style>`，不改静态主样式文件；
 - 明确排除 `body/#sheld/#chat` 等应用核心容器，避免牵连应用本体布局；
 - 不侵入第三方扩展资源加载链路（与 `third-party-runtime.js` 解耦）。
+
+---
+
+## 7. Android 返回键分层返回（Back Navigation）
+
+问题：
+
+- Android 端按系统返回键可能直接退出应用（未能按“退一层 UI”关闭弹窗/抽屉/聊天）。
+- 不要依赖覆盖 `Activity.onBackPressed()`：在较新的 Android（predictive back / `OnBackInvokedDispatcher`）路径下，Back 分发优先走 `OnBackPressedDispatcher`，`super.onBackPressed()` 也可能绕开子类 override。
+
+当前方案（Native→JS Back Bridge）：
+
+- `MainActivity` 在 `onCreate()` 里向 `onBackPressedDispatcher` 注册回调，并把 Back 交给 `AndroidBackNavigationController`：
+  - `src-tauri/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`
+  - `src-tauri/gen/android/app/src/main/java/com/tauritavern/client/AndroidBackNavigationController.kt`
+- controller 通过 `WebView.evaluateJavascript` 调用前端全局函数：`window.__TAURITAVERN_HANDLE_BACK__()`。
+  - JS 返回 `true`：表示已消费 Back（关闭了一层 UI），原生不退出。
+  - JS 返回 `false`：表示前端未消费，原生执行 `finish()` 退出。
+
+前端分层关闭策略：
+
+- Back 逻辑集中在 `src/tauri/main/back-navigation.js`，并在 `src/tauri/main/bootstrap.js` 启动早期安装。
+- 关闭动作必须复用现有 UI 的关闭入口（点击 close/cancel 或触发既有的“点空白收起”逻辑），避免引入新的状态机。
+- “点空白收起”要模拟 `mousedown`（SillyTavern 绑定在 `html` 的 `touchstart/mousedown` 上），仅派发 `click` 不足以关闭抽屉。
+
+维护原则：
+
+- 不修改 auto-generated 的 `src-tauri/gen/android/.../generated/*`，避免升级冲突。
+- UI 分层判断与关闭动作只写在 JS；Kotlin 不写 DOM/UI 规则，只做拦截/转发/退出决策。
+- 若未来新增/变更 UI 层级，只在 `back-navigation.js` 增加一个分支即可；更详细设计见 `docs/AndroidBackNavigation.md`。

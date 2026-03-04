@@ -23,6 +23,12 @@ class MainActivity : TauriActivity() {
       Thread(runnable, "tauritavern-main-bg").apply { priority = Thread.NORM_PRIORITY - 1 }
     }
   private var isActivityDestroyed: Boolean = false
+  private val backNavigationController: AndroidBackNavigationController by lazy {
+    AndroidBackNavigationController(
+      webViewProvider = { webView },
+      exitApp = { finish() },
+    )
+  }
   private val aiGenerationNotifier: AndroidAiGenerationNotifier by lazy {
     AndroidAiGenerationNotifier(applicationContext)
   }
@@ -81,6 +87,7 @@ class MainActivity : TauriActivity() {
     initRustlsPlatformVerifier(applicationContext)
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    backNavigationController.register(onBackPressedDispatcher, this)
     // Keep a foreground service for the whole app session to reduce OEM background kills.
     aiGenerationNotifier.ensureKeepAliveService()
     insetsBridge.onCreate()
