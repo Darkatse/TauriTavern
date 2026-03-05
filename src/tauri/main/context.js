@@ -1024,6 +1024,21 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         return String(raw);
     }
 
+    function arrayNotationValuesFromForm(formData, key) {
+        const values = [];
+
+        for (const [entryKey, entryValue] of formData.entries()) {
+            if (entryKey === `${key}[]` || (entryKey.startsWith(`${key}[`) && entryKey.endsWith(']'))) {
+                const value = String(entryValue);
+                if (value) {
+                    values.push(value);
+                }
+            }
+        }
+
+        return values;
+    }
+
     function splitTags(tagsRaw) {
         if (Array.isArray(tagsRaw)) {
             return tagsRaw.map((tag) => String(tag).trim()).filter(Boolean);
@@ -1072,6 +1087,10 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
     }
 
     function formDataToCreateCharacterDto(formData) {
+        const alternateGreetings = formData.getAll('alternate_greetings').map((item) => String(item)).filter(Boolean);
+        const bracketAlternateGreetings = arrayNotationValuesFromForm(formData, 'alternate_greetings');
+        const bracketTags = arrayNotationValuesFromForm(formData, 'tags');
+
         return {
             name: stringFromForm(formData, 'ch_name', '').trim(),
             description: stringFromForm(formData, 'description', ''),
@@ -1082,10 +1101,10 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             creator: stringFromForm(formData, 'creator', ''),
             creator_notes: stringFromForm(formData, 'creator_notes', ''),
             character_version: stringFromForm(formData, 'character_version', ''),
-            tags: splitTags(stringFromForm(formData, 'tags', '')),
+            tags: bracketTags.length > 0 ? splitTags(bracketTags) : splitTags(stringFromForm(formData, 'tags', '')),
             talkativeness: numberFromForm(formData, 'talkativeness', 0.5),
             fav: boolFromForm(formData, 'fav'),
-            alternate_greetings: formData.getAll('alternate_greetings').map((item) => String(item)).filter(Boolean),
+            alternate_greetings: alternateGreetings.length > 0 ? alternateGreetings : bracketAlternateGreetings,
             system_prompt: stringFromForm(formData, 'system_prompt', ''),
             post_history_instructions: stringFromForm(formData, 'post_history_instructions', ''),
             extensions: buildCharacterExtensions(formData),

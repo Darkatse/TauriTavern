@@ -368,55 +368,52 @@ impl Character {
             }
         }
 
-        let data_name = pick_non_empty(&self.data.name, &self.name);
-        let data_creator = pick_non_empty(&self.data.creator, &self.creator);
-        let data_creator_notes = pick_non_empty(&self.data.creator_notes, &self.creator_notes);
-        let data_character_version =
-            pick_non_empty(&self.data.character_version, &self.character_version);
-        let top_tags = if self.tags.is_empty() {
-            self.data.tags.clone()
-        } else {
-            self.tags.clone()
-        };
+        let mut character = self.clone();
 
-        Self {
-            spec: self.spec.clone(),
-            spec_version: self.spec_version.clone(),
-            name: self.name.clone(),
-            description: String::new(),
-            personality: String::new(),
-            scenario: String::new(),
-            first_mes: String::new(),
-            mes_example: String::new(),
-            avatar: self.avatar.clone(),
-            chat: self.chat.clone(),
-            creator: self.creator.clone(),
-            creator_notes: self.creator_notes.clone(),
-            character_version: self.character_version.clone(),
-            tags: top_tags.clone(),
-            create_date: self.create_date.clone(),
-            talkativeness: self.talkativeness,
-            fav: self.fav,
-            data: CharacterData {
-                name: data_name,
-                creator: data_creator,
-                creator_notes: data_creator_notes,
-                character_version: data_character_version,
-                tags: top_tags,
-                extensions: CharacterExtensions {
-                    talkativeness: self.talkativeness,
-                    fav: self.fav,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            file_name: self.file_name.clone(),
-            chat_size: self.chat_size,
-            date_added: self.date_added,
-            date_last_chat: self.date_last_chat,
-            json_data: None,
-            shallow: true,
+        character.name = pick_non_empty(&self.name, &self.data.name);
+        character.description = pick_non_empty(&self.description, &self.data.description);
+        character.personality = pick_non_empty(&self.personality, &self.data.personality);
+        character.scenario = pick_non_empty(&self.scenario, &self.data.scenario);
+        character.first_mes = pick_non_empty(&self.first_mes, &self.data.first_mes);
+        character.mes_example = pick_non_empty(&self.mes_example, &self.data.mes_example);
+        character.creator = pick_non_empty(&self.creator, &self.data.creator);
+        character.creator_notes =
+            pick_non_empty(&self.creator_notes, &self.data.creator_notes);
+        character.character_version =
+            pick_non_empty(&self.character_version, &self.data.character_version);
+
+        character.data.name = character.name.clone();
+        character.data.description = character.description.clone();
+        character.data.personality = character.personality.clone();
+        character.data.scenario = character.scenario.clone();
+        character.data.first_mes = character.first_mes.clone();
+        character.data.mes_example = character.mes_example.clone();
+        character.data.creator = character.creator.clone();
+        character.data.creator_notes = character.creator_notes.clone();
+        character.data.character_version = character.character_version.clone();
+
+        if character.tags.is_empty() {
+            character.tags = self.data.tags.clone();
         }
+        if character.data.tags.is_empty() {
+            character.data.tags = character.tags.clone();
+        }
+
+        if character.talkativeness == 0.0 {
+            character.talkativeness = self.data.extensions.talkativeness;
+        }
+        character.data.extensions.talkativeness = character.talkativeness;
+
+        character.fav = self.fav || self.data.extensions.fav;
+        character.data.extensions.fav = character.fav;
+
+        // Keep runtime-relevant card fields intact for extension compatibility,
+        // but omit the embedded lorebook payload to keep list responses lightweight.
+        character.data.character_book = None;
+        character.json_data = None;
+        character.shallow = true;
+
+        character
     }
 }
 

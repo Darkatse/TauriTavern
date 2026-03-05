@@ -396,7 +396,7 @@ async fn save_character_cache_exposes_real_avatar_file_name() {
 }
 
 #[tokio::test]
-async fn find_all_shallow_returns_projected_character() {
+async fn find_all_shallow_preserves_runtime_fields_and_omits_character_book() {
     let (repository, root) = setup_repository().await;
 
     let mut character = Character::new(
@@ -416,6 +416,12 @@ async fn find_all_shallow_returns_projected_character() {
     character.data.system_prompt = "system".to_string();
     character.data.post_history_instructions = "post-history".to_string();
     character.data.alternate_greetings = vec!["alt".to_string()];
+    character.data.extensions.world = "world".to_string();
+    character
+        .data
+        .extensions
+        .additional
+        .insert("regex_scripts".to_string(), json!(["rule"]));
     character.data.character_book = Some(json!({
         "entries": [
             { "id": 1, "content": "book-entry" }
@@ -440,14 +446,23 @@ async fn find_all_shallow_returns_projected_character() {
     assert!(shallow.fav);
     assert_eq!(shallow.talkativeness, 0.7);
 
-    assert_eq!(shallow.description, "");
-    assert_eq!(shallow.personality, "");
-    assert_eq!(shallow.scenario, "");
-    assert_eq!(shallow.first_mes, "");
-    assert_eq!(shallow.mes_example, "");
-    assert_eq!(shallow.data.system_prompt, "");
-    assert_eq!(shallow.data.post_history_instructions, "");
-    assert!(shallow.data.alternate_greetings.is_empty());
+    assert_eq!(shallow.description, "very long description");
+    assert_eq!(shallow.personality, "very long personality");
+    assert_eq!(shallow.scenario, "scenario");
+    assert_eq!(shallow.first_mes, "hello there");
+    assert_eq!(shallow.mes_example, "example");
+    assert_eq!(shallow.data.system_prompt, "system");
+    assert_eq!(shallow.data.post_history_instructions, "post-history");
+    assert_eq!(shallow.data.alternate_greetings, vec!["alt".to_string()]);
+    assert_eq!(shallow.data.extensions.world, "world");
+    assert_eq!(
+        shallow
+            .data
+            .extensions
+            .additional
+            .get("regex_scripts"),
+        Some(&json!(["rule"]))
+    );
     assert!(shallow.data.character_book.is_none());
 
     let _ = fs::remove_dir_all(&root).await;
@@ -479,7 +494,8 @@ async fn find_by_name_promotes_cached_shallow_character_to_full() {
         .expect("load shallow character list");
     assert_eq!(shallow.len(), 1);
     assert!(shallow[0].shallow, "list should be shallow");
-    assert_eq!(shallow[0].description, "");
+    assert_eq!(shallow[0].description, "desc");
+    assert!(shallow[0].data.character_book.is_none());
 
     let full = repository
         .find_by_name("cache_promotion")
