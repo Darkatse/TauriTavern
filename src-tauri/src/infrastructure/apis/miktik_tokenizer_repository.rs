@@ -119,35 +119,35 @@ impl MiktikTokenizerRepository {
             "command-r" => Some(ModelResourceSpec {
                 file_name: "command-r.json",
                 source: ModelSource::Remote {
-                    url: "https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/command-r.json.gz",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/command-r.json.gz",
                     gzip: true,
                 },
             }),
             "command-a" => Some(ModelResourceSpec {
                 file_name: "command-a.json",
                 source: ModelSource::Remote {
-                    url: "https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/command-a.json.gz",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/command-a.json.gz",
                     gzip: true,
                 },
             }),
             "qwen2" => Some(ModelResourceSpec {
                 file_name: "qwen2.json",
                 source: ModelSource::Remote {
-                    url: "https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/qwen2.json.gz",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/qwen2.json.gz",
                     gzip: true,
                 },
             }),
             "nemo" => Some(ModelResourceSpec {
                 file_name: "nemo.json",
                 source: ModelSource::Remote {
-                    url: "https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/nemo.json.gz",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/nemo.json.gz",
                     gzip: true,
                 },
             }),
             "deepseek" => Some(ModelResourceSpec {
                 file_name: "deepseek.json",
                 source: ModelSource::Remote {
-                    url: "https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/deepseek.json.gz",
+                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/deepseek.json.gz",
                     gzip: true,
                 },
             }),
@@ -241,7 +241,7 @@ impl MiktikTokenizerRepository {
             .await
             .map_err(|error| {
                 DomainError::InternalError(format!(
-                    "Failed to download tokenizer resource '{}': {}",
+                    "Failed to download tokenizer resource '{}': {:?}",
                     url, error
                 ))
             })?

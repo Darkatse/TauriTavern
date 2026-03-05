@@ -3,8 +3,6 @@ mod application;
 mod domain;
 mod infrastructure;
 mod presentation;
-#[cfg(target_os = "android")]
-mod android;
 
 use app::spawn_initialization;
 use infrastructure::logging::logger;

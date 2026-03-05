@@ -1,6 +1,5 @@
 package com.tauritavern.client
 
-import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
@@ -84,7 +83,6 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
-    initRustlsPlatformVerifier(applicationContext)
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     backNavigationController.register(onBackPressedDispatcher, this)
@@ -244,6 +242,4 @@ class MainActivity : TauriActivity() {
     private const val IMPORT_ARCHIVE_PICKER_RECEIVER = "__TAURITAVERN_IMPORT_ARCHIVE_PICKER__"
     private const val EXPORT_ARCHIVE_PICKER_RECEIVER = "__TAURITAVERN_EXPORT_ARCHIVE_PICKER__"
   }
-
-  private external fun initRustlsPlatformVerifier(context: Context)
 }
