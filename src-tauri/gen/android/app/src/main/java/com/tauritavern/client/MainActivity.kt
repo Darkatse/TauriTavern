@@ -6,7 +6,10 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.WebView
+import android.webkit.WebChromeClient
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import org.json.JSONObject
@@ -14,7 +17,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
-class MainActivity : TauriActivity() {
+class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
   private var webView: WebView? = null
   private val mainHandler = Handler(Looper.getMainLooper())
   private val backgroundExecutor: ExecutorService =
@@ -25,6 +28,7 @@ class MainActivity : TauriActivity() {
   private val backNavigationController: AndroidBackNavigationController by lazy {
     AndroidBackNavigationController(
       webViewProvider = { webView },
+      consumeNativeBack = { webFullscreenController.hide() },
       exitApp = { finish() },
     )
   }
@@ -66,6 +70,12 @@ class MainActivity : TauriActivity() {
       isDestroyed = { isActivityDestroyed },
       mainHandler = mainHandler,
       readinessPoller = readinessPoller,
+    )
+  }
+  private val webFullscreenController: AndroidWebFullscreenController by lazy {
+    AndroidWebFullscreenController(
+      contentRootProvider = { window.decorView.findViewById<ViewGroup>(android.R.id.content) },
+      insetsBridge = insetsBridge,
     )
   }
 
@@ -120,6 +130,13 @@ class MainActivity : TauriActivity() {
     insetsBridge.onResume()
     sharePayloadDispatcher.requestDispatch()
   }
+
+  override fun showWebFullscreenView(
+    view: View,
+    callback: WebChromeClient.CustomViewCallback,
+  ): Boolean = webFullscreenController.show(view, callback)
+
+  override fun hideWebFullscreenView(): Boolean = webFullscreenController.hide()
 
   override fun onDestroy() {
     isActivityDestroyed = true

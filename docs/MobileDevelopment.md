@@ -273,3 +273,37 @@ https://v2.tauri.app/develop/resources/#android
 - 不修改 auto-generated 的 `src-tauri/gen/android/.../generated/*`，避免升级冲突。
 - UI 分层判断与关闭动作只写在 JS；Kotlin 不写 DOM/UI 规则，只做拦截/转发/退出决策。
 - 若未来新增/变更 UI 层级，只在 `back-navigation.js` 增加一个分支即可；更详细设计见 `docs/AndroidBackNavigation.md`。
+
+---
+
+## 8. Android WebView 页面 Fullscreen API
+
+问题：
+
+- 桌面端嵌入页面的全屏按钮可正常进入全屏；
+- Android 端同一路径报错：`Fullscreen is not supported (TypeError)`。
+
+根因：
+
+- Android WebView 的 DOM Fullscreen 最终依赖 `WebChromeClient.onShowCustomView/onHideCustomView`；
+- 当前生成的 `RustWebChromeClient.kt` 直接在 `onShowCustomView()` 里调用 `callback.onCustomViewHidden()`，等价于显式拒绝网页全屏；
+- `src/scripts/html-code-preview.js` 创建的预览 `iframe` 未声明 fullscreen 权限，嵌入页面即使调用 `requestFullscreen()` 也缺少宿主授权。
+
+当前方案：
+
+- 新增 `AndroidWebFullscreenController.kt`，负责：
+  - 将 WebView 请求的 custom view 挂到 Activity 内容根节点；
+  - 全屏期间强制开启 immersive system bars，退出时恢复先前状态；
+  - 暴露 `hide()`，让 Android 返回键优先退出网页全屏。
+- `MainActivity.kt` 实现 `AndroidWebFullscreenHost`，只做生命周期编排与 controller 委托。
+- `AndroidBackNavigationController.kt` 新增 native back 优先消费点，先尝试退出网页全屏，再决定是否把返回键交给前端/退出应用。
+- `RustWebChromeClient.kt` 仅保留最小补丁：
+  - `onShowCustomView()` 转发到 `AndroidWebFullscreenHost`
+  - `onHideCustomView()` 转发到 `AndroidWebFullscreenHost`
+- `src/scripts/html-code-preview.js` 为预览 `iframe` 增加 `allowfullscreen` / `allow="fullscreen"`。
+
+维护原则：
+
+- 由于当前 Tauri Android 侧没有公开的 WebChromeClient fullscreen 扩展点，这里允许对 `generated/RustWebChromeClient.kt` 保留一个“两方法转发”的最小补丁；
+- fullscreen 业务逻辑必须继续留在自维护文件（`MainActivity.kt` / `AndroidWebFullscreenController.kt`），不要把状态机堆回 generated 文件；
+- 不做前端 fullscreen polyfill 或静默降级，失败直接暴露，便于定位真实链路问题。

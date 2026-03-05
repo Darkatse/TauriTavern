@@ -543,6 +543,9 @@ function createPreviewIframe(srcdoc, previewId) {
     iframe.loading = 'lazy';
     iframe.referrerPolicy = 'no-referrer';
     iframe.title = 'Interactive code preview';
+    iframe.allowFullscreen = true;
+    iframe.setAttribute('allowfullscreen', '');
+    iframe.setAttribute('allow', 'fullscreen');
     iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals');
     iframe.srcdoc = injectHeightReporter(srcdoc, previewId);
     iframe.style.height = `${PREVIEW_HEIGHT_FALLBACK}px`;

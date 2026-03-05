@@ -8,6 +8,7 @@ import androidx.lifecycle.LifecycleOwner
 
 class AndroidBackNavigationController(
   private val webViewProvider: () -> WebView?,
+  private val consumeNativeBack: () -> Boolean = { false },
   private val exitApp: () -> Unit,
 ) {
   fun register(dispatcher: OnBackPressedDispatcher, owner: LifecycleOwner) {
@@ -23,6 +24,10 @@ class AndroidBackNavigationController(
 
   @MainThread
   fun handleBackPressed() {
+    if (consumeNativeBack()) {
+      return
+    }
+
     val activeWebView = webViewProvider()
     if (activeWebView == null) {
       exitApp()

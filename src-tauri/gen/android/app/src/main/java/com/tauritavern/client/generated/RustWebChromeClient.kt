@@ -80,6 +80,12 @@ class RustWebChromeClient(appActivity: WryActivity) : WebChromeClient() {
    * @see [](https://developer.android.com/reference/android/webkit/WebChromeClient.onShowCustomView
   ) */
   override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+    if (activity is AndroidWebFullscreenHost &&
+      activity.showWebFullscreenView(view, callback)
+    ) {
+      return
+    }
+
     callback.onCustomViewHidden()
     super.onShowCustomView(view, callback)
   }
@@ -90,6 +96,10 @@ class RustWebChromeClient(appActivity: WryActivity) : WebChromeClient() {
    * Do not remove this method--@see #onShowCustomView(View, CustomViewCallback).
    */
   override fun onHideCustomView() {
+    if (activity is AndroidWebFullscreenHost && activity.hideWebFullscreenView()) {
+      return
+    }
+
     super.onHideCustomView()
   }
 
