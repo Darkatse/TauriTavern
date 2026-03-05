@@ -36,6 +36,7 @@ pub struct FileExtensionRepository {
 const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "regex",
     "code-render",
+    "connection-manager",
     "data-migration",
     "quick-reply",
     "tauritavern-version",
