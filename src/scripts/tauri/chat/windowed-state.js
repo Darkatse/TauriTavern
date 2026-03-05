@@ -73,7 +73,9 @@ export function buildWindowedPayloadPatch(messages, windowState, label = 'chat')
         lines = messages.slice(savedMessageCount).map((entry) => JSON.stringify(entry));
         patch = { kind: 'append', lines };
     } else {
-        patch = { kind: 'append', lines: [] };
+        patch = messages.length === 0
+            ? { kind: 'append', lines: [] }
+            : { kind: 'rewriteFromIndex', startIndex: 0, lines: messages.map((entry) => JSON.stringify(entry)) };
     }
 
     return {
