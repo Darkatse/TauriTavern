@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::character::Character;
+use crate::domain::models::character::{Character, sanitize_filename};
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::list_files_with_extension;
 use crate::infrastructure::persistence::png_utils::read_character_data_from_png;
@@ -13,6 +13,43 @@ use crate::infrastructure::persistence::png_utils::read_character_data_from_png;
 use super::FileCharacterRepository;
 
 impl FileCharacterRepository {
+    pub(crate) fn normalize_character_file_stem(name: &str) -> Result<String, DomainError> {
+        let normalized = sanitize_filename(name)
+            .trim()
+            .trim_end_matches(['.', ' '])
+            .to_string();
+
+        if normalized.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Character name is invalid".to_string(),
+            ));
+        }
+
+        Ok(normalized)
+    }
+
+    pub(crate) fn resolve_renamed_file_stem(
+        &self,
+        requested_name: &str,
+        current_file_stem: &str,
+    ) -> Result<String, DomainError> {
+        let base = Self::normalize_character_file_stem(requested_name)?;
+
+        if base == current_file_stem {
+            return Ok(base);
+        }
+
+        let mut candidate = base.clone();
+        let mut suffix = 1usize;
+
+        while self.get_character_path(&candidate).exists() {
+            candidate = format!("{}{}", base, suffix);
+            suffix += 1;
+        }
+
+        Ok(candidate)
+    }
+
     pub(crate) async fn ensure_directory_exists(&self) -> Result<(), DomainError> {
         if !self.characters_dir.exists() {
             tracing::info!("Creating characters directory: {:?}", self.characters_dir);

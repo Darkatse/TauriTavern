@@ -143,6 +143,8 @@ impl CharacterRepository for FileCharacterRepository {
     }
 
     async fn rename(&self, old_name: &str, new_name: &str) -> Result<Character, DomainError> {
+        self.ensure_directory_exists().await?;
+
         let old_path = self.get_character_path(old_name);
         if !old_path.exists() {
             return Err(DomainError::NotFound(format!(
@@ -151,26 +153,22 @@ impl CharacterRepository for FileCharacterRepository {
             )));
         }
 
-        let new_path = self.get_character_path(new_name);
-        if new_path.exists() {
-            return Err(DomainError::InvalidData(format!(
-                "Character already exists: {}",
-                new_name
-            )));
-        }
+        let new_name = new_name.trim();
+        let target_file_stem = self.resolve_renamed_file_stem(new_name, old_name)?;
+        let new_path = self.get_character_path(&target_file_stem);
 
         let mut character = self.read_character_from_file(&old_path).await?;
 
         character.name = new_name.to_string();
         character.data.name = new_name.to_string();
-        let character = Self::with_storage_identity(&character, new_name);
+        let character = Self::with_storage_identity(&character, &target_file_stem);
 
         self.save(&character).await?;
 
         let old_chat_dir = self.get_chat_directory(old_name);
-        let new_chat_dir = self.get_chat_directory(new_name);
+        let new_chat_dir = self.get_chat_directory(&target_file_stem);
 
-        if old_chat_dir.exists() && !new_chat_dir.exists() {
+        if old_chat_dir.exists() && old_chat_dir != new_chat_dir && !new_chat_dir.exists() {
             fs::rename(&old_chat_dir, &new_chat_dir)
                 .await
                 .map_err(|e| {
@@ -179,12 +177,14 @@ impl CharacterRepository for FileCharacterRepository {
                 })?;
         }
 
-        fs::remove_file(&old_path).await.map_err(|e| {
-            logger::error(&format!("Failed to delete old character file: {}", e));
-            DomainError::InternalError(format!("Failed to delete old character file: {}", e))
-        })?;
+        if old_path != new_path {
+            fs::remove_file(&old_path).await.map_err(|e| {
+                logger::error(&format!("Failed to delete old character file: {}", e));
+                DomainError::InternalError(format!("Failed to delete old character file: {}", e))
+            })?;
+        }
 
-        {
+        if old_name != target_file_stem {
             let mut cache = self.memory_cache.lock().await;
             cache.remove(old_name);
         }

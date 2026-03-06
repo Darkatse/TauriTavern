@@ -1193,7 +1193,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             try {
                 await safeInvoke('update_avatar', {
                     dto: {
-                        name: dto.name || originalCharacterId,
+                        name: originalCharacterId,
                         avatar_path: fileInfo.filePath,
                         crop,
                     },

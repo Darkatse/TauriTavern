@@ -507,3 +507,72 @@ async fn find_by_name_promotes_cached_shallow_character_to_full() {
 
     let _ = fs::remove_dir_all(&root).await;
 }
+
+#[tokio::test]
+async fn rename_sanitizes_target_file_name_and_moves_chat_directory() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Source".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+
+    let old_chat_dir = root.join("chats").join("Source");
+    fs::create_dir_all(&old_chat_dir)
+        .await
+        .expect("create old chat directory");
+    fs::write(old_chat_dir.join("session.jsonl"), b"{}\n")
+        .await
+        .expect("write chat file");
+
+    let renamed = repository
+        .rename("Source", "Renamed:/Name")
+        .await
+        .expect("rename character");
+
+    assert_eq!(renamed.name, "Renamed:/Name");
+    assert_eq!(renamed.avatar, "Renamed__Name.png");
+    assert!(root.join("characters").join("Renamed__Name.png").exists());
+    assert!(!root.join("characters").join("Source.png").exists());
+    assert!(root.join("chats").join("Renamed__Name").exists());
+    assert!(!root.join("chats").join("Source").exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn rename_uses_next_available_file_stem_when_target_exists() {
+    let (repository, root) = setup_repository().await;
+
+    let source = Character::new(
+        "Source".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&source).await.expect("save source");
+
+    let existing = Character::new(
+        "Taken".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&existing).await.expect("save existing");
+
+    let renamed = repository
+        .rename("Source", "Taken")
+        .await
+        .expect("rename character with conflict");
+
+    assert_eq!(renamed.name, "Taken");
+    assert_eq!(renamed.avatar, "Taken1.png");
+    assert!(root.join("characters").join("Taken.png").exists());
+    assert!(root.join("characters").join("Taken1.png").exists());
+    assert!(!root.join("characters").join("Source.png").exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}

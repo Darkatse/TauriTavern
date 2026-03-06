@@ -223,6 +223,8 @@ impl CharacterService {
         &self,
         dto: RenameCharacterDto,
     ) -> Result<CharacterDto, ApplicationError> {
+        self.validate_character_name(&dto.new_name)?;
+
         logger::debug(&format!(
             "Renaming character: {} -> {}",
             dto.old_name, dto.new_name
@@ -340,15 +342,17 @@ impl CharacterService {
 
     /// Validate a character
     fn validate_character(&self, character: &Character) -> Result<(), DomainError> {
-        // Check required fields
-        if character.name.trim().is_empty() {
+        self.validate_character_name(&character.name)
+    }
+
+    fn validate_character_name(&self, name: &str) -> Result<(), DomainError> {
+        if name.trim().is_empty() {
             return Err(DomainError::InvalidData(
                 "Character name is required".to_string(),
             ));
         }
 
-        // Check name length
-        if character.name.len() > 100 {
+        if name.len() > 100 {
             return Err(DomainError::InvalidData(
                 "Character name is too long (max 100 characters)".to_string(),
             ));
