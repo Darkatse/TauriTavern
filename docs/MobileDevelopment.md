@@ -289,7 +289,7 @@ https://v2.tauri.app/develop/resources/#android
 - 当前生成的 `RustWebChromeClient.kt` 直接在 `onShowCustomView()` 里调用 `callback.onCustomViewHidden()`，等价于显式拒绝网页全屏；
 - `src/scripts/html-code-preview.js` 创建的预览 `iframe` 未声明 fullscreen 权限，嵌入页面即使调用 `requestFullscreen()` 也缺少宿主授权。
 
-当前方案：
+原始问题定位：
 
 - 新增 `AndroidWebFullscreenController.kt`，负责：
   - 将 WebView 请求的 custom view 挂到 Activity 内容根节点；
@@ -302,8 +302,24 @@ https://v2.tauri.app/develop/resources/#android
   - `onHideCustomView()` 转发到 `AndroidWebFullscreenHost`
 - `src/scripts/html-code-preview.js` 为预览 `iframe` 增加 `allowfullscreen` / `allow="fullscreen"`。
 
-维护原则：
+### 8.1 进一步的架构收敛
 
-- 由于当前 Tauri Android 侧没有公开的 WebChromeClient fullscreen 扩展点，这里允许对 `generated/RustWebChromeClient.kt` 保留一个“两方法转发”的最小补丁；
+上面的 fullscreen 逻辑本身没有问题，真正的问题是挂载位置：
+
+- `RustWebChromeClient.kt` 来自 Wry Android 生成链；
+- 直接改 `src-tauri/gen/android/.../generated/RustWebChromeClient.kt` 会在重新生成 Android 工程时被覆盖；
+- `MainActivity.onWebViewCreate()` 又不是一个可靠的运行时替换点，因为 Wry 后续仍会再次调用 `setWebChromeClient(...)`。
+
+因此，fullscreen 的正式方案不应继续依赖“修改 generated 文件”，而应改为：
+
+- 在项目源码中提供本地 `com.tauritavern.client.RustWebChromeClient`；
+- 在 Android Gradle 构建中排除 generated 版本参与编译；
+- 让 Wry native 侧继续通过原有类名加载，但实际落到项目自维护实现。
+
+### 8.2 正式维护原则
+
+- 不再手改 `generated/RustWebChromeClient.kt`；
+- local `RustWebChromeClient.kt` 只承担 Wry fullscreen 边界转发，不承载 fullscreen 状态机；
 - fullscreen 业务逻辑必须继续留在自维护文件（`MainActivity.kt` / `AndroidWebFullscreenController.kt`），不要把状态机堆回 generated 文件；
-- 不做前端 fullscreen polyfill 或静默降级，失败直接暴露，便于定位真实链路问题。
+- 不做前端 fullscreen polyfill 或静默降级，失败直接暴露，便于定位真实链路问题；
+- 未来升级 Tauri / Wry 时，只需要对比 upstream 的 `RustWebChromeClient.kt` 与本地替代版本的差异。

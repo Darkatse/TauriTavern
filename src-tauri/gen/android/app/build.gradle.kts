@@ -1,5 +1,6 @@
 import java.util.Properties
 import java.io.FileInputStream
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     id("com.android.application")
@@ -72,6 +73,10 @@ android {
 
 rust {
     rootDirRel = "../../../"
+}
+
+tasks.withType<KotlinCompile>().configureEach {
+    exclude("**/com/tauritavern/client/generated/RustWebChromeClient.kt")
 }
 
 dependencies {
