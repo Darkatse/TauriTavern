@@ -20,6 +20,7 @@
    - 创建运行上下文（`context`）
    - 注册前端路由（`router + routes/*`）
    - 安装请求拦截器（`fetch` 与 `jQuery.ajax`）
+   - 安装同源窗口下载桥（移动端浏览器式导出 -> 原生落盘）
    - 初始化 bridge 与目录信息
 
 ## 3. 目录结构（前端集成相关）
@@ -32,6 +33,7 @@ src/
 │   └── main/
 │       ├── bootstrap.js       # 组合根（composition root）
 │       ├── context.js         # 状态与共享业务能力
+│       ├── download-bridge.js # 同源窗口下载桥接
 │       ├── http-utils.js      # URL/Body/Response 工具
 │       ├── interceptors.js    # fetch/jQuery 注入
 │       ├── router.js          # 轻量路由注册与分发
@@ -54,7 +56,7 @@ src/
 
 - 组装模块依赖并执行初始化。
 - 确保只 bootstrap 一次。
-- 在 bridge 初始化后再次尝试 patch jQuery（处理加载时序问题）。
+- 在 bridge 初始化后再次尝试 patch 运行时补丁（处理加载时序问题）。
 
 ### 4.2 `context.js`
 
@@ -69,7 +71,13 @@ src/
 - 代理 `$.ajax` 并保持 Deferred/jqXHR 行为兼容。
 - 只拦截本地 API 请求，其余请求透传原生实现。
 
-### 4.4 `router.js` + `routes/*`
+### 4.4 `download-bridge.js`
+
+- 只处理移动端同源窗口中的浏览器式下载（如 `blob:` / `data:` + `a[download]`）。
+- 将命中的导出转接到现有原生文件导出链路。
+- 不参与 API 路由判断，避免与请求拦截职责混合。
+
+### 4.5 `router.js` + `routes/*`
 
 - `router.js` 提供简洁注册接口：`get/post/all`。
 - `routes/*` 按业务域组织，降低文件复杂度与改动冲突。

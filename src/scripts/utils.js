@@ -18,6 +18,7 @@ import { groups, selected_group } from './group-chats.js';
 import { getCurrentLocale, t } from './i18n.js';
 import { importWorldInfo } from './world-info.js';
 import { downloadBlobWithRuntime } from './file-export.js';
+import { showExportSuccessToast } from './download-feedback.js';
 
 export const shiftUpByOne = (e, i, a) => a[i] = e + 1;
 export const shiftDownByOne = (e, i, a) => a[i] = e - 1;
@@ -404,15 +405,7 @@ export async function download(content, fileName, contentType, options = {}) {
         const result = await downloadBlobWithRuntime(file, fileName, {
             fallbackName: 'download.bin',
         });
-
-        const savedPath = String(result?.savedPath || '').trim();
-        const savedDirectory = savedPath ? savedPath.replace(/[\\/][^\\/]*$/, '') : '';
-        const destination = savedDirectory || savedPath;
-        const successMessage = destination
-            ? t`Exported to: ${destination}`
-            : t`Export started. Check your default download folder.`;
-
-        toastr.success(successMessage, t`Export completed`, { timeOut: 7000 });
+        showExportSuccessToast(result);
         return result;
     } catch (error) {
         console.error('Failed to export file:', error);

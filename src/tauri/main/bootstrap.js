@@ -1,10 +1,13 @@
 import { initializeBridge, invoke, isTauri as isTauriRuntime, convertFileSrc } from '../../tauri-bridge.js';
 import { createTauriMainContext } from './context.js';
+import { createDownloadBridge } from './download-bridge.js';
 import { createInterceptors } from './interceptors.js';
 import { createRouteRegistry } from './router.js';
 import { installBackNavigationBridge } from './back-navigation.js';
 import { installNativeShareBridge } from './share-target-bridge.js';
 import { installLanSyncPanel } from '../../scripts/tauri/sync/sync-panel.js';
+import { downloadBlobWithRuntime, isNativeMobileDownloadRuntime } from '../../scripts/file-export.js';
+import { showExportSuccessToast } from '../../scripts/download-feedback.js';
 import {
     getMethod,
     getMethodHint,
@@ -86,7 +89,7 @@ async function installBackendErrorBridge() {
     }
 }
 
-function installSameOriginWindowInterceptors(interceptors) {
+function installSameOriginWindowPatches(interceptors, downloadBridge) {
     const trackedIframes = new WeakSet();
 
     const patchWindow = (targetWindow) => {
@@ -100,6 +103,7 @@ function installSameOriginWindowInterceptors(interceptors) {
 
         interceptors.patchFetch(targetWindow);
         interceptors.patchJQueryAjax(targetWindow);
+        downloadBridge.patchWindow(targetWindow);
     };
 
     const watchIframe = (iframeElement) => {
@@ -223,23 +227,30 @@ export function bootstrapTauriMain() {
         jsonResponse,
         safeJson,
     });
+    const downloadBridge = createDownloadBridge({
+        isNativeMobileDownloadRuntime,
+        downloadBlobWithRuntime,
+        notifyDownloadResult: showExportSuccessToast,
+    });
 
     interceptors.patchFetch();
     interceptors.patchJQueryAjax();
-    installSameOriginWindowInterceptors(interceptors);
+    downloadBridge.patchWindow();
+    installSameOriginWindowPatches(interceptors, downloadBridge);
 
-    const readyPromise = initializeTauriIntegration(context, interceptors).catch((error) => {
+    const readyPromise = initializeTauriIntegration(context, interceptors, downloadBridge).catch((error) => {
         console.error('Failed to initialize Tauri integration:', error);
     });
     window.__TAURITAVERN_MAIN_READY__ = readyPromise;
 }
 
-async function initializeTauriIntegration(context, interceptors) {
+async function initializeTauriIntegration(context, interceptors, downloadBridge) {
     await initializeBridge();
     await installBackendErrorBridge();
     await context.initialize();
 
-    // Re-apply runtime patches in case third-party code recreated fetch/jQuery after bootstrap.
+    // Re-apply runtime patches in case third-party code recreated fetch/jQuery or download bindings after bootstrap.
     interceptors.patchFetch();
     interceptors.patchJQueryAjax();
+    downloadBridge.patchWindow();
 }
