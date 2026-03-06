@@ -21,7 +21,7 @@ pub struct LanSyncPairingSession {
 
 pub struct LanSyncRuntime {
     app_handle: AppHandle,
-    pub data_root: PathBuf,
+    pub sync_root: PathBuf,
     pub store: LanSyncStore,
     sync_permit: Arc<Semaphore>,
     pairing_session: Mutex<Option<LanSyncPairingSession>>,
@@ -31,11 +31,11 @@ pub struct LanSyncRuntime {
 }
 
 impl LanSyncRuntime {
-    pub fn new(app_handle: AppHandle, default_user_dir: PathBuf) -> Self {
+    pub fn new(app_handle: AppHandle, sync_root: PathBuf, store_root: PathBuf) -> Self {
         Self {
             app_handle,
-            data_root: default_user_dir.clone(),
-            store: LanSyncStore::new(default_user_dir),
+            sync_root,
+            store: LanSyncStore::new(store_root),
             sync_permit: Arc::new(Semaphore::new(1)),
             pairing_session: Mutex::new(None),
             sync_mode_override: Mutex::new(None),

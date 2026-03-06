@@ -150,7 +150,7 @@ async fn handle_sync_plan_inner(
         return Err((StatusCode::UNAUTHORIZED, "Invalid signature".to_string()));
     }
 
-    let source_manifest = scan_manifest(runtime.data_root.clone())
+    let source_manifest = scan_manifest(runtime.sync_root.clone())
         .await
         .map_err(map_domain_error)?;
 
@@ -199,7 +199,7 @@ async fn handle_sync_file_inner(
         return Err((StatusCode::UNAUTHORIZED, "Invalid signature".to_string()));
     }
 
-    let full_path = resolve_relative_path(&runtime.data_root, &path).map_err(map_domain_error)?;
+    let full_path = resolve_relative_path(&runtime.sync_root, &path).map_err(map_domain_error)?;
 
     let metadata = tokio::fs::metadata(&full_path)
         .await

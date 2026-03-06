@@ -159,6 +159,7 @@ pub(super) fn build_services(
     ));
     let lan_sync_service = Arc::new(LanSyncService::new(
         app_handle.clone(),
+        data_directory.root().to_path_buf(),
         data_directory.default_user().to_path_buf(),
     ));
 

@@ -26,12 +26,12 @@ pub struct LanSyncService {
 }
 
 impl LanSyncService {
-    pub fn new(app_handle: AppHandle, default_user_dir: PathBuf) -> Self {
+    pub fn new(app_handle: AppHandle, sync_root: PathBuf, store_root: PathBuf) -> Self {
         let http_client =
             build_http_client(Client::builder()).expect("Failed to build LAN sync HTTP client");
 
         Self {
-            runtime: Arc::new(LanSyncRuntime::new(app_handle, default_user_dir)),
+            runtime: Arc::new(LanSyncRuntime::new(app_handle, sync_root, store_root)),
             http_client,
             server: Mutex::new(None),
         }

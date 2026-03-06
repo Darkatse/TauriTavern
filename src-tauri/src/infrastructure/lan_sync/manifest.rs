@@ -8,17 +8,17 @@ use crate::infrastructure::lan_sync::paths::{
     is_excluded_relative_path, normalize_relative_path, sync_scope_directories, sync_scope_files,
 };
 
-pub async fn scan_manifest(data_root: PathBuf) -> Result<LanSyncManifest, DomainError> {
-    tokio::task::spawn_blocking(move || scan_manifest_sync(&data_root))
+pub async fn scan_manifest(sync_root: PathBuf) -> Result<LanSyncManifest, DomainError> {
+    tokio::task::spawn_blocking(move || scan_manifest_sync(&sync_root))
         .await
         .map_err(|error| DomainError::InternalError(error.to_string()))?
 }
 
-fn scan_manifest_sync(data_root: &Path) -> Result<LanSyncManifest, DomainError> {
+fn scan_manifest_sync(sync_root: &Path) -> Result<LanSyncManifest, DomainError> {
     let mut entries = Vec::new();
 
     for directory in sync_scope_directories() {
-        let root = data_root.join(directory);
+        let root = sync_root.join(directory);
         if !root.exists() {
             continue;
         }
@@ -29,11 +29,11 @@ fn scan_manifest_sync(data_root: &Path) -> Result<LanSyncManifest, DomainError> 
             )));
         }
 
-        scan_dir_recursive(data_root, &root, &mut entries)?;
+        scan_dir_recursive(sync_root, &root, &mut entries)?;
     }
 
     for file in sync_scope_files() {
-        let path = data_root.join(file);
+        let path = sync_root.join(file);
         if !path.exists() {
             continue;
         }
@@ -44,7 +44,7 @@ fn scan_manifest_sync(data_root: &Path) -> Result<LanSyncManifest, DomainError> 
             )));
         }
 
-        entries.push(make_entry(data_root, &path)?);
+        entries.push(make_entry(sync_root, &path)?);
     }
 
     entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
@@ -53,7 +53,7 @@ fn scan_manifest_sync(data_root: &Path) -> Result<LanSyncManifest, DomainError> 
 }
 
 fn scan_dir_recursive(
-    data_root: &Path,
+    sync_root: &Path,
     dir: &Path,
     entries: &mut Vec<LanSyncManifestEntry>,
 ) -> Result<(), DomainError> {
@@ -91,7 +91,7 @@ fn scan_dir_recursive(
 
         if file_type.is_dir() {
             let relative = entry_path
-                .strip_prefix(data_root)
+                .strip_prefix(sync_root)
                 .map_err(|error| DomainError::InternalError(error.to_string()))?;
             let relative = normalize_relative_path(relative)?;
 
@@ -99,13 +99,13 @@ fn scan_dir_recursive(
                 continue;
             }
 
-            scan_dir_recursive(data_root, &entry_path, entries)?;
+            scan_dir_recursive(sync_root, &entry_path, entries)?;
             continue;
         }
 
         if file_type.is_file() {
             let relative = entry_path
-                .strip_prefix(data_root)
+                .strip_prefix(sync_root)
                 .map_err(|error| DomainError::InternalError(error.to_string()))?;
             let relative = normalize_relative_path(relative)?;
 
@@ -113,16 +113,16 @@ fn scan_dir_recursive(
                 continue;
             }
 
-            entries.push(make_entry(data_root, &entry_path)?);
+            entries.push(make_entry(sync_root, &entry_path)?);
         }
     }
 
     Ok(())
 }
 
-fn make_entry(data_root: &Path, file_path: &Path) -> Result<LanSyncManifestEntry, DomainError> {
+fn make_entry(sync_root: &Path, file_path: &Path) -> Result<LanSyncManifestEntry, DomainError> {
     let relative = file_path
-        .strip_prefix(data_root)
+        .strip_prefix(sync_root)
         .map_err(|error| DomainError::InternalError(error.to_string()))?;
     let relative_path = normalize_relative_path(relative)?;
 
@@ -193,5 +193,116 @@ pub fn diff_manifests(source: &LanSyncManifest, target: &LanSyncManifest) -> Lan
             .collect(),
         files_total,
         bytes_total,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use rand::random;
+
+    use super::scan_manifest_sync;
+
+    fn unique_temp_root() -> PathBuf {
+        std::env::temp_dir().join(format!("tauritavern-lan-sync-{}", random::<u64>()))
+    }
+
+    #[test]
+    fn scan_manifest_includes_plugins_and_excludes_lan_sync_state() {
+        let root = unique_temp_root();
+        let _ = std::fs::remove_dir_all(&root);
+
+        std::fs::create_dir_all(
+            root.join("default-user")
+                .join("extensions")
+                .join("local-ext"),
+        )
+        .expect("create local extension directory");
+        std::fs::create_dir_all(
+            root.join("extensions")
+                .join("third-party")
+                .join("global-ext"),
+        )
+        .expect("create global extension directory");
+        std::fs::create_dir_all(
+            root.join("_tauritavern")
+                .join("extension-sources")
+                .join("local"),
+        )
+        .expect("create local source state directory");
+        std::fs::create_dir_all(
+            root.join("_tauritavern")
+                .join("extension-sources")
+                .join("global"),
+        )
+        .expect("create global source state directory");
+        std::fs::create_dir_all(root.join("default-user").join("user").join("lan-sync"))
+            .expect("create lan sync state directory");
+
+        std::fs::write(
+            root.join("default-user")
+                .join("extensions")
+                .join("local-ext")
+                .join("index.js"),
+            b"local",
+        )
+        .expect("write local extension file");
+        std::fs::write(
+            root.join("extensions")
+                .join("third-party")
+                .join("global-ext")
+                .join("index.js"),
+            b"global",
+        )
+        .expect("write global extension file");
+        std::fs::write(
+            root.join("_tauritavern")
+                .join("extension-sources")
+                .join("local")
+                .join("local-ext.json"),
+            b"{}",
+        )
+        .expect("write local source state");
+        std::fs::write(
+            root.join("_tauritavern")
+                .join("extension-sources")
+                .join("global")
+                .join("global-ext.json"),
+            b"{}",
+        )
+        .expect("write global source state");
+        std::fs::write(
+            root.join("default-user")
+                .join("user")
+                .join("lan-sync")
+                .join("config.json"),
+            b"{}",
+        )
+        .expect("write lan sync config");
+
+        let manifest = scan_manifest_sync(&root).expect("scan sync manifest");
+        let relative_paths = manifest
+            .entries
+            .into_iter()
+            .map(|entry| entry.relative_path)
+            .collect::<Vec<_>>();
+
+        assert!(relative_paths.contains(&"default-user/extensions/local-ext/index.js".to_string()));
+        assert!(relative_paths.contains(&"extensions/third-party/global-ext/index.js".to_string()));
+        assert!(
+            relative_paths
+                .contains(&"_tauritavern/extension-sources/local/local-ext.json".to_string())
+        );
+        assert!(
+            relative_paths
+                .contains(&"_tauritavern/extension-sources/global/global-ext.json".to_string())
+        );
+        assert!(
+            !relative_paths.contains(&"default-user/user/lan-sync/config.json".to_string()),
+            "lan sync state must never be part of the sync manifest"
+        );
+
+        std::fs::remove_dir_all(&root).expect("remove temp lan sync test root");
     }
 }

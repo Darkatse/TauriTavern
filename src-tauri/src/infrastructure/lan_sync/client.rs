@@ -41,7 +41,7 @@ pub async fn merge_sync_from_device(
         current_path: None,
     })?;
 
-    let target_manifest = scan_manifest(runtime.data_root.clone()).await?;
+    let target_manifest = scan_manifest(runtime.sync_root.clone()).await?;
 
     runtime.emit_sync_progress(LanSyncSyncProgressEvent {
         phase: LanSyncSyncPhase::Diffing,
@@ -115,7 +115,7 @@ pub async fn merge_sync_from_device(
             address.clone(),
             peer.pair_secret.clone(),
             identity.device_id.clone(),
-            runtime.data_root.clone(),
+            runtime.sync_root.clone(),
             entry,
         );
         in_flight += 1;
@@ -150,7 +150,7 @@ pub async fn merge_sync_from_device(
                 address.clone(),
                 peer.pair_secret.clone(),
                 identity.device_id.clone(),
-                runtime.data_root.clone(),
+                runtime.sync_root.clone(),
                 entry,
             );
             in_flight += 1;
@@ -169,7 +169,7 @@ pub async fn merge_sync_from_device(
         })?;
 
         for relative_path in plan.delete {
-            let full_path = resolve_relative_path(&runtime.data_root, &relative_path)?;
+            let full_path = resolve_relative_path(&runtime.sync_root, &relative_path)?;
             tokio::fs::remove_file(&full_path)
                 .await
                 .map_err(|error| DomainError::InternalError(error.to_string()))?;
@@ -210,7 +210,7 @@ fn spawn_download_task(
     address: String,
     pair_secret: String,
     device_id: String,
-    data_root: std::path::PathBuf,
+    sync_root: std::path::PathBuf,
     entry: crate::domain::models::lan_sync::LanSyncManifestEntry,
 ) {
     join_set.spawn(async move {
@@ -219,7 +219,7 @@ fn spawn_download_task(
             &address,
             &pair_secret,
             &device_id,
-            &data_root,
+            &sync_root,
             entry,
         )
         .await
@@ -231,10 +231,10 @@ async fn download_one(
     address: &str,
     pair_secret: &str,
     device_id: &str,
-    data_root: &std::path::Path,
+    sync_root: &std::path::Path,
     entry: crate::domain::models::lan_sync::LanSyncManifestEntry,
 ) -> Result<DownloadResult, DomainError> {
-    let full_path = resolve_relative_path(data_root, &entry.relative_path)?;
+    let full_path = resolve_relative_path(sync_root, &entry.relative_path)?;
 
     if let Some(parent) = full_path.parent() {
         tokio::fs::create_dir_all(parent)
