@@ -232,8 +232,9 @@ fn build_repositories(
     let extension_repository: Arc<dyn ExtensionRepository> =
         Arc::new(FileExtensionRepository::new(
             default_user_dir.join("extensions"),
-            data_root.join("extensions").join("third-party"),
-        ));
+            data_directory.global_extensions().to_path_buf(),
+            data_directory.extension_sources().to_path_buf(),
+        )?);
 
     let avatar_repository: Arc<dyn AvatarRepository> = Arc::new(FileAvatarRepository::new(
         default_user_dir.join("User Avatars"),

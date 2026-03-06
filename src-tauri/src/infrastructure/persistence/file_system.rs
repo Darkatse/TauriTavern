@@ -8,6 +8,11 @@ use tokio::fs::{self as tokio_fs, create_dir_all, read_to_string};
 pub struct DataDirectory {
     root: PathBuf,
     default_user: PathBuf,
+    tauritavern: PathBuf,
+    extension_sources: PathBuf,
+    local_extension_sources: PathBuf,
+    global_extension_sources: PathBuf,
+    global_extensions: PathBuf,
     characters: PathBuf,
     chats: PathBuf,
     settings: PathBuf,
@@ -22,6 +27,11 @@ impl DataDirectory {
     /// Create a new DataDirectory instance
     pub fn new(root: PathBuf) -> Self {
         let default_user = root.join("default-user");
+        let tauritavern = root.join("_tauritavern");
+        let extension_sources = tauritavern.join("extension-sources");
+        let local_extension_sources = extension_sources.join("local");
+        let global_extension_sources = extension_sources.join("global");
+        let global_extensions = root.join("extensions").join("third-party");
         let characters = default_user.join("characters");
         let chats = default_user.join("chats");
         let settings = default_user.clone();
@@ -36,6 +46,11 @@ impl DataDirectory {
         Self {
             root,
             default_user,
+            tauritavern,
+            extension_sources,
+            local_extension_sources,
+            global_extension_sources,
+            global_extensions,
             characters,
             chats,
             settings,
@@ -54,6 +69,12 @@ impl DataDirectory {
         // Create main directories
         self.create_directory(&self.root).await?;
         self.create_directory(&self.default_user).await?;
+        self.create_directory(&self.tauritavern).await?;
+        self.create_directory(&self.extension_sources).await?;
+        self.create_directory(&self.local_extension_sources).await?;
+        self.create_directory(&self.global_extension_sources)
+            .await?;
+        self.create_directory(&self.global_extensions).await?;
 
         // Create default user subdirectories
         let default_user_dirs = [
@@ -117,6 +138,16 @@ impl DataDirectory {
     /// Get the data root directory
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Get the extension source state root directory
+    pub fn extension_sources(&self) -> &Path {
+        &self.extension_sources
+    }
+
+    /// Get the global third-party extensions directory
+    pub fn global_extensions(&self) -> &Path {
+        &self.global_extensions
     }
 
     /// Get the characters directory

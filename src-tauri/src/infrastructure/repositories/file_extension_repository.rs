@@ -20,15 +20,21 @@ use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::read_json_file;
 
 mod github;
-mod metadata;
 mod snapshot;
+mod source_store;
 
+#[cfg(test)]
+mod tests;
+
+use self::github::{normalize_requested_reference, parse_github_repo_url};
 use self::snapshot::copy_dir_all;
+use self::source_store::{ExtensionSourceMetadata, ExtensionSourceStore, ExtensionStoreScope};
 
 pub struct FileExtensionRepository {
     http_client: Client,
     user_extensions_dir: PathBuf,
     global_extensions_dir: PathBuf,
+    source_store: ExtensionSourceStore,
 }
 
 /// Built-in extensions enabled in TauriTavern.
@@ -54,50 +60,44 @@ struct GithubCommit {
     sha: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct ExtensionSourceMetadata {
-    owner: String,
-    repo: String,
-    reference: String,
-    remote_url: String,
-    installed_commit: String,
-}
-
-#[derive(Debug)]
-struct GithubRepoLocation {
-    owner: String,
-    repo: String,
-    reference_from_url: Option<String>,
-}
-
 impl FileExtensionRepository {
-    pub fn new(user_extensions_dir: PathBuf, global_extensions_dir: PathBuf) -> Self {
-        // Create directories if they don't exist
-        fs::create_dir_all(&user_extensions_dir)
-            .expect("Failed to create user extensions directory");
-        fs::create_dir_all(&global_extensions_dir)
-            .expect("Failed to create global extensions directory");
+    pub fn new(
+        user_extensions_dir: PathBuf,
+        global_extensions_dir: PathBuf,
+        source_store_root: PathBuf,
+    ) -> Result<Self, DomainError> {
+        let http_client = build_http_client(Client::builder()).map_err(|error| {
+            DomainError::InternalError(format!("Failed to build extension HTTP client: {}", error))
+        })?;
 
-        let http_client =
-            build_http_client(Client::builder()).expect("Failed to build extension HTTP client");
-
-        Self {
+        let source_store = ExtensionSourceStore::new(source_store_root);
+        let repository = Self {
             http_client,
             user_extensions_dir,
             global_extensions_dir,
-        }
+            source_store,
+        };
+        repository.source_store.migrate_all(
+            &repository.user_extensions_dir,
+            &repository.global_extensions_dir,
+        )?;
+
+        Ok(repository)
+    }
+
+    fn extension_scope(global: bool) -> ExtensionStoreScope {
+        ExtensionStoreScope::from_global(global)
     }
 
     fn extension_base_dir(&self, global: bool) -> &Path {
-        if global {
-            &self.global_extensions_dir
-        } else {
-            &self.user_extensions_dir
-        }
+        self.extension_dir_for_scope(Self::extension_scope(global))
     }
 
-    fn source_metadata_path(extension_path: &Path) -> PathBuf {
-        extension_path.join(SOURCE_METADATA_FILE)
+    fn extension_dir_for_scope(&self, scope: ExtensionStoreScope) -> &Path {
+        match scope {
+            ExtensionStoreScope::Local => &self.user_extensions_dir,
+            ExtensionStoreScope::Global => &self.global_extensions_dir,
+        }
     }
 
     fn sanitize_filename(filename: &str) -> String {
@@ -175,6 +175,99 @@ impl FileExtensionRepository {
         let normalized_name = self.normalize_extension_name(extension_name)?;
         Ok(self.extension_base_dir(global).join(normalized_name))
     }
+
+    async fn resolve_source_metadata(
+        &self,
+        scope: ExtensionStoreScope,
+        extension_name: &str,
+        extension_path: &Path,
+    ) -> Result<Option<ExtensionSourceMetadata>, DomainError> {
+        self.source_store
+            .resolve_or_migrate(scope, extension_name, extension_path)
+            .await
+    }
+
+    async fn discover_scoped_extensions(
+        &self,
+        scope: ExtensionStoreScope,
+        extensions: &mut Vec<Extension>,
+    ) -> Result<(), DomainError> {
+        let extensions_dir = self.extension_dir_for_scope(scope);
+        if !extensions_dir.exists() {
+            return Ok(());
+        }
+
+        let entries = fs::read_dir(extensions_dir).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to read extensions directory '{}': {}",
+                extensions_dir.display(),
+                error
+            ))
+        })?;
+
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to read extension directory entry in '{}': {}",
+                    extensions_dir.display(),
+                    error
+                ))
+            })?;
+
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            let Some(file_name) = path.file_name() else {
+                continue;
+            };
+            let extension_folder_name = file_name.to_string_lossy().to_string();
+            if extension_folder_name.starts_with('.') {
+                continue;
+            }
+
+            let extension_name = format!("third-party/{}", extension_folder_name);
+            if scope == ExtensionStoreScope::Global
+                && extensions
+                    .iter()
+                    .any(|extension| extension.name == extension_name)
+            {
+                continue;
+            }
+
+            let manifest = self.get_manifest(&path).await?;
+            let source = self
+                .resolve_source_metadata(scope, &extension_folder_name, &path)
+                .await?;
+
+            extensions.push(Extension {
+                name: extension_name,
+                extension_type: match scope {
+                    ExtensionStoreScope::Local => ExtensionType::Local,
+                    ExtensionStoreScope::Global => ExtensionType::Global,
+                },
+                manifest,
+                path,
+                remote_url: source.as_ref().map(|metadata| metadata.remote_url.clone()),
+                commit_hash: source
+                    .as_ref()
+                    .map(|metadata| metadata.installed_commit.clone()),
+                branch_name: source.as_ref().map(|metadata| metadata.reference.clone()),
+                is_up_to_date: None,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn resolve_move_dir<'a>(
+        &'a self,
+        location: &str,
+    ) -> Result<(&'a Path, ExtensionStoreScope), DomainError> {
+        let scope = ExtensionStoreScope::from_location(location)?;
+        Ok((self.extension_dir_for_scope(scope), scope))
+    }
 }
 
 #[async_trait]
@@ -184,15 +277,12 @@ impl ExtensionRepository for FileExtensionRepository {
 
         let mut extensions = Vec::new();
 
-        // Built-in extensions are explicitly allowlisted; unsupported modules stay disabled.
         for &name in ENABLED_SYSTEM_EXTENSIONS {
-            let path = PathBuf::from(format!("scripts/extensions/{}", name));
-
             extensions.push(Extension {
                 name: name.to_string(),
                 extension_type: ExtensionType::System,
                 manifest: None,
-                path,
+                path: PathBuf::from(format!("scripts/extensions/{}", name)),
                 remote_url: None,
                 commit_hash: None,
                 branch_name: None,
@@ -200,113 +290,10 @@ impl ExtensionRepository for FileExtensionRepository {
             });
         }
 
-        // Get user extensions
-        if self.user_extensions_dir.exists() {
-            let entries = fs::read_dir(&self.user_extensions_dir).map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to read local extensions directory '{}': {}",
-                    self.user_extensions_dir.display(),
-                    error
-                ))
-            })?;
-
-            for entry in entries {
-                let entry = entry.map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to read local extension directory entry: {}",
-                        error
-                    ))
-                })?;
-
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
-                }
-
-                let name = match path.file_name() {
-                    Some(value) => value.to_string_lossy().to_string(),
-                    None => continue,
-                };
-
-                if name.starts_with('.') {
-                    continue;
-                }
-
-                let manifest = self.get_manifest(&path).await.ok().flatten();
-                let source = self.read_source_metadata(&path).await.ok().flatten();
-
-                extensions.push(Extension {
-                    name: format!("third-party/{}", name),
-                    extension_type: ExtensionType::Local,
-                    manifest,
-                    path,
-                    remote_url: source.as_ref().map(|metadata| metadata.remote_url.clone()),
-                    commit_hash: source
-                        .as_ref()
-                        .map(|metadata| metadata.installed_commit.clone()),
-                    branch_name: source.as_ref().map(|metadata| metadata.reference.clone()),
-                    is_up_to_date: None,
-                });
-            }
-        }
-
-        // Get global extensions
-        if self.global_extensions_dir.exists() {
-            let entries = fs::read_dir(&self.global_extensions_dir).map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to read global extensions directory '{}': {}",
-                    self.global_extensions_dir.display(),
-                    error
-                ))
-            })?;
-
-            for entry in entries {
-                let entry = entry.map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to read global extension directory entry: {}",
-                        error
-                    ))
-                })?;
-
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
-                }
-
-                let name = match path.file_name() {
-                    Some(value) => value.to_string_lossy().to_string(),
-                    None => continue,
-                };
-
-                if name.starts_with('.') {
-                    continue;
-                }
-
-                // In case of conflict, the extension in user scope takes precedence.
-                if extensions
-                    .iter()
-                    .any(|extension| extension.name == format!("third-party/{}", name))
-                {
-                    continue;
-                }
-
-                let manifest = self.get_manifest(&path).await.ok().flatten();
-                let source = self.read_source_metadata(&path).await.ok().flatten();
-
-                extensions.push(Extension {
-                    name: format!("third-party/{}", name),
-                    extension_type: ExtensionType::Global,
-                    manifest,
-                    path,
-                    remote_url: source.as_ref().map(|metadata| metadata.remote_url.clone()),
-                    commit_hash: source
-                        .as_ref()
-                        .map(|metadata| metadata.installed_commit.clone()),
-                    branch_name: source.as_ref().map(|metadata| metadata.reference.clone()),
-                    is_up_to_date: None,
-                });
-            }
-        }
+        self.discover_scoped_extensions(ExtensionStoreScope::Local, &mut extensions)
+            .await?;
+        self.discover_scoped_extensions(ExtensionStoreScope::Global, &mut extensions)
+            .await?;
 
         logger::debug(&format!("Discovered {} extensions", extensions.len()));
         Ok(extensions)
@@ -333,8 +320,8 @@ impl ExtensionRepository for FileExtensionRepository {
     ) -> Result<ExtensionInstallResult, DomainError> {
         tracing::info!("Installing extension from {}", url);
 
-        let repo = self.parse_github_repo_url(url)?;
-        let reference = Self::normalize_requested_reference(branch)
+        let repo = parse_github_repo_url(url)?;
+        let reference = normalize_requested_reference(branch)
             .or(repo.reference_from_url.clone())
             .unwrap_or(
                 self.github_get_default_branch(&repo.owner, &repo.repo)
@@ -389,7 +376,12 @@ impl ExtensionRepository for FileExtensionRepository {
             remote_url: format!("https://github.com/{}/{}", repo.owner, repo.repo),
             installed_commit: latest_commit.clone(),
         };
-        self.write_source_metadata(&extension_path, &source_metadata)
+        self.source_store
+            .write(
+                Self::extension_scope(global),
+                &extension_folder_name,
+                &source_metadata,
+            )
             .await?;
 
         tracing::info!(
@@ -415,6 +407,8 @@ impl ExtensionRepository for FileExtensionRepository {
     ) -> Result<ExtensionUpdateResult, DomainError> {
         tracing::info!("Updating extension: {}", extension_name);
 
+        let scope = Self::extension_scope(global);
+        let extension_folder_name = self.normalize_extension_name(extension_name)?;
         let extension_path = self.resolve_extension_path(extension_name, global)?;
         if !extension_path.exists() {
             return Err(DomainError::NotFound(format!(
@@ -424,7 +418,7 @@ impl ExtensionRepository for FileExtensionRepository {
         }
 
         let mut source = self
-            .resolve_source_metadata(&extension_path)
+            .resolve_source_metadata(scope, &extension_folder_name, &extension_path)
             .await?
             .ok_or_else(|| {
                 DomainError::InvalidData(
@@ -473,7 +467,9 @@ impl ExtensionRepository for FileExtensionRepository {
             }
 
             source.installed_commit = latest_commit.clone();
-            self.write_source_metadata(&extension_path, &source).await?;
+            self.source_store
+                .write(scope, &extension_folder_name, &source)
+                .await?;
         }
 
         let short_commit_hash = Self::short_commit_hash(&latest_commit);
@@ -493,6 +489,8 @@ impl ExtensionRepository for FileExtensionRepository {
     ) -> Result<(), DomainError> {
         tracing::info!("Deleting extension: {}", extension_name);
 
+        let scope = Self::extension_scope(global);
+        let extension_folder_name = self.normalize_extension_name(extension_name)?;
         let extension_path = self.resolve_extension_path(extension_name, global)?;
         if !extension_path.exists() {
             return Err(DomainError::NotFound(format!(
@@ -510,6 +508,9 @@ impl ExtensionRepository for FileExtensionRepository {
                     error
                 ))
             })?;
+        self.source_store
+            .delete(scope, &extension_folder_name)
+            .await?;
 
         tracing::info!("Extension deleted: {}", extension_name);
         Ok(())
@@ -522,6 +523,8 @@ impl ExtensionRepository for FileExtensionRepository {
     ) -> Result<ExtensionVersion, DomainError> {
         tracing::info!("Getting extension version: {}", extension_name);
 
+        let scope = Self::extension_scope(global);
+        let extension_folder_name = self.normalize_extension_name(extension_name)?;
         let extension_path = self.resolve_extension_path(extension_name, global)?;
         if !extension_path.exists() {
             return Err(DomainError::NotFound(format!(
@@ -530,11 +533,12 @@ impl ExtensionRepository for FileExtensionRepository {
             )));
         }
 
-        let source = match self.resolve_source_metadata(&extension_path).await? {
+        let source = match self
+            .resolve_source_metadata(scope, &extension_folder_name, &extension_path)
+            .await?
+        {
             Some(source) => source,
             None => {
-                // Keep behavior close to upstream: for non-managed directories,
-                // version endpoint returns an empty Git state instead of failing.
                 return Ok(ExtensionVersion {
                     current_branch_name: String::new(),
                     current_commit_hash: String::new(),
@@ -577,8 +581,8 @@ impl ExtensionRepository for FileExtensionRepository {
         }
 
         let extension_folder_name = self.normalize_extension_name(extension_name)?;
-        let source_dir = self.resolve_move_dir(source)?;
-        let destination_dir = self.resolve_move_dir(destination)?;
+        let (source_dir, source_scope) = self.resolve_move_dir(source)?;
+        let (destination_dir, destination_scope) = self.resolve_move_dir(destination)?;
 
         let source_path = source_dir.join(&extension_folder_name);
         let destination_path = destination_dir.join(&extension_folder_name);
@@ -615,6 +619,9 @@ impl ExtensionRepository for FileExtensionRepository {
                     error
                 ))
             })?;
+        self.source_store
+            .move_record(source_scope, destination_scope, &extension_folder_name)
+            .await?;
 
         tracing::info!(
             "Extension moved: {} from {} to {}",

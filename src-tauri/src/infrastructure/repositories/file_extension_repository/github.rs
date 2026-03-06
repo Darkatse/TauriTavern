@@ -1,75 +1,79 @@
 use super::*;
 
-impl FileExtensionRepository {
-    pub(super) fn parse_github_repo_url(
-        &self,
-        url: &str,
-    ) -> Result<GithubRepoLocation, DomainError> {
-        let parsed_url = Url::parse(url).map_err(|error| {
-            DomainError::InvalidData(format!("Invalid GitHub URL '{}': {}", url, error))
-        })?;
+#[derive(Debug)]
+pub(super) struct GithubRepoLocation {
+    pub(super) owner: String,
+    pub(super) repo: String,
+    pub(super) reference_from_url: Option<String>,
+}
 
-        let host = parsed_url
-            .host_str()
-            .unwrap_or_default()
-            .to_ascii_lowercase();
+pub(super) fn parse_github_repo_url(url: &str) -> Result<GithubRepoLocation, DomainError> {
+    let parsed_url = Url::parse(url).map_err(|error| {
+        DomainError::InvalidData(format!("Invalid GitHub URL '{}': {}", url, error))
+    })?;
 
-        if host != "github.com" && host != "www.github.com" {
-            return Err(DomainError::InvalidData(
-                "Only GitHub repositories are supported".to_string(),
-            ));
-        }
+    let host = parsed_url
+        .host_str()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
 
-        let path_segments = parsed_url
-            .path_segments()
-            .ok_or_else(|| DomainError::InvalidData("Invalid GitHub URL path".to_string()))?
-            .filter(|segment| !segment.is_empty())
-            .map(ToString::to_string)
-            .collect::<Vec<String>>();
+    if host != "github.com" && host != "www.github.com" {
+        return Err(DomainError::InvalidData(
+            "Only GitHub repositories are supported".to_string(),
+        ));
+    }
 
-        if path_segments.len() < 2 {
-            return Err(DomainError::InvalidData(
-                "GitHub URL must include owner and repository".to_string(),
-            ));
-        }
+    let path_segments = parsed_url
+        .path_segments()
+        .ok_or_else(|| DomainError::InvalidData("Invalid GitHub URL path".to_string()))?
+        .filter(|segment| !segment.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<String>>();
 
-        let owner = path_segments[0].trim().to_string();
-        let repo = path_segments[1].trim_end_matches(".git").trim().to_string();
+    if path_segments.len() < 2 {
+        return Err(DomainError::InvalidData(
+            "GitHub URL must include owner and repository".to_string(),
+        ));
+    }
 
-        if owner.is_empty() || repo.is_empty() {
-            return Err(DomainError::InvalidData(
-                "GitHub owner/repository cannot be empty".to_string(),
-            ));
-        }
+    let owner = path_segments[0].trim().to_string();
+    let repo = path_segments[1].trim_end_matches(".git").trim().to_string();
 
-        let reference_from_url = if path_segments.len() >= 4 && path_segments[2] == "tree" {
-            let reference = path_segments[3..].join("/");
-            if reference.is_empty() {
-                None
-            } else {
-                Some(reference)
-            }
+    if owner.is_empty() || repo.is_empty() {
+        return Err(DomainError::InvalidData(
+            "GitHub owner/repository cannot be empty".to_string(),
+        ));
+    }
+
+    let reference_from_url = if path_segments.len() >= 4 && path_segments[2] == "tree" {
+        let reference = path_segments[3..].join("/");
+        if reference.is_empty() {
+            None
         } else {
-            parsed_url
-                .query_pairs()
-                .find(|(key, _)| key == "ref")
-                .map(|(_, value)| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-        };
-
-        Ok(GithubRepoLocation {
-            owner,
-            repo,
-            reference_from_url,
-        })
-    }
-
-    pub(super) fn normalize_requested_reference(reference: Option<String>) -> Option<String> {
-        reference
-            .map(|value| value.trim().to_string())
+            Some(reference)
+        }
+    } else {
+        parsed_url
+            .query_pairs()
+            .find(|(key, _)| key == "ref")
+            .map(|(_, value)| value.trim().to_string())
             .filter(|value| !value.is_empty())
-    }
+    };
 
+    Ok(GithubRepoLocation {
+        owner,
+        repo,
+        reference_from_url,
+    })
+}
+
+pub(super) fn normalize_requested_reference(reference: Option<String>) -> Option<String> {
+    reference
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+impl FileExtensionRepository {
     pub(super) fn build_github_api_url(&self, segments: &[&str]) -> Result<Url, DomainError> {
         let mut url = Url::parse(GITHUB_API_BASE).map_err(|error| {
             DomainError::InternalError(format!("Failed to parse GitHub API base URL: {}", error))

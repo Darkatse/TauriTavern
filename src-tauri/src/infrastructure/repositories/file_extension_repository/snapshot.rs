@@ -214,17 +214,6 @@ impl FileExtensionRepository {
 
         Ok(())
     }
-
-    pub(super) fn resolve_move_dir<'a>(&'a self, location: &str) -> Result<&'a Path, DomainError> {
-        match location {
-            "global" => Ok(&self.global_extensions_dir),
-            "local" => Ok(&self.user_extensions_dir),
-            _ => Err(DomainError::InvalidData(format!(
-                "Invalid extension location: {}",
-                location
-            ))),
-        }
-    }
 }
 
 pub(super) fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
