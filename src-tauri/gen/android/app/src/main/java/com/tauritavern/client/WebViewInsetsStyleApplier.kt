@@ -53,6 +53,7 @@ class WebViewInsetsStyleApplier(private val resources: Resources) {
 
         const state = {
           baseViewportHeight: 0,
+          baseViewportHeightCss: '',
           safeAreaTop: '',
           safeAreaRight: '',
           safeAreaLeft: '',
@@ -86,6 +87,15 @@ class WebViewInsetsStyleApplier(private val resources: Resources) {
               state.baseViewportHeight = viewportHeight;
             } else if (!state.baseViewportHeight && viewportHeight > 0) {
               state.baseViewportHeight = viewportHeight;
+            }
+
+            if (state.baseViewportHeight > 0) {
+              setVarIfChanged(
+                root,
+                '--tt-base-viewport-height',
+                'baseViewportHeightCss',
+                state.baseViewportHeight.toFixed(2) + 'px',
+              );
             }
 
             const viewportShrink =

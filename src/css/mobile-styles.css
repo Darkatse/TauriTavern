@@ -254,10 +254,13 @@
 
     #sheld {
         --tt-ime-bottom: 0px;
-        --tt-viewport-bottom-inset-local: max(var(--tt-safe-area-bottom), var(--tt-ime-bottom));
-        --tt-keyboard-offset: max(var(--tt-viewport-bottom-inset-local), 0px);
-        height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px));
-        max-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px));
+        --tt-safe-bottom-offset: max(var(--tt-safe-area-bottom), 0px);
+        --tt-viewport-bottom-inset-local: max(var(--tt-safe-bottom-offset), var(--tt-ime-bottom));
+        --tt-keyboard-offset: max(calc(var(--tt-viewport-bottom-inset-local) - var(--tt-safe-bottom-offset)), 0px);
+        height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px) - var(--tt-safe-bottom-offset));
+        height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px) - var(--tt-safe-bottom-offset));
+        max-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px) - var(--tt-safe-bottom-offset));
+        max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px) - var(--tt-safe-bottom-offset));
         overflow-y: hidden;
     }
 
@@ -307,6 +310,8 @@
         border-bottom: 1px solid var(--SmartThemeBorderColor);
         align-items: start;
         align-content: start;
+        min-height: 0;
+        max-height: none;
         overflow-y: auto;
         overflow-x: hidden;
         padding-bottom: var(--tt-keyboard-offset);
@@ -323,10 +328,10 @@
 
     body #sheld {
         top: calc(var(--topBarBlockSize) + max(var(--tt-safe-area-top), 0px)) !important;
-        height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px)) !important;
-        height: calc(100dvh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px)) !important;
-        max-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px)) !important;
-        max-height: calc(100dvh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px)) !important;
+        height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px) - var(--tt-safe-bottom-offset)) !important;
+        height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px) - var(--tt-safe-bottom-offset)) !important;
+        max-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px) - var(--tt-safe-bottom-offset)) !important;
+        max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-safe-area-top), 0px) - var(--tt-safe-bottom-offset)) !important;
     }
 
     body #form_sheld {
@@ -337,6 +342,8 @@
     }
 
     body #chat {
+        min-height: 0 !important;
+        max-height: none !important;
         padding-bottom: var(--tt-keyboard-offset) !important;
     }
 
