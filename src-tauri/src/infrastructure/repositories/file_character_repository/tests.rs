@@ -456,11 +456,7 @@ async fn find_all_shallow_preserves_runtime_fields_and_omits_character_book() {
     assert_eq!(shallow.data.alternate_greetings, vec!["alt".to_string()]);
     assert_eq!(shallow.data.extensions.world, "world");
     assert_eq!(
-        shallow
-            .data
-            .extensions
-            .additional
-            .get("regex_scripts"),
+        shallow.data.extensions.additional.get("regex_scripts"),
         Some(&json!(["rule"]))
     );
     assert!(shallow.data.character_book.is_none());

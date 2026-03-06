@@ -90,16 +90,33 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    max-height: 60vh;
+    max-height: min(68vh, 640px);
 }
 
-.ttv-update-popup h3 {
+.ttv-update-popup-header {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ttv-update-popup h3,
+.ttv-update-popup-title {
     margin: 0;
+}
+
+.ttv-update-popup-meta,
+.ttv-update-popup-note {
+    margin: 0;
+    opacity: 0.85;
+}
+
+.ttv-update-popup-note {
+    font-size: 0.95rem;
 }
 
 .ttv-update-popup-body {
     overflow: auto;
-    padding: 8px;
+    padding: 10px 12px;
     border-radius: 8px;
     border: 1px solid var(--SmartThemeBorderColor);
     background-color: var(--black20a);

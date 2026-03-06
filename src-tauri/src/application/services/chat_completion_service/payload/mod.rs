@@ -27,8 +27,9 @@ pub(super) fn build_payload(
     }
 
     match source {
-        ChatCompletionSource::OpenAi
-        | ChatCompletionSource::SiliconFlow => Ok(openai::build(payload)),
+        ChatCompletionSource::OpenAi | ChatCompletionSource::SiliconFlow => {
+            Ok(openai::build(payload))
+        }
         ChatCompletionSource::DeepSeek => Ok(deepseek::build(payload)),
         ChatCompletionSource::Moonshot => Ok(moonshot::build(payload)),
         ChatCompletionSource::OpenRouter => Ok(openrouter::build(payload)),

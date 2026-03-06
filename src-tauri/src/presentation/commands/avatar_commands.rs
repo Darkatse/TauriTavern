@@ -107,12 +107,16 @@ pub async fn read_user_avatar_asset(
         ))?;
 
     let avatar_path = PathBuf::from(directories.avatars).join(&safe_file);
-    let bytes = fs::read(&avatar_path).await.map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => {
-            CommandError::NotFound(format!("Avatar not found: {}", safe_file))
-        }
-        _ => CommandError::InternalServerError(format!("Failed to read avatar asset: {}", error)),
-    })?;
+    let bytes = fs::read(&avatar_path)
+        .await
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => {
+                CommandError::NotFound(format!("Avatar not found: {}", safe_file))
+            }
+            _ => {
+                CommandError::InternalServerError(format!("Failed to read avatar asset: {}", error))
+            }
+        })?;
 
     Ok(UserAvatarAssetPayload {
         content_base64: BASE64_STANDARD.encode(bytes),

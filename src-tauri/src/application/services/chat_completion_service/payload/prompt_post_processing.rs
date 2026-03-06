@@ -200,7 +200,9 @@ fn merge_messages(messages: Vec<Value>, names: &PromptNames, options: MergeOptio
             continue;
         };
 
-        if !message_object.contains_key("content") || message_object.get("content").is_some_and(Value::is_null) {
+        if !message_object.contains_key("content")
+            || message_object.get("content").is_some_and(Value::is_null)
+        {
             message_object.insert("content".to_string(), Value::String(String::new()));
         }
 
@@ -214,7 +216,10 @@ fn merge_messages(messages: Vec<Value>, names: &PromptNames, options: MergeOptio
             .unwrap_or("user")
             .trim()
             .to_ascii_lowercase();
-        let name = message_object.get("name").and_then(Value::as_str).map(str::trim);
+        let name = message_object
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim);
         let content_text = message_object
             .get("content")
             .and_then(Value::as_str)
@@ -222,11 +227,9 @@ fn merge_messages(messages: Vec<Value>, names: &PromptNames, options: MergeOptio
             .to_string();
 
         let content_text = if role == "system" && name == Some("example_assistant") {
-            prefix_if_missing(
-                &content_text,
-                &names.char_name,
-                |content| names.starts_with_group_name(content),
-            )
+            prefix_if_missing(&content_text, &names.char_name, |content| {
+                names.starts_with_group_name(content)
+            })
         } else if role == "system" && name == Some("example_user") {
             prefix_if_missing(&content_text, &names.user_name, |_| false)
         } else {
@@ -251,11 +254,9 @@ fn merge_messages(messages: Vec<Value>, names: &PromptNames, options: MergeOptio
 
         if options.single {
             if role == "assistant" {
-                content_text = prefix_if_missing(
-                    &content_text,
-                    &names.char_name,
-                    |content| names.starts_with_group_name(content),
-                );
+                content_text = prefix_if_missing(&content_text, &names.char_name, |content| {
+                    names.starts_with_group_name(content)
+                });
             } else if role == "user" {
                 content_text = prefix_if_missing(&content_text, &names.user_name, |_| false);
             }
@@ -553,7 +554,11 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .filter_map(|msg| msg.get("role").and_then(Value::as_str).map(|s| s.to_string()))
+            .filter_map(|msg| {
+                msg.get("role")
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_string())
+            })
             .collect();
         assert_eq!(roles, vec!["user", "assistant", "user"]);
 
@@ -579,7 +584,11 @@ mod tests {
         let merged = post_process_prompt(messages, PromptProcessingType::Strict, &names);
         let roles: Vec<String> = merged
             .iter()
-            .filter_map(|msg| msg.get("role").and_then(Value::as_str).map(|s| s.to_string()))
+            .filter_map(|msg| {
+                msg.get("role")
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_string())
+            })
             .collect();
         assert_eq!(roles, vec!["user", "assistant"]);
     }

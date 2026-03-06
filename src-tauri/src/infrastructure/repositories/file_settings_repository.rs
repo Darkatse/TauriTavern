@@ -7,7 +7,7 @@ use tokio::fs;
 use tokio::sync::Mutex;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::settings::{AppSettings, SettingsSnapshot, UserSettings};
+use crate::domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
 use crate::domain::repositories::settings_repository::SettingsRepository;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
@@ -15,8 +15,8 @@ use crate::infrastructure::persistence::file_system::{
 };
 
 pub struct FileSettingsRepository {
-    settings_file: PathBuf,
-    settings: Arc<Mutex<Option<AppSettings>>>,
+    tauritavern_settings_file: PathBuf,
+    tauritavern_settings: Arc<Mutex<Option<TauriTavernSettings>>>,
     user_settings_file: PathBuf,
     user_settings: Arc<Mutex<Option<UserSettings>>>,
     base_directory: PathBuf,
@@ -24,14 +24,13 @@ pub struct FileSettingsRepository {
 
 impl FileSettingsRepository {
     pub fn new(settings_dir: PathBuf) -> Self {
-        // 在default-user目录下创建settings.json文件
-        let settings_file = settings_dir.join("app-settings.json");
+        let tauritavern_settings_file = settings_dir.join("tauritavern-settings.json");
         let user_settings_file = settings_dir.join("settings.json");
         let base_directory = settings_dir;
 
         Self {
-            settings_file,
-            settings: Arc::new(Mutex::new(None)),
+            tauritavern_settings_file,
+            tauritavern_settings: Arc::new(Mutex::new(None)),
             user_settings_file,
             user_settings: Arc::new(Mutex::new(None)),
             base_directory,
@@ -39,7 +38,7 @@ impl FileSettingsRepository {
     }
 
     async fn ensure_directory_exists(&self) -> Result<(), DomainError> {
-        if let Some(parent) = self.settings_file.parent() {
+        if let Some(parent) = self.tauritavern_settings_file.parent() {
             if !parent.exists() {
                 tracing::debug!("Creating settings directory: {:?}", parent);
                 fs::create_dir_all(parent).await.map_err(|e| {
@@ -54,7 +53,6 @@ impl FileSettingsRepository {
         Ok(())
     }
 
-    /// 确保快照目录存在
     async fn ensure_snapshots_directory_exists(&self) -> Result<PathBuf, DomainError> {
         let snapshots_dir = self.base_directory.join("snapshots");
 
@@ -69,7 +67,6 @@ impl FileSettingsRepository {
         Ok(snapshots_dir)
     }
 
-    /// 获取当前时间戳（毫秒）
     fn get_timestamp_ms(&self) -> i64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -77,7 +74,6 @@ impl FileSettingsRepository {
             .as_millis() as i64
     }
 
-    /// 从目录中读取 JSON 文件列表
     async fn read_json_files_from_directory(
         &self,
         dir: &Path,
@@ -93,15 +89,12 @@ impl FileSettingsRepository {
         })?;
 
         let mut entries_vec = Vec::new();
-
-        // 收集所有条目
         while let Some(entry) = entries.next_entry().await.map_err(|e| {
             DomainError::InternalError(format!("Failed to read directory entry: {}", e))
         })? {
             entries_vec.push(entry);
         }
 
-        // 处理每个条目
         for entry in entries_vec {
             let path = entry.path();
 
@@ -116,7 +109,6 @@ impl FileSettingsRepository {
                             path.display(),
                             e
                         ));
-                        // 继续处理其他文件
                     }
                 }
             }
@@ -125,7 +117,6 @@ impl FileSettingsRepository {
         Ok(result)
     }
 
-    /// 从目录中读取预设文件
     async fn read_presets_from_directory(
         &self,
         dir_name: &str,
@@ -134,7 +125,6 @@ impl FileSettingsRepository {
         self.read_json_files_from_directory(&dir).await
     }
 
-    /// 从目录中读取 AI 设置
     async fn read_ai_settings(
         &self,
         dir_name: &str,
@@ -187,45 +177,42 @@ impl FileSettingsRepository {
 
 #[async_trait]
 impl SettingsRepository for FileSettingsRepository {
-    async fn save(&self, settings: &AppSettings) -> Result<(), DomainError> {
+    async fn save_tauritavern_settings(
+        &self,
+        settings: &TauriTavernSettings,
+    ) -> Result<(), DomainError> {
         self.ensure_directory_exists().await?;
 
-        write_json_file(&self.settings_file, settings).await?;
+        write_json_file(&self.tauritavern_settings_file, settings).await?;
 
-        // Update cache
-        let mut cached_settings = self.settings.lock().await;
+        let mut cached_settings = self.tauritavern_settings.lock().await;
         *cached_settings = Some(settings.clone());
 
         Ok(())
     }
 
-    async fn load(&self) -> Result<AppSettings, DomainError> {
-        // Try to get from cache first
+    async fn load_tauritavern_settings(&self) -> Result<TauriTavernSettings, DomainError> {
         {
-            let cached_settings = self.settings.lock().await;
+            let cached_settings = self.tauritavern_settings.lock().await;
             if let Some(settings) = cached_settings.clone() {
                 return Ok(settings);
             }
         }
 
-        // If not in cache, load from file
-        if !self.settings_file.exists() {
-            // If settings file doesn't exist, create default settings
-            let default_settings = AppSettings::default();
-            self.save(&default_settings).await?;
+        if !self.tauritavern_settings_file.exists() {
+            let default_settings = TauriTavernSettings::default();
+            self.save_tauritavern_settings(&default_settings).await?;
             return Ok(default_settings);
         }
 
-        let settings = read_json_file::<AppSettings>(&self.settings_file).await?;
+        let settings =
+            read_json_file::<TauriTavernSettings>(&self.tauritavern_settings_file).await?;
 
-        // Update cache
-        let mut cached_settings = self.settings.lock().await;
+        let mut cached_settings = self.tauritavern_settings.lock().await;
         *cached_settings = Some(settings.clone());
 
         Ok(settings)
     }
-
-    // 用户设置
 
     async fn save_user_settings(&self, settings: &UserSettings) -> Result<(), DomainError> {
         self.ensure_directory_exists().await?;
@@ -236,7 +223,6 @@ impl SettingsRepository for FileSettingsRepository {
         );
         write_json_file(&self.user_settings_file, settings).await?;
 
-        // Update cache
         let mut cached_settings = self.user_settings.lock().await;
         *cached_settings = Some(settings.clone());
 
@@ -244,7 +230,6 @@ impl SettingsRepository for FileSettingsRepository {
     }
 
     async fn load_user_settings(&self) -> Result<UserSettings, DomainError> {
-        // Try to get from cache first
         {
             let cached_settings = self.user_settings.lock().await;
             if let Some(settings) = cached_settings.clone() {
@@ -252,9 +237,7 @@ impl SettingsRepository for FileSettingsRepository {
             }
         }
 
-        // If not in cache, load from file
         if !self.user_settings_file.exists() {
-            // If settings file doesn't exist, create default settings
             let default_settings = UserSettings::default();
             self.save_user_settings(&default_settings).await?;
             return Ok(default_settings);
@@ -266,27 +249,18 @@ impl SettingsRepository for FileSettingsRepository {
         );
         let settings = read_json_file::<UserSettings>(&self.user_settings_file).await?;
 
-        // Update cache
         let mut cached_settings = self.user_settings.lock().await;
         *cached_settings = Some(settings.clone());
 
         Ok(settings)
     }
 
-    // 设置快照
-
     async fn create_snapshot(&self) -> Result<(), DomainError> {
-        // 确保快照目录存在
         let snapshots_dir = self.ensure_snapshots_directory_exists().await?;
-
-        // 加载当前设置
         let settings = self.load_user_settings().await?;
-
-        // 创建快照文件名
         let timestamp = self.get_timestamp_ms();
         let snapshot_file = snapshots_dir.join(format!("settings_{}.json", timestamp));
 
-        // 保存快照
         tracing::info!("Creating settings snapshot: {}", snapshot_file.display());
         write_json_file(&snapshot_file, &settings).await?;
 
@@ -294,17 +268,13 @@ impl SettingsRepository for FileSettingsRepository {
     }
 
     async fn get_snapshots(&self) -> Result<Vec<SettingsSnapshot>, DomainError> {
-        // 确保快照目录存在
         let snapshots_dir = self.ensure_snapshots_directory_exists().await?;
 
         let mut snapshots = Vec::new();
-
-        // 读取快照目录
         let mut entries = fs::read_dir(&snapshots_dir).await.map_err(|e| {
             DomainError::InternalError(format!("Failed to read snapshots directory: {}", e))
         })?;
 
-        // 处理每个条目
         while let Some(entry) = entries.next_entry().await.map_err(|e| {
             DomainError::InternalError(format!("Failed to read directory entry: {}", e))
         })? {
@@ -316,10 +286,8 @@ impl SettingsRepository for FileSettingsRepository {
                     .and_then(|s| s.to_str())
                     .unwrap_or_default();
 
-                // 解析时间戳
                 if let Some(timestamp_str) = file_name.strip_prefix("settings_") {
                     if let Ok(timestamp) = timestamp_str.parse::<i64>() {
-                        // 获取文件大小
                         let metadata = fs::metadata(&path).await.map_err(|e| {
                             DomainError::InternalError(format!(
                                 "Failed to get file metadata: {}",
@@ -337,20 +305,15 @@ impl SettingsRepository for FileSettingsRepository {
             }
         }
 
-        // 按时间戳排序（降序）
         snapshots.sort_by(|a, b| b.date.cmp(&a.date));
 
         Ok(snapshots)
     }
 
     async fn load_snapshot(&self, name: &str) -> Result<UserSettings, DomainError> {
-        // 确保快照目录存在
         let snapshots_dir = self.ensure_snapshots_directory_exists().await?;
-
-        // 构建快照文件路径
         let snapshot_file = snapshots_dir.join(format!("{}.json", name));
 
-        // 检查文件是否存在
         if !snapshot_file.exists() {
             return Err(DomainError::NotFound(format!(
                 "Snapshot {} not found",
@@ -358,7 +321,6 @@ impl SettingsRepository for FileSettingsRepository {
             )));
         }
 
-        // 读取快照文件
         tracing::info!("Loading settings snapshot: {}", snapshot_file.display());
         let settings = read_json_file::<UserSettings>(&snapshot_file).await?;
 
@@ -366,16 +328,11 @@ impl SettingsRepository for FileSettingsRepository {
     }
 
     async fn restore_snapshot(&self, name: &str) -> Result<(), DomainError> {
-        // 加载快照
         let settings = self.load_snapshot(name).await?;
-
-        // 保存为当前设置
         self.save_user_settings(&settings).await?;
 
         Ok(())
     }
-
-    // 预设和主题
 
     async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {
         let mut themes = self.read_presets_from_directory("themes").await?;
@@ -411,8 +368,6 @@ impl SettingsRepository for FileSettingsRepository {
         self.read_presets_from_directory("reasoning").await
     }
 
-    // AI 设置
-
     async fn get_koboldai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
         self.read_ai_settings("KoboldAI Settings").await
     }
@@ -428,8 +383,6 @@ impl SettingsRepository for FileSettingsRepository {
     async fn get_textgen_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError> {
         self.read_ai_settings("TextGen Settings").await
     }
-
-    // 世界信息
 
     async fn get_world_names(&self) -> Result<Vec<String>, DomainError> {
         let worlds_dir = self.base_directory.join("worlds");

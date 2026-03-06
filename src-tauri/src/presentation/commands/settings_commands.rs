@@ -4,37 +4,37 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::settings_dto::{
-    AppSettingsDto, SettingsSnapshotDto, SillyTavernSettingsResponseDto, UpdateAppSettingsDto,
-    UserSettingsDto,
+    SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
+    UpdateTauriTavernSettingsDto, UserSettingsDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
 #[tauri::command]
-pub async fn get_settings(
+pub async fn get_tauritavern_settings(
     app_state: State<'_, Arc<AppState>>,
-) -> Result<AppSettingsDto, CommandError> {
-    log_command("get_settings");
+) -> Result<TauriTavernSettingsDto, CommandError> {
+    log_command("get_tauritavern_settings");
 
     app_state
         .settings_service
-        .get_settings()
+        .get_tauritavern_settings()
         .await
-        .map_err(map_command_error("Failed to get settings"))
+        .map_err(map_command_error("Failed to get TauriTavern settings"))
 }
 
 #[tauri::command]
-pub async fn update_settings(
-    dto: UpdateAppSettingsDto,
+pub async fn update_tauritavern_settings(
+    dto: UpdateTauriTavernSettingsDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<AppSettingsDto, CommandError> {
-    log_command("update_settings");
+) -> Result<TauriTavernSettingsDto, CommandError> {
+    log_command("update_tauritavern_settings");
 
     app_state
         .settings_service
-        .update_settings(dto)
+        .update_tauritavern_settings(dto)
         .await
-        .map_err(map_command_error("Failed to update settings"))
+        .map_err(map_command_error("Failed to update TauriTavern settings"))
 }
 
 #[tauri::command]

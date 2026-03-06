@@ -1,6 +1,12 @@
 import { DOMPurify } from '../../../lib.js';
-import { CLIENT_VERSION, converter, displayVersion, reloadMarkdownProcessor } from '../../../script.js';
-import { checkForUpdate, getClientVersion as getBridgeClientVersion, listen } from '../../../tauri-bridge.js';
+import { CLIENT_VERSION, converter, displayVersion, eventSource, event_types, reloadMarkdownProcessor } from '../../../script.js';
+import {
+    checkForUpdate,
+    getClientVersion as getBridgeClientVersion,
+    getTauriTavernSettings,
+    openExternalUrl,
+    updateTauriTavernSettings,
+} from '../../../tauri-bridge.js';
 import { renderExtensionTemplateAsync } from '../../extensions.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 
@@ -11,11 +17,18 @@ const LINKS = Object.freeze({
     discordUrl: 'https://discord.com/channels/1134557553011998840/1472415443078742188',
 });
 
-const COPY_SUCCESS_TEXT = '版本信息已复制到剪贴板';
-const COPY_FAILURE_TEXT = '复制失败，请手动复制版本信息';
+const COPY_SUCCESS_TEXT = '\u7248\u672c\u4fe1\u606f\u5df2\u590d\u5236\u5230\u526a\u8d34\u677f';
+const COPY_FAILURE_TEXT = '\u590d\u5236\u5931\u8d25\uff0c\u8bf7\u624b\u52a8\u590d\u5236\u7248\u672c\u4fe1\u606f';
 const UNKNOWN_VALUE = 'UNKNOWN';
-const UPDATE_CHECKING_TEXT = '检查中…';
-const UPDATE_NO_UPDATE_TEXT = '当前已是最新版本';
+const UPDATE_CHECKING_TEXT = '\u68c0\u67e5\u4e2d...';
+const UPDATE_NO_UPDATE_TEXT = '\u5f53\u524d\u5df2\u662f\u6700\u65b0\u7248\u672c';
+const OPEN_LINK_FAILURE_PREFIX = '\u6253\u5f00\u94fe\u63a5\u5931\u8d25\uff1a';
+
+let latestUpdateResult = null;
+let startupUpdateCheckPromise = null;
+let startupUpdatePopupShown = false;
+let tauriTavernSettingsCache = null;
+let tauriTavernSettingsPromise = null;
 
 function extractCompatVersion(agent) {
     const segments = String(agent || '')
@@ -23,7 +36,7 @@ function extractCompatVersion(agent) {
         .map(segment => segment.trim())
         .filter(Boolean);
 
-    return segments.length >= 2 ? segments[1] : 'UNKNOWN';
+    return segments.length >= 2 ? segments[1] : UNKNOWN_VALUE;
 }
 
 function getFallbackVersion() {
@@ -89,13 +102,11 @@ function buildVersionInfo(payload = null) {
         summaryParts.push(`WebView ${androidInfo.webViewVersion}`);
     }
 
-    const summary = summaryParts.join(' | ');
-
     return {
         packageVersion,
         compatBaseline,
         gitInfo,
-        summary,
+        summary: summaryParts.join(' | '),
     };
 }
 
@@ -124,22 +135,47 @@ async function onCopyVersionClick() {
 
     const clipboard = globalThis?.navigator?.clipboard;
     if (!clipboard || typeof clipboard.writeText !== 'function') {
-        if (globalThis.toastr?.warning) {
-            globalThis.toastr.warning(COPY_FAILURE_TEXT);
-        }
+        globalThis.toastr?.warning?.(COPY_FAILURE_TEXT);
         return;
     }
 
     try {
         await clipboard.writeText(summary);
-        if (globalThis.toastr?.success) {
-            globalThis.toastr.success(COPY_SUCCESS_TEXT);
-        }
+        globalThis.toastr?.success?.(COPY_SUCCESS_TEXT);
     } catch {
-        if (globalThis.toastr?.error) {
-            globalThis.toastr.error(COPY_FAILURE_TEXT);
-        }
+        globalThis.toastr?.error?.(COPY_FAILURE_TEXT);
     }
+}
+
+async function openVersionUrl(url) {
+    try {
+        await openExternalUrl(url);
+    } catch (error) {
+        globalThis.toastr?.error?.(`${OPEN_LINK_FAILURE_PREFIX}${error}`);
+        throw error;
+    }
+}
+
+function shouldInterceptExternalLink(event) {
+    return event.button === 0
+        && !event.metaKey
+        && !event.ctrlKey
+        && !event.shiftKey
+        && !event.altKey;
+}
+
+function onExternalLinkClick(event) {
+    if (!shouldInterceptExternalLink(event)) {
+        return;
+    }
+
+    const href = String(event.currentTarget?.href || '').trim();
+    if (!href) {
+        return;
+    }
+
+    event.preventDefault();
+    void openVersionUrl(href);
 }
 
 function ensureMarkdownConverter() {
@@ -149,7 +185,7 @@ function ensureMarkdownConverter() {
 function renderChangelogHtml(markdown) {
     const normalized = String(markdown || '').trim();
     if (!normalized) {
-        return '<p>无变更日志</p>';
+        return '<p>\u65e0\u53d8\u66f4\u65e5\u5fd7</p>';
     }
 
     const html = ensureMarkdownConverter().makeHtml(normalized);
@@ -162,21 +198,36 @@ function showUpdateResult(result) {
         return;
     }
 
+    latestUpdateResult = result;
+
+    const $result = $('#tauritavern_update_result');
+    if (!$result.length) {
+        return;
+    }
+
     $('#tauritavern_update_version').text(release.version || release.tag_name || UNKNOWN_VALUE);
     $('#tauritavern_update_changelog').html(renderChangelogHtml(release.body));
     $('#tauritavern_update_download').attr('href', release.html_url);
-    $('#tauritavern_update_result').slideDown(200);
+
+    if ($result.is(':hidden')) {
+        $result.slideDown(200);
+    }
 }
 
 function hideUpdateResult() {
-    $('#tauritavern_update_result').slideUp(200);
+    const $result = $('#tauritavern_update_result');
+    if ($result.length && $result.is(':visible')) {
+        $result.slideUp(200);
+    }
 }
 
 async function onCheckUpdateClick() {
     const $btn = $('#tauritavern_check_update');
     const $icon = $btn.find('i');
     const $text = $btn.find('span');
+    const defaultText = String($text.data('defaultLabel') || $text.text()).trim();
 
+    $text.data('defaultLabel', defaultText);
     $icon.addClass('fa-spin');
     $text.text(UPDATE_CHECKING_TEXT);
     $btn.prop('disabled', true);
@@ -186,25 +237,94 @@ async function onCheckUpdateClick() {
         if (result?.has_update && result?.latest_release) {
             showUpdateResult(result);
         } else {
-            globalThis.toastr?.info(UPDATE_NO_UPDATE_TEXT);
+            latestUpdateResult = null;
+            globalThis.toastr?.info?.(UPDATE_NO_UPDATE_TEXT);
             hideUpdateResult();
         }
     } catch (error) {
-        globalThis.toastr?.error(`检查更新失败: ${error}`);
+        globalThis.toastr?.error?.(`\u68c0\u67e5\u66f4\u65b0\u5931\u8d25\uff1a${error}`);
     } finally {
         $icon.removeClass('fa-spin');
-        $text.text('检查更新');
+        $text.text(defaultText);
         $btn.prop('disabled', false);
     }
 }
 
-function buildStartupUpdatePopupContent(release) {
+async function getTauriTavernSettingsState() {
+    if (tauriTavernSettingsCache) {
+        return tauriTavernSettingsCache;
+    }
+
+    if (!tauriTavernSettingsPromise) {
+        tauriTavernSettingsPromise = getTauriTavernSettings()
+            .then((settings) => {
+                tauriTavernSettingsCache = settings;
+                return settings;
+            })
+            .finally(() => {
+                tauriTavernSettingsPromise = null;
+            });
+    }
+
+    return tauriTavernSettingsPromise;
+}
+
+function getStartupUpdatePopupToken(result) {
+    const releaseVersion = String(result?.latest_release?.version || result?.latest_release?.tag_name || '').trim();
+    const currentVersion = String(result?.current_version || '').trim();
+
+    return releaseVersion ? `${currentVersion}->${releaseVersion}` : '';
+}
+
+async function hasSeenStartupUpdate(result) {
+    const token = getStartupUpdatePopupToken(result);
+    if (token === '') {
+        return false;
+    }
+
+    const settings = await getTauriTavernSettingsState();
+    return settings.updates.startup_popup.dismissed_release_token === token;
+}
+
+async function rememberStartupUpdate(result) {
+    const token = getStartupUpdatePopupToken(result);
+    if (token === '') {
+        return;
+    }
+
+    tauriTavernSettingsCache = await updateTauriTavernSettings({
+        updates: {
+            startup_popup: {
+                dismissed_release_token: token,
+            },
+        },
+    });
+}
+
+function buildStartupUpdatePopupContent(result) {
+    const release = result.latest_release;
     const root = document.createElement('div');
     root.className = 'ttv-update-popup';
 
+    const header = document.createElement('div');
+    header.className = 'ttv-update-popup-header';
+
     const title = document.createElement('h3');
-    title.textContent = `TauriTavern ${release.version} 已发布`;
-    root.appendChild(title);
+    title.className = 'ttv-update-popup-title';
+    title.textContent = `\u53d1\u73b0\u65b0\u7248 TauriTavern ${release.version}`;
+    header.appendChild(title);
+
+    const meta = document.createElement('p');
+    meta.className = 'ttv-update-popup-meta';
+    meta.textContent = `TauriTavern ${result.current_version}  \u2192  ${release.version}`;
+    header.appendChild(meta);
+
+    const note = document.createElement('p');
+    note.className = 'ttv-update-popup-note';
+    note.textContent = '\u53ef\u4ee5\u7a0d\u540e\u518d\u66f4\u65b0\uff0c\u624b\u52a8\u68c0\u67e5\u5165\u53e3\u4ecd\u7136\u4f1a\u4fdd\u7559\u3002';
+    header.appendChild(note);
+
+    root.appendChild(header);
 
     const body = document.createElement('div');
     body.className = 'ttv-update-popup-body';
@@ -214,43 +334,62 @@ function buildStartupUpdatePopupContent(release) {
     return root;
 }
 
-async function showStartupUpdatePopup(release) {
-    const popup = new Popup(buildStartupUpdatePopupContent(release), POPUP_TYPE.CONFIRM, '', {
-        okButton: '前往下载',
-        cancelButton: '稍后',
+async function showStartupUpdatePopup(result) {
+    const popup = new Popup(buildStartupUpdatePopupContent(result), POPUP_TYPE.CONFIRM, '', {
+        okButton: '\u524d\u5f80\u4e0b\u8f7d',
+        cancelButton: '\u7a0d\u540e',
         allowVerticalScrolling: true,
         wide: true,
-        large: true,
+        wider: true,
     });
 
-    const result = await popup.show();
-    if (result === POPUP_RESULT.AFFIRMATIVE) {
-        window.open(release.html_url, '_blank', 'noopener,noreferrer');
+    const popupResult = await popup.show();
+    await rememberStartupUpdate(result);
+
+    if (popupResult === POPUP_RESULT.AFFIRMATIVE) {
+        await openVersionUrl(result.latest_release.html_url);
     }
 }
 
-let startupUpdatePopupShown = false;
+async function runStartupUpdateCheck() {
+    if (startupUpdateCheckPromise) {
+        return startupUpdateCheckPromise;
+    }
 
-async function listenForStartupUpdate() {
+    startupUpdateCheckPromise = (async () => {
+        let result;
+
+        try {
+            result = await checkForUpdate();
+        } catch (error) {
+            console.warn('Startup update check failed:', error);
+            return;
+        }
+
+        if (!result?.has_update || !result?.latest_release) {
+            return;
+        }
+
+        showUpdateResult(result);
+
+        if (startupUpdatePopupShown || await hasSeenStartupUpdate(result)) {
+            return;
+        }
+
+        startupUpdatePopupShown = true;
+        await showStartupUpdatePopup(result);
+    })();
+
     try {
-        await listen('update-available', (event) => {
-            const result = event?.payload;
-            if (!result?.has_update || !result?.latest_release) {
-                return;
-            }
-
-            showUpdateResult(result);
-
-            if (startupUpdatePopupShown) {
-                return;
-            }
-            startupUpdatePopupShown = true;
-            void showStartupUpdatePopup(result.latest_release);
-        });
-    } catch (error) {
-        console.warn('Failed to listen for update-available event:', error);
+        await startupUpdateCheckPromise;
+    } finally {
+        startupUpdateCheckPromise = null;
     }
 }
+
+eventSource.once(event_types.APP_READY, () => {
+    void runStartupUpdateCheck();
+});
 
 jQuery(async () => {
     const container = $('#tauritavern_version_container');
@@ -258,14 +397,17 @@ jQuery(async () => {
         return;
     }
 
-    void listenForStartupUpdate();
-
     const html = await renderExtensionTemplateAsync(MODULE_NAME, 'settings', LINKS);
     container.append(html);
     $('#tauritavern_version_copy').on('click', onCopyVersionClick);
     $('#tauritavern_check_update').on('click', onCheckUpdateClick);
     $('#tauritavern_update_dismiss').on('click', hideUpdateResult);
+    container.on('click', 'a[target="_blank"]', onExternalLinkClick);
 
     const versionInfo = await resolveVersionInfo();
     renderVersionInfo(versionInfo);
+
+    if (latestUpdateResult?.has_update && latestUpdateResult?.latest_release) {
+        showUpdateResult(latestUpdateResult);
+    }
 });

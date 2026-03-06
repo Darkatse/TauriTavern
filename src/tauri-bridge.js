@@ -149,6 +149,64 @@ export async function checkForUpdate() {
     return invokeFn('check_for_update');
 }
 
+export async function getTauriTavernSettings() {
+    const invokeFn = getInvokeFn();
+    if (!invokeFn) {
+        throw new Error('Tauri invoke is unavailable');
+    }
+
+    return invokeFn('get_tauritavern_settings');
+}
+
+export async function updateTauriTavernSettings(dto) {
+    const invokeFn = getInvokeFn();
+    if (!invokeFn) {
+        throw new Error('Tauri invoke is unavailable');
+    }
+
+    return invokeFn('update_tauritavern_settings', { dto });
+}
+
+function normalizeExternalUrl(url) {
+    const value = String(url instanceof URL ? url.href : url ?? '').trim();
+    if (!value) {
+        throw new Error('External URL is required');
+    }
+
+    try {
+        return new URL(value, window.location.href).toString();
+    } catch {
+        throw new Error(`Invalid external URL: ${value}`);
+    }
+}
+
+export async function openExternalUrl(url, openWith) {
+    const href = normalizeExternalUrl(url);
+    const invokeFn = getInvokeFn();
+
+    if (invokeFn) {
+        return invokeFn('plugin:opener|open_url', {
+            url: href,
+            with: openWith,
+        });
+    }
+
+    const openedWindow = typeof window.open === 'function'
+        ? window.open(href, '_blank', 'noopener,noreferrer')
+        : null;
+
+    if (openedWindow) {
+        return;
+    }
+
+    if (typeof window.location?.assign === 'function') {
+        window.location.assign(href);
+        return;
+    }
+
+    throw new Error('Unable to open external URL');
+}
+
 export function getAssetUrl(path) {
     if (!isTauriEnv || !convertFileSrc || !path) {
         return path;

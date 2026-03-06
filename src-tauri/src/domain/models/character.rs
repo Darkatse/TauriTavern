@@ -377,8 +377,7 @@ impl Character {
         character.first_mes = pick_non_empty(&self.first_mes, &self.data.first_mes);
         character.mes_example = pick_non_empty(&self.mes_example, &self.data.mes_example);
         character.creator = pick_non_empty(&self.creator, &self.data.creator);
-        character.creator_notes =
-            pick_non_empty(&self.creator_notes, &self.data.creator_notes);
+        character.creator_notes = pick_non_empty(&self.creator_notes, &self.data.creator_notes);
         character.character_version =
             pick_non_empty(&self.character_version, &self.data.character_version);
 

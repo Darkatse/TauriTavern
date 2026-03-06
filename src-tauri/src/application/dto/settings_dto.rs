@@ -1,52 +1,36 @@
 use crate::domain::models::settings::{
-    AppSettings, InterfaceSettings, SecuritySettings, ServerSettings, SettingsSnapshot,
+    SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings, TauriTavernUpdateSettings,
     UserSettings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppSettingsDto {
-    pub server: ServerSettingsDto,
-    pub interface: InterfaceSettingsDto,
-    pub security: SecuritySettingsDto,
+pub struct TauriTavernSettingsDto {
+    pub updates: TauriTavernUpdateSettingsDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerSettingsDto {
-    pub port: u16,
-    pub host: String,
-    pub data_directory: String,
+pub struct TauriTavernUpdateSettingsDto {
+    pub startup_popup: StartupUpdatePopupSettingsDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InterfaceSettingsDto {
-    pub default_theme: String,
-    pub default_character: Option<String>,
-    pub show_welcome_message: bool,
+pub struct StartupUpdatePopupSettingsDto {
+    pub dismissed_release_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecuritySettingsDto {
-    pub enable_authentication: bool,
-    pub session_timeout_minutes: u32,
+pub struct UpdateTauriTavernSettingsDto {
+    pub updates: Option<TauriTavernUpdateSettingsDto>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateAppSettingsDto {
-    pub server: Option<ServerSettingsDto>,
-    pub interface: Option<InterfaceSettingsDto>,
-    pub security: Option<SecuritySettingsDto>,
-}
-
-/// SillyTavern 用户设置 DTO
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserSettingsDto {
     #[serde(flatten)]
     pub data: Value,
 }
 
-/// 设置快照 DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSnapshotDto {
     pub date: i64,
@@ -54,7 +38,6 @@ pub struct SettingsSnapshotDto {
     pub size: u64,
 }
 
-/// SillyTavern 设置响应 DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SillyTavernSettingsResponseDto {
     pub settings: String,
@@ -105,80 +88,26 @@ impl From<SettingsSnapshot> for SettingsSnapshotDto {
     }
 }
 
-impl From<AppSettings> for AppSettingsDto {
-    fn from(settings: AppSettings) -> Self {
+impl From<TauriTavernSettings> for TauriTavernSettingsDto {
+    fn from(settings: TauriTavernSettings) -> Self {
         Self {
-            server: ServerSettingsDto::from(settings.server),
-            interface: InterfaceSettingsDto::from(settings.interface),
-            security: SecuritySettingsDto::from(settings.security),
+            updates: TauriTavernUpdateSettingsDto::from(settings.updates),
         }
     }
 }
 
-impl From<ServerSettings> for ServerSettingsDto {
-    fn from(settings: ServerSettings) -> Self {
+impl From<TauriTavernUpdateSettings> for TauriTavernUpdateSettingsDto {
+    fn from(settings: TauriTavernUpdateSettings) -> Self {
         Self {
-            port: settings.port,
-            host: settings.host,
-            data_directory: settings.data_directory,
+            startup_popup: StartupUpdatePopupSettingsDto::from(settings.startup_popup),
         }
     }
 }
 
-impl From<InterfaceSettings> for InterfaceSettingsDto {
-    fn from(settings: InterfaceSettings) -> Self {
+impl From<StartupUpdatePopupSettings> for StartupUpdatePopupSettingsDto {
+    fn from(settings: StartupUpdatePopupSettings) -> Self {
         Self {
-            default_theme: settings.default_theme,
-            default_character: settings.default_character,
-            show_welcome_message: settings.show_welcome_message,
-        }
-    }
-}
-
-impl From<SecuritySettings> for SecuritySettingsDto {
-    fn from(settings: SecuritySettings) -> Self {
-        Self {
-            enable_authentication: settings.enable_authentication,
-            session_timeout_minutes: settings.session_timeout_minutes,
-        }
-    }
-}
-
-impl From<AppSettingsDto> for AppSettings {
-    fn from(dto: AppSettingsDto) -> Self {
-        Self {
-            server: ServerSettings::from(dto.server),
-            interface: InterfaceSettings::from(dto.interface),
-            security: SecuritySettings::from(dto.security),
-        }
-    }
-}
-
-impl From<ServerSettingsDto> for ServerSettings {
-    fn from(dto: ServerSettingsDto) -> Self {
-        Self {
-            port: dto.port,
-            host: dto.host,
-            data_directory: dto.data_directory,
-        }
-    }
-}
-
-impl From<InterfaceSettingsDto> for InterfaceSettings {
-    fn from(dto: InterfaceSettingsDto) -> Self {
-        Self {
-            default_theme: dto.default_theme,
-            default_character: dto.default_character,
-            show_welcome_message: dto.show_welcome_message,
-        }
-    }
-}
-
-impl From<SecuritySettingsDto> for SecuritySettings {
-    fn from(dto: SecuritySettingsDto) -> Self {
-        Self {
-            enable_authentication: dto.enable_authentication,
-            session_timeout_minutes: dto.session_timeout_minutes,
+            dismissed_release_token: settings.dismissed_release_token,
         }
     }
 }

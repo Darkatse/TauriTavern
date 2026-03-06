@@ -107,22 +107,6 @@ pub fn spawn_initialization(app_handle: AppHandle, runtime_paths: RuntimePaths) 
                     Ok(_) => tracing::debug!("Application is ready"),
                     Err(error) => tracing::error!("Failed to emit app-ready event: {}", error),
                 }
-
-                let update_service = app_handle.state::<Arc<AppState>>().update_service.clone();
-                let emitter = app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    match update_service.check_for_update().await {
-                        Ok(result) if result.has_update => {
-                            if let Err(error) = emitter.emit("update-available", &result) {
-                                tracing::warn!("Failed to emit update-available event: {}", error);
-                            }
-                        }
-                        Ok(_) => tracing::debug!("No update available"),
-                        Err(error) => {
-                            tracing::debug!("Startup update check failed (non-fatal): {}", error)
-                        }
-                    }
-                });
             }
             Err(error) => {
                 tracing::error!("Failed to initialize application state: {}", error);
