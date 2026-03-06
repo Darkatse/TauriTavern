@@ -1,26 +1,25 @@
 <div id="tauritavern_version_settings">
     <div class="inline-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b data-i18n="TauriTavern Version">TauriTavern 版本</b>
+            <b data-i18n="ttv_version.panel_title">TauriTavern Version</b>
             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content">
-
             <div class="ttv-info-table">
                 <div class="ttv-row">
-                    <span class="ttv-label">应用版本</span>
+                    <span class="ttv-label" data-i18n="ttv_version.app_version_label">App Version</span>
                     <strong id="tauritavern_version_number">Loading...</strong>
                 </div>
                 <div class="ttv-row">
-                    <span class="ttv-label">兼容基线</span>
+                    <span class="ttv-label" data-i18n="ttv_version.compat_label">Compatibility Baseline</span>
                     <strong id="tauritavern_compat_version">Loading...</strong>
                 </div>
                 <div class="ttv-row">
-                    <span class="ttv-label">Git 信息</span>
+                    <span class="ttv-label" data-i18n="ttv_version.git_label">Git Info</span>
                     <strong id="tauritavern_git_info">Loading...</strong>
                 </div>
                 <div class="ttv-row">
-                    <span class="ttv-label">作者</span>
+                    <span class="ttv-label" data-i18n="ttv_version.author_label">Author</span>
                     <strong>{{authorName}}</strong>
                 </div>
             </div>
@@ -28,29 +27,35 @@
             <div class="ttv-actions">
                 <a class="menu_button menu_button_icon" href="{{repositoryUrl}}" target="_blank" rel="noopener noreferrer">
                     <i class="fa-brands fa-github"></i>
-                    <span>GitHub 仓库</span>
+                    <span data-i18n="ttv_version.github_repository">GitHub Repository</span>
                 </a>
                 <a class="menu_button menu_button_icon" href="{{discordUrl}}" target="_blank" rel="noopener noreferrer">
                     <i class="fa-brands fa-discord"></i>
-                    <span>Discord 更新页</span>
+                    <span data-i18n="ttv_version.discord_updates">Discord Update Channel</span>
                 </a>
                 <button id="tauritavern_version_copy" class="menu_button menu_button_icon" type="button">
                     <i class="fa-solid fa-copy"></i>
-                    <span>复制版本信息</span>
+                    <span data-i18n="ttv_version.copy_version_info">Copy Version Info</span>
                 </button>
                 <button id="tauritavern_check_update" class="menu_button menu_button_icon" type="button">
                     <i class="fa-solid fa-arrows-rotate"></i>
-                    <span>检查更新</span>
+                    <span data-i18n="ttv_version.check_updates">Check for Updates</span>
                 </button>
             </div>
 
             <div id="tauritavern_update_result" class="ttv-update-result">
                 <div class="ttv-update-header">
                     <div class="ttv-update-title">
-                        <span class="ttv-update-label">发现新版本</span>
+                        <span class="ttv-update-label" data-i18n="ttv_version.update_available">Update Available</span>
                         <strong id="tauritavern_update_version">Loading...</strong>
                     </div>
-                    <button id="tauritavern_update_dismiss" class="menu_button menu_button_icon margin0" type="button" title="忽略">
+                    <button
+                        id="tauritavern_update_dismiss"
+                        class="menu_button menu_button_icon margin0"
+                        type="button"
+                        title="Dismiss"
+                        data-i18n="[title]ttv_version.dismiss"
+                    >
                         <i class="fa-solid fa-xmark"></i>
                     </button>
                 </div>
@@ -59,7 +64,7 @@
 
                 <a id="tauritavern_update_download" class="menu_button menu_button_icon" href="{{repositoryUrl}}" target="_blank" rel="noopener noreferrer">
                     <i class="fa-solid fa-download"></i>
-                    <span>前往下载</span>
+                    <span data-i18n="ttv_version.go_to_download">Go to Download</span>
                 </a>
             </div>
         </div>

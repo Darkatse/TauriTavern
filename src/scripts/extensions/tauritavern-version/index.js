@@ -8,6 +8,7 @@ import {
     updateTauriTavernSettings,
 } from '../../../tauri-bridge.js';
 import { renderExtensionTemplateAsync } from '../../extensions.js';
+import { translate } from '../../i18n.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 
 const MODULE_NAME = 'tauritavern-version';
@@ -17,18 +18,26 @@ const LINKS = Object.freeze({
     discordUrl: 'https://discord.com/channels/1134557553011998840/1472415443078742188',
 });
 
-const COPY_SUCCESS_TEXT = '\u7248\u672c\u4fe1\u606f\u5df2\u590d\u5236\u5230\u526a\u8d34\u677f';
-const COPY_FAILURE_TEXT = '\u590d\u5236\u5931\u8d25\uff0c\u8bf7\u624b\u52a8\u590d\u5236\u7248\u672c\u4fe1\u606f';
 const UNKNOWN_VALUE = 'UNKNOWN';
-const UPDATE_CHECKING_TEXT = '\u68c0\u67e5\u4e2d...';
-const UPDATE_NO_UPDATE_TEXT = '\u5f53\u524d\u5df2\u662f\u6700\u65b0\u7248\u672c';
-const OPEN_LINK_FAILURE_PREFIX = '\u6253\u5f00\u94fe\u63a5\u5931\u8d25\uff1a';
 
 let latestUpdateResult = null;
 let startupUpdateCheckPromise = null;
 let startupUpdatePopupShown = false;
 let tauriTavernSettingsCache = null;
 let tauriTavernSettingsPromise = null;
+
+function localize(key, fallback) {
+    return translate(fallback, key);
+}
+
+function localizeTemplate(key, fallback, ...values) {
+    const template = localize(key, fallback);
+    return template.replace(/\$\{(\d+)\}/g, (_, index) => String(values[Number(index)] ?? ''));
+}
+
+function describeError(error) {
+    return error instanceof Error ? error.message : String(error);
+}
 
 function extractCompatVersion(agent) {
     const segments = String(agent || '')
@@ -91,15 +100,15 @@ function buildVersionInfo(payload = null) {
     const compatBaseline = `SillyTavern ${compatVersion}`;
     const summaryParts = [
         `TauriTavern ${packageVersion}`,
-        `Compat ${compatBaseline}`,
-        `Git ${gitInfo}`,
+        localizeTemplate('ttv_version.summary_compat', 'Compat ${0}', compatBaseline),
+        localizeTemplate('ttv_version.summary_git', 'Git ${0}', gitInfo),
     ];
 
     const androidInfo = getAndroidSystemInfo();
     if (androidInfo) {
-        summaryParts.push(`Android ${androidInfo.androidVersion}`);
-        summaryParts.push(`Model ${androidInfo.model}`);
-        summaryParts.push(`WebView ${androidInfo.webViewVersion}`);
+        summaryParts.push(localizeTemplate('ttv_version.summary_android', 'Android ${0}', androidInfo.androidVersion));
+        summaryParts.push(localizeTemplate('ttv_version.summary_model', 'Model ${0}', androidInfo.model));
+        summaryParts.push(localizeTemplate('ttv_version.summary_webview', 'WebView ${0}', androidInfo.webViewVersion));
     }
 
     return {
@@ -135,15 +144,15 @@ async function onCopyVersionClick() {
 
     const clipboard = globalThis?.navigator?.clipboard;
     if (!clipboard || typeof clipboard.writeText !== 'function') {
-        globalThis.toastr?.warning?.(COPY_FAILURE_TEXT);
+        globalThis.toastr?.warning?.(localize('ttv_version.copy_failure', 'Failed to copy. Please copy the version info manually.'));
         return;
     }
 
     try {
         await clipboard.writeText(summary);
-        globalThis.toastr?.success?.(COPY_SUCCESS_TEXT);
+        globalThis.toastr?.success?.(localize('ttv_version.copy_success', 'Version info copied to clipboard.'));
     } catch {
-        globalThis.toastr?.error?.(COPY_FAILURE_TEXT);
+        globalThis.toastr?.error?.(localize('ttv_version.copy_failure', 'Failed to copy. Please copy the version info manually.'));
     }
 }
 
@@ -151,7 +160,9 @@ async function openVersionUrl(url) {
     try {
         await openExternalUrl(url);
     } catch (error) {
-        globalThis.toastr?.error?.(`${OPEN_LINK_FAILURE_PREFIX}${error}`);
+        globalThis.toastr?.error?.(
+            localizeTemplate('ttv_version.open_link_failed', 'Failed to open link: ${0}', describeError(error)),
+        );
         throw error;
     }
 }
@@ -185,7 +196,7 @@ function ensureMarkdownConverter() {
 function renderChangelogHtml(markdown) {
     const normalized = String(markdown || '').trim();
     if (!normalized) {
-        return '<p>\u65e0\u53d8\u66f4\u65e5\u5fd7</p>';
+        return `<p>${localize('ttv_version.no_changelog', 'No changelog available.')}</p>`;
     }
 
     const html = ensureMarkdownConverter().makeHtml(normalized);
@@ -229,7 +240,7 @@ async function onCheckUpdateClick() {
 
     $text.data('defaultLabel', defaultText);
     $icon.addClass('fa-spin');
-    $text.text(UPDATE_CHECKING_TEXT);
+    $text.text(localize('ttv_version.checking_updates', 'Checking for updates...'));
     $btn.prop('disabled', true);
 
     try {
@@ -238,11 +249,13 @@ async function onCheckUpdateClick() {
             showUpdateResult(result);
         } else {
             latestUpdateResult = null;
-            globalThis.toastr?.info?.(UPDATE_NO_UPDATE_TEXT);
+            globalThis.toastr?.info?.(localize('ttv_version.no_update', 'You are already on the latest version.'));
             hideUpdateResult();
         }
     } catch (error) {
-        globalThis.toastr?.error?.(`\u68c0\u67e5\u66f4\u65b0\u5931\u8d25\uff1a${error}`);
+        globalThis.toastr?.error?.(
+            localizeTemplate('ttv_version.check_update_failed', 'Failed to check for updates: ${0}', describeError(error)),
+        );
     } finally {
         $icon.removeClass('fa-spin');
         $text.text(defaultText);
@@ -311,7 +324,11 @@ function buildStartupUpdatePopupContent(result) {
 
     const title = document.createElement('h3');
     title.className = 'ttv-update-popup-title';
-    title.textContent = `\u53d1\u73b0\u65b0\u7248 TauriTavern ${release.version}`;
+    title.textContent = localizeTemplate(
+        'ttv_version.popup_title',
+        'New TauriTavern ${0} is available',
+        release.version,
+    );
     header.appendChild(title);
 
     const meta = document.createElement('p');
@@ -321,7 +338,10 @@ function buildStartupUpdatePopupContent(result) {
 
     const note = document.createElement('p');
     note.className = 'ttv-update-popup-note';
-    note.textContent = '\u53ef\u4ee5\u7a0d\u540e\u518d\u66f4\u65b0\uff0c\u624b\u52a8\u68c0\u67e5\u5165\u53e3\u4ecd\u7136\u4f1a\u4fdd\u7559\u3002';
+    note.textContent = localize(
+        'ttv_version.popup_note',
+        'You can update later. Manual update checking remains available.',
+    );
     header.appendChild(note);
 
     root.appendChild(header);
@@ -336,8 +356,8 @@ function buildStartupUpdatePopupContent(result) {
 
 async function showStartupUpdatePopup(result) {
     const popup = new Popup(buildStartupUpdatePopupContent(result), POPUP_TYPE.CONFIRM, '', {
-        okButton: '\u524d\u5f80\u4e0b\u8f7d',
-        cancelButton: '\u7a0d\u540e',
+        okButton: localize('ttv_version.popup_download', 'Download'),
+        cancelButton: localize('ttv_version.popup_later', 'Later'),
         allowVerticalScrolling: true,
         wide: true,
         wider: true,

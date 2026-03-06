@@ -5,6 +5,11 @@
     "optional": [],
     "js": "index.js",
     "css": "style.css",
+    "i18n": {
+        "en": "locales/en.json",
+        "zh-cn": "locales/zh-cn.json",
+        "zh-tw": "locales/zh-tw.json"
+    },
     "author": "Darkatse",
     "version": "1.0.0",
     "description": "Built-in information panel for TauriTavern metadata, repository, and update channels.",
