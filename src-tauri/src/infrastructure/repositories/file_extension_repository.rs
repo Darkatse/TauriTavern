@@ -236,10 +236,29 @@ impl FileExtensionRepository {
                 continue;
             }
 
-            let manifest = self.get_manifest(&path).await?;
             let source = self
                 .resolve_source_metadata(scope, &extension_folder_name, &path)
                 .await?;
+
+            let Some(source) = source else {
+                tracing::warn!(
+                    "Deleting extension '{}' at '{}' because source metadata is missing",
+                    extension_folder_name,
+                    path.display()
+                );
+                tokio_fs::remove_dir_all(&path)
+                    .await
+                    .map_err(|error| {
+                        DomainError::InternalError(format!(
+                            "Failed to delete extension directory '{}' due to missing source metadata: {}",
+                            path.display(),
+                            error
+                        ))
+                    })?;
+                continue;
+            };
+
+            let manifest = self.get_manifest(&path).await?;
 
             extensions.push(Extension {
                 name: extension_name,
@@ -249,11 +268,9 @@ impl FileExtensionRepository {
                 },
                 manifest,
                 path,
-                remote_url: source.as_ref().map(|metadata| metadata.remote_url.clone()),
-                commit_hash: source
-                    .as_ref()
-                    .map(|metadata| metadata.installed_commit.clone()),
-                branch_name: source.as_ref().map(|metadata| metadata.reference.clone()),
+                remote_url: Some(source.remote_url),
+                commit_hash: Some(source.installed_commit),
+                branch_name: Some(source.reference),
                 is_up_to_date: None,
             });
         }

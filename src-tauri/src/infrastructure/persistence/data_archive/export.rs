@@ -7,11 +7,12 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crate::domain::errors::DomainError;
 
+use super::DataArchiveExportResult;
 use super::shared::{
     COPY_BUFFER_BYTES, FILE_IO_BUFFER_BYTES, PROGRESS_REPORT_MIN_DELTA, copy_stream_with_cancel,
-    ensure_not_cancelled, internal_error, normalize_zip_path, progress_percent, read_directory_sorted,
+    ensure_not_cancelled, internal_error, normalize_zip_path, progress_percent,
+    read_directory_sorted,
 };
-use super::DataArchiveExportResult;
 
 const DEFLATE_TEXT_COMPRESSION_LEVEL: i64 = 1;
 const DEFLATE_TEXT_EXTENSIONS: &[&str] = &[
@@ -107,7 +108,10 @@ pub fn default_export_file_name() -> String {
     )
 }
 
-fn count_export_entries(current: &Path, is_cancelled: &dyn Fn() -> bool) -> Result<u64, DomainError> {
+fn count_export_entries(
+    current: &Path,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<u64, DomainError> {
     let mut count = 0u64;
 
     for entry in read_directory_sorted(current)? {
@@ -238,4 +242,3 @@ fn report_export_progress(
     progress.last_reported_percent = percent;
     report_progress("zipping", percent, "Writing archive entries");
 }
-

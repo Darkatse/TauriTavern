@@ -202,10 +202,14 @@ pub fn create_output_file_replacing_directory(path: &Path) -> Result<File, Domai
                 )
             })?;
 
-            File::create(path)
-                .map_err(|create_error| internal_error("Failed to create overlay output file", create_error))
+            File::create(path).map_err(|create_error| {
+                internal_error("Failed to create overlay output file", create_error)
+            })
         }
-        Err(error) => Err(internal_error("Failed to create overlay output file", error)),
+        Err(error) => Err(internal_error(
+            "Failed to create overlay output file",
+            error,
+        )),
     }
 }
 

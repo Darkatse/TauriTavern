@@ -8,8 +8,10 @@ use std::path::Path;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::file_system::DataDirectory;
 
-use super::shared::{DEFAULT_USER_HANDLE, cleanup_directory_sync, ensure_not_cancelled, internal_error};
 use super::DataArchiveImportResult;
+use super::shared::{
+    DEFAULT_USER_HANDLE, cleanup_directory_sync, ensure_not_cancelled, internal_error,
+};
 
 pub fn run_import_data_archive(
     data_root: &Path,
@@ -68,8 +70,8 @@ mod tests {
     use base64::Engine;
     use std::fs;
     use std::io::Write;
-    use zip::write::SimpleFileOptions as FileOptions;
     use zip::ZipWriter;
+    use zip::write::SimpleFileOptions as FileOptions;
 
     const UNICODE_PATH_FIXTURE_BASE64: &str = "UEsDBBQAAAAAAAAAAACBC0z9EgAAABIAAAAmADEAZGF0YS9kZWZhdWx0LXVzZXIvY2hhcmFjdGVycy/W0M7ELmpzb251cC0AAcO1/b1kYXRhL2RlZmF1bHQtdXNlci9jaGFyYWN0ZXJzL+S4reaWhy5qc29ueyJuYW1lIjoi5Lit5paHIn0KUEsDBBQAAAAAAAAAAACC6jpGEQAAABEAAAAjAAAAZGF0YS9kZWZhdWx0LXVzZXIvY2hhdHMvaGVsbG8uanNvbmx7ImNoYXQiOiJoZWxsbyJ9ClBLAQIUABQAAAAAAAAAAACBC0z9EgAAABIAAAAmADEAAAAAAAAAAAAAAAAAAABkYXRhL2RlZmF1bHQtdXNlci9jaGFyYWN0ZXJzL9bQzsQuanNvbnVwLQABw7X9vWRhdGEvZGVmYXVsdC11c2VyL2NoYXJhY3RlcnMv5Lit5paHLmpzb25QSwECFAAUAAAAAAAAAAAAguo6RhEAAAARAAAAIwAAAAAAAAAAAAAAAACHAAAAZGF0YS9kZWZhdWx0LXVzZXIvY2hhdHMvaGVsbG8uanNvbmxQSwUGAAAAAAIAAgDWAAAA2QAAAAAA";
 
@@ -98,13 +100,21 @@ mod tests {
 
         let mut archive = zip::ZipArchive::new(reader).expect("parse fixture zip");
         let mut names = (0..archive.len())
-            .map(|index| archive.by_index(index).expect("read entry").name().to_string())
+            .map(|index| {
+                archive
+                    .by_index(index)
+                    .expect("read entry")
+                    .name()
+                    .to_string()
+            })
             .collect::<Vec<_>>();
         names.sort();
 
-        assert!(names
-            .iter()
-            .any(|name| name.ends_with("data/default-user/characters/中文.json")));
+        assert!(
+            names
+                .iter()
+                .any(|name| name.ends_with("data/default-user/characters/中文.json"))
+        );
     }
 
     #[test]
@@ -326,7 +336,10 @@ mod tests {
         .expect("import archive");
 
         assert!(
-            data_root.join("default-user").join("settings.json").is_file(),
+            data_root
+                .join("default-user")
+                .join("settings.json")
+                .is_file(),
             "settings.json should map into default-user"
         );
 

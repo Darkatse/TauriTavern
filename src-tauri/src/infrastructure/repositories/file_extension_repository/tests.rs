@@ -185,3 +185,37 @@ async fn delete_extension_removes_source_state_file() {
 
     fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
+
+#[tokio::test]
+async fn discover_extensions_deletes_extensions_without_source_state() {
+    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let extension_dir = user_extensions_dir.join("orphan-ext");
+    fs::create_dir_all(&extension_dir)
+        .await
+        .expect("create extension dir");
+
+    let repository = FileExtensionRepository::new(
+        user_extensions_dir.clone(),
+        global_extensions_dir,
+        source_store_root,
+    )
+    .expect("create extension repository");
+
+    let extensions = repository
+        .discover_extensions()
+        .await
+        .expect("discover extensions");
+
+    assert!(
+        !extension_dir.exists(),
+        "extension directory should be removed when source state is missing"
+    );
+    assert!(
+        !extensions
+            .iter()
+            .any(|extension| extension.name == "third-party/orphan-ext"),
+        "orphan extension should not be returned after cleanup"
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup temp root");
+}

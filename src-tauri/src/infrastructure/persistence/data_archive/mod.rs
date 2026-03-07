@@ -29,4 +29,3 @@ pub fn is_cancelled_error(error: &DomainError) -> bool {
         _ => false,
     }
 }
-

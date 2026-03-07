@@ -17,7 +17,10 @@ pub fn apply_overlay(
 ) -> Result<(), DomainError> {
     if !data_root.exists() {
         fs::create_dir_all(data_root).map_err(|error| {
-            internal_error("Failed to create data root directory before applying overlay", error)
+            internal_error(
+                "Failed to create data root directory before applying overlay",
+                error,
+            )
         })?;
     }
 
@@ -70,8 +73,9 @@ fn apply_directory_recursive(
         }
 
         if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| internal_error("Failed to create overlay parent directory", error))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                internal_error("Failed to create overlay parent directory", error)
+            })?;
         }
 
         let mut reader = File::open(&source_path)
@@ -89,4 +93,3 @@ fn apply_directory_recursive(
 
     Ok(())
 }
-

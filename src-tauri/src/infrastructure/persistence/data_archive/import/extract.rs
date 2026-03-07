@@ -23,8 +23,8 @@ pub fn extract_to_normalized_root_streaming(
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<(), DomainError> {
-    let archive_file =
-        File::open(archive_path).map_err(|error| internal_error("Failed to open archive file", error))?;
+    let archive_file = File::open(archive_path)
+        .map_err(|error| internal_error("Failed to open archive file", error))?;
     let archive_reader = BufReader::with_capacity(FILE_IO_BUFFER_BYTES, archive_file);
     let mut archive = ZipArchive::new(archive_reader)
         .map_err(|error| internal_error("Failed to parse archive file", error))?;
@@ -34,7 +34,11 @@ pub fn extract_to_normalized_root_streaming(
     let mut last_reported_percent = 0.0f32;
     let mut copy_buffer = vec![0u8; COPY_BUFFER_BYTES];
     let mut last_ensured_parent: Option<PathBuf> = None;
-    let source_users_lookup = layout.source_users().iter().cloned().collect::<BTreeSet<_>>();
+    let source_users_lookup = layout
+        .source_users()
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
 
     for index in 0..archive.len() {
         ensure_not_cancelled(is_cancelled)?;
@@ -49,7 +53,8 @@ pub fn extract_to_normalized_root_streaming(
 
         processed_entries = processed_entries.saturating_add(1);
 
-        let Some(rel_components) = components_after_prefix(&sanitized_path, &layout.source_prefix) else {
+        let Some(rel_components) = components_after_prefix(&sanitized_path, &layout.source_prefix)
+        else {
             maybe_report_extraction_progress(
                 processed_entries,
                 total_entries,
@@ -89,8 +94,9 @@ pub fn extract_to_normalized_root_streaming(
                 .map(|last| last != parent)
                 .unwrap_or(true);
             if should_create_parent {
-                fs::create_dir_all(parent)
-                    .map_err(|error| internal_error("Failed to create normalized parent directory", error))?;
+                fs::create_dir_all(parent).map_err(|error| {
+                    internal_error("Failed to create normalized parent directory", error)
+                })?;
                 last_ensured_parent = Some(parent.to_path_buf());
             }
         }
@@ -169,4 +175,3 @@ fn maybe_report_extraction_progress(
     *last_reported_percent = percent;
     report_progress("extracting", percent, "Extracting and normalizing archive");
 }
-

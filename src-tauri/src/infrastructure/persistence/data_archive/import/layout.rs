@@ -9,8 +9,8 @@ use crate::domain::errors::DomainError;
 use crate::infrastructure::zipkit;
 
 use crate::infrastructure::persistence::data_archive::shared::{
-    FILE_IO_BUFFER_BYTES, MAX_ARCHIVE_ENTRIES, collect_user_handles_from_components, internal_error,
-    is_user_root_marker, path_components, validate_zip_entry_limits,
+    FILE_IO_BUFFER_BYTES, MAX_ARCHIVE_ENTRIES, collect_user_handles_from_components,
+    internal_error, is_user_root_marker, path_components, validate_zip_entry_limits,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,8 +36,10 @@ impl LayoutMeta {
     pub fn source_users_for_result(&self) -> Vec<String> {
         if self.source_users.is_empty() {
             return match self.kind {
-                LayoutKind::UserRoot => vec![crate::infrastructure::persistence::data_archive::shared::DEFAULT_USER_HANDLE
-                    .to_string()],
+                LayoutKind::UserRoot => vec![
+                    crate::infrastructure::persistence::data_archive::shared::DEFAULT_USER_HANDLE
+                        .to_string(),
+                ],
                 _ => Vec::new(),
             };
         }
@@ -54,8 +56,8 @@ struct PrefixEval {
 }
 
 pub fn scan_archive_layout(archive_path: &Path) -> Result<LayoutMeta, DomainError> {
-    let archive_file =
-        File::open(archive_path).map_err(|error| internal_error("Failed to open archive file", error))?;
+    let archive_file = File::open(archive_path)
+        .map_err(|error| internal_error("Failed to open archive file", error))?;
     let archive_reader = BufReader::with_capacity(FILE_IO_BUFFER_BYTES, archive_file);
     let mut archive = ZipArchive::new(archive_reader)
         .map_err(|error| internal_error("Failed to parse archive file", error))?;
@@ -176,7 +178,9 @@ fn eval_prefix(prefix_components: &[String], entries: &[Vec<String>]) -> Option<
     }
 
     let has_data_root_feature = has_root_tauritavern || has_global_extensions;
-    let prefix_last_is_data = prefix_components.last().is_some_and(|value| value == "data");
+    let prefix_last_is_data = prefix_components
+        .last()
+        .is_some_and(|value| value == "data");
 
     if has_user_root_marker_at_root && (has_data_root_feature || !source_users.is_empty()) {
         return None;
@@ -205,14 +209,19 @@ fn eval_prefix(prefix_components: &[String], entries: &[Vec<String>]) -> Option<
     })
 }
 
-fn choose_candidate(candidates: &[PrefixEval], entries: &[Vec<String>]) -> Result<PrefixEval, DomainError> {
+fn choose_candidate(
+    candidates: &[PrefixEval],
+    entries: &[Vec<String>],
+) -> Result<PrefixEval, DomainError> {
     let data_roots = candidates
         .iter()
         .filter(|candidate| candidate.kind == LayoutKind::DataRoot)
         .cloned()
         .collect::<Vec<_>>();
     if data_roots.len() > 1 {
-        return Err(DomainError::InvalidData("Archive layout is ambiguous".to_string()));
+        return Err(DomainError::InvalidData(
+            "Archive layout is ambiguous".to_string(),
+        ));
     }
     if data_roots.len() == 1 {
         let chosen = data_roots[0].clone();
@@ -226,7 +235,9 @@ fn choose_candidate(candidates: &[PrefixEval], entries: &[Vec<String>]) -> Resul
         .cloned()
         .collect::<Vec<_>>();
     if user_handles.len() > 1 {
-        return Err(DomainError::InvalidData("Archive layout is ambiguous".to_string()));
+        return Err(DomainError::InvalidData(
+            "Archive layout is ambiguous".to_string(),
+        ));
     }
     if user_handles.len() == 1 {
         let chosen = user_handles[0].clone();
@@ -240,7 +251,9 @@ fn choose_candidate(candidates: &[PrefixEval], entries: &[Vec<String>]) -> Resul
         .cloned()
         .collect::<Vec<_>>();
     if user_roots.len() > 1 {
-        return Err(DomainError::InvalidData("Archive layout is ambiguous".to_string()));
+        return Err(DomainError::InvalidData(
+            "Archive layout is ambiguous".to_string(),
+        ));
     }
     if user_roots.len() == 1 {
         let chosen = user_roots[0].clone();
@@ -275,7 +288,9 @@ fn assert_no_recognized_entries_outside_prefix(
         }
 
         if is_recognized_elsewhere {
-            return Err(DomainError::InvalidData("Archive layout is ambiguous".to_string()));
+            return Err(DomainError::InvalidData(
+                "Archive layout is ambiguous".to_string(),
+            ));
         }
     }
 
@@ -288,8 +303,8 @@ mod tests {
 
     use std::fs;
     use std::io::Write;
-    use zip::write::SimpleFileOptions as FileOptions;
     use zip::ZipWriter;
+    use zip::write::SimpleFileOptions as FileOptions;
 
     fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
         let file = File::create(path).expect("create zip");
@@ -305,10 +320,8 @@ mod tests {
 
     #[test]
     fn detects_data_default_user_layout() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-layout-{}",
-            rand::random::<u64>()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
         fs::create_dir_all(&root).expect("create root");
 
@@ -323,10 +336,8 @@ mod tests {
 
     #[test]
     fn detects_default_user_layout() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-layout-{}",
-            rand::random::<u64>()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
         fs::create_dir_all(&root).expect("create root");
 
@@ -341,10 +352,8 @@ mod tests {
 
     #[test]
     fn detects_default_user_layout_with_extra_root_file() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-layout-{}",
-            rand::random::<u64>()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
         fs::create_dir_all(&root).expect("create root");
 
@@ -365,10 +374,8 @@ mod tests {
 
     #[test]
     fn detects_default_user_layout_with_macosx_junk() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-layout-{}",
-            rand::random::<u64>()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
         fs::create_dir_all(&root).expect("create root");
 
@@ -389,10 +396,8 @@ mod tests {
 
     #[test]
     fn detects_user_root_layout() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-layout-{}",
-            rand::random::<u64>()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
         fs::create_dir_all(&root).expect("create root");
 
@@ -407,10 +412,8 @@ mod tests {
 
     #[test]
     fn detects_single_file_settings_layout() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-layout-{}",
-            rand::random::<u64>()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
         fs::create_dir_all(&root).expect("create root");
 
@@ -424,10 +427,8 @@ mod tests {
 
     #[test]
     fn detects_wrapped_data_layout() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-layout-{}",
-            rand::random::<u64>()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
         fs::create_dir_all(&root).expect("create root");
 
@@ -438,17 +439,18 @@ mod tests {
 
         let layout = scan_archive_layout(&zip_path).expect("scan layout");
         assert_eq!(layout.kind, LayoutKind::DataRoot);
-        assert_eq!(layout.source_prefix, PathBuf::from("BackupRoot").join("data"));
+        assert_eq!(
+            layout.source_prefix,
+            PathBuf::from("BackupRoot").join("data")
+        );
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }
 
     #[test]
     fn rejects_ambiguous_mixed_roots() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-layout-{}",
-            rand::random::<u64>()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
         let zip_path = root.join("fixture.zip");
         fs::create_dir_all(&root).expect("create root");
 

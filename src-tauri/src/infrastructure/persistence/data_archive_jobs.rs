@@ -396,7 +396,10 @@ pub fn cleanup_export_data_archive(job_id: &str) -> Result<(), DomainError> {
     Ok(())
 }
 
-pub fn save_export_data_archive(app_handle: &AppHandle, job_id: &str) -> Result<PathBuf, DomainError> {
+pub fn save_export_data_archive(
+    app_handle: &AppHandle,
+    job_id: &str,
+) -> Result<PathBuf, DomainError> {
     let status = get_job(job_id)?.snapshot()?;
     if status.kind != KIND_EXPORT || status.state != STATE_COMPLETED {
         return Err(DomainError::InvalidData(format!(

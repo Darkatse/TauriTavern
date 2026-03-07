@@ -70,7 +70,10 @@ pub fn cancel_data_archive_job(job_id: String) -> Result<(), CommandError> {
 }
 
 #[tauri::command]
-pub async fn save_export_data_archive(app: AppHandle, job_id: String) -> Result<String, CommandError> {
+pub async fn save_export_data_archive(
+    app: AppHandle,
+    job_id: String,
+) -> Result<String, CommandError> {
     log_command(format!("save_export_data_archive {}", job_id));
 
     let app_handle = app.clone();
