@@ -1,6 +1,6 @@
 # TauriTavern 前端指南
 
-本文档描述 TauriTavern 当前前端（基于 SillyTavern 1.15.0）在 Tauri 环境下的集成架构与开发方式。
+本文档描述 TauriTavern 当前前端（基于 SillyTavern 1.16.0）在 Tauri 环境下的集成架构与开发方式。
 
 ## 1. 目标与原则
 

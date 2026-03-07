@@ -1,12 +1,12 @@
 # TauriTavern
 
-TauriTavern ports SillyTavern into a native desktop app with Tauri v2 + Rust backend while keeping the upstream frontend experience. The frontend is now synced to SillyTavern 1.15.0 and integrated through a modular Tauri injection layer.
+TauriTavern ports SillyTavern into a native desktop app with Tauri v2 + Rust backend while keeping the upstream frontend experience. The frontend is now synced to SillyTavern 1.16.0 and integrated through a modular Tauri injection layer.
 
 ## Highlights
 
 - Native desktop runtime on Windows, macOS, Linux (Tauri v2)
 - Rust backend with clean architecture layering
-- Frontend compatibility with SillyTavern 1.15.0
+- Frontend compatibility with SillyTavern 1.16.0
 - Chat Completion providers: OpenAI, Claude, Gemini(MakerSuite), and Custom OpenAI-compatible endpoint
 - Modular request injection pipeline (`src/tauri/main/*`) replacing the previous monolithic `tauri-main.js`
 - Unified frontend bootstrap pipeline without runtime loader indirection

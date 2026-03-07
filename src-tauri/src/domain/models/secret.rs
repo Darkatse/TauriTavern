@@ -21,7 +21,7 @@ impl SecretEntry {
     }
 }
 
-/// 表示用户的 API 密钥集合，结构与 SillyTavern 1.15.0 的 secrets.json 一致：
+/// 表示用户的 API 密钥集合，结构与 SillyTavern 的 secrets.json 一致：
 /// `{ "api_key_xxx": [{ id, value, label, active }], ... }`
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Secrets {
@@ -159,7 +159,7 @@ impl Secrets {
     }
 }
 
-/// 定义常用密钥名称（与 SillyTavern 1.15.0 对齐）
+/// 定义常用密钥名称（与 SillyTavern 对齐）
 pub struct SecretKeys;
 
 impl SecretKeys {
