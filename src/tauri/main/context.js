@@ -1273,6 +1273,21 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             }
         }
 
+        const data = payload?.data;
+        if (data && typeof data === 'object') {
+            for (const key of keys) {
+                if (key !== 'extensions' && !Object.prototype.hasOwnProperty.call(dto, key) && Object.prototype.hasOwnProperty.call(data, key)) {
+                    dto[key] = data[key];
+                }
+            }
+
+            if (Object.prototype.hasOwnProperty.call(data, 'extensions')) {
+                dto.extensions = Object.prototype.hasOwnProperty.call(dto, 'extensions')
+                    ? { ...dto.extensions, ...data.extensions }
+                    : data.extensions;
+            }
+        }
+
         return dto;
     }
 
