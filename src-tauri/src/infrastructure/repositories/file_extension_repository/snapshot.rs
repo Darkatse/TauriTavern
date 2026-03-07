@@ -1,4 +1,5 @@
 use super::*;
+use crate::infrastructure::zipkit;
 
 impl FileExtensionRepository {
     pub(super) async fn create_temp_directory(
@@ -56,11 +57,7 @@ impl FileExtensionRepository {
                 DomainError::InternalError(format!("Failed to read ZIP entry: {}", error))
             })?;
 
-            // Skip entries that are not safely enclosed paths.
-            let enclosed_path = match entry.enclosed_name() {
-                Some(path) => path.to_path_buf(),
-                None => continue,
-            };
+            let enclosed_path = zipkit::enclosed_zip_entry_path(&entry)?;
 
             // GitHub archives always wrap files in a top-level root folder.
             let relative_path = match Self::strip_archive_root(&enclosed_path) {

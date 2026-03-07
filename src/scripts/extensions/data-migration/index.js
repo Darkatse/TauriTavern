@@ -1,6 +1,5 @@
 import { renderExtensionTemplateAsync } from '../../extensions.js';
 import { t } from '../../i18n.js';
-import { downloadBlobWithRuntime } from '../../file-export.js';
 
 const MODULE_NAME = 'data-migration';
 const JOB_POLL_INTERVAL_MS = 1200;
@@ -12,6 +11,7 @@ const jobState = {
     jobId: '',
     starting: false,
     cancelRequested: false,
+    lastExportSavedPath: '',
 };
 
 function extractErrorMessage(text) {
@@ -111,7 +111,7 @@ async function pickAndroidImportArchive() {
     return contentUri;
 }
 
-async function downloadExportArchive(jobId, fileName) {
+async function saveExportArchive(jobId) {
     if (isAndroidRuntime()) {
         const response = await fetch('/api/extensions/data-migration/export/android/save', {
             method: 'POST',
@@ -131,16 +131,22 @@ async function downloadExportArchive(jobId, fileName) {
         };
     }
 
-    const response = await fetch(`/api/extensions/data-migration/export/download?id=${encodeURIComponent(jobId)}`, {
-        method: 'GET',
-        cache: 'no-store',
+    const response = await fetch('/api/extensions/data-migration/export/save', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ job_id: jobId }),
     });
     if (!response.ok) {
         throw new Error(await readFailureMessage(response));
     }
 
-    const blob = await response.blob();
-    return downloadBlobWithRuntime(blob, fileName, { fallbackName: 'tauritavern-data.zip' });
+    const payload = await response.json();
+    return {
+        mode: 'desktop-native',
+        savedPath: String(payload?.saved_target || ''),
+    };
 }
 
 async function cleanupExportArchive(jobId) {
@@ -164,10 +170,28 @@ function setStatusText(message) {
     $('#data_migration_status').text(String(message || ''));
 }
 
+function refreshExportActions() {
+    const actions = $('#data_migration_export_actions');
+    if (!actions.length) {
+        return;
+    }
+
+    const savedPath = String(jobState.lastExportSavedPath || '').trim();
+    const visible = Boolean(savedPath) && !isAndroidRuntime();
+    actions.toggle(visible);
+
+    $('#data_migration_reveal_export_button').prop('disabled', !visible);
+}
+
 function refreshControls() {
     const busy = hasActiveJob();
     $('#data_migration_import_button').prop('disabled', busy);
     $('#data_migration_export_button').prop('disabled', busy);
+    if (busy) {
+        $('#data_migration_reveal_export_button').prop('disabled', true);
+    } else {
+        refreshExportActions();
+    }
 
     const cancelButton = $('#data_migration_cancel_button');
     if (jobState.jobId) {
@@ -199,6 +223,26 @@ function stopJobTracking() {
     jobState.starting = false;
     jobState.cancelRequested = false;
     refreshControls();
+}
+
+async function onRevealExportClick() {
+    const savedPath = String(jobState.lastExportSavedPath || '').trim();
+    if (!savedPath) {
+        return;
+    }
+
+    try {
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (typeof invoke !== 'function') {
+            throw new Error('Tauri opener is unavailable');
+        }
+
+        await invoke('plugin:opener|reveal_item_in_dir', {
+            paths: [savedPath],
+        });
+    } catch (error) {
+        toastr.error(normalizeCaughtError(error), t`Unable to open folder`);
+    }
 }
 
 async function onImportButtonClick() {
@@ -377,18 +421,21 @@ async function runMigrationJob(kind, startJob) {
                     location.reload();
                 }, 800);
             } else {
-                const fileName = finalStatus.result.file_name;
-                const downloadResult = await downloadExportArchive(jobId, fileName);
-                void cleanupExportArchive(jobId).catch((error) => {
-                    console.warn('Failed to cleanup export archive:', error);
-                });
+                const saveResult = await saveExportArchive(jobId);
+                if (saveResult.mode === 'mobile-native') {
+                    void cleanupExportArchive(jobId).catch((error) => {
+                        console.warn('Failed to cleanup export archive:', error);
+                    });
+                }
 
-                if (downloadResult.mode === 'mobile-native') {
-                    const savedPath = downloadResult.savedPath;
+                const savedPath = saveResult.savedPath;
+                if (savedPath) {
+                    jobState.lastExportSavedPath = savedPath;
+                    refreshExportActions();
                     toastr.success(t`Data archive saved: ${savedPath}`, t`Export completed`, { timeOut: 8000 });
                     setStatusText(t`Export completed | ${savedPath}`);
                 } else {
-                    toastr.success(t`Data archive exported`, t`Export completed`);
+                    toastr.success(t`Data archive saved`, t`Export completed`);
                     setStatusText(t`Export completed`);
                 }
             }
@@ -472,4 +519,5 @@ jQuery(async () => {
     $('#data_migration_import_input').on('change', onImportInputChange);
     $('#data_migration_export_button').on('click', onExportClick);
     $('#data_migration_cancel_button').on('click', requestCancelActiveJob);
+    $('#data_migration_reveal_export_button').on('click', onRevealExportClick);
 });

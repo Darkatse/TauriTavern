@@ -249,7 +249,10 @@ mod tests {
 
         let repository = FileAvatarRepository::new(dir.path().to_path_buf());
         let avatars = repository.get_avatars().await.expect("get avatars failed");
-        let names = avatars.into_iter().map(|avatar| avatar.name).collect::<Vec<_>>();
+        let names = avatars
+            .into_iter()
+            .map(|avatar| avatar.name)
+            .collect::<Vec<_>>();
 
         assert_eq!(names, vec!["a.png".to_string(), "b.png".to_string()]);
     }

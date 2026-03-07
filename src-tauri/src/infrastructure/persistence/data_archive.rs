@@ -4,11 +4,12 @@ use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions as FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::file_system::DataDirectory;
+use crate::infrastructure::zipkit;
 
 const DEFAULT_USER_HANDLE: &str = "default-user";
 const USER_DIR_MARKERS: &[&str] = &["characters", "chats", "user", "worlds", "groups"];
@@ -21,6 +22,10 @@ const COMPRESSION_RATIO_MIN_BYTES: u64 = 1024 * 1024;
 const COPY_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 const FILE_IO_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 const PROGRESS_REPORT_MIN_DELTA: f32 = 0.5;
+const DEFLATE_TEXT_COMPRESSION_LEVEL: i64 = 1;
+const DEFLATE_TEXT_EXTENSIONS: &[&str] = &[
+    "json", "jsonl", "txt", "md", "csv", "html", "css", "js", "yaml", "yml",
+];
 
 pub const CANCELLED_ERROR_MARKER: &str = "__data_archive_job_cancelled__";
 
@@ -91,11 +96,8 @@ pub fn run_export_data_archive(
         last_reported_percent: 0.0,
     };
 
-    let file_options = FileOptions::default()
-        .compression_method(CompressionMethod::Deflated)
-        .unix_permissions(0o644);
     let dir_options = FileOptions::default()
-        .compression_method(CompressionMethod::Deflated)
+        .compression_method(CompressionMethod::Stored)
         .unix_permissions(0o755);
 
     let output_file = File::create(output_path)
@@ -114,7 +116,6 @@ pub fn run_export_data_archive(
         data_root,
         data_root,
         "data",
-        file_options,
         dir_options,
         &mut progress,
         &mut copy_buffer,
@@ -232,7 +233,6 @@ fn write_export_entries(
     root: &Path,
     current: &Path,
     zip_prefix: &str,
-    file_options: FileOptions,
     dir_options: FileOptions,
     progress: &mut ExportProgress,
     copy_buffer: &mut [u8],
@@ -264,7 +264,6 @@ fn write_export_entries(
                 root,
                 &path,
                 zip_prefix,
-                file_options,
                 dir_options,
                 progress,
                 copy_buffer,
@@ -278,6 +277,7 @@ fn write_export_entries(
             continue;
         }
 
+        let file_options = export_file_options(&path);
         writer
             .start_file(&zip_path, file_options)
             .map_err(|error| internal_error("Failed to add file to archive", error))?;
@@ -298,6 +298,25 @@ fn write_export_entries(
     }
 
     Ok(())
+}
+
+fn export_file_options(path: &Path) -> FileOptions {
+    let ext = path.extension().and_then(|ext| ext.to_str());
+    if let Some(ext) = ext {
+        if DEFLATE_TEXT_EXTENSIONS
+            .iter()
+            .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+        {
+            return FileOptions::default()
+                .compression_method(CompressionMethod::Deflated)
+                .compression_level(Some(DEFLATE_TEXT_COMPRESSION_LEVEL))
+                .unix_permissions(0o644);
+        }
+    }
+
+    FileOptions::default()
+        .compression_method(CompressionMethod::Stored)
+        .unix_permissions(0o644)
 }
 
 fn report_export_progress(
@@ -345,7 +364,7 @@ fn scan_archive_layout(archive_path: &Path) -> Result<ArchiveLayoutMeta, DomainE
         let entry = archive
             .by_index(index)
             .map_err(|error| internal_error("Failed to read archive entry", error))?;
-        let sanitized_path = sanitize_zip_entry_path(entry.name())?;
+        let sanitized_path = zipkit::enclosed_zip_entry_path(&entry)?;
         if sanitized_path.as_os_str().is_empty() {
             continue;
         }
@@ -609,7 +628,7 @@ fn extract_to_normalized_root_streaming(
         let mut archive_entry = archive
             .by_index(index)
             .map_err(|error| internal_error("Failed to read archive entry", error))?;
-        let sanitized_path = sanitize_zip_entry_path(archive_entry.name())?;
+        let sanitized_path = zipkit::enclosed_zip_entry_path(&archive_entry)?;
         if sanitized_path.as_os_str().is_empty() {
             continue;
         }
@@ -642,7 +661,7 @@ fn extract_to_normalized_root_streaming(
         );
         let output_path = normalized_root.join(target_relative_path);
 
-        if archive_entry.is_dir() || archive_entry.name().ends_with('/') {
+        if archive_entry.is_dir() {
             ensure_output_directory(&output_path)?;
             maybe_report_extraction_progress(
                 processed_entries,
@@ -830,25 +849,6 @@ fn validate_zip_entry_limits(
     Ok(())
 }
 
-fn sanitize_zip_entry_path(raw_path: &str) -> Result<PathBuf, DomainError> {
-    let mut sanitized = PathBuf::new();
-
-    for component in Path::new(raw_path).components() {
-        match component {
-            Component::Normal(segment) => sanitized.push(segment),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(DomainError::InvalidData(format!(
-                    "Invalid archive entry path: {}",
-                    raw_path
-                )));
-            }
-        }
-    }
-
-    Ok(sanitized)
-}
-
 fn path_components(path: &Path) -> Vec<String> {
     path.components()
         .filter_map(|component| match component {
@@ -977,4 +977,81 @@ pub fn default_export_file_name() -> String {
         "tauritavern-data-{}.zip",
         Utc::now().format("%Y%m%d-%H%M%S")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use base64::Engine;
+
+    const UNICODE_PATH_FIXTURE_BASE64: &str = "UEsDBBQAAAAAAAAAAACBC0z9EgAAABIAAAAmADEAZGF0YS9kZWZhdWx0LXVzZXIvY2hhcmFjdGVycy/W0M7ELmpzb251cC0AAcO1/b1kYXRhL2RlZmF1bHQtdXNlci9jaGFyYWN0ZXJzL+S4reaWhy5qc29ueyJuYW1lIjoi5Lit5paHIn0KUEsDBBQAAAAAAAAAAACC6jpGEQAAABEAAAAjAAAAZGF0YS9kZWZhdWx0LXVzZXIvY2hhdHMvaGVsbG8uanNvbmx7ImNoYXQiOiJoZWxsbyJ9ClBLAQIUABQAAAAAAAAAAACBC0z9EgAAABIAAAAmADEAAAAAAAAAAAAAAAAAAABkYXRhL2RlZmF1bHQtdXNlci9jaGFyYWN0ZXJzL9bQzsQuanNvbnVwLQABw7X9vWRhdGEvZGVmYXVsdC11c2VyL2NoYXJhY3RlcnMv5Lit5paHLmpzb25QSwECFAAUAAAAAAAAAAAAguo6RhEAAAARAAAAIwAAAAAAAAAAAAAAAACHAAAAZGF0YS9kZWZhdWx0LXVzZXIvY2hhdHMvaGVsbG8uanNvbmxQSwUGAAAAAAIAAgDWAAAA2QAAAAAA";
+
+    fn decode_fixture() -> Vec<u8> {
+        base64::engine::general_purpose::STANDARD
+            .decode(UNICODE_PATH_FIXTURE_BASE64)
+            .expect("decode base64 fixture")
+    }
+
+    #[test]
+    fn zip_unicode_extra_field_overrides_non_utf8_filename() {
+        let bytes = decode_fixture();
+        let reader = std::io::Cursor::new(bytes);
+
+        let mut archive = ZipArchive::new(reader).expect("parse fixture zip");
+        let mut names = (0..archive.len())
+            .map(|index| {
+                archive
+                    .by_index(index)
+                    .expect("read entry")
+                    .name()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        names.sort();
+
+        assert!(
+            names
+                .iter()
+                .any(|name| name.ends_with("data/default-user/characters/中文.json"))
+        );
+    }
+
+    #[test]
+    fn import_preserves_unicode_filenames() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-unicode-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.zip");
+
+        fs::create_dir_all(&root).expect("create temp root");
+        fs::create_dir_all(&workspace_root).expect("create temp workspace");
+        fs::write(&archive_path, decode_fixture()).expect("write fixture zip");
+
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        let is_cancelled = || false;
+
+        run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &is_cancelled,
+        )
+        .expect("import archive");
+
+        let imported = data_root
+            .join("default-user")
+            .join("characters")
+            .join("中文.json");
+        assert!(imported.is_file(), "imported file should exist");
+
+        let text = fs::read_to_string(&imported).expect("read imported file");
+        assert!(text.contains("中文"), "imported content should match");
+
+        cleanup_directory_sync(&root);
+    }
 }

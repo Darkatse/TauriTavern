@@ -1,14 +1,5 @@
 import { decodeBase64ToBytes } from '../binary-utils.js';
 
-function sanitizeFileName(value, fallback = 'tauritavern-data.zip') {
-    const fileName = String(value || '').trim();
-    if (!fileName) {
-        return fallback;
-    }
-
-    return fileName.replace(/[\\/:*?"<>|]+/g, '_');
-}
-
 function parseJobId(value) {
     const jobId = String(value || '').trim();
     return jobId || '';
@@ -271,6 +262,27 @@ export function registerExtensionRoutes(router, context, { jsonResponse, textRes
         });
     });
 
+    router.post('/api/extensions/data-migration/export/save', async ({ body }) => {
+        const jobId = parseJobId(body?.job_id);
+        if (!jobId) {
+            return jsonResponse({ error: 'Missing job id' }, 400);
+        }
+
+        const { error } = await loadCompletedExportJobStatus(jobId);
+        if (error) {
+            return error;
+        }
+
+        const savedTarget = await context.safeInvoke('save_export_data_archive', {
+            job_id: jobId,
+        });
+
+        return jsonResponse({
+            ok: true,
+            saved_target: String(savedTarget || ''),
+        });
+    });
+
     router.get('/api/extensions/data-migration/job', async ({ url }) => {
         const jobId = parseJobId(url?.searchParams?.get('id'));
         if (!jobId) {
@@ -294,39 +306,6 @@ export function registerExtensionRoutes(router, context, { jsonResponse, textRes
         });
 
         return jsonResponse({ ok: true });
-    });
-
-    router.get('/api/extensions/data-migration/export/download', async ({ url }) => {
-        const jobId = parseJobId(url?.searchParams?.get('id'));
-        if (!jobId) {
-            return jsonResponse({ error: 'Missing job id' }, 400);
-        }
-
-        const { error, status } = await loadCompletedExportJobStatus(jobId);
-        if (error) {
-            return error;
-        }
-
-        const archivePath = status.result.archive_path;
-
-        const payload = await context.safeInvoke('read_data_archive_file', {
-            archive_path: archivePath,
-        });
-        const bytes = Uint8Array.from(payload);
-
-        const headers = new Headers();
-        headers.set('Content-Type', 'application/zip');
-        headers.set(
-            'Content-Disposition',
-            `attachment; filename="${sanitizeFileName(status.result.file_name, 'tauritavern-data.zip')}"`,
-        );
-        headers.set('Cache-Control', 'no-store');
-        headers.set('Content-Length', String(bytes.byteLength));
-
-        return new Response(bytes, {
-            status: 200,
-            headers,
-        });
     });
 
     router.post('/api/extensions/data-migration/export/cleanup', async ({ body }) => {

@@ -5,7 +5,7 @@ use crate::infrastructure::persistence::data_archive_jobs::{
     DataArchiveJobStatus, cancel_data_archive_job as cancel_data_archive_job_impl,
     cleanup_export_data_archive as cleanup_export_data_archive_impl,
     get_data_archive_job_status as get_data_archive_job_status_impl,
-    read_data_archive_file as read_data_archive_file_impl,
+    save_export_data_archive as save_export_data_archive_impl,
     start_export_data_archive_job as start_export_data_archive_job_impl,
     start_import_data_archive_job as start_import_data_archive_job_impl,
 };
@@ -70,11 +70,21 @@ pub fn cancel_data_archive_job(job_id: String) -> Result<(), CommandError> {
 }
 
 #[tauri::command]
-pub fn read_data_archive_file(archive_path: String) -> Result<Vec<u8>, CommandError> {
-    log_command(format!("read_data_archive_file {}", archive_path));
+pub async fn save_export_data_archive(app: AppHandle, job_id: String) -> Result<String, CommandError> {
+    log_command(format!("save_export_data_archive {}", job_id));
 
-    read_data_archive_file_impl(std::path::Path::new(&archive_path))
-        .map_err(map_command_error("Failed to read data archive file"))
+    let app_handle = app.clone();
+    let blocking_job_id = job_id.clone();
+    let saved_path = tauri::async_runtime::spawn_blocking(move || {
+        save_export_data_archive_impl(&app_handle, &blocking_job_id)
+    })
+    .await
+    .map_err(|error| {
+        CommandError::InternalServerError(format!("Save export task join error: {}", error))
+    })?
+    .map_err(map_command_error("Failed to save export data archive"))?;
+
+    Ok(saved_path.to_string_lossy().to_string())
 }
 
 #[tauri::command]

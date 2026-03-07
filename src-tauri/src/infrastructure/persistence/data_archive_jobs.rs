@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 use tauri::AppHandle;
+use tauri::Manager;
 use uuid::Uuid;
 
 use crate::domain::errors::DomainError;
@@ -395,21 +396,76 @@ pub fn cleanup_export_data_archive(job_id: &str) -> Result<(), DomainError> {
     Ok(())
 }
 
-pub fn read_data_archive_file(archive_path: &Path) -> Result<Vec<u8>, DomainError> {
-    if !archive_path.is_file() {
-        return Err(DomainError::NotFound(format!(
-            "Data archive file not found: {}",
-            archive_path.display()
+pub fn save_export_data_archive(app_handle: &AppHandle, job_id: &str) -> Result<PathBuf, DomainError> {
+    let status = get_job(job_id)?.snapshot()?;
+    if status.kind != KIND_EXPORT || status.state != STATE_COMPLETED {
+        return Err(DomainError::InvalidData(format!(
+            "Export job is not completed: {}",
+            job_id
         )));
     }
 
-    fs::read(archive_path).map_err(|error| {
+    let (archive_path, file_name) = status
+        .result
+        .and_then(|result| Some((result.archive_path?, result.file_name?)))
+        .ok_or_else(|| {
+            DomainError::InvalidData(format!(
+                "Export archive result is missing for job: {}",
+                job_id
+            ))
+        })?;
+
+    let source_path = PathBuf::from(&archive_path);
+    if !source_path.is_file() {
+        return Err(DomainError::NotFound(format!(
+            "Export archive file not found: {}",
+            source_path.display()
+        )));
+    }
+
+    let download_dir = app_handle.path().download_dir().map_err(|error| {
+        DomainError::InternalError(format!("Failed to resolve downloads directory: {}", error))
+    })?;
+    fs::create_dir_all(&download_dir).map_err(|error| {
         DomainError::InternalError(format!(
-            "Failed to read data archive file {}: {}",
-            archive_path.display(),
+            "Failed to create downloads directory {}: {}",
+            download_dir.display(),
             error
         ))
-    })
+    })?;
+
+    let target_path = download_dir.join(&file_name);
+    if target_path.exists() {
+        return Err(DomainError::InvalidData(format!(
+            "Export target already exists: {}",
+            target_path.display()
+        )));
+    }
+
+    if fs::rename(&source_path, &target_path).is_ok() {
+        return Ok(target_path);
+    }
+
+    if let Err(error) = fs::copy(&source_path, &target_path) {
+        remove_file_if_exists(&target_path, "cleanup partial export save");
+        return Err(DomainError::InternalError(format!(
+            "Failed to save export archive {} to {}: {}",
+            source_path.display(),
+            target_path.display(),
+            error
+        )));
+    }
+
+    if let Err(error) = fs::remove_file(&source_path) {
+        remove_file_if_exists(&target_path, "cleanup partial export save");
+        return Err(DomainError::InternalError(format!(
+            "Failed to remove staged export archive {}: {}",
+            source_path.display(),
+            error
+        )));
+    }
+
+    Ok(target_path)
 }
 
 fn prepare_import_archive_path(
