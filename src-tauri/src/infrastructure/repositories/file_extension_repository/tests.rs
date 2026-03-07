@@ -94,6 +94,141 @@ async fn startup_migration_moves_legacy_source_state_into_new_store() {
 }
 
 #[tokio::test]
+async fn startup_migration_rebuilds_missing_source_state_from_git_dir() {
+    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let extension_dir = user_extensions_dir.join("git-ext");
+    fs::create_dir_all(extension_dir.join(".git").join("refs").join("heads"))
+        .await
+        .expect("create git refs directory");
+
+    let config = r#"[remote "origin"]
+    url = git@github.com:N0VI028/JS-Slash-Runner.git
+"#;
+    fs::write(extension_dir.join(".git").join("config"), config)
+        .await
+        .expect("write git config");
+
+    let commit = "abcdef1234567890abcdef1234567890abcdef12\n";
+    fs::write(
+        extension_dir.join(".git").join("HEAD"),
+        "ref: refs/heads/main\n",
+    )
+    .await
+    .expect("write git HEAD");
+    fs::write(
+        extension_dir
+            .join(".git")
+            .join("refs")
+            .join("heads")
+            .join("main"),
+        commit,
+    )
+    .await
+    .expect("write git ref commit");
+
+    let repository = FileExtensionRepository::new(
+        user_extensions_dir.clone(),
+        global_extensions_dir,
+        source_store_root.clone(),
+    )
+    .expect("create extension repository");
+
+    assert!(
+        source_store_root
+            .join("local")
+            .join("git-ext.json")
+            .exists(),
+        "recovered state file should exist"
+    );
+
+    let extensions = repository
+        .discover_extensions()
+        .await
+        .expect("discover extensions");
+    let extension = extensions
+        .into_iter()
+        .find(|extension| extension.name == "third-party/git-ext")
+        .expect("git extension should be discoverable");
+    assert_eq!(
+        extension.remote_url.as_deref(),
+        Some("https://github.com/N0VI028/JS-Slash-Runner")
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup temp root");
+}
+
+#[tokio::test]
+async fn startup_migration_rebuilds_missing_source_state_from_gitfile_commondir_layout() {
+    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let extension_dir = user_extensions_dir.join("gitfile-ext");
+    fs::create_dir_all(&extension_dir)
+        .await
+        .expect("create extension dir");
+
+    fs::write(extension_dir.join(".git"), "gitdir: .git-worktree\n")
+        .await
+        .expect("write gitdir file");
+
+    let worktree_dir = extension_dir.join(".git-worktree");
+    let common_dir = extension_dir.join(".git-common");
+    fs::create_dir_all(worktree_dir.join("refs").join("heads"))
+        .await
+        .expect("create worktree refs directory");
+    fs::create_dir_all(common_dir.join("refs").join("heads"))
+        .await
+        .expect("create common refs directory");
+
+    fs::write(worktree_dir.join("HEAD"), "ref: refs/heads/main\n")
+        .await
+        .expect("write worktree HEAD");
+    fs::write(worktree_dir.join("commondir"), "../.git-common\n")
+        .await
+        .expect("write commondir");
+
+    let config = r#"[remote "origin"]
+    url = https://github.com/N0VI028/JS-Slash-Runner.git
+"#;
+    fs::write(common_dir.join("config"), config)
+        .await
+        .expect("write common git config");
+
+    let commit = "abcdef1234567890abcdef1234567890abcdef12\n";
+    fs::write(common_dir.join("refs").join("heads").join("main"), commit)
+        .await
+        .expect("write common git ref commit");
+
+    let repository = FileExtensionRepository::new(
+        user_extensions_dir.clone(),
+        global_extensions_dir,
+        source_store_root.clone(),
+    )
+    .expect("create extension repository");
+
+    assert!(
+        source_store_root
+            .join("local")
+            .join("gitfile-ext.json")
+            .exists(),
+        "recovered state file should exist"
+    );
+
+    let extensions = repository
+        .discover_extensions()
+        .await
+        .expect("discover extensions");
+    let extension = extensions
+        .into_iter()
+        .find(|extension| extension.name == "third-party/gitfile-ext")
+        .expect("gitfile extension should be discoverable");
+    assert_eq!(
+        extension.remote_url.as_deref(),
+        Some("https://github.com/N0VI028/JS-Slash-Runner")
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup temp root");
+}
+
+#[tokio::test]
 async fn move_extension_moves_source_state_between_scopes() {
     let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
     let extension_dir = user_extensions_dir.join("movable-ext");

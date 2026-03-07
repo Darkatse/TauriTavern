@@ -242,7 +242,7 @@ impl FileExtensionRepository {
 
             let Some(source) = source else {
                 tracing::warn!(
-                    "Deleting extension '{}' at '{}' because source metadata is missing",
+                    "Deleting extension '{}' at '{}' because source metadata is missing and could not be rebuilt from git state",
                     extension_folder_name,
                     path.display()
                 );
