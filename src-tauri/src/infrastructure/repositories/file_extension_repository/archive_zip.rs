@@ -46,7 +46,7 @@ impl FileExtensionRepository {
         }
     }
 
-    fn extract_zip_bytes(&self, bytes: &[u8], destination: &Path) -> Result<(), DomainError> {
+    pub(super) fn extract_zip_bytes(&self, bytes: &[u8], destination: &Path) -> Result<(), DomainError> {
         let reader = Cursor::new(bytes);
         let mut archive = zip::ZipArchive::new(reader).map_err(|error| {
             DomainError::InternalError(format!("Failed to read downloaded ZIP archive: {}", error))
@@ -59,7 +59,7 @@ impl FileExtensionRepository {
 
             let enclosed_path = zipkit::enclosed_zip_entry_path(&entry)?;
 
-            // GitHub archives always wrap files in a top-level root folder.
+            // Provider archives wrap files in a top-level root folder.
             let relative_path = match Self::strip_archive_root(&enclosed_path) {
                 Some(path) => path,
                 None => continue,
@@ -106,53 +106,6 @@ impl FileExtensionRepository {
         }
 
         Ok(())
-    }
-
-    pub(super) async fn download_and_extract_snapshot(
-        &self,
-        owner: &str,
-        repo: &str,
-        commit_hash: &str,
-        destination: &Path,
-    ) -> Result<(), DomainError> {
-        let url = self.build_github_api_url(&["repos", owner, repo, "zipball", commit_hash])?;
-
-        let response = self
-            .http_client
-            .get(url.clone())
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to download extension archive: {}",
-                    error
-                ))
-            })?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            let snippet = body.trim();
-            let suffix = if snippet.is_empty() {
-                String::new()
-            } else {
-                format!(" ({})", snippet)
-            };
-            return Err(DomainError::InternalError(format!(
-                "Failed to download extension archive from '{}': HTTP {}{}",
-                url, status, suffix
-            )));
-        }
-
-        let archive_bytes = response.bytes().await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read extension archive response: {}",
-                error
-            ))
-        })?;
-
-        self.extract_zip_bytes(archive_bytes.as_ref(), destination)
     }
 
     pub(super) async fn required_manifest(
@@ -219,8 +172,7 @@ pub(super) fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
         let entry = entry?;
         let ty = entry.file_type()?;
         let path = entry.path();
-        let file_name = path.file_name().unwrap();
-        let target = dst.join(file_name);
+        let target = dst.join(entry.file_name());
 
         if ty.is_dir() {
             copy_dir_all(&path, &target)?;

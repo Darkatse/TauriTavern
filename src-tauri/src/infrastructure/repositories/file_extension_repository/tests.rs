@@ -158,6 +158,131 @@ async fn startup_migration_rebuilds_missing_source_state_from_git_dir() {
 }
 
 #[tokio::test]
+async fn startup_migration_rebuilds_missing_source_state_from_git_dir_for_gitlab() {
+    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let extension_dir = user_extensions_dir.join("gitlab-ext");
+    fs::create_dir_all(extension_dir.join(".git").join("refs").join("heads"))
+        .await
+        .expect("create git refs directory");
+
+    let config = r#"[remote "origin"]
+    url = git@gitlab.com:my-group/subgroup/my-repo.git
+"#;
+    fs::write(extension_dir.join(".git").join("config"), config)
+        .await
+        .expect("write git config");
+
+    let commit = "abcdef1234567890abcdef1234567890abcdef12\n";
+    fs::write(
+        extension_dir.join(".git").join("HEAD"),
+        "ref: refs/heads/main\n",
+    )
+    .await
+    .expect("write git HEAD");
+    fs::write(
+        extension_dir
+            .join(".git")
+            .join("refs")
+            .join("heads")
+            .join("main"),
+        commit,
+    )
+    .await
+    .expect("write git ref commit");
+
+    let repository = FileExtensionRepository::new(
+        user_extensions_dir.clone(),
+        global_extensions_dir,
+        source_store_root.clone(),
+    )
+    .expect("create extension repository");
+
+    assert!(
+        source_store_root
+            .join("local")
+            .join("gitlab-ext.json")
+            .exists(),
+        "recovered state file should exist"
+    );
+
+    let extensions = repository
+        .discover_extensions()
+        .await
+        .expect("discover extensions");
+    let extension = extensions
+        .into_iter()
+        .find(|extension| extension.name == "third-party/gitlab-ext")
+        .expect("gitlab extension should be discoverable");
+    assert_eq!(
+        extension.remote_url.as_deref(),
+        Some("https://gitlab.com/my-group/subgroup/my-repo")
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup temp root");
+}
+
+#[tokio::test]
+async fn startup_migration_rebuilds_missing_source_state_from_git_dir_for_gitee() {
+    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let extension_dir = user_extensions_dir.join("gitee-ext");
+    fs::create_dir_all(extension_dir.join(".git").join("refs").join("heads"))
+        .await
+        .expect("create git refs directory");
+
+    let config = r#"[remote "origin"]
+    url = git@gitee.com:some-owner/some-repo.git
+"#;
+    fs::write(extension_dir.join(".git").join("config"), config)
+        .await
+        .expect("write git config");
+
+    let commit = "abcdef1234567890abcdef1234567890abcdef12\n";
+    fs::write(
+        extension_dir.join(".git").join("HEAD"),
+        "ref: refs/heads/main\n",
+    )
+    .await
+    .expect("write git HEAD");
+    fs::write(
+        extension_dir
+            .join(".git")
+            .join("refs")
+            .join("heads")
+            .join("main"),
+        commit,
+    )
+    .await
+    .expect("write git ref commit");
+
+    let repository = FileExtensionRepository::new(
+        user_extensions_dir.clone(),
+        global_extensions_dir,
+        source_store_root.clone(),
+    )
+    .expect("create extension repository");
+
+    assert!(
+        source_store_root.join("local").join("gitee-ext.json").exists(),
+        "recovered state file should exist"
+    );
+
+    let extensions = repository
+        .discover_extensions()
+        .await
+        .expect("discover extensions");
+    let extension = extensions
+        .into_iter()
+        .find(|extension| extension.name == "third-party/gitee-ext")
+        .expect("gitee extension should be discoverable");
+    assert_eq!(
+        extension.remote_url.as_deref(),
+        Some("https://gitee.com/some-owner/some-repo")
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup temp root");
+}
+
+#[tokio::test]
 async fn startup_migration_rebuilds_missing_source_state_from_gitfile_commondir_layout() {
     let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
     let extension_dir = user_extensions_dir.join("gitfile-ext");

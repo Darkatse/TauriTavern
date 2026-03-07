@@ -1,5 +1,9 @@
 use super::*;
 
+use crate::infrastructure::repositories::file_extension_repository::repo_url::{
+    HOST_GITHUB, parse_repo_url,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ExtensionStoreScope {
     Local,
@@ -25,11 +29,45 @@ impl ExtensionStoreScope {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub(super) struct ExtensionSourceMetadata {
-    pub(super) owner: String,
-    pub(super) repo: String,
+    pub(super) host: String,
+    /// `owner/repo` for GitHub/Gitee, `group/subgroup/repo` for GitLab.
+    pub(super) repo_path: String,
     pub(super) reference: String,
     pub(super) remote_url: String,
     pub(super) installed_commit: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LegacyGithubSourceMetadata {
+    owner: String,
+    repo: String,
+    reference: String,
+    installed_commit: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum StoredSourceMetadata {
+    V2(ExtensionSourceMetadata),
+    V1(LegacyGithubSourceMetadata),
+}
+
+impl StoredSourceMetadata {
+    fn into_v2(self) -> ExtensionSourceMetadata {
+        match self {
+            StoredSourceMetadata::V2(metadata) => metadata,
+            StoredSourceMetadata::V1(legacy) => {
+                let repo_path = format!("{}/{}", legacy.owner, legacy.repo);
+                ExtensionSourceMetadata {
+                    host: HOST_GITHUB.to_string(),
+                    repo_path: repo_path.clone(),
+                    reference: legacy.reference,
+                    remote_url: format!("https://{}/{}", HOST_GITHUB, repo_path),
+                    installed_commit: legacy.installed_commit,
+                }
+            }
+        }
+    }
 }
 
 pub(super) struct ExtensionSourceStore {
@@ -75,7 +113,16 @@ impl ExtensionSourceStore {
             return Ok(None);
         }
 
-        let metadata: ExtensionSourceMetadata = read_json_file(&path).await?;
+        let stored: StoredSourceMetadata = read_json_file(&path).await?;
+        let (metadata, needs_rewrite) = match stored {
+            StoredSourceMetadata::V2(metadata) => (metadata, false),
+            StoredSourceMetadata::V1(legacy) => (StoredSourceMetadata::V1(legacy).into_v2(), true),
+        };
+
+        if needs_rewrite {
+            self.write(scope, extension_name, &metadata).await?;
+        }
+
         Ok(Some(metadata))
     }
 
@@ -96,14 +143,24 @@ impl ExtensionSourceStore {
                 error
             ))
         })?;
-        let metadata =
-            serde_json::from_str::<ExtensionSourceMetadata>(&contents).map_err(|error| {
+
+        let stored =
+            serde_json::from_str::<StoredSourceMetadata>(&contents).map_err(|error| {
                 DomainError::InvalidData(format!(
                     "Invalid extension source state '{}': {}",
                     path.display(),
                     error
                 ))
             })?;
+
+        let (metadata, needs_rewrite) = match stored {
+            StoredSourceMetadata::V2(metadata) => (metadata, false),
+            StoredSourceMetadata::V1(legacy) => (StoredSourceMetadata::V1(legacy).into_v2(), true),
+        };
+
+        if needs_rewrite {
+            self.write_sync(scope, extension_name, &metadata)?;
+        }
 
         Ok(Some(metadata))
     }
@@ -285,6 +342,7 @@ impl ExtensionSourceStore {
         extension_path: &Path,
     ) -> Result<Option<ExtensionSourceMetadata>, DomainError> {
         if let Some(metadata) = self.read(scope, extension_name).await? {
+            self.delete_legacy(extension_path).await?;
             return Ok(Some(metadata));
         }
 
@@ -311,8 +369,8 @@ impl ExtensionSourceStore {
             return Ok(None);
         }
 
-        let metadata: ExtensionSourceMetadata = read_json_file(&path).await?;
-        Ok(Some(metadata))
+        let stored: StoredSourceMetadata = read_json_file(&path).await?;
+        Ok(Some(stored.into_v2()))
     }
 
     fn read_legacy_sync(
@@ -331,8 +389,9 @@ impl ExtensionSourceStore {
                 error
             ))
         })?;
-        let metadata =
-            serde_json::from_str::<ExtensionSourceMetadata>(&contents).map_err(|error| {
+
+        let stored =
+            serde_json::from_str::<StoredSourceMetadata>(&contents).map_err(|error| {
                 DomainError::InvalidData(format!(
                     "Invalid legacy extension source state '{}': {}",
                     path.display(),
@@ -340,7 +399,7 @@ impl ExtensionSourceStore {
                 ))
             })?;
 
-        Ok(Some(metadata))
+        Ok(Some(stored.into_v2()))
     }
 
     async fn delete_legacy(&self, extension_path: &Path) -> Result<(), DomainError> {
@@ -373,18 +432,37 @@ impl ExtensionSourceStore {
         })
     }
 
-    fn normalize_git_remote_url(remote_url: &str) -> String {
+    fn normalize_git_remote_url(remote_url: &str) -> Option<String> {
         let trimmed = remote_url.trim();
-
-        if let Some(path) = trimmed.strip_prefix("git@github.com:") {
-            return format!("https://github.com/{}", path);
+        if trimmed.is_empty() {
+            return None;
         }
 
-        if let Some(path) = trimmed.strip_prefix("ssh://git@github.com/") {
-            return format!("https://github.com/{}", path);
+        if let Some(rest) = trimmed.strip_prefix("git@") {
+            let (host, path) = rest.split_once(':')?;
+            let host = host.trim();
+            let path = path.trim().trim_start_matches('/');
+            if host.is_empty() || path.is_empty() {
+                return None;
+            }
+            return Some(format!("https://{}/{}", host, path));
         }
 
-        trimmed.to_string()
+        if trimmed.starts_with("ssh://") {
+            let url = Url::parse(trimmed).ok()?;
+            let host = url.host_str()?;
+            let path = url.path().trim_start_matches('/');
+            if path.is_empty() {
+                return None;
+            }
+            return Some(format!("https://{}/{}", host, path));
+        }
+
+        if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+            return Some(trimmed.to_string());
+        }
+
+        None
     }
 
     fn parse_origin_remote_url(config: &str) -> Option<String> {
@@ -608,9 +686,11 @@ impl ExtensionSourceStore {
         let Some(remote_url) = Self::parse_origin_remote_url(&git_config) else {
             return Ok(None);
         };
+        let Some(normalized_remote_url) = Self::normalize_git_remote_url(&remote_url) else {
+            return Ok(None);
+        };
 
-        let normalized_remote_url = Self::normalize_git_remote_url(&remote_url);
-        let repo = parse_github_repo_url(&normalized_remote_url)?;
+        let repo = parse_repo_url(&normalized_remote_url)?;
 
         let head_content = fs::read_to_string(git_dir.join("HEAD")).map_err(|error| {
             DomainError::InternalError(format!(
@@ -640,10 +720,10 @@ impl ExtensionSourceStore {
         }
 
         Ok(Some(ExtensionSourceMetadata {
-            owner: repo.owner.clone(),
-            repo: repo.repo.clone(),
+            host: repo.host.clone(),
+            repo_path: repo.repo_path.clone(),
             reference,
-            remote_url: format!("https://github.com/{}/{}", repo.owner, repo.repo),
+            remote_url: repo.canonical_remote_url(),
             installed_commit,
         }))
     }

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use reqwest::Client;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -19,22 +19,25 @@ use crate::infrastructure::http_client::build_http_client;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::read_json_file;
 
-mod github;
-mod snapshot;
+mod archive_zip;
+mod providers;
+mod repo_url;
 mod source_store;
 
 #[cfg(test)]
 mod tests;
 
-use self::github::{normalize_requested_reference, parse_github_repo_url};
-use self::snapshot::copy_dir_all;
+use self::archive_zip::copy_dir_all;
+use self::providers::ExtensionSourceProvider;
+use self::providers::ExtensionSourceProviders;
+use self::repo_url::{normalize_requested_reference, parse_repo_url};
 use self::source_store::{ExtensionSourceMetadata, ExtensionSourceStore, ExtensionStoreScope};
 
 pub struct FileExtensionRepository {
-    http_client: Client,
     user_extensions_dir: PathBuf,
     global_extensions_dir: PathBuf,
     source_store: ExtensionSourceStore,
+    providers: ExtensionSourceProviders,
 }
 
 /// Built-in extensions enabled in TauriTavern.
@@ -47,18 +50,7 @@ const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "quick-reply",
     "tauritavern-version",
 ];
-const GITHUB_API_BASE: &str = "https://api.github.com";
 const SOURCE_METADATA_FILE: &str = ".tauritavern-source.json";
-
-#[derive(Debug, Deserialize)]
-struct GithubRepositoryInfo {
-    default_branch: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubCommit {
-    sha: String,
-}
 
 impl FileExtensionRepository {
     pub fn new(
@@ -71,11 +63,12 @@ impl FileExtensionRepository {
         })?;
 
         let source_store = ExtensionSourceStore::new(source_store_root);
+        let providers = ExtensionSourceProviders::new(http_client);
         let repository = Self {
-            http_client,
             user_extensions_dir,
             global_extensions_dir,
             source_store,
+            providers,
         };
         repository.source_store.migrate_all(
             &repository.user_extensions_dir,
@@ -185,6 +178,32 @@ impl FileExtensionRepository {
         self.source_store
             .resolve_or_migrate(scope, extension_name, extension_path)
             .await
+    }
+
+    async fn stage_extension_snapshot(
+        &self,
+        provider: &dyn ExtensionSourceProvider,
+        repo_path: &str,
+        commit: &str,
+        base_dir: &Path,
+        temp_prefix: &str,
+    ) -> Result<(PathBuf, ExtensionManifest), DomainError> {
+        let staging_dir = self.create_temp_directory(base_dir, temp_prefix).await?;
+
+        let result: Result<ExtensionManifest, DomainError> = async {
+            let archive_bytes = provider.download_archive_zip(repo_path, commit).await?;
+            self.extract_zip_bytes(archive_bytes.as_ref(), &staging_dir)?;
+            self.required_manifest(&staging_dir).await
+        }
+        .await;
+
+        match result {
+            Ok(manifest) => Ok((staging_dir, manifest)),
+            Err(error) => {
+                Self::cleanup_temp_directory(&staging_dir).await;
+                Err(error)
+            }
+        }
     }
 
     async fn discover_scoped_extensions(
@@ -337,19 +356,17 @@ impl ExtensionRepository for FileExtensionRepository {
     ) -> Result<ExtensionInstallResult, DomainError> {
         tracing::info!("Installing extension from {}", url);
 
-        let repo = parse_github_repo_url(url)?;
+        let repo = parse_repo_url(url)?;
+        let provider = self.providers.for_host(repo.host.as_str())?;
         let reference = normalize_requested_reference(branch)
             .or(repo.reference_from_url.clone())
-            .unwrap_or(
-                self.github_get_default_branch(&repo.owner, &repo.repo)
-                    .await?,
-            );
-        let latest_commit = self
-            .github_get_latest_commit_hash(&repo.owner, &repo.repo, &reference)
+            .unwrap_or(provider.default_branch(repo.repo_path.as_str()).await?);
+        let latest_commit = provider
+            .latest_commit(repo.repo_path.as_str(), reference.as_str())
             .await?;
 
         let base_dir = self.extension_base_dir(global);
-        let extension_folder_name = Self::sanitize_filename(&repo.repo);
+        let extension_folder_name = Self::sanitize_filename(repo.repo_name());
         let extension_path = base_dir.join(&extension_folder_name);
 
         if extension_path.exists() {
@@ -359,47 +376,48 @@ impl ExtensionRepository for FileExtensionRepository {
             )));
         }
 
-        let staging_dir = self
-            .create_temp_directory(base_dir, "extension-install")
+        let (staging_dir, manifest) = self
+            .stage_extension_snapshot(
+                provider,
+                repo.repo_path.as_str(),
+                latest_commit.as_str(),
+                base_dir,
+                "extension-install",
+            )
             .await?;
+
+        let scope = Self::extension_scope(global);
+        let source_metadata = ExtensionSourceMetadata {
+            host: repo.host.clone(),
+            repo_path: repo.repo_path.clone(),
+            reference: reference.clone(),
+            remote_url: repo.canonical_remote_url(),
+            installed_commit: latest_commit.clone(),
+        };
         if let Err(error) = self
-            .download_and_extract_snapshot(&repo.owner, &repo.repo, &latest_commit, &staging_dir)
+            .source_store
+            .write(scope, &extension_folder_name, &source_metadata)
             .await
         {
             Self::cleanup_temp_directory(&staging_dir).await;
             return Err(error);
         }
 
-        let manifest = match self.required_manifest(&staging_dir).await {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                Self::cleanup_temp_directory(&staging_dir).await;
-                return Err(error);
+        if let Err(error) = fs::rename(&staging_dir, &extension_path) {
+            if let Err(cleanup_error) = self.source_store.delete(scope, &extension_folder_name).await
+            {
+                logger::warn(&format!(
+                    "Failed to rollback extension source metadata for '{}': {}",
+                    extension_folder_name, cleanup_error
+                ));
             }
-        };
-
-        fs::rename(&staging_dir, &extension_path).map_err(|error| {
-            DomainError::InternalError(format!(
+            Self::cleanup_temp_directory(&staging_dir).await;
+            return Err(DomainError::InternalError(format!(
                 "Failed to finalize extension installation into '{}': {}",
                 extension_path.display(),
                 error
-            ))
-        })?;
-
-        let source_metadata = ExtensionSourceMetadata {
-            owner: repo.owner.clone(),
-            repo: repo.repo.clone(),
-            reference: reference.clone(),
-            remote_url: format!("https://github.com/{}/{}", repo.owner, repo.repo),
-            installed_commit: latest_commit.clone(),
-        };
-        self.source_store
-            .write(
-                Self::extension_scope(global),
-                &extension_folder_name,
-                &source_metadata,
-            )
-            .await?;
+            )));
+        }
 
         tracing::info!(
             "Extension installed: {} v{} by {} ({})",
@@ -444,8 +462,9 @@ impl ExtensionRepository for FileExtensionRepository {
                 )
             })?;
 
-        let latest_commit = self
-            .github_get_latest_commit_hash(&source.owner, &source.repo, &source.reference)
+        let provider = self.providers.for_host(source.host.as_str())?;
+        let latest_commit = provider
+            .latest_commit(source.repo_path.as_str(), source.reference.as_str())
             .await?;
         let is_up_to_date = source.installed_commit == latest_commit;
 
@@ -456,27 +475,16 @@ impl ExtensionRepository for FileExtensionRepository {
                     extension_path.display()
                 ))
             })?;
-            let staging_dir = self
-                .create_temp_directory(base_dir, "extension-update")
-                .await?;
 
-            if let Err(error) = self
-                .download_and_extract_snapshot(
-                    &source.owner,
-                    &source.repo,
-                    &latest_commit,
-                    &staging_dir,
+            let (staging_dir, _) = self
+                .stage_extension_snapshot(
+                    provider,
+                    source.repo_path.as_str(),
+                    latest_commit.as_str(),
+                    base_dir,
+                    "extension-update",
                 )
-                .await
-            {
-                Self::cleanup_temp_directory(&staging_dir).await;
-                return Err(error);
-            }
-
-            if let Err(error) = self.required_manifest(&staging_dir).await {
-                Self::cleanup_temp_directory(&staging_dir).await;
-                return Err(error);
-            }
+                .await?;
 
             if let Err(error) = self.replace_directory(&staging_dir, &extension_path) {
                 Self::cleanup_temp_directory(&staging_dir).await;
@@ -565,8 +573,9 @@ impl ExtensionRepository for FileExtensionRepository {
             }
         };
 
-        let latest_commit = self
-            .github_get_latest_commit_hash(&source.owner, &source.repo, &source.reference)
+        let provider = self.providers.for_host(source.host.as_str())?;
+        let latest_commit = provider
+            .latest_commit(source.repo_path.as_str(), source.reference.as_str())
             .await?;
         let is_up_to_date = source.installed_commit == latest_commit;
 
