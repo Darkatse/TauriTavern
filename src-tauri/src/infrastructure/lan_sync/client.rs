@@ -204,6 +204,17 @@ struct DownloadResult {
     size_bytes: u64,
 }
 
+fn download_tmp_path(full_path: &std::path::Path) -> std::path::PathBuf {
+    match full_path.extension() {
+        Some(ext) if !ext.is_empty() => {
+            let mut tmp_ext = ext.to_os_string();
+            tmp_ext.push(".ttsync.tmp");
+            full_path.with_extension(tmp_ext)
+        }
+        _ => full_path.with_extension("ttsync.tmp"),
+    }
+}
+
 fn spawn_download_task(
     join_set: &mut JoinSet<Result<DownloadResult, DomainError>>,
     http_client: Client,
@@ -266,7 +277,7 @@ async fn download_one(
         )));
     }
 
-    let tmp_path = full_path.with_extension("ttsync.tmp");
+    let tmp_path = download_tmp_path(&full_path);
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -375,4 +386,49 @@ fn default_download_concurrency() -> usize {
 
 fn should_emit_progress(files_done: usize, files_total: usize) -> bool {
     files_done == files_total || files_done == 1 || files_done % 10 == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::download_tmp_path;
+
+    #[test]
+    fn download_tmp_path_preserves_original_extension() {
+        let pack = std::path::Path::new("pack-abc.pack");
+        let idx = std::path::Path::new("pack-abc.idx");
+        let rev = std::path::Path::new("pack-abc.rev");
+
+        assert_ne!(download_tmp_path(pack), download_tmp_path(idx));
+        assert_ne!(download_tmp_path(pack), download_tmp_path(rev));
+        assert_ne!(download_tmp_path(idx), download_tmp_path(rev));
+
+        assert_eq!(
+            download_tmp_path(pack).file_name().unwrap(),
+            std::ffi::OsStr::new("pack-abc.pack.ttsync.tmp")
+        );
+        assert_eq!(
+            download_tmp_path(idx).file_name().unwrap(),
+            std::ffi::OsStr::new("pack-abc.idx.ttsync.tmp")
+        );
+        assert_eq!(
+            download_tmp_path(rev).file_name().unwrap(),
+            std::ffi::OsStr::new("pack-abc.rev.ttsync.tmp")
+        );
+    }
+
+    #[test]
+    fn download_tmp_path_avoids_stem_collisions_for_lock_files() {
+        let config = std::path::Path::new("config");
+        let config_lock = std::path::Path::new("config.lock");
+
+        assert_ne!(download_tmp_path(config), download_tmp_path(config_lock));
+        assert_eq!(
+            download_tmp_path(config).file_name().unwrap(),
+            std::ffi::OsStr::new("config.ttsync.tmp")
+        );
+        assert_eq!(
+            download_tmp_path(config_lock).file_name().unwrap(),
+            std::ffi::OsStr::new("config.lock.ttsync.tmp")
+        );
+    }
 }
