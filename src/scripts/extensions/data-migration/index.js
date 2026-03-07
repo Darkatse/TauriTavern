@@ -485,7 +485,7 @@ async function onAndroidImportButtonClick() {
 
 async function runConfirmedImport(startJob) {
     const confirmed = window.confirm(
-        t`Importing will replace the current local data directory. Continue?`,
+        t`Importing will merge into the current local data directory (same-path files will be overwritten). Continue?`,
     );
     if (!confirmed) {
         return;
