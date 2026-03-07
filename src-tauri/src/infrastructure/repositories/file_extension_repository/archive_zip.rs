@@ -1,5 +1,17 @@
-use super::*;
+use std::fs;
+use std::io::Cursor;
+use std::path::{Path, PathBuf};
+
+use tokio::fs as tokio_fs;
+use uuid::Uuid;
+
+use crate::domain::errors::DomainError;
+use crate::domain::models::extension::ExtensionManifest;
+use crate::domain::repositories::extension_repository::ExtensionRepository;
+use crate::infrastructure::logging::logger;
 use crate::infrastructure::zipkit;
+
+use super::FileExtensionRepository;
 
 impl FileExtensionRepository {
     pub(super) async fn create_temp_directory(
@@ -46,7 +58,11 @@ impl FileExtensionRepository {
         }
     }
 
-    pub(super) fn extract_zip_bytes(&self, bytes: &[u8], destination: &Path) -> Result<(), DomainError> {
+    pub(super) fn extract_zip_bytes(
+        &self,
+        bytes: &[u8],
+        destination: &Path,
+    ) -> Result<(), DomainError> {
         let reader = Cursor::new(bytes);
         let mut archive = zip::ZipArchive::new(reader).map_err(|error| {
             DomainError::InternalError(format!("Failed to read downloaded ZIP archive: {}", error))
@@ -112,7 +128,9 @@ impl FileExtensionRepository {
         &self,
         extension_path: &Path,
     ) -> Result<ExtensionManifest, DomainError> {
-        match self.get_manifest(extension_path).await? {
+        match <FileExtensionRepository as ExtensionRepository>::get_manifest(self, extension_path)
+            .await?
+        {
             Some(manifest) => Ok(manifest),
             None => Err(DomainError::InvalidData(
                 "Extension manifest not found".to_string(),

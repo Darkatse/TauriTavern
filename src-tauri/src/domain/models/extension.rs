@@ -61,6 +61,11 @@ pub struct Extension {
     pub name: String,
     /// Type of the extension
     pub extension_type: ExtensionType,
+    /// Whether the extension is managed by TauriTavern.
+    ///
+    /// Managed extensions have source metadata and can be updated.
+    /// Unmanaged extensions are still discoverable/loadable but cannot be updated.
+    pub managed: bool,
     /// Manifest of the extension
     pub manifest: Option<ExtensionManifest>,
     /// Path to the extension

@@ -6,7 +6,7 @@ use url::Url;
 
 use crate::domain::errors::DomainError;
 
-use super::repo_url::{HOST_GITHUB, HOST_GITEE, HOST_GITLAB};
+use super::repo_url::{HOST_GITEE, HOST_GITHUB, HOST_GITLAB};
 
 pub(super) mod gitee;
 pub(super) mod github;

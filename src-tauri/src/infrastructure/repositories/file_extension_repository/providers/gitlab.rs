@@ -33,13 +33,9 @@ impl GitLabProvider {
         let mut encoded = String::with_capacity(repo_path.len() + 8);
         for byte in repo_path.as_bytes() {
             match byte {
-                b'A'..=b'Z'
-                | b'a'..=b'z'
-                | b'0'..=b'9'
-                | b'-'
-                | b'_'
-                | b'.'
-                | b'~' => encoded.push(*byte as char),
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    encoded.push(*byte as char)
+                }
                 b'/' => encoded.push_str("%2F"),
                 _ => encoded.push_str(&format!("%{:02X}", byte)),
             }
@@ -69,7 +65,9 @@ impl ExtensionSourceProvider for GitLabProvider {
             .get(url.clone())
             .send()
             .await
-            .map_err(|error| DomainError::InternalError(format!("GitLab request failed: {}", error)))?;
+            .map_err(|error| {
+                DomainError::InternalError(format!("GitLab request failed: {}", error))
+            })?;
 
         let info: GitLabProjectInfo = parse_json_or_error(response, &url, "GitLab").await?;
         if info.default_branch.trim().is_empty() {
@@ -94,7 +92,9 @@ impl ExtensionSourceProvider for GitLabProvider {
             .get(url.clone())
             .send()
             .await
-            .map_err(|error| DomainError::InternalError(format!("GitLab request failed: {}", error)))?;
+            .map_err(|error| {
+                DomainError::InternalError(format!("GitLab request failed: {}", error))
+            })?;
 
         let commits: Vec<GitLabCommit> = parse_json_or_error(response, &url, "GitLab").await?;
         let commit = commits.first().ok_or_else(|| {

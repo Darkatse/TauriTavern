@@ -58,8 +58,9 @@ fn parse_reference_query(url: &Url) -> Option<String> {
 
 pub(super) fn parse_repo_url(url: &str) -> Result<RepoSpec, DomainError> {
     let raw = url.trim();
-    let parsed_url = Url::parse(raw)
-        .map_err(|error| DomainError::InvalidData(format!("Invalid repository URL '{}': {}", raw, error)))?;
+    let parsed_url = Url::parse(raw).map_err(|error| {
+        DomainError::InvalidData(format!("Invalid repository URL '{}': {}", raw, error))
+    })?;
 
     let Some(host) = parsed_url.host_str() else {
         return Err(DomainError::InvalidData(format!(
@@ -102,7 +103,11 @@ pub(super) fn parse_repo_url(url: &str) -> Result<RepoSpec, DomainError> {
 
             let reference_from_path = if segments.len() >= 4 && segments[2] == "tree" {
                 let reference = segments[3..].join("/");
-                if reference.is_empty() { None } else { Some(reference) }
+                if reference.is_empty() {
+                    None
+                } else {
+                    Some(reference)
+                }
             } else {
                 None
             };
@@ -134,7 +139,10 @@ pub(super) fn parse_repo_url(url: &str) -> Result<RepoSpec, DomainError> {
                 .ok_or_else(|| DomainError::InvalidData("GitLab URL path is empty".to_string()))?;
             *last = strip_dot_git(last).to_string();
 
-            if repo_segments.iter().any(|segment| segment.trim().is_empty()) {
+            if repo_segments
+                .iter()
+                .any(|segment| segment.trim().is_empty())
+            {
                 return Err(DomainError::InvalidData(
                     "GitLab URL path contains empty segments".to_string(),
                 ));
@@ -143,7 +151,11 @@ pub(super) fn parse_repo_url(url: &str) -> Result<RepoSpec, DomainError> {
             let reference_from_path = match dash_index {
                 Some(index) if segments.len() > index + 2 && segments[index + 1] == "tree" => {
                     let reference = segments[index + 2..].join("/");
-                    if reference.is_empty() { None } else { Some(reference) }
+                    if reference.is_empty() {
+                        None
+                    } else {
+                        Some(reference)
+                    }
                 }
                 _ => None,
             };
@@ -174,16 +186,15 @@ mod tests {
 
     #[test]
     fn github_ref_query_param_used_when_tree_missing() {
-        let spec = parse_repo_url("https://github.com/owner/repo?ref=dev")
-            .expect("parse github url");
+        let spec =
+            parse_repo_url("https://github.com/owner/repo?ref=dev").expect("parse github url");
         assert_eq!(spec.reference_from_url.as_deref(), Some("dev"));
     }
 
     #[test]
     fn gitlab_tree_reference_overrides_ref_query_param() {
-        let spec =
-            parse_repo_url("https://gitlab.com/group/subgroup/repo/-/tree/main?ref=dev")
-                .expect("parse gitlab url");
+        let spec = parse_repo_url("https://gitlab.com/group/subgroup/repo/-/tree/main?ref=dev")
+            .expect("parse gitlab url");
         assert_eq!(spec.reference_from_url.as_deref(), Some("main"));
     }
 }

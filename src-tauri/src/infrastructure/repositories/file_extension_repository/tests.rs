@@ -85,6 +85,7 @@ async fn startup_migration_moves_legacy_source_state_into_new_store() {
         .into_iter()
         .find(|extension| extension.name == "third-party/legacy-ext")
         .expect("migrated extension should be discoverable");
+    assert!(extension.managed, "migrated extension should be managed");
     assert_eq!(
         extension.remote_url.as_deref(),
         Some("https://github.com/N0VI028/JS-Slash-Runner")
@@ -149,6 +150,7 @@ async fn startup_migration_rebuilds_missing_source_state_from_git_dir() {
         .into_iter()
         .find(|extension| extension.name == "third-party/git-ext")
         .expect("git extension should be discoverable");
+    assert!(extension.managed, "git extension should be managed");
     assert_eq!(
         extension.remote_url.as_deref(),
         Some("https://github.com/N0VI028/JS-Slash-Runner")
@@ -213,6 +215,7 @@ async fn startup_migration_rebuilds_missing_source_state_from_git_dir_for_gitlab
         .into_iter()
         .find(|extension| extension.name == "third-party/gitlab-ext")
         .expect("gitlab extension should be discoverable");
+    assert!(extension.managed, "gitlab extension should be managed");
     assert_eq!(
         extension.remote_url.as_deref(),
         Some("https://gitlab.com/my-group/subgroup/my-repo")
@@ -262,7 +265,10 @@ async fn startup_migration_rebuilds_missing_source_state_from_git_dir_for_gitee(
     .expect("create extension repository");
 
     assert!(
-        source_store_root.join("local").join("gitee-ext.json").exists(),
+        source_store_root
+            .join("local")
+            .join("gitee-ext.json")
+            .exists(),
         "recovered state file should exist"
     );
 
@@ -274,6 +280,7 @@ async fn startup_migration_rebuilds_missing_source_state_from_git_dir_for_gitee(
         .into_iter()
         .find(|extension| extension.name == "third-party/gitee-ext")
         .expect("gitee extension should be discoverable");
+    assert!(extension.managed, "gitee extension should be managed");
     assert_eq!(
         extension.remote_url.as_deref(),
         Some("https://gitee.com/some-owner/some-repo")
@@ -345,6 +352,7 @@ async fn startup_migration_rebuilds_missing_source_state_from_gitfile_commondir_
         .into_iter()
         .find(|extension| extension.name == "third-party/gitfile-ext")
         .expect("gitfile extension should be discoverable");
+    assert!(extension.managed, "gitfile extension should be managed");
     assert_eq!(
         extension.remote_url.as_deref(),
         Some("https://github.com/N0VI028/JS-Slash-Runner")
@@ -447,12 +455,23 @@ async fn delete_extension_removes_source_state_file() {
 }
 
 #[tokio::test]
-async fn discover_extensions_deletes_extensions_without_source_state() {
+async fn discover_extensions_keeps_extensions_without_source_state_as_unmanaged() {
     let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
     let extension_dir = user_extensions_dir.join("orphan-ext");
     fs::create_dir_all(&extension_dir)
         .await
         .expect("create extension dir");
+    fs::write(
+        extension_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&json!({
+            "display_name": "Orphan Extension",
+            "version": "0.0.1",
+            "author": "Unknown"
+        }))
+        .expect("serialize orphan manifest"),
+    )
+    .await
+    .expect("write orphan manifest");
 
     let repository = FileExtensionRepository::new(
         user_extensions_dir.clone(),
@@ -467,14 +486,14 @@ async fn discover_extensions_deletes_extensions_without_source_state() {
         .expect("discover extensions");
 
     assert!(
-        !extension_dir.exists(),
-        "extension directory should be removed when source state is missing"
+        extension_dir.exists(),
+        "unmanaged extension directory should not be deleted"
     );
     assert!(
-        !extensions
+        extensions
             .iter()
-            .any(|extension| extension.name == "third-party/orphan-ext"),
-        "orphan extension should not be returned after cleanup"
+            .any(|extension| extension.name == "third-party/orphan-ext" && !extension.managed),
+        "orphan extension should be returned and marked unmanaged"
     );
 
     fs::remove_dir_all(root).await.expect("cleanup temp root");

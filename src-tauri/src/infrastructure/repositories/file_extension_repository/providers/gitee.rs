@@ -64,7 +64,9 @@ impl ExtensionSourceProvider for GiteeProvider {
             .get(url.clone())
             .send()
             .await
-            .map_err(|error| DomainError::InternalError(format!("Gitee request failed: {}", error)))?;
+            .map_err(|error| {
+                DomainError::InternalError(format!("Gitee request failed: {}", error))
+            })?;
 
         let info: GiteeRepoInfo = parse_json_or_error(response, &url, "Gitee").await?;
         if info.default_branch.trim().is_empty() {
@@ -90,7 +92,9 @@ impl ExtensionSourceProvider for GiteeProvider {
             .get(url.clone())
             .send()
             .await
-            .map_err(|error| DomainError::InternalError(format!("Gitee request failed: {}", error)))?;
+            .map_err(|error| {
+                DomainError::InternalError(format!("Gitee request failed: {}", error))
+            })?;
 
         let commits: Vec<GiteeCommit> = parse_json_or_error(response, &url, "Gitee").await?;
         let commit = commits.first().ok_or_else(|| {

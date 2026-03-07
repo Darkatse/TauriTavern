@@ -1,8 +1,15 @@
-use super::*;
+use std::fs;
+use std::path::{Path, PathBuf};
 
-use crate::infrastructure::repositories::file_extension_repository::repo_url::{
-    HOST_GITHUB, parse_repo_url,
-};
+use serde::{Deserialize, Serialize};
+use tokio::fs as tokio_fs;
+use url::Url;
+
+use crate::domain::errors::DomainError;
+use crate::infrastructure::persistence::file_system::read_json_file;
+
+use super::SOURCE_METADATA_FILE;
+use super::repo_url::{HOST_GITHUB, parse_repo_url};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ExtensionStoreScope {
@@ -144,14 +151,13 @@ impl ExtensionSourceStore {
             ))
         })?;
 
-        let stored =
-            serde_json::from_str::<StoredSourceMetadata>(&contents).map_err(|error| {
-                DomainError::InvalidData(format!(
-                    "Invalid extension source state '{}': {}",
-                    path.display(),
-                    error
-                ))
-            })?;
+        let stored = serde_json::from_str::<StoredSourceMetadata>(&contents).map_err(|error| {
+            DomainError::InvalidData(format!(
+                "Invalid extension source state '{}': {}",
+                path.display(),
+                error
+            ))
+        })?;
 
         let (metadata, needs_rewrite) = match stored {
             StoredSourceMetadata::V2(metadata) => (metadata, false),
@@ -390,14 +396,13 @@ impl ExtensionSourceStore {
             ))
         })?;
 
-        let stored =
-            serde_json::from_str::<StoredSourceMetadata>(&contents).map_err(|error| {
-                DomainError::InvalidData(format!(
-                    "Invalid legacy extension source state '{}': {}",
-                    path.display(),
-                    error
-                ))
-            })?;
+        let stored = serde_json::from_str::<StoredSourceMetadata>(&contents).map_err(|error| {
+            DomainError::InvalidData(format!(
+                "Invalid legacy extension source state '{}': {}",
+                path.display(),
+                error
+            ))
+        })?;
 
         Ok(Some(stored.into_v2()))
     }
