@@ -26,7 +26,8 @@ pub(super) async fn install_extension(
         .await?;
 
     let base_dir = repository.extension_base_dir(global);
-    let extension_folder_name = FileExtensionRepository::sanitize_filename(repo.repo_name());
+    let extension_folder_name =
+        FileExtensionRepository::install_folder_name_from_repo_name(repo.repo_name())?;
     let extension_path = base_dir.join(&extension_folder_name);
 
     if extension_path.exists() {

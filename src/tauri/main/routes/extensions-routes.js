@@ -1,40 +1,9 @@
-import { decodeBase64ToBytes } from '../binary-utils.js';
-
 function parseJobId(value) {
     const jobId = String(value || '').trim();
     return jobId || '';
 }
 
-function decodeRoutePath(value) {
-    try {
-        return decodeURIComponent(String(value || ''));
-    } catch {
-        return String(value || '');
-    }
-}
-
-function parseThirdPartyAssetRoutePath(wildcard) {
-    const decodedPath = decodeRoutePath(wildcard)
-        .replace(/[\\/]+/g, '/')
-        .replace(/^\/+/, '');
-    const segments = decodedPath.split('/').filter(Boolean);
-    if (segments.length < 2) {
-        return null;
-    }
-
-    const extensionFolder = segments[0];
-    const relativePath = segments.slice(1).join('/');
-    if (!extensionFolder || !relativePath) {
-        return null;
-    }
-
-    return {
-        extensionName: `third-party/${extensionFolder}`,
-        relativePath,
-    };
-}
-
-export function registerExtensionRoutes(router, context, { jsonResponse, textResponse }) {
+export function registerExtensionRoutes(router, context, { jsonResponse }) {
     async function startImportJobFromFileInfo(fileInfo) {
         if (!fileInfo?.filePath) {
             const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
@@ -83,35 +52,6 @@ export function registerExtensionRoutes(router, context, { jsonResponse, textRes
             status,
         };
     }
-
-    router.get('/scripts/extensions/third-party/*', async ({ wildcard }) => {
-        const parsed = parseThirdPartyAssetRoutePath(wildcard);
-        if (!parsed) {
-            return textResponse('Not Found', 404);
-        }
-
-        try {
-            const payload = await context.safeInvoke('read_third_party_extension_asset', {
-                extensionName: parsed.extensionName,
-                relativePath: parsed.relativePath,
-            });
-
-            const bytes = decodeBase64ToBytes(payload?.content_base64 || '');
-            return new Response(bytes, {
-                status: 200,
-                headers: {
-                    'Content-Type': payload?.mime_type || 'application/octet-stream',
-                    'Cache-Control': 'no-store',
-                },
-            });
-        } catch (error) {
-            const message = String(error?.message || error || '').toLowerCase();
-            if (message.includes('not found')) {
-                return textResponse('Not Found', 404);
-            }
-            throw error;
-        }
-    });
 
     router.all('/api/extensions/discover', async () => {
         const extensions = await context.safeInvoke('get_extensions');

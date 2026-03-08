@@ -131,7 +131,7 @@ src/
 - `src/scripts/browser-fixes.js`：前端运行时兼容层入口（移动端按需补齐缺失 JS API，避免插件在旧 WebView 初始化失败）。
 - `src/scripts/extensions/runtime/resource-paths.js`：扩展资源路径规范化与 third-party 判定。
 - `src/scripts/extensions/runtime/tauri-ready.js`：等待 `__TAURITAVERN_MAIN_READY__`，避免 bridge 未就绪时提前加载。
-- `src/scripts/extensions/runtime/third-party-runtime.js`：第三方 ESM/CSS 运行时（处理动态导入/循环依赖、HTML 误回包检测、legacy WebView 的 `@layer` 样式降级；请求阶段使用当前 `window.fetch` 以确保命中拦截器）。
+- `src/scripts/extensions/runtime/third-party-runtime.js`：第三方扩展样式兼容层（仅处理 legacy WebView 的 `@layer` 降级与 `url()` 绝对化；必要时返回 Blob URL，否则返回原始 URL）。
 - `src/scripts/extensions/runtime/asset-loader.js`：脚本与样式注入、超时保护、重复注入幂等控制。
 
 ### 7.3 端到端加载链路
@@ -140,9 +140,15 @@ src/
 2. 前端通过 `/api/extensions/discover` 获取扩展列表与类型，读取 manifest 并进入 `activateExtensions()`。
 3. 对每个扩展执行 `addExtensionLocale()` + `addExtensionScript()` + `addExtensionStyle()`。
 4. 当扩展为 `third-party/*` 时：
-   - JS/CSS 先经 runtime 解析为 Blob URL，再注入页面。
-   - runtime 拉取依赖时请求 `/scripts/extensions/third-party/*`。
-5. `extensions-routes.js` 将该路径转发为 `read_third_party_extension_asset` Tauri 命令，从本地文件系统读取内容并返回 MIME。
+   - JS 入口脚本直接从 `/scripts/extensions/third-party/*` 加载（真实同源静态资源端点）。
+   - CSS 仅在旧 WebView 不支持 `@layer` 时经 runtime 预处理为 Blob URL（否则仍走原始 URL）。
+5. `/scripts/extensions/third-party/*` 由 Rust 协议层端点提供（WebView `on_web_resource_request` hook），统一返回 bytes + `Content-Type` + 404 语义。
+
+### 7.3.1 当前实现结论
+
+- 当前实现已经从“前端模拟静态文件服务”收敛为“前端只负责编排，Rust 负责 third-party 资源端点”。
+- `src/scripts/extensions/runtime/third-party-runtime.js` 不再承担 JS 源码重写或伪服务器职责，主要只保留第三方样式兼容修复。
+- 面向持续开发的现状说明见 `docs/CurrentState/ThirdPartyExtensions.md`；涉及实现边界或改动前，先读该文档，再决定是改前端 runtime 还是改后端资源端点。
 
 ### 7.4 契约与约束
 
@@ -156,17 +162,17 @@ src/
 
 - `Extension module is not JavaScript`：
   - 通常表示拿到了 HTML 回包而非模块文件。
-  - 优先检查 `/scripts/extensions/third-party/*` 是否命中 `extensions-routes.js`。
+  - 优先检查 `/scripts/extensions/third-party/*` 是否被协议层端点正确响应（应返回 404 或 JS bytes，而不是 `index.html`）。
 - `missing required key extensionName`：
   - 表示 invoke 参数命名不匹配，检查路由 body -> 命令参数映射。
-- `script/stylesheet preprocessing timed out`：
-  - 卡在第三方依赖预处理阶段，需检查插件依赖图和资源可达性。
+- `stylesheet preprocessing timed out`：
+  - 卡在第三方 CSS 预处理阶段，需检查样式资源可达性与 WebView 环境（是否触发 `@layer` 降级分支）。
 
 ### 7.6 后续开发规则
 
 - 新增插件加载能力时，优先扩展 `src/scripts/extensions/runtime/*`，不要把 Tauri 细节回灌到 `extensions.js`。
 - 新增插件 API 时，优先在 `src/tauri/main/routes/extensions-routes.js` 封装，再通过 `context.safeInvoke()` 调 Rust 命令。
-- 若调整插件路径约定，必须同时更新 `resource-paths.js` 与 `extensions-routes.js` 的路径解析规则。
+- 若调整 third-party 静态资源路径约定，必须同时更新 `resource-paths.js` 与 Rust 协议层端点的前缀解析逻辑。
 
 ### 7.7 移动端插件兼容（新增）
 
@@ -222,7 +228,7 @@ src/
   - 检查 `applyBrowserFixes()` 是否在应用初始化阶段已执行。
 - 若插件样式错乱但 CSS 已成功请求：
   - 优先检查是否命中 `@layer` 降级分支；
-  - 关注 `resolveStylesheetBlobUrl()` 是否返回预处理后的样式文本。
+  - 关注 `resolveStylesheetUrl()` 是否返回预处理后的 Blob URL。
 - 若脚本弹窗贴顶到状态栏：
   - 检查脚本是否通过 `<style>` 或行内 `style` 设置了固定定位顶边；
   - 检查是否命中 `applyMobileDynamicStyleSafeAreaPatch()`。

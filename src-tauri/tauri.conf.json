@@ -11,6 +11,8 @@
     "withGlobalTauri": true,
     "windows": [
       {
+        "label": "main",
+        "create": false,
         "title": "TauriTavern",
         "width": 1280,
         "height": 800,

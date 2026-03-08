@@ -120,6 +120,7 @@ cargo run --manifest-path fastools/Cargo.toml
 - `docs/BackendStructure.md`：后端架构详解
 - `docs/TechStack.md`：技术栈与集成选型
 - `docs/ImplementationPlan.md`：路线图与里程碑
+- `docs/CurrentState/README.md`：已落地模块的当前实现状态说明
 
 ## 许可协议
 

@@ -60,16 +60,11 @@ function toScriptTimeoutError(name, url, timeoutMs) {
     return new Error(`Extension "${name}" script load timed out after ${timeoutMs}ms: ${url}`);
 }
 
-function toScriptPrepareTimeoutError(name, url, timeoutMs) {
-    return new Error(`Extension "${name}" script preprocessing timed out after ${timeoutMs}ms: ${url}`);
-}
-
 export function createExtensionAssetLoader({
     sanitizeSelector,
     getExtensionResourceUrl,
     isThirdPartyExtension,
-    resolveThirdPartyModuleBlobUrl,
-    resolveThirdPartyStylesheetBlobUrl,
+    resolveThirdPartyStylesheetUrl,
     scriptLoadTimeoutMs = 30000,
     styleLoadTimeoutMs = 15000,
 }) {
@@ -91,7 +86,7 @@ export function createExtensionAssetLoader({
         let styleUrl = getExtensionResourceUrl(name, manifest.css);
         if (isThirdPartyExtension(name)) {
             styleUrl = await withTimeout(
-                () => resolveThirdPartyStylesheetBlobUrl(styleUrl),
+                () => resolveThirdPartyStylesheetUrl(styleUrl),
                 styleLoadTimeoutMs,
                 () => toStylePrepareTimeoutError(name, styleUrl, styleLoadTimeoutMs),
             );
@@ -151,13 +146,6 @@ export function createExtensionAssetLoader({
         }
 
         let scriptUrl = getExtensionResourceUrl(name, manifest.js);
-        if (isThirdPartyExtension(name)) {
-            scriptUrl = await withTimeout(
-                () => resolveThirdPartyModuleBlobUrl(scriptUrl),
-                scriptLoadTimeoutMs,
-                () => toScriptPrepareTimeoutError(name, scriptUrl, scriptLoadTimeoutMs),
-            );
-        }
 
         await new Promise((resolve, reject) => {
             let settled = false;

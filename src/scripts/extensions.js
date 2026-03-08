@@ -11,7 +11,7 @@ import { addLocaleData, getCurrentLocale, t } from './i18n.js';
 import { debounce_timeout } from './constants.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { SimpleMutex } from './util/SimpleMutex.js';
-import { createThirdPartyBlobResolver } from './extensions/runtime/third-party-runtime.js';
+import { createThirdPartyStylesheetResolver } from './extensions/runtime/third-party-runtime.js';
 import { createExtensionAssetLoader } from './extensions/runtime/asset-loader.js';
 import { getExtensionResourceUrl, isThirdPartyExtension } from './extensions/runtime/resource-paths.js';
 import { waitForTauriMainReady } from './extensions/runtime/tauri-ready.js';
@@ -49,13 +49,12 @@ const activeExtensions = new Set();
  * @type {Set<string>}
  */
 const extensionLoadErrors = new Set();
-const thirdPartyBlobResolver = createThirdPartyBlobResolver();
+const thirdPartyStylesheetResolver = createThirdPartyStylesheetResolver();
 const extensionAssetLoader = createExtensionAssetLoader({
     sanitizeSelector,
     getExtensionResourceUrl,
     isThirdPartyExtension,
-    resolveThirdPartyModuleBlobUrl: thirdPartyBlobResolver.resolveModuleBlobUrl,
-    resolveThirdPartyStylesheetBlobUrl: thirdPartyBlobResolver.resolveStylesheetBlobUrl,
+    resolveThirdPartyStylesheetUrl: thirdPartyStylesheetResolver.resolveStylesheetUrl,
 });
 const addExtensionScript = extensionAssetLoader.addExtensionScript;
 const addExtensionStyle = extensionAssetLoader.addExtensionStyle;
@@ -125,7 +124,13 @@ export function saveMetadataDebounced() {
  * @deprecated Use renderExtensionTemplateAsync instead.
  */
 export function renderExtensionTemplate(extensionName, templateId, templateData = {}, sanitize = true, localize = true) {
-    return renderTemplate(`scripts/extensions/${extensionName}/${templateId}.html`, templateData, sanitize, localize, true);
+    return renderTemplate(
+        getExtensionResourceUrl(extensionName, `${templateId}.html`),
+        templateData,
+        sanitize,
+        localize,
+        true,
+    );
 }
 
 /**
@@ -137,7 +142,13 @@ export function renderExtensionTemplate(extensionName, templateId, templateData 
  * @returns {Promise<string>} Rendered HTML
  */
 export function renderExtensionTemplateAsync(extensionName, templateId, templateData = {}, sanitize = true, localize = true) {
-    return renderTemplateAsync(`scripts/extensions/${extensionName}/${templateId}.html`, templateData, sanitize, localize, true);
+    return renderTemplateAsync(
+        getExtensionResourceUrl(extensionName, `${templateId}.html`),
+        templateData,
+        sanitize,
+        localize,
+        true,
+    );
 }
 
 export const extension_settings = {
@@ -433,7 +444,7 @@ async function getManifests(names) {
 
     for (const name of names) {
         const promise = new Promise((resolve, reject) => {
-            fetch(`/scripts/extensions/${name}/manifest.json`).then(async response => {
+            fetch(getExtensionResourceUrl(name, 'manifest.json')).then(async response => {
                 if (response.ok) {
                     const json = await response.json();
                     obj[name] = json;

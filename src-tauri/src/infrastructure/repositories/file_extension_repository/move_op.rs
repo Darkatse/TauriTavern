@@ -25,7 +25,7 @@ pub(super) async fn move_extension(
         ));
     }
 
-    let extension_folder_name = repository.normalize_extension_name(extension_name)?;
+    let extension_folder_name = repository.extension_folder_name_from_identifier(extension_name)?;
     let (source_dir, source_scope) = resolve_move_dir(repository, source)?;
     let (destination_dir, destination_scope) = resolve_move_dir(repository, destination)?;
 

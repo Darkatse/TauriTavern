@@ -42,6 +42,7 @@ rand = "0.9"
 uuid = { version = "1.4", default-features = false, features = ["serde", "std", "v4"] }
 async-trait = "0.1"
 url = "2.4"
+percent-encoding = "2"
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 image = { version = "0.24", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
 png = "0.17"

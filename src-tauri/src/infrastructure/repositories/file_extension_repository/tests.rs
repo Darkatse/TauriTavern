@@ -4,6 +4,7 @@ use rand::random;
 use serde_json::json;
 use tokio::fs;
 
+use crate::domain::errors::DomainError;
 use crate::domain::repositories::extension_repository::ExtensionRepository;
 
 use super::FileExtensionRepository;
@@ -450,6 +451,25 @@ async fn delete_extension_removes_source_state_file() {
             .exists(),
         "source state file should be removed"
     );
+
+    fs::remove_dir_all(root).await.expect("cleanup temp root");
+}
+
+#[tokio::test]
+async fn delete_extension_rejects_nested_extension_identifier() {
+    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let repository = FileExtensionRepository::new(
+        user_extensions_dir,
+        global_extensions_dir,
+        source_store_root,
+    )
+    .expect("create extension repository");
+
+    let result = repository
+        .delete_extension("third-party/delete-ext/nested", false)
+        .await;
+
+    assert!(matches!(result, Err(DomainError::InvalidData(_))));
 
     fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
