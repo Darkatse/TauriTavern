@@ -8,6 +8,8 @@ import { installNativeShareBridge } from './share-target-bridge.js';
 import { installLanSyncPanel } from '../../scripts/tauri/sync/sync-panel.js';
 import { downloadBlobWithRuntime, isNativeMobileDownloadRuntime } from '../../scripts/file-export.js';
 import { showExportSuccessToast } from '../../scripts/download-feedback.js';
+import { installMobileOverlayCompatController } from './compat/mobile/mobile-overlay-compat-controller.js';
+import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compat.js';
 import {
     getMethod,
     getMethodHint,
@@ -25,6 +27,36 @@ const FRONTEND_BACKEND_ERROR_EVENT = 'tauritavern:backend-error';
 const BACKEND_ERROR_QUEUE_KEY = '__TAURITAVERN_BACKEND_ERROR_QUEUE__';
 const BACKEND_ERROR_READY_KEY = '__TAURITAVERN_BACKEND_ERROR_CONSUMER_READY__';
 const MAX_BACKEND_ERROR_QUEUE_SIZE = 50;
+
+function isMobileUserAgent() {
+    // NOTE: Intentionally self-contained UA check.
+    // This runs in the Tauri bootstrap composition root; importing a shared helper here risks
+    // pulling in higher-level app modules (and potential side effects / cycles) too early.
+    if (typeof navigator === 'undefined') {
+        return false;
+    }
+
+    const userAgent = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
+    if (/android|iphone|ipad|ipod/i.test(userAgent)) {
+        return true;
+    }
+
+    return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+}
+
+function installTauriMobileCompat() {
+    try {
+        installMobileRuntimeCompat();
+    } catch (error) {
+        console.error('Failed to install mobile runtime compat:', error);
+    }
+
+    try {
+        installMobileOverlayCompatController();
+    } catch (error) {
+        console.error('Failed to install mobile overlay compat controller:', error);
+    }
+}
 
 function getWindowOrigin(targetWindow) {
     try {
@@ -187,6 +219,10 @@ export function bootstrapTauriMain() {
         return;
     }
     bootstrapped = true;
+
+    if (isMobileUserAgent()) {
+        installTauriMobileCompat();
+    }
 
     installBackNavigationBridge();
     installNativeShareBridge();

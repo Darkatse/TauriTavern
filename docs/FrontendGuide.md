@@ -21,6 +21,7 @@
    - 注册前端路由（`router + routes/*`）
    - 安装请求拦截器（`fetch` 与 `jQuery.ajax`）
    - 安装同源窗口下载桥（移动端浏览器式导出 -> 原生落盘）
+   - 安装 Tauri mobile 兼容层（runtime polyfills + overlay safe-area，仅移动端）
    - 初始化 bridge 与目录信息
 
 ## 3. 目录结构（前端集成相关）
@@ -128,7 +129,9 @@ src/
 ### 7.2 模块分层
 
 - `src/scripts/extensions.js`：插件激活编排层（发现、排序、依赖/版本检查、触发加载）。
-- `src/scripts/browser-fixes.js`：前端运行时兼容层入口（移动端按需补齐缺失 JS API，避免插件在旧 WebView 初始化失败）。
+- `src/scripts/browser-fixes.js`：上游浏览器补丁（保持与 SillyTavern 同步）。
+- `src/tauri/main/compat/mobile/mobile-runtime-compat.js`：Tauri mobile 运行时 polyfills（补齐旧 WebView 缺失 JS API）。
+- `src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`：Tauri mobile overlay safe-area top 兜底（避免状态栏遮挡）。
 - `src/scripts/extensions/runtime/resource-paths.js`：扩展资源路径规范化与 third-party 判定。
 - `src/scripts/extensions/runtime/tauri-ready.js`：等待 `__TAURITAVERN_MAIN_READY__`，避免 bridge 未就绪时提前加载。
 - `src/scripts/extensions/runtime/third-party-runtime.js`：第三方扩展样式兼容层（仅处理 legacy WebView 的 `@layer` 降级与 `url()` 绝对化；必要时返回 Blob URL，否则返回原始 URL）。
@@ -178,9 +181,9 @@ src/
 
 #### 7.7.1 JS 运行时兼容（Android 旧 WebView）
 
-- 实现位置：`src/scripts/browser-fixes.js`。
-- 入口：`applyBrowserFixes()` 中优先执行 `applyMobileRuntimeCompatibility()`。
-- 启用条件：仅在 `isMobile() === true` 且检测到缺失 API 时启用，且只执行一次。
+- 实现位置：`src/tauri/main/compat/mobile/mobile-runtime-compat.js`。
+- 入口：`src/tauri/main/bootstrap.js` 中安装（仅 Tauri mobile）。
+- 行为：仅补齐缺失 API，且只执行一次。
 - 当前按需补齐：
   - `Array.prototype.at`
   - `String.prototype.at`
@@ -209,29 +212,29 @@ src/
 
 该策略用于修复移动端插件面板（如 `TH-custom-tailwind`）样式大面积失效导致的布局错乱。
 
-#### 7.7.3 动态 `style` safe-area 修正（移动端）
+#### 7.7.3 浮层 safe-area 修正（移动端）
 
-- 实现位置：`src/scripts/browser-fixes.js`。
-- 入口：`applyBrowserFixes()` 中执行 `applyMobileDynamicStyleSafeAreaPatch()`。
-- 触发条件：仅移动端启用；仅处理运行时新增的 `<style>` 节点。
+- 实现位置：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`。
+- 入口：`src/tauri/main/bootstrap.js` 中安装（仅 Tauri mobile）。
+- 触发条件：仅处理第三方浮层节点（`position: fixed` 且顶边贴近 0）。
 - 处理策略：
-  - 监听运行时新增 `<style>` 并修正固定定位规则中的 `top`；
-  - 监听运行时新增节点与 `class/style` 变更，对第三方浮层候选元素的 `position: fixed` 顶边做 safe-area 兜底；
-  - 将未包含 safe-area 的 `top: <value>` 统一改写为 `top: max(var(--tt-safe-area-top), <value>)`；
+  - 观察 `document.body` 直接子节点新增/移除；
+  - 对命中元素设置 `top: max(var(--tt-safe-area-top), <原top>) !important`；
   - 明确排除 `body/#sheld/#chat` 等应用核心容器，避免影响主界面布局。
+- Android 变量语义：沉浸模式下 `--tt-safe-area-top` 仍保留 `displayCutout`（刘海/打孔）inset；临时显示 system bars 时该值会随可见 insets 变大。
 
 该策略用于修复 JS-Slash-Runner 等脚本在运行时注入固定定位弹窗样式时，关闭按钮落入状态栏导致不可点击的问题。
 
 #### 7.7.4 调试建议
 
 - 若看到 `*.at is not a function`：
-  - 检查 `applyBrowserFixes()` 是否在应用初始化阶段已执行。
+  - 检查是否为 Tauri mobile 会话，并确认 `window.__TAURITAVERN_MOBILE_RUNTIME_COMPAT__ === true`。
 - 若插件样式错乱但 CSS 已成功请求：
   - 优先检查是否命中 `@layer` 降级分支；
   - 关注 `resolveStylesheetUrl()` 是否返回预处理后的 Blob URL。
 - 若脚本弹窗贴顶到状态栏：
   - 检查脚本是否通过 `<style>` 或行内 `style` 设置了固定定位顶边；
-  - 检查是否命中 `applyMobileDynamicStyleSafeAreaPatch()`。
+  - 检查 `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__` 是否已安装。
 
 ## 8. 兼容层策略
 

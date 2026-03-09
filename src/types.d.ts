@@ -13,4 +13,11 @@ interface Window {
     __TAURI__?: any;
     __TAURI_INTERNALS__?: any;
     __TAURI_RUNNING__?: boolean;
+
+    __TAURITAVERN_MAIN_READY__?: Promise<void>;
+    __TAURITAVERN_MOBILE_RUNTIME_COMPAT__?: boolean;
+    __TAURITAVERN_MOBILE_OVERLAY_COMPAT__?: {
+        dispose: () => void;
+        revalidate: () => void;
+    };
 }

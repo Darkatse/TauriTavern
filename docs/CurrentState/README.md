@@ -22,3 +22,7 @@
 1. `docs/CurrentState/ThirdPartyExtensions.md`
    - 第三方前端扩展兼容的当前状态
    - 包含前端加载链路、后端资源端点、目录语义与开发约束
+
+2. `docs/CurrentState/MobileStyleAdaptation.md`
+   - 移动端样式适配现状（edge-to-edge / safe-area / 沉浸模式 / 第三方浮层兜底）
+   - 包含 Android 原生注入链路、CSS 变量契约、前端消费与回归要点

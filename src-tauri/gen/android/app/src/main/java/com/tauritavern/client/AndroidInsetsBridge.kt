@@ -136,8 +136,17 @@ class AndroidInsetsBridge(
   }
 
   private fun updateSystemBarInsets(insets: WindowInsetsCompat) {
+    val cutoutInsets = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+    val systemBarsInsets = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+
     if (immersiveFullscreenEnabled) {
-      systemBarInsets = Insets.NONE
+      systemBarInsets =
+        Insets.of(
+          maxOf(cutoutInsets.left, systemBarsInsets.left),
+          maxOf(cutoutInsets.top, systemBarsInsets.top),
+          maxOf(cutoutInsets.right, systemBarsInsets.right),
+          maxOf(cutoutInsets.bottom, systemBarsInsets.bottom),
+        )
       return
     }
 
