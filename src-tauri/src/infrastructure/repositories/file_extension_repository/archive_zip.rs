@@ -6,7 +6,7 @@ use tokio::fs as tokio_fs;
 use uuid::Uuid;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::extension::ExtensionManifest;
+use crate::domain::models::extension::ExtensionManifestMetadata;
 use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::zipkit;
@@ -124,12 +124,15 @@ impl FileExtensionRepository {
         Ok(())
     }
 
-    pub(super) async fn required_manifest(
+    pub(super) async fn required_manifest_metadata(
         &self,
         extension_path: &Path,
-    ) -> Result<ExtensionManifest, DomainError> {
-        match <FileExtensionRepository as ExtensionRepository>::get_manifest(self, extension_path)
-            .await?
+    ) -> Result<ExtensionManifestMetadata, DomainError> {
+        match <FileExtensionRepository as ExtensionRepository>::get_manifest_metadata(
+            self,
+            extension_path,
+        )
+        .await?
         {
             Some(manifest) => Ok(manifest),
             None => Err(DomainError::InvalidData(

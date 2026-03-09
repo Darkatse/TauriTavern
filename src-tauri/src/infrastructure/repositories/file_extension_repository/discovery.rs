@@ -106,7 +106,7 @@ async fn discover_scoped_extensions(
             }
         };
 
-        let manifest = repository.read_manifest(&path).await?;
+        let manifest = repository.read_manifest_metadata(&path).await?;
 
         extensions.push(Extension {
             name: extension_name,

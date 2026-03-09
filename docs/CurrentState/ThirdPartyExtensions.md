@@ -23,6 +23,11 @@
 4. `ExtensionService -> FileExtensionRepository::discover_extensions()`
 5. 返回扩展列表后，前端继续读取 manifest、排序并激活扩展
 
+补充约束：
+
+- Rust 侧扩展仓储当前只读取 manifest 摘要元数据（如 `display_name` / `version` / `author` / `description` / `loading_order`）。
+- `js` / `css` / `i18n` 等浏览器运行时字段不再由后端建模解释，而是由前端从原始 `manifest.json` 直接消费。
+
 扩展命名约定：
 
 - 系统扩展：`regex`、`quick-reply` 等
@@ -40,6 +45,7 @@
 - JS 入口由 `asset-loader.js` 直接作为 `<script type="module" src="...">` 注入
 - CSS 默认直接 `<link rel="stylesheet" href="...">` 加载
 - 只有旧 WebView 不支持 CSS `@layer` 时，`third-party-runtime.js` 才会预取 CSS、展平 `@layer`、绝对化 `url()` / `@import`，再回落到 Blob URL
+- `js` / `css` 字段显式接受 `string` 或单元素 `string[]`；不为多元素数组建立新的加载顺序语义
 
 额外兼容层：
 

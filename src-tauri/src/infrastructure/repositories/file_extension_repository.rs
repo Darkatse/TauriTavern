@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::extension::{
-    Extension, ExtensionInstallResult, ExtensionManifest, ExtensionUpdateResult, ExtensionVersion,
+    Extension, ExtensionInstallResult, ExtensionManifestMetadata, ExtensionUpdateResult,
+    ExtensionVersion,
 };
 use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::infrastructure::http_client::build_http_client;
@@ -110,16 +111,16 @@ impl FileExtensionRepository {
         self.extension_base_dir(global).join(extension_folder_name)
     }
 
-    async fn read_manifest(
+    async fn read_manifest_metadata(
         &self,
         extension_path: &Path,
-    ) -> Result<Option<ExtensionManifest>, DomainError> {
+    ) -> Result<Option<ExtensionManifestMetadata>, DomainError> {
         let manifest_path = extension_path.join("manifest.json");
         if !manifest_path.exists() {
             return Ok(None);
         }
 
-        let manifest: ExtensionManifest = read_json_file(&manifest_path).await?;
+        let manifest: ExtensionManifestMetadata = read_json_file(&manifest_path).await?;
         Ok(Some(manifest))
     }
 
@@ -141,13 +142,13 @@ impl FileExtensionRepository {
         commit: &str,
         base_dir: &Path,
         temp_prefix: &str,
-    ) -> Result<(PathBuf, ExtensionManifest), DomainError> {
+    ) -> Result<(PathBuf, ExtensionManifestMetadata), DomainError> {
         let staging_dir = self.create_temp_directory(base_dir, temp_prefix).await?;
 
-        let result: Result<ExtensionManifest, DomainError> = async {
+        let result: Result<ExtensionManifestMetadata, DomainError> = async {
             let archive_bytes = provider.download_archive_zip(repo_path, commit).await?;
             self.extract_zip_bytes(archive_bytes.as_ref(), &staging_dir)?;
-            self.required_manifest(&staging_dir).await
+            self.required_manifest_metadata(&staging_dir).await
         }
         .await;
 
@@ -167,11 +168,11 @@ impl ExtensionRepository for FileExtensionRepository {
         discovery::discover_extensions(self).await
     }
 
-    async fn get_manifest(
+    async fn get_manifest_metadata(
         &self,
         extension_path: &Path,
-    ) -> Result<Option<ExtensionManifest>, DomainError> {
-        self.read_manifest(extension_path).await
+    ) -> Result<Option<ExtensionManifestMetadata>, DomainError> {
+        self.read_manifest_metadata(extension_path).await
     }
 
     async fn install_extension(

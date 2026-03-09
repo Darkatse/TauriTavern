@@ -518,3 +518,55 @@ async fn discover_extensions_keeps_extensions_without_source_state_as_unmanaged(
 
     fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
+
+#[tokio::test]
+async fn discover_extensions_accepts_single_item_asset_arrays_in_manifest() {
+    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let extension_dir = user_extensions_dir.join("array-assets-ext");
+    fs::create_dir_all(&extension_dir)
+        .await
+        .expect("create extension dir");
+    fs::write(
+        extension_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&json!({
+            "display_name": "Array Assets Extension",
+            "version": "1.2.3",
+            "author": "Faxrd9",
+            "description": "Uses single-item asset arrays",
+            "loading_order": 10,
+            "js": ["index.js"],
+            "css": ["style.css"],
+            "entryPoint": "index.js"
+        }))
+        .expect("serialize manifest"),
+    )
+    .await
+    .expect("write manifest");
+
+    let repository = FileExtensionRepository::new(
+        user_extensions_dir,
+        global_extensions_dir,
+        source_store_root,
+    )
+    .expect("create extension repository");
+
+    let extensions = repository
+        .discover_extensions()
+        .await
+        .expect("discover extensions");
+
+    let extension = extensions
+        .into_iter()
+        .find(|extension| extension.name == "third-party/array-assets-ext")
+        .expect("array-assets extension should be discoverable");
+
+    assert!(!extension.managed, "extension should remain unmanaged");
+    let manifest = extension.manifest.expect("manifest summary should exist");
+    assert_eq!(manifest.display_name, "Array Assets Extension");
+    assert_eq!(manifest.version, "1.2.3");
+    assert_eq!(manifest.author, "Faxrd9");
+    assert_eq!(manifest.description, "Uses single-item asset arrays");
+    assert_eq!(manifest.loading_order, 10);
+
+    fs::remove_dir_all(root).await.expect("cleanup temp root");
+}

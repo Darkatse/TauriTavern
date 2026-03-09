@@ -12,10 +12,10 @@ pub trait ExtensionRepository: Send + Sync {
     async fn discover_extensions(&self) -> Result<Vec<Extension>, DomainError>;
 
     /// Get extension manifest
-    async fn get_manifest(
+    async fn get_manifest_metadata(
         &self,
         extension_path: &Path,
-    ) -> Result<Option<crate::domain::models::extension::ExtensionManifest>, DomainError>;
+    ) -> Result<Option<crate::domain::models::extension::ExtensionManifestMetadata>, DomainError>;
 
     /// Install an extension from a URL
     async fn install_extension(
