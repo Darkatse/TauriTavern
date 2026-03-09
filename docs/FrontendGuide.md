@@ -131,7 +131,7 @@ src/
 - `src/scripts/extensions.js`：插件激活编排层（发现、排序、依赖/版本检查、触发加载）。
 - `src/scripts/browser-fixes.js`：上游浏览器补丁（保持与 SillyTavern 同步）。
 - `src/tauri/main/compat/mobile/mobile-runtime-compat.js`：Tauri mobile 运行时 polyfills（补齐旧 WebView 缺失 JS API）。
-- `src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`：Tauri mobile overlay safe-area top 兜底（避免状态栏遮挡）。
+- `src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`：Tauri mobile overlay safe-area top 兜底（遵循当前顶部 safe-area 布局策略）。
 - `src/scripts/extensions/runtime/resource-paths.js`：扩展资源路径规范化与 third-party 判定。
 - `src/scripts/extensions/runtime/tauri-ready.js`：等待 `__TAURITAVERN_MAIN_READY__`，避免 bridge 未就绪时提前加载。
 - `src/scripts/extensions/runtime/third-party-runtime.js`：第三方扩展样式兼容层（仅处理 legacy WebView 的 `@layer` 降级与 `url()` 绝对化；必要时返回 Blob URL，否则返回原始 URL）。
@@ -221,7 +221,7 @@ src/
   - 观察 `document.body` 直接子节点新增/移除；
   - 对命中元素设置 `top: max(var(--tt-safe-area-top), <原top>) !important`；
   - 明确排除 `body/#sheld/#chat` 等应用核心容器，避免影响主界面布局。
-- Android 变量语义：沉浸模式下 `--tt-safe-area-top` 仍保留 `displayCutout`（刘海/打孔）inset；临时显示 system bars 时该值会随可见 insets 变大。
+- Android 变量语义：`--tt-safe-area-top` 表示当前布局应避开的有效 inset；非沉浸模式下反映顶部 safe area，沉浸模式下回落为 `0`，因此 overlay patch 不再额外避开顶部状态栏/刘海区域。
 
 该策略用于修复 JS-Slash-Runner 等脚本在运行时注入固定定位弹窗样式时，关闭按钮落入状态栏导致不可点击的问题。
 
