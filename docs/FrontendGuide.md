@@ -265,3 +265,18 @@ src/
 - 查看 DevTools 中请求是否命中本地注入路径。
 - 查看控制台 `invoke` 报错信息与路由返回状态码。
 - 检查对应 `routes/*` 是否遗漏请求字段映射。
+
+### 10.1 轻量性能仪表（Perf HUD）
+
+用于快速定位移动端/低端机型的主线程卡顿、DOM 膨胀、以及 invoke 热点。
+
+- 默认关闭：未启用时不会加载 HUD 模块，也不会包裹 `context.safeInvoke`（prod 默认近似零成本）。
+- 启用（需 reload 才能抓启动打点）：
+  - 控制台：`localStorage.setItem('tt:perf','1'); location.reload();`
+  - 或 URL：`?ttPerf=1`
+- 启用后等待就绪：`await window.__TAURITAVERN_PERF_READY__`
+- 常用导出命令：
+  - `window.__TAURITAVERN_PERF__.downloadReport()` 下载 JSON（便于交给 AI 分析）
+  - `window.__TAURITAVERN_PERF__.exportJson({ includeResources: true })` 直接拿到 JSON 字符串
+  - `await window.__TAURITAVERN_PERF__.copyReport()` 复制到剪贴板（若可用）
+- HUD 操作：拖动标题栏移动（位置持久化），点击标题栏展开/收起；桌面端可用 `Ctrl+Alt+P` 切换开关。

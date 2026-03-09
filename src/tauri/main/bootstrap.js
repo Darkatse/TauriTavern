@@ -28,6 +28,52 @@ const BACKEND_ERROR_QUEUE_KEY = '__TAURITAVERN_BACKEND_ERROR_QUEUE__';
 const BACKEND_ERROR_READY_KEY = '__TAURITAVERN_BACKEND_ERROR_CONSUMER_READY__';
 const MAX_BACKEND_ERROR_QUEUE_SIZE = 50;
 
+function isPerfHudEnabled() {
+    try {
+        const flag = globalThis.__TAURITAVERN_PERF_ENABLED__;
+        if (typeof flag === 'boolean') {
+            return flag;
+        }
+    } catch {
+        // Ignore global access failures.
+    }
+
+    try {
+        if (globalThis.localStorage?.getItem('tt:perf') === '1') {
+            return true;
+        }
+    } catch {
+        // Ignore storage access failures.
+    }
+
+    try {
+        const search = String(globalThis.location?.search || '');
+        if (!search) {
+            return false;
+        }
+        const params = new URLSearchParams(search);
+        return params.get('ttPerf') === '1' || params.get('tt_perf') === '1';
+    } catch {
+        return false;
+    }
+}
+
+function safePerfMark(name, detail) {
+    try {
+        globalThis.performance?.mark?.(name, detail ? { detail } : undefined);
+    } catch {
+        // Ignore unsupported mark calls.
+    }
+}
+
+function safePerfMeasure(name, startMark, endMark) {
+    try {
+        globalThis.performance?.measure?.(name, startMark, endMark);
+    } catch {
+        // Ignore unsupported measure calls.
+    }
+}
+
 function isMobileUserAgent() {
     // NOTE: Intentionally self-contained UA check.
     // This runs in the Tauri bootstrap composition root; importing a shared helper here risks
@@ -220,6 +266,12 @@ export function bootstrapTauriMain() {
     }
     bootstrapped = true;
 
+    const perfEnabled = isPerfHudEnabled();
+    let perfReadyPromise = null;
+    if (perfEnabled) {
+        safePerfMark('tt:tauri:bootstrap:start');
+    }
+
     if (isMobileUserAgent()) {
         installTauriMobileCompat();
     }
@@ -229,6 +281,15 @@ export function bootstrapTauriMain() {
     installLanSyncPanel();
 
     const context = createTauriMainContext({ invoke, convertFileSrc });
+    if (perfEnabled) {
+        perfReadyPromise = import('./perf/perf-hud.js')
+            .then(({ installPerfHud }) => installPerfHud({ context }))
+            .catch((error) => {
+                console.warn('TauriTavern: Failed to load perf HUD:', error);
+                return null;
+            });
+        window.__TAURITAVERN_PERF_READY__ = perfReadyPromise;
+    }
     const router = createRouteRegistry();
     registerRoutes(router, context, { jsonResponse, textResponse });
 
@@ -274,16 +335,51 @@ export function bootstrapTauriMain() {
     downloadBridge.patchWindow();
     installSameOriginWindowPatches(interceptors, downloadBridge);
 
-    const readyPromise = initializeTauriIntegration(context, interceptors, downloadBridge).catch((error) => {
+    const readyPromise = initializeTauriIntegration(
+        context,
+        interceptors,
+        downloadBridge,
+        perfEnabled,
+        perfReadyPromise,
+    ).catch((error) => {
         console.error('Failed to initialize Tauri integration:', error);
     });
     window.__TAURITAVERN_MAIN_READY__ = readyPromise;
+
+    if (perfEnabled) {
+        readyPromise
+            .then(() => {
+                safePerfMark('tt:tauri:ready');
+                safePerfMeasure('tt:tauri:ready', 'tt:tauri:bootstrap:start', 'tt:tauri:ready');
+            })
+            .catch(() => {});
+    }
 }
 
-async function initializeTauriIntegration(context, interceptors, downloadBridge) {
+async function initializeTauriIntegration(context, interceptors, downloadBridge, perfEnabled, perfReadyPromise) {
+    if (perfEnabled && perfReadyPromise) {
+        try {
+            await perfReadyPromise;
+        } catch {
+            // Ignore perf HUD load failures.
+        }
+    }
+
+    if (perfEnabled) {
+        safePerfMark('tt:tauri:init:start');
+    }
     await initializeBridge();
+    if (perfEnabled) {
+        safePerfMark('tt:tauri:init:bridge-ready');
+    }
     await installBackendErrorBridge();
+    if (perfEnabled) {
+        safePerfMark('tt:tauri:init:error-bridge-ready');
+    }
     await context.initialize();
+    if (perfEnabled) {
+        safePerfMark('tt:tauri:init:context-ready');
+    }
 
     // Re-apply runtime patches in case third-party code recreated fetch/jQuery or download bindings after bootstrap.
     interceptors.patchFetch();
