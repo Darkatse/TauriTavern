@@ -55,6 +55,9 @@
     "resources": {
       "../default/": "default/",
       "../src/scripts/templates/": "frontend-templates/"
+    },
+    "iOS": {
+      "developmentTeam": "Y82Q3U47CB"
     }
   }
 }
