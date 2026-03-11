@@ -224,6 +224,7 @@ function createPerfController(options = {}) {
         invokeStatsByCommand: new Map(),
         recentInvokes: [],
         contextRef: null,
+        invokeFnKey: null,
         safeInvokeBase: null,
         safeInvokeWrapped: null,
         keyHandlerInstalled: false,
@@ -1018,15 +1019,23 @@ function createPerfController(options = {}) {
 
     function ensureSafeInvokeWrapperInstalled(context) {
         const target = context || state.contextRef;
-        if (!target || typeof target.safeInvoke !== 'function') {
+        if (!target) {
             return;
         }
 
-        if (target.safeInvoke === state.safeInvokeWrapped) {
+        const key = typeof target.invokeTransport === 'function'
+            ? 'invokeTransport'
+            : 'safeInvoke';
+
+        if (typeof target[key] !== 'function') {
             return;
         }
 
-        const current = target.safeInvoke;
+        if (key === state.invokeFnKey && target[key] === state.safeInvokeWrapped) {
+            return;
+        }
+
+        const current = target[key];
         const base = (current && current.__ttPerfWrapped && typeof current.__ttPerfBase === 'function')
             ? current.__ttPerfBase
             : current;
@@ -1053,7 +1062,8 @@ function createPerfController(options = {}) {
         wrapped.__ttPerfWrapped = true;
         wrapped.__ttPerfBase = base;
 
-        target.safeInvoke = wrapped;
+        target[key] = wrapped;
+        state.invokeFnKey = key;
         state.safeInvokeBase = base;
         state.safeInvokeWrapped = wrapped;
     }
@@ -1063,18 +1073,21 @@ function createPerfController(options = {}) {
         if (!target) {
             state.safeInvokeBase = null;
             state.safeInvokeWrapped = null;
+            state.invokeFnKey = null;
             return;
         }
 
-        if (state.safeInvokeWrapped && target.safeInvoke === state.safeInvokeWrapped) {
+        const key = state.invokeFnKey;
+        if (key && state.safeInvokeWrapped && target[key] === state.safeInvokeWrapped) {
             const base = state.safeInvokeBase;
             if (typeof base === 'function') {
-                target.safeInvoke = base;
+                target[key] = base;
             }
         }
 
         state.safeInvokeBase = null;
         state.safeInvokeWrapped = null;
+        state.invokeFnKey = null;
     }
 
     function enable() {

@@ -165,6 +165,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_completion_commands::cancel_chat_completion_generation,
         // Tokenizer commands
         super::tokenizer_commands::count_openai_tokens,
+        super::tokenizer_commands::count_openai_tokens_batch,
         super::tokenizer_commands::encode_openai_tokens,
         super::tokenizer_commands::decode_openai_tokens,
         super::tokenizer_commands::build_openai_logit_bias,

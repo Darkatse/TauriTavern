@@ -5,7 +5,8 @@ use std::sync::Arc;
 use crate::application::dto::tokenization_dto::{
     LogitBiasEntryDto, OpenAiDecodeRequestDto, OpenAiDecodeResponseDto, OpenAiEncodeRequestDto,
     OpenAiEncodeResponseDto, OpenAiLogitBiasRequestDto, OpenAiLogitBiasResponseDto,
-    OpenAiTokenCountRequestDto, OpenAiTokenCountResponseDto,
+    OpenAiTokenCountBatchRequestDto, OpenAiTokenCountBatchResponseDto, OpenAiTokenCountRequestDto,
+    OpenAiTokenCountResponseDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
@@ -36,6 +37,39 @@ impl TokenizationService {
             .count_messages(model.as_ref(), &dto.messages)?;
 
         Ok(OpenAiTokenCountResponseDto { token_count })
+    }
+
+    pub async fn count_openai_tokens_batch(
+        &self,
+        dto: OpenAiTokenCountBatchRequestDto,
+    ) -> Result<OpenAiTokenCountBatchResponseDto, ApplicationError> {
+        let model = self.normalize_model(&dto.model);
+        self.tokenizer_repository
+            .ensure_model_ready(model.as_ref())
+            .await?;
+
+        let tokenizer_repository = Arc::clone(&self.tokenizer_repository);
+        let model = model.into_owned();
+        let requests = dto.requests;
+
+        let token_counts = tokio::task::spawn_blocking(move || {
+            let mut token_counts = Vec::with_capacity(requests.len());
+
+            for request in requests {
+                let token_count = tokenizer_repository
+                    .count_messages(&model, &request.messages)
+                    .map_err(ApplicationError::from)?;
+                token_counts.push(token_count);
+            }
+
+            Ok::<_, ApplicationError>(token_counts)
+        })
+        .await
+        .map_err(|error| {
+            ApplicationError::InternalError(format!("Token count batch task failed: {error}"))
+        })??;
+
+        Ok(OpenAiTokenCountBatchResponseDto { token_counts })
     }
 
     pub async fn encode_openai_tokens(

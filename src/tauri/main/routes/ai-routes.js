@@ -1,3 +1,5 @@
+import { createTokenCountBroker, estimateTokenCount } from '../brokers/token-count-broker.js';
+
 function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
@@ -529,13 +531,11 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
     const encoder = new TextEncoder();
     const androidSupportsLiveUpdates = getAndroidGenerationBridgeResult('supportsLiveUpdates') === true;
     const androidCanReportTokens = androidSupportsLiveUpdates && hasAndroidGenerationBridgeMethod('onGenerationProgress');
-    const androidModel = getCompletionModel(payload);
     const androidOutputChunks = [];
     let androidOutputChars = 0;
     let androidLastTokenCount = 0;
     let androidLastTokenCharCount = 0;
     let androidLastTokenReportAt = 0;
-    let androidTokenCountInFlight = false;
 
     const tauriEvent = window.__TAURI__?.event;
     if (typeof tauriEvent?.listen !== 'function') {
@@ -682,49 +682,22 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
 
                         const now = Date.now();
                         const shouldCompute = shouldNotifyCompletion()
-                            && !androidTokenCountInFlight
                             && now - androidLastTokenReportAt >= ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS
                             && androidOutputChars - androidLastTokenCharCount >= ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA;
 
                         if (shouldCompute) {
                             androidLastTokenReportAt = now;
-                            androidTokenCountInFlight = true;
                             const charCountAtRequest = androidOutputChars;
                             const textSnapshot = androidOutputChunks.join('');
                             androidOutputChunks.length = 0;
                             androidOutputChunks.push(textSnapshot);
 
-                            void context.safeInvoke('count_openai_tokens', {
-                                dto: {
-                                    model: androidModel,
-                                    messages: [textSnapshot],
-                                },
-                            })
-                                .then((result) => {
-                                    if (isClosed) {
-                                        return;
-                                    }
-
-                                    const count = Number(asObject(result).token_count || 0);
-                                    if (!Number.isFinite(count) || count < 0) {
-                                        return;
-                                    }
-
-                                    const normalized = Math.floor(count);
-                                    androidLastTokenCharCount = charCountAtRequest;
-                                    if (normalized === androidLastTokenCount) {
-                                        return;
-                                    }
-
-                                    androidLastTokenCount = normalized;
-                                    callAndroidGenerationBridge('onGenerationProgress', normalized);
-                                })
-                                .catch((error) => {
-                                    console.debug('Failed to count stream tokens:', error);
-                                })
-                                .finally(() => {
-                                    androidTokenCountInFlight = false;
-                                });
+                            const normalized = estimateTokenCount(textSnapshot);
+                            androidLastTokenCharCount = charCountAtRequest;
+                            if (!isClosed && normalized !== androidLastTokenCount) {
+                                androidLastTokenCount = normalized;
+                                callAndroidGenerationBridge('onGenerationProgress', normalized);
+                            }
                         }
                     }
                 } catch {
@@ -817,6 +790,8 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
 }
 
 export function registerAiRoutes(router, context, { jsonResponse }) {
+    const tokenCountBroker = createTokenCountBroker({ context });
+
     router.post('/api/backends/chat-completions/status', async ({ body }) => {
         const payload = asObject(body);
         const dto = {
@@ -908,16 +883,12 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/tokenizers/openai/count', async ({ body, url }) => {
         const model = String(url?.searchParams?.get('model') || '');
-        const messages = Array.isArray(body) ? body : [];
-        const dto = { model, messages };
-
-        try {
-            const result = await context.safeInvoke('count_openai_tokens', { dto });
-            return jsonResponse(result || { token_count: 0 });
-        } catch (error) {
-            console.error('OpenAI token count failed:', error);
-            return jsonResponse({ token_count: 0 });
+        if (!Array.isArray(body)) {
+            throw new Error('OpenAI token count body must be an array');
         }
+
+        const token_count = await tokenCountBroker.count({ model, messages: body });
+        return jsonResponse({ token_count });
     });
 
     router.post('/api/tokenizers/openai/encode', async ({ body, url }) => {

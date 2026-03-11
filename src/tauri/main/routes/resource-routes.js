@@ -112,9 +112,18 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
         const type = String(url.searchParams.get('type') || '').trim().toLowerCase();
         const file = decodeRoutePath(url.searchParams.get('file') || '').trim();
         const animated = String(url.searchParams.get('animated') || '').toLowerCase() === 'true';
+        const cacheBust = String(url.searchParams.get('t') || '').trim();
 
         if (!type || !file || !['bg', 'avatar', 'persona'].includes(type)) {
             return textResponse('Bad Request', 400);
+        }
+
+        if (cacheBust) {
+            context.invalidateInvoke('read_thumbnail_asset', {
+                thumbnail_type: type,
+                file,
+                animated,
+            });
         }
 
         try {
@@ -207,6 +216,7 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
 
     router.post('/api/backgrounds/delete', async ({ body }) => {
         await context.safeInvoke('delete_background', { dto: { bg: body?.bg || '' } });
+        context.invalidateInvokeAll('read_thumbnail_asset');
         return jsonResponse({ ok: true });
     });
 
@@ -218,6 +228,7 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             },
         });
 
+        context.invalidateInvokeAll('read_thumbnail_asset');
         return jsonResponse({ ok: true });
     });
 
@@ -239,6 +250,7 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
 
         const data = Array.from(new Uint8Array(await file.arrayBuffer()));
         const uploaded = await context.safeInvoke('upload_background', { filename, data });
+        context.invalidateInvokeAll('read_thumbnail_asset');
 
         return textResponse(String(uploaded || filename));
     });

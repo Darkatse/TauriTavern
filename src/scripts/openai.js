@@ -888,54 +888,55 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
 
     // Insert chat messages as long as there is budget available
     const chatPool = [...messages].reverse();
-    for (let index = 0; index < chatPool.length; index++) {
+    const tokenPrefetchChunkSize = 12;
+    for (let index = 0; index < chatPool.length;) {
         const chatPrompt = chatPool[index];
 
-        // We do not want to mutate the prompt
-        const prompt = new Prompt(chatPrompt);
-        prompt.identifier = `chatHistory-${messages.length - index}`;
-        const chatMessage = await Message.fromPromptAsync(promptManager.preparePrompt(prompt));
+        if (canUseTools && Array.isArray(chatPrompt.invocations)) {
+            // We do not want to mutate the prompt
+            const prompt = new Prompt(chatPrompt);
+            prompt.identifier = `chatHistory-${messages.length - index}`;
+            const chatMessage = await Message.fromPromptAsync(promptManager.preparePrompt(prompt));
 
-        if (promptManager.serviceSettings.names_behavior === character_names_behavior.COMPLETION && prompt.name) {
-            const messageName = promptManager.isValidName(prompt.name) ? prompt.name : promptManager.sanitizeName(prompt.name);
-            await chatMessage.setName(messageName);
-        }
+            if (promptManager.serviceSettings.names_behavior === character_names_behavior.COMPLETION && prompt.name) {
+                const messageName = promptManager.isValidName(prompt.name) ? prompt.name : promptManager.sanitizeName(prompt.name);
+                await chatMessage.setName(messageName);
+            }
 
-        /**
-         * Inline a media attachment into the chat message.
-         * @param {MediaAttachment} media - The media attachment to inline.
-         */
-        async function inlineMediaAttachment(media) {
-            if (!media || !media.url) {
-                return;
+            /**
+             * Inline a media attachment into the chat message.
+             * @param {MediaAttachment} media - The media attachment to inline.
+             */
+            async function inlineMediaAttachment(media) {
+                if (!media || !media.url) {
+                    return;
+                }
+                if (!media.type) {
+                    media.type = MEDIA_TYPE.IMAGE;
+                }
+                if (imageInlining && media.type === MEDIA_TYPE.IMAGE) {
+                    await chatMessage.addImage(media.url);
+                }
+                if (videoInlining && media.type === MEDIA_TYPE.VIDEO) {
+                    await chatMessage.addVideo(media.url);
+                }
+                if (audioInlining && media.type === MEDIA_TYPE.AUDIO) {
+                    await chatMessage.addAudio(media.url);
+                }
             }
-            if (!media.type) {
-                media.type = MEDIA_TYPE.IMAGE;
-            }
-            if (imageInlining && media.type === MEDIA_TYPE.IMAGE) {
-                await chatMessage.addImage(media.url);
-            }
-            if (videoInlining && media.type === MEDIA_TYPE.VIDEO) {
-                await chatMessage.addVideo(media.url);
-            }
-            if (audioInlining && media.type === MEDIA_TYPE.AUDIO) {
-                await chatMessage.addAudio(media.url);
-            }
-        }
 
-        if (Array.isArray(chatPrompt.media) && chatPrompt.media.length) {
-            if (chatPrompt.mediaDisplay === MEDIA_DISPLAY.LIST) {
-                for (const media of chatPrompt.media) {
+            if (Array.isArray(chatPrompt.media) && chatPrompt.media.length) {
+                if (chatPrompt.mediaDisplay === MEDIA_DISPLAY.LIST) {
+                    for (const media of chatPrompt.media) {
+                        await inlineMediaAttachment(media);
+                    }
+                }
+                if (chatPrompt.mediaDisplay === MEDIA_DISPLAY.GALLERY) {
+                    const media = chatPrompt.media[chatPrompt.mediaIndex];
                     await inlineMediaAttachment(media);
                 }
             }
-            if (chatPrompt.mediaDisplay === MEDIA_DISPLAY.GALLERY) {
-                const media = chatPrompt.media[chatPrompt.mediaIndex];
-                await inlineMediaAttachment(media);
-            }
-        }
 
-        if (canUseTools && Array.isArray(chatPrompt.invocations)) {
             /** @type {import('./tool-calling.js').ToolInvocation[]} */
             const invocations = chatPrompt.invocations;
             const toolCallMessage = await Message.createAsync(chatMessage.role, undefined, 'toolCall-' + chatMessage.identifier);
@@ -950,16 +951,91 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                 break;
             }
 
+            index += 1;
             continue;
         }
 
-        if (includeSignature && chatPrompt.signature) {
-            chatMessage.signature = chatPrompt.signature;
+        const batch = [];
+        for (; index < chatPool.length && batch.length < tokenPrefetchChunkSize; index += 1) {
+            const candidate = chatPool[index];
+            if (canUseTools && Array.isArray(candidate.invocations)) {
+                break;
+            }
+
+            const prompt = new Prompt(candidate);
+            prompt.identifier = `chatHistory-${messages.length - index}`;
+            batch.push({ chatPrompt: candidate, prompt, preparedPrompt: promptManager.preparePrompt(prompt) });
         }
 
-        if (chatCompletion.canAfford(chatMessage)) {
-            chatCompletion.insertAtStart(chatMessage, 'chatHistory');
-        } else {
+        const batchMessages = await Promise.all(batch.map((item) => Message.fromPromptAsync(item.preparedPrompt)));
+
+        if (promptManager.serviceSettings.names_behavior === character_names_behavior.COMPLETION) {
+            const nameUpdates = [];
+            for (let batchIndex = 0; batchIndex < batch.length; batchIndex++) {
+                const prompt = batch[batchIndex].prompt;
+                if (!prompt.name) {
+                    continue;
+                }
+
+                const messageName = promptManager.isValidName(prompt.name) ? prompt.name : promptManager.sanitizeName(prompt.name);
+                nameUpdates.push(batchMessages[batchIndex].setName(messageName));
+            }
+
+            await Promise.all(nameUpdates);
+        }
+
+        let outOfBudget = false;
+        for (let batchIndex = 0; batchIndex < batch.length; batchIndex++) {
+            const { chatPrompt: promptSource, prompt } = batch[batchIndex];
+            const chatMessage = batchMessages[batchIndex];
+
+            /**
+             * Inline a media attachment into the chat message.
+             * @param {MediaAttachment} media - The media attachment to inline.
+             */
+            async function inlineMediaAttachment(media) {
+                if (!media || !media.url) {
+                    return;
+                }
+                if (!media.type) {
+                    media.type = MEDIA_TYPE.IMAGE;
+                }
+                if (imageInlining && media.type === MEDIA_TYPE.IMAGE) {
+                    await chatMessage.addImage(media.url);
+                }
+                if (videoInlining && media.type === MEDIA_TYPE.VIDEO) {
+                    await chatMessage.addVideo(media.url);
+                }
+                if (audioInlining && media.type === MEDIA_TYPE.AUDIO) {
+                    await chatMessage.addAudio(media.url);
+                }
+            }
+
+            if (Array.isArray(promptSource.media) && promptSource.media.length) {
+                if (promptSource.mediaDisplay === MEDIA_DISPLAY.LIST) {
+                    for (const media of promptSource.media) {
+                        await inlineMediaAttachment(media);
+                    }
+                }
+                if (promptSource.mediaDisplay === MEDIA_DISPLAY.GALLERY) {
+                    const media = promptSource.media[promptSource.mediaIndex];
+                    await inlineMediaAttachment(media);
+                }
+            }
+
+            if (includeSignature && promptSource.signature) {
+                chatMessage.signature = promptSource.signature;
+            }
+
+            if (chatCompletion.canAfford(chatMessage)) {
+                chatCompletion.insertAtStart(chatMessage, 'chatHistory');
+            } else {
+                outOfBudget = true;
+                break;
+            }
+        }
+
+        if (outOfBudget) {
             break;
         }
     }

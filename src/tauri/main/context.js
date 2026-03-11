@@ -1,3 +1,5 @@
+import { createInvokeBroker } from './brokers/invoke-broker.js';
+
 export function createTauriMainContext({ invoke, convertFileSrc }) {
     const UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
     const ANDROID_IMPORT_ARCHIVE_BRIDGE_NAME = 'TauriTavernAndroidImportArchiveBridge';
@@ -394,7 +396,58 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         return normalized;
     }
 
+    let invokeTransportRef = invokeTransport;
+
+    const invokeBroker = createInvokeBroker({
+        transport: (command, args) => invokeTransportRef(command, args),
+        policies: {
+            get_sillytavern_settings: {
+                kind: 'dedupe',
+                key: () => 'singleton',
+            },
+            read_thumbnail_asset: {
+                kind: 'dedupe',
+                maxConcurrent: 2,
+                cacheTtlMs: 30_000,
+                cacheLimit: THUMBNAIL_BLOB_CACHE_LIMIT,
+                key: (args) => {
+                    const type = String(args?.thumbnailType ?? args?.thumbnail_type ?? '').trim().toLowerCase();
+                    const file = String(args?.file ?? '').trim();
+                    const animated = Boolean(args?.animated);
+                    return `${type}|${animated ? 1 : 0}|${file}`;
+                },
+            },
+            save_user_settings: {
+                kind: 'writeBehind',
+                delayMs: 300,
+                maxConcurrent: 1,
+                key: () => 'singleton',
+                merge: (_prev, next) => next,
+            },
+        },
+    });
+
     async function safeInvoke(command, args = {}) {
+        return invokeBroker.invoke(command, args);
+    }
+
+    function invalidateInvoke(command, args = {}) {
+        invokeBroker.invalidate(command, args);
+    }
+
+    function invalidateInvokeAll(command) {
+        invokeBroker.invalidateAll(command);
+    }
+
+    function flushInvokes(command) {
+        return invokeBroker.flush(command);
+    }
+
+    function flushAllInvokes() {
+        return invokeBroker.flushAll();
+    }
+
+    async function invokeTransport(command, args = {}) {
         const invokeArgs = withTauriArgumentAliases(args);
 
         for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -406,9 +459,24 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
                     await sleep(200);
                     continue;
                 }
-                throw new Error(message);
+
+                const raised = new Error(message);
+                raised.cause = error;
+                throw raised;
             }
         }
+    }
+
+    function installInvokeBrokerFlushOnHide() {
+        const flush = () => flushAllInvokes();
+
+        window.addEventListener('pagehide', flush);
+        window.addEventListener('beforeunload', flush);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                void flush();
+            }
+        });
     }
 
     function withTauriArgumentAliases(args) {
@@ -416,11 +484,15 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             return args;
         }
 
-        const aliased = { ...args };
+        let aliased = null;
 
         for (const [key, value] of Object.entries(args)) {
             if (!key.includes('_')) {
                 continue;
+            }
+
+            if (!aliased) {
+                aliased = { ...args };
             }
 
             const camelCaseKey = key.replace(/_+([a-zA-Z0-9])/g, (_, char) => char.toUpperCase());
@@ -429,7 +501,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
             }
         }
 
-        return aliased;
+        return aliased || args;
     }
 
     function shouldRetryInvoke(message) {
@@ -1198,6 +1270,8 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
                         crop,
                     },
                 });
+
+                invalidateInvokeAll('read_thumbnail_asset');
             } finally {
                 await fileInfo.cleanup?.();
             }
@@ -1310,11 +1384,13 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         }
 
         try {
-            return await safeInvoke('upload_avatar', {
+            const uploaded = await safeInvoke('upload_avatar', {
                 file_path: fileInfo.filePath,
                 overwrite_name: overwriteName,
                 crop: crop ? JSON.stringify(crop) : null,
             });
+            invalidateInvokeAll('read_thumbnail_asset');
+            return uploaded;
         } finally {
             await fileInfo.cleanup?.();
         }
@@ -1724,10 +1800,22 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
     }
 
     installAssetPathHelpers();
+    installInvokeBrokerFlushOnHide();
 
     return {
         initialize,
         safeInvoke,
+        invalidateInvoke,
+        invalidateInvokeAll,
+        flushInvokes,
+        flushAllInvokes,
+        get invokeTransport() {
+            return invokeTransportRef;
+        },
+        set invokeTransport(next) {
+            invokeTransportRef = next;
+        },
+        invokeBroker,
         normalizeCharacter,
         normalizeExtensions,
         getAllCharacters,
