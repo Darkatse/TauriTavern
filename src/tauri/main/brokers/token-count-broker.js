@@ -1,7 +1,7 @@
 const DEFAULT_FLUSH_INTERVAL_MS = 25;
 const DEFAULT_MAX_BATCH_REQUESTS = 50;
 
-function trimOpenAiMessage(message) {
+export function trimOpenAiMessage(message) {
     if (!message || typeof message !== 'object' || Array.isArray(message)) {
         return message;
     }
@@ -158,4 +158,3 @@ export function createTokenCountBroker(options) {
         },
     };
 }
-

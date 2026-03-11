@@ -12,6 +12,40 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
         return jsonResponse(worldInfo || { entries: {} });
     });
 
+    router.post('/api/worldinfo/get-batch', async ({ body }) => {
+        const names = body?.names;
+        if (!Array.isArray(names)) {
+            return jsonResponse({ error: 'World info get-batch requires a names array' }, 400);
+        }
+
+        const seen = new Set();
+        const sanitized = [];
+
+        for (const rawName of names) {
+            if (typeof rawName !== 'string') {
+                continue;
+            }
+
+            const name = rawName.trim();
+            if (!name || seen.has(name)) {
+                continue;
+            }
+
+            seen.add(name);
+            sanitized.push(name);
+        }
+
+        if (!sanitized.length) {
+            return jsonResponse({ items: [] });
+        }
+
+        const result = await context.safeInvoke('get_world_infos_batch', {
+            dto: { names: sanitized },
+        });
+
+        return jsonResponse(result || { items: [] });
+    });
+
     router.post('/api/worldinfo/edit', async ({ body }) => {
         const name = String(body?.name || '').trim();
         const data = body?.data;

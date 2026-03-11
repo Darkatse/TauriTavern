@@ -1,4 +1,4 @@
-import { createTokenCountBroker, estimateTokenCount } from '../brokers/token-count-broker.js';
+import { createTokenCountBroker, estimateTokenCount, trimOpenAiMessage } from '../brokers/token-count-broker.js';
 
 function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -889,6 +889,21 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
 
         const token_count = await tokenCountBroker.count({ model, messages: body });
         return jsonResponse({ token_count });
+    });
+
+    router.post('/api/tokenizers/openai/count-batch', async ({ body, url }) => {
+        const model = String(url?.searchParams?.get('model') || '');
+        if (!Array.isArray(body)) {
+            throw new Error('OpenAI token count batch body must be an array');
+        }
+
+        const dto = {
+            model,
+            requests: body.map((message) => ({ messages: [trimOpenAiMessage(message)] })),
+        };
+
+        const result = await context.safeInvoke('count_openai_tokens_batch', { dto });
+        return jsonResponse(result);
     });
 
     router.post('/api/tokenizers/openai/encode', async ({ body, url }) => {

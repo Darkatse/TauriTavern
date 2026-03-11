@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::errors::ApplicationError;
+use crate::application::dto::world_info_dto::GetWorldInfosBatchItemDto;
 use crate::domain::models::world_info::WorldInfo;
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 
@@ -25,6 +26,24 @@ impl WorldInfoService {
             .unwrap_or_else(|| json!({ "entries": {} }));
 
         Ok(world_info)
+    }
+
+    pub async fn get_world_infos_batch(
+        &self,
+        names: Vec<String>,
+    ) -> Result<Vec<GetWorldInfosBatchItemDto>, ApplicationError> {
+        let mut items = Vec::with_capacity(names.len());
+        for name in names {
+            let data = self
+                .world_info_repository
+                .get_world_info(&name, true)
+                .await?
+                .unwrap_or_else(|| json!({ "entries": {} }));
+
+            items.push(GetWorldInfosBatchItemDto { name, data });
+        }
+
+        Ok(items)
     }
 
     pub async fn save_world_info(&self, name: &str, data: Value) -> Result<(), ApplicationError> {

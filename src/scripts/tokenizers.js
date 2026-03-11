@@ -787,12 +787,43 @@ export function getTokenizerModel() {
     return turboTokenizer;
 }
 
+function guesstimateOpenAiMessageTokenCount(message) {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        return 0;
+    }
+
+    const content = message.content;
+    if (typeof content === 'string') {
+        return guesstimate(content);
+    }
+
+    if (Array.isArray(content)) {
+        let text = '';
+        for (const part of content) {
+            if (typeof part === 'string') {
+                text += part;
+                continue;
+            }
+
+            if (part && typeof part === 'object' && typeof part.text === 'string') {
+                text += part.text;
+            }
+        }
+
+        return text ? guesstimate(text) : 0;
+    }
+
+    return 0;
+}
+
 /**
  * @param {any[] | Object} messages
  * @deprecated Use countTokensOpenAIAsync instead.
  */
 export function countTokensOpenAI(messages, full = false) {
-    const tokenizerEndpoint = `/api/tokenizers/openai/count?model=${getTokenizerModel()}`;
+    const model = getTokenizerModel();
+    const tokenizerEndpoint = `/api/tokenizers/openai/count-batch?model=${model}`;
+    const legacyTokenizerEndpoint = `/api/tokenizers/openai/count?model=${model}`;
     const cacheObject = getTokenCacheObject();
 
     if (!Array.isArray(messages)) {
@@ -801,13 +832,14 @@ export function countTokensOpenAI(messages, full = false) {
 
     let token_count = -1;
 
+    if (model === 'claude') {
+        full = true;
+    }
+
+    const cacheMisses = [];
+    const cacheMissKeys = [];
+
     for (const message of messages) {
-        const model = getTokenizerModel();
-
-        if (model === 'claude') {
-            full = true;
-        }
-
         const hash = getStringHash(JSON.stringify(message));
         const cacheKey = `${model}-${hash}`;
         const cachedCount = cacheObject[cacheKey];
@@ -817,18 +849,64 @@ export function countTokensOpenAI(messages, full = false) {
         }
 
         else {
-            jQuery.ajax({
-                async: false,
-                type: 'POST', //
-                url: tokenizerEndpoint,
-                data: JSON.stringify([message]),
-                dataType: 'json',
-                contentType: 'application/json',
-                success: function (data) {
-                    token_count += Number(data.token_count);
-                    cacheObject[cacheKey] = Number(data.token_count);
-                },
-            });
+            cacheMisses.push(message);
+            cacheMissKeys.push(cacheKey);
+        }
+    }
+
+    if (cacheMisses.length) {
+        let batchResult = null;
+
+        jQuery.ajax({
+            async: false,
+            type: 'POST',
+            url: tokenizerEndpoint,
+            data: JSON.stringify(cacheMisses),
+            dataType: 'json',
+            contentType: 'application/json',
+            success: function (data) {
+                batchResult = data;
+            },
+        });
+
+        const tokenCounts = Array.isArray(batchResult?.token_counts)
+            ? batchResult.token_counts
+            : null;
+        let warnedSingleFailure = false;
+
+        for (let i = 0; i < cacheMissKeys.length; i += 1) {
+            let count = tokenCounts ? Number(tokenCounts[i]) : NaN;
+            let shouldCache = Number.isFinite(count);
+
+            if (!shouldCache) {
+                jQuery.ajax({
+                    async: false,
+                    type: 'POST',
+                    url: legacyTokenizerEndpoint,
+                    data: JSON.stringify([cacheMisses[i]]),
+                    dataType: 'json',
+                    contentType: 'application/json',
+                    success: function (data) {
+                        count = Number(data?.token_count);
+                        shouldCache = Number.isFinite(count);
+                    },
+                    error: function (_xhr, _status, errorThrown) {
+                        if (!warnedSingleFailure) {
+                            warnedSingleFailure = true;
+                            console.warn('OpenAI token count request failed, using guesstimate fallback:', errorThrown);
+                        }
+                    },
+                });
+            }
+
+            if (!shouldCache) {
+                count = guesstimateOpenAiMessageTokenCount(cacheMisses[i]);
+            }
+
+            token_count += count;
+            if (shouldCache) {
+                cacheObject[cacheMissKeys[i]] = count;
+            }
         }
     }
 
@@ -844,7 +922,9 @@ export function countTokensOpenAI(messages, full = false) {
  * @returns {Promise<number>} Token count.
  */
 export async function countTokensOpenAIAsync(messages, full = false) {
-    const tokenizerEndpoint = `/api/tokenizers/openai/count?model=${getTokenizerModel()}`;
+    const model = getTokenizerModel();
+    const tokenizerEndpoint = `/api/tokenizers/openai/count-batch?model=${model}`;
+    const legacyTokenizerEndpoint = `/api/tokenizers/openai/count?model=${model}`;
     const cacheObject = getTokenCacheObject();
 
     if (!Array.isArray(messages)) {
@@ -853,13 +933,14 @@ export async function countTokensOpenAIAsync(messages, full = false) {
 
     let token_count = -1;
 
+    if (model === 'claude') {
+        full = true;
+    }
+
+    const cacheMisses = [];
+    const cacheMissKeys = [];
+
     for (const message of messages) {
-        const model = getTokenizerModel();
-
-        if (model === 'claude') {
-            full = true;
-        }
-
         const hash = getStringHash(JSON.stringify(message));
         const cacheKey = `${model}-${hash}`;
         const cachedCount = cacheObject[cacheKey];
@@ -869,17 +950,65 @@ export async function countTokensOpenAIAsync(messages, full = false) {
         }
 
         else {
+            cacheMisses.push(message);
+            cacheMissKeys.push(cacheKey);
+        }
+    }
+
+    if (cacheMisses.length) {
+        let tokenCounts = null;
+        let warnedSingleFailure = false;
+
+        try {
             const data = await jQuery.ajax({
                 async: true,
-                type: 'POST', //
+                type: 'POST',
                 url: tokenizerEndpoint,
-                data: JSON.stringify([message]),
+                data: JSON.stringify(cacheMisses),
                 dataType: 'json',
                 contentType: 'application/json',
             });
 
-            token_count += Number(data.token_count);
-            cacheObject[cacheKey] = Number(data.token_count);
+            if (Array.isArray(data?.token_counts)) {
+                tokenCounts = data.token_counts;
+            }
+        } catch (error) {
+            console.warn('OpenAI token count batch request failed:', error);
+        }
+
+        for (let i = 0; i < cacheMissKeys.length; i += 1) {
+            let count = tokenCounts ? Number(tokenCounts[i]) : NaN;
+            let shouldCache = Number.isFinite(count);
+
+            if (!shouldCache) {
+                try {
+                    const data = await jQuery.ajax({
+                        async: true,
+                        type: 'POST',
+                        url: legacyTokenizerEndpoint,
+                        data: JSON.stringify([cacheMisses[i]]),
+                        dataType: 'json',
+                        contentType: 'application/json',
+                    });
+
+                    count = Number(data?.token_count);
+                    shouldCache = Number.isFinite(count);
+                } catch (error) {
+                    if (!warnedSingleFailure) {
+                        warnedSingleFailure = true;
+                        console.warn('OpenAI token count request failed, using guesstimate fallback:', error);
+                    }
+                }
+            }
+
+            if (!shouldCache) {
+                count = guesstimateOpenAiMessageTokenCount(cacheMisses[i]);
+            }
+
+            token_count += count;
+            if (shouldCache) {
+                cacheObject[cacheMissKeys[i]] = count;
+            }
         }
     }
 

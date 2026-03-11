@@ -7,6 +7,22 @@ pub struct GetWorldInfoDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetWorldInfosBatchDto {
+    pub names: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetWorldInfosBatchItemDto {
+    pub name: String,
+    pub data: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetWorldInfosBatchResponseDto {
+    pub items: Vec<GetWorldInfosBatchItemDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveWorldInfoDto {
     pub name: String,
     pub data: Value,
