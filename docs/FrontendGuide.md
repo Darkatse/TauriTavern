@@ -2,6 +2,8 @@
 
 本文档描述 TauriTavern 当前前端（基于 SillyTavern 1.16.0）在 Tauri 环境下的集成架构与开发方式。
 
+宿主层对外契约清单见：`docs/FrontendHostContract.md`（重构时优先保障其不回归）。
+
 ## 1. 目标与原则
 
 - **最小侵入**：尽量保持上游 SillyTavern 前端行为不变。

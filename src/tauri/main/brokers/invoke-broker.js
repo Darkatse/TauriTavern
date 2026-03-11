@@ -236,6 +236,34 @@ function createWriteBehindState({ key, delayMs = 0, merge, maxConcurrent = 0 } =
     };
 }
 
+/**
+ * @typedef {(command: string, args?: any) => Promise<any>} InvokeTransport
+ * @typedef {{
+ *   kind: 'dedupe';
+ *   key?: ((args: any) => string) | undefined;
+ *   cacheTtlMs?: number | undefined;
+ *   cacheLimit?: number | undefined;
+ *   maxConcurrent?: number | undefined;
+ *   timeoutMs?: number | undefined;
+ * }} DedupePolicy
+ * @typedef {{
+ *   kind: 'writeBehind';
+ *   key?: ((args: any) => string) | undefined;
+ *   delayMs?: number | undefined;
+ *   merge?: ((previousArgs: any, nextArgs: any) => any) | undefined;
+ *   maxConcurrent?: number | undefined;
+ *   timeoutMs?: number | undefined;
+ * }} WriteBehindPolicy
+ * @typedef {DedupePolicy | WriteBehindPolicy} InvokePolicy
+ */
+
+/**
+ * @param {{
+ *   transport: InvokeTransport;
+ *   policies?: Record<string, InvokePolicy> | undefined;
+ *   now?: (() => number) | undefined;
+ * }} options
+ */
 export function createInvokeBroker({ transport, policies = {}, now = () => Date.now() } = {}) {
     if (typeof transport !== 'function') {
         throw new Error('InvokeBroker requires a transport(command, args) function');

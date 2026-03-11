@@ -26,3 +26,7 @@
 2. `docs/CurrentState/MobileStyleAdaptation.md`
    - 移动端样式适配现状（edge-to-edge / safe-area / 沉浸模式 / 第三方浮层兜底）
    - 包含 Android 原生注入链路、CSS 变量契约、前端消费与回归要点
+
+3. `docs/CurrentState/FrontendPerfBaseline.md`
+   - Perf HUD 导出的前端性能基线（启动指标 / invoke 热点 / long frames/tasks）
+   - 用于 Phase 1–3 重构的对比与回归门槛
