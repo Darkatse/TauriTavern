@@ -11,6 +11,7 @@ use crate::infrastructure::third_party_paths::{
 };
 
 const THIRD_PARTY_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
+const MAX_MOBILE_INLINE_THIRD_PARTY_ASSET_BYTES: u64 = 32 * 1024 * 1024;
 
 pub fn handle_third_party_asset_web_request(
     local_extensions_dir: &Path,
@@ -122,23 +123,67 @@ fn handle_third_party_asset_route_request(
         &parsed.extension_folder,
         &parsed.relative_path,
     ) {
-        Ok(resolved) => match std::fs::read(&resolved.path) {
-            Ok(bytes) => {
-                respond_bytes(response, StatusCode::OK, bytes, &resolved.mime_type);
-                tracing::debug!(
-                    "Third-party asset hit: {}/{}",
+        Ok(resolved) => {
+            if request.method() == Method::HEAD {
+                respond_bytes(
+                    response,
+                    StatusCode::OK,
+                    Vec::new(),
+                    &resolved.mime_type,
+                );
+                return;
+            }
+
+            let metadata = match std::fs::metadata(&resolved.path) {
+                Ok(value) => value,
+                Err(error) => {
+                    let status = match error.kind() {
+                        std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+                        _ => StatusCode::INTERNAL_SERVER_ERROR,
+                    };
+                    respond_plain_text(
+                        response,
+                        status,
+                        &format!("Failed to stat third-party asset: {}", error),
+                    );
+                    return;
+                }
+            };
+
+            let size_bytes = metadata.len();
+            if cfg!(mobile) && size_bytes > MAX_MOBILE_INLINE_THIRD_PARTY_ASSET_BYTES {
+                tracing::warn!(
+                    "Rejected large third-party asset ({} bytes): {}/{}",
+                    size_bytes,
                     parsed.extension_folder,
                     parsed.relative_path_display
                 );
-            }
-            Err(error) => {
                 respond_plain_text(
                     response,
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &format!("Failed to read third-party asset: {}", error),
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "Third-party asset is too large to load on mobile.",
                 );
+                return;
             }
-        },
+
+            match std::fs::read(&resolved.path) {
+                Ok(bytes) => {
+                    respond_bytes(response, StatusCode::OK, bytes, &resolved.mime_type);
+                    tracing::debug!(
+                        "Third-party asset hit: {}/{}",
+                        parsed.extension_folder,
+                        parsed.relative_path_display
+                    );
+                }
+                Err(error) => {
+                    respond_plain_text(
+                        response,
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        &format!("Failed to read third-party asset: {}", error),
+                    );
+                }
+            }
+        }
         Err(DomainError::NotFound(_)) => {
             respond_plain_text(response, StatusCode::NOT_FOUND, "Not Found");
             tracing::debug!(
@@ -154,10 +199,6 @@ fn handle_third_party_asset_route_request(
                 &error.to_string(),
             );
         }
-    }
-
-    if request.method() == Method::HEAD {
-        *response.body_mut() = Cow::Owned(Vec::new());
     }
 }
 
