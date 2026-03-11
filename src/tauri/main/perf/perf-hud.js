@@ -2,10 +2,14 @@ const GLOBAL_KEY = '__TAURITAVERN_PERF__';
 const STORAGE_ENABLED_KEY = 'tt:perf';
 const STORAGE_POSITION_KEY = 'tt:perf:pos';
 
+const LONG_TASK_BLOCKING_THRESHOLD_MS = 50;
+
 const DEFAULTS = Object.freeze({
     updateIntervalMs: 750,
     frameSampleSize: 60,
     longFrameThresholdMs: 50,
+    eventLoopLagIntervalMs: 100,
+    eventLoopLagSampleSize: 60,
     maxInvokeStats: 30,
     maxRecentLongFrames: 200,
     maxRecentLongTasks: 200,
@@ -144,11 +148,43 @@ function formatMB(bytes) {
     return `${(n / (1024 * 1024)).toFixed(1)}MB`;
 }
 
+function formatNumber(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+        return '-';
+    }
+    if (Math.abs(n) >= 100) {
+        return String(Math.round(n));
+    }
+    return n.toFixed(1);
+}
+
+function computePercentile(values, percentile) {
+    if (!Array.isArray(values) || values.length === 0) {
+        return null;
+    }
+
+    const p = Number(percentile);
+    if (!Number.isFinite(p) || p <= 0) {
+        return values[0] ?? null;
+    }
+    if (p >= 1) {
+        return values[values.length - 1] ?? null;
+    }
+
+    const sorted = values.slice().sort((a, b) => a - b);
+    const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1));
+    const v = sorted[index];
+    return Number.isFinite(v) ? v : null;
+}
+
 function createPerfController(options = {}) {
     const config = {
         updateIntervalMs: clampInt(options.updateIntervalMs, 100, 10_000, DEFAULTS.updateIntervalMs),
         frameSampleSize: clampInt(options.frameSampleSize, 10, 600, DEFAULTS.frameSampleSize),
         longFrameThresholdMs: clampInt(options.longFrameThresholdMs, 16, 500, DEFAULTS.longFrameThresholdMs),
+        eventLoopLagIntervalMs: clampInt(options.eventLoopLagIntervalMs, 20, 2000, DEFAULTS.eventLoopLagIntervalMs),
+        eventLoopLagSampleSize: clampInt(options.eventLoopLagSampleSize, 5, 600, DEFAULTS.eventLoopLagSampleSize),
         maxInvokeStats: clampInt(options.maxInvokeStats, 5, 200, DEFAULTS.maxInvokeStats),
         maxRecentLongFrames: clampInt(options.maxRecentLongFrames, 0, 5000, DEFAULTS.maxRecentLongFrames),
         maxRecentLongTasks: clampInt(options.maxRecentLongTasks, 0, 5000, DEFAULTS.maxRecentLongTasks),
@@ -164,6 +200,10 @@ function createPerfController(options = {}) {
         dragState: null,
         hudEl: null,
         updateTimer: null,
+        eventLoopLagTimer: null,
+        eventLoopLagSamples: [],
+        eventLoopLagLastMs: 0,
+        eventLoopLagMaxMs: 0,
         rafId: null,
         lastFrameTs: null,
         frameDeltas: [],
@@ -176,7 +216,11 @@ function createPerfController(options = {}) {
         longTaskMaxMs: 0,
         longTaskLastMs: 0,
         longTaskLastName: null,
+        longTaskBlockingTotalMs: 0,
         observers: [],
+        invokeInFlight: 0,
+        invokeInFlightMax: 0,
+        invokeInFlightByCommand: new Map(),
         invokeStatsByCommand: new Map(),
         recentInvokes: [],
         contextRef: null,
@@ -221,6 +265,9 @@ function createPerfController(options = {}) {
             return;
         }
 
+        const blockingMs = Math.max(0, duration - LONG_TASK_BLOCKING_THRESHOLD_MS);
+        state.longTaskBlockingTotalMs += blockingMs;
+
         state.longTaskCount += 1;
         state.longTaskLastMs = duration;
         state.longTaskMaxMs = Math.max(state.longTaskMaxMs, duration);
@@ -229,8 +276,10 @@ function createPerfController(options = {}) {
         if (config.maxRecentLongTasks > 0) {
             const startTime = Number(entry?.startTime);
             state.recentLongTasks.push({
+                ts: safeNow(),
                 startTime: Number.isFinite(startTime) ? startTime : null,
                 duration,
+                blockingMs,
                 name: typeof entry?.name === 'string' ? entry.name : null,
             });
             if (state.recentLongTasks.length > config.maxRecentLongTasks) {
@@ -242,12 +291,39 @@ function createPerfController(options = {}) {
         }
     }
 
+    function normalizeCommandKey(command) {
+        return String(command || '').trim() || '(unknown)';
+    }
+
+    function recordInvokeStart(command) {
+        const key = normalizeCommandKey(command);
+        state.invokeInFlight += 1;
+        state.invokeInFlightMax = Math.max(state.invokeInFlightMax, state.invokeInFlight);
+
+        const current = state.invokeInFlightByCommand.get(key) || 0;
+        state.invokeInFlightByCommand.set(key, current + 1);
+
+        return key;
+    }
+
+    function recordInvokeEnd(command) {
+        const key = normalizeCommandKey(command);
+        state.invokeInFlight = Math.max(0, state.invokeInFlight - 1);
+
+        const current = state.invokeInFlightByCommand.get(key) || 0;
+        if (current <= 1) {
+            state.invokeInFlightByCommand.delete(key);
+        } else {
+            state.invokeInFlightByCommand.set(key, current - 1);
+        }
+    }
+
     function recordInvoke(command, durationMs, ok) {
         if (!isEnabled()) {
             return;
         }
 
-        const key = String(command || '').trim() || '(unknown)';
+        const key = normalizeCommandKey(command);
         const existing = state.invokeStatsByCommand.get(key) || {
             count: 0,
             okCount: 0,
@@ -332,6 +408,47 @@ function createPerfController(options = {}) {
         }
     }
 
+    function startEventLoopLagLoop() {
+        if (state.eventLoopLagTimer) {
+            return;
+        }
+
+        state.eventLoopLagSamples = [];
+        state.eventLoopLagLastMs = 0;
+        state.eventLoopLagMaxMs = 0;
+
+        const intervalMs = config.eventLoopLagIntervalMs;
+        let expected = safeNow() + intervalMs;
+
+        state.eventLoopLagTimer = globalThis.setInterval(() => {
+            const now = safeNow();
+            const lagMs = Math.max(0, now - expected);
+            expected = now + intervalMs;
+
+            state.eventLoopLagLastMs = lagMs;
+            state.eventLoopLagMaxMs = Math.max(state.eventLoopLagMaxMs, lagMs);
+
+            state.eventLoopLagSamples.push(lagMs);
+            const maxSamples = config.eventLoopLagSampleSize;
+            if (state.eventLoopLagSamples.length > maxSamples) {
+                state.eventLoopLagSamples.splice(0, state.eventLoopLagSamples.length - maxSamples);
+            }
+        }, intervalMs);
+    }
+
+    function stopEventLoopLagLoop() {
+        if (!state.eventLoopLagTimer) {
+            return;
+        }
+
+        try {
+            globalThis.clearInterval(state.eventLoopLagTimer);
+        } catch {
+            // Ignore.
+        }
+        state.eventLoopLagTimer = null;
+    }
+
     function installObservers() {
         if (!globalThis.PerformanceObserver) {
             return;
@@ -387,20 +504,56 @@ function createPerfController(options = {}) {
         state.observers = [];
     }
 
-    function computeFps() {
+    function computeFrameStats() {
         const deltas = state.frameDeltas;
         if (!Array.isArray(deltas) || deltas.length === 0) {
             return null;
         }
 
-        const sum = deltas.reduce((acc, v) => acc + v, 0);
+        let sum = 0;
+        let max = 0;
+        for (const v of deltas) {
+            const n = Number(v);
+            if (!Number.isFinite(n)) {
+                continue;
+            }
+            sum += n;
+            max = Math.max(max, n);
+        }
         if (!sum) {
             return null;
         }
 
         const avgDelta = sum / deltas.length;
         const fps = 1000 / avgDelta;
-        return Number.isFinite(fps) ? fps : null;
+        const p95Delta = computePercentile(deltas, 0.95);
+
+        return {
+            sampleSize: deltas.length,
+            fps: Number.isFinite(fps) ? fps : null,
+            avgDeltaMs: Number.isFinite(avgDelta) ? avgDelta : null,
+            p95DeltaMs: Number.isFinite(p95Delta) ? p95Delta : null,
+            maxDeltaMs: Number.isFinite(max) ? max : null,
+        };
+    }
+
+    function computeEventLoopLagStats() {
+        const samples = state.eventLoopLagSamples;
+        if (!Array.isArray(samples) || samples.length === 0) {
+            return null;
+        }
+
+        const sum = samples.reduce((acc, v) => acc + v, 0);
+        const avg = sum ? sum / samples.length : null;
+        const p95 = computePercentile(samples, 0.95);
+
+        return {
+            sampleSize: samples.length,
+            avgMs: Number.isFinite(avg) ? avg : null,
+            p95Ms: Number.isFinite(p95) ? p95 : null,
+            maxMs: state.eventLoopLagMaxMs,
+            lastMs: state.eventLoopLagLastMs,
+        };
     }
 
     function getDomSample() {
@@ -439,8 +592,13 @@ function createPerfController(options = {}) {
             }
             const used = Number(mem.usedJSHeapSize);
             const total = Number(mem.totalJSHeapSize);
+            const limit = Number(mem.jsHeapSizeLimit);
             return Number.isFinite(used) && Number.isFinite(total)
-                ? { used, total }
+                ? {
+                    used,
+                    total,
+                    limit: Number.isFinite(limit) ? limit : null,
+                }
                 : null;
         } catch {
             return null;
@@ -702,9 +860,11 @@ function createPerfController(options = {}) {
             return;
         }
 
-        const fps = computeFps();
+        const now = safeNow();
+        const frameStats = computeFrameStats();
         const dom = getDomSample();
         const heap = getHeapSample();
+        const lagStats = computeEventLoopLagStats();
 
         const fcp = getPaintMetric('first-contentful-paint');
         const lcp = getLatestLcp();
@@ -714,19 +874,64 @@ function createPerfController(options = {}) {
         const importTauriMain = readMeasureDuration('tt:init:import:tauri-main');
         const importApp = readMeasureDuration('tt:init:import:app');
 
+        const since1s = now - 1000;
+        let invokeCount1s = 0;
+        let invokeErrCount1s = 0;
+        for (let i = state.recentInvokes.length - 1; i >= 0; i -= 1) {
+            const item = state.recentInvokes[i];
+            if (Number(item?.ts) < since1s) {
+                break;
+            }
+            invokeCount1s += 1;
+            if (!item?.ok) {
+                invokeErrCount1s += 1;
+            }
+        }
+
+        const since10s = now - 10_000;
+        let longTaskBlocking10sMs = 0;
+        for (let i = state.recentLongTasks.length - 1; i >= 0; i -= 1) {
+            const item = state.recentLongTasks[i];
+            if (Number(item?.ts) < since10s) {
+                break;
+            }
+            longTaskBlocking10sMs += Number(item?.blockingMs) || 0;
+        }
+
         const lines = [];
         lines.push(`Enabled: yes  Uptime: ${formatMs(safeNow() - state.installedAt)}`);
-        lines.push(`FPS: ${fps ? fps.toFixed(1) : '-'}  LongFrames: ${state.longFrameCount} (max ${formatMs(state.longFrameMaxMs)})`);
-        lines.push(`LongTasks: ${state.longTaskCount} (max ${formatMs(state.longTaskMaxMs)})`);
+        if (frameStats) {
+            lines.push(`FPS: ${frameStats.fps ? frameStats.fps.toFixed(1) : '-'}  Frame(ms): avg ${formatNumber(frameStats.avgDeltaMs)} p95 ${formatNumber(frameStats.p95DeltaMs)} max ${formatNumber(frameStats.maxDeltaMs)}`);
+        } else {
+            lines.push('FPS: -  Frame(ms): -');
+        }
+        lines.push(`LongFrames(>${config.longFrameThresholdMs}ms): ${state.longFrameCount} (last ${formatMs(state.longFrameLastMs)} max ${formatMs(state.longFrameMaxMs)})`);
+        lines.push(`LongTasks(>${LONG_TASK_BLOCKING_THRESHOLD_MS}ms): ${state.longTaskCount} (last ${formatMs(state.longTaskLastMs)} max ${formatMs(state.longTaskMaxMs)})  TBT10s: ${formatMs(longTaskBlocking10sMs)}`);
+        lines.push(`Invokes: inflight ${state.invokeInFlight} (peak ${state.invokeInFlightMax})  1s ${invokeCount1s}${invokeErrCount1s ? ` err:${invokeErrCount1s}` : ''}`);
         lines.push(`DOM: ${dom.elements ?? '-'}  mes: ${dom.mes ?? '-'}  iframes: ${dom.iframes ?? '-'}`);
         if (heap) {
-            lines.push(`Heap: ${formatMB(heap.used)} / ${formatMB(heap.total)}`);
+            const limitSuffix = heap.limit ? ` (limit ${formatMB(heap.limit)})` : '';
+            lines.push(`Heap: ${formatMB(heap.used)} / ${formatMB(heap.total)}${limitSuffix}`);
         } else {
             lines.push('Heap: -');
         }
 
         if (state.expanded) {
             lines.push('');
+            if (lagStats) {
+                lines.push(`EventLoop lag(ms): p95 ${formatNumber(lagStats.p95Ms)} max ${formatNumber(lagStats.maxMs)} last ${formatNumber(lagStats.lastMs)}`);
+            } else {
+                lines.push('EventLoop lag(ms): -');
+            }
+            lines.push(`TBT total: ${formatMs(state.longTaskBlockingTotalMs)} (>${LONG_TASK_BLOCKING_THRESHOLD_MS}ms)`);
+
+            const inFlightTop = [...state.invokeInFlightByCommand.entries()]
+                .sort((a, b) => (b[1] || 0) - (a[1] || 0))
+                .slice(0, 4);
+            if (inFlightTop.length) {
+                const summary = inFlightTop.map(([command, count]) => `${command}×${count}`).join('  ');
+                lines.push(`Invokes inflight top: ${summary}`);
+            }
             lines.push(`FCP: ${fcp === null ? '-' : formatMs(fcp)}  LCP: ${lcp === null ? '-' : formatMs(lcp)}`);
             lines.push(`Init total: ${initTotal === null ? '-' : formatMs(initTotal)}`);
             lines.push(`Import lib: ${importLib === null ? '-' : formatMs(importLib)}`);
@@ -831,14 +1036,17 @@ function createPerfController(options = {}) {
         }
 
         const wrapped = async (command, args = {}) => {
+            const key = recordInvokeStart(command);
             const t0 = safeNow();
             try {
                 const result = await base(command, args);
-                recordInvoke(command, safeNow() - t0, true);
+                recordInvoke(key, safeNow() - t0, true);
                 return result;
             } catch (error) {
-                recordInvoke(command, safeNow() - t0, false);
+                recordInvoke(key, safeNow() - t0, false);
                 throw error;
+            } finally {
+                recordInvokeEnd(key);
             }
         };
 
@@ -882,6 +1090,7 @@ function createPerfController(options = {}) {
         ensureKeyHandler();
         installObservers();
         startFrameLoop();
+        startEventLoopLagLoop();
         startHudLoop();
         renderHud();
     }
@@ -897,6 +1106,7 @@ function createPerfController(options = {}) {
 
         stopHudLoop();
         stopFrameLoop();
+        stopEventLoopLagLoop();
         disconnectObservers();
         restoreSafeInvokeWrapper();
 
@@ -919,15 +1129,42 @@ function createPerfController(options = {}) {
     }
 
     function snapshot() {
-        const fps = computeFps();
+        const now = safeNow();
+        const frameStats = computeFrameStats();
         const dom = getDomSample();
         const heap = getHeapSample();
+        const eventLoopLag = computeEventLoopLagStats();
+
+        const since10s = now - 10_000;
+        let invokeCount10s = 0;
+        let invokeErrCount10s = 0;
+        for (let i = state.recentInvokes.length - 1; i >= 0; i -= 1) {
+            const item = state.recentInvokes[i];
+            if (Number(item?.ts) < since10s) {
+                break;
+            }
+            invokeCount10s += 1;
+            if (!item?.ok) {
+                invokeErrCount10s += 1;
+            }
+        }
+
+        let longTaskBlocking10sMs = 0;
+        for (let i = state.recentLongTasks.length - 1; i >= 0; i -= 1) {
+            const item = state.recentLongTasks[i];
+            if (Number(item?.ts) < since10s) {
+                break;
+            }
+            longTaskBlocking10sMs += Number(item?.blockingMs) || 0;
+        }
 
         return {
             enabled: state.enabled,
-            now: safeNow(),
+            now,
             timeOrigin: state.timeOrigin,
-            fps,
+            fps: frameStats?.fps ?? null,
+            frames: frameStats,
+            eventLoopLag,
             longFrames: {
                 count: state.longFrameCount,
                 maxMs: state.longFrameMaxMs,
@@ -938,6 +1175,14 @@ function createPerfController(options = {}) {
                 maxMs: state.longTaskMaxMs,
                 lastMs: state.longTaskLastMs,
                 lastName: state.longTaskLastName,
+                blockingTotalMs: state.longTaskBlockingTotalMs,
+                blocking10sMs: longTaskBlocking10sMs,
+            },
+            invokes: {
+                inFlight: state.invokeInFlight,
+                inFlightMax: state.invokeInFlightMax,
+                count10s: invokeCount10s,
+                errCount10s: invokeErrCount10s,
             },
             dom,
             heap,
@@ -1058,6 +1303,11 @@ function createPerfController(options = {}) {
             env,
             snapshot: snapshotData,
             invokes: {
+                inFlight: {
+                    count: state.invokeInFlight,
+                    max: state.invokeInFlightMax,
+                    byCommand: Object.fromEntries(state.invokeInFlightByCommand.entries()),
+                },
                 statsByCommand: invokeStats,
                 recent: state.recentInvokes.slice(),
             },
