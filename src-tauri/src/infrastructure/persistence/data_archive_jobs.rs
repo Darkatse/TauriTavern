@@ -10,6 +10,7 @@ use tauri::AppHandle;
 use tauri::Manager;
 use uuid::Uuid;
 
+use crate::app::AppState;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::paths::resolve_runtime_paths;
 
@@ -233,6 +234,7 @@ pub fn start_import_data_archive_job(
     })?;
     let imports_root = runtime_paths.archive_imports_root.clone();
     let data_root = runtime_paths.data_root.clone();
+    let app_handle = app_handle.clone();
     fs::create_dir_all(&imports_root).map_err(|error| {
         DomainError::InternalError(format!("Failed to create job root: {}", error))
     })?;
@@ -278,6 +280,19 @@ pub fn start_import_data_archive_job(
 
         match blocking_result {
             Ok(Ok(result)) => {
+                let refresh_result = app_handle
+                    .state::<Arc<AppState>>()
+                    .refresh_after_external_data_change("import")
+                    .await;
+                if let Err(error) = refresh_result {
+                    let _ = job.mark_failed(&format!(
+                        "Import completed but failed to refresh runtime caches: {}",
+                        error
+                    ));
+                    cleanup_directory(&job_root);
+                    return;
+                }
+
                 let _ = job.mark_completed_import(result);
             }
             Ok(Err(error)) => {

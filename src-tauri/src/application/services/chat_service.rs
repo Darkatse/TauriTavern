@@ -7,6 +7,7 @@ use crate::application::dto::chat_dto::{
     SaveChatFromFileDto, SaveGroupChatFromFileDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::chat_repository::{
@@ -377,12 +378,9 @@ impl ChatService {
     }
 
     /// Clear the chat cache
-    pub async fn clear_cache(&self) -> Result<(), ApplicationError> {
+    pub async fn clear_cache(&self) -> Result<(), DomainError> {
         tracing::info!("Clearing chat cache");
-
-        self.chat_repository.clear_cache().await?;
-
-        Ok(())
+        self.chat_repository.clear_cache().await
     }
 
     /// Get the absolute path to a character chat payload file.
