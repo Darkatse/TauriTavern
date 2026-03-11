@@ -883,6 +883,7 @@ export const wi_anchor_position = {
  * @type {StructuredCloneMap<string,object>}
  * */
 export const worldInfoCache = new StructuredCloneMap({ cloneOnGet: true, cloneOnSet: false });
+const worldInfoInFlight = new Map();
 
 /**
  * Gets the world info based on chat messages.
@@ -2093,28 +2094,43 @@ async function prefetchWorldInfos(names) {
  * @return {Promise<Object|null>} A promise that resolves to the loaded world information, or null if the request fails.
  */
 export async function loadWorldInfo(name) {
-    if (!name) {
-        return;
-    }
+    name = String(name || '').trim();
+    if (!name) return;
 
     if (worldInfoCache.has(name)) {
         return worldInfoCache.get(name);
     }
 
-    const response = await fetch('/api/worldinfo/get', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ name: name }),
-        cache: 'no-cache',
-    });
-
-    if (response.ok) {
-        const data = await response.json();
-        worldInfoCache.set(name, data);
-        return data;
+    const inFlight = worldInfoInFlight.get(name);
+    if (inFlight) {
+        return inFlight;
     }
 
-    return null;
+    const task = (async () => {
+        const response = await fetch('/api/worldinfo/get', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ name: name }),
+            cache: 'no-cache',
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            worldInfoCache.set(name, data);
+            return data;
+        }
+
+        return null;
+    })();
+
+    worldInfoInFlight.set(name, task);
+    task.finally(() => {
+        if (worldInfoInFlight.get(name) === task) {
+            worldInfoInFlight.delete(name);
+        }
+    });
+
+    return task;
 }
 
 export async function updateWorldInfoList() {

@@ -1,13 +1,15 @@
+import { createWorldInfoBroker } from '../brokers/world-info-broker.js';
+
 export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
+    const worldInfoBroker = createWorldInfoBroker({ context });
+
     router.post('/api/worldinfo/get', async ({ body }) => {
         const name = String(body?.name || '').trim();
         if (!name) {
             return jsonResponse({ error: 'World file must have a name' }, 400);
         }
 
-        const worldInfo = await context.safeInvoke('get_world_info', {
-            dto: { name },
-        });
+        const worldInfo = await worldInfoBroker.get(name);
 
         return jsonResponse(worldInfo || { entries: {} });
     });
