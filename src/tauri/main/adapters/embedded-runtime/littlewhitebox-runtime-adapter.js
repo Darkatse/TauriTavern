@@ -10,7 +10,7 @@ import { createManagedIframeSlot } from './managed-iframe-slot.js';
  * @typedef {ReturnType<createEmbeddedRuntimeManager>} EmbeddedRuntimeManager
  */
 
-const TH_RENDER_SELECTOR = '.TH-render';
+const XIAOBAIX_WRAPPER_SELECTOR = '.xiaobaix-iframe-wrapper';
 let nextWrapperUid = 0;
 
 /**
@@ -42,11 +42,19 @@ function getMessageIdForWrapper(wrapper) {
  * @param {HTMLElement} wrapper
  */
 function getWrapperSignature(wrapper) {
-    const code = wrapper.querySelector('pre code');
-    if (code instanceof HTMLElement) {
-        const text = String(code.textContent || '').trim();
-        if (text) {
-            return text;
+    const pre = wrapper.nextElementSibling;
+    if (pre instanceof HTMLPreElement) {
+        const hash = String(pre.dataset.xbHash || '').trim();
+        if (hash) {
+            return `xb:${hash}`;
+        }
+
+        const code = pre.querySelector('code');
+        if (code instanceof HTMLElement) {
+            const text = String(code.textContent || '').trim();
+            if (text) {
+                return text;
+            }
         }
     }
 
@@ -103,12 +111,12 @@ function registerWrapper(manager, wrapper) {
 
     const key = fnv1a32(signature);
     const uid = ensureWrapperUid(wrapper);
-    const slotId = `jsr:${messageId}:${key}:${uid}`;
+    const slotId = `lwb:${messageId}:${key}:${uid}`;
 
     const parkDelayMs = manager.profile === 'mobile-safe' ? 800 : 1500;
     const slot = createManagedIframeSlot({
         id: slotId,
-        kind: EmbeddedRuntimeKind.JsrHtmlRender,
+        kind: EmbeddedRuntimeKind.LittleWhiteBoxHtmlRender,
         host: wrapper,
         priority: 0,
         weight: 10,
@@ -118,36 +126,31 @@ function registerWrapper(manager, wrapper) {
     manager.register(slot);
 }
 
-export function createJsSlashRunnerRuntimeAdapter() {
+export function createLittleWhiteBoxRuntimeAdapter() {
     return Object.freeze({
-        hostSelector: TH_RENDER_SELECTOR,
+        hostSelector: XIAOBAIX_WRAPPER_SELECTOR,
         registerHost: registerWrapper,
     });
 }
 
 /**
- * Installs a lightweight adapter that registers JS-Slash-Runner HTML runtimes
- * (wrappers with class `.TH-render`) as managed embedded runtimes.
- *
- * This adapter is intentionally DOM-driven (no dependency on JSR internals),
- * so it can be extended to similar plugins (e.g. LittleWhiteBox) by adding
- * additional wrapper detectors.
- *
+ * Back-compat single-adapter installer.
  * @param {{ manager: EmbeddedRuntimeManager }} options
  */
-export function installJsSlashRunnerRuntimeAdapter({ manager }) {
+export function installLittleWhiteBoxRuntimeAdapter({ manager }) {
     if (!manager) {
-        throw new Error('installJsSlashRunnerRuntimeAdapter requires manager');
+        throw new Error('installLittleWhiteBoxRuntimeAdapter requires manager');
     }
 
     const chat = document.querySelector('#chat');
     if (!(chat instanceof HTMLElement)) {
-        throw new Error('installJsSlashRunnerRuntimeAdapter: #chat not found');
+        throw new Error('installLittleWhiteBoxRuntimeAdapter: #chat not found');
     }
 
     return installDomEmbeddedRuntimeAdapter({
         manager,
         root: chat,
-        adapters: [createJsSlashRunnerRuntimeAdapter()],
+        adapters: [createLittleWhiteBoxRuntimeAdapter()],
     });
 }
+

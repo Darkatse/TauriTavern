@@ -28,6 +28,7 @@ const COMPAT_PROFILE = Object.freeze({
     maxActiveSlots: 80,
     parkWhenHiddenKinds: Object.freeze([
         EmbeddedRuntimeKind.JsrHtmlRender,
+        EmbeddedRuntimeKind.LittleWhiteBoxHtmlRender,
     ]),
     rootMargin: '300px 0px',
     threshold: 0.01,
@@ -41,6 +42,7 @@ const MOBILE_SAFE_PROFILE = Object.freeze({
     maxActiveSlots: 30,
     parkWhenHiddenKinds: Object.freeze([
         EmbeddedRuntimeKind.JsrHtmlRender,
+        EmbeddedRuntimeKind.LittleWhiteBoxHtmlRender,
     ]),
     rootMargin: '500px 0px',
     threshold: 0.01,
