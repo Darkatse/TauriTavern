@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
@@ -11,6 +10,7 @@ use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
     list_files_with_extension, read_json_file, write_json_file,
 };
+use crate::infrastructure::preset_file_naming::load_named_preset_files;
 
 pub struct FileSettingsRepository {
     tauritavern_settings_file: PathBuf,
@@ -125,34 +125,13 @@ impl FileSettingsRepository {
     ) -> Result<(Vec<String>, Vec<String>), DomainError> {
         let dir = self.base_directory.join(dir_name);
 
-        if !dir.exists() {
-            return Ok((Vec::new(), Vec::new()));
-        }
+        let named_files = load_named_preset_files(&dir).await?;
+        let mut settings = Vec::with_capacity(named_files.len());
+        let mut names = Vec::with_capacity(named_files.len());
 
-        let mut files = Vec::new();
-        files.extend(list_files_with_extension(&dir, "json").await?);
-        files.sort();
-
-        let mut settings = Vec::new();
-        let mut names = Vec::new();
-        let mut seen_names = HashSet::new();
-
-        for file in files {
-            let file_name = file
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or_default();
-
-            if !seen_names.insert(file_name.to_string()) {
-                continue;
-            }
-
-            let content = fs::read_to_string(&file).await.map_err(|e| {
-                DomainError::InternalError(format!("Failed to read file {}: {}", file.display(), e))
-            })?;
-
-            settings.push(content);
-            names.push(file_name.to_string());
+        for file in named_files {
+            settings.push(file.raw_content);
+            names.push(file.name);
         }
 
         Ok((settings, names))
@@ -450,8 +429,61 @@ mod tests {
             .await
             .expect("load externally updated tauritavern settings");
         assert_eq!(
-            second.updates.startup_popup.dismissed_release_token.as_deref(),
+            second
+                .updates
+                .startup_popup
+                .dismissed_release_token
+                .as_deref(),
             Some("token")
         );
+    }
+
+    #[tokio::test]
+    async fn get_openai_settings_uses_embedded_name_from_deprecated_legacy_file() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+        let openai_dir = dir.path().join("OpenAI Settings");
+        fs::create_dir_all(&openai_dir).expect("create OpenAI Settings dir");
+        fs::write(
+            openai_dir.join("_明月青秋_.json"),
+            r#"{"name":"【明月青秋】","temperature":0.7}"#,
+        )
+        .expect("write legacy preset file");
+
+        let (settings, names) = repository
+            .get_openai_settings()
+            .await
+            .expect("load openai settings");
+
+        assert_eq!(names, vec!["【明月青秋】".to_string()]);
+        assert_eq!(settings.len(), 1);
+        assert!(settings[0].contains(r#""temperature":0.7"#));
+    }
+
+    #[tokio::test]
+    async fn get_openai_settings_prefers_canonical_file_over_deprecated_legacy_duplicate() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+        let openai_dir = dir.path().join("OpenAI Settings");
+        fs::create_dir_all(&openai_dir).expect("create OpenAI Settings dir");
+        fs::write(
+            openai_dir.join("_明月青秋_.json"),
+            r#"{"name":"【明月青秋】","temperature":0.1}"#,
+        )
+        .expect("write legacy preset file");
+        fs::write(
+            openai_dir.join("【明月青秋】.json"),
+            r#"{"name":"【明月青秋】","temperature":0.9}"#,
+        )
+        .expect("write canonical preset file");
+
+        let (settings, names) = repository
+            .get_openai_settings()
+            .await
+            .expect("load openai settings");
+
+        assert_eq!(names, vec!["【明月青秋】".to_string()]);
+        assert_eq!(settings.len(), 1);
+        assert!(settings[0].contains(r#""temperature":0.9"#));
     }
 }

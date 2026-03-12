@@ -125,12 +125,7 @@ fn handle_third_party_asset_route_request(
     ) {
         Ok(resolved) => {
             if request.method() == Method::HEAD {
-                respond_bytes(
-                    response,
-                    StatusCode::OK,
-                    Vec::new(),
-                    &resolved.mime_type,
-                );
+                respond_bytes(response, StatusCode::OK, Vec::new(), &resolved.mime_type);
                 return;
             }
 

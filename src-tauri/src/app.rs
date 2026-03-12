@@ -87,7 +87,10 @@ impl AppState {
         })
     }
 
-    pub async fn refresh_after_external_data_change(&self, reason: &str) -> Result<(), DomainError> {
+    pub async fn refresh_after_external_data_change(
+        &self,
+        reason: &str,
+    ) -> Result<(), DomainError> {
         tracing::info!(
             reason = reason,
             "Refreshing runtime caches after external data change"
