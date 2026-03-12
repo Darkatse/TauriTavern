@@ -104,6 +104,17 @@ Android 说明：
 - 只在 Tauri mobile 安装，补齐少量缺失的标准 API（如 `Array.prototype.at` 等）。
 - 通过 `window.__TAURITAVERN_MOBILE_RUNTIME_COMPAT__` sentinel 保证只执行一次。
 
+### 3.5 聊天输入框焦点策略（移动端）
+
+实现：`src/scripts/chat-input-focus.js`
+
+当前策略：
+
+- `#send_textarea` 的程序化聚焦按意图分为 `navigation` / `restoration` / `editing`。
+- 移动端会拒绝 `navigation` 与 `restoration`，因此切角色、读历史聊天、welcome screen 创建临时聊天、按钮回焦都不会自动把键盘弹起。
+- 显式编辑流仍允许聚焦，例如消息编辑收尾、Quick Reply 把内容注入聊天输入框后继续编辑。
+- 该策略完全留在前端共享模块，不依赖 native/WebView 对 `focus()` 做拦截。
+
 ## 4. 沉浸模式开关（Android）
 
 前端入口：`src/scripts/mobile-system-ui.js`
@@ -126,6 +137,7 @@ native 侧实现：`src-tauri/gen/android/app/src/main/java/com/tauritavern/clie
 - Android 沉浸模式下以 full-bleed 策略运行，顶部 safe-area 不再额外避让刘海/状态栏。
 - iOS `viewport-fit=cover` + `env(safe-area-inset-*)` 消费。
 - 第三方脚本 fixed 浮层的 safe‑area top 元素级修正（移动端）。
+- 聊天导航类场景不再自动聚焦 `#send_textarea`，移动端键盘只在真正进入输入/编辑意图时弹出。
 
 明确不支持 / 不承诺：
 

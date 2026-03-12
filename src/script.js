@@ -32,6 +32,11 @@ import {
 } from './scripts/tauri/chat/windowed-state.js';
 import { extension_prompt_roles, extension_prompt_types } from './scripts/extension-prompts.js';
 import { waitForTauriMainReady } from './scripts/extensions/runtime/tauri-ready.js';
+import {
+    ChatInputFocusIntent,
+    focusChatInput,
+    installChatInputFocusKeeper,
+} from './scripts/chat-input-focus.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -7829,7 +7834,7 @@ export async function getChat() {
             if ($(document.activeElement).is('input:visible, textarea:visible')) {
                 return;
             }
-            $('#send_textarea').trigger('click').trigger('focus');
+            focusChatInput(ChatInputFocusIntent.NAVIGATION);
         });
     } catch (error) {
         await getChatResult();
@@ -11281,28 +11286,7 @@ jQuery(async function () {
 
     $(document).on('click', '.api_loading', () => cancelStatusCheck('Canceled because connecting was manually canceled'));
 
-    //////////INPUT BAR FOCUS-KEEPING LOGIC/////////////
-    let S_TAPreviouslyFocused = false;
-    $('#send_textarea').on('focusin focus click', () => {
-        S_TAPreviouslyFocused = true;
-    });
-    $('#send_but, #option_regenerate, #option_continue, #mes_continue, #mes_impersonate').on('click', () => {
-        if (S_TAPreviouslyFocused) {
-            $('#send_textarea').trigger('focus');
-        }
-    });
-    $(document).on('click', event => {
-        if ($(':focus').attr('id') !== 'send_textarea') {
-            var validIDs = ['options_button', 'send_but', 'mes_impersonate', 'mes_continue', 'send_textarea', 'option_regenerate', 'option_continue', 'option_toggle_fullscreen'];
-            if (!validIDs.includes($(event.target).attr('id'))) {
-                S_TAPreviouslyFocused = false;
-            }
-        } else {
-            S_TAPreviouslyFocused = true;
-        }
-    });
-
-    /////////////////
+    installChatInputFocusKeeper();
 
     $('#swipes-checkbox').on('change', function () {
         swipes = !!$('#swipes-checkbox').prop('checked');
@@ -12555,13 +12539,13 @@ jQuery(async function () {
             const isEditVisible = $('#curEditTextarea').is(':visible') || $('.reasoning_edit_textarea').length > 0;
             if (isEditVisible && power_user.auto_save_msg_edits === false) {
                 closeMessageEditor('all');
-                $('#send_textarea').trigger('focus');
+                focusChatInput(ChatInputFocusIntent.EDITING);
                 return;
             }
             if (isEditVisible && power_user.auto_save_msg_edits === true) {
                 chatElement.find(`.mes[mesid="${this_edit_mes_id}"] .mes_edit_done`).trigger('click');
                 closeMessageEditor('reasoning');
-                $('#send_textarea').trigger('focus');
+                focusChatInput(ChatInputFocusIntent.EDITING);
                 return;
             }
             if (this_edit_mes_id === undefined && $('#mes_stop').is(':visible')) {
