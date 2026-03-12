@@ -1,0 +1,30 @@
+.tt-runtime-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 12px 10px;
+    border: 1px dashed var(--white30a);
+    border-radius: 6px;
+    background: var(--black30a);
+    color: var(--SmartThemeBodyColor);
+    cursor: pointer;
+    user-select: none;
+}
+
+.tt-runtime-placeholder-title {
+    font-weight: 600;
+}
+
+.tt-runtime-placeholder-hint {
+    margin-top: 4px;
+    font-size: 0.9em;
+    opacity: 0.8;
+}
+
+.tt-runtime-placeholder:focus-visible {
+    outline: 2px solid var(--interactable-outline-color);
+    outline-offset: 2px;
+}

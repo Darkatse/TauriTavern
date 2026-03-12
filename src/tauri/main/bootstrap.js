@@ -334,11 +334,10 @@ export function bootstrapTauriMain() {
         window.__TAURITAVERN__.ready = readyPromise;
     }
 
-    void readyPromise.then(() => import('../../scripts/tauri/sync/sync-panel.js')
-        .then(({ installLanSyncPanel }) => installLanSyncPanel())
-        .catch((error) => {
-            console.warn('TauriTavern: Failed to load LAN sync panel:', error);
-        }));
+    void readyPromise.then(() => import('../../scripts/tauri/sync/sync-panel.js').then(({ installLanSyncPanel }) => installLanSyncPanel()).catch((error) => {
+        console.warn('TauriTavern: Failed to load LAN sync panel:', error);
+    }));
+    void readyPromise.then(() => import('./services/embedded-runtime/install.js').then(({ installEmbeddedRuntime }) => installEmbeddedRuntime()));
 
     if (perfEnabled) {
         readyPromise

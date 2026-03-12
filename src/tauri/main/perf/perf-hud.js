@@ -1,4 +1,5 @@
 const GLOBAL_KEY = '__TAURITAVERN_PERF__';
+const EMBEDDED_RUNTIME_KEY = '__TAURITAVERN_EMBEDDED_RUNTIME__';
 const STORAGE_ENABLED_KEY = 'tt:perf';
 const STORAGE_POSITION_KEY = 'tt:perf:pos';
 
@@ -585,6 +586,19 @@ function createPerfController(options = {}) {
         return sample;
     }
 
+    function getEmbeddedRuntimeSample() {
+        try {
+            const runtime = globalThis[EMBEDDED_RUNTIME_KEY];
+            if (!runtime || typeof runtime.getPerfSnapshot !== 'function') {
+                return null;
+            }
+
+            return runtime.getPerfSnapshot();
+        } catch {
+            return null;
+        }
+    }
+
     function getHeapSample() {
         try {
             const mem = globalThis.performance?.memory;
@@ -864,6 +878,7 @@ function createPerfController(options = {}) {
         const now = safeNow();
         const frameStats = computeFrameStats();
         const dom = getDomSample();
+        const embeddedRuntime = getEmbeddedRuntimeSample();
         const heap = getHeapSample();
         const lagStats = computeEventLoopLagStats();
 
@@ -910,6 +925,9 @@ function createPerfController(options = {}) {
         lines.push(`LongTasks(>${LONG_TASK_BLOCKING_THRESHOLD_MS}ms): ${state.longTaskCount} (last ${formatMs(state.longTaskLastMs)} max ${formatMs(state.longTaskMaxMs)})  TBT10s: ${formatMs(longTaskBlocking10sMs)}`);
         lines.push(`Invokes: inflight ${state.invokeInFlight} (peak ${state.invokeInFlightMax})  1s ${invokeCount1s}${invokeErrCount1s ? ` err:${invokeErrCount1s}` : ''}`);
         lines.push(`DOM: ${dom.elements ?? '-'}  mes: ${dom.mes ?? '-'}  iframes: ${dom.iframes ?? '-'}`);
+        if (embeddedRuntime) {
+            lines.push(`Runtime: active ${embeddedRuntime.active}/${embeddedRuntime.registered}  iframes ${embeddedRuntime.activeIframes}  parked ${embeddedRuntime.parked}`);
+        }
         if (heap) {
             const limitSuffix = heap.limit ? ` (limit ${formatMB(heap.limit)})` : '';
             lines.push(`Heap: ${formatMB(heap.used)} / ${formatMB(heap.total)}${limitSuffix}`);
@@ -1145,6 +1163,7 @@ function createPerfController(options = {}) {
         const now = safeNow();
         const frameStats = computeFrameStats();
         const dom = getDomSample();
+        const embeddedRuntime = getEmbeddedRuntimeSample();
         const heap = getHeapSample();
         const eventLoopLag = computeEventLoopLagStats();
 
@@ -1198,6 +1217,7 @@ function createPerfController(options = {}) {
                 errCount10s: invokeErrCount10s,
             },
             dom,
+            embeddedRuntime,
             heap,
             init: {
                 totalMs: readMeasureDuration('tt:init:total'),

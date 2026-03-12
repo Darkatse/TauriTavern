@@ -681,6 +681,8 @@ let this_del_mes = -1;
 let this_edit_mes_chname = '';
 /** @type {number|undefined} */
 let this_edit_mes_id = undefined;
+/** @type {Map<number, DocumentFragment>} */
+const ttMessageEditStash = new Map();
 
 //settings
 export let settings;
@@ -8402,7 +8404,16 @@ export async function messageEdit(editMessageId) {
     const messageBlock = messageElement.find('.mes_block');
     const messageText = messageBlock.find('.mes_text');
 
-    messageText.empty();
+    const messageTextDom = messageText.get(0);
+    if (!messageTextDom) {
+        throw new Error(`messageEdit: .mes_text missing for message ${editMessageId}`);
+    }
+
+    const stash = document.createDocumentFragment();
+    while (messageTextDom.firstChild) {
+        stash.appendChild(messageTextDom.firstChild);
+    }
+    ttMessageEditStash.set(editMessageId, stash);
     messageBlock.find('.mes_buttons').css('display', 'none');
     messageBlock.find('.mes_edit_buttons').css('display', 'inline-flex');
 
@@ -8456,11 +8467,21 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
     }
 
     const thisMesBlock = thisMesDiv.find('.mes_block');
-    thisMesBlock.find('.mes_text').empty();
+    const messageText = thisMesBlock.find('.mes_text');
+    messageText.empty();
     thisMesDiv.find('.mes_edit_buttons').css('display', 'none');
     thisMesBlock.find('.mes_buttons').css('display', '');
-    thisMesBlock.find('.mes_text')
-        .append(messageFormatting(
+
+    const stash = ttMessageEditStash.get(messageId);
+    const messageTextDom = messageText.get(0);
+    if (stash) {
+        if (!messageTextDom) {
+            throw new Error(`messageEditCancel: .mes_text missing for message ${messageId}`);
+        }
+        messageTextDom.appendChild(stash);
+        ttMessageEditStash.delete(messageId);
+    } else {
+        messageText.append(messageFormatting(
             text,
             this_edit_mes_chname,
             chat[messageId].is_system,
@@ -8469,8 +8490,9 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
             {},
             false,
         ));
-    appendMediaToMessage(chat[messageId], thisMesDiv);
-    addCopyToCodeBlocks(thisMesDiv);
+        appendMediaToMessage(chat[messageId], thisMesDiv);
+        addCopyToCodeBlocks(thisMesDiv);
+    }
 
     const reasoningEditDone = thisMesBlock.find('.mes_reasoning_edit_cancel:visible');
     if (reasoningEditDone.length > 0) {
@@ -8532,6 +8554,19 @@ async function messageEditMove(sourceId, targetId) {
         this_edit_mes_id = targetId;
     }
 
+    const sourceStash = ttMessageEditStash.get(sourceId);
+    const targetStash = ttMessageEditStash.get(targetId);
+    if (sourceStash || targetStash) {
+        ttMessageEditStash.delete(sourceId);
+        ttMessageEditStash.delete(targetId);
+        if (targetStash) {
+            ttMessageEditStash.set(sourceId, targetStash);
+        }
+        if (sourceStash) {
+            ttMessageEditStash.set(targetId, sourceStash);
+        }
+    }
+
     swapItemizedPrompts(sourceId, targetId);
     updateViewMessageIds();
     refreshSwipeButtons();
@@ -8545,6 +8580,8 @@ async function messageEditDone(div) {
         console.trace('this_edit_mes_id cannot be blank when calling messageEditDone.');
         return;
     }
+
+    ttMessageEditStash.delete(this_edit_mes_id);
 
     let { mesBlock, text, mes, bias } = updateMessage(div);
 

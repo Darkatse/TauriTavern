@@ -69,4 +69,12 @@ interface Window {
         dispose: () => void;
         revalidate: () => void;
     };
+
+    __TAURITAVERN_EMBEDDED_RUNTIME__?: {
+        profile: string;
+        register: (slot: any) => { id: string; unregister: () => void };
+        unregister: (id: string) => void;
+        reconcile: () => void;
+        getPerfSnapshot: () => any;
+    };
 }
