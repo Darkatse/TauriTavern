@@ -7,9 +7,10 @@ import { renderTemplate, renderTemplateAsync } from './templates.js';
 import { delay, equalsIgnoreCaseAndAccents, isSubsetOf, sanitizeSelector, setValueByPath, versionCompare } from './utils.js';
 import { getContext } from './st-context.js';
 import { isAdmin } from './user.js';
-import { addLocaleData, getCurrentLocale, t } from './i18n.js';
+import { addLocaleData, getCurrentLocale, t, translate } from './i18n.js';
 import { debounce_timeout } from './constants.js';
 import { accountStorage } from './util/AccountStorage.js';
+import { stripCommandErrorPrefixes } from './util/command-error-utils.js';
 import { SimpleMutex } from './util/SimpleMutex.js';
 import { createThirdPartyStylesheetResolver } from './extensions/runtime/third-party-runtime.js';
 import { createExtensionAssetLoader } from './extensions/runtime/asset-loader.js';
@@ -1369,6 +1370,11 @@ function isGithubOnlyRepositoryError(value) {
     return message.includes(GITHUB_ONLY_ERROR_TOKEN);
 }
 
+function getExtensionInstallToastMessage(value) {
+    const normalized = stripCommandErrorPrefixes(value);
+    return normalized ? translate(normalized) : t`Unknown error`;
+}
+
 async function showGithubOnlyRepositoryPopup() {
     await callGenericPopup(
         t`Only GitHub repositories are supported for extension installation.`,
@@ -1401,7 +1407,7 @@ export async function installExtension(url, global, branch = '') {
             return;
         }
 
-        toastr.warning(message || t`Unknown error`, t`Extension installation failed`, { timeOut: 5000 });
+        toastr.warning(getExtensionInstallToastMessage(message), t`Extension installation failed`, { timeOut: 5000 });
         console.error('Extension installation failed', error);
         return;
     }
@@ -1413,7 +1419,7 @@ export async function installExtension(url, global, branch = '') {
             return;
         }
 
-        toastr.warning(text || request.statusText, t`Extension installation failed`, { timeOut: 5000 });
+        toastr.warning(getExtensionInstallToastMessage(text || request.statusText), t`Extension installation failed`, { timeOut: 5000 });
         console.error('Extension installation failed', request.status, request.statusText, text);
         return;
     }

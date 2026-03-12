@@ -2772,6 +2772,7 @@
     "Export Current Data": "匯出目前資料",
     "Warning: importing will merge into your current local data directory (same-path files will be overwritten).": "警告：匯入將合併到你目前本機的 data 目錄（同路徑檔案將被覆寫）。",
     "Unknown error": "未知錯誤",
+    "GitHub has rate-limited your requests. Please try again later, or change your network and try again.": "GitHub 已對你的請求進行速率限制。請稍後再試，或更換網路後再試一次。",
     "Importing will merge into the current local data directory (same-path files will be overwritten). Continue?": "匯入將合併到目前本機的 data 目錄（同路徑檔案將被覆寫）。是否繼續？",
     "Importing data archive...": "正在匯入資料壓縮檔...",
     "Data import failed": "資料匯入失敗",

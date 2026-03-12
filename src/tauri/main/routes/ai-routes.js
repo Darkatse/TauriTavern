@@ -2,6 +2,7 @@ import { createTokenCountBroker, estimateTokenCount, trimOpenAiMessage } from '.
 import { createAndroidGenerationBridge } from '../adapters/android/android-generation-bridge.js';
 import { translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
 import { listen } from '../../../tauri-bridge.js';
+import { stripCommandErrorPrefixes } from '../../../scripts/util/command-error-utils.js';
 
 function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -41,14 +42,6 @@ function isAbortError(error) {
 const DEFAULT_COMPLETION_MODEL = 'tauritavern-error';
 const DEFAULT_ERROR_MESSAGE = 'Chat completion request failed';
 const ERROR_LABEL = '[API Error]';
-const ERROR_PREFIX_PATTERNS = Object.freeze([
-    /^internal server error:\s*/i,
-    /^internal error:\s*/i,
-    /^validation error:\s*/i,
-    /^bad request:\s*/i,
-    /^unauthorized:\s*/i,
-    /^permission denied:\s*/i,
-]);
 const STREAM_FRAME_INTERVAL_MS = 10;
 const STREAM_RESPONSE_HEADERS = Object.freeze({
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -173,14 +166,14 @@ function pickFirstStringValue(source) {
 
 function normalizeFailureNotificationBody(errorMessage) {
     const raw = String(errorMessage || '').trim();
-    let normalized = stripKnownErrorPrefixes(raw);
+    let normalized = stripCommandErrorPrefixes(raw);
 
     if (normalized.startsWith('{') && normalized.endsWith('}')) {
         try {
             const parsed = JSON.parse(normalized);
             const parsedMessage = pickFirstStringValue(parsed);
             if (parsedMessage) {
-                normalized = stripKnownErrorPrefixes(parsedMessage);
+                normalized = stripCommandErrorPrefixes(parsedMessage);
             }
         } catch {
             // Keep original normalized text.
@@ -294,26 +287,9 @@ function getCompletionModel(payload) {
     return DEFAULT_COMPLETION_MODEL;
 }
 
-function stripKnownErrorPrefixes(message) {
-    let normalized = String(message || '').trim();
-    if (!normalized) {
-        return '';
-    }
-
-    let previous = '';
-    while (normalized && normalized !== previous) {
-        previous = normalized;
-        for (const prefixPattern of ERROR_PREFIX_PATTERNS) {
-            normalized = normalized.replace(prefixPattern, '').trim();
-        }
-    }
-
-    return normalized;
-}
-
 function buildErrorAssistantText(error) {
     const rawMessage = getErrorMessage(error);
-    const normalizedMessage = stripKnownErrorPrefixes(rawMessage) || DEFAULT_ERROR_MESSAGE;
+    const normalizedMessage = stripCommandErrorPrefixes(rawMessage) || DEFAULT_ERROR_MESSAGE;
     if (normalizedMessage.startsWith(ERROR_LABEL)) {
         return normalizedMessage;
     }
