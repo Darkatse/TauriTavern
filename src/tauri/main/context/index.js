@@ -8,6 +8,7 @@ import { createCharacterService } from '../services/characters/character-service
 import { createCharacterFormService } from '../services/characters/character-form-service.js';
 import { createUploadService } from '../services/uploads/upload-service.js';
 import { createAndroidArchiveService } from '../services/android/android-archive-service.js';
+import { createHostInvokePolicies } from '../kernel/invokes/invoke-policies.js';
 import {
     ensureJsonl,
     stripJsonl,
@@ -34,17 +35,6 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
     const IMAGE_THUMBNAIL_ROUTE_TYPES = new Set(['avatar', 'persona']);
     const THUMBNAIL_BLOB_CACHE_LIMIT = 300;
 
-    /** @param {any} args */
-    const readThumbnailAssetCacheKey = (args) => {
-        const type = String(args?.thumbnailType ?? args?.thumbnail_type ?? '').trim().toLowerCase();
-        const file = String(args?.file ?? '').trim();
-        const animated = Boolean(args?.animated);
-        return `${type}|${animated ? 1 : 0}|${file}`;
-    };
-
-    /** @param {any} _prev @param {any} next */
-    const takeLatest = (_prev, next) => next;
-
     const userDirectoriesService = createUserDirectoriesService({ invoke });
     const assetService = createAssetService({
         convertFileSrc,
@@ -62,26 +52,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
 
     const invokeService = createInvokeService({
         invoke,
-        policies: {
-            get_sillytavern_settings: {
-                kind: 'dedupe',
-                key: () => 'singleton',
-            },
-            read_thumbnail_asset: {
-                kind: 'dedupe',
-                maxConcurrent: 2,
-                cacheTtlMs: 30_000,
-                cacheLimit: THUMBNAIL_BLOB_CACHE_LIMIT,
-                key: readThumbnailAssetCacheKey,
-            },
-            save_user_settings: {
-                kind: 'writeBehind',
-                delayMs: 300,
-                maxConcurrent: 1,
-                key: () => 'singleton',
-                merge: takeLatest,
-            },
-        },
+        policies: createHostInvokePolicies({ thumbnailBlobCacheLimit: THUMBNAIL_BLOB_CACHE_LIMIT }),
     });
 
     const characterService = createCharacterService({ safeInvoke: invokeService.safeInvoke });

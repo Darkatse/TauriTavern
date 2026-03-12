@@ -4,6 +4,7 @@ import { createInvokeBroker } from '../../brokers/invoke-broker.js';
 
 /**
  * @typedef {import('../../context/types.js').TauriInvokeFn} TauriInvokeFn
+ * @typedef {import('../../context/types.js').TauriInvokeCommand} TauriInvokeCommand
  */
 
 /**
@@ -129,7 +130,7 @@ export function createInvokeService({ invoke, policies }) {
     }
 
     /**
-     * @param {string} command
+     * @param {TauriInvokeCommand} command
      * @param {any} args
      */
     async function invokeTransport(command, args = {}) {
@@ -156,7 +157,7 @@ export function createInvokeService({ invoke, policies }) {
     let invokeTransportRef = invokeTransport;
 
     /** @param {string} command @param {any} args */
-    const transport = (command, args) => invokeTransportRef(command, args);
+    const transport = (command, args) => invokeTransportRef(/** @type {TauriInvokeCommand} */ (command), args);
 
     const invokeBroker = createInvokeBroker({
         transport,
@@ -164,7 +165,7 @@ export function createInvokeService({ invoke, policies }) {
     });
 
     /**
-     * @param {string} command
+     * @param {TauriInvokeCommand} command
      * @param {any} args
      */
     async function safeInvoke(command, args = {}) {
@@ -172,19 +173,19 @@ export function createInvokeService({ invoke, policies }) {
     }
 
     /**
-     * @param {string} command
+     * @param {TauriInvokeCommand} command
      * @param {any} args
      */
     function invalidateInvoke(command, args = {}) {
         invokeBroker.invalidate(command, args);
     }
 
-    /** @param {string} command */
+    /** @param {TauriInvokeCommand} command */
     function invalidateInvokeAll(command) {
         invokeBroker.invalidateAll(command);
     }
 
-    /** @param {string} command */
+    /** @param {TauriInvokeCommand} command */
     function flushInvokes(command) {
         return invokeBroker.flush(command);
     }

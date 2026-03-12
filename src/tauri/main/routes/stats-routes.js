@@ -1,3 +1,5 @@
+import { getLocalStorage } from '../adapters/storage/safe-local-storage.js';
+
 const STATS_STORAGE_KEY = 'tauritavern.stats.v1';
 let memoryStats = {};
 
@@ -5,16 +7,8 @@ function isPlainObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function getStorage() {
-    try {
-        return window?.localStorage ?? null;
-    } catch {
-        return null;
-    }
-}
-
 function loadStats() {
-    const storage = getStorage();
+    const storage = getLocalStorage();
 
     if (!storage) {
         return memoryStats;
@@ -43,7 +37,7 @@ function saveStats(stats) {
     const nextStats = isPlainObject(stats) ? stats : {};
     memoryStats = nextStats;
 
-    const storage = getStorage();
+    const storage = getLocalStorage();
     if (!storage) {
         return;
     }

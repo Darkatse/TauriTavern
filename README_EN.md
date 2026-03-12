@@ -8,7 +8,9 @@ TauriTavern ports SillyTavern into a native desktop app with Tauri v2 + Rust bac
 - Rust backend with clean architecture layering
 - Frontend compatibility with SillyTavern 1.16.0
 - Chat Completion providers: OpenAI, Claude, Gemini(MakerSuite), and Custom OpenAI-compatible endpoint
-- Modular request injection pipeline (`src/tauri/main/*`) replacing the previous monolithic `tauri-main.js`
+- Modular request injection pipeline (`src/tauri/main/*`), organized as a maintainable Host Kernel layering (`context/kernel/services/adapters/routes`)
+- Stable platform ABI: `window.__TAURITAVERN__` + request tracing header: `x-tauritavern-trace-id`
+- Engineering guardrails: strict type checks (`tsc -p tsconfig.host.json`) + dependency/line-budget rules (routes must not reference `window`)
 - Unified frontend bootstrap pipeline without runtime loader indirection
 
 ## Architecture
@@ -30,7 +32,7 @@ Frontend startup flow:
 1. `src/init.js` loads `lib.js` -> `tauri-main.js` -> `script.js`
 2. `src/lib.js` statically imports `src/dist/lib.bundle.js` and re-exports a stable ESM library surface
 3. `src/tauri-main.js` delegates to `bootstrapTauriMain()`
-4. `src/tauri/main/bootstrap.js` creates context/router/interceptors, then initializes bridge and runtime helpers
+4. `src/tauri/main/bootstrap.js` creates context/router/interceptors, installs the `window.__TAURITAVERN__` platform ABI, and injects a trace header for host-handled routes
 
 ## Frontend Integration Layout
 
@@ -43,7 +45,11 @@ src/
 ├── dist/lib.bundle.js           # webpack-built vendor bundle
 └── tauri/main/
     ├── bootstrap.js             # composition root
-    ├── context.js               # shared state + domain helpers
+    ├── context.js               # compatibility shim (re-export `context/index`)
+    ├── context/                 # host kernel facade + types (stable contract)
+    ├── kernel/                  # pure logic (policies/tracing/hash/...)
+    ├── services/                # stateful capabilities (assets/thumbnails/characters/android…)
+    ├── adapters/                # adapters touching window/DOM/upstream ST
     ├── http-utils.js            # request/response parsing helpers
     ├── interceptors.js          # fetch/jQuery ajax patching
     ├── router.js                # lightweight route registry
@@ -77,6 +83,7 @@ pnpm install
 Common commands:
 
 ```bash
+pnpm run check             # guardrails + host-kernel type checks (recommended)
 pnpm run web:build         # build frontend bundles (webpack)
 pnpm run dev           # desktop dev mode (alias of tauri:dev)
 pnpm run tauri:dev     # desktop dev mode
@@ -115,6 +122,7 @@ cargo run --manifest-path fastools/Cargo.toml
 ## Documentation
 
 - `docs/FrontendGuide.md`: frontend architecture and extension guide
+- `docs/FrontendHostContract.md`: public host-kernel contract (keep stable during refactors)
 - `docs/BackendStructure.md`: backend architecture details
 - `docs/TechStack.md`: stack and integration choices
 - `docs/ImplementationPlan.md`: roadmap and milestones

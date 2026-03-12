@@ -5,8 +5,8 @@
  */
 
 /**
- * @typedef {(command: string, args?: any) => Promise<any>} SafeInvokeFn
- * @typedef {(command: string) => void} InvalidateInvokeAllFn
+ * @typedef {(command: import('../../context/types.js').TauriInvokeCommand, args?: any) => Promise<any>} SafeInvokeFn
+ * @typedef {(command: import('../../context/types.js').TauriInvokeCommand) => void} InvalidateInvokeAllFn
  * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveCharacterIdFn
  * @typedef {(file: Blob, options?: { preferredName?: string; preferredExtension?: string }) => Promise<MaterializedFileInfo | null>} MaterializeUploadFileFn
  */

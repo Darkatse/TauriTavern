@@ -49,7 +49,7 @@
 
 ### 3.1 资源与缩略图（Public）
 
-由 `src/tauri/main/context.js` 安装：
+由 `createTauriMainContext()` 安装（实现：`src/tauri/main/context/index.js`，兼容入口：`src/tauri/main/context.js`）：
 
 - `window.__TAURITAVERN_THUMBNAIL__(type, file, useTimestamp?) -> string`
   - 生成缩略图 URL（通常返回 `/thumbnail?...` 或 asset protocol URL）。
@@ -67,7 +67,7 @@
 
 ### 3.2 Android 导入/导出 Picker（Public）
 
-由 `src/tauri/main/context.js` 安装（用于 Android Content URI 的回调接收）：
+由 `createTauriMainContext()` 安装（用于 Android Content URI 的回调接收）：
 
 - `window.__TAURITAVERN_IMPORT_ARCHIVE_PICKER__`（对象：用于接收 Android 侧回调并 resolve/reject pending promise）
 - `window.__TAURITAVERN_EXPORT_ARCHIVE_PICKER__`（同上）
@@ -88,6 +88,19 @@
 - `window.__TAURITAVERN_NATIVE_SHARE__ = { push(payload), subscribe(handler) }`
   - `push()`：注入分享 payload（url 或 png）。
   - `subscribe()`：订阅消费；若早到则进入 backlog，首次订阅会 drain backlog。
+
+### 3.5 平台 ABI（Public，新）
+
+为避免未来继续扩散 `window.__TAURITAVERN_*` 零散符号，宿主层额外提供一个**统一出口**：
+
+- `window.__TAURITAVERN__ : { abiVersion, traceHeader, ready, invoke, assets }`
+  - `abiVersion: number`：ABI 版本号（语义化破坏改动时递增）。
+  - `traceHeader: string`：请求追踪 header 名（见 4.4）。
+  - `ready: Promise<void> | null`：与 `__TAURITAVERN_MAIN_READY__` 语义一致。
+  - `invoke.safeInvoke(...)` / `invoke.flushAll()`：对 `context` invoke 能力的稳定包装。
+  - `assets.*`：对资源路径/缩略图相关全局 API 的统一引用。
+
+> 注意：`window.__TAURITAVERN__` 是“平台 ABI”，应保持**小而稳定**；不要把内部实现对象整个暴露出去。
 
 ---
 
@@ -129,6 +142,15 @@
 - `/thumbnail`：缩略图/资源路由（与 `__TAURITAVERN_THUMBNAIL__` 强耦合）
 - `/user/files/*`、`/User Avatars/*`：用户文件与头像资源访问（含通配符路由）
 
+### 4.4 Request tracing（Project，建议作为调试常用工具）
+
+对所有被宿主接管的路由响应，都会附带一个追踪 header：
+
+- `x-tauritavern-trace-id: <traceId>`
+
+用途：将 DevTools Network 中的单次请求，与 console 日志 / perf-hud 数据关联起来，定位第三方脚本导致的异常与性能热点。
+header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免硬编码）。
+
 ---
 
 ## 5. 兼容补丁与观测（Public/Project）
@@ -163,3 +185,15 @@
 
 任何涉及第 3/4 节契约的改动，都必须至少跑通以上 smoke tests。
 
+---
+
+## 7. 工程约束（Project，维护者）
+
+> 这些约束不属于第三方“对外 API”，但属于长期维护的硬门槛：它们用于防止宿主层再次退化为单体与隐式耦合。
+
+- Guardrails：`pnpm run check:frontend`（`scripts/check-frontend-guardrails.mjs`）
+  - 行数预算：关键聚合文件受 `scripts/guardrails/frontend-lines-baseline.json` 约束。
+  - 依赖边界：`kernel/ports` 不得 import `services/routes/adapters`；`services` 不得 import `routes`。
+  - 路由契约：`src/tauri/main/routes/*` 禁止直接引用 `window`（通过 `adapters/*` 触碰浏览器/DOM/上游 ST）。
+- 类型检查：`pnpm run check:types`（`tsc -p tsconfig.host.json`）
+- Invoke surface：宿主层已知命令名集中在 `src/tauri/main/kernel/invokes/tauri-commands.js`（减少字符串漂移与 typo）

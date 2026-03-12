@@ -7,10 +7,11 @@
 1. [产品需求文档 (PRD)](./PRD.md) - 详细描述项目的功能需求和目标
 2. [技术栈文档](./TechStack.md) - 列出项目使用的技术栈和依赖
 3. [前端指南](./FrontendGuide.md) - 前端代码结构、Tauri注入启动链与模块化路由开发指南
-4. [后端结构](./BackendStructure.md) - 后端架构和模块说明
-5. [实施计划](./ImplementationPlan.md) - 项目实施的阶段和里程碑
-6. [移动端开发说明](./MobileDevelopment.md) - Android/iOS 关键坑位、资源访问与路径解析方案
-7. [现状说明](./CurrentState/README.md) - 当前实现状态快照与持续开发约束
+4. [前端宿主契约](./FrontendHostContract.md) - Host Kernel 对上游/插件/脚本可观察行为的契约清单（重构必读）
+5. [后端结构](./BackendStructure.md) - 后端架构和模块说明
+6. [实施计划](./ImplementationPlan.md) - 项目实施的阶段和里程碑
+7. [移动端开发说明](./MobileDevelopment.md) - Android/iOS 关键坑位、资源访问与路径解析方案
+8. [现状说明](./CurrentState/README.md) - 当前实现状态快照与持续开发约束
 
 ## 项目概述
 

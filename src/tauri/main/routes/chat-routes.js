@@ -6,56 +6,6 @@ import {
 } from '../../../scripts/tauri/chat/transport.js';
 import { payloadToJsonl } from '../../../scripts/tauri/chat/jsonl.js';
 
-function payloadMessages(payload) {
-    if (!Array.isArray(payload)) {
-        throw new Error('Chat payload must be an array');
-    }
-
-    return payload.filter((entry, index) => index > 0 && typeof entry?.mes === 'string');
-}
-
-function previewMessage(messages) {
-    const maxLength = 400;
-    const lastMessage = messages[messages.length - 1]?.mes;
-    if (!lastMessage || typeof lastMessage !== 'string') {
-        return '';
-    }
-
-    if (lastMessage.length <= maxLength) {
-        return lastMessage;
-    }
-
-    return `...${lastMessage.slice(lastMessage.length - maxLength)}`;
-}
-
-function lastMessageTimestamp(context, payload) {
-    const messages = payloadMessages(payload);
-    const lastMessage = messages[messages.length - 1];
-    return context.parseTimestamp(lastMessage?.send_date);
-}
-
-function searchFragments(query) {
-    return String(query || '')
-        .trim()
-        .toLowerCase()
-        .split(/\s+/)
-        .filter(Boolean);
-}
-
-function matchesSearch(fileStem, payload, query) {
-    const fragments = searchFragments(query);
-    if (fragments.length === 0) {
-        return true;
-    }
-
-    const messages = payloadMessages(payload);
-    const searchText = [fileStem, ...messages.map((message) => String(message.mes || ''))]
-        .join('\n')
-        .toLowerCase();
-
-    return fragments.every((fragment) => searchText.includes(fragment));
-}
-
 function normalizePinnedChats(value) {
     if (!Array.isArray(value)) {
         return [];
@@ -172,10 +122,20 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return jsonResponse({ ok: true });
         }
 
-        await context.safeInvoke('delete_chat', {
-            characterName: characterId,
-            fileName,
-        });
+        try {
+            await context.safeInvoke('delete_chat', {
+                characterName: characterId,
+                fileName,
+            });
+        } catch (error) {
+            return jsonResponse(
+                {
+                    error: 'Failed to delete chat',
+                    details: String(error?.message || error || ''),
+                },
+                500,
+            );
+        }
 
         return jsonResponse({ ok: true });
     });
@@ -275,170 +235,180 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/chats/recent', async ({ body }) => {
-        const pinnedChats = normalizePinnedChats(body?.pinned);
-        const requestedMax = Number.parseInt(body?.max, 10);
-        const requestedRecentLimit = (
-            Number.isFinite(requestedMax)
-                ? Math.max(0, requestedMax)
-                : Number.MAX_SAFE_INTEGER
-        );
-        const responseLimit = requestedRecentLimit + pinnedChats.length;
-        const withMetadata = Boolean(body?.metadata);
-        const [groups] = await Promise.all([
-            context.safeInvoke('get_all_groups'),
-            context.getAllCharacters({ shallow: true }),
-        ]);
+        try {
+            const pinnedChats = normalizePinnedChats(body?.pinned);
+            const requestedMax = Number.parseInt(body?.max, 10);
+            const requestedRecentLimit = (
+                Number.isFinite(requestedMax)
+                    ? Math.max(0, requestedMax)
+                    : Number.MAX_SAFE_INTEGER
+            );
+            const responseLimit = requestedRecentLimit + pinnedChats.length;
+            const withMetadata = Boolean(body?.metadata);
+            const [groups] = await Promise.all([
+                context.safeInvoke('get_all_groups'),
+                context.getAllCharacters({ shallow: true }),
+            ]);
 
-        const groupChatToGroup = new Map();
-        if (Array.isArray(groups)) {
-            groups.forEach((group) => {
-                const groupId = String(group?.id || '').trim();
-                const chatIds = Array.isArray(group?.chats) ? group.chats : [];
-                if (!groupId) {
+            const groupChatToGroup = new Map();
+            if (Array.isArray(groups)) {
+                groups.forEach((group) => {
+                    const groupId = String(group?.id || '').trim();
+                    const chatIds = Array.isArray(group?.chats) ? group.chats : [];
+                    if (!groupId) {
+                        return;
+                    }
+
+                    chatIds.forEach((chatId) => {
+                        const id = context.stripJsonl(chatId);
+                        if (!id || groupChatToGroup.has(id)) {
+                            return;
+                        }
+                        groupChatToGroup.set(id, groupId);
+                    });
+                });
+            }
+
+            const pinnedCharacterRefs = [];
+            const pinnedCharacterRefKeys = new Set();
+            await Promise.all(pinnedChats.map(async (chat) => {
+                const avatar = String(chat?.avatar || '').trim();
+                const fileStem = context.stripJsonl(chat?.file_name || '');
+                if (!avatar || !fileStem || chat?.group) {
                     return;
                 }
 
-                chatIds.forEach((chatId) => {
-                    const id = context.stripJsonl(chatId);
-                    if (!id || groupChatToGroup.has(id)) {
-                        return;
-                    }
-                    groupChatToGroup.set(id, groupId);
+                const characterId = await context.resolveCharacterId({ avatar });
+                if (!characterId) {
+                    return;
+                }
+
+                const key = `${characterId}/${fileStem}`;
+                if (pinnedCharacterRefKeys.has(key)) {
+                    return;
+                }
+                pinnedCharacterRefKeys.add(key);
+                pinnedCharacterRefs.push({
+                    character_name: characterId,
+                    file_name: fileStem,
                 });
-            });
-        }
+            }));
 
-        const pinnedCharacterRefs = [];
-        const pinnedCharacterRefKeys = new Set();
-        await Promise.all(pinnedChats.map(async (chat) => {
-            const avatar = String(chat?.avatar || '').trim();
-            const fileStem = context.stripJsonl(chat?.file_name || '');
-            if (!avatar || !fileStem || chat?.group) {
-                return;
-            }
-
-            const characterId = await context.resolveCharacterId({ avatar });
-            if (!characterId) {
-                return;
-            }
-
-            const key = `${characterId}/${fileStem}`;
-            if (pinnedCharacterRefKeys.has(key)) {
-                return;
-            }
-            pinnedCharacterRefKeys.add(key);
-            pinnedCharacterRefs.push({
-                character_name: characterId,
-                file_name: fileStem,
-            });
-        }));
-
-        const pinnedGroupRefs = [];
-        const pinnedGroupRefKeys = new Set();
-        pinnedChats.forEach((chat) => {
-            const groupId = String(chat?.group || '').trim();
-            const fileStem = context.stripJsonl(chat?.file_name || '');
-            if (!groupId || !fileStem) {
-                return;
-            }
-
-            if (groupChatToGroup.get(fileStem) !== groupId) {
-                return;
-            }
-
-            if (pinnedGroupRefKeys.has(fileStem)) {
-                return;
-            }
-            pinnedGroupRefKeys.add(fileStem);
-            pinnedGroupRefs.push({ chat_id: fileStem });
-        });
-
-        const characterQueryLimit = requestedRecentLimit + pinnedCharacterRefs.length;
-        const groupChatIds = Array.from(groupChatToGroup.keys());
-        const groupQueryLimit = requestedRecentLimit + pinnedGroupRefs.length;
-        const [characterSummaries, groupSummaries] = await Promise.all([
-            context.safeInvoke('list_recent_chat_summaries', {
-                include_metadata: withMetadata,
-                max_entries: characterQueryLimit,
-                pinned: pinnedCharacterRefs,
-            }),
-            groupChatIds.length > 0
-                ? context.safeInvoke('list_recent_group_chat_summaries', {
-                    chat_ids: groupChatIds,
-                    include_metadata: withMetadata,
-                    max_entries: groupQueryLimit,
-                    pinned: pinnedGroupRefs,
-                })
-                : Promise.resolve([]),
-        ]);
-
-        const characterEntries = Array.isArray(characterSummaries)
-            ? characterSummaries.map((chat) => {
-                const characterId = String(chat?.character_name || '').trim();
+            const pinnedGroupRefs = [];
+            const pinnedGroupRefKeys = new Set();
+            pinnedChats.forEach((chat) => {
+                const groupId = String(chat?.group || '').trim();
                 const fileStem = context.stripJsonl(chat?.file_name || '');
-                if (!characterId || !fileStem) {
-                    return null;
+                if (!groupId || !fileStem) {
+                    return;
                 }
 
-                const avatar = context.findAvatarByCharacterId(characterId);
-                const result = {
-                    file_name: context.ensureJsonl(chat.file_name || ''),
-                    file_size: context.formatFileSize(chat.file_size),
-                    chat_items: Number(chat.message_count || 0),
-                    mes: String(chat.preview || ''),
-                    last_mes: Number(chat.date || 0),
-                    avatar: avatar || '',
-                };
-
-                if (withMetadata) {
-                    result.chat_metadata = chat?.chat_metadata || {};
+                if (groupChatToGroup.get(fileStem) !== groupId) {
+                    return;
                 }
 
-                return result;
-            })
-            : [];
+                if (pinnedGroupRefKeys.has(fileStem)) {
+                    return;
+                }
+                pinnedGroupRefKeys.add(fileStem);
+                pinnedGroupRefs.push({ chat_id: fileStem });
+            });
 
-        const groupEntries = Array.isArray(groupSummaries)
-            ? groupSummaries.map((chat) => {
-                const fileName = context.ensureJsonl(chat.file_name || '');
-                const fileStem = context.stripJsonl(fileName);
-                const groupId = groupChatToGroup.get(fileStem);
-                if (!groupId) {
-                    return null;
+            const characterQueryLimit = requestedRecentLimit + pinnedCharacterRefs.length;
+            const groupChatIds = Array.from(groupChatToGroup.keys());
+            const groupQueryLimit = requestedRecentLimit + pinnedGroupRefs.length;
+            const [characterSummaries, groupSummaries] = await Promise.all([
+                context.safeInvoke('list_recent_chat_summaries', {
+                    include_metadata: withMetadata,
+                    max_entries: characterQueryLimit,
+                    pinned: pinnedCharacterRefs,
+                }),
+                groupChatIds.length > 0
+                    ? context.safeInvoke('list_recent_group_chat_summaries', {
+                        chat_ids: groupChatIds,
+                        include_metadata: withMetadata,
+                        max_entries: groupQueryLimit,
+                        pinned: pinnedGroupRefs,
+                    })
+                    : Promise.resolve([]),
+            ]);
+
+            const characterEntries = Array.isArray(characterSummaries)
+                ? characterSummaries.map((chat) => {
+                    const characterId = String(chat?.character_name || '').trim();
+                    const fileStem = context.stripJsonl(chat?.file_name || '');
+                    if (!characterId || !fileStem) {
+                        return null;
+                    }
+
+                    const avatar = context.findAvatarByCharacterId(characterId);
+                    const result = {
+                        file_name: context.ensureJsonl(chat.file_name || ''),
+                        file_size: context.formatFileSize(chat.file_size),
+                        chat_items: Number(chat.message_count || 0),
+                        mes: String(chat.preview || ''),
+                        last_mes: Number(chat.date || 0),
+                        avatar: avatar || '',
+                    };
+
+                    if (withMetadata) {
+                        result.chat_metadata = chat?.chat_metadata || {};
+                    }
+
+                    return result;
+                })
+                : [];
+
+            const groupEntries = Array.isArray(groupSummaries)
+                ? groupSummaries.map((chat) => {
+                    const fileName = context.ensureJsonl(chat.file_name || '');
+                    const fileStem = context.stripJsonl(fileName);
+                    const groupId = groupChatToGroup.get(fileStem);
+                    if (!groupId) {
+                        return null;
+                    }
+
+                    const result = {
+                        file_name: fileName,
+                        file_size: context.formatFileSize(chat.file_size),
+                        chat_items: Number(chat.message_count || 0),
+                        mes: String(chat.preview || ''),
+                        last_mes: Number(chat.date || 0),
+                        group: groupId,
+                    };
+
+                    if (withMetadata) {
+                        result.chat_metadata = chat?.chat_metadata || {};
+                    }
+
+                    return result;
+                })
+                : [];
+
+            const allEntries = [...characterEntries.filter(Boolean), ...groupEntries.filter(Boolean)];
+            allEntries.sort((a, b) => {
+                const aPinned = isPinnedRecentChat(a, pinnedChats);
+                const bPinned = isPinnedRecentChat(b, pinnedChats);
+                if (aPinned && !bPinned) {
+                    return -1;
+                }
+                if (!aPinned && bPinned) {
+                    return 1;
                 }
 
-                const result = {
-                    file_name: fileName,
-                    file_size: context.formatFileSize(chat.file_size),
-                    chat_items: Number(chat.message_count || 0),
-                    mes: String(chat.preview || ''),
-                    last_mes: Number(chat.date || 0),
-                    group: groupId,
-                };
+                return Number(b.last_mes || 0) - Number(a.last_mes || 0);
+            });
 
-                if (withMetadata) {
-                    result.chat_metadata = chat?.chat_metadata || {};
-                }
-
-                return result;
-            })
-            : [];
-
-        const allEntries = [...characterEntries.filter(Boolean), ...groupEntries.filter(Boolean)];
-        allEntries.sort((a, b) => {
-            const aPinned = isPinnedRecentChat(a, pinnedChats);
-            const bPinned = isPinnedRecentChat(b, pinnedChats);
-            if (aPinned && !bPinned) {
-                return -1;
-            }
-            if (!aPinned && bPinned) {
-                return 1;
-            }
-
-            return Number(b.last_mes || 0) - Number(a.last_mes || 0);
-        });
-
-        return jsonResponse(allEntries.slice(0, Math.max(0, responseLimit)));
+            return jsonResponse(allEntries.slice(0, Math.max(0, responseLimit)));
+        } catch (error) {
+            return jsonResponse(
+                {
+                    error: 'Failed to load recent chats',
+                    details: String(error?.message || error || ''),
+                },
+                500,
+            );
+        }
     });
 
     router.post('/api/chats/export', async ({ body }) => {

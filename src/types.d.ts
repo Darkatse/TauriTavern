@@ -17,6 +17,31 @@ interface Window {
     __TAURITAVERN_MAIN_READY__?: Promise<void>;
 
     // TauriTavern host contract (public globals)
+    __TAURITAVERN__?: {
+        abiVersion: number;
+        traceHeader: string;
+        ready: Promise<void> | null;
+        invoke: {
+            safeInvoke: (command: any, args?: any) => Promise<any>;
+            invalidate: (command: any, args?: any) => void;
+            invalidateAll: (command: any) => void;
+            flush: (command: any) => Promise<void>;
+            flushAll: () => Promise<void>;
+            broker: any;
+        };
+        assets: {
+            thumbnailUrl?: (type: string, file: string, useTimestamp?: boolean) => string;
+            thumbnailBlobUrl?: (
+                type: string,
+                file: string,
+                options?: { animated?: boolean; useTimestamp?: boolean },
+            ) => Promise<string>;
+            backgroundPath?: (file: string) => string;
+            avatarPath?: (file: string) => string | null;
+            personaPath?: (file: string) => string;
+        };
+    };
+
     __TAURITAVERN_THUMBNAIL__?: (type: string, file: string, useTimestamp?: boolean) => string;
     __TAURITAVERN_THUMBNAIL_BLOB_URL__?: (
         type: string,

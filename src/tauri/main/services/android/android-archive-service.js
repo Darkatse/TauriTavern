@@ -15,7 +15,7 @@
  */
 
 /**
- * @typedef {(command: string, args?: any) => Promise<any>} SafeInvokeFn
+ * @typedef {(command: import('../../context/types.js').TauriInvokeCommand, args?: any) => Promise<any>} SafeInvokeFn
  */
 
 /**

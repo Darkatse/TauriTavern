@@ -22,8 +22,10 @@
    - 创建运行上下文（`context`）
    - 注册前端路由（`router + routes/*`）
    - 安装请求拦截器（`fetch` 与 `jQuery.ajax`）
+   - 安装平台 ABI：`window.__TAURITAVERN__`（小而稳定的宿主对外接口）
    - 安装同源窗口下载桥（移动端浏览器式导出 -> 原生落盘）
    - 安装 Tauri mobile 兼容层（runtime polyfills + overlay safe-area，仅移动端）
+   - 为宿主接管的路由响应注入追踪 header：`x-tauritavern-trace-id`
    - 初始化 bridge 与目录信息
 
 ## 3. 目录结构（前端集成相关）
@@ -35,7 +37,11 @@ src/
 ├── tauri/
 │   └── main/
 │       ├── bootstrap.js       # 组合根（composition root）
-│       ├── context.js         # 状态与共享业务能力
+│       ├── context.js         # 兼容 shim（re-export `context/index`）
+│       ├── context/           # Host Kernel facade + types（对外契约保持稳定）
+│       ├── kernel/            # 纯逻辑（策略/计算/键生成/追踪等）
+│       ├── services/          # 有状态能力（assets/thumbnails/characters/android…）
+│       ├── adapters/          # 触碰 window/DOM/上游 ST 的适配层
 │       ├── download-bridge.js # 同源窗口下载桥接
 │       ├── http-utils.js      # URL/Body/Response 工具
 │       ├── interceptors.js    # fetch/jQuery 注入
@@ -60,13 +66,15 @@ src/
 - 组装模块依赖并执行初始化。
 - 确保只 bootstrap 一次。
 - 在 bridge 初始化后再次尝试 patch 运行时补丁（处理加载时序问题）。
+- 维护对第三方可见的宿主 ABI（`window.__TAURITAVERN__`）与请求追踪 header。
 
 ### 4.2 `context.js`
 
-- 提供统一的 `safeInvoke`（含短重试机制）。
-- 管理角色缓存和名称解析。
-- 处理头像/背景等资源路径转换（`convertFileSrc`）。
-- 封装表单到 DTO 的转换与上传文件临时落盘。
+- `context.js` 仅作为兼容入口（避免外部 import 路径变化）。
+- 真实实现位于 `src/tauri/main/context/index.js`：作为 Host Kernel facade 组装 `kernel + services + adapters`。
+- `safeInvoke` 具备可配置的 invoke 策略（dedupe / write-behind / TTL cache），集中在 `src/tauri/main/kernel/invokes/invoke-policies.js`。
+- Host 侧已知的 Rust 命令名收敛为类型：`src/tauri/main/kernel/invokes/tauri-commands.js`（`TauriInvokeCommand`）。
+- 与第三方直接交互的全局符号（如缩略图 helpers）属于 Public Contract（见 `docs/FrontendHostContract.md`）。
 
 ### 4.3 `interceptors.js`
 
@@ -93,7 +101,10 @@ src/
 4. 路由通过 `context.safeInvoke(...)` 调用 Rust 命令
 5. 返回标准 `Response` 给前端调用方
 
-补充：`/csrf-token` 在 `system-routes.js` 中返回固定 token，用于通过前端初始化流程中的 CSRF 依赖检查。
+补充：
+
+- `/csrf-token` 在 `system-routes.js` 中返回固定 token，用于通过前端初始化流程中的 CSRF 依赖检查。
+- 所有宿主接管的路由响应都会附带 `x-tauritavern-trace-id`，用于将 DevTools Network 与 console/perf-hud 关联定位问题（header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取）。
 
 ## 6. 路由分域说明
 
@@ -246,17 +257,19 @@ src/
 ## 9. 如何新增一个 Tauri 注入接口
 
 1. 在 Rust 后端新增/确认命令（`src-tauri/src/presentation/commands/*`）。
-2. 在 `src/tauri/main/routes/` 对应业务域中新增路由。
-3. 路由内只做参数校验、DTO 组装、`context.safeInvoke` 调用。
-4. 需要共享逻辑时，优先放到 `context.js` 或 `http-utils.js`，不要回写到单体入口。
-5. 保持返回结构稳定（状态码 + JSON 结构），避免破坏上游前端调用假设。
+2. 若宿主层会调用该命令，将命令名加入 `src/tauri/main/kernel/invokes/tauri-commands.js`（`TauriInvokeCommand`，避免字符串拼写漂移）。
+3. 若该命令为高频/可合并写入的调用，按需在 `src/tauri/main/kernel/invokes/invoke-policies.js` 增加/调整策略（dedupe / write-behind）。
+4. 在 `src/tauri/main/routes/` 对应业务域中新增路由：路由层禁止直接引用 `window`，需要浏览器能力时下沉到 `adapters/` 或 `services/`。
+5. 路由内只做参数校验、DTO 组装、`context.safeInvoke` 调用；错误直接暴露（避免 silent fallback）。
+6. 保持返回结构稳定（状态码 + JSON 结构），避免破坏上游前端调用假设。
+7. 跑 `pnpm run check`（guardrails + types），确保依赖边界与行数预算未回归。
 
 ## 10. 调试与验证
 
 建议最小验证流程：
 
-1. `pnpm run build`
-2. `pnpm run tauri:dev`
+1. `pnpm run check`
+2. `pnpm run dev`
 3. 启动后确认：
    - 首屏加载正常
    - 不再出现 CSRF 初始化错误
@@ -282,3 +295,16 @@ src/
   - `window.__TAURITAVERN_PERF__.exportJson({ includeResources: true })` 直接拿到 JSON 字符串
   - `await window.__TAURITAVERN_PERF__.copyReport()` 复制到剪贴板（若可用）
 - HUD 操作：拖动标题栏移动（位置持久化），点击标题栏展开/收起；桌面端可用 `Ctrl+Alt+P` 切换开关。
+
+## 11. 工程守护（Guardrails + 类型检查）
+
+目标：把宿主层（`src/tauri/main/*`）限制在**可长期维护**的规模与依赖形态，避免再次回到单文件膨胀与隐式耦合。
+
+- 一键检查：`pnpm run check`（= `check:frontend` + `check:types`）。
+- Guardrails（`scripts/check-frontend-guardrails.mjs`）：
+  - 行数预算：默认单文件 `<= 500` 行；关键聚合文件受 `scripts/guardrails/frontend-lines-baseline.json` 的基线约束。
+  - 依赖边界：`kernel/ports` 不得 import `services/routes/adapters`；`services` 不得 import `routes`。
+  - 路由契约：`src/tauri/main/routes/*` 禁止直接引用 `window`（需要触碰浏览器/DOM/上游 ST 时，新增 `adapters/*`）。
+- 类型检查（`tsc -p tsconfig.host.json`）：
+  - `strict` + `exactOptionalPropertyTypes` + `noUncheckedIndexedAccess` 等强约束。
+  - JS 文件默认不强制检查；需要在文件头加 `// @ts-check` 并配合 JSDoc（Host Kernel 目录已按此标准化）。

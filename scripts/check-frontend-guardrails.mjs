@@ -233,6 +233,7 @@ async function main() {
 
     const filesByPath = {};
     const lineErrors = [];
+    const contractErrors = [];
 
     for (const posixPath of hostFiles) {
         const absPath = path.join(repoRoot, posixPath);
@@ -255,6 +256,10 @@ async function main() {
 
         if (lines > DEFAULT_MAX_FILE_LINES) {
             lineErrors.push(`${posixPath}: ${lines} lines (max ${DEFAULT_MAX_FILE_LINES})`);
+        }
+
+        if (layerOf(posixPath) === 'routes' && /\bwindow\b/.test(text)) {
+            contractErrors.push(`${posixPath}: routes must not reference window (use adapters/services)`);
         }
     }
 
@@ -336,6 +341,13 @@ async function main() {
     if (importErrors.length > 0) {
         errors.push('Dependency boundary violations:');
         for (const message of importErrors) {
+            errors.push(`- ${message}`);
+        }
+    }
+
+    if (contractErrors.length > 0) {
+        errors.push('Contract violations:');
+        for (const message of contractErrors) {
             errors.push(`- ${message}`);
         }
     }

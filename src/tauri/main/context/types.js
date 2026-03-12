@@ -3,7 +3,11 @@
 export {};
 
 /**
- * @typedef {(command: string, args?: any) => Promise<any>} TauriInvokeFn
+ * @typedef {import('../kernel/invokes/tauri-commands.js').TauriInvokeCommand} TauriInvokeCommand
+ */
+
+/**
+ * @typedef {(command: TauriInvokeCommand, args?: any) => Promise<any>} TauriInvokeFn
  */
 
 /**
@@ -53,13 +57,13 @@ export {};
 /**
  * @typedef {{
  *   initialize: () => Promise<void>;
- *   safeInvoke: (command: string, args?: any) => Promise<any>;
- *   invalidateInvoke: (command: string, args?: any) => void;
- *   invalidateInvokeAll: (command: string) => void;
- *   flushInvokes: (command: string) => Promise<void>;
+ *   safeInvoke: (command: TauriInvokeCommand, args?: any) => Promise<any>;
+ *   invalidateInvoke: (command: TauriInvokeCommand, args?: any) => void;
+ *   invalidateInvokeAll: (command: TauriInvokeCommand) => void;
+ *   flushInvokes: (command: TauriInvokeCommand) => Promise<void>;
  *   flushAllInvokes: () => Promise<void>;
  *   invokeBroker: any;
- *   invokeTransport: (command: string, args?: any) => Promise<any>;
+ *   invokeTransport: (command: TauriInvokeCommand, args?: any) => Promise<any>;
  *   normalizeCharacter: (character: any) => any;
  *   normalizeExtensions: (extensions: any) => any;
  *   getAllCharacters: (options?: { shallow?: boolean; forceRefresh?: boolean }) => Promise<any[]>;
@@ -85,4 +89,3 @@ export {};
  *   toAssetUrl: (path: string) => string | null;
  * }} TauriMainContext
  */
-

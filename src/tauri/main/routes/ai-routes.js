@@ -1,4 +1,7 @@
 import { createTokenCountBroker, estimateTokenCount, trimOpenAiMessage } from '../brokers/token-count-broker.js';
+import { createAndroidGenerationBridge } from '../adapters/android/android-generation-bridge.js';
+import { translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
+import { listen } from '../../../tauri-bridge.js';
 
 function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -72,41 +75,7 @@ const mobileGenerationState = {
     activeCount: 0,
 };
 
-function callAndroidGenerationBridge(methodName, ...args) {
-    const bridge = window?.[ANDROID_GENERATION_BRIDGE_NAME];
-    const method = bridge?.[methodName];
-    if (typeof method !== 'function') {
-        return false;
-    }
-
-    try {
-        method.apply(bridge, args);
-        return true;
-    } catch (error) {
-        console.debug(`Failed to call ${ANDROID_GENERATION_BRIDGE_NAME}.${methodName}:`, error);
-        return false;
-    }
-}
-
-function getAndroidGenerationBridgeResult(methodName, ...args) {
-    const bridge = window?.[ANDROID_GENERATION_BRIDGE_NAME];
-    const method = bridge?.[methodName];
-    if (typeof method !== 'function') {
-        return null;
-    }
-
-    try {
-        return method.apply(bridge, args);
-    } catch (error) {
-        console.debug(`Failed to call ${ANDROID_GENERATION_BRIDGE_NAME}.${methodName}:`, error);
-        return null;
-    }
-}
-
-function hasAndroidGenerationBridgeMethod(methodName) {
-    const bridge = window?.[ANDROID_GENERATION_BRIDGE_NAME];
-    return typeof bridge?.[methodName] === 'function';
-}
+const androidGenerationBridge = createAndroidGenerationBridge({ bridgeName: ANDROID_GENERATION_BRIDGE_NAME });
 
 function extractHttpStatusCode(errorMessage) {
     const text = String(errorMessage || '');
@@ -143,21 +112,7 @@ function shouldNotifyCompletion() {
 }
 
 function translateNotificationText(key, fallback) {
-    const translate = window?.SillyTavern?.i18n?.translate;
-    if (typeof translate !== 'function') {
-        return fallback;
-    }
-
-    try {
-        const translated = translate(fallback, key);
-        if (typeof translated === 'string' && translated.trim()) {
-            return translated;
-        }
-    } catch (error) {
-        console.debug('Failed to translate notification text:', error);
-    }
-
-    return fallback;
+    return translateSillyTavern(key, fallback);
 }
 
 function getGenerationNotificationTexts() {
@@ -262,7 +217,7 @@ function createGenerationLifecycle(context, payload) {
             mobileGenerationState.activeCount += 1;
 
             if (mobileGenerationState.activeCount === 1) {
-                callAndroidGenerationBridge('onGenerationStart');
+                androidGenerationBridge.call('onGenerationStart');
             }
         },
         finish({ success = false, errorMessage = '', notifyFailure = true } = {}) {
@@ -276,10 +231,10 @@ function createGenerationLifecycle(context, payload) {
             if (mobileGenerationState.activeCount === 0) {
                 const shouldNotify = shouldNotifyResult && shouldNotifyCompletion();
                 const statusCode = notifyFailure ? extractHttpStatusCode(errorMessage) : 0;
-                const supportsLiveUpdates = getAndroidGenerationBridgeResult('supportsLiveUpdates') === true;
+                const supportsLiveUpdates = androidGenerationBridge.get('supportsLiveUpdates') === true;
 
-                if (supportsLiveUpdates && hasAndroidGenerationBridgeMethod('onGenerationFinish')) {
-                    callAndroidGenerationBridge(
+                if (supportsLiveUpdates && androidGenerationBridge.has('onGenerationFinish')) {
+                    androidGenerationBridge.call(
                         'onGenerationFinish',
                         JSON.stringify({
                             success: Boolean(success),
@@ -301,7 +256,7 @@ function createGenerationLifecycle(context, payload) {
                     showSystemNotification(context, texts.failureTitle, normalizedBody);
                 }
 
-                callAndroidGenerationBridge('onGenerationStop');
+                androidGenerationBridge.call('onGenerationStop');
             }
         },
     };
@@ -529,18 +484,13 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
     const streamId = createStreamId();
     const eventName = `chat-completion-stream:${streamId}`;
     const encoder = new TextEncoder();
-    const androidSupportsLiveUpdates = getAndroidGenerationBridgeResult('supportsLiveUpdates') === true;
-    const androidCanReportTokens = androidSupportsLiveUpdates && hasAndroidGenerationBridgeMethod('onGenerationProgress');
+    const androidSupportsLiveUpdates = androidGenerationBridge.get('supportsLiveUpdates') === true;
+    const androidCanReportTokens = androidSupportsLiveUpdates && androidGenerationBridge.has('onGenerationProgress');
     const androidOutputChunks = [];
     let androidOutputChars = 0;
     let androidLastTokenCount = 0;
     let androidLastTokenCharCount = 0;
     let androidLastTokenReportAt = 0;
-
-    const tauriEvent = window.__TAURI__?.event;
-    if (typeof tauriEvent?.listen !== 'function') {
-        throw new Error('Tauri event API is unavailable');
-    }
 
     let isClosed = false;
     let sawDone = false;
@@ -696,7 +646,7 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                             androidLastTokenCharCount = charCountAtRequest;
                             if (!isClosed && normalized !== androidLastTokenCount) {
                                 androidLastTokenCount = normalized;
-                                callAndroidGenerationBridge('onGenerationProgress', normalized);
+                                androidGenerationBridge.call('onGenerationProgress', normalized);
                             }
                         }
                     }
@@ -731,7 +681,7 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
             controllerRef = controller;
 
             try {
-                unlisten = await tauriEvent.listen(eventName, onStreamEvent);
+                unlisten = await listen(eventName, onStreamEvent);
             } catch (error) {
                 const message = getErrorMessage(error);
                 await closeStream({
@@ -883,27 +833,27 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/tokenizers/openai/count', async ({ body, url }) => {
         const model = String(url?.searchParams?.get('model') || '');
-        if (!Array.isArray(body)) {
-            throw new Error('OpenAI token count body must be an array');
+        if (!Array.isArray(body)) return jsonResponse({ error: 'OpenAI token count body must be an array' }, 400);
+        try {
+            return jsonResponse({ token_count: await tokenCountBroker.count({ model, messages: body }) });
+        } catch (error) {
+            console.warn('OpenAI token count failed:', error);
+            return jsonResponse({ error: getErrorMessage(error) }, 500);
         }
-
-        const token_count = await tokenCountBroker.count({ model, messages: body });
-        return jsonResponse({ token_count });
     });
 
     router.post('/api/tokenizers/openai/count-batch', async ({ body, url }) => {
         const model = String(url?.searchParams?.get('model') || '');
-        if (!Array.isArray(body)) {
-            throw new Error('OpenAI token count batch body must be an array');
+        if (!Array.isArray(body)) return jsonResponse({ error: 'OpenAI token count batch body must be an array' }, 400);
+
+        const dto = { model, requests: body.map((message) => ({ messages: [trimOpenAiMessage(message)] })) };
+
+        try {
+            return jsonResponse(await context.safeInvoke('count_openai_tokens_batch', { dto }));
+        } catch (error) {
+            console.warn('OpenAI token count batch failed:', error);
+            return jsonResponse({ error: getErrorMessage(error) }, 500);
         }
-
-        const dto = {
-            model,
-            requests: body.map((message) => ({ messages: [trimOpenAiMessage(message)] })),
-        };
-
-        const result = await context.safeInvoke('count_openai_tokens_batch', { dto });
-        return jsonResponse(result);
     });
 
     router.post('/api/tokenizers/openai/encode', async ({ body, url }) => {
