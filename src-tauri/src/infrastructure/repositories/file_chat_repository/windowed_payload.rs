@@ -177,6 +177,7 @@ impl FileChatRepository {
         })?;
 
         let path = self.get_chat_path(character_name, file_name);
+        let _write_guard = self.acquire_payload_write_lock(&path).await;
         let backup_key = self.get_cache_key(character_name, file_name);
         let result = save_payload_windowed_internal(&path, cursor, header, lines, force).await?;
 
@@ -222,6 +223,7 @@ impl FileChatRepository {
         self.ensure_directory_exists().await?;
 
         let path = self.get_group_chat_path(chat_id);
+        let _write_guard = self.acquire_payload_write_lock(&path).await;
         let backup_key = format!("group:{}", Self::strip_jsonl_extension(chat_id));
         let result = save_payload_windowed_internal(&path, cursor, header, lines, force).await?;
 
@@ -322,7 +324,7 @@ async fn save_payload_windowed_internal(
     if existing_metadata.is_none() {
         ensure_parent_dir(path).await?;
 
-        let temp_path = path.with_extension("jsonl.tmp");
+        let temp_path = FileChatRepository::temp_payload_path(path);
         let mut file = File::create(&temp_path).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to create chat payload file {:?}: {}",
@@ -455,7 +457,7 @@ async fn save_payload_windowed_internal(
         }
         ensure_parent_dir(path).await?;
 
-        let temp_path = path.with_extension("jsonl.tmp");
+        let temp_path = FileChatRepository::temp_payload_path(path);
         let mut out = File::create(&temp_path).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to create chat payload file {:?}: {}",

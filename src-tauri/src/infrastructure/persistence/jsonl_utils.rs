@@ -1,5 +1,8 @@
 use crate::domain::errors::DomainError;
 use crate::infrastructure::logging::logger;
+use crate::infrastructure::persistence::file_system::{
+    replace_file_with_fallback, unique_temp_path,
+};
 use serde_json::Value;
 use std::path::Path;
 use tokio::fs::{self, File};
@@ -98,9 +101,12 @@ pub async fn write_jsonl_file(path: &Path, objects: &[Value]) -> Result<(), Doma
     write_jsonl_bytes_file(path, &serialized).await
 }
 
-/// Atomically write raw JSONL bytes to a file.
+/// Write raw JSONL bytes to a file.
+///
+/// Uses a temporary file and then replaces the target. On some storage backends (notably Android
+/// external app storage), file replacement may fall back to copy/remove if rename is unreliable.
 pub async fn write_jsonl_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
-    let temp_path = path.with_extension("jsonl.tmp");
+    let temp_path = unique_temp_path(path, "data.jsonl");
 
     if let Some(parent) = path.parent() {
         if !parent.exists() {
@@ -127,10 +133,7 @@ pub async fn write_jsonl_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), Dom
         DomainError::InternalError(format!("Failed to flush temporary file: {}", e))
     })?;
 
-    fs::rename(&temp_path, path).await.map_err(|e| {
-        logger::error(&format!("Failed to rename temporary file: {}", e));
-        DomainError::InternalError(format!("Failed to rename temporary file: {}", e))
-    })?;
+    replace_file_with_fallback(&temp_path, path).await?;
 
     Ok(())
 }

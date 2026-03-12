@@ -6,6 +6,7 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::Chat;
 use crate::infrastructure::logging::logger;
+use crate::infrastructure::persistence::file_system::replace_file_with_fallback;
 use crate::infrastructure::persistence::jsonl_utils::{
     parse_jsonl_bytes, read_first_non_empty_jsonl_line, write_jsonl_file,
 };
@@ -204,6 +205,7 @@ impl FileChatRepository {
             ));
         }
 
+        let _write_guard = self.acquire_payload_write_lock(path).await;
         self.verify_chat_integrity_if_needed(path, payload, force)
             .await?;
         write_jsonl_file(path, payload).await?;
@@ -227,10 +229,11 @@ impl FileChatRepository {
             )));
         }
 
+        let _write_guard = self.acquire_payload_write_lock(path).await;
         self.verify_chat_integrity_file_if_needed(path, source_path, force)
             .await?;
 
-        let temp_path = path.with_extension("jsonl.tmp");
+        let temp_path = Self::temp_payload_path(path);
         if let Some(parent) = path.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).await.map_err(|e| {
@@ -240,11 +243,12 @@ impl FileChatRepository {
         }
 
         fs::copy(source_path, &temp_path).await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to copy chat payload file: {}", e))
+            DomainError::InternalError(format!(
+                "Failed to copy chat payload file from {:?} to {:?}: {}",
+                source_path, temp_path, e
+            ))
         })?;
-        fs::rename(&temp_path, path).await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to move chat payload file: {}", e))
-        })?;
+        replace_file_with_fallback(&temp_path, path).await?;
 
         self.backup_chat_file(path, backup_name, backup_key).await?;
         Ok(())

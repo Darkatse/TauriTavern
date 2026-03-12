@@ -637,6 +637,7 @@ impl ChatRepository for FileChatRepository {
             )));
         }
 
+        let _write_guard = self.acquire_payload_write_lock(&chat_path).await;
         let backup_key = self.get_cache_key(character_name, file_name);
         self.backup_chat_file(&chat_path, character_name, &backup_key)
             .await

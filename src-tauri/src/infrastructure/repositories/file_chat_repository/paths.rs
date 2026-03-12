@@ -1,10 +1,13 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::Local;
 use tokio::fs;
+use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::character::sanitize_filename;
+use crate::infrastructure::persistence::file_system::unique_temp_path;
 
 use super::FileChatRepository;
 
@@ -50,6 +53,33 @@ impl FileChatRepository {
         } else {
             sanitized
         }
+    }
+
+    pub(super) async fn acquire_payload_write_lock(&self, path: &Path) -> OwnedMutexGuard<()> {
+        const MAX_RETAINED_LOCK_ENTRIES: usize = 2048;
+
+        let key = path.to_path_buf();
+        let lock = {
+            let mut locks = self.path_write_locks.lock().await;
+            if locks.len() > MAX_RETAINED_LOCK_ENTRIES {
+                locks.retain(|_, value| value.strong_count() > 0);
+            }
+
+            match locks.get(&key).and_then(|value| value.upgrade()) {
+                Some(existing) => existing,
+                None => {
+                    let created = Arc::new(Mutex::new(()));
+                    locks.insert(key, Arc::downgrade(&created));
+                    created
+                }
+            }
+        };
+
+        lock.lock_owned().await
+    }
+
+    pub(super) fn temp_payload_path(path: &Path) -> PathBuf {
+        unique_temp_path(path, "chat.jsonl")
     }
 
     fn normalize_jsonl_file_stem(file_name: &str) -> String {
