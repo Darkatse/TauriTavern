@@ -114,11 +114,13 @@ export function installDomEmbeddedRuntimeAdapter({ manager, root, adapters }) {
 
     const observer = new MutationObserver((records) => {
         for (const record of records) {
-            for (const addedNode of record.addedNodes) {
-                scanForHosts(manager, addedNode, adapters);
-            }
             for (const removedNode of record.removedNodes) {
                 unregisterSlotsInSubtree(manager, removedNode);
+            }
+        }
+        for (const record of records) {
+            for (const addedNode of record.addedNodes) {
+                scanForHosts(manager, addedNode, adapters);
             }
         }
     });
@@ -133,4 +135,3 @@ export function installDomEmbeddedRuntimeAdapter({ manager, root, adapters }) {
         },
     };
 }
-

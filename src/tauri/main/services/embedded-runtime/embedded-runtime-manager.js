@@ -9,13 +9,25 @@ import { compareEmbeddedRuntimeSlotRank, normalizeEmbeddedRuntimeProfile, normal
  */
 
 /**
- * @param {{ profile: EmbeddedRuntimeProfile; now?: () => number }} options
+ * @param {{ profile: EmbeddedRuntimeProfile; now?: () => number; root?: HTMLElement | null }} options
  */
-export function createEmbeddedRuntimeManager({ profile, now = () => Date.now() }) {
+export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), root = null }) {
     const normalizedProfile = normalizeEmbeddedRuntimeProfile(profile);
     const rootMarginPx = parseRootMarginPx(normalizedProfile.rootMargin);
+    const rootElement = root instanceof HTMLElement ? root : null;
 
-    /** @type {Map<string, { slot: ReturnType<typeof normalizeEmbeddedRuntimeSlot>; state: EmbeddedRuntimeState; visible: boolean; inViewport: boolean; lastVisibleAt: number; lastTouchedAt: number; activatedAt: number; deactivatedAt: number; }>} */
+    const profileConfig = Object.freeze({
+        name: normalizedProfile.name,
+        maxActiveWeight: normalizedProfile.maxActiveWeight,
+        maxActiveIframes: normalizedProfile.maxActiveIframes,
+        maxActiveSlots: normalizedProfile.maxActiveSlots,
+        maxSoftParkedIframes: normalizedProfile.maxSoftParkedIframes,
+        softParkTtlMs: normalizedProfile.softParkTtlMs,
+        rootMargin: normalizedProfile.rootMargin,
+        threshold: normalizedProfile.threshold,
+    });
+
+    /** @type {Map<string, { slot: ReturnType<typeof normalizeEmbeddedRuntimeSlot>; state: EmbeddedRuntimeState; parkReason: string; visible: boolean; inViewport: boolean; lastVisibleAt: number; lastTouchedAt: number; activatedAt: number; deactivatedAt: number; }>} */
     const slots = new Map();
 
     let reconcilePending = false;
@@ -31,10 +43,16 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now() }
         lastReconcileMs: 0,
         lastReconcileAt: 0,
         budgetDeny: 0,
+        parkReasonChange: 0,
     };
 
     const observer = new IntersectionObserver((entries) => {
         const ts = now();
+        const rootBounds = rootElement ? rootElement.getBoundingClientRect() : null;
+        const rootTop = Number(rootBounds?.top) || 0;
+        const rootRight = Number(rootBounds?.right) || (Number(globalThis.innerWidth) || 0);
+        const rootBottom = Number(rootBounds?.bottom) || (Number(globalThis.innerHeight) || 0);
+        const rootLeft = Number(rootBounds?.left) || 0;
         let changed = false;
         for (const entry of entries) {
             const target = entry.target;
@@ -57,9 +75,7 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now() }
 
             const isVisible = Boolean(entry.isIntersecting) && entry.intersectionRatio >= normalizedProfile.threshold;
             const rect = entry.boundingClientRect;
-            const vw = Number(globalThis.innerWidth) || 0;
-            const vh = Number(globalThis.innerHeight) || 0;
-            const isInViewport = rect.bottom > 0 && rect.top < vh && rect.right > 0 && rect.left < vw;
+            const isInViewport = rect.bottom > rootTop && rect.top < rootBottom && rect.right > rootLeft && rect.left < rootRight;
 
             if (record.visible !== isVisible) {
                 record.visible = isVisible;
@@ -79,7 +95,7 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now() }
             requestReconcile('visibility');
         }
     }, {
-        root: null,
+        root: rootElement,
         rootMargin: normalizedProfile.rootMargin,
         threshold: normalizedProfile.threshold,
     });
@@ -176,22 +192,34 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now() }
             if (shouldBeActive && record.state !== 'active') {
                 record.slot.hydrate(reason);
                 record.state = 'active';
+                record.parkReason = '';
                 record.activatedAt = startedAt;
                 counters.hydrate += 1;
                 continue;
             }
-            if (!shouldBeActive && (record.state === 'active' || record.state === 'cold')) {
+            if (!shouldBeActive) {
                 const parkReason = record.visible || !normalizedProfile.parkWhenHiddenKinds.has(record.slot.kind)
                     ? 'budget'
                     : 'visibility';
-                record.slot.dehydrate(parkReason);
-                record.state = 'parked';
-                record.deactivatedAt = startedAt;
-                counters.dehydrate += 1;
-                if (parkReason === 'budget') {
-                    counters.parkBudget += 1;
-                } else {
-                    counters.parkVisibility += 1;
+
+                if (record.state === 'active' || record.state === 'cold') {
+                    record.slot.dehydrate(parkReason);
+                    record.state = 'parked';
+                    record.parkReason = parkReason;
+                    record.deactivatedAt = startedAt;
+                    counters.dehydrate += 1;
+                    if (parkReason === 'budget') {
+                        counters.parkBudget += 1;
+                    } else {
+                        counters.parkVisibility += 1;
+                    }
+                    continue;
+                }
+
+                if (record.state === 'parked' && record.parkReason !== parkReason) {
+                    record.slot.dehydrate(parkReason);
+                    record.parkReason = parkReason;
+                    counters.parkReasonChange += 1;
                 }
             }
         }
@@ -280,14 +308,17 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now() }
             inViewport = normalizedSlot.initialVisible;
         } else {
             const rect = normalizedSlot.visibilityTarget.getBoundingClientRect();
-            const vw = Number(globalThis.innerWidth) || 0;
-            const vh = Number(globalThis.innerHeight) || 0;
-            inViewport = rect.bottom > 0 && rect.top < vh && rect.right > 0 && rect.left < vw;
+            const rootBounds = rootElement ? rootElement.getBoundingClientRect() : null;
+            const rootTop = Number(rootBounds?.top) || 0;
+            const rootRight = Number(rootBounds?.right) || (Number(globalThis.innerWidth) || 0);
+            const rootBottom = Number(rootBounds?.bottom) || (Number(globalThis.innerHeight) || 0);
+            const rootLeft = Number(rootBounds?.left) || 0;
+            inViewport = rect.bottom > rootTop && rect.top < rootBottom && rect.right > rootLeft && rect.left < rootRight;
             const bounds = {
-                top: -rootMarginPx.top,
-                right: vw + rootMarginPx.right,
-                bottom: vh + rootMarginPx.bottom,
-                left: -rootMarginPx.left,
+                top: rootTop - rootMarginPx.top,
+                right: rootRight + rootMarginPx.right,
+                bottom: rootBottom + rootMarginPx.bottom,
+                left: rootLeft - rootMarginPx.left,
             };
             visible = rect.bottom > bounds.top && rect.top < bounds.bottom && rect.right > bounds.left && rect.left < bounds.right;
         }
@@ -295,6 +326,7 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now() }
         slots.set(normalizedSlot.id, {
             slot: normalizedSlot,
             state: 'cold',
+            parkReason: '',
             visible,
             inViewport,
             lastVisibleAt: visible ? now() : 0,
@@ -362,6 +394,9 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now() }
         getPerfSnapshot,
         get profile() {
             return normalizedProfile.name;
+        },
+        get profileConfig() {
+            return profileConfig;
         },
     };
 }

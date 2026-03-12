@@ -11,20 +11,6 @@ import { createManagedIframeSlot } from './managed-iframe-slot.js';
  */
 
 const TH_RENDER_SELECTOR = '.TH-render';
-let nextWrapperUid = 0;
-
-/**
- * @param {HTMLElement} wrapper
- */
-function ensureWrapperUid(wrapper) {
-    if (wrapper.dataset.ttEmbeddedRuntimeUid) {
-        return wrapper.dataset.ttEmbeddedRuntimeUid;
-    }
-
-    nextWrapperUid += 1;
-    wrapper.dataset.ttEmbeddedRuntimeUid = String(nextWrapperUid);
-    return wrapper.dataset.ttEmbeddedRuntimeUid;
-}
 
 /**
  * @param {HTMLElement} wrapper
@@ -68,6 +54,19 @@ function getWrapperSignature(wrapper) {
 /**
  * @param {HTMLElement} wrapper
  */
+function getWrapperIndexInMessage(wrapper) {
+    const message = wrapper.closest('.mes');
+    if (!message) {
+        return null;
+    }
+    const wrappers = Array.from(message.querySelectorAll(TH_RENDER_SELECTOR));
+    const index = wrappers.indexOf(wrapper);
+    return index >= 0 ? index : null;
+}
+
+/**
+ * @param {HTMLElement} wrapper
+ */
 function findManagedSlotId(wrapper) {
     const id = String(wrapper.dataset.ttRuntimeSlotId || '').trim();
     return id ? id : null;
@@ -101,18 +100,22 @@ function registerWrapper(manager, wrapper) {
         return;
     }
 
-    const key = fnv1a32(signature);
-    const uid = ensureWrapperUid(wrapper);
-    const slotId = `jsr:${messageId}:${key}:${uid}`;
+    const wrapperIndex = getWrapperIndexInMessage(wrapper);
+    if (wrapperIndex === null) {
+        return;
+    }
 
-    const parkDelayMs = manager.profile === 'mobile-safe' ? 800 : 1500;
+    const key = fnv1a32(signature);
+    const slotId = `jsr:${messageId}:${key}:${wrapperIndex}`;
+    const { maxSoftParkedIframes, softParkTtlMs } = manager.profileConfig;
     const slot = createManagedIframeSlot({
         id: slotId,
         kind: EmbeddedRuntimeKind.JsrHtmlRender,
         host: wrapper,
         priority: 0,
         weight: 10,
-        parkDelayMs,
+        maxSoftParkedIframes,
+        softParkTtlMs,
     });
 
     manager.register(slot);

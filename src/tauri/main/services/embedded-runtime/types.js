@@ -32,6 +32,8 @@ export {};
  * @property {number} maxActiveWeight
  * @property {number} maxActiveIframes
  * @property {number} maxActiveSlots
+ * @property {number} maxSoftParkedIframes
+ * @property {number} softParkTtlMs
  * @property {ReadonlyArray<string>} parkWhenHiddenKinds
  * @property {string} [rootMargin]
  * @property {number} [threshold]
@@ -47,5 +49,5 @@ export {};
  * @property {number} parked
  * @property {number} activeWeight
  * @property {number} activeIframes
- * @property {{ hydrate: number; dehydrate: number; parkVisibility: number; parkBudget: number; register: number; unregister: number; reconcile: number; lastReconcileMs: number; lastReconcileAt: number; budgetDeny: number }} counters
+ * @property {{ hydrate: number; dehydrate: number; parkVisibility: number; parkBudget: number; parkReasonChange: number; register: number; unregister: number; reconcile: number; lastReconcileMs: number; lastReconcileAt: number; budgetDeny: number }} counters
  */

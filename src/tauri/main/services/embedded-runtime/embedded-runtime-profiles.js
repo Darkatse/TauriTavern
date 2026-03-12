@@ -26,12 +26,14 @@ const COMPAT_PROFILE = Object.freeze({
     maxActiveWeight: 200,
     maxActiveIframes: 12,
     maxActiveSlots: 80,
+    maxSoftParkedIframes: 24,
+    softParkTtlMs: 120_000,
     parkWhenHiddenKinds: Object.freeze([
         EmbeddedRuntimeKind.JsrHtmlRender,
         EmbeddedRuntimeKind.LittleWhiteBoxHtmlRender,
     ]),
-    rootMargin: '300px 0px',
-    threshold: 0.01,
+    rootMargin: '400px 0px',
+    threshold: 0,
 });
 
 /** @type {EmbeddedRuntimeProfile} */
@@ -40,12 +42,14 @@ const MOBILE_SAFE_PROFILE = Object.freeze({
     maxActiveWeight: 80,
     maxActiveIframes: 4,
     maxActiveSlots: 30,
+    maxSoftParkedIframes: 8,
+    softParkTtlMs: 45_000,
     parkWhenHiddenKinds: Object.freeze([
         EmbeddedRuntimeKind.JsrHtmlRender,
         EmbeddedRuntimeKind.LittleWhiteBoxHtmlRender,
     ]),
-    rootMargin: '500px 0px',
-    threshold: 0.01,
+    rootMargin: '900px 0px',
+    threshold: 0,
 });
 
 export const EMBEDDED_RUNTIME_PROFILES = Object.freeze({

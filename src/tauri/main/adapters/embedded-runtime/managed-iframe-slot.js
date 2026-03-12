@@ -4,7 +4,10 @@
  * @typedef {import('../../services/embedded-runtime/types.js').EmbeddedRuntimeSlot} EmbeddedRuntimeSlot
  */
 
-const PLACEHOLDER_CLASS = 'tt-runtime-placeholder';
+import { parkManagedIframe, takeParkedManagedIframe } from './managed-iframe-parking-lot.js';
+
+const BUDGET_PLACEHOLDER_CLASS = 'tt-runtime-placeholder';
+const GHOST_PLACEHOLDER_CLASS = 'tt-runtime-ghost';
 
 /**
  * @param {HTMLIFrameElement} iframe
@@ -26,8 +29,16 @@ function findHostIframe(host) {
 /**
  * @param {HTMLElement} host
  */
-function findHostPlaceholder(host) {
-    const el = host.querySelector(`.${PLACEHOLDER_CLASS}`);
+function findHostBudgetPlaceholder(host) {
+    const el = host.querySelector(`.${BUDGET_PLACEHOLDER_CLASS}`);
+    return el instanceof HTMLElement ? el : null;
+}
+
+/**
+ * @param {HTMLElement} host
+ */
+function findHostGhostPlaceholder(host) {
+    const el = host.querySelector(`.${GHOST_PLACEHOLDER_CLASS}`);
     return el instanceof HTMLElement ? el : null;
 }
 
@@ -36,42 +47,37 @@ function findHostPlaceholder(host) {
  * @param {string} options.id
  * @param {string} options.kind
  * @param {HTMLElement} options.host
+ * @param {number} options.maxSoftParkedIframes
+ * @param {number} options.softParkTtlMs
  * @param {number} [options.priority]
  * @param {number} [options.weight]
- * @param {number} [options.parkDelayMs]
  * @returns {EmbeddedRuntimeSlot}
  */
-export function createManagedIframeSlot({ id, kind, host, priority = 0, weight = 10, parkDelayMs = 1500 }) {
+export function createManagedIframeSlot({ id, kind, host, maxSoftParkedIframes, softParkTtlMs, priority = 0, weight = 10 }) {
     if (!(host instanceof HTMLElement)) {
         throw new Error(`createManagedIframeSlot(${id}): host must be an HTMLElement`);
+    }
+    if (!Number.isFinite(Number(maxSoftParkedIframes))) {
+        throw new Error(`createManagedIframeSlot(${id}): maxSoftParkedIframes must be a number`);
+    }
+    if (!Number.isFinite(Number(softParkTtlMs))) {
+        throw new Error(`createManagedIframeSlot(${id}): softParkTtlMs must be a number`);
     }
 
     /** @type {HTMLIFrameElement | null} */
     let template = null;
     /** @type {number} */
     let lastMeasuredHeight = 0;
-    /** @type {number | null} */
-    let parkTimer = null;
 
     const ensureTemplate = () => {
-        const iframe = findHostIframe(host);
-        if (!iframe) {
-            if (template) {
-                return;
-            }
-            throw new Error(`createManagedIframeSlot(${id}): iframe is missing`);
-        }
-        if (!template || !iframe.dataset.ttRuntimeClone) {
-            template = cloneIframeTemplate(iframe);
-        }
-    };
-
-    const cancelParkTimer = () => {
-        if (parkTimer === null) {
+        if (template) {
             return;
         }
-        clearTimeout(parkTimer);
-        parkTimer = null;
+        const iframe = findHostIframe(host);
+        if (!(iframe instanceof HTMLIFrameElement)) {
+            throw new Error(`createManagedIframeSlot(${id}): iframe is missing`);
+        }
+        template = cloneIframeTemplate(iframe);
     };
 
     const removeIframeNow = () => {
@@ -86,8 +92,8 @@ export function createManagedIframeSlot({ id, kind, host, priority = 0, weight =
      * @param {number} heightPx
      * @param {string} reason
      */
-    const ensurePlaceholderNow = (heightPx, reason) => {
-        const existing = findHostPlaceholder(host);
+    const ensureBudgetPlaceholderNow = (heightPx, reason) => {
+        const existing = findHostBudgetPlaceholder(host);
         if (existing) {
             existing.style.minHeight = `${heightPx}px`;
             existing.dataset.ttRuntimeParkReason = reason;
@@ -95,7 +101,7 @@ export function createManagedIframeSlot({ id, kind, host, priority = 0, weight =
         }
 
         const el = document.createElement('div');
-        el.className = PLACEHOLDER_CLASS;
+        el.className = BUDGET_PLACEHOLDER_CLASS;
         el.tabIndex = 0;
         el.dataset.ttRuntimeParkReason = reason;
         el.style.minHeight = `${heightPx}px`;
@@ -113,10 +119,32 @@ export function createManagedIframeSlot({ id, kind, host, priority = 0, weight =
         return el;
     };
 
-    const removePlaceholderNow = () => {
-        const placeholder = findHostPlaceholder(host);
-        if (placeholder) {
-            placeholder.remove();
+    /**
+     * @param {number} heightPx
+     */
+    const ensureGhostPlaceholderNow = (heightPx) => {
+        const existing = findHostGhostPlaceholder(host);
+        if (existing) {
+            existing.style.minHeight = `${heightPx}px`;
+            return existing;
+        }
+
+        const el = document.createElement('div');
+        el.className = GHOST_PLACEHOLDER_CLASS;
+        el.setAttribute('aria-hidden', 'true');
+        el.style.minHeight = `${heightPx}px`;
+        host.append(el);
+        return el;
+    };
+
+    const removePlaceholdersNow = () => {
+        const budget = findHostBudgetPlaceholder(host);
+        if (budget) {
+            budget.remove();
+        }
+        const ghost = findHostGhostPlaceholder(host);
+        if (ghost) {
+            ghost.remove();
         }
     };
 
@@ -134,54 +162,83 @@ export function createManagedIframeSlot({ id, kind, host, priority = 0, weight =
         return 240;
     };
 
-    /** @param {string} reason */
-    const replaceIframeWithPlaceholderNow = (reason) => {
+    const replaceIframeWithGhostPlaceholderNow = () => {
         const iframe = findHostIframe(host);
         if (!iframe) {
             return;
         }
-
         ensureTemplate();
         const height = measureIframeHeight(iframe);
-        const placeholder = ensurePlaceholderNow(height, reason);
-        iframe.replaceWith(placeholder);
+        const ghost = ensureGhostPlaceholderNow(height);
+        iframe.replaceWith(ghost);
     };
 
-    const ensureIframeNow = () => {
-        const iframe = findHostIframe(host);
-        if (iframe) {
-            removePlaceholderNow();
+    /**
+     * @param {HTMLIFrameElement} iframe
+     */
+    const softParkIframe = (iframe) => {
+        if (!(maxSoftParkedIframes > 0)) {
+            iframe.remove();
             return;
         }
+        parkManagedIframe({
+            id,
+            iframe,
+            maxIframes: maxSoftParkedIframes,
+            ttlMs: softParkTtlMs,
+        });
+    };
+
+    /**
+     * Ensures the host has a live iframe instance, preferring a parked instance
+     * for the same id to avoid reload/flicker.
+     */
+    const ensureIframeNow = () => {
+        const parked = takeParkedManagedIframe(id);
+        if (parked) {
+            const existing = findHostIframe(host);
+            if (existing && existing !== parked) {
+                existing.remove();
+            }
+
+            const budgetPlaceholder = findHostBudgetPlaceholder(host);
+            if (budgetPlaceholder) {
+                budgetPlaceholder.replaceWith(parked);
+            } else {
+                const ghostPlaceholder = findHostGhostPlaceholder(host);
+                if (ghostPlaceholder) {
+                    ghostPlaceholder.replaceWith(parked);
+                } else {
+                    host.append(parked);
+                }
+            }
+            removePlaceholdersNow();
+            return;
+        }
+
+        const iframe = findHostIframe(host);
+        if (iframe) {
+            ensureTemplate();
+            removePlaceholdersNow();
+            return;
+        }
+
         ensureTemplate();
         const next = cloneIframeTemplate(/** @type {HTMLIFrameElement} */ (template));
         next.dataset.ttRuntimeClone = '1';
 
-        const placeholder = findHostPlaceholder(host);
-        if (placeholder) {
-            placeholder.replaceWith(next);
+        const budgetPlaceholder = findHostBudgetPlaceholder(host);
+        if (budgetPlaceholder) {
+            budgetPlaceholder.replaceWith(next);
         } else {
-            host.append(next);
+            const ghostPlaceholder = findHostGhostPlaceholder(host);
+            if (ghostPlaceholder) {
+                ghostPlaceholder.replaceWith(next);
+            } else {
+                host.append(next);
+            }
         }
-        removePlaceholderNow();
-    };
-
-    const schedulePark = () => {
-        if (parkDelayMs <= 0) {
-            ensureTemplate();
-            removeIframeNow();
-            return;
-        }
-
-        if (parkTimer !== null) {
-            return;
-        }
-
-        ensureTemplate();
-        parkTimer = setTimeout(() => {
-            parkTimer = null;
-            removeIframeNow();
-        }, parkDelayMs);
+        removePlaceholdersNow();
     };
 
     return {
@@ -192,27 +249,41 @@ export function createManagedIframeSlot({ id, kind, host, priority = 0, weight =
         weight,
         iframeCount: 1,
         hydrate: () => {
-            cancelParkTimer();
             ensureIframeNow();
         },
         dehydrate: (reason) => {
-            if (reason === 'visibility') {
-                schedulePark();
+            if (reason === 'budget') {
+                const iframe = findHostIframe(host);
+                if (iframe) {
+                    ensureTemplate();
+                    const height = measureIframeHeight(iframe);
+                    const placeholder = ensureBudgetPlaceholderNow(height, reason);
+                    iframe.replaceWith(placeholder);
+                    softParkIframe(iframe);
+                }
                 return;
             }
-            cancelParkTimer();
-            if (reason === 'budget') {
-                replaceIframeWithPlaceholderNow(reason);
+            if (reason === 'visibility') {
+                const iframe = findHostIframe(host);
+                if (iframe) {
+                    replaceIframeWithGhostPlaceholderNow();
+                    softParkIframe(iframe);
+                } else {
+                    const height = lastMeasuredHeight > 0 ? lastMeasuredHeight : 240;
+                    ensureGhostPlaceholderNow(height);
+                }
                 return;
             }
             ensureTemplate();
-            removePlaceholderNow();
+            removePlaceholdersNow();
             removeIframeNow();
         },
         dispose: () => {
-            cancelParkTimer();
-            removePlaceholderNow();
-            removeIframeNow();
+            const iframe = findHostIframe(host);
+            if (iframe) {
+                softParkIframe(iframe);
+            }
+            removePlaceholdersNow();
         },
     };
 }

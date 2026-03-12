@@ -153,6 +153,8 @@ export function normalizeEmbeddedRuntimeProfile(profile) {
     const maxActiveWeight = clampNumber(profile.maxActiveWeight, 0, 1_000_000, 0);
     const maxActiveIframes = clampNumber(profile.maxActiveIframes, 0, 10_000, 0);
     const maxActiveSlots = clampNumber(profile.maxActiveSlots, 0, 100_000, 0);
+    const maxSoftParkedIframes = clampNumber(profile.maxSoftParkedIframes, 0, 10_000, 0);
+    const softParkTtlMs = clampNumber(profile.softParkTtlMs, 0, 60 * 60 * 1000, 0);
 
     const parkWhenHiddenKinds = Array.isArray(profile.parkWhenHiddenKinds)
         ? profile.parkWhenHiddenKinds.map((k) => String(k || '').trim()).filter(Boolean)
@@ -163,6 +165,8 @@ export function normalizeEmbeddedRuntimeProfile(profile) {
         maxActiveWeight,
         maxActiveIframes,
         maxActiveSlots,
+        maxSoftParkedIframes,
+        softParkTtlMs,
         parkWhenHiddenKinds: new Set(parkWhenHiddenKinds),
         rootMargin: typeof profile.rootMargin === 'string' ? profile.rootMargin : '200px 0px',
         threshold: clampNumber(profile.threshold, 0, 1, 0.01),
@@ -191,4 +195,3 @@ export function compareEmbeddedRuntimeSlotRank(a, b) {
     }
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
-
