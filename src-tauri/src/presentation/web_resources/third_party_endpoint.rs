@@ -2,12 +2,14 @@ use std::borrow::Cow;
 use std::path::Path;
 
 use tauri::http::StatusCode;
-use tauri::http::header::{ALLOW, CACHE_CONTROL, CONTENT_TYPE, HeaderValue};
 
 use crate::domain::errors::DomainError;
 use crate::infrastructure::third_party_assets::resolve_third_party_extension_asset;
 use crate::infrastructure::third_party_paths::{
     THIRD_PARTY_EXTENSION_ROUTE_PREFIX, ThirdPartyPathError, parse_third_party_asset_request_path,
+};
+use crate::presentation::web_resources::response_helpers::{
+    respond_bytes, respond_method_not_allowed, respond_no_content, respond_plain_text,
 };
 
 const THIRD_PARTY_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
@@ -16,7 +18,7 @@ const MAX_MOBILE_INLINE_THIRD_PARTY_ASSET_BYTES: u64 = 32 * 1024 * 1024;
 pub fn handle_third_party_asset_web_request(
     local_extensions_dir: &Path,
     global_extensions_dir: &Path,
-    request: tauri::http::Request<Vec<u8>>,
+    request: &tauri::http::Request<Vec<u8>>,
     response: &mut tauri::http::Response<Cow<'static, [u8]>>,
 ) {
     if !request
@@ -35,66 +37,22 @@ pub fn handle_third_party_asset_web_request(
     );
 }
 
-#[cfg(dev)]
-pub fn handle_third_party_extension_protocol_request<R: tauri::Runtime>(
-    ctx: tauri::UriSchemeContext<'_, R>,
-    request: tauri::http::Request<Vec<u8>>,
-) -> tauri::http::Response<Cow<'static, [u8]>> {
-    use tauri::Manager;
-    use tauri::http::header::{
-        ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-    };
-
-    let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
-
-    response
-        .headers_mut()
-        .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
-    response.headers_mut().insert(
-        ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static(THIRD_PARTY_ALLOWED_METHODS),
-    );
-    response
-        .headers_mut()
-        .insert(ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("*"));
-
-    if !request
-        .uri()
-        .path()
-        .starts_with(THIRD_PARTY_EXTENSION_ROUTE_PREFIX)
-    {
-        respond_plain_text(&mut response, StatusCode::NOT_FOUND, "Not Found");
-        return response;
-    }
-
-    let dirs = ctx
-        .app_handle()
-        .state::<crate::infrastructure::third_party_assets::ThirdPartyExtensionDirs>();
-    handle_third_party_asset_route_request(
-        &dirs.local_dir,
-        &dirs.global_dir,
-        request,
-        &mut response,
-    );
-    response
-}
-
 fn handle_third_party_asset_route_request(
     local_extensions_dir: &Path,
     global_extensions_dir: &Path,
-    request: tauri::http::Request<Vec<u8>>,
+    request: &tauri::http::Request<Vec<u8>>,
     response: &mut tauri::http::Response<Cow<'static, [u8]>>,
 ) {
     use tauri::http::Method;
 
     match request.method() {
         &Method::OPTIONS => {
-            respond_no_content(response);
+            respond_no_content(response, THIRD_PARTY_ALLOWED_METHODS);
             return;
         }
         &Method::GET | &Method::HEAD => {}
         _ => {
-            respond_method_not_allowed(response);
+            respond_method_not_allowed(response, THIRD_PARTY_ALLOWED_METHODS);
             return;
         }
     }
@@ -197,66 +155,10 @@ fn handle_third_party_asset_route_request(
     }
 }
 
-fn respond_no_content(response: &mut tauri::http::Response<Cow<'static, [u8]>>) {
-    *response.status_mut() = StatusCode::NO_CONTENT;
-    set_allowed_methods_header(response);
-    response
-        .headers_mut()
-        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    *response.body_mut() = Cow::Owned(Vec::new());
-}
-
-fn respond_plain_text(
-    response: &mut tauri::http::Response<Cow<'static, [u8]>>,
-    status: StatusCode,
-    message: &str,
-) {
-    *response.status_mut() = status;
-    response.headers_mut().insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static("text/plain; charset=utf-8"),
-    );
-    response
-        .headers_mut()
-        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    *response.body_mut() = Cow::Owned(message.as_bytes().to_vec());
-}
-
-fn respond_method_not_allowed(response: &mut tauri::http::Response<Cow<'static, [u8]>>) {
-    respond_plain_text(
-        response,
-        StatusCode::METHOD_NOT_ALLOWED,
-        "Method not allowed",
-    );
-    set_allowed_methods_header(response);
-}
-
-fn set_allowed_methods_header(response: &mut tauri::http::Response<Cow<'static, [u8]>>) {
-    response
-        .headers_mut()
-        .insert(ALLOW, HeaderValue::from_static(THIRD_PARTY_ALLOWED_METHODS));
-}
-
-fn respond_bytes(
-    response: &mut tauri::http::Response<Cow<'static, [u8]>>,
-    status: StatusCode,
-    bytes: Vec<u8>,
-    content_type: &str,
-) {
-    *response.status_mut() = status;
-    response.headers_mut().insert(
-        CONTENT_TYPE,
-        HeaderValue::from_str(content_type).expect("Invalid Content-Type"),
-    );
-    response
-        .headers_mut()
-        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    *response.body_mut() = Cow::Owned(bytes);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tauri::http::header::{ALLOW, CONTENT_TYPE, HeaderValue};
     use std::path::PathBuf;
 
     struct TempDirGuard {
@@ -288,7 +190,7 @@ mod tests {
             .expect("request");
         let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
 
-        handle_third_party_asset_web_request(&temp.path, &temp.path, request, &mut response);
+        handle_third_party_asset_web_request(&temp.path, &temp.path, &request, &mut response);
 
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
         assert_eq!(
@@ -316,7 +218,7 @@ mod tests {
             .expect("request");
         let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
 
-        handle_third_party_asset_web_request(&local_root, &global_root, request, &mut response);
+        handle_third_party_asset_web_request(&local_root, &global_root, &request, &mut response);
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
@@ -345,7 +247,7 @@ mod tests {
             .expect("request");
         let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
 
-        handle_third_party_asset_web_request(&local_root, &global_root, request, &mut response);
+        handle_third_party_asset_web_request(&local_root, &global_root, &request, &mut response);
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(

@@ -261,6 +261,19 @@ async function main() {
         if (layerOf(posixPath) === 'routes' && /\bwindow\b/.test(text)) {
             contractErrors.push(`${posixPath}: routes must not reference window (use adapters/services)`);
         }
+
+        if (posixPath === 'src/tauri/main/routes/resource-routes.js') {
+            const forbiddenStaticRoutes = [
+                "router.get('/thumbnail'",
+                "router.get('/user/files/",
+                "router.get('/User%20Avatars/",
+                "router.get('/User Avatars/",
+            ];
+
+            if (forbiddenStaticRoutes.some((needle) => text.includes(needle))) {
+                contractErrors.push(`${posixPath}: static file/thumbnail endpoints must be served as browser resources (remove JS route handler)`);
+            }
+        }
     }
 
     if (args.updateBaseline) {

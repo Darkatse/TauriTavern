@@ -8,10 +8,13 @@ use app::spawn_initialization;
 use infrastructure::logging::logger;
 use infrastructure::paths::resolve_runtime_paths;
 use infrastructure::third_party_assets::ThirdPartyExtensionDirs;
+use infrastructure::user_data_dirs::DefaultUserWebDirs;
 use presentation::commands::registry::invoke_handler;
 use presentation::web_resources::third_party_endpoint::handle_third_party_asset_web_request;
 #[cfg(dev)]
-use presentation::web_resources::third_party_endpoint::handle_third_party_extension_protocol_request;
+use presentation::web_resources::dev_protocol_endpoint::handle_dev_protocol_request;
+use presentation::web_resources::thumbnail_endpoint::handle_thumbnail_web_request;
+use presentation::web_resources::user_data_endpoint::handle_user_data_asset_web_request;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -26,7 +29,7 @@ pub async fn run() {
 
     #[cfg(dev)]
     let builder = builder.register_uri_scheme_protocol("tt-ext", move |ctx, request| {
-        handle_third_party_extension_protocol_request(ctx, request)
+        handle_dev_protocol_request(ctx, request)
     });
 
     builder
@@ -55,8 +58,10 @@ pub async fn run() {
 
             let third_party_dirs =
                 ThirdPartyExtensionDirs::from_data_root(&runtime_paths.data_root);
+            let user_dirs = DefaultUserWebDirs::from_data_root(&runtime_paths.data_root);
             app.manage(third_party_dirs.clone());
-            create_main_window(app, third_party_dirs)?;
+            app.manage(user_dirs.clone());
+            create_main_window(app, third_party_dirs, user_dirs)?;
             spawn_initialization(app_handle.clone(), runtime_paths.clone());
             Ok(())
         })
@@ -68,6 +73,7 @@ pub async fn run() {
 fn create_main_window(
     app: &mut tauri::App,
     third_party_dirs: ThirdPartyExtensionDirs,
+    user_dirs: DefaultUserWebDirs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let window_config = app
         .config()
@@ -79,15 +85,18 @@ fn create_main_window(
 
     let local_extensions_dir = third_party_dirs.local_dir;
     let global_extensions_dir = third_party_dirs.global_dir;
+    let user_dirs = user_dirs;
 
     tauri::webview::WebviewWindowBuilder::from_config(app.handle(), window_config)?
         .on_web_resource_request(move |request, response| {
             handle_third_party_asset_web_request(
                 &local_extensions_dir,
                 &global_extensions_dir,
-                request,
+                &request,
                 response,
             );
+            handle_thumbnail_web_request(&user_dirs, &request, response);
+            handle_user_data_asset_web_request(&user_dirs, &request, response);
         })
         .build()?;
 

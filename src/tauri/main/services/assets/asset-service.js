@@ -41,36 +41,6 @@ export function createAssetService({ convertFileSrc, getUserDirectories, thumbna
     }
 
     /**
-     * @param {unknown} rawUrl
-     * @returns {ThumbnailRouteSpec | null}
-     */
-    function parseThumbnailRouteUrl(rawUrl) {
-        try {
-            const url = new URL(String(rawUrl || ''), window.location.origin);
-            if (url.pathname !== '/thumbnail') {
-                return null;
-            }
-
-            const type = String(url.searchParams.get('type') || '').trim().toLowerCase();
-            const file = String(url.searchParams.get('file') || '').trim();
-            if (!type || !file || !thumbnailRouteTypes.has(type)) {
-                return null;
-            }
-
-            const animated = String(url.searchParams.get('animated') || '').toLowerCase() === 'true';
-            const cacheBust = String(url.searchParams.get('t') || '').trim();
-            return {
-                type,
-                file,
-                animated,
-                cacheBust,
-            };
-        } catch {
-            return null;
-        }
-    }
-
-    /**
      * @param {string} type
      * @param {string} file
      */
@@ -112,7 +82,6 @@ export function createAssetService({ convertFileSrc, getUserDirectories, thumbna
 
     return {
         buildThumbnailRouteUrl,
-        parseThumbnailRouteUrl,
         resolveAssetPath,
         toAssetUrl,
     };

@@ -1,13 +1,3 @@
-import { decodeBase64ToBytes } from '../binary-utils.js';
-
-function decodeRoutePath(value) {
-    try {
-        return decodeURIComponent(String(value || ''));
-    } catch {
-        return String(value || '');
-    }
-}
-
 function isNotFoundError(error) {
     const message = String(error?.message || error || '').toLowerCase();
     return message.includes('not found')
@@ -24,33 +14,6 @@ function sanitizeFileName(value) {
 }
 
 export function registerResourceRoutes(router, context, { jsonResponse, textResponse }) {
-    const serveUserAvatarAsset = async ({ wildcard }) => {
-        const relativePath = decodeRoutePath(wildcard).replace(/^\/+/, '');
-        if (!relativePath) {
-            return textResponse('Not Found', 404);
-        }
-
-        try {
-            const payload = await context.safeInvoke('read_user_avatar_asset', {
-                file: relativePath,
-            });
-            const bytes = decodeBase64ToBytes(payload?.content_base64 || '');
-            return new Response(bytes, {
-                status: 200,
-                headers: {
-                    'Content-Type': payload?.mime_type || 'application/octet-stream',
-                    'Cache-Control': 'no-store',
-                },
-            });
-        } catch (error) {
-            if (isNotFoundError(error)) {
-                return textResponse('Not Found', 404);
-            }
-
-            throw error;
-        }
-    };
-
     router.post('/api/files/sanitize-filename', async ({ body }) => {
         const sanitized = sanitizeFileName(body?.fileName || '');
 
@@ -107,77 +70,6 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
         const verified = await context.safeInvoke('verify_user_files', { urls });
         return jsonResponse(verified && typeof verified === 'object' ? verified : {});
     });
-
-    router.get('/thumbnail', async ({ url }) => {
-        const type = String(url.searchParams.get('type') || '').trim().toLowerCase();
-        const file = decodeRoutePath(url.searchParams.get('file') || '').trim();
-        const animated = String(url.searchParams.get('animated') || '').toLowerCase() === 'true';
-        const cacheBust = String(url.searchParams.get('t') || '').trim();
-
-        if (!type || !file || !['bg', 'avatar', 'persona'].includes(type)) {
-            return textResponse('Bad Request', 400);
-        }
-
-        if (cacheBust) {
-            context.invalidateInvoke('read_thumbnail_asset', {
-                thumbnail_type: type,
-                file,
-                animated,
-            });
-        }
-
-        try {
-            const payload = await context.safeInvoke('read_thumbnail_asset', {
-                thumbnail_type: type,
-                file,
-                animated,
-            });
-            const bytes = decodeBase64ToBytes(payload?.content_base64 || '');
-            return new Response(bytes, {
-                status: 200,
-                headers: {
-                    'Content-Type': payload?.mime_type || 'application/octet-stream',
-                    'Cache-Control': 'no-store',
-                },
-            });
-        } catch (error) {
-            if (isNotFoundError(error)) {
-                return textResponse('Not Found', 404);
-            }
-
-            throw error;
-        }
-    });
-
-    router.get('/user/files/*', async ({ wildcard }) => {
-        const relativePath = decodeRoutePath(wildcard).replace(/^\/+/, '');
-        if (!relativePath) {
-            return textResponse('Not Found', 404);
-        }
-
-        try {
-            const payload = await context.safeInvoke('read_user_file_asset', {
-                relative_path: relativePath,
-            });
-            const bytes = decodeBase64ToBytes(payload?.content_base64 || '');
-            return new Response(bytes, {
-                status: 200,
-                headers: {
-                    'Content-Type': payload?.mime_type || 'application/octet-stream',
-                    'Cache-Control': 'no-store',
-                },
-            });
-        } catch (error) {
-            if (isNotFoundError(error)) {
-                return textResponse('Not Found', 404);
-            }
-
-            throw error;
-        }
-    });
-
-    router.get('/User%20Avatars/*', serveUserAvatarAsset);
-    router.get('/User Avatars/*', serveUserAvatarAsset);
 
     router.post('/api/avatars/get', async () => {
         const avatars = await context.safeInvoke('get_avatars');

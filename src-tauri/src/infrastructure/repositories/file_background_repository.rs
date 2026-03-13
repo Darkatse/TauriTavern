@@ -12,14 +12,13 @@ use crate::domain::models::background::{
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::thumbnail_cache::{
-    ThumbnailConfig, ThumbnailResizeMode, invalidate_thumbnail_cache, is_animated_image,
-    read_thumbnail_or_original,
+    invalidate_thumbnail_cache, is_animated_image, read_thumbnail_or_original,
+};
+use crate::infrastructure::thumbnails::{
+    BACKGROUND_THUMBNAIL_HEIGHT, BACKGROUND_THUMBNAIL_WIDTH, background_thumbnail_config,
 };
 
-const THUMBNAIL_WIDTH: u32 = 160;
-const THUMBNAIL_HEIGHT: u32 = 90;
-const THUMBNAIL_QUALITY: u8 = 90;
-const THUMBNAIL_RESOLUTION: u32 = THUMBNAIL_WIDTH * THUMBNAIL_HEIGHT;
+const THUMBNAIL_RESOLUTION: u32 = BACKGROUND_THUMBNAIL_WIDTH * BACKGROUND_THUMBNAIL_HEIGHT;
 
 /// File system implementation of the BackgroundRepository
 pub struct FileBackgroundRepository {
@@ -323,14 +322,9 @@ impl BackgroundRepository for FileBackgroundRepository {
         let normalized = self.normalize_filename(filename)?;
         let original_path = self.backgrounds_dir.join(&normalized);
         let thumbnail_path = self.thumbnail_cache_path(&normalized);
-        let config = ThumbnailConfig {
-            width: THUMBNAIL_WIDTH,
-            height: THUMBNAIL_HEIGHT,
-            quality: THUMBNAIL_QUALITY,
-            resize_mode: ThumbnailResizeMode::PreserveArea,
-        };
-
-        let asset = read_thumbnail_or_original(&original_path, &thumbnail_path, config).await?;
+        let asset =
+            read_thumbnail_or_original(&original_path, &thumbnail_path, background_thumbnail_config())
+                .await?;
         Ok(BackgroundAsset {
             bytes: asset.bytes,
             mime_type: asset.mime_type,

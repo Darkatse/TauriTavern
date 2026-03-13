@@ -103,26 +103,16 @@ pub(crate) fn parse_third_party_asset_request_path(
 }
 
 fn decode_request_segment(segment: &str) -> Result<String, ThirdPartyPathError> {
-    percent_encoding::percent_decode_str(segment)
-        .decode_utf8()
-        .map(|value| value.into_owned())
+    crate::infrastructure::request_path::decode_request_segment(segment)
         .map_err(|_| ThirdPartyPathError::InvalidPath)
 }
 
 fn validate_path_segment(segment: &str) -> Result<(), ThirdPartyPathError> {
-    if segment.is_empty()
-        || segment == "."
-        || segment == ".."
-        || segment.contains('/')
-        || segment.contains('\\')
-        || segment
-            .chars()
-            .any(|c| matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|'))
-    {
-        return Err(ThirdPartyPathError::InvalidPath);
+    if crate::infrastructure::request_path::validate_path_segment(segment) {
+        Ok(())
+    } else {
+        Err(ThirdPartyPathError::InvalidPath)
     }
-
-    Ok(())
 }
 
 #[cfg(test)]

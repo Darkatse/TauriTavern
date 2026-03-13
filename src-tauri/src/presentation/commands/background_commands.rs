@@ -8,15 +8,11 @@ use tauri::State;
 use crate::app::AppState;
 use crate::application::dto::background_dto::{DeleteBackgroundDto, RenameBackgroundDto};
 use crate::domain::models::background::BackgroundImageMetadataIndex;
-use crate::infrastructure::persistence::thumbnail_cache::{
-    ThumbnailConfig, ThumbnailResizeMode, read_thumbnail_or_original,
-};
+use crate::infrastructure::persistence::thumbnail_cache::read_thumbnail_or_original;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
-const AVATAR_THUMBNAIL_WIDTH: u32 = 96;
-const AVATAR_THUMBNAIL_HEIGHT: u32 = 144;
-const AVATAR_THUMBNAIL_QUALITY: u8 = 90;
+use crate::infrastructure::thumbnails::avatar_thumbnail_config;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ThumbnailAssetPayload {
@@ -98,16 +94,7 @@ async fn read_non_background_thumbnail_asset(
 
     let original_path = std::path::PathBuf::from(source_directory).join(&safe_file_name);
     let thumbnail_path = std::path::PathBuf::from(thumbnail_directory).join(&safe_file_name);
-    let asset = read_thumbnail_or_original(
-        &original_path,
-        &thumbnail_path,
-        ThumbnailConfig {
-            width: AVATAR_THUMBNAIL_WIDTH,
-            height: AVATAR_THUMBNAIL_HEIGHT,
-            quality: AVATAR_THUMBNAIL_QUALITY,
-            resize_mode: ThumbnailResizeMode::Cover,
-        },
-    )
+    let asset = read_thumbnail_or_original(&original_path, &thumbnail_path, avatar_thumbnail_config())
     .await
     .map_err(map_command_error("Failed to read non-background thumbnail"))?;
 

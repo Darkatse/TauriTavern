@@ -2,6 +2,11 @@
 
 本文档描述 **当前已经落地** 的第三方前端扩展兼容实现，用于指导后续持续开发。
 
+补充：目前已落地浏览器资源契约：
+
+- 头像：`/thumbnail`、`/characters/*`、`/User Avatars/*`，并移除缩略图 DOM monkey patch
+- 用户静态资源：`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*`
+
 ## 1. 范围与结论
 
 当前兼容目标是 SillyTavern 风格的 **纯前端 third-party extension**，即依赖：
@@ -59,7 +64,9 @@
 生产/打包运行时：
 
 - `src-tauri/src/lib.rs` 在主窗口安装 `on_web_resource_request`
-- `src-tauri/src/presentation/web_resources/third_party_endpoint.rs` 仅拦截 `/scripts/extensions/third-party/*`
+- `src-tauri/src/presentation/web_resources/third_party_endpoint.rs` 拦截 `/scripts/extensions/third-party/*`
+- `src-tauri/src/presentation/web_resources/thumbnail_endpoint.rs` 拦截 `/thumbnail`
+- `src-tauri/src/presentation/web_resources/user_data_endpoint.rs` 拦截用户数据静态资源：`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*`
 
 请求处理步骤：
 
@@ -72,8 +79,8 @@
 开发态本地 Web 入口：
 
 - `src/init.js` 会注册 `/tt-ext-sw.js`
-- Service Worker 将 `/scripts/extensions/third-party/*` 转发到 `tt-ext` 自定义 scheme
-- Rust 侧 `register_uri_scheme_protocol("tt-ext", ...)` 复用同一套 third-party 资源处理逻辑
+- Service Worker 将 `/scripts/extensions/third-party/*`、`/thumbnail`、`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 转发到 `tt-ext` 自定义 scheme
+- Rust 侧 `register_uri_scheme_protocol("tt-ext", ...)` 在 dev 下统一分发上述资源请求
 
 因此，开发态与生产态虽然入口不同，但 third-party 路径语义保持一致。
 
@@ -102,6 +109,8 @@
 - `fetch('/scripts/extensions/third-party/...')`
 - CSS `url(...)`
 - iframe 页面及其相对资源
+- `/thumbnail`、`/characters/*`、`/User Avatars/*` 作为头像相关的浏览器原生子资源端点
+- `/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 作为用户静态资源的浏览器原生子资源端点
 
 当前安全约束：
 

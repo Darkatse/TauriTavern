@@ -8,25 +8,17 @@
 /**
  * @param {{
  *   buildThumbnailRouteUrl: (type: string, file: string, options?: { cacheBust?: string | number | null; animated?: boolean }) => string;
- *   parseThumbnailRouteUrl: (rawUrl: unknown) => ThumbnailRouteSpec | null;
  *   thumbnailRouteTypes: ReadonlySet<string>;
- *   imageThumbnailRouteTypes: ReadonlySet<string>;
  *   cacheLimit: number;
  * }} deps
  */
 export function createThumbnailService({
     buildThumbnailRouteUrl,
-    parseThumbnailRouteUrl,
     thumbnailRouteTypes,
-    imageThumbnailRouteTypes,
     cacheLimit,
 }) {
-    const TRANSPARENT_PIXEL_DATA_URL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
-    const THUMBNAIL_SRC_GUARD = Symbol('tauritavern-thumbnail-src-guard');
-    const THUMBNAIL_REQUEST_TOKEN = Symbol('tauritavern-thumbnail-request-token');
     const normalizedLimit = Math.max(0, Math.floor(Number(cacheLimit) || 0));
 
-    let thumbnailImageBridgeInstalled = false;
     /** @type {Map<string, string>} */
     const thumbnailBlobCache = new Map();
     /** @type {Map<string, Promise<string>>} */
@@ -180,98 +172,7 @@ export function createThumbnailService({
         });
     }
 
-    function installThumbnailImageBridge() {
-        if (thumbnailImageBridgeInstalled) {
-            return;
-        }
-
-        const imagePrototype = window.HTMLImageElement?.prototype;
-        if (!imagePrototype) {
-            return;
-        }
-
-        const srcDescriptor = Object.getOwnPropertyDescriptor(imagePrototype, 'src');
-        if (!srcDescriptor?.get || !srcDescriptor?.set || typeof imagePrototype.setAttribute !== 'function') {
-            return;
-        }
-
-        const srcGet = /** @type {NonNullable<typeof srcDescriptor.get>} */ (srcDescriptor.get);
-        const srcSet = /** @type {NonNullable<typeof srcDescriptor.set>} */ (srcDescriptor.set);
-        const enumerable = Boolean(srcDescriptor.enumerable);
-
-        const originalSetAttribute = imagePrototype.setAttribute;
-
-        /** @param {HTMLImageElement} image @param {string} value */
-        const setSourceDirectly = (image, value) => {
-            const imageState = /** @type {any} */ (image);
-            imageState[THUMBNAIL_SRC_GUARD] = true;
-            try {
-                srcSet.call(image, value);
-            } finally {
-                imageState[THUMBNAIL_SRC_GUARD] = false;
-            }
-        };
-
-        /** @param {HTMLImageElement} image @param {any} rawValue */
-        const handleThumbnailRouteSource = (image, rawValue) => {
-            const value = String(rawValue ?? '');
-            const parsed = parseThumbnailRouteUrl(value);
-            if (!parsed || !imageThumbnailRouteTypes.has(parsed.type)) {
-                setSourceDirectly(image, value);
-                return;
-            }
-
-            const requestToken = `${parsed.type}|${parsed.file}|${parsed.cacheBust}|${Date.now()}|${Math.random()}`;
-            /** @type {any} */ (image)[THUMBNAIL_REQUEST_TOKEN] = requestToken;
-            setSourceDirectly(image, TRANSPARENT_PIXEL_DATA_URL);
-
-            void resolveThumbnailBlobUrlFromSpec(parsed)
-                .then((blobUrl) => {
-                    if ((/** @type {any} */ (image))[THUMBNAIL_REQUEST_TOKEN] !== requestToken) {
-                        return;
-                    }
-                    setSourceDirectly(image, blobUrl);
-                })
-                .catch(() => {
-                    if ((/** @type {any} */ (image))[THUMBNAIL_REQUEST_TOKEN] !== requestToken) {
-                        return;
-                    }
-                    setSourceDirectly(image, value);
-                });
-        };
-
-        Object.defineProperty(imagePrototype, 'src', {
-            configurable: true,
-            enumerable,
-            get() {
-                return srcGet.call(this);
-            },
-            set(value) {
-                if ((/** @type {any} */ (this))[THUMBNAIL_SRC_GUARD]) {
-                    srcSet.call(this, value);
-                    return;
-                }
-                handleThumbnailRouteSource(this, value);
-            },
-        });
-
-        imagePrototype.setAttribute = function patchedImageSetAttribute(name, value) {
-            if (String(name || '').toLowerCase() === 'src') {
-                if ((/** @type {any} */ (this))[THUMBNAIL_SRC_GUARD]) {
-                    return originalSetAttribute.call(this, name, value);
-                }
-                handleThumbnailRouteSource(this, value);
-                return;
-            }
-
-            return originalSetAttribute.call(this, name, value);
-        };
-
-        thumbnailImageBridgeInstalled = true;
-    }
-
     return {
         resolveThumbnailBlobUrl,
-        installThumbnailImageBridge,
     };
 }

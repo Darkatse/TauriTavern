@@ -32,7 +32,6 @@ import {
 export function createTauriMainContext({ invoke, convertFileSrc }) {
     const ANDROID_IMPORT_ARCHIVE_BRIDGE_NAME = 'TauriTavernAndroidImportArchiveBridge';
     const THUMBNAIL_ROUTE_TYPES = new Set(['bg', 'avatar', 'persona']);
-    const IMAGE_THUMBNAIL_ROUTE_TYPES = new Set(['avatar', 'persona']);
     const THUMBNAIL_BLOB_CACHE_LIMIT = 300;
 
     const userDirectoriesService = createUserDirectoriesService({ invoke });
@@ -44,9 +43,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
 
     const thumbnailService = createThumbnailService({
         buildThumbnailRouteUrl: assetService.buildThumbnailRouteUrl,
-        parseThumbnailRouteUrl: assetService.parseThumbnailRouteUrl,
         thumbnailRouteTypes: THUMBNAIL_ROUTE_TYPES,
-        imageThumbnailRouteTypes: IMAGE_THUMBNAIL_ROUTE_TYPES,
         cacheLimit: THUMBNAIL_BLOB_CACHE_LIMIT,
     });
 
@@ -135,8 +132,6 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         window.__TAURITAVERN_AVATAR_PATH__ = buildAvatarPath;
         window.__TAURITAVERN_PERSONA_PATH__ = buildPersonaPath;
         window.__TAURITAVERN_THUMBNAIL_BLOB_URL__ = resolveThumbnailBlobUrl;
-
-        thumbnailService.installThumbnailImageBridge();
     }
 
     installAssetPathHelpers();
