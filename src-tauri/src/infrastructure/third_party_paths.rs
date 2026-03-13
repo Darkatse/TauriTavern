@@ -78,7 +78,7 @@ pub(crate) fn parse_third_party_asset_request_path(
     let mut relative_segments = Vec::new();
     for raw_segment in raw_segments {
         if raw_segment.is_empty() {
-            return Err(ThirdPartyPathError::InvalidPath);
+            continue;
         }
 
         let segment = decode_request_segment(raw_segment)?;
@@ -174,10 +174,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_relative_segments() {
+    fn normalizes_redundant_relative_separators() {
         let path = "/scripts/extensions/third-party/mobile//a.js";
-        let result = parse_third_party_asset_request_path(path);
-        assert_eq!(result, Err(ThirdPartyPathError::InvalidPath));
+        let parsed = parse_third_party_asset_request_path(path)
+            .expect("parse")
+            .expect("should match");
+
+        assert_eq!(parsed.extension_folder, "mobile");
+        assert_eq!(parsed.relative_path, PathBuf::from("a.js"));
+        assert_eq!(parsed.relative_path_display, "a.js");
     }
 
     #[test]

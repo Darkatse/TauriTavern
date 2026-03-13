@@ -13,8 +13,7 @@ use crate::infrastructure::repositories::file_extension_repository::repo_url::HO
 
 const GITHUB_API_BASE: &str = "https://api.github.com";
 const GITHUB_RATE_LIMIT_TOKENS: [&str; 2] = ["rate limit", "abuse detection"];
-const GITHUB_RATE_LIMIT_MESSAGE: &str =
-    "GitHub has rate-limited your requests. Please try again later, or change your network and try again.";
+const GITHUB_RATE_LIMIT_MESSAGE: &str = "GitHub has rate-limited your requests. Please try again later, or change your network and try again.";
 
 #[derive(Debug, Deserialize)]
 struct GithubRepositoryInfo {

@@ -325,4 +325,33 @@ mod tests {
         );
         assert!(response.body().is_empty());
     }
+
+    #[test]
+    fn serves_assets_with_redundant_relative_separators() {
+        let temp = TempDirGuard::new("third-party-endpoint-redundant-separators");
+        let local_root = temp.path.join("local");
+        let global_root = temp.path.join("global");
+        std::fs::create_dir_all(local_root.join("mobile")).expect("create extension dir");
+        std::fs::write(
+            local_root.join("mobile").join("style.css"),
+            b".example { color: red; }",
+        )
+        .expect("write stylesheet");
+
+        let request = tauri::http::Request::builder()
+            .method("GET")
+            .uri("/scripts/extensions/third-party/mobile//style.css")
+            .body(Vec::new())
+            .expect("request");
+        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+
+        handle_third_party_asset_web_request(&local_root, &global_root, request, &mut response);
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE),
+            Some(&HeaderValue::from_static("text/css"))
+        );
+        assert_eq!(response.body().as_ref(), b".example { color: red; }");
+    }
 }

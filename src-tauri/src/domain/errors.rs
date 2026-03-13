@@ -15,9 +15,7 @@ pub enum DomainError {
     InternalError(String),
 
     #[error("{message}")]
-    RateLimited {
-        message: String,
-    },
+    RateLimited { message: String },
 }
 
 impl DomainError {
