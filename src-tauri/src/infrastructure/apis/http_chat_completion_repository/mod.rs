@@ -18,7 +18,7 @@ mod makersuite;
 mod normalizers;
 mod openai;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 const NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 pub struct HttpChatCompletionRepository {
