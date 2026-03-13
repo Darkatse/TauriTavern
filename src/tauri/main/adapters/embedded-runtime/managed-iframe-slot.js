@@ -270,19 +270,33 @@ export function createManagedIframeSlot({ id, kind, host, maxSoftParkedIframes, 
             ensureIframeNow();
         },
         dehydrate: (reason) => {
-        if (reason === 'budget') {
-            const iframe = findHostIframe(host);
-            if (iframe) {
-                ensureTemplate();
-                const height = measureIframeHeight(iframe);
-                const placeholder = ensureBudgetPlaceholderNow(height, reason);
-                markManagedIframeMutation(iframe);
-                iframe.replaceWith(placeholder);
-                softParkIframe(iframe);
+            if (reason === 'budget') {
+                const ghost = findHostGhostPlaceholder(host);
+                if (ghost) {
+                    ghost.remove();
+                }
+
+                const iframe = findHostIframe(host);
+                if (iframe) {
+                    ensureTemplate();
+                    const height = measureIframeHeight(iframe);
+                    const placeholder = ensureBudgetPlaceholderNow(height, reason);
+                    markManagedIframeMutation(iframe);
+                    iframe.replaceWith(placeholder);
+                    softParkIframe(iframe);
+                    return;
+                }
+
+                const height = lastMeasuredHeight > 0 ? lastMeasuredHeight : 240;
+                ensureBudgetPlaceholderNow(height, reason);
+                return;
             }
-            return;
-        }
             if (reason === 'visibility') {
+                const budget = findHostBudgetPlaceholder(host);
+                if (budget) {
+                    budget.remove();
+                }
+
                 const iframe = findHostIframe(host);
                 if (iframe) {
                     replaceIframeWithGhostPlaceholderNow();

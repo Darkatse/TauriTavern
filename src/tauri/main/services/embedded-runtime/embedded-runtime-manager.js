@@ -262,6 +262,30 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
     }
 
     /**
+     * Marks a slot as "dirty" so the next reconcile can re-assert its desired
+     * state and (re)hydrate it if selected active.
+     *
+     * This is primarily used for ER-3 self-heal when third-party code removes
+     * an iframe DOM node without properly unmounting its runtime controller.
+     *
+     * @param {string} id
+     */
+    function invalidate(id) {
+        const record = slots.get(id);
+        if (!record || record.state === 'disposed') {
+            throw new Error(`EmbeddedRuntimeManager.invalidate(${id}): slot not found`);
+        }
+
+        record.lastTouchedAt = now();
+        if (record.state !== 'cold') {
+            record.state = 'cold';
+            record.parkReason = '';
+        }
+
+        requestReconcile('invalidate');
+    }
+
+    /**
      * @param {string} id
      * @param {boolean} visible
      */
@@ -389,6 +413,7 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
         register,
         unregister,
         touch,
+        invalidate,
         setVisible,
         reconcile: () => reconcile('manual'),
         getPerfSnapshot,

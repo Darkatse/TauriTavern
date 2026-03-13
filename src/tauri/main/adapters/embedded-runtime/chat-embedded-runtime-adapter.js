@@ -13,6 +13,8 @@ import { parkManagedIframe } from './managed-iframe-parking-lot.js';
 
 const PLACEHOLDER_SELECTOR = '.tt-runtime-placeholder';
 const SLOT_ID_SELECTOR = '[data-tt-runtime-slot-id]';
+const TH_RENDER_SELECTOR = '.TH-render';
+const HIDDEN_CLASS = 'hidden!';
 
 /**
  * @param {unknown} value
@@ -20,6 +22,56 @@ const SLOT_ID_SELECTOR = '[data-tt-runtime-slot-id]';
 function toMessageId(value) {
     const n = Number(value);
     return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+/**
+ * Detects a JS-Slash-Runner `.TH-render` wrapper that has lost its iframe without
+ * running the Vue `onBeforeUnmount` cleanup (which normally unhides siblings).
+ *
+ * This state looks like: no iframe, but the collapse button / pre is still
+ * hidden, resulting in a zero-height wrapper.
+ *
+ * @param {HTMLElement} host
+ */
+function isOrphanedThRender(host) {
+    if (!host.matches(TH_RENDER_SELECTOR)) {
+        return false;
+    }
+    if (host.querySelector('iframe')) {
+        return false;
+    }
+
+    const button = host.querySelector(':scope > .TH-collapse-code-block-button');
+    if (button instanceof HTMLElement && button.classList.contains(HIDDEN_CLASS)) {
+        return true;
+    }
+
+    const pre = host.querySelector(':scope > pre');
+    if (pre instanceof HTMLElement && pre.classList.contains(HIDDEN_CLASS)) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Restores the `.TH-render` fallback UI when its iframe is removed externally,
+ * mirroring JSR's own Vue `onBeforeUnmount` cleanup.
+ *
+ * @param {HTMLElement} host
+ */
+function restoreThRenderFallbackUi(host) {
+    const button = host.querySelector(':scope > .TH-collapse-code-block-button');
+    if (button instanceof HTMLElement) {
+        button.textContent = '显示前端代码块';
+        button.classList.remove(HIDDEN_CLASS);
+        return;
+    }
+
+    const pre = host.querySelector(':scope > pre');
+    if (pre instanceof HTMLElement) {
+        pre.classList.remove(HIDDEN_CLASS);
+    }
 }
 
 /**
@@ -121,17 +173,42 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
                         continue;
                     }
 
-                    const { maxSoftParkedIframes, softParkTtlMs } = manager.profileConfig;
-                    if (maxSoftParkedIframes > 0) {
-                        parkManagedIframe({
-                            id,
-                            iframe: removedNode,
-                            maxIframes: maxSoftParkedIframes,
-                            ttlMs: softParkTtlMs,
-                        });
-                    }
+                    const removedIframe = removedNode;
+                    const host = slotHost;
+                    requestAnimationFrame(() => {
+                        if (!host.isConnected) {
+                            return;
+                        }
+                        if (host.dataset.ttRuntimeMoving === '1') {
+                            return;
+                        }
+                        if (String(host.dataset.ttRuntimeSlotId || '').trim() !== id) {
+                            return;
+                        }
+                        if (host.querySelector('iframe')) {
+                            return;
+                        }
 
-                    unregisterSlotsInSubtree(manager, slotHost);
+                        const orphanedThRender = isOrphanedThRender(host);
+                        if (orphanedThRender) {
+                            restoreThRenderFallbackUi(host);
+
+                            const { maxSoftParkedIframes, softParkTtlMs } = manager.profileConfig;
+                            if (maxSoftParkedIframes > 0) {
+                                parkManagedIframe({
+                                    id,
+                                    iframe: removedIframe,
+                                    maxIframes: maxSoftParkedIframes,
+                                    ttlMs: softParkTtlMs,
+                                });
+                            }
+
+                            manager.invalidate(id);
+                            return;
+                        }
+
+                        unregisterSlotsInSubtree(manager, host);
+                    });
                     continue;
                 }
 
