@@ -19,7 +19,7 @@ const SLOT_ID_SELECTOR = '[data-tt-runtime-slot-id]';
  * @param {Node} root
  * @param {DomEmbeddedRuntimeAdapter[]} adapters
  */
-function scanForHosts(manager, root, adapters) {
+export function scanForHosts(manager, root, adapters) {
     if (!(root instanceof Element)) {
         return;
     }
@@ -41,7 +41,7 @@ function scanForHosts(manager, root, adapters) {
  * @param {EmbeddedRuntimeManager} manager
  * @param {Node} root
  */
-function unregisterSlotsInSubtree(manager, root) {
+export function unregisterSlotsInSubtree(manager, root) {
     if (!(root instanceof Element)) {
         return;
     }
@@ -49,6 +49,9 @@ function unregisterSlotsInSubtree(manager, root) {
     /** @param {Element} el */
     const unregister = (el) => {
         if (!(el instanceof HTMLElement)) {
+            return;
+        }
+        if (el.dataset.ttRuntimeMoving === '1') {
             return;
         }
         const id = String(el.dataset.ttRuntimeSlotId || '').trim();

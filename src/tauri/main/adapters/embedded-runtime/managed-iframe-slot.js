@@ -10,6 +10,19 @@ const BUDGET_PLACEHOLDER_CLASS = 'tt-runtime-placeholder';
 const GHOST_PLACEHOLDER_CLASS = 'tt-runtime-ghost';
 
 /**
+ * Marks an iframe mutation as managed by TauriTavern embedded-runtime so that
+ * chat-level observers can ignore it (ER-3.2 self-heal).
+ *
+ * @param {HTMLIFrameElement} iframe
+ */
+function markManagedIframeMutation(iframe) {
+    iframe.dataset.ttRuntimeManaged = '1';
+    queueMicrotask(() => {
+        delete iframe.dataset.ttRuntimeManaged;
+    });
+}
+
+/**
  * @param {HTMLIFrameElement} iframe
  */
 function cloneIframeTemplate(iframe) {
@@ -85,6 +98,7 @@ export function createManagedIframeSlot({ id, kind, host, maxSoftParkedIframes, 
         if (!iframe) {
             return;
         }
+        markManagedIframeMutation(iframe);
         iframe.remove();
     };
 
@@ -170,6 +184,7 @@ export function createManagedIframeSlot({ id, kind, host, maxSoftParkedIframes, 
         ensureTemplate();
         const height = measureIframeHeight(iframe);
         const ghost = ensureGhostPlaceholderNow(height);
+        markManagedIframeMutation(iframe);
         iframe.replaceWith(ghost);
     };
 
@@ -178,9 +193,11 @@ export function createManagedIframeSlot({ id, kind, host, maxSoftParkedIframes, 
      */
     const softParkIframe = (iframe) => {
         if (!(maxSoftParkedIframes > 0)) {
+            markManagedIframeMutation(iframe);
             iframe.remove();
             return;
         }
+        markManagedIframeMutation(iframe);
         parkManagedIframe({
             id,
             iframe,
@@ -198,6 +215,7 @@ export function createManagedIframeSlot({ id, kind, host, maxSoftParkedIframes, 
         if (parked) {
             const existing = findHostIframe(host);
             if (existing && existing !== parked) {
+                markManagedIframeMutation(existing);
                 existing.remove();
             }
 
@@ -252,17 +270,18 @@ export function createManagedIframeSlot({ id, kind, host, maxSoftParkedIframes, 
             ensureIframeNow();
         },
         dehydrate: (reason) => {
-            if (reason === 'budget') {
-                const iframe = findHostIframe(host);
-                if (iframe) {
-                    ensureTemplate();
-                    const height = measureIframeHeight(iframe);
-                    const placeholder = ensureBudgetPlaceholderNow(height, reason);
-                    iframe.replaceWith(placeholder);
-                    softParkIframe(iframe);
-                }
-                return;
+        if (reason === 'budget') {
+            const iframe = findHostIframe(host);
+            if (iframe) {
+                ensureTemplate();
+                const height = measureIframeHeight(iframe);
+                const placeholder = ensureBudgetPlaceholderNow(height, reason);
+                markManagedIframeMutation(iframe);
+                iframe.replaceWith(placeholder);
+                softParkIframe(iframe);
             }
+            return;
+        }
             if (reason === 'visibility') {
                 const iframe = findHostIframe(host);
                 if (iframe) {

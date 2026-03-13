@@ -27,6 +27,6 @@
    - 移动端样式适配现状（edge-to-edge / safe-area / 沉浸模式 / 第三方浮层兜底）
    - 包含 Android 原生注入链路、CSS 变量契约、前端消费与回归要点
 
-3. `docs/CurrentState/FrontendPerfBaseline.md`
-   - Perf HUD 导出的前端性能基线（启动指标 / invoke 热点 / long frames/tasks）
-   - 用于 Phase 1–3 重构的对比与回归门槛
+3. `docs/CurrentState/EmbeddedRuntime.md`
+   - 消息内 iframe runtime（JSR/LWB）的生命周期管控现状（budget/park/hydrate/自愈/渲染事务）
+   - 包含端到端链路、支持/不支持边界与持续开发约束

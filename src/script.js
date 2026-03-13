@@ -12,6 +12,7 @@ import {
 } from './lib.js';
 import { getClientVersion as getBridgeClientVersion } from './tauri-bridge.js';
 import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
+import { replaceMesTextHtmlPreservingEmbeddedRuntimes } from './tauri/main/adapters/embedded-runtime/message-render-transaction.js';
 import {
     isTauriChatPayloadTransportEnabled,
     loadCharacterChatPayload,
@@ -686,8 +687,32 @@ let this_del_mes = -1;
 let this_edit_mes_chname = '';
 /** @type {number|undefined} */
 let this_edit_mes_id = undefined;
-/** @type {Map<number, DocumentFragment>} */
+/** @type {Map<number, HTMLElement>} */
 const ttMessageEditStash = new Map();
+
+/**
+ * Marks runtime slots under `root` as "moving" to prevent the embedded runtime
+ * DOM adapter from unregistering them during intentional DOM re-parenting.
+ *
+ * @param {HTMLElement} root
+ * @param {() => void} move
+ */
+function ttGuardEmbeddedRuntimeMoves(root, move) {
+    const moving = Array.from(root.querySelectorAll('[data-tt-runtime-slot-id]'))
+        .filter((el) => el instanceof HTMLElement);
+
+    for (const el of moving) {
+        el.dataset.ttRuntimeMoving = '1';
+    }
+
+    move();
+
+    queueMicrotask(() => {
+        for (const el of moving) {
+            delete el.dataset.ttRuntimeMoving;
+        }
+    });
+}
 
 //settings
 export let settings;
@@ -2176,7 +2201,10 @@ export function updateMessageBlock(messageId, message, { rerenderMessage = true 
     const messageElement = chatElement.find(`[mesid="${messageId}"]`);
     if (rerenderMessage) {
         const text = message?.extra?.display_text ?? message.mes;
-        messageElement.find('.mes_text').html(messageFormatting(text, message.name, message.is_system, message.is_user, messageId, {}, false));
+        replaceMesTextHtmlPreservingEmbeddedRuntimes(
+            /** @type {HTMLElement} */ (messageElement[0]),
+            messageFormatting(text, message.name, message.is_system, message.is_user, messageId, {}, false),
+        );
     }
 
     updateReasoningUI(messageElement);
@@ -2845,7 +2873,10 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
     });
 
     appendMediaToMessage(mes, messageElement, adjustMediaScroll);
-    messageElement.find('.mes_text').html(messageHTML);
+    replaceMesTextHtmlPreservingEmbeddedRuntimes(
+        /** @type {HTMLElement} */ (messageElement[0]),
+        messageHTML,
+    );
     addCopyToCodeBlocks(messageElement);
 
     // Set the swipes counter for all non-user messages.
@@ -8414,10 +8445,29 @@ export async function messageEdit(editMessageId) {
         throw new Error(`messageEdit: .mes_text missing for message ${editMessageId}`);
     }
 
-    const stash = document.createDocumentFragment();
-    while (messageTextDom.firstChild) {
-        stash.appendChild(messageTextDom.firstChild);
+    const messageBlockDom = messageBlock.get(0);
+    if (!messageBlockDom) {
+        throw new Error(`messageEdit: .mes_block missing for message ${editMessageId}`);
     }
+
+    const stash = document.createElement('div');
+    stash.className = 'tt-message-edit-stash';
+    stash.style.position = 'fixed';
+    stash.style.left = '0';
+    stash.style.top = '0';
+    stash.style.width = '0';
+    stash.style.height = '0';
+    stash.style.overflow = 'hidden';
+    stash.style.pointerEvents = 'none';
+    stash.style.opacity = '0';
+    stash.style.zIndex = '-1';
+    messageBlockDom.appendChild(stash);
+
+    ttGuardEmbeddedRuntimeMoves(messageTextDom, () => {
+        while (messageTextDom.firstChild) {
+            stash.appendChild(messageTextDom.firstChild);
+        }
+    });
     ttMessageEditStash.set(editMessageId, stash);
     messageBlock.find('.mes_buttons').css('display', 'none');
     messageBlock.find('.mes_edit_buttons').css('display', 'inline-flex');
@@ -8483,7 +8533,12 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
         if (!messageTextDom) {
             throw new Error(`messageEditCancel: .mes_text missing for message ${messageId}`);
         }
-        messageTextDom.appendChild(stash);
+        ttGuardEmbeddedRuntimeMoves(stash, () => {
+            while (stash.firstChild) {
+                messageTextDom.appendChild(stash.firstChild);
+            }
+        });
+        stash.remove();
         ttMessageEditStash.delete(messageId);
     } else {
         messageText.append(messageFormatting(
@@ -8586,16 +8641,35 @@ async function messageEditDone(div) {
         return;
     }
 
-    ttMessageEditStash.delete(this_edit_mes_id);
+    const editStash = ttMessageEditStash.get(this_edit_mes_id);
+    if (editStash) {
+        ttMessageEditStash.delete(this_edit_mes_id);
+    }
 
     let { mesBlock, text, mes, bias } = updateMessage(div);
 
     await eventSource.emit(event_types.MESSAGE_EDITED, this_edit_mes_id);
     text = chat[this_edit_mes_id]?.mes ?? text;
-    mesBlock.find('.mes_text').empty();
     mesBlock.find('.mes_edit_buttons').css('display', 'none');
     mesBlock.find('.mes_buttons').css('display', '');
-    mesBlock.find('.mes_text').append(
+
+    const messageText = mesBlock.find('.mes_text');
+    messageText.empty();
+    if (editStash) {
+        const messageTextDom = messageText.get(0);
+        if (!messageTextDom) {
+            throw new Error(`messageEditDone: .mes_text missing for message ${this_edit_mes_id}`);
+        }
+        ttGuardEmbeddedRuntimeMoves(editStash, () => {
+            while (editStash.firstChild) {
+                messageTextDom.appendChild(editStash.firstChild);
+            }
+        });
+        editStash.remove();
+    }
+
+    replaceMesTextHtmlPreservingEmbeddedRuntimes(
+        /** @type {HTMLElement} */ (mesBlock[0]),
         messageFormatting(
             text,
             this_edit_mes_chname,

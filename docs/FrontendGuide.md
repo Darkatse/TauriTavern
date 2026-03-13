@@ -249,6 +249,29 @@ src/
   - 检查脚本是否通过 `<style>` 或行内 `style` 设置了固定定位顶边；
   - 检查 `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__` 是否已安装。
 
+### 7.8 嵌入式运行时（Embedded Runtime，消息内 iframe）
+
+目标：把“消息内嵌入式内容（iframe）”从普通 DOM 升级为**可管理运行时**（有预算、有 park/hydrate、有自愈），并且在消息重渲染时尽量避免 iframe teardown/白屏重载，保持对主流扩展生态（JSR/LWB）可迁移。
+
+当前落地点（代码）：
+
+- 安装入口：`src/tauri/main/services/embedded-runtime/install.js`
+  - `bootstrap.js` 在 main ready 后加载；在 `APP_READY` 后安装 chat adapters。
+- Manager 与 profiles：`src/tauri/main/services/embedded-runtime/*`
+  - 全局调试入口：`globalThis.__TAURITAVERN_EMBEDDED_RUNTIME__`
+  - profile 覆盖：`localStorage tt:runtimeProfile = 'compat' | 'mobile-safe'`
+- DOM detectors：`src/tauri/main/adapters/embedded-runtime/*-runtime-adapter.js`
+  - 已支持：JS-Slash-Runner（`.TH-render`）与 LittleWhiteBox（`.xiaobaix-iframe-wrapper`）。
+- 渲染事务（ER-3.0）：`src/tauri/main/adapters/embedded-runtime/message-render-transaction.js`
+  - 宿主侧重渲染消息内容时应优先使用 `replaceMesTextHtmlPreservingEmbeddedRuntimes(mesEl, html)`，避免把 iframe runtime 当成普通 DOM 反复销毁重建。
+
+当前边界说明：
+
+- 已纳入管控：**消息内 iframe runtime**（JSR/LWB）。
+- 暂不纳入：面板类 runtime 的 park（目前依赖浏览器本身回收即可）。
+
+更多“当前如何工作/哪些契约不能破坏/回归点”见：`docs/CurrentState/EmbeddedRuntime.md`。
+
 ## 8. 兼容层策略
 
 - `src/tauri-main.js`：新主入口（推荐）。
