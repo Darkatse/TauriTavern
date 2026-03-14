@@ -322,9 +322,12 @@ impl BackgroundRepository for FileBackgroundRepository {
         let normalized = self.normalize_filename(filename)?;
         let original_path = self.backgrounds_dir.join(&normalized);
         let thumbnail_path = self.thumbnail_cache_path(&normalized);
-        let asset =
-            read_thumbnail_or_original(&original_path, &thumbnail_path, background_thumbnail_config())
-                .await?;
+        let asset = read_thumbnail_or_original(
+            &original_path,
+            &thumbnail_path,
+            background_thumbnail_config(),
+        )
+        .await?;
         Ok(BackgroundAsset {
             bytes: asset.bytes,
             mime_type: asset.mime_type,

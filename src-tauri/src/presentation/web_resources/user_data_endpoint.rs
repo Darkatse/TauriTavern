@@ -165,8 +165,7 @@ mod tests {
     fn serves_character_assets() {
         let temp = TempDirGuard::new("user-data-endpoint-characters");
         std::fs::create_dir_all(temp.path.join("characters")).expect("create characters dir");
-        std::fs::write(temp.path.join("characters").join("a.png"), b"ok")
-            .expect("write asset");
+        std::fs::write(temp.path.join("characters").join("a.png"), b"ok").expect("write asset");
 
         let request = tauri::http::Request::builder()
             .method("GET")

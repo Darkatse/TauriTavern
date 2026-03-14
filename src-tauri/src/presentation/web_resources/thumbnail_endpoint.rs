@@ -86,7 +86,11 @@ fn handle_thumbnail_route_request(
             return;
         }
         Err(error) => {
-            respond_plain_text(response, StatusCode::INTERNAL_SERVER_ERROR, &error.to_string());
+            respond_plain_text(
+                response,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &error.to_string(),
+            );
             return;
         }
     };
@@ -183,8 +187,8 @@ fn parse_thumbnail_query(query: &str) -> Result<(String, String), ThumbnailQuery
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tauri::http::header::CONTENT_TYPE;
     use std::path::PathBuf;
+    use tauri::http::header::CONTENT_TYPE;
 
     fn dirs(root: &PathBuf) -> DefaultUserWebDirs {
         DefaultUserWebDirs {
@@ -255,7 +259,8 @@ mod tests {
     fn falls_back_to_original_when_thumbnail_missing() {
         let temp = TempDirGuard::new("thumbnail-endpoint-fallback-original");
         std::fs::create_dir_all(temp.path.join("characters")).expect("create characters dir");
-        std::fs::write(temp.path.join("characters").join("a.png"), b"original").expect("write original");
+        std::fs::write(temp.path.join("characters").join("a.png"), b"original")
+            .expect("write original");
 
         let request = tauri::http::Request::builder()
             .method("GET")
@@ -278,8 +283,10 @@ mod tests {
     fn serves_cached_thumbnail_when_available() {
         let temp = TempDirGuard::new("thumbnail-endpoint-cached");
         std::fs::create_dir_all(temp.path.join("characters")).expect("create characters dir");
-        std::fs::create_dir_all(temp.path.join("thumbnails").join("avatar")).expect("create thumbnail dir");
-        std::fs::write(temp.path.join("characters").join("a.png"), b"original").expect("write original");
+        std::fs::create_dir_all(temp.path.join("thumbnails").join("avatar"))
+            .expect("create thumbnail dir");
+        std::fs::write(temp.path.join("characters").join("a.png"), b"original")
+            .expect("write original");
         std::fs::write(
             temp.path.join("thumbnails").join("avatar").join("a.png"),
             b"thumb",
@@ -307,7 +314,8 @@ mod tests {
     fn serves_background_thumbnails() {
         let temp = TempDirGuard::new("thumbnail-endpoint-bg");
         std::fs::create_dir_all(temp.path.join("backgrounds")).expect("create backgrounds dir");
-        std::fs::write(temp.path.join("backgrounds").join("a.png"), b"original").expect("write original");
+        std::fs::write(temp.path.join("backgrounds").join("a.png"), b"original")
+            .expect("write original");
 
         let request = tauri::http::Request::builder()
             .method("GET")

@@ -39,7 +39,12 @@ pub fn handle_dev_protocol_request<R: tauri::Runtime>(
     let path = request.uri().path();
     if path.starts_with(THIRD_PARTY_EXTENSION_ROUTE_PREFIX) {
         let dirs = ctx.app_handle().state::<ThirdPartyExtensionDirs>();
-        handle_third_party_asset_web_request(&dirs.local_dir, &dirs.global_dir, &request, &mut response);
+        handle_third_party_asset_web_request(
+            &dirs.local_dir,
+            &dirs.global_dir,
+            &request,
+            &mut response,
+        );
         return response;
     }
 

@@ -145,7 +145,10 @@ fn read_original_asset_sync(original_path: &Path) -> Result<ThumbnailAsset, Doma
     Ok(ThumbnailAsset { bytes, mime_type })
 }
 
-fn thumbnail_is_fresh_sync(thumbnail_path: &Path, original_path: &Path) -> Result<bool, DomainError> {
+fn thumbnail_is_fresh_sync(
+    thumbnail_path: &Path,
+    original_path: &Path,
+) -> Result<bool, DomainError> {
     let thumbnail_metadata = match std::fs::metadata(thumbnail_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -209,7 +212,9 @@ fn generate_thumbnail_sync(
             let thumbnail_height = ((target_area / aspect_ratio).sqrt().round() as u32).max(1);
             source_image.resize(thumbnail_width, thumbnail_height, FilterType::Triangle)
         }
-        ThumbnailResizeMode::Cover => source_image.resize_to_fill(width, height, FilterType::Triangle),
+        ThumbnailResizeMode::Cover => {
+            source_image.resize_to_fill(width, height, FilterType::Triangle)
+        }
     };
 
     let quality = config.quality.clamp(1, 100);
@@ -296,17 +301,18 @@ pub fn read_thumbnail_or_original_sync(
     thumbnail_path: &Path,
     config: ThumbnailConfig,
 ) -> Result<ThumbnailAsset, DomainError> {
-    let original_metadata = std::fs::metadata(original_path).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => DomainError::NotFound(format!(
-            "Source image not found: {}",
-            original_path.display()
-        )),
-        _ => DomainError::InternalError(format!(
-            "Failed to read source image metadata '{}': {}",
-            original_path.display(),
-            error
-        )),
-    })?;
+    let original_metadata =
+        std::fs::metadata(original_path).map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => DomainError::NotFound(format!(
+                "Source image not found: {}",
+                original_path.display()
+            )),
+            _ => DomainError::InternalError(format!(
+                "Failed to read source image metadata '{}': {}",
+                original_path.display(),
+                error
+            )),
+        })?;
 
     if !original_metadata.is_file() {
         return Err(DomainError::NotFound(format!(

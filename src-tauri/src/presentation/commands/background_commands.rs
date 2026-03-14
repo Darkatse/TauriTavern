@@ -94,9 +94,10 @@ async fn read_non_background_thumbnail_asset(
 
     let original_path = std::path::PathBuf::from(source_directory).join(&safe_file_name);
     let thumbnail_path = std::path::PathBuf::from(thumbnail_directory).join(&safe_file_name);
-    let asset = read_thumbnail_or_original(&original_path, &thumbnail_path, avatar_thumbnail_config())
-    .await
-    .map_err(map_command_error("Failed to read non-background thumbnail"))?;
+    let asset =
+        read_thumbnail_or_original(&original_path, &thumbnail_path, avatar_thumbnail_config())
+            .await
+            .map_err(map_command_error("Failed to read non-background thumbnail"))?;
 
     Ok(ThumbnailAssetPayload {
         content_base64: BASE64_STANDARD.encode(asset.bytes),

@@ -35,7 +35,11 @@ pub(crate) fn respond_method_not_allowed(
     response: &mut tauri::http::Response<Cow<'static, [u8]>>,
     allowed_methods: &'static str,
 ) {
-    respond_plain_text(response, StatusCode::METHOD_NOT_ALLOWED, "Method not allowed");
+    respond_plain_text(
+        response,
+        StatusCode::METHOD_NOT_ALLOWED,
+        "Method not allowed",
+    );
     set_allowed_methods_header(response, allowed_methods);
 }
 
@@ -64,4 +68,3 @@ pub(crate) fn respond_bytes(
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     *response.body_mut() = Cow::Owned(bytes);
 }
-

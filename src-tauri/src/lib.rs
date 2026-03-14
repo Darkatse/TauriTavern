@@ -10,9 +10,9 @@ use infrastructure::paths::resolve_runtime_paths;
 use infrastructure::third_party_assets::ThirdPartyExtensionDirs;
 use infrastructure::user_data_dirs::DefaultUserWebDirs;
 use presentation::commands::registry::invoke_handler;
-use presentation::web_resources::third_party_endpoint::handle_third_party_asset_web_request;
 #[cfg(dev)]
 use presentation::web_resources::dev_protocol_endpoint::handle_dev_protocol_request;
+use presentation::web_resources::third_party_endpoint::handle_third_party_asset_web_request;
 use presentation::web_resources::thumbnail_endpoint::handle_thumbnail_web_request;
 use presentation::web_resources::user_data_endpoint::handle_user_data_asset_web_request;
 use tauri::Manager;

@@ -20,4 +20,3 @@ pub(crate) fn validate_path_segment(segment: &str) -> bool {
 
     true
 }
-

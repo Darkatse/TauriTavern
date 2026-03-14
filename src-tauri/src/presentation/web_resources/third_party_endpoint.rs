@@ -158,8 +158,8 @@ fn handle_third_party_asset_route_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tauri::http::header::{ALLOW, CONTENT_TYPE, HeaderValue};
     use std::path::PathBuf;
+    use tauri::http::header::{ALLOW, CONTENT_TYPE, HeaderValue};
 
     struct TempDirGuard {
         path: PathBuf,
