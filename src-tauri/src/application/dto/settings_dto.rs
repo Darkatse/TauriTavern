@@ -8,6 +8,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TauriTavernSettingsDto {
     pub updates: TauriTavernUpdateSettingsDto,
+    pub perf_profile: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +24,7 @@ pub struct StartupUpdatePopupSettingsDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateTauriTavernSettingsDto {
     pub updates: Option<TauriTavernUpdateSettingsDto>,
+    pub perf_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -92,6 +94,7 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
     fn from(settings: TauriTavernSettings) -> Self {
         Self {
             updates: TauriTavernUpdateSettingsDto::from(settings.updates),
+            perf_profile: settings.perf_profile,
         }
     }
 }

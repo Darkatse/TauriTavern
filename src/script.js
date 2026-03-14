@@ -13,6 +13,7 @@ import {
 import { getClientVersion as getBridgeClientVersion } from './tauri-bridge.js';
 import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
 import { replaceMesTextHtmlPreservingEmbeddedRuntimes } from './tauri/main/adapters/embedded-runtime/message-render-transaction.js';
+import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
 import {
     isTauriChatPayloadTransportEnabled,
     loadCharacterChatPayload,
@@ -1786,6 +1787,7 @@ export async function clearChat({ clearData = false } = {}) {
     cancelDebouncedChatSave();
     cancelDebouncedMetadataSave();
     closeMessageEditor();
+    getCodeHighlightCoordinator().reset();
     extension_prompts = {};
     if (is_delete_mode) {
         $('#dialogue_del_mes_cancel').trigger('click');
@@ -2651,13 +2653,23 @@ export function addCopyToCodeBlocks(messageElement) {
     setHtmlCodeRenderReplaceLastMessageByDefault(extension_settings.code_render?.replace_last_message_by_default === true);
     renderInteractiveHtmlCodeBlocks(messageElement);
 
+    const coordinator = getCodeHighlightCoordinator();
     const codeBlocks = $(messageElement).find('pre code');
     for (let i = 0; i < codeBlocks.length; i++) {
         const codeBlock = codeBlocks.get(i);
-        hljs.highlightElement(codeBlock);
+        if (!codeBlock || !(codeBlock instanceof HTMLElement)) {
+            continue;
+        }
 
-        // This helper can be called multiple times for the same message; avoid duplicate buttons.
-        if (!codeBlock.querySelector('.code-copy')) {
+        if (codeBlock.querySelector('.code-copy')) {
+            continue;
+        }
+
+        const ensureCopyButton = () => {
+            if (codeBlock.querySelector('.code-copy')) {
+                return;
+            }
+
             const copyButton = document.createElement('i');
             copyButton.classList.add('fa-solid', 'fa-copy', 'code-copy', 'interactable');
             copyButton.title = 'Copy code';
@@ -2670,7 +2682,14 @@ export function addCopyToCodeBlocks(messageElement) {
                 await copyText(text);
                 toastr.info(t`Copied!`, '', { timeOut: 2000 });
             });
+        };
+
+        if (codeBlock.classList.contains('hljs') || codeBlock.dataset.ttHljsState === 'done') {
+            ensureCopyButton();
+            continue;
         }
+
+        coordinator.request(codeBlock, { afterHighlight: ensureCopyButton });
     }
 }
 

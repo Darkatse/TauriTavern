@@ -42,6 +42,10 @@ impl SettingsService {
                 updates.startup_popup.dismissed_release_token;
         }
 
+        if let Some(perf_profile) = dto.perf_profile {
+            settings.perf_profile = perf_profile;
+        }
+
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;
