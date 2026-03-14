@@ -101,15 +101,16 @@ async fn resolve_api_config(
             let base_url = resolve_custom_base_url(custom_url, reverse_proxy)?;
             let mut extra_headers = custom_parameters::parse_string_map(custom_headers_raw)?;
             let authorization_header = take_header_value(&mut extra_headers, "Authorization");
+            let uses_reverse_proxy = custom_url.is_empty() && !reverse_proxy.is_empty();
 
             let api_key = if authorization_header.is_some() {
                 String::new()
-            } else if reverse_proxy.is_empty() {
+            } else if uses_reverse_proxy {
+                proxy_password.to_string()
+            } else {
                 read_optional_secret(secret_repository, SecretKeys::CUSTOM)
                     .await?
                     .unwrap_or_default()
-            } else {
-                proxy_password.to_string()
             };
 
             Ok(ChatCompletionApiConfig {
@@ -504,6 +505,63 @@ mod tests {
                 .expect("generate config should resolve");
 
         assert_eq!(config.api_key, "saved-secret");
+        assert_eq!(config.authorization_header, None);
+        assert_eq!(
+            config.extra_headers.get("X-Trace").map(String::as_str),
+            Some("abc")
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_status_prefers_saved_secret_when_custom_url_present_even_if_reverse_proxy_present()
+    {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
+            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
+        });
+        let dto = ChatCompletionStatusRequestDto {
+            chat_completion_source: "custom".to_string(),
+            reverse_proxy: "https://proxy.example.com/v1".to_string(),
+            proxy_password: "proxy-secret".to_string(),
+            custom_url: "https://example.com/v1".to_string(),
+            custom_include_headers: "X-Trace: abc".to_string(),
+            ..Default::default()
+        };
+
+        let config =
+            resolve_status_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
+                .await
+                .expect("status config should resolve");
+
+        assert_eq!(config.base_url, "https://example.com/v1");
+        assert_eq!(config.api_key, "saved-secret");
+        assert_eq!(config.authorization_header, None);
+        assert_eq!(
+            config.extra_headers.get("X-Trace").map(String::as_str),
+            Some("abc")
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_status_uses_proxy_password_when_custom_url_missing_and_reverse_proxy_present() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
+            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
+        });
+        let dto = ChatCompletionStatusRequestDto {
+            chat_completion_source: "custom".to_string(),
+            reverse_proxy: "https://proxy.example.com/v1".to_string(),
+            proxy_password: "proxy-secret".to_string(),
+            custom_url: "".to_string(),
+            custom_include_headers: "X-Trace: abc".to_string(),
+            ..Default::default()
+        };
+
+        let config =
+            resolve_status_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
+                .await
+                .expect("status config should resolve");
+
+        assert_eq!(config.base_url, "https://proxy.example.com/v1");
+        assert_eq!(config.api_key, "proxy-secret");
         assert_eq!(config.authorization_header, None);
         assert_eq!(
             config.extra_headers.get("X-Trace").map(String::as_str),
