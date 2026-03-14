@@ -1,6 +1,7 @@
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 import { isMobile } from '../../RossAscends-mods.js';
 import { t, translate } from '../../i18n.js';
+import { getTauriTavernSettings, updateTauriTavernSettings } from '../../../tauri-bridge.js';
 
 const TAURITAVERN_SETTINGS_BUTTON_ID = 'tauritavern_settings_button';
 const LAN_SYNC_DEVICES_CHANGED_EVENT = 'tauritavern:lan_sync_devices_changed';
@@ -50,7 +51,7 @@ function bindLanSyncButton() {
     }
 
     button.addEventListener('click', () => {
-        void openLanSyncPopup();
+        runOrPopup(openTauriTavernSettingsPopup);
     });
 }
 
@@ -288,6 +289,84 @@ async function scanPairUriFromCamera() {
     }
 
     return content;
+}
+
+async function openTauriTavernSettingsPopup() {
+    const settings = await getTauriTavernSettings();
+
+    const root = document.createElement('div');
+    root.className = 'flex-container flexFlowColumn';
+    root.style.gap = '12px';
+    root.innerHTML = `
+        <div class="flex-container flexFlowColumn" style="gap: 10px;">
+            <b data-i18n="TauriTavern Settings">TauriTavern Settings</b>
+
+            <div class="flex-container flexFlowColumn" style="gap: 8px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
+                <b data-i18n="Panel Runtime">Panel Runtime</b>
+                <div class="flex-container alignItemsBaseline" style="gap: 10px; flex-wrap: wrap;">
+                    <span data-i18n="Mode">Mode</span>:
+                    <select id="tt-panel-runtime-profile" class="text_pole" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;">
+                        <option value="compat" data-i18n="Compatibility (Recommended)">Compatibility (Recommended)</option>
+                        <option value="aggressive" data-i18n="Aggressive (More DOM Parking)">Aggressive (More DOM Parking)</option>
+                        <option value="off" data-i18n="Off (Legacy)">Off (Legacy)</option>
+                    </select>
+                </div>
+                <small style="opacity: 0.85;" data-i18n="Requires reload to apply.">Requires reload to apply.</small>
+            </div>
+
+            <div class="flex-container flexFlowColumn" style="gap: 8px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
+                <b data-i18n="LAN Sync">LAN Sync</b>
+                <div class="flex-container flexFlowRow" style="gap: 10px;">
+                    <div id="tt-open-lan-sync" class="menu_button" data-i18n="Open">Open</div>
+                </div>
+            </div>
+        </div>
+    `.trim();
+
+    const profileSelect = root.querySelector('#tt-panel-runtime-profile');
+    if (!(profileSelect instanceof HTMLSelectElement)) {
+        throw new Error('TauriTavern settings: panel runtime selector not found');
+    }
+
+    const currentProfile = settings.panel_runtime_profile;
+    profileSelect.value = typeof currentProfile === 'string' && currentProfile ? currentProfile : 'compat';
+
+    const openLanSyncButton = root.querySelector('#tt-open-lan-sync');
+    if (!(openLanSyncButton instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: LAN sync button not found');
+    }
+    openLanSyncButton.addEventListener('click', () => runOrPopup(openLanSyncPopup));
+
+    const result = await callGenericPopup(root, POPUP_TYPE.CONFIRM, '', {
+        okButton: translate('Save'),
+        cancelButton: translate('Close'),
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+    });
+
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return;
+    }
+
+    const nextProfile = String(profileSelect.value || '').trim();
+    if (!nextProfile || nextProfile === currentProfile) {
+        return;
+    }
+
+    await updateTauriTavernSettings({
+        panel_runtime_profile: nextProfile,
+    });
+
+    // Keep in sync with:
+    // - src/tauri/main/services/panel-runtime/preinstall.js
+    // - src/tauri/main/services/panel-runtime/install.js
+    //
+    // Mirror the chosen profile so bootstrap can synchronously honor `off`
+    // before Tauri settings are loaded.
+    localStorage.setItem('tt:panelRuntimeProfile', nextProfile);
+
+    window.location.reload();
 }
 
 async function openLanSyncPopup() {

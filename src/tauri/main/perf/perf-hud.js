@@ -1,5 +1,6 @@
 const GLOBAL_KEY = '__TAURITAVERN_PERF__';
 const EMBEDDED_RUNTIME_KEY = '__TAURITAVERN_EMBEDDED_RUNTIME__';
+const PANEL_RUNTIME_KEY = '__TAURITAVERN_PANEL_RUNTIME__';
 const STORAGE_ENABLED_KEY = 'tt:perf';
 const STORAGE_POSITION_KEY = 'tt:perf:pos';
 
@@ -599,6 +600,19 @@ function createPerfController(options = {}) {
         }
     }
 
+    function getPanelRuntimeSample() {
+        try {
+            const runtime = globalThis[PANEL_RUNTIME_KEY];
+            if (!runtime || typeof runtime.getPerfSnapshot !== 'function') {
+                return null;
+            }
+
+            return runtime.getPerfSnapshot();
+        } catch {
+            return null;
+        }
+    }
+
     function getHeapSample() {
         try {
             const mem = globalThis.performance?.memory;
@@ -658,6 +672,138 @@ function createPerfController(options = {}) {
             .map(([command, stats]) => ({ command, ...stats }))
             .sort((a, b) => (b.totalMs || 0) - (a.totalMs || 0));
         return items.slice(0, Math.max(0, limit));
+    }
+
+    function cssEscape(raw) {
+        if (typeof raw !== 'string') {
+            return '';
+        }
+        try {
+            return globalThis.CSS?.escape ? globalThis.CSS.escape(raw) : raw.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+        } catch {
+            return raw;
+        }
+    }
+
+    /**
+     * @param {Element} el
+     */
+    function buildSelectorPath(el) {
+        const parts = [];
+        let cur = el;
+        let hops = 0;
+        while (cur && hops < 6) {
+            const tag = String(cur.tagName || '').toLowerCase();
+            const id = typeof cur.id === 'string' && cur.id ? `#${cssEscape(cur.id)}` : '';
+            const classes = cur.classList && cur.classList.length
+                ? `.${[...cur.classList].slice(0, 2).map(cssEscape).join('.')}`
+                : '';
+            parts.unshift(`${tag}${id}${classes}`);
+
+            if (id) {
+                break;
+            }
+            cur = cur.parentElement;
+            hops += 1;
+        }
+        return parts.join(' > ');
+    }
+
+    /**
+     * @param {object} options
+     * @param {Element | null} options.root
+     * @param {number} options.topN
+     * @param {number} options.minDescendants
+     */
+    function computeTopDomSubtrees({ root, topN, minDescendants }) {
+        const host = root || document.body;
+        if (!(host instanceof Element)) {
+            throw new Error('domTop(): root must be an Element');
+        }
+
+        const n = clampInt(topN, 1, 200, 12);
+        const min = clampInt(minDescendants, 0, 1_000_000, 0);
+
+        /** @type {Array<{ el: Element; depth: number }>} */
+        const nodes = [];
+        /** @type {Array<{ el: Element; depth: number }>} */
+        const stack = [{ el: host, depth: 0 }];
+
+        while (stack.length) {
+            const item = stack.pop();
+            if (!item) {
+                break;
+            }
+            nodes.push(item);
+            const children = item.el.children;
+            for (let i = children.length - 1; i >= 0; i -= 1) {
+                const child = children[i];
+                if (child instanceof Element) {
+                    stack.push({ el: child, depth: item.depth + 1 });
+                }
+            }
+        }
+
+        /** @type {WeakMap<Element, number>} */
+        const subtreeSizes = new WeakMap();
+        for (let i = nodes.length - 1; i >= 0; i -= 1) {
+            const el = nodes[i]?.el;
+            if (!el) {
+                continue;
+            }
+            let size = 1;
+            const children = el.children;
+            for (let j = 0; j < children.length; j += 1) {
+                const child = children[j];
+                if (!(child instanceof Element)) {
+                    continue;
+                }
+                size += subtreeSizes.get(child) || 1;
+            }
+            subtreeSizes.set(el, size);
+        }
+
+        /** @type {Array<{ selector: string; tag: string; depth: number; directChildren: number; descendants: number; text: string }>} */
+        const top = [];
+
+        for (const { el, depth } of nodes) {
+            const size = subtreeSizes.get(el) || 1;
+            const descendants = size - 1;
+            if (descendants < min) {
+                continue;
+            }
+
+            if (top.length < n) {
+                top.push({
+                    selector: buildSelectorPath(el),
+                    tag: String(el.tagName || '').toLowerCase(),
+                    depth,
+                    directChildren: el.children.length,
+                    descendants,
+                    text: String(el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+                });
+                top.sort((a, b) => b.descendants - a.descendants);
+                continue;
+            }
+
+            const tail = top[top.length - 1];
+            if (tail && descendants <= tail.descendants) {
+                continue;
+            }
+
+            top.pop();
+            top.push({
+                selector: buildSelectorPath(el),
+                tag: String(el.tagName || '').toLowerCase(),
+                depth,
+                directChildren: el.children.length,
+                descendants,
+                text: String(el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+            });
+            top.sort((a, b) => b.descendants - a.descendants);
+        }
+
+        return top;
     }
 
     function clampHudPosition(x, y) {
@@ -879,6 +1025,7 @@ function createPerfController(options = {}) {
         const frameStats = computeFrameStats();
         const dom = getDomSample();
         const embeddedRuntime = getEmbeddedRuntimeSample();
+        const panelRuntime = getPanelRuntimeSample();
         const heap = getHeapSample();
         const lagStats = computeEventLoopLagStats();
 
@@ -928,6 +1075,9 @@ function createPerfController(options = {}) {
         if (embeddedRuntime) {
             lines.push(`Runtime: active ${embeddedRuntime.active}/${embeddedRuntime.registered}  iframes ${embeddedRuntime.activeIframes}  parked ${embeddedRuntime.parked}`);
         }
+        if (panelRuntime) {
+            lines.push(`Panels: active ${panelRuntime.active}/${panelRuntime.registered}  parked ${panelRuntime.parked}`);
+        }
         if (heap) {
             const limitSuffix = heap.limit ? ` (limit ${formatMB(heap.limit)})` : '';
             lines.push(`Heap: ${formatMB(heap.used)} / ${formatMB(heap.total)}${limitSuffix}`);
@@ -970,6 +1120,7 @@ function createPerfController(options = {}) {
             lines.push('');
             lines.push(`timeOrigin: ${Math.round(state.timeOrigin)}  now(): ${Math.round(safeNow())}`);
             lines.push('Commands: __TAURITAVERN_PERF__.exportJson() / downloadReport() / copyReport() / saveReport()');
+            lines.push('DOM report: __TAURITAVERN_PERF__.domTop()');
             lines.push('Auto-enable: localStorage tt:perf=1');
         }
 
@@ -1164,6 +1315,7 @@ function createPerfController(options = {}) {
         const frameStats = computeFrameStats();
         const dom = getDomSample();
         const embeddedRuntime = getEmbeddedRuntimeSample();
+        const panelRuntime = getPanelRuntimeSample();
         const heap = getHeapSample();
         const eventLoopLag = computeEventLoopLagStats();
 
@@ -1218,6 +1370,7 @@ function createPerfController(options = {}) {
             },
             dom,
             embeddedRuntime,
+            panelRuntime,
             heap,
             init: {
                 totalMs: readMeasureDuration('tt:init:total'),
@@ -1418,6 +1571,18 @@ function createPerfController(options = {}) {
         }
     }
 
+    function domTop(options = {}) {
+        const rootSelector = typeof options.rootSelector === 'string' ? options.rootSelector : '';
+        const root = rootSelector ? document.querySelector(rootSelector) : document.body;
+        const top = computeTopDomSubtrees({
+            root: root instanceof Element ? root : document.body,
+            topN: options.topN ?? 12,
+            minDescendants: options.minDescendants ?? 0,
+        });
+        console.table(top);
+        return top;
+    }
+
     return {
         config,
         get enabled() {
@@ -1435,6 +1600,7 @@ function createPerfController(options = {}) {
         copyReport,
         downloadReport,
         saveReport,
+        domTop,
         attachContext,
         setPosition: (x, y) => setHudPosition(x, y, { persist: true }),
         resetPosition: resetHudPosition,

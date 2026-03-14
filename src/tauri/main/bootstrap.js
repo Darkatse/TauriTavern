@@ -21,6 +21,7 @@ import {
     toUrl,
 } from './http-utils.js';
 import { registerRoutes } from './routes/index.js';
+import { preinstallPanelRuntime } from './services/panel-runtime/preinstall.js';
 
 let bootstrapped = false;
 const HOST_ABI_VERSION = 1;
@@ -318,8 +319,7 @@ export function bootstrapTauriMain() {
     interceptors.patchFetch();
     interceptors.patchJQueryAjax();
     downloadBridge.patchWindow();
-    installSameOriginWindowPatches(interceptors, downloadBridge);
-
+    installSameOriginWindowPatches(interceptors, downloadBridge); preinstallPanelRuntime();
     const readyPromise = initializeTauriIntegration(
         context,
         interceptors,
@@ -338,6 +338,7 @@ export function bootstrapTauriMain() {
         console.warn('TauriTavern: Failed to load LAN sync panel:', error);
     }));
     void readyPromise.then(() => import('./services/embedded-runtime/install.js').then(({ installEmbeddedRuntime }) => installEmbeddedRuntime()));
+    void readyPromise.then(() => import('./services/panel-runtime/install.js').then(({ installPanelRuntime }) => installPanelRuntime()));
 
     if (perfEnabled) {
         readyPromise

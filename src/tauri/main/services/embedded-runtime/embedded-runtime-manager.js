@@ -31,6 +31,7 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
     const slots = new Map();
 
     let reconcilePending = false;
+    let reconcileSeq = 0;
 
     const counters = {
         hydrate: 0,
@@ -101,6 +102,18 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
     });
 
     /**
+     * Cancels a pending requestAnimationFrame reconcile, if any.
+     */
+    function cancelPendingReconcile() {
+        if (!reconcilePending) {
+            return;
+        }
+
+        reconcilePending = false;
+        reconcileSeq += 1;
+    }
+
+    /**
      * @param {string} reason
      */
     function requestReconcile(reason) {
@@ -108,7 +121,12 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
             return;
         }
         reconcilePending = true;
+        const seq = (reconcileSeq += 1);
         requestAnimationFrame(() => {
+            if (seq !== reconcileSeq) {
+                return;
+            }
+
             reconcilePending = false;
             reconcile(reason);
         });
@@ -415,7 +433,10 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
         touch,
         invalidate,
         setVisible,
-        reconcile: () => reconcile('manual'),
+        reconcile: () => {
+            cancelPendingReconcile();
+            reconcile('manual');
+        },
         getPerfSnapshot,
         get profile() {
             return normalizedProfile.name;

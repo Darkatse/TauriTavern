@@ -5,11 +5,17 @@ fn default_perf_profile() -> String {
     "auto".to_string()
 }
 
+fn default_panel_runtime_profile() -> String {
+    "compat".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TauriTavernSettings {
     pub updates: TauriTavernUpdateSettings,
     #[serde(default = "default_perf_profile")]
     pub perf_profile: String,
+    #[serde(default = "default_panel_runtime_profile")]
+    pub panel_runtime_profile: String,
 }
 
 impl Default for TauriTavernSettings {
@@ -17,6 +23,7 @@ impl Default for TauriTavernSettings {
         Self {
             updates: TauriTavernUpdateSettings::default(),
             perf_profile: default_perf_profile(),
+            panel_runtime_profile: default_panel_runtime_profile(),
         }
     }
 }

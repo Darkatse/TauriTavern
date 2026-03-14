@@ -46,6 +46,10 @@ impl SettingsService {
             settings.perf_profile = perf_profile;
         }
 
+        if let Some(panel_runtime_profile) = dto.panel_runtime_profile {
+            settings.panel_runtime_profile = panel_runtime_profile;
+        }
+
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;
