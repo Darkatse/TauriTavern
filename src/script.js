@@ -14,6 +14,7 @@ import { getClientVersion as getBridgeClientVersion } from './tauri-bridge.js';
 import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
 import { replaceMesTextHtmlPreservingEmbeddedRuntimes } from './tauri/main/adapters/embedded-runtime/message-render-transaction.js';
 import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
+import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
 import {
     isTauriChatPayloadTransportEnabled,
     loadCharacterChatPayload,
@@ -12497,19 +12498,30 @@ jQuery(async function () {
             return;
         }
         const drawer = $(this).closest('.inline-drawer');
+        const drawerEl = drawer.get(0);
+        if (!(drawerEl instanceof HTMLElement)) {
+            throw new Error('Inline drawer element not found');
+        }
         const icon = drawer.find('>.inline-drawer-header .inline-drawer-icon');
         const drawerContent = drawer.find('>.inline-drawer-content');
-        icon.toggleClass('down up');
-        icon.toggleClass('fa-circle-chevron-down fa-circle-chevron-up');
-        drawer.trigger('inline-drawer-toggle');
-        drawerContent.stop().slideToggle({
-            complete: () => {
-                $(this).css('height', '');
-            },
+        const drawerContentEl = drawerContent.get(0);
+        if (!(drawerContentEl instanceof HTMLElement)) {
+            throw new Error('Inline drawer content not found');
+        }
+
+        const open = !isInlineDrawerContentOpen(drawerContentEl);
+        icon.toggleClass('down', !open);
+        icon.toggleClass('up', open);
+        icon.toggleClass('fa-circle-chevron-down', !open);
+        icon.toggleClass('fa-circle-chevron-up', open);
+        drawerEl.dispatchEvent(new CustomEvent('inline-drawer-toggle', { bubbles: true, detail: { open } }));
+        const motion = setInlineDrawerContentOpen(drawerContentEl, open, { durationMs: animation_duration });
+        void motion.then(() => {
+            drawerEl.dispatchEvent(new CustomEvent('inline-drawer-motion-complete', { bubbles: true, detail: { open } }));
         });
 
         // Set the height of "autoSetHeight" textareas within the inline-drawer to their scroll height
-        if (!CSS.supports('field-sizing', 'content')) {
+        if (open && !CSS.supports('field-sizing', 'content')) {
             const textareas = drawerContent.find('textarea.autoSetHeight');
             for (const textarea of textareas) {
                 await resetScrollHeight($(textarea));
