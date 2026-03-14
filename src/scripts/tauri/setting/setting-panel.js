@@ -298,26 +298,51 @@ async function openTauriTavernSettingsPopup() {
     root.className = 'flex-container flexFlowColumn';
     root.style.gap = '12px';
     root.innerHTML = `
-        <div class="flex-container flexFlowColumn" style="gap: 10px;">
+        <div class="flex-container flexFlowColumn" style="gap: 12px;">
             <b data-i18n="TauriTavern Settings">TauriTavern Settings</b>
 
-            <div class="flex-container flexFlowColumn" style="gap: 8px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
-                <b data-i18n="Panel Runtime">Panel Runtime</b>
-                <div class="flex-container alignItemsBaseline" style="gap: 10px; flex-wrap: wrap;">
-                    <span data-i18n="Mode">Mode</span>:
+            <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
+                <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
+                    <b data-i18n="Performance">Performance</b>
+                </div>
+
+                <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                    <div class="flex-container alignItemsBaseline" style="gap: 8px; min-width: 220px; flex: 1;">
+                        <span data-i18n="Panel Runtime">Panel Runtime</span>
+                        <a id="tt-help-panel-runtime" class="notes-link" href="javascript:void(0);">
+                            <span class="fa-solid fa-circle-question note-link-span" title="Learn more" data-i18n="[title]Learn more"></span>
+                        </a>
+                    </div>
                     <select id="tt-panel-runtime-profile" class="text_pole" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;">
-                        <option value="compat" data-i18n="Compatibility (Recommended)">Compatibility (Recommended)</option>
+                        <option value="compat" data-i18n="Compact (Recommended)">Compact (Recommended)</option>
                         <option value="aggressive" data-i18n="Aggressive (More DOM Parking)">Aggressive (More DOM Parking)</option>
                         <option value="off" data-i18n="Off (Legacy)">Off (Legacy)</option>
                     </select>
                 </div>
+
+                <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                    <div class="flex-container alignItemsBaseline" style="gap: 8px; min-width: 220px; flex: 1;">
+                        <span data-i18n="Embedded Runtime">Embedded Runtime</span>
+                        <a id="tt-help-embedded-runtime" class="notes-link" href="javascript:void(0);">
+                            <span class="fa-solid fa-circle-question note-link-span" title="Learn more" data-i18n="[title]Learn more"></span>
+                        </a>
+                    </div>
+                    <select id="tt-embedded-runtime-profile" class="text_pole" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;">
+                        <option value="auto" data-i18n="Auto (Recommended)">Auto (Recommended)</option>
+                        <option value="compat" data-i18n="Balanced">Balanced</option>
+                        <option value="mobile-safe" data-i18n="Power Saver">Power Saver</option>
+                    </select>
+                </div>
+
                 <small style="opacity: 0.85;" data-i18n="Requires reload to apply.">Requires reload to apply.</small>
             </div>
 
-            <div class="flex-container flexFlowColumn" style="gap: 8px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
-                <b data-i18n="LAN Sync">LAN Sync</b>
+            <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
+                <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
+                    <b data-i18n="LAN Sync">LAN Sync</b>
+                </div>
                 <div class="flex-container flexFlowRow" style="gap: 10px;">
-                    <div id="tt-open-lan-sync" class="menu_button" data-i18n="Open">Open</div>
+                    <div id="tt-open-lan-sync" class="menu_button" data-i18n="Open Panel">Open Panel</div>
                 </div>
             </div>
         </div>
@@ -328,14 +353,75 @@ async function openTauriTavernSettingsPopup() {
         throw new Error('TauriTavern settings: panel runtime selector not found');
     }
 
-    const currentProfile = settings.panel_runtime_profile;
-    profileSelect.value = typeof currentProfile === 'string' && currentProfile ? currentProfile : 'compat';
+    const embeddedProfileSelect = root.querySelector('#tt-embedded-runtime-profile');
+    if (!(embeddedProfileSelect instanceof HTMLSelectElement)) {
+        throw new Error('TauriTavern settings: embedded runtime selector not found');
+    }
+
+    const currentPanelRuntimeProfile = settings.panel_runtime_profile;
+    profileSelect.value = typeof currentPanelRuntimeProfile === 'string' && currentPanelRuntimeProfile ? currentPanelRuntimeProfile : 'compat';
+
+    const embeddedOverride = String(localStorage.getItem('tt:runtimeProfile') || '').trim();
+    const currentEmbeddedRuntimeProfile = embeddedOverride === 'compat' || embeddedOverride === 'mobile-safe'
+        ? embeddedOverride
+        : 'auto';
+    embeddedProfileSelect.value = currentEmbeddedRuntimeProfile;
 
     const openLanSyncButton = root.querySelector('#tt-open-lan-sync');
     if (!(openLanSyncButton instanceof HTMLElement)) {
         throw new Error('TauriTavern settings: LAN sync button not found');
     }
     openLanSyncButton.addEventListener('click', () => runOrPopup(openLanSyncPopup));
+
+    const panelRuntimeHelp = root.querySelector('#tt-help-panel-runtime');
+    if (!(panelRuntimeHelp instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: panel runtime help button not found');
+    }
+    panelRuntimeHelp.addEventListener('click', (event) => {
+        event.preventDefault();
+        runOrPopup(async () => {
+            const content = document.createElement('div');
+            content.className = 'flex-container flexFlowColumn';
+            content.style.gap = '8px';
+            content.innerHTML = `
+                <b data-i18n="Panel Runtime">Panel Runtime</b>
+                <div data-i18n="Panel Runtime help: compact">Compact: ~40% less DOM pressure, best compatibility.</div>
+                <div data-i18n="Panel Runtime help: aggressive">Aggressive: ~60% less DOM pressure, but some scripts may not work (e.g. SPresets).</div>
+                <div data-i18n="Panel Runtime help: off">Off: legacy behavior (no DOM parking).</div>
+            `.trim();
+            await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+                okButton: translate('Close'),
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+            });
+        });
+    });
+
+    const embeddedRuntimeHelp = root.querySelector('#tt-help-embedded-runtime');
+    if (!(embeddedRuntimeHelp instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: embedded runtime help button not found');
+    }
+    embeddedRuntimeHelp.addEventListener('click', (event) => {
+        event.preventDefault();
+        runOrPopup(async () => {
+            const content = document.createElement('div');
+            content.className = 'flex-container flexFlowColumn';
+            content.style.gap = '8px';
+            content.innerHTML = `
+                <b data-i18n="Embedded Runtime">Embedded Runtime</b>
+                <div data-i18n="Embedded Runtime help: auto">Auto: picks a profile based on your device.</div>
+                <div data-i18n="Embedded Runtime help: balanced">Balanced: keeps more runtimes active for compatibility.</div>
+                <div data-i18n="Embedded Runtime help: saver">Power Saver: reduces memory/CPU by parking more aggressively.</div>
+            `.trim();
+            await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+                okButton: translate('Close'),
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+            });
+        });
+    });
 
     const result = await callGenericPopup(root, POPUP_TYPE.CONFIRM, '', {
         okButton: translate('Save'),
@@ -349,22 +435,40 @@ async function openTauriTavernSettingsPopup() {
         return;
     }
 
-    const nextProfile = String(profileSelect.value || '').trim();
-    if (!nextProfile || nextProfile === currentProfile) {
+    const nextPanelRuntimeProfile = String(profileSelect.value || '').trim();
+    const nextEmbeddedRuntimeProfile = String(embeddedProfileSelect.value || '').trim();
+
+    const hasPanelRuntimeChange = Boolean(nextPanelRuntimeProfile) && nextPanelRuntimeProfile !== currentPanelRuntimeProfile;
+    const hasEmbeddedRuntimeChange = Boolean(nextEmbeddedRuntimeProfile) && nextEmbeddedRuntimeProfile !== currentEmbeddedRuntimeProfile;
+
+    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange) {
         return;
     }
 
-    await updateTauriTavernSettings({
-        panel_runtime_profile: nextProfile,
-    });
+    if (hasPanelRuntimeChange) {
+        await updateTauriTavernSettings({
+            panel_runtime_profile: nextPanelRuntimeProfile,
+        });
 
-    // Keep in sync with:
-    // - src/tauri/main/services/panel-runtime/preinstall.js
-    // - src/tauri/main/services/panel-runtime/install.js
-    //
-    // Mirror the chosen profile so bootstrap can synchronously honor `off`
-    // before Tauri settings are loaded.
-    localStorage.setItem('tt:panelRuntimeProfile', nextProfile);
+        // Keep in sync with:
+        // - src/tauri/main/services/panel-runtime/preinstall.js
+        // - src/tauri/main/services/panel-runtime/install.js
+        //
+        // Mirror the chosen profile so bootstrap can synchronously honor `off`
+        // before Tauri settings are loaded.
+        localStorage.setItem('tt:panelRuntimeProfile', nextPanelRuntimeProfile);
+    }
+
+    if (hasEmbeddedRuntimeChange) {
+        // Keep in sync with: src/tauri/main/services/embedded-runtime/embedded-runtime-profiles.js
+        //
+        // `auto` is represented by removing the override key.
+        if (nextEmbeddedRuntimeProfile === 'auto') {
+            localStorage.removeItem('tt:runtimeProfile');
+        } else {
+            localStorage.setItem('tt:runtimeProfile', nextEmbeddedRuntimeProfile);
+        }
+    }
 
     window.location.reload();
 }

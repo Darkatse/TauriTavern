@@ -4,7 +4,7 @@ import { preinstallApiConnectionsSubtreeGates } from '../../adapters/panel-runti
 
 // Keep in sync with:
 // - src/tauri/main/services/panel-runtime/install.js
-// - src/scripts/tauri/sync/sync-panel.js
+// - src/scripts/tauri/setting/setting-panel.js
 //
 // Rationale: `panel_runtime_profile` is persisted in Tauri settings (async to load),
 // but some panel-runtime hooks must be installed during bootstrap to preserve

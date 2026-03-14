@@ -3807,7 +3807,7 @@ grammarly-extension {
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 5px;
     padding: 3px 5px;
-    width: min-content;
+    width: fit-content;
     cursor: pointer;
     margin: 5px 0;
     transition: var(--animation-duration-2x);

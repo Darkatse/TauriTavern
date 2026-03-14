@@ -10,7 +10,7 @@ import { validatePanelRuntimeInvariants } from './validate.js';
 
 // Keep in sync with:
 // - src/tauri/main/services/panel-runtime/preinstall.js
-// - src/scripts/tauri/sync/sync-panel.js
+// - src/scripts/tauri/setting/setting-panel.js
 const PANEL_RUNTIME_PROFILE_STORAGE_KEY = 'tt:panelRuntimeProfile';
 
 export function installPanelRuntime() {
