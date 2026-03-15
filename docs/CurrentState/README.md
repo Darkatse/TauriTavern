@@ -30,3 +30,7 @@
 3. `docs/CurrentState/EmbeddedRuntime.md`
    - 消息内 iframe runtime（JSR/LWB）的生命周期管控现状（budget/park/hydrate/自愈/渲染事务）
    - 包含端到端链路、支持/不支持边界与持续开发约束
+
+4. `docs/CurrentState/StartupOptimization.md`
+   - 开屏启动优化（Shell/Core/Full 分阶段启动）的当前实现快照
+   - 包含前端启动编排、bootstrap 快照、扩展发现/激活、按需加载与可观测性约束
