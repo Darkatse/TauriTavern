@@ -3,8 +3,7 @@ use std::path::Path;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::extension::{
-    Extension, ExtensionAssetPayload, ExtensionInstallResult, ExtensionUpdateResult,
-    ExtensionVersion,
+    Extension, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
 };
 
 #[async_trait]
@@ -13,10 +12,10 @@ pub trait ExtensionRepository: Send + Sync {
     async fn discover_extensions(&self) -> Result<Vec<Extension>, DomainError>;
 
     /// Get extension manifest
-    async fn get_manifest(
+    async fn get_manifest_metadata(
         &self,
         extension_path: &Path,
-    ) -> Result<Option<crate::domain::models::extension::ExtensionManifest>, DomainError>;
+    ) -> Result<Option<crate::domain::models::extension::ExtensionManifestMetadata>, DomainError>;
 
     /// Install an extension from a URL
     async fn install_extension(
@@ -51,12 +50,4 @@ pub trait ExtensionRepository: Send + Sync {
         source: &str,
         destination: &str,
     ) -> Result<(), DomainError>;
-
-    /// Read a file from a third-party extension directory.
-    async fn read_third_party_asset(
-        &self,
-        extension_name: &str,
-        relative_path: &str,
-        location_hint: Option<&str>,
-    ) -> Result<ExtensionAssetPayload, DomainError>;
 }

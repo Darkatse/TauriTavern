@@ -39,6 +39,7 @@ impl ChatCompletionSource {
 pub struct ChatCompletionApiConfig {
     pub base_url: String,
     pub api_key: String,
+    pub authorization_header: Option<String>,
     pub extra_headers: HashMap<String, String>,
 }
 

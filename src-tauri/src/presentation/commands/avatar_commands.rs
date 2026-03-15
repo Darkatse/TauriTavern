@@ -14,6 +14,8 @@ use crate::infrastructure::logging::logger;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
+const MAX_MOBILE_INLINE_AVATAR_BYTES: u64 = 8 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct UserAvatarAssetPayload {
     pub content_base64: String,
@@ -107,6 +109,29 @@ pub async fn read_user_avatar_asset(
         ))?;
 
     let avatar_path = PathBuf::from(directories.avatars).join(&safe_file);
+
+    let metadata = fs::metadata(&avatar_path)
+        .await
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => {
+                CommandError::NotFound(format!("Avatar not found: {}", safe_file))
+            }
+            _ => {
+                CommandError::InternalServerError(format!("Failed to stat avatar asset: {}", error))
+            }
+        })?;
+
+    if cfg!(mobile) && metadata.len() > MAX_MOBILE_INLINE_AVATAR_BYTES {
+        tracing::warn!(
+            "Rejected large avatar asset ({} bytes): {}",
+            metadata.len(),
+            safe_file
+        );
+        return Err(CommandError::BadRequest(
+            "Avatar is too large to load on mobile.".to_string(),
+        ));
+    }
+
     let bytes = fs::read(&avatar_path)
         .await
         .map_err(|error| match error.kind() {

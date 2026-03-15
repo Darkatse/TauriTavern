@@ -2,7 +2,6 @@ import {
     showdown,
     moment,
     DOMPurify,
-    hljs,
     Handlebars,
     SVGInject,
     Popper,
@@ -12,6 +11,9 @@ import {
 } from './lib.js';
 import { getClientVersion as getBridgeClientVersion } from './tauri-bridge.js';
 import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
+import { replaceMesTextHtmlPreservingEmbeddedRuntimes } from './tauri/main/adapters/embedded-runtime/message-render-transaction.js';
+import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
+import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
 import {
     isTauriChatPayloadTransportEnabled,
     loadCharacterChatPayload,
@@ -32,6 +34,11 @@ import {
 } from './scripts/tauri/chat/windowed-state.js';
 import { extension_prompt_roles, extension_prompt_types } from './scripts/extension-prompts.js';
 import { waitForTauriMainReady } from './scripts/extensions/runtime/tauri-ready.js';
+import {
+    ChatInputFocusIntent,
+    focusChatInput,
+    installChatInputFocusKeeper,
+} from './scripts/chat-input-focus.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -78,6 +85,7 @@ import {
     selected_group,
     saveGroupChat,
     getGroups,
+    applyGroupsSnapshot,
     generateGroupWrapper,
     is_group_generating,
     resetSelectedGroup,
@@ -209,7 +217,7 @@ import {
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
 
-import { cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, runGenerationInterceptors } from './scripts/extensions.js';
+import { activateOfflineExtensions, applyExtensionSettings, cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, runGenerationInterceptors, startOfflineExtensionsDiscovery } from './scripts/extensions.js';
 import { COMMENT_NAME_DEFAULT, CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, initSlashCommandAutoComplete, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
 import { initMacroAutoComplete } from './scripts/autocomplete/MacroAutoComplete.js';
 import {
@@ -235,7 +243,7 @@ import {
     tag_import_setting,
     applyCharacterTagsToMessageDivs,
 } from './scripts/tags.js';
-import { initSecrets, readSecretState } from './scripts/secrets.js';
+import { initSecrets, primeSecretStateSnapshot, readSecretState } from './scripts/secrets.js';
 import { markdownExclusionExt } from './scripts/showdown-exclusion.js';
 import { markdownUnderscoreExt } from './scripts/showdown-underscore.js';
 import { NOTE_MODULE_NAME, initAuthorsNote, metadata_keys, setFloatingPrompt, shouldWIAddPrompt } from './scripts/authors-note.js';
@@ -256,6 +264,7 @@ import { initLocales, t, translate } from './scripts/i18n.js';
 import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
 import {
     user_avatar,
+    primeUserAvatarsSnapshot,
     getUserAvatars,
     getUserAvatar,
     setUserAvatar,
@@ -266,7 +275,7 @@ import {
     isPersonaPanelOpen,
 } from './scripts/personas.js';
 import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_settings } from './scripts/backgrounds.js';
-import { hideLoader, showLoader } from './scripts/loader.js';
+import { hideLoader, showLoader, removePreloader } from './scripts/loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
 import { initTextGenModels } from './scripts/textgen-models.js';
 import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
@@ -317,6 +326,7 @@ import { MacroEnvBuilder } from './scripts/macros/engine/MacroEnvBuilder.js';
 import { MacroEngine } from './scripts/macros/engine/MacroEngine.js';
 import { addChatBackupsBrowser } from './scripts/chat-backups.js';
 import { onboardingExperimentalMacroEngine } from './scripts/macros/engine/MacroDiagnostics.js';
+import { createStartupStatusOverlay } from './scripts/tauri/startup/startup-status-overlay.js';
 
 // API OBJECT FOR EXTERNAL WIRING
 globalThis.SillyTavern = {
@@ -681,6 +691,32 @@ let this_del_mes = -1;
 let this_edit_mes_chname = '';
 /** @type {number|undefined} */
 let this_edit_mes_id = undefined;
+/** @type {Map<number, HTMLElement>} */
+const ttMessageEditStash = new Map();
+
+/**
+ * Marks runtime slots under `root` as "moving" to prevent the embedded runtime
+ * DOM adapter from unregistering them during intentional DOM re-parenting.
+ *
+ * @param {HTMLElement} root
+ * @param {() => void} move
+ */
+function ttGuardEmbeddedRuntimeMoves(root, move) {
+    const moving = Array.from(root.querySelectorAll('[data-tt-runtime-slot-id]'))
+        .filter((el) => el instanceof HTMLElement);
+
+    for (const el of moving) {
+        el.dataset.ttRuntimeMoving = '1';
+    }
+
+    move();
+
+    queueMicrotask(() => {
+        for (const el of moving) {
+            delete el.dataset.ttRuntimeMoving;
+        }
+    });
+}
 
 //settings
 export let settings;
@@ -762,12 +798,55 @@ export async function pingServer() {
     }
 }
 
+async function fetchBootstrapSnapshot() {
+    const response = await fetch('/api/bootstrap', {
+        method: 'POST',
+        headers: getRequestHeaders({ omitContentType: true }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Bootstrap snapshot request failed with status ${response.status}`);
+    }
+
+    return response.json();
+}
+
 //MARK: firstLoadInit
 async function firstLoadInit() {
-    // Ensure bridge/interceptors are installed before first /api/* calls.
-    await waitForTauriMainReady();
+    const startupStatus = createStartupStatusOverlay();
+    const perfEnabled = globalThis.__TAURITAVERN_PERF_ENABLED__ === true;
+    const perfMark = (name) => perfEnabled && globalThis.performance?.mark?.(name);
+
+    const setStage = (stage, message) => {
+        globalThis.__TAURITAVERN_STARTUP_STAGE__ = stage;
+        startupStatus.setText(message);
+        perfMark(`tt:startup:${stage}`);
+    };
+
+    const nextPaint = () => new Promise((resolve) => requestAnimationFrame(resolve));
+
+    const hostReadyPromise = waitForTauriMainReady();
+
+    perfMark('tt:startup:start');
 
     try {
+        setStage('shell', '启动中：渲染界面…（扩展稍后加载）');
+        removePreloader();
+        await nextPaint();
+
+        registerPromptManagerMigration();
+        initDomHandlers();
+        initStandaloneMode();
+        initLibraryShims();
+        addShowdownPatch(showdown);
+        addDOMPurifyHooks();
+        reloadMarkdownProcessor();
+        applyBrowserFixes();
+
+        // Ensure bridge/interceptors are installed before first /api/* calls.
+        setStage('core', '启动中：连接后端…');
+        await hostReadyPromise;
+
         const tokenResponse = await fetch('/csrf-token');
         if (!tokenResponse.ok) {
             throw new Error(`CSRF request failed with status ${tokenResponse.status}`);
@@ -777,80 +856,107 @@ async function firstLoadInit() {
             throw new Error('CSRF token is missing');
         }
         token = tokenData.token;
-    } catch (error) {
-        if (window.__TAURI_INTERNALS__ !== undefined) {
-            console.warn('CSRF token unavailable in Tauri; using fallback token.', error);
-            token = 'tauri-dummy-token';
-        } else {
-            toastr.error(t`Couldn't get CSRF token. Please refresh the page.`, t`Error`, { timeOut: 0, extendedTimeOut: 0, preventDuplicates: true });
-            throw new Error('Initialization failed');
-        }
-    }
 
-    showLoader();
-    registerPromptManagerMigration();
-    initDomHandlers();
-    initStandaloneMode();
-    initLibraryShims();
-    addShowdownPatch(showdown);
-    addDOMPurifyHooks();
-    reloadMarkdownProcessor();
-    applyBrowserFixes();
-    await getClientVersion();
-    await initSecrets();
-    await readSecretState();
-    await initLocales();
-    initChatUtilities();
-    initDefaultSlashCommands();
-    initTextGenModels();
-    initOpenAI();
-    initTextGenSettings();
-    initKoboldSettings();
-    initNovelAISettings();
-    initSystemPrompts();
-    initExtensions();
-    initExtensionSlashCommands();
-    ToolManager.initToolSlashCommands();
-    await initPresetManager();
-    await initSystemMessages();
-    await getSettings();
-    syncMobileImmersiveFullscreenUi();
-    initKeyboard();
-    initDynamicStyles();
-    initTags();
-    initBookmarks();
-    await getUserAvatars(true, user_avatar);
-    await getCharacters();
-    await getBackgrounds();
-    await initTokenizers();
-    initBackgrounds();
-    initAuthorsNote();
-    await initPersonas();
-    await initSlashCommandAutoComplete();
-    initMacroAutoComplete();
-    initWorldInfo();
-    initHorde();
-    initRossMods();
-    initStats();
-    initCfg();
-    initLogprobs();
-    initInputMarkdown();
-    initServerHistory();
-    initSettingsSearch();
-    initBulkEdit();
-    initReasoning();
-    initWelcomeScreen();
-    await initScrapers();
-    initCustomSelectedSamplers();
-    initDataMaid();
-    initItemizedPrompts();
-    initAccessibility();
-    addDebugFunctions();
-    doDailyExtensionUpdatesCheck();
-    await eventSource.emit(event_types.APP_INITIALIZED);
-    await hideLoader();
-    await fixViewport();
-    await eventSource.emit(event_types.APP_READY);
+        const bootstrapPromise = fetchBootstrapSnapshot();
+
+        setStage('core', '启动中：加载核心数据…');
+        const clientVersionPromise = getClientVersion();
+        await initSecrets();
+        const bootstrapSnapshot = await bootstrapPromise;
+        const extensionsEnabled = Boolean(bootstrapSnapshot.settings?.enable_extensions)
+            && bootstrapSnapshot.settings?.result != 'file not find'
+            && Boolean(bootstrapSnapshot.settings?.settings);
+        const extensionsDiscoveryPromise = extensionsEnabled ? startOfflineExtensionsDiscovery() : null;
+        primeSecretStateSnapshot(bootstrapSnapshot.secret_state);
+        await readSecretState();
+        await clientVersionPromise;
+        await initLocales();
+        initChatUtilities();
+        initDefaultSlashCommands();
+        initTextGenModels();
+        initOpenAI();
+        initTextGenSettings();
+        initKoboldSettings();
+        initNovelAISettings();
+        initSystemPrompts();
+
+        setStage('full', '启动中：加载扩展与可选模块…');
+        initExtensions();
+        initExtensionSlashCommands();
+        ToolManager.initToolSlashCommands();
+        await initPresetManager();
+        await initSystemMessages();
+        await applySettingsSnapshot(bootstrapSnapshot.settings);
+        syncMobileImmersiveFullscreenUi();
+        initKeyboard();
+        initDynamicStyles();
+        initTags();
+        initBookmarks();
+        primeUserAvatarsSnapshot(bootstrapSnapshot.avatars);
+        await getUserAvatars(true, user_avatar);
+        const appliedCharacters = await applyCharactersSnapshot(bootstrapSnapshot.characters);
+        if (!appliedCharacters) {
+            return;
+        }
+        applyGroupsSnapshot(bootstrapSnapshot.groups);
+        await printCharacters(true);
+        await getBackgrounds();
+        initBackgrounds();
+        initAuthorsNote();
+        await initPersonas();
+        await initSlashCommandAutoComplete();
+        initMacroAutoComplete();
+        initWorldInfo();
+        initHorde();
+        initRossMods();
+        initStats();
+        initCfg();
+        initLogprobs();
+        initInputMarkdown();
+        initServerHistory();
+        initSettingsSearch();
+        initBulkEdit();
+        initReasoning();
+        initWelcomeScreen();
+        initCustomSelectedSamplers();
+        initDataMaid();
+        initItemizedPrompts();
+        initAccessibility();
+        addDebugFunctions();
+
+        if (extensionsEnabled) {
+            await extensionsDiscoveryPromise;
+            const enableAutoUpdate = Boolean(bootstrapSnapshot.settings?.enable_extensions_auto_update);
+            const isVersionChanged = settings.currentVersion !== currentVersion;
+
+            const isAndroid = /android/i.test(navigator.userAgent || '');
+            const extensionParallelism = isAndroid ? 1 : 2;
+
+            await activateOfflineExtensions({
+                versionChanged: isVersionChanged,
+                enableAutoUpdate,
+                parallelism: extensionParallelism,
+            });
+            await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED);
+            doDailyExtensionUpdatesCheck();
+        }
+
+        await eventSource.emit(event_types.APP_INITIALIZED);
+        await fixViewport();
+        await eventSource.emit(event_types.APP_READY);
+
+        startupStatus.remove();
+        perfMark('tt:startup:ready');
+
+        void (async () => {
+            await nextPaint();
+            await initTokenizers();
+            await nextPaint();
+            await initScrapers();
+        })();
+    } finally {
+        startupStatus.remove();
+    }
 }
 
 async function fixViewport() {
@@ -1356,6 +1462,37 @@ export function getCharacterSource(chId = this_chid) {
     return '';
 }
 
+async function applyCharactersSnapshot(getData) {
+    const previousAvatar = this_chid !== undefined ? characters[this_chid]?.avatar : null;
+    characters.splice(0, characters.length);
+
+    for (let i = 0; i < getData.length; i++) {
+        characters[i] = getData[i];
+        characters[i].name = DOMPurify.sanitize(characters[i].name);
+
+        // For dropped-in cards
+        if (!characters[i].chat) {
+            characters[i].chat = `${characters[i].name} - ${humanizedDateTime()}`;
+        }
+
+        characters[i].chat = String(characters[i].chat);
+    }
+
+    if (previousAvatar) {
+        const newCharacterId = characters.findIndex(x => x.avatar === previousAvatar);
+        if (newCharacterId >= 0) {
+            setCharacterId(newCharacterId);
+            await selectCharacterById(newCharacterId, { switchMenu: false });
+        } else {
+            await Popup.show.text(t`ERROR: The active character is no longer available.`, t`The page will be refreshed to prevent data loss. Press "OK" to continue.`);
+            location.reload();
+            return false;
+        }
+    }
+
+    return true;
+}
+
 export async function getCharacters() {
     const response = await fetch('/api/characters/all', {
         method: 'POST',
@@ -1363,30 +1500,10 @@ export async function getCharacters() {
         body: JSON.stringify({}),
     });
     if (response.ok) {
-        const previousAvatar = this_chid !== undefined ? characters[this_chid]?.avatar : null;
-        characters.splice(0, characters.length);
         const getData = await response.json();
-        for (let i = 0; i < getData.length; i++) {
-            characters[i] = getData[i];
-            characters[i].name = DOMPurify.sanitize(characters[i].name);
-
-            // For dropped-in cards
-            if (!characters[i].chat) {
-                characters[i].chat = `${characters[i].name} - ${humanizedDateTime()}`;
-            }
-
-            characters[i].chat = String(characters[i].chat);
-        }
-
-        if (previousAvatar) {
-            const newCharacterId = characters.findIndex(x => x.avatar === previousAvatar);
-            if (newCharacterId >= 0) {
-                setCharacterId(newCharacterId);
-                await selectCharacterById(newCharacterId, { switchMenu: false });
-            } else {
-                await Popup.show.text(t`ERROR: The active character is no longer available.`, t`The page will be refreshed to prevent data loss. Press "OK" to continue.`);
-                return location.reload();
-            }
+        const applied = await applyCharactersSnapshot(getData);
+        if (!applied) {
+            return;
         }
 
         await getGroups();
@@ -1754,6 +1871,7 @@ export async function clearChat({ clearData = false } = {}) {
     cancelDebouncedChatSave();
     cancelDebouncedMetadataSave();
     closeMessageEditor();
+    getCodeHighlightCoordinator().reset();
     extension_prompts = {};
     if (is_delete_mode) {
         $('#dialogue_del_mes_cancel').trigger('click');
@@ -2169,7 +2287,10 @@ export function updateMessageBlock(messageId, message, { rerenderMessage = true 
     const messageElement = chatElement.find(`[mesid="${messageId}"]`);
     if (rerenderMessage) {
         const text = message?.extra?.display_text ?? message.mes;
-        messageElement.find('.mes_text').html(messageFormatting(text, message.name, message.is_system, message.is_user, messageId, {}, false));
+        replaceMesTextHtmlPreservingEmbeddedRuntimes(
+            /** @type {HTMLElement} */ (messageElement[0]),
+            messageFormatting(text, message.name, message.is_system, message.is_user, messageId, {}, false),
+        );
     }
 
     updateReasoningUI(messageElement);
@@ -2616,13 +2737,23 @@ export function addCopyToCodeBlocks(messageElement) {
     setHtmlCodeRenderReplaceLastMessageByDefault(extension_settings.code_render?.replace_last_message_by_default === true);
     renderInteractiveHtmlCodeBlocks(messageElement);
 
+    const coordinator = getCodeHighlightCoordinator();
     const codeBlocks = $(messageElement).find('pre code');
     for (let i = 0; i < codeBlocks.length; i++) {
         const codeBlock = codeBlocks.get(i);
-        hljs.highlightElement(codeBlock);
+        if (!codeBlock || !(codeBlock instanceof HTMLElement)) {
+            continue;
+        }
 
-        // This helper can be called multiple times for the same message; avoid duplicate buttons.
-        if (!codeBlock.querySelector('.code-copy')) {
+        if (codeBlock.querySelector('.code-copy')) {
+            continue;
+        }
+
+        const ensureCopyButton = () => {
+            if (codeBlock.querySelector('.code-copy')) {
+                return;
+            }
+
             const copyButton = document.createElement('i');
             copyButton.classList.add('fa-solid', 'fa-copy', 'code-copy', 'interactable');
             copyButton.title = 'Copy code';
@@ -2635,7 +2766,14 @@ export function addCopyToCodeBlocks(messageElement) {
                 await copyText(text);
                 toastr.info(t`Copied!`, '', { timeOut: 2000 });
             });
+        };
+
+        if (codeBlock.classList.contains('hljs') || codeBlock.dataset.ttHljsState === 'done') {
+            ensureCopyButton();
+            continue;
         }
+
+        coordinator.request(codeBlock, { afterHighlight: ensureCopyButton });
     }
 }
 
@@ -2838,7 +2976,10 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
     });
 
     appendMediaToMessage(mes, messageElement, adjustMediaScroll);
-    messageElement.find('.mes_text').html(messageHTML);
+    replaceMesTextHtmlPreservingEmbeddedRuntimes(
+        /** @type {HTMLElement} */ (messageElement[0]),
+        messageHTML,
+    );
     addCopyToCodeBlocks(messageElement);
 
     // Set the swipes counter for all non-user messages.
@@ -7827,7 +7968,7 @@ export async function getChat() {
             if ($(document.activeElement).is('input:visible, textarea:visible')) {
                 return;
             }
-            $('#send_textarea').trigger('click').trigger('focus');
+            focusChatInput(ChatInputFocusIntent.NAVIGATION);
         });
     } catch (error) {
         await getChatResult();
@@ -8062,23 +8203,7 @@ function reloadLoop() {
     }
 }
 
-//MARK: getSettings()
-///////////////////////////////////////////
-export async function getSettings() {
-    const response = await fetch('/api/settings/get', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({}),
-        cache: 'no-cache',
-    });
-
-    if (!response.ok) {
-        reloadLoop();
-        toastr.error(t`Settings could not be loaded after multiple attempts. Please try again later.`);
-        throw new Error('Error getting settings');
-    }
-
-    const data = await response.json();
+async function applySettingsSnapshot(data) {
     if (data.result != 'file not find' && data.settings) {
         settings = JSON.parse(data.settings);
         if (settings.username !== undefined && settings.username !== '') {
@@ -8172,10 +8297,7 @@ export async function getSettings() {
         initMacros();
 
         if (data.enable_extensions) {
-            const enableAutoUpdate = Boolean(data.enable_extensions_auto_update);
-            const isVersionChanged = settings.currentVersion !== currentVersion;
-            await loadExtensionSettings(settings, isVersionChanged, enableAutoUpdate);
-            await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED);
+            applyExtensionSettings(settings);
         }
 
         firstRun = !!settings.firstRun;
@@ -8189,6 +8311,26 @@ export async function getSettings() {
     await validateDisabledSamplers();
     settingsReady = true;
     await eventSource.emit(event_types.SETTINGS_LOADED);
+}
+
+//MARK: getSettings()
+///////////////////////////////////////////
+export async function getSettings() {
+    const response = await fetch('/api/settings/get', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({}),
+        cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+        reloadLoop();
+        toastr.error(t`Settings could not be loaded after multiple attempts. Please try again later.`);
+        throw new Error('Error getting settings');
+    }
+
+    const data = await response.json();
+    await applySettingsSnapshot(data);
 }
 
 //MARK: saveSettings()
@@ -8402,7 +8544,35 @@ export async function messageEdit(editMessageId) {
     const messageBlock = messageElement.find('.mes_block');
     const messageText = messageBlock.find('.mes_text');
 
-    messageText.empty();
+    const messageTextDom = messageText.get(0);
+    if (!messageTextDom) {
+        throw new Error(`messageEdit: .mes_text missing for message ${editMessageId}`);
+    }
+
+    const messageBlockDom = messageBlock.get(0);
+    if (!messageBlockDom) {
+        throw new Error(`messageEdit: .mes_block missing for message ${editMessageId}`);
+    }
+
+    const stash = document.createElement('div');
+    stash.className = 'tt-message-edit-stash';
+    stash.style.position = 'fixed';
+    stash.style.left = '0';
+    stash.style.top = '0';
+    stash.style.width = '0';
+    stash.style.height = '0';
+    stash.style.overflow = 'hidden';
+    stash.style.pointerEvents = 'none';
+    stash.style.opacity = '0';
+    stash.style.zIndex = '-1';
+    messageBlockDom.appendChild(stash);
+
+    ttGuardEmbeddedRuntimeMoves(messageTextDom, () => {
+        while (messageTextDom.firstChild) {
+            stash.appendChild(messageTextDom.firstChild);
+        }
+    });
+    ttMessageEditStash.set(editMessageId, stash);
     messageBlock.find('.mes_buttons').css('display', 'none');
     messageBlock.find('.mes_edit_buttons').css('display', 'inline-flex');
 
@@ -8456,11 +8626,26 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
     }
 
     const thisMesBlock = thisMesDiv.find('.mes_block');
-    thisMesBlock.find('.mes_text').empty();
+    const messageText = thisMesBlock.find('.mes_text');
+    messageText.empty();
     thisMesDiv.find('.mes_edit_buttons').css('display', 'none');
     thisMesBlock.find('.mes_buttons').css('display', '');
-    thisMesBlock.find('.mes_text')
-        .append(messageFormatting(
+
+    const stash = ttMessageEditStash.get(messageId);
+    const messageTextDom = messageText.get(0);
+    if (stash) {
+        if (!messageTextDom) {
+            throw new Error(`messageEditCancel: .mes_text missing for message ${messageId}`);
+        }
+        ttGuardEmbeddedRuntimeMoves(stash, () => {
+            while (stash.firstChild) {
+                messageTextDom.appendChild(stash.firstChild);
+            }
+        });
+        stash.remove();
+        ttMessageEditStash.delete(messageId);
+    } else {
+        messageText.append(messageFormatting(
             text,
             this_edit_mes_chname,
             chat[messageId].is_system,
@@ -8469,8 +8654,9 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
             {},
             false,
         ));
-    appendMediaToMessage(chat[messageId], thisMesDiv);
-    addCopyToCodeBlocks(thisMesDiv);
+        appendMediaToMessage(chat[messageId], thisMesDiv);
+        addCopyToCodeBlocks(thisMesDiv);
+    }
 
     const reasoningEditDone = thisMesBlock.find('.mes_reasoning_edit_cancel:visible');
     if (reasoningEditDone.length > 0) {
@@ -8532,6 +8718,19 @@ async function messageEditMove(sourceId, targetId) {
         this_edit_mes_id = targetId;
     }
 
+    const sourceStash = ttMessageEditStash.get(sourceId);
+    const targetStash = ttMessageEditStash.get(targetId);
+    if (sourceStash || targetStash) {
+        ttMessageEditStash.delete(sourceId);
+        ttMessageEditStash.delete(targetId);
+        if (targetStash) {
+            ttMessageEditStash.set(sourceId, targetStash);
+        }
+        if (sourceStash) {
+            ttMessageEditStash.set(targetId, sourceStash);
+        }
+    }
+
     swapItemizedPrompts(sourceId, targetId);
     updateViewMessageIds();
     refreshSwipeButtons();
@@ -8546,14 +8745,35 @@ async function messageEditDone(div) {
         return;
     }
 
+    const editStash = ttMessageEditStash.get(this_edit_mes_id);
+    if (editStash) {
+        ttMessageEditStash.delete(this_edit_mes_id);
+    }
+
     let { mesBlock, text, mes, bias } = updateMessage(div);
 
     await eventSource.emit(event_types.MESSAGE_EDITED, this_edit_mes_id);
     text = chat[this_edit_mes_id]?.mes ?? text;
-    mesBlock.find('.mes_text').empty();
     mesBlock.find('.mes_edit_buttons').css('display', 'none');
     mesBlock.find('.mes_buttons').css('display', '');
-    mesBlock.find('.mes_text').append(
+
+    const messageText = mesBlock.find('.mes_text');
+    messageText.empty();
+    if (editStash) {
+        const messageTextDom = messageText.get(0);
+        if (!messageTextDom) {
+            throw new Error(`messageEditDone: .mes_text missing for message ${this_edit_mes_id}`);
+        }
+        ttGuardEmbeddedRuntimeMoves(editStash, () => {
+            while (editStash.firstChild) {
+                messageTextDom.appendChild(editStash.firstChild);
+            }
+        });
+        editStash.remove();
+    }
+
+    replaceMesTextHtmlPreservingEmbeddedRuntimes(
+        /** @type {HTMLElement} */ (mesBlock[0]),
         messageFormatting(
             text,
             this_edit_mes_chname,
@@ -11244,28 +11464,7 @@ jQuery(async function () {
 
     $(document).on('click', '.api_loading', () => cancelStatusCheck('Canceled because connecting was manually canceled'));
 
-    //////////INPUT BAR FOCUS-KEEPING LOGIC/////////////
-    let S_TAPreviouslyFocused = false;
-    $('#send_textarea').on('focusin focus click', () => {
-        S_TAPreviouslyFocused = true;
-    });
-    $('#send_but, #option_regenerate, #option_continue, #mes_continue, #mes_impersonate').on('click', () => {
-        if (S_TAPreviouslyFocused) {
-            $('#send_textarea').trigger('focus');
-        }
-    });
-    $(document).on('click', event => {
-        if ($(':focus').attr('id') !== 'send_textarea') {
-            var validIDs = ['options_button', 'send_but', 'mes_impersonate', 'mes_continue', 'send_textarea', 'option_regenerate', 'option_continue', 'option_toggle_fullscreen'];
-            if (!validIDs.includes($(event.target).attr('id'))) {
-                S_TAPreviouslyFocused = false;
-            }
-        } else {
-            S_TAPreviouslyFocused = true;
-        }
-    });
-
-    /////////////////
+    installChatInputFocusKeeper();
 
     $('#swipes-checkbox').on('change', function () {
         swipes = !!$('#swipes-checkbox').prop('checked');
@@ -12383,19 +12582,30 @@ jQuery(async function () {
             return;
         }
         const drawer = $(this).closest('.inline-drawer');
+        const drawerEl = drawer.get(0);
+        if (!(drawerEl instanceof HTMLElement)) {
+            throw new Error('Inline drawer element not found');
+        }
         const icon = drawer.find('>.inline-drawer-header .inline-drawer-icon');
         const drawerContent = drawer.find('>.inline-drawer-content');
-        icon.toggleClass('down up');
-        icon.toggleClass('fa-circle-chevron-down fa-circle-chevron-up');
-        drawer.trigger('inline-drawer-toggle');
-        drawerContent.stop().slideToggle({
-            complete: () => {
-                $(this).css('height', '');
-            },
+        const drawerContentEl = drawerContent.get(0);
+        if (!(drawerContentEl instanceof HTMLElement)) {
+            throw new Error('Inline drawer content not found');
+        }
+
+        const open = !isInlineDrawerContentOpen(drawerContentEl);
+        icon.toggleClass('down', !open);
+        icon.toggleClass('up', open);
+        icon.toggleClass('fa-circle-chevron-down', !open);
+        icon.toggleClass('fa-circle-chevron-up', open);
+        drawerEl.dispatchEvent(new CustomEvent('inline-drawer-toggle', { bubbles: true, detail: { open } }));
+        const motion = setInlineDrawerContentOpen(drawerContentEl, open, { durationMs: animation_duration });
+        void motion.then(() => {
+            drawerEl.dispatchEvent(new CustomEvent('inline-drawer-motion-complete', { bubbles: true, detail: { open } }));
         });
 
         // Set the height of "autoSetHeight" textareas within the inline-drawer to their scroll height
-        if (!CSS.supports('field-sizing', 'content')) {
+        if (open && !CSS.supports('field-sizing', 'content')) {
             const textareas = drawerContent.find('textarea.autoSetHeight');
             for (const textarea of textareas) {
                 await resetScrollHeight($(textarea));
@@ -12518,13 +12728,13 @@ jQuery(async function () {
             const isEditVisible = $('#curEditTextarea').is(':visible') || $('.reasoning_edit_textarea').length > 0;
             if (isEditVisible && power_user.auto_save_msg_edits === false) {
                 closeMessageEditor('all');
-                $('#send_textarea').trigger('focus');
+                focusChatInput(ChatInputFocusIntent.EDITING);
                 return;
             }
             if (isEditVisible && power_user.auto_save_msg_edits === true) {
                 chatElement.find(`.mes[mesid="${this_edit_mes_id}"] .mes_edit_done`).trigger('click');
                 closeMessageEditor('reasoning');
-                $('#send_textarea').trigger('focus');
+                focusChatInput(ChatInputFocusIntent.EDITING);
                 return;
             }
             if (this_edit_mes_id === undefined && $('#mes_stop').is(':visible')) {

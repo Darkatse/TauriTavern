@@ -13,4 +13,15 @@ pub enum DomainError {
 
     #[error("Internal error: {0}")]
     InternalError(String),
+
+    #[error("{message}")]
+    RateLimited { message: String },
+}
+
+impl DomainError {
+    pub fn rate_limited(message: impl Into<String>) -> Self {
+        Self::RateLimited {
+            message: message.into(),
+        }
+    }
 }

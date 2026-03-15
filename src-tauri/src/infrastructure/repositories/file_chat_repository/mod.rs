@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use tokio::sync::Mutex;
@@ -27,6 +28,7 @@ pub struct FileChatRepository {
     chats_dir: PathBuf,
     group_chats_dir: PathBuf,
     backups_dir: PathBuf,
+    path_write_locks: Arc<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>>,
     memory_cache: Arc<Mutex<MemoryCache>>,
     summary_cache: Arc<Mutex<SummaryCache>>,
     throttled_backup: Arc<Mutex<ThrottledBackup>>,
@@ -63,12 +65,14 @@ impl FileChatRepository {
 
         // Match SillyTavern default: backups.chat.throttleInterval = 10_000ms
         let throttled_backup = Arc::new(Mutex::new(ThrottledBackup::new(10)));
+        let path_write_locks = Arc::new(Mutex::new(HashMap::new()));
 
         Self {
             characters_dir,
             chats_dir,
             group_chats_dir,
             backups_dir,
+            path_write_locks,
             memory_cache,
             summary_cache,
             throttled_backup,

@@ -1,3 +1,9 @@
+import { createTokenCountBroker, estimateTokenCount, trimOpenAiMessage } from '../brokers/token-count-broker.js';
+import { createAndroidGenerationBridge } from '../adapters/android/android-generation-bridge.js';
+import { translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
+import { listen } from '../../../tauri-bridge.js';
+import { stripCommandErrorPrefixes } from '../../../scripts/util/command-error-utils.js';
+
 function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
@@ -36,14 +42,6 @@ function isAbortError(error) {
 const DEFAULT_COMPLETION_MODEL = 'tauritavern-error';
 const DEFAULT_ERROR_MESSAGE = 'Chat completion request failed';
 const ERROR_LABEL = '[API Error]';
-const ERROR_PREFIX_PATTERNS = Object.freeze([
-    /^internal server error:\s*/i,
-    /^internal error:\s*/i,
-    /^validation error:\s*/i,
-    /^bad request:\s*/i,
-    /^unauthorized:\s*/i,
-    /^permission denied:\s*/i,
-]);
 const STREAM_FRAME_INTERVAL_MS = 10;
 const STREAM_RESPONSE_HEADERS = Object.freeze({
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -70,41 +68,7 @@ const mobileGenerationState = {
     activeCount: 0,
 };
 
-function callAndroidGenerationBridge(methodName, ...args) {
-    const bridge = window?.[ANDROID_GENERATION_BRIDGE_NAME];
-    const method = bridge?.[methodName];
-    if (typeof method !== 'function') {
-        return false;
-    }
-
-    try {
-        method.apply(bridge, args);
-        return true;
-    } catch (error) {
-        console.debug(`Failed to call ${ANDROID_GENERATION_BRIDGE_NAME}.${methodName}:`, error);
-        return false;
-    }
-}
-
-function getAndroidGenerationBridgeResult(methodName, ...args) {
-    const bridge = window?.[ANDROID_GENERATION_BRIDGE_NAME];
-    const method = bridge?.[methodName];
-    if (typeof method !== 'function') {
-        return null;
-    }
-
-    try {
-        return method.apply(bridge, args);
-    } catch (error) {
-        console.debug(`Failed to call ${ANDROID_GENERATION_BRIDGE_NAME}.${methodName}:`, error);
-        return null;
-    }
-}
-
-function hasAndroidGenerationBridgeMethod(methodName) {
-    const bridge = window?.[ANDROID_GENERATION_BRIDGE_NAME];
-    return typeof bridge?.[methodName] === 'function';
-}
+const androidGenerationBridge = createAndroidGenerationBridge({ bridgeName: ANDROID_GENERATION_BRIDGE_NAME });
 
 function extractHttpStatusCode(errorMessage) {
     const text = String(errorMessage || '');
@@ -141,21 +105,7 @@ function shouldNotifyCompletion() {
 }
 
 function translateNotificationText(key, fallback) {
-    const translate = window?.SillyTavern?.i18n?.translate;
-    if (typeof translate !== 'function') {
-        return fallback;
-    }
-
-    try {
-        const translated = translate(fallback, key);
-        if (typeof translated === 'string' && translated.trim()) {
-            return translated;
-        }
-    } catch (error) {
-        console.debug('Failed to translate notification text:', error);
-    }
-
-    return fallback;
+    return translateSillyTavern(key, fallback);
 }
 
 function getGenerationNotificationTexts() {
@@ -216,14 +166,14 @@ function pickFirstStringValue(source) {
 
 function normalizeFailureNotificationBody(errorMessage) {
     const raw = String(errorMessage || '').trim();
-    let normalized = stripKnownErrorPrefixes(raw);
+    let normalized = stripCommandErrorPrefixes(raw);
 
     if (normalized.startsWith('{') && normalized.endsWith('}')) {
         try {
             const parsed = JSON.parse(normalized);
             const parsedMessage = pickFirstStringValue(parsed);
             if (parsedMessage) {
-                normalized = stripKnownErrorPrefixes(parsedMessage);
+                normalized = stripCommandErrorPrefixes(parsedMessage);
             }
         } catch {
             // Keep original normalized text.
@@ -260,7 +210,7 @@ function createGenerationLifecycle(context, payload) {
             mobileGenerationState.activeCount += 1;
 
             if (mobileGenerationState.activeCount === 1) {
-                callAndroidGenerationBridge('onGenerationStart');
+                androidGenerationBridge.call('onGenerationStart');
             }
         },
         finish({ success = false, errorMessage = '', notifyFailure = true } = {}) {
@@ -274,10 +224,10 @@ function createGenerationLifecycle(context, payload) {
             if (mobileGenerationState.activeCount === 0) {
                 const shouldNotify = shouldNotifyResult && shouldNotifyCompletion();
                 const statusCode = notifyFailure ? extractHttpStatusCode(errorMessage) : 0;
-                const supportsLiveUpdates = getAndroidGenerationBridgeResult('supportsLiveUpdates') === true;
+                const supportsLiveUpdates = androidGenerationBridge.get('supportsLiveUpdates') === true;
 
-                if (supportsLiveUpdates && hasAndroidGenerationBridgeMethod('onGenerationFinish')) {
-                    callAndroidGenerationBridge(
+                if (supportsLiveUpdates && androidGenerationBridge.has('onGenerationFinish')) {
+                    androidGenerationBridge.call(
                         'onGenerationFinish',
                         JSON.stringify({
                             success: Boolean(success),
@@ -299,7 +249,7 @@ function createGenerationLifecycle(context, payload) {
                     showSystemNotification(context, texts.failureTitle, normalizedBody);
                 }
 
-                callAndroidGenerationBridge('onGenerationStop');
+                androidGenerationBridge.call('onGenerationStop');
             }
         },
     };
@@ -337,26 +287,9 @@ function getCompletionModel(payload) {
     return DEFAULT_COMPLETION_MODEL;
 }
 
-function stripKnownErrorPrefixes(message) {
-    let normalized = String(message || '').trim();
-    if (!normalized) {
-        return '';
-    }
-
-    let previous = '';
-    while (normalized && normalized !== previous) {
-        previous = normalized;
-        for (const prefixPattern of ERROR_PREFIX_PATTERNS) {
-            normalized = normalized.replace(prefixPattern, '').trim();
-        }
-    }
-
-    return normalized;
-}
-
 function buildErrorAssistantText(error) {
     const rawMessage = getErrorMessage(error);
-    const normalizedMessage = stripKnownErrorPrefixes(rawMessage) || DEFAULT_ERROR_MESSAGE;
+    const normalizedMessage = stripCommandErrorPrefixes(rawMessage) || DEFAULT_ERROR_MESSAGE;
     if (normalizedMessage.startsWith(ERROR_LABEL)) {
         return normalizedMessage;
     }
@@ -527,20 +460,13 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
     const streamId = createStreamId();
     const eventName = `chat-completion-stream:${streamId}`;
     const encoder = new TextEncoder();
-    const androidSupportsLiveUpdates = getAndroidGenerationBridgeResult('supportsLiveUpdates') === true;
-    const androidCanReportTokens = androidSupportsLiveUpdates && hasAndroidGenerationBridgeMethod('onGenerationProgress');
-    const androidModel = getCompletionModel(payload);
+    const androidSupportsLiveUpdates = androidGenerationBridge.get('supportsLiveUpdates') === true;
+    const androidCanReportTokens = androidSupportsLiveUpdates && androidGenerationBridge.has('onGenerationProgress');
     const androidOutputChunks = [];
     let androidOutputChars = 0;
     let androidLastTokenCount = 0;
     let androidLastTokenCharCount = 0;
     let androidLastTokenReportAt = 0;
-    let androidTokenCountInFlight = false;
-
-    const tauriEvent = window.__TAURI__?.event;
-    if (typeof tauriEvent?.listen !== 'function') {
-        throw new Error('Tauri event API is unavailable');
-    }
 
     let isClosed = false;
     let sawDone = false;
@@ -682,49 +608,22 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
 
                         const now = Date.now();
                         const shouldCompute = shouldNotifyCompletion()
-                            && !androidTokenCountInFlight
                             && now - androidLastTokenReportAt >= ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS
                             && androidOutputChars - androidLastTokenCharCount >= ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA;
 
                         if (shouldCompute) {
                             androidLastTokenReportAt = now;
-                            androidTokenCountInFlight = true;
                             const charCountAtRequest = androidOutputChars;
                             const textSnapshot = androidOutputChunks.join('');
                             androidOutputChunks.length = 0;
                             androidOutputChunks.push(textSnapshot);
 
-                            void context.safeInvoke('count_openai_tokens', {
-                                dto: {
-                                    model: androidModel,
-                                    messages: [textSnapshot],
-                                },
-                            })
-                                .then((result) => {
-                                    if (isClosed) {
-                                        return;
-                                    }
-
-                                    const count = Number(asObject(result).token_count || 0);
-                                    if (!Number.isFinite(count) || count < 0) {
-                                        return;
-                                    }
-
-                                    const normalized = Math.floor(count);
-                                    androidLastTokenCharCount = charCountAtRequest;
-                                    if (normalized === androidLastTokenCount) {
-                                        return;
-                                    }
-
-                                    androidLastTokenCount = normalized;
-                                    callAndroidGenerationBridge('onGenerationProgress', normalized);
-                                })
-                                .catch((error) => {
-                                    console.debug('Failed to count stream tokens:', error);
-                                })
-                                .finally(() => {
-                                    androidTokenCountInFlight = false;
-                                });
+                            const normalized = estimateTokenCount(textSnapshot);
+                            androidLastTokenCharCount = charCountAtRequest;
+                            if (!isClosed && normalized !== androidLastTokenCount) {
+                                androidLastTokenCount = normalized;
+                                androidGenerationBridge.call('onGenerationProgress', normalized);
+                            }
                         }
                     }
                 } catch {
@@ -758,7 +657,7 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
             controllerRef = controller;
 
             try {
-                unlisten = await tauriEvent.listen(eventName, onStreamEvent);
+                unlisten = await listen(eventName, onStreamEvent);
             } catch (error) {
                 const message = getErrorMessage(error);
                 await closeStream({
@@ -817,6 +716,8 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
 }
 
 export function registerAiRoutes(router, context, { jsonResponse }) {
+    const tokenCountBroker = createTokenCountBroker({ context });
+
     router.post('/api/backends/chat-completions/status', async ({ body }) => {
         const payload = asObject(body);
         const dto = {
@@ -908,15 +809,26 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/tokenizers/openai/count', async ({ body, url }) => {
         const model = String(url?.searchParams?.get('model') || '');
-        const messages = Array.isArray(body) ? body : [];
-        const dto = { model, messages };
+        if (!Array.isArray(body)) return jsonResponse({ error: 'OpenAI token count body must be an array' }, 400);
+        try {
+            return jsonResponse({ token_count: await tokenCountBroker.count({ model, messages: body }) });
+        } catch (error) {
+            console.warn('OpenAI token count failed:', error);
+            return jsonResponse({ error: getErrorMessage(error) }, 500);
+        }
+    });
+
+    router.post('/api/tokenizers/openai/count-batch', async ({ body, url }) => {
+        const model = String(url?.searchParams?.get('model') || '');
+        if (!Array.isArray(body)) return jsonResponse({ error: 'OpenAI token count batch body must be an array' }, 400);
+
+        const dto = { model, requests: body.map((message) => ({ messages: [trimOpenAiMessage(message)] })) };
 
         try {
-            const result = await context.safeInvoke('count_openai_tokens', { dto });
-            return jsonResponse(result || { token_count: 0 });
+            return jsonResponse(await context.safeInvoke('count_openai_tokens_batch', { dto }));
         } catch (error) {
-            console.error('OpenAI token count failed:', error);
-            return jsonResponse({ token_count: 0 });
+            console.warn('OpenAI token count batch failed:', error);
+            return jsonResponse({ error: getErrorMessage(error) }, 500);
         }
     });
 

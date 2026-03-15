@@ -148,23 +148,6 @@ pub struct DefaultPreset {
     pub data: Value,
 }
 
-/// Sanitize a filename to be safe for filesystem use
-pub fn sanitize_filename(name: &str) -> String {
-    // Use a simple sanitization approach similar to the original
-    name.chars()
-        .map(|c| match c {
-            // Replace unsafe characters with underscores
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            // Keep safe characters
-            c if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == ' ' => c,
-            // Replace other characters with underscores
-            _ => '_',
-        })
-        .collect::<String>()
-        .trim()
-        .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,20 +208,6 @@ mod tests {
         let data_with_name = preset.data_with_name();
         assert_eq!(data_with_name["name"], "Test Preset");
         assert_eq!(data_with_name["temperature"], 0.7);
-    }
-
-    #[test]
-    fn test_sanitize_filename() {
-        assert_eq!(sanitize_filename("normal_name"), "normal_name");
-        assert_eq!(sanitize_filename("name with spaces"), "name with spaces");
-        assert_eq!(
-            sanitize_filename("name/with\\unsafe:chars"),
-            "name_with_unsafe_chars"
-        );
-        assert_eq!(
-            sanitize_filename("name*with?more\"unsafe<chars>"),
-            "name_with_more_unsafe_chars_"
-        );
     }
 
     #[test]

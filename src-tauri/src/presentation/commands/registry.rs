@@ -58,6 +58,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::user_commands::create_user,
         super::user_commands::update_user,
         super::user_commands::delete_user,
+        // Bootstrap commands
+        super::bootstrap_commands::get_bootstrap_snapshot,
         // Settings commands
         super::settings_commands::get_tauritavern_settings,
         super::settings_commands::update_tauritavern_settings,
@@ -69,6 +71,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::settings_commands::restore_settings_snapshot,
         // World info commands
         super::world_info_commands::get_world_info,
+        super::world_info_commands::get_world_infos_batch,
         super::world_info_commands::save_world_info,
         super::world_info_commands::delete_world_info,
         super::world_info_commands::import_world_info,
@@ -104,7 +107,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::extension_commands::delete_extension,
         super::extension_commands::get_extension_version,
         super::extension_commands::move_extension,
-        super::extension_commands::read_third_party_extension_asset,
         super::lan_sync_commands::lan_sync_get_status,
         super::lan_sync_commands::lan_sync_start_server,
         super::lan_sync_commands::lan_sync_stop_server,
@@ -123,6 +125,11 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::file_commands::read_user_file_asset,
         super::file_commands::delete_user_file,
         super::file_commands::verify_user_files,
+        // Image commands
+        super::image_commands::upload_user_image,
+        super::image_commands::list_user_images,
+        super::image_commands::list_user_image_folders,
+        super::image_commands::delete_user_image,
         // Avatar commands
         super::avatar_commands::get_avatars,
         super::avatar_commands::delete_avatar,
@@ -166,6 +173,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_completion_commands::cancel_chat_completion_generation,
         // Tokenizer commands
         super::tokenizer_commands::count_openai_tokens,
+        super::tokenizer_commands::count_openai_tokens_batch,
         super::tokenizer_commands::encode_openai_tokens,
         super::tokenizer_commands::decode_openai_tokens,
         super::tokenizer_commands::build_openai_logit_bias,

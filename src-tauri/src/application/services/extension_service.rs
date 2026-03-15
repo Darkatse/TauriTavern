@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::extension::{
-    Extension, ExtensionAssetPayload, ExtensionInstallResult, ExtensionUpdateResult,
-    ExtensionVersion,
+    Extension, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
 };
 use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::infrastructure::logging::logger;
@@ -89,22 +88,6 @@ impl ExtensionService {
         ));
         self.extension_repository
             .move_extension(extension_name, source, destination)
-            .await
-    }
-
-    /// Read a file from a third-party extension directory.
-    pub async fn read_third_party_asset(
-        &self,
-        extension_name: &str,
-        relative_path: &str,
-        location_hint: Option<&str>,
-    ) -> Result<ExtensionAssetPayload, DomainError> {
-        logger::debug(&format!(
-            "Reading extension asset: {} / {}",
-            extension_name, relative_path
-        ));
-        self.extension_repository
-            .read_third_party_asset(extension_name, relative_path, location_hint)
             .await
     }
 }

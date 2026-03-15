@@ -308,6 +308,11 @@ async function viewSecrets() {
  * @type {import('../../src/endpoints/secrets.js').SecretStateMap}
  */
 export let secret_state = {};
+let primedSecretState = null;
+
+export function primeSecretStateSnapshot(snapshot) {
+    primedSecretState = snapshot;
+}
 
 /**
  * Write a secret value to the server.
@@ -381,6 +386,15 @@ export async function deleteSecret(key, id) {
  * @returns {Promise<void>}
  */
 export async function readSecretState() {
+    if (primedSecretState !== null) {
+        secret_state = primedSecretState;
+        primedSecretState = null;
+        updateSecretDisplay();
+        updateInputDataLists();
+        await checkOpenRouterAuth();
+        return;
+    }
+
     try {
         const response = await fetch('/api/secrets/read', {
             method: 'POST',

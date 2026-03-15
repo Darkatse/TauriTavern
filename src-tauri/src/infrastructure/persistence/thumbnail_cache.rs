@@ -66,6 +66,30 @@ async fn read_image_header(path: &Path) -> Result<Vec<u8>, DomainError> {
     Ok(header)
 }
 
+fn read_image_header_sync(path: &Path) -> Result<Vec<u8>, DomainError> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to inspect image header '{}': {}",
+            path.display(),
+            error
+        ))
+    })?;
+
+    let mut header = vec![0u8; 512];
+    let read_len = file.read(&mut header).map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to inspect image header '{}': {}",
+            path.display(),
+            error
+        ))
+    })?;
+    header.truncate(read_len);
+
+    Ok(header)
+}
+
 pub async fn is_animated_image(path: &Path) -> Result<bool, DomainError> {
     let extension = extension_lowercase(path);
     if ANIMATED_EXTENSIONS.contains(&extension.as_str()) {
@@ -85,8 +109,27 @@ pub async fn is_animated_image(path: &Path) -> Result<bool, DomainError> {
     Ok(false)
 }
 
-async fn read_original_asset(original_path: &Path) -> Result<ThumbnailAsset, DomainError> {
-    let bytes = fs::read(original_path).await.map_err(|error| {
+pub fn is_animated_image_sync(path: &Path) -> Result<bool, DomainError> {
+    let extension = extension_lowercase(path);
+    if ANIMATED_EXTENSIONS.contains(&extension.as_str()) {
+        return Ok(true);
+    }
+
+    if extension == ".png" {
+        let header = read_image_header_sync(path)?;
+        return Ok(is_apng_header(&header));
+    }
+
+    if extension == ".webp" {
+        let header = read_image_header_sync(path)?;
+        return Ok(is_animated_webp_header(&header));
+    }
+
+    Ok(false)
+}
+
+fn read_original_asset_sync(original_path: &Path) -> Result<ThumbnailAsset, DomainError> {
+    let bytes = std::fs::read(original_path).map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to read original image '{}': {}",
             original_path.display(),
@@ -102,11 +145,11 @@ async fn read_original_asset(original_path: &Path) -> Result<ThumbnailAsset, Dom
     Ok(ThumbnailAsset { bytes, mime_type })
 }
 
-async fn thumbnail_is_fresh(
+fn thumbnail_is_fresh_sync(
     thumbnail_path: &Path,
     original_path: &Path,
 ) -> Result<bool, DomainError> {
-    let thumbnail_metadata = match fs::metadata(thumbnail_path).await {
+    let thumbnail_metadata = match std::fs::metadata(thumbnail_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => {
@@ -118,7 +161,7 @@ async fn thumbnail_is_fresh(
         }
     };
 
-    let original_metadata = fs::metadata(original_path).await.map_err(|error| {
+    let original_metadata = std::fs::metadata(original_path).map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to read original image metadata '{}': {}",
             original_path.display(),
@@ -136,12 +179,12 @@ async fn thumbnail_is_fresh(
     Ok(original_modified <= thumbnail_modified)
 }
 
-async fn generate_thumbnail(
+fn generate_thumbnail_sync(
     original_path: &Path,
     thumbnail_path: &Path,
     config: ThumbnailConfig,
 ) -> Result<(), DomainError> {
-    let source_bytes = fs::read(original_path).await.map_err(|error| {
+    let source_bytes = std::fs::read(original_path).map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to read source image '{}': {}",
             original_path.display(),
@@ -186,7 +229,7 @@ async fn generate_thumbnail(
     })?;
 
     if let Some(parent) = thumbnail_path.parent() {
-        fs::create_dir_all(parent).await.map_err(|error| {
+        std::fs::create_dir_all(parent).map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to ensure thumbnail directory '{}': {}",
                 parent.display(),
@@ -196,7 +239,7 @@ async fn generate_thumbnail(
     }
 
     let temp_path = thumbnail_path.with_extension("tmp");
-    fs::write(&temp_path, &encoded).await.map_err(|error| {
+    std::fs::write(&temp_path, &encoded).map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to write temporary thumbnail '{}': {}",
             temp_path.display(),
@@ -204,7 +247,7 @@ async fn generate_thumbnail(
         ))
     })?;
 
-    match fs::remove_file(thumbnail_path).await {
+    match std::fs::remove_file(thumbnail_path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
@@ -216,27 +259,25 @@ async fn generate_thumbnail(
         }
     }
 
-    fs::rename(&temp_path, thumbnail_path)
-        .await
-        .map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to finalize thumbnail '{}': {}",
-                thumbnail_path.display(),
-                error
-            ))
-        })
+    std::fs::rename(&temp_path, thumbnail_path).map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to finalize thumbnail '{}': {}",
+            thumbnail_path.display(),
+            error
+        ))
+    })
 }
 
-async fn ensure_thumbnail(
+fn ensure_thumbnail_sync(
     original_path: &Path,
     thumbnail_path: &Path,
     config: ThumbnailConfig,
 ) -> Result<(), DomainError> {
-    if thumbnail_is_fresh(thumbnail_path, original_path).await? {
+    if thumbnail_is_fresh_sync(thumbnail_path, original_path)? {
         return Ok(());
     }
 
-    generate_thumbnail(original_path, thumbnail_path, config).await
+    generate_thumbnail_sync(original_path, thumbnail_path, config)
 }
 
 pub async fn read_thumbnail_or_original(
@@ -244,20 +285,34 @@ pub async fn read_thumbnail_or_original(
     thumbnail_path: &Path,
     config: ThumbnailConfig,
 ) -> Result<ThumbnailAsset, DomainError> {
+    let original_path = original_path.to_path_buf();
+    let thumbnail_path = thumbnail_path.to_path_buf();
+    let task = tokio::task::spawn_blocking(move || {
+        read_thumbnail_or_original_sync(&original_path, &thumbnail_path, config)
+    });
+
+    task.await.map_err(|error| {
+        DomainError::InternalError(format!("Thumbnail worker failed: {}", error))
+    })?
+}
+
+pub fn read_thumbnail_or_original_sync(
+    original_path: &Path,
+    thumbnail_path: &Path,
+    config: ThumbnailConfig,
+) -> Result<ThumbnailAsset, DomainError> {
     let original_metadata =
-        fs::metadata(original_path)
-            .await
-            .map_err(|error| match error.kind() {
-                std::io::ErrorKind::NotFound => DomainError::NotFound(format!(
-                    "Source image not found: {}",
-                    original_path.display()
-                )),
-                _ => DomainError::InternalError(format!(
-                    "Failed to read source image metadata '{}': {}",
-                    original_path.display(),
-                    error
-                )),
-            })?;
+        std::fs::metadata(original_path).map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => DomainError::NotFound(format!(
+                "Source image not found: {}",
+                original_path.display()
+            )),
+            _ => DomainError::InternalError(format!(
+                "Failed to read source image metadata '{}': {}",
+                original_path.display(),
+                error
+            )),
+        })?;
 
     if !original_metadata.is_file() {
         return Err(DomainError::NotFound(format!(
@@ -266,24 +321,20 @@ pub async fn read_thumbnail_or_original(
         )));
     }
 
-    let is_animated = is_animated_image(original_path).await?;
-    if is_animated {
-        return read_original_asset(original_path).await;
+    if is_animated_image_sync(original_path)? {
+        return read_original_asset_sync(original_path);
     }
 
-    if ensure_thumbnail(original_path, thumbnail_path, config)
-        .await
-        .is_err()
-    {
-        return read_original_asset(original_path).await;
+    if ensure_thumbnail_sync(original_path, thumbnail_path, config).is_err() {
+        return read_original_asset_sync(original_path);
     }
 
-    match fs::read(thumbnail_path).await {
+    match std::fs::read(thumbnail_path) {
         Ok(bytes) => Ok(ThumbnailAsset {
             bytes,
             mime_type: "image/jpeg".to_string(),
         }),
-        Err(_) => read_original_asset(original_path).await,
+        Err(_) => read_original_asset_sync(original_path),
     }
 }
 

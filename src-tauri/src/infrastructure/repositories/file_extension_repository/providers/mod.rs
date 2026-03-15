@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use reqwest::{Client, Response};
+use reqwest::{Client, Response, StatusCode};
 use serde::de::DeserializeOwned;
 use url::Url;
 
@@ -11,6 +11,11 @@ use super::repo_url::{HOST_GITEE, HOST_GITHUB, HOST_GITLAB};
 pub(super) mod gitee;
 pub(super) mod github;
 pub(super) mod gitlab;
+
+pub(super) struct ProviderHttpError {
+    status: StatusCode,
+    body: String,
+}
 
 #[async_trait]
 pub(super) trait ExtensionSourceProvider: Send + Sync {
@@ -64,18 +69,11 @@ where
     T: DeserializeOwned,
 {
     if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        let snippet = body.trim();
-        let suffix = if snippet.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", snippet)
-        };
-        return Err(DomainError::InternalError(format!(
-            "{} request failed for '{}': HTTP {}{}",
-            provider, url, status, suffix
-        )));
+        return Err(provider_http_error_to_domain_error(
+            provider,
+            url,
+            read_provider_http_error(response).await,
+        ));
     }
 
     response.json::<T>().await.map_err(|error| {
@@ -92,18 +90,11 @@ pub(super) async fn parse_bytes_or_error(
     provider: &str,
 ) -> Result<Bytes, DomainError> {
     if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        let snippet = body.trim();
-        let suffix = if snippet.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", snippet)
-        };
-        return Err(DomainError::InternalError(format!(
-            "{} request failed for '{}': HTTP {}{}",
-            provider, url, status, suffix
-        )));
+        return Err(provider_http_error_to_domain_error(
+            provider,
+            url,
+            read_provider_http_error(response).await,
+        ));
     }
 
     response.bytes().await.map_err(|error| {
@@ -112,6 +103,31 @@ pub(super) async fn parse_bytes_or_error(
             provider, url, error
         ))
     })
+}
+
+pub(super) async fn read_provider_http_error(response: Response) -> ProviderHttpError {
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+
+    ProviderHttpError { status, body }
+}
+
+pub(super) fn provider_http_error_to_domain_error(
+    provider: &str,
+    url: &Url,
+    error: ProviderHttpError,
+) -> DomainError {
+    let snippet = error.body.trim();
+    let suffix = if snippet.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", snippet)
+    };
+
+    DomainError::InternalError(format!(
+        "{} request failed for '{}': HTTP {}{}",
+        provider, url, error.status, suffix
+    ))
 }
 
 pub(super) fn split_owner_repo<'a>(

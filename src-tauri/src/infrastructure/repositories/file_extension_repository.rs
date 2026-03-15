@@ -4,15 +4,17 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::extension::{
-    Extension, ExtensionAssetPayload, ExtensionInstallResult, ExtensionManifest,
-    ExtensionUpdateResult, ExtensionVersion,
+    Extension, ExtensionInstallResult, ExtensionManifestMetadata, ExtensionUpdateResult,
+    ExtensionVersion,
 };
 use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::infrastructure::http_client::build_http_client;
 use crate::infrastructure::persistence::file_system::read_json_file;
+use crate::infrastructure::third_party_paths::{
+    parse_third_party_extension_folder_name, sanitize_third_party_extension_folder_name,
+};
 
 mod archive_zip;
-mod assets;
 mod delete;
 mod discovery;
 mod install;
@@ -44,6 +46,7 @@ const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "code-render",
     "connection-manager",
     "data-migration",
+    "attachments",
     "quick-reply",
     "tauritavern-version",
 ];
@@ -90,60 +93,35 @@ impl FileExtensionRepository {
         }
     }
 
-    fn sanitize_filename(filename: &str) -> String {
-        filename
-            .chars()
-            .map(|c| match c {
-                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-                _ => c,
-            })
-            .collect()
-    }
-
-    fn normalize_extension_name(&self, extension_name: &str) -> Result<String, DomainError> {
-        let normalized = extension_name.trim().replace('\\', "/");
-        let normalized = normalized.trim_matches('/');
-        let normalized = normalized
-            .strip_prefix("third-party/")
-            .unwrap_or(normalized);
-
-        if normalized.is_empty() || normalized.contains("..") {
-            return Err(DomainError::InvalidData(format!(
-                "Invalid extension name: {}",
-                extension_name
-            )));
-        }
-
-        let sanitized = Self::sanitize_filename(normalized);
-        if sanitized.trim().is_empty() {
-            return Err(DomainError::InvalidData(format!(
-                "Invalid extension name: {}",
-                extension_name
-            )));
-        }
-
-        Ok(sanitized)
-    }
-
-    fn resolve_extension_path(
+    fn extension_folder_name_from_identifier(
         &self,
         extension_name: &str,
-        global: bool,
-    ) -> Result<PathBuf, DomainError> {
-        let normalized_name = self.normalize_extension_name(extension_name)?;
-        Ok(self.extension_base_dir(global).join(normalized_name))
+    ) -> Result<String, DomainError> {
+        parse_third_party_extension_folder_name(extension_name).map_err(|_| {
+            DomainError::InvalidData(format!("Invalid extension name: {}", extension_name))
+        })
     }
 
-    async fn read_manifest(
+    fn install_folder_name_from_repo_name(repo_name: &str) -> Result<String, DomainError> {
+        sanitize_third_party_extension_folder_name(repo_name).map_err(|_| {
+            DomainError::InvalidData(format!("Invalid extension repository name: {}", repo_name))
+        })
+    }
+
+    fn resolve_extension_path(&self, extension_folder_name: &str, global: bool) -> PathBuf {
+        self.extension_base_dir(global).join(extension_folder_name)
+    }
+
+    async fn read_manifest_metadata(
         &self,
         extension_path: &Path,
-    ) -> Result<Option<ExtensionManifest>, DomainError> {
+    ) -> Result<Option<ExtensionManifestMetadata>, DomainError> {
         let manifest_path = extension_path.join("manifest.json");
         if !manifest_path.exists() {
             return Ok(None);
         }
 
-        let manifest: ExtensionManifest = read_json_file(&manifest_path).await?;
+        let manifest: ExtensionManifestMetadata = read_json_file(&manifest_path).await?;
         Ok(Some(manifest))
     }
 
@@ -165,13 +143,13 @@ impl FileExtensionRepository {
         commit: &str,
         base_dir: &Path,
         temp_prefix: &str,
-    ) -> Result<(PathBuf, ExtensionManifest), DomainError> {
+    ) -> Result<(PathBuf, ExtensionManifestMetadata), DomainError> {
         let staging_dir = self.create_temp_directory(base_dir, temp_prefix).await?;
 
-        let result: Result<ExtensionManifest, DomainError> = async {
+        let result: Result<ExtensionManifestMetadata, DomainError> = async {
             let archive_bytes = provider.download_archive_zip(repo_path, commit).await?;
             self.extract_zip_bytes(archive_bytes.as_ref(), &staging_dir)?;
-            self.required_manifest(&staging_dir).await
+            self.required_manifest_metadata(&staging_dir).await
         }
         .await;
 
@@ -191,11 +169,11 @@ impl ExtensionRepository for FileExtensionRepository {
         discovery::discover_extensions(self).await
     }
 
-    async fn get_manifest(
+    async fn get_manifest_metadata(
         &self,
         extension_path: &Path,
-    ) -> Result<Option<ExtensionManifest>, DomainError> {
-        self.read_manifest(extension_path).await
+    ) -> Result<Option<ExtensionManifestMetadata>, DomainError> {
+        self.read_manifest_metadata(extension_path).await
     }
 
     async fn install_extension(
@@ -238,14 +216,5 @@ impl ExtensionRepository for FileExtensionRepository {
         destination: &str,
     ) -> Result<(), DomainError> {
         move_op::move_extension(self, extension_name, source, destination).await
-    }
-
-    async fn read_third_party_asset(
-        &self,
-        extension_name: &str,
-        relative_path: &str,
-        location_hint: Option<&str>,
-    ) -> Result<ExtensionAssetPayload, DomainError> {
-        assets::read_third_party_asset(self, extension_name, relative_path, location_hint).await
     }
 }

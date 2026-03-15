@@ -35,6 +35,11 @@ label[for="extensions_autoconnect"] {
     padding: 0.05px;
 }
 
+/* Keep legacy Extras API nodes available for upstream bindings, but hide the deprecated UI in TauriTavern. */
+.tt-deprecated-extras-api {
+    display: none;
+}
+
 .extensions_info {
     text-align: left;
 }

@@ -1,4 +1,4 @@
-import { hljs, morphdom } from '../../../../lib.js';
+import { getHljs, morphdom } from '../../../../lib.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../../popup.js';
 import { setSlashCommandAutoComplete } from '../../../slash-commands.js';
 import { SlashCommandAbortController } from '../../../slash-commands/SlashCommandAbortController.js';
@@ -910,15 +910,25 @@ export class QuickReply {
             });
             window.addEventListener('resize', resizeListener);
             updateSyntaxEnabled();
-            const updateSyntax = ()=>{
-                if (messageSyntaxInner && syntax.checked) {
-                    morphdom(
-                        messageSyntaxInner,
-                        `<div>${hljs.highlight(`${message.value}${message.value.slice(-1) == '\n' ? ' ' : ''}`, { language:'stscript', ignoreIllegals:true })?.value}</div>`,
-                        { childrenOnly: true },
-                    );
-                    updateScrollDebounced();
+            let hljsInstance = null;
+            const updateSyntax = async()=>{
+                if (!messageSyntaxInner || !syntax.checked) {
+                    return;
                 }
+
+                const text = `${message.value}${message.value.slice(-1) == '\n' ? ' ' : ''}`;
+
+                if (!hljsInstance) {
+                    messageSyntaxInner.textContent = text;
+                    hljsInstance = await getHljs();
+                }
+
+                morphdom(
+                    messageSyntaxInner,
+                    `<div>${hljsInstance.highlight(text, { language:'stscript', ignoreIllegals:true })?.value}</div>`,
+                    { childrenOnly: true },
+                );
+                updateScrollDebounced();
             };
             let lastSyntaxUpdate = 0;
             const fpsTime = 1000 / 30;
@@ -942,7 +952,7 @@ export class QuickReply {
                 wasSyntax = syntax.checked;
                 lastSyntaxUpdate = now;
                 lastMessageValue = message.value;
-                updateSyntax();
+                void updateSyntax();
                 requestAnimationFrame(updateSyntaxLoop);
             };
             requestAnimationFrame(()=>updateSyntaxLoop());
@@ -1310,6 +1320,7 @@ export class QuickReply {
             this.debugController = new SlashCommandDebugController();
             this.debugController.onBreakPoint = async(closure, executor)=>{
                 this.editorDom.classList.add('qr--isPaused');
+                const hljs = await getHljs();
                 syntax.innerHTML = hljs.highlight(`${closure.fullText}${closure.fullText.slice(-1) == '\n' ? ' ' : ''}`, { language:'stscript', ignoreIllegals:true })?.value;
                 this.editorMessageLabel.innerHTML = '';
                 if (uuidCheck.test(closure.source)) {

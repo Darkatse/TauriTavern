@@ -12,9 +12,14 @@ pub enum ExtensionType {
     Global,
 }
 
-/// Extension manifest struct
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtensionManifest {
+/// Backend-facing extension manifest summary.
+///
+/// This intentionally keeps only the metadata that the Rust installation and discovery
+/// pipeline actually needs. Frontend runtime fields such as `js`, `css`, `i18n`, and
+/// other browser-loading semantics are loaded from the raw `manifest.json` by the web
+/// runtime instead of being re-modeled here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionManifestMetadata {
     /// Display name of the extension
     pub display_name: String,
     /// Version of the extension
@@ -24,30 +29,9 @@ pub struct ExtensionManifest {
     /// Description of the extension
     #[serde(default)]
     pub description: String,
-    /// Main JavaScript file
-    #[serde(default)]
-    pub js: Option<String>,
-    /// CSS file
-    #[serde(default)]
-    pub css: Option<String>,
-    /// Required modules
-    #[serde(default)]
-    pub requires: Vec<String>,
-    /// Optional modules
-    #[serde(default)]
-    pub optional: Vec<String>,
     /// Loading order
     #[serde(default = "default_loading_order")]
     pub loading_order: i32,
-    /// Whether to auto-update the extension
-    #[serde(default)]
-    pub auto_update: bool,
-    /// Generate interceptor function name
-    #[serde(default)]
-    pub generate_interceptor: Option<String>,
-    /// Localization data
-    #[serde(default)]
-    pub i18n: std::collections::HashMap<String, String>,
 }
 
 fn default_loading_order() -> i32 {
@@ -66,8 +50,8 @@ pub struct Extension {
     /// Managed extensions have source metadata and can be updated.
     /// Unmanaged extensions are still discoverable/loadable but cannot be updated.
     pub managed: bool,
-    /// Manifest of the extension
-    pub manifest: Option<ExtensionManifest>,
+    /// Backend-facing manifest summary of the extension
+    pub manifest: Option<ExtensionManifestMetadata>,
     /// Path to the extension
     pub path: PathBuf,
     /// Remote URL of the extension repository
@@ -91,15 +75,6 @@ pub struct ExtensionVersion {
     pub is_up_to_date: bool,
     /// Remote URL of the extension repository
     pub remote_url: String,
-}
-
-/// Third-party extension file payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtensionAssetPayload {
-    /// File content encoded as Base64.
-    pub content_base64: String,
-    /// MIME type inferred from file extension.
-    pub mime_type: String,
 }
 
 /// Extension installation result

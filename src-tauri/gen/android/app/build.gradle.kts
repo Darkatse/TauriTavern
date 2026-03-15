@@ -77,6 +77,7 @@ rust {
 
 tasks.withType<KotlinCompile>().configureEach {
     exclude("**/com/tauritavern/client/generated/RustWebChromeClient.kt")
+    exclude("**/com/tauritavern/client/generated/RustWebViewClient.kt")
 }
 
 dependencies {

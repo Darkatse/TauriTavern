@@ -1,10 +1,7 @@
 use async_trait::async_trait;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
-use tokio::sync::Mutex;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
@@ -13,12 +10,11 @@ use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
     list_files_with_extension, read_json_file, write_json_file,
 };
+use crate::infrastructure::preset_file_naming::load_named_preset_files;
 
 pub struct FileSettingsRepository {
     tauritavern_settings_file: PathBuf,
-    tauritavern_settings: Arc<Mutex<Option<TauriTavernSettings>>>,
     user_settings_file: PathBuf,
-    user_settings: Arc<Mutex<Option<UserSettings>>>,
     base_directory: PathBuf,
 }
 
@@ -30,9 +26,7 @@ impl FileSettingsRepository {
 
         Self {
             tauritavern_settings_file,
-            tauritavern_settings: Arc::new(Mutex::new(None)),
             user_settings_file,
-            user_settings: Arc::new(Mutex::new(None)),
             base_directory,
         }
     }
@@ -131,34 +125,13 @@ impl FileSettingsRepository {
     ) -> Result<(Vec<String>, Vec<String>), DomainError> {
         let dir = self.base_directory.join(dir_name);
 
-        if !dir.exists() {
-            return Ok((Vec::new(), Vec::new()));
-        }
+        let named_files = load_named_preset_files(&dir).await?;
+        let mut settings = Vec::with_capacity(named_files.len());
+        let mut names = Vec::with_capacity(named_files.len());
 
-        let mut files = Vec::new();
-        files.extend(list_files_with_extension(&dir, "json").await?);
-        files.sort();
-
-        let mut settings = Vec::new();
-        let mut names = Vec::new();
-        let mut seen_names = HashSet::new();
-
-        for file in files {
-            let file_name = file
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or_default();
-
-            if !seen_names.insert(file_name.to_string()) {
-                continue;
-            }
-
-            let content = fs::read_to_string(&file).await.map_err(|e| {
-                DomainError::InternalError(format!("Failed to read file {}: {}", file.display(), e))
-            })?;
-
-            settings.push(content);
-            names.push(file_name.to_string());
+        for file in named_files {
+            settings.push(file.raw_content);
+            names.push(file.name);
         }
 
         Ok((settings, names))
@@ -184,34 +157,17 @@ impl SettingsRepository for FileSettingsRepository {
         self.ensure_directory_exists().await?;
 
         write_json_file(&self.tauritavern_settings_file, settings).await?;
-
-        let mut cached_settings = self.tauritavern_settings.lock().await;
-        *cached_settings = Some(settings.clone());
-
         Ok(())
     }
 
     async fn load_tauritavern_settings(&self) -> Result<TauriTavernSettings, DomainError> {
-        {
-            let cached_settings = self.tauritavern_settings.lock().await;
-            if let Some(settings) = cached_settings.clone() {
-                return Ok(settings);
-            }
-        }
-
         if !self.tauritavern_settings_file.exists() {
             let default_settings = TauriTavernSettings::default();
             self.save_tauritavern_settings(&default_settings).await?;
             return Ok(default_settings);
         }
 
-        let settings =
-            read_json_file::<TauriTavernSettings>(&self.tauritavern_settings_file).await?;
-
-        let mut cached_settings = self.tauritavern_settings.lock().await;
-        *cached_settings = Some(settings.clone());
-
-        Ok(settings)
+        read_json_file::<TauriTavernSettings>(&self.tauritavern_settings_file).await
     }
 
     async fn save_user_settings(&self, settings: &UserSettings) -> Result<(), DomainError> {
@@ -222,21 +178,10 @@ impl SettingsRepository for FileSettingsRepository {
             self.user_settings_file.display()
         );
         write_json_file(&self.user_settings_file, settings).await?;
-
-        let mut cached_settings = self.user_settings.lock().await;
-        *cached_settings = Some(settings.clone());
-
         Ok(())
     }
 
     async fn load_user_settings(&self) -> Result<UserSettings, DomainError> {
-        {
-            let cached_settings = self.user_settings.lock().await;
-            if let Some(settings) = cached_settings.clone() {
-                return Ok(settings);
-            }
-        }
-
         if !self.user_settings_file.exists() {
             let default_settings = UserSettings::default();
             self.save_user_settings(&default_settings).await?;
@@ -247,12 +192,7 @@ impl SettingsRepository for FileSettingsRepository {
             "Loading user settings from {}",
             self.user_settings_file.display()
         );
-        let settings = read_json_file::<UserSettings>(&self.user_settings_file).await?;
-
-        let mut cached_settings = self.user_settings.lock().await;
-        *cached_settings = Some(settings.clone());
-
-        Ok(settings)
+        read_json_file::<UserSettings>(&self.user_settings_file).await
     }
 
     async fn create_snapshot(&self) -> Result<(), DomainError> {
@@ -404,5 +344,146 @@ impl SettingsRepository for FileSettingsRepository {
         world_names.sort();
 
         Ok(world_names)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FileSettingsRepository;
+    use crate::domain::repositories::settings_repository::SettingsRepository;
+    use serde_json::json;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new() -> Self {
+            let suffix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be after unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "tauritavern-settings-repo-test-{}-{}",
+                std::process::id(),
+                suffix
+            ));
+            fs::create_dir_all(&path).expect("failed to create temp dir");
+
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[tokio::test]
+    async fn load_user_settings_reads_disk_each_time() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+
+        let first = repository
+            .load_user_settings()
+            .await
+            .expect("load default user settings");
+        assert_eq!(first.data, json!({}));
+
+        fs::write(dir.path().join("settings.json"), r#"{"hello":"world"}"#)
+            .expect("write external settings.json");
+
+        let second = repository
+            .load_user_settings()
+            .await
+            .expect("load externally updated user settings");
+        assert_eq!(second.data, json!({"hello":"world"}));
+    }
+
+    #[tokio::test]
+    async fn load_tauritavern_settings_reads_disk_each_time() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+
+        let _ = repository
+            .load_tauritavern_settings()
+            .await
+            .expect("load default tauritavern settings");
+
+        fs::write(
+            dir.path().join("tauritavern-settings.json"),
+            r#"{"updates":{"startup_popup":{"dismissed_release_token":"token"}}}"#,
+        )
+        .expect("write external tauritavern-settings.json");
+
+        let second = repository
+            .load_tauritavern_settings()
+            .await
+            .expect("load externally updated tauritavern settings");
+        assert_eq!(
+            second
+                .updates
+                .startup_popup
+                .dismissed_release_token
+                .as_deref(),
+            Some("token")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_openai_settings_uses_embedded_name_from_deprecated_legacy_file() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+        let openai_dir = dir.path().join("OpenAI Settings");
+        fs::create_dir_all(&openai_dir).expect("create OpenAI Settings dir");
+        fs::write(
+            openai_dir.join("_明月青秋_.json"),
+            r#"{"name":"【明月青秋】","temperature":0.7}"#,
+        )
+        .expect("write legacy preset file");
+
+        let (settings, names) = repository
+            .get_openai_settings()
+            .await
+            .expect("load openai settings");
+
+        assert_eq!(names, vec!["【明月青秋】".to_string()]);
+        assert_eq!(settings.len(), 1);
+        assert!(settings[0].contains(r#""temperature":0.7"#));
+    }
+
+    #[tokio::test]
+    async fn get_openai_settings_prefers_canonical_file_over_deprecated_legacy_duplicate() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+        let openai_dir = dir.path().join("OpenAI Settings");
+        fs::create_dir_all(&openai_dir).expect("create OpenAI Settings dir");
+        fs::write(
+            openai_dir.join("_明月青秋_.json"),
+            r#"{"name":"【明月青秋】","temperature":0.1}"#,
+        )
+        .expect("write legacy preset file");
+        fs::write(
+            openai_dir.join("【明月青秋】.json"),
+            r#"{"name":"【明月青秋】","temperature":0.9}"#,
+        )
+        .expect("write canonical preset file");
+
+        let (settings, names) = repository
+            .get_openai_settings()
+            .await
+            .expect("load openai settings");
+
+        assert_eq!(names, vec!["【明月青秋】".to_string()]);
+        assert_eq!(settings.len(), 1);
+        assert!(settings[0].contains(r#""temperature":0.9"#));
     }
 }

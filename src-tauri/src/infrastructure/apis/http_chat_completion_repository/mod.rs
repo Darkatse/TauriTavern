@@ -18,7 +18,7 @@ mod makersuite;
 mod normalizers;
 mod openai;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 const NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 pub struct HttpChatCompletionRepository {
@@ -57,6 +57,17 @@ impl HttpChatCompletionRepository {
             request
         } else {
             request.header(AUTHORIZATION, format!("Bearer {api_key}"))
+        }
+    }
+
+    fn apply_openai_auth(
+        request: RequestBuilder,
+        config: &ChatCompletionApiConfig,
+    ) -> RequestBuilder {
+        if let Some(authorization_header) = config.authorization_header.as_deref() {
+            Self::apply_header_if_present(request, "Authorization", authorization_header)
+        } else {
+            Self::apply_bearer_auth(request, &config.api_key)
         }
     }
 
@@ -442,7 +453,10 @@ mod tests {
     use std::collections::HashMap;
 
     use reqwest::Client;
+    use reqwest::header::AUTHORIZATION;
     use tokio::sync::mpsc;
+
+    use crate::domain::repositories::chat_completion_repository::ChatCompletionApiConfig;
 
     use super::HttpChatCompletionRepository;
 
@@ -490,6 +504,29 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("ok")
         );
+    }
+
+    #[test]
+    fn apply_openai_auth_prefers_explicit_authorization_header() {
+        let config = ChatCompletionApiConfig {
+            base_url: "https://example.com/v1".to_string(),
+            api_key: "saved-secret".to_string(),
+            authorization_header: Some("Bearer override".to_string()),
+            extra_headers: HashMap::new(),
+        };
+
+        let request = Client::new().get("https://example.com");
+        let request = HttpChatCompletionRepository::apply_openai_auth(request, &config);
+        let request = request.build().expect("request should build");
+
+        let values = request
+            .headers()
+            .get_all(AUTHORIZATION)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, vec!["Bearer override"]);
     }
 
     #[test]

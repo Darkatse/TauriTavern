@@ -1,21 +1,21 @@
 /**
  * Library module facade for TauriTavern.
  *
- * We load a single webpack bundle (`src/dist/lib.bundle.js`) and re-export
- * the libraries expected by SillyTavern frontend modules.
+ * We load a small core webpack bundle (`src/dist/lib.core.bundle.js`) and
+ * re-export the libraries expected by SillyTavern frontend modules.
+ *
+ * Heavy / feature-specific libraries live in `src/dist/lib.optional.bundle.js`
+ * and are loaded on demand via async helpers.
  */
-import libBundle, {
+import libCoreBundle, {
     lodash,
     Fuse,
     DOMPurify,
-    hljs,
     localforage,
     Handlebars,
     css,
     Bowser,
     DiffMatchPatch,
-    isProbablyReaderable,
-    Readability,
     SVGInject,
     showdown,
     moment,
@@ -23,13 +23,41 @@ import libBundle, {
     Popper,
     droll,
     morphdom,
-    slideToggle,
-    chalk,
-    yaml,
     chevrotain,
-    moduleLexerInit,
-    moduleLexerParse,
-} from './dist/lib.bundle.js';
+} from './dist/lib.core.bundle.js';
+
+let optionalBundlePromise = null;
+let stscriptLanguageRegistered = false;
+
+async function loadOptionalBundle() {
+    if (optionalBundlePromise) {
+        return optionalBundlePromise;
+    }
+
+    optionalBundlePromise = import('./dist/lib.optional.bundle.js');
+    return optionalBundlePromise;
+}
+
+export async function getHljs() {
+    const { hljs } = await loadOptionalBundle();
+
+    if (!stscriptLanguageRegistered) {
+        const { registerStscriptLanguage } = await import('./scripts/slash-commands/stscript-hljs-language.js');
+        registerStscriptLanguage(hljs);
+        stscriptLanguageRegistered = true;
+    }
+
+    if (typeof window !== 'undefined' && !('hljs' in window)) {
+        window.hljs = hljs;
+    }
+
+    return hljs;
+}
+
+export async function getReadability() {
+    const { Readability, isProbablyReaderable } = await loadOptionalBundle();
+    return { Readability, isProbablyReaderable };
+}
 
 /**
  * Expose selected libraries on window for third-party extension compatibility.
@@ -45,9 +73,6 @@ export function initLibraryShims() {
     }
     if (!('DOMPurify' in window)) {
         window.DOMPurify = DOMPurify;
-    }
-    if (!('hljs' in window)) {
-        window.hljs = hljs;
     }
     if (!('localforage' in window)) {
         window.localforage = localforage;
@@ -79,14 +104,11 @@ export {
     lodash,
     Fuse,
     DOMPurify,
-    hljs,
     localforage,
     Handlebars,
     css,
     Bowser,
     DiffMatchPatch,
-    Readability,
-    isProbablyReaderable,
     SVGInject,
     showdown,
     moment,
@@ -94,12 +116,7 @@ export {
     Popper,
     droll,
     morphdom,
-    slideToggle,
-    chalk,
-    yaml,
     chevrotain,
-    moduleLexerInit,
-    moduleLexerParse,
 };
 
-export default libBundle;
+export default libCoreBundle;

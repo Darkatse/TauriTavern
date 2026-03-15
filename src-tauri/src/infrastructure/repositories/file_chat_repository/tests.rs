@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use std::path::PathBuf;
 
 use rand::random;
@@ -238,6 +240,66 @@ async fn save_chat_payload_from_path_enforces_integrity() {
         .await
         .expect("load chat payload bytes");
     assert_eq!(loaded_bytes, payload_b.as_bytes());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn concurrent_save_chat_payload_from_path_serializes_same_target() {
+    let (repository, root) = setup_repository().await;
+    let repository = Arc::new(repository);
+
+    let source_a = root.join("source-concurrent-a.jsonl");
+    let payload_a = payload_to_jsonl(&payload_with_message(
+        "path-concurrent",
+        "2026-01-01T00:00:00.000Z",
+        "concurrent-a",
+        "Assistant",
+    ));
+    fs::write(&source_a, &payload_a)
+        .await
+        .expect("write first concurrent source payload");
+
+    let source_b = root.join("source-concurrent-b.jsonl");
+    let payload_b = payload_to_jsonl(&payload_with_message(
+        "path-concurrent",
+        "2026-01-01T00:00:00.000Z",
+        "concurrent-b",
+        "Assistant",
+    ));
+    fs::write(&source_b, &payload_b)
+        .await
+        .expect("write second concurrent source payload");
+
+    let repository_a = Arc::clone(&repository);
+    let repository_b = Arc::clone(&repository);
+    let source_a_task = source_a.clone();
+    let source_b_task = source_b.clone();
+
+    let save_a = tokio::spawn(async move {
+        repository_a
+            .save_chat_payload_from_path("alice", "session", &source_a_task, false)
+            .await
+    });
+    let save_b = tokio::spawn(async move {
+        repository_b
+            .save_chat_payload_from_path("alice", "session", &source_b_task, false)
+            .await
+    });
+
+    let result_a = save_a.await.expect("join concurrent save a");
+    let result_b = save_b.await.expect("join concurrent save b");
+    assert!(result_a.is_ok(), "first concurrent save should succeed");
+    assert!(result_b.is_ok(), "second concurrent save should succeed");
+
+    let loaded_bytes = repository
+        .get_chat_payload_bytes("alice", "session")
+        .await
+        .expect("load concurrent payload bytes");
+    assert!(
+        loaded_bytes == payload_a.as_bytes() || loaded_bytes == payload_b.as_bytes(),
+        "final payload should match one completed save"
+    );
 
     let _ = fs::remove_dir_all(&root).await;
 }

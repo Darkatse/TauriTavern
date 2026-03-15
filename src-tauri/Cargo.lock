@@ -5012,7 +5012,7 @@ dependencies = [
 
 [[package]]
 name = "tauritavern"
-version = "1.4.2"
+version = "1.5.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -5026,6 +5026,7 @@ dependencies = [
  "local-ip-address",
  "miktik",
  "mime_guess",
+ "percent-encoding",
  "png",
  "qrcode",
  "rand 0.9.2",

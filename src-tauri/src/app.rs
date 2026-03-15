@@ -86,6 +86,22 @@ impl AppState {
             update_service: services.update_service,
         })
     }
+
+    pub async fn refresh_after_external_data_change(
+        &self,
+        reason: &str,
+    ) -> Result<(), DomainError> {
+        tracing::info!(
+            reason = reason,
+            "Refreshing runtime caches after external data change"
+        );
+
+        self.character_service.clear_cache().await?;
+        self.chat_service.clear_cache().await?;
+        self.group_service.clear_cache().await?;
+
+        Ok(())
+    }
 }
 
 pub fn spawn_initialization(app_handle: AppHandle, runtime_paths: RuntimePaths) {

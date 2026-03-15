@@ -29,6 +29,7 @@ import {
     updateRemoteChatName,
 } from '../script.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
+import { ChatInputFocusIntent, focusChatInput } from './chat-input-focus.js';
 import { deleteGroupChatByName, getGroupAvatar, groups, is_group_generating, openGroupById, openGroupChat } from './group-chats.js';
 import { t } from './i18n.js';
 import { callGenericPopup, POPUP_TYPE } from './popup.js';
@@ -337,7 +338,7 @@ async function sendWelcomePanel(chats, expand = false) {
             button.addEventListener('click', async () => {
                 await newAssistantChat({ temporary: true });
                 if (sendTextArea instanceof HTMLTextAreaElement) {
-                    sendTextArea.focus();
+                    focusChatInput(ChatInputFocusIntent.NAVIGATION);
                 }
             });
         });

@@ -1,8 +1,10 @@
 use crate::domain::errors::DomainError;
 use crate::infrastructure::logging::logger;
 use serde::{Serialize, de::DeserializeOwned};
+use std::io;
 use std::path::{Path, PathBuf};
 use tokio::fs::{self as tokio_fs, create_dir_all, read_to_string};
+use uuid::Uuid;
 
 /// Represents the application data directory structure
 pub struct DataDirectory {
@@ -213,6 +215,67 @@ pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, Domai
         logger::error(&format!("Failed to parse JSON from file {:?}: {}", path, e));
         DomainError::InvalidData(format!("Invalid JSON: {}", e))
     })
+}
+
+/// Generate a unique temporary file path adjacent to `target_path`.
+///
+/// The returned file name is based on the target file name (or `fallback_file_name` if missing)
+/// and includes a random UUID to avoid collisions under concurrent writes.
+pub fn unique_temp_path(target_path: &Path, fallback_file_name: &str) -> PathBuf {
+    let file_name = target_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback_file_name);
+
+    target_path.with_file_name(format!("{}.{}.tmp", file_name, Uuid::new_v4()))
+}
+
+/// Replace a file using `rename`, with a copy/remove fallback for storage backends
+/// where rename is unreliable (notably Android external app storage).
+pub async fn replace_file_with_fallback(
+    temp_path: &Path,
+    target_path: &Path,
+) -> Result<(), DomainError> {
+    match tokio_fs::rename(temp_path, target_path).await {
+        Ok(()) => Ok(()),
+        Err(rename_error) => {
+            logger::warn(&format!(
+                "Rename failed while replacing file {:?} -> {:?}: {}. Falling back to copy/remove.",
+                temp_path, target_path, rename_error
+            ));
+
+            if let Some(parent) = target_path.parent() {
+                create_dir_all(parent).await.map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to create target parent directory {:?}: {}",
+                        parent, error
+                    ))
+                })?;
+            }
+
+            let copy_result = tokio_fs::copy(temp_path, target_path).await;
+            if let Err(copy_error) = copy_result {
+                return Err(DomainError::InternalError(format!(
+                    "Failed to replace file {:?} -> {:?}. Rename error: {}. Copy fallback error: {}",
+                    temp_path, target_path, rename_error, copy_error
+                )));
+            }
+
+            match tokio_fs::remove_file(temp_path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    logger::warn(&format!(
+                        "Copied file {:?} -> {:?}, but failed to remove temp file: {}",
+                        temp_path, target_path, error
+                    ));
+                }
+            }
+
+            Ok(())
+        }
+    }
 }
 
 /// Write a JSON file

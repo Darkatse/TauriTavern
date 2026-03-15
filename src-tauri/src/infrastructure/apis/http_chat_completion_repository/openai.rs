@@ -19,7 +19,7 @@ pub(super) async fn list_models(
         .client
         .get(url)
         .header(ACCEPT, "application/json");
-    let request = HttpChatCompletionRepository::apply_bearer_auth(request, &config.api_key);
+    let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 
     let response = request
@@ -57,7 +57,7 @@ pub(super) async fn generate(
         .header(ACCEPT, "application/json")
         .json(payload);
 
-    let request = HttpChatCompletionRepository::apply_bearer_auth(request, &config.api_key);
+    let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 
     let response = request.send().await.map_err(|error| {
@@ -96,7 +96,7 @@ pub(super) async fn generate_stream(
         .header(ACCEPT, "text/event-stream")
         .json(payload);
 
-    let request = HttpChatCompletionRepository::apply_bearer_auth(request, &config.api_key);
+    let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 
     let response = request.send().await.map_err(|error| {

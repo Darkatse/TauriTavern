@@ -6,9 +6,11 @@ use local_ip_address::{list_afinet_netifas, local_ip};
 use qrcode::QrCode;
 use reqwest::Client;
 use tauri::AppHandle;
+use tauri::Manager;
 use tokio::sync::Mutex;
 use url::Url;
 
+use crate::app::AppState;
 use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
     LanSyncPairRequest, LanSyncPairResponse, LanSyncPairedDevice, LanSyncStatus,
@@ -339,8 +341,27 @@ impl LanSyncService {
 
         match self.sync_from_device_inner(device_id).await {
             Ok(completed) => {
-                drop(permit);
-                self.runtime.emit_sync_completed(completed)?;
+                let refresh_result = self
+                    .runtime
+                    .app_handle()
+                    .state::<Arc<AppState>>()
+                    .refresh_after_external_data_change("lan_sync")
+                    .await;
+                match refresh_result {
+                    Ok(()) => {
+                        drop(permit);
+                        self.runtime.emit_sync_completed(completed)?;
+                    }
+                    Err(error) => {
+                        drop(permit);
+                        self.runtime.emit_sync_error(LanSyncSyncErrorEvent {
+                            message: format!(
+                                "LAN sync completed but failed to refresh runtime caches: {}",
+                                error
+                            ),
+                        })?;
+                    }
+                }
             }
             Err(error) => {
                 drop(permit);

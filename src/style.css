@@ -15,6 +15,7 @@
 @import url(css/secrets.css);
 @import url(css/backgrounds.css);
 @import url(css/chat-backups.css);
+@import url(css/tauritavern-embedded-runtime.css);
 
 :root {
     interpolate-size: allow-keywords;
@@ -3806,7 +3807,7 @@ grammarly-extension {
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 5px;
     padding: 3px 5px;
-    width: min-content;
+    width: fit-content;
     cursor: pointer;
     margin: 5px 0;
     transition: var(--animation-duration-2x);

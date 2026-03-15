@@ -158,7 +158,7 @@
 ### 7.2 前端优化
 
 - **资源加载**: 优化资源加载顺序
-- **库注入链路**: `lib.js` 直接导入 `src/dist/lib.bundle.js`，移除运行时动态 loader
+- **库注入链路**: `lib.js` 静态导入 `src/dist/lib.core.bundle.js`；重库通过 `getHljs()/getReadability()` 动态加载 `src/dist/lib.optional.bundle.js`
 - **延迟加载**: 非关键资源延迟加载
 - **构建缓存**: webpack filesystem cache 提升增量构建速度
 

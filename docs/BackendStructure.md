@@ -406,6 +406,27 @@ tauri::Builder::default()
 
 这样可以避免在 `lib.rs` 中直接维护超长命令列表，命令增减时只需更新 `registry.rs`。
 
+#### 3.4.4 第三方扩展静态资源端点（2026-03）
+
+第三方前端扩展资源兼容当前不再通过 Tauri 命令走 IPC/base64，而是通过 WebView 资源请求钩子直接提供：
+
+- 入口安装位置：`src-tauri/src/lib.rs`
+  - 主窗口在 `create_main_window()` 中挂载 `on_web_resource_request`
+  - 仅覆盖 `/scripts/extensions/third-party/*` 前缀
+- 表示层实现：`src-tauri/src/presentation/web_resources/third_party_endpoint.rs`
+  - 负责方法门禁、路径解析、状态码、`Content-Type`、`Cache-Control`
+  - 仅允许 `GET` / `HEAD` / `OPTIONS`
+  - 未命中返回真正 `404`，不回退 `index.html`
+- 基础设施支撑：
+  - `src-tauri/src/infrastructure/third_party_paths.rs`：路径解析与安全校验
+  - `src-tauri/src/infrastructure/third_party_assets.rs`：local/global 目录查找与 MIME 推断
+- 目录语义：
+  - local：`data/default-user/extensions/<folder>`
+  - global：`data/extensions/third-party/<folder>`
+  - 资源读取与扩展发现都遵循 local 优先、global 兜底
+
+这条链路的意义是把 third-party 兼容问题下沉为“真实静态资源端点”问题，而不是继续在前端扩展 runtime 里模拟浏览器加载行为。当前状态摘要见 `docs/CurrentState/ThirdPartyExtensions.md`。
+
 ### 3.5 聊天后端链路（Payload-First + Path/From-File Transport，2026-02重构）
 
 本次聊天链路重构目标是对齐 SillyTavern 上游业务逻辑与文件系统语义，同时降低字段漂移/数据丢失风险。

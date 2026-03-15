@@ -1,5 +1,6 @@
 import { getRequestHeaders, substituteParams } from '../../../../script.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
+import { ChatInputFocusIntent, focusChatInput, getChatInput } from '../../../chat-input-focus.js';
 import { executeSlashCommandsOnChatInput, executeSlashCommandsWithOptions } from '../../../slash-commands.js';
 import { SlashCommandScope } from '../../../slash-commands/SlashCommandScope.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
@@ -146,8 +147,7 @@ export class QuickReplySet {
             executionOptions:{},
         }, options);
         const execOptions = options.executionOptions;
-        /**@type {HTMLTextAreaElement}*/
-        const ta = document.querySelector('#send_textarea');
+        const ta = getChatInput();
         const finalMessage = options.message ?? qr.message;
         let input = ta.value;
         if (!options.isAutoExecute && !options.isEditor && !options.isRun && this.injectInput && input.length > 0) {
@@ -186,7 +186,7 @@ export class QuickReplySet {
         }
 
         ta.value = substituteParams(input);
-        ta.focus();
+        focusChatInput(ChatInputFocusIntent.EDITING, { cursor: 'end' });
 
         if (!this.disableSend) {
             // @ts-ignore

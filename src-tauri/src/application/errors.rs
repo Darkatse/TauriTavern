@@ -4,6 +4,9 @@ use crate::domain::errors::DomainError;
 
 #[derive(Error, Debug)]
 pub enum ApplicationError {
+    #[error("{0}")]
+    RateLimited(String),
+
     #[error("Internal error: {0}")]
     InternalError(String),
 
@@ -27,6 +30,7 @@ impl From<DomainError> for ApplicationError {
             DomainError::InvalidData(msg) => ApplicationError::ValidationError(msg),
             DomainError::AuthenticationError(msg) => ApplicationError::Unauthorized(msg),
             DomainError::InternalError(msg) => ApplicationError::InternalError(msg),
+            DomainError::RateLimited { message } => ApplicationError::RateLimited(message),
         }
     }
 }

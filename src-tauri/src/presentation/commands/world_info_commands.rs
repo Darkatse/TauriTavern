@@ -4,8 +4,8 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::world_info_dto::{
-    DeleteWorldInfoDto, GetWorldInfoDto, ImportWorldInfoDto, ImportWorldInfoResponseDto,
-    SaveWorldInfoDto,
+    DeleteWorldInfoDto, GetWorldInfoDto, GetWorldInfosBatchDto, GetWorldInfosBatchResponseDto,
+    ImportWorldInfoDto, ImportWorldInfoResponseDto, SaveWorldInfoDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -22,6 +22,22 @@ pub async fn get_world_info(
         .get_world_info(&dto.name)
         .await
         .map_err(map_command_error("Failed to get world info"))
+}
+
+#[tauri::command]
+pub async fn get_world_infos_batch(
+    dto: GetWorldInfosBatchDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<GetWorldInfosBatchResponseDto, CommandError> {
+    log_command(format!("get_world_infos_batch, count: {}", dto.names.len()));
+
+    let items = app_state
+        .world_info_service
+        .get_world_infos_batch(dto.names)
+        .await
+        .map_err(map_command_error("Failed to get world infos batch"))?;
+
+    Ok(GetWorldInfosBatchResponseDto { items })
 }
 
 #[tauri::command]

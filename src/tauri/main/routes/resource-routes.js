@@ -1,13 +1,3 @@
-import { decodeBase64ToBytes } from '../binary-utils.js';
-
-function decodeRoutePath(value) {
-    try {
-        return decodeURIComponent(String(value || ''));
-    } catch {
-        return String(value || '');
-    }
-}
-
 function isNotFoundError(error) {
     const message = String(error?.message || error || '').toLowerCase();
     return message.includes('not found')
@@ -23,34 +13,34 @@ function sanitizeFileName(value) {
         .trim();
 }
 
+function parseCommandErrorStatus(error) {
+    const message = String(error?.message || error || '');
+    if (message.startsWith('Bad request:')) {
+        return 400;
+    }
+    if (message.startsWith('Not found:')) {
+        return 404;
+    }
+    if (message.startsWith('Unauthorized:')) {
+        return 401;
+    }
+    if (message.startsWith('Too many requests:')) {
+        return 429;
+    }
+    return 500;
+}
+
+function stripCommandErrorPrefix(error) {
+    const message = String(error?.message || error || '').trim();
+    for (const prefix of ['Bad request:', 'Not found:', 'Unauthorized:', 'Too many requests:', 'Internal server error:']) {
+        if (message.startsWith(prefix)) {
+            return message.slice(prefix.length).trim();
+        }
+    }
+    return message;
+}
+
 export function registerResourceRoutes(router, context, { jsonResponse, textResponse }) {
-    const serveUserAvatarAsset = async ({ wildcard }) => {
-        const relativePath = decodeRoutePath(wildcard).replace(/^\/+/, '');
-        if (!relativePath) {
-            return textResponse('Not Found', 404);
-        }
-
-        try {
-            const payload = await context.safeInvoke('read_user_avatar_asset', {
-                file: relativePath,
-            });
-            const bytes = decodeBase64ToBytes(payload?.content_base64 || '');
-            return new Response(bytes, {
-                status: 200,
-                headers: {
-                    'Content-Type': payload?.mime_type || 'application/octet-stream',
-                    'Cache-Control': 'no-store',
-                },
-            });
-        } catch (error) {
-            if (isNotFoundError(error)) {
-                return textResponse('Not Found', 404);
-            }
-
-            throw error;
-        }
-    };
-
     router.post('/api/files/sanitize-filename', async ({ body }) => {
         const sanitized = sanitizeFileName(body?.fileName || '');
 
@@ -108,67 +98,121 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
         return jsonResponse(verified && typeof verified === 'object' ? verified : {});
     });
 
-    router.get('/thumbnail', async ({ url }) => {
-        const type = String(url.searchParams.get('type') || '').trim().toLowerCase();
-        const file = decodeRoutePath(url.searchParams.get('file') || '').trim();
-        const animated = String(url.searchParams.get('animated') || '').toLowerCase() === 'true';
+    router.post('/api/images/upload', async ({ body }) => {
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+            return jsonResponse({ error: 'No data provided' }, 400);
+        }
 
-        if (!type || !file || !['bg', 'avatar', 'persona'].includes(type)) {
-            return textResponse('Bad Request', 400);
+        const image = typeof body.image === 'string' ? body.image.trim() : '';
+        if (!image) {
+            return jsonResponse({ error: 'No image data provided' }, 400);
         }
 
         try {
-            const payload = await context.safeInvoke('read_thumbnail_asset', {
-                thumbnail_type: type,
-                file,
-                animated,
+            const uploaded = await context.safeInvoke('upload_user_image', {
+                image_base64: image,
+                format: body.format,
+                filename: body.filename,
+                ch_name: body.ch_name,
             });
-            const bytes = decodeBase64ToBytes(payload?.content_base64 || '');
-            return new Response(bytes, {
-                status: 200,
-                headers: {
-                    'Content-Type': payload?.mime_type || 'application/octet-stream',
-                    'Cache-Control': 'no-store',
-                },
-            });
+            return jsonResponse(uploaded || {});
         } catch (error) {
-            if (isNotFoundError(error)) {
-                return textResponse('Not Found', 404);
+            const status = parseCommandErrorStatus(error);
+            const message = stripCommandErrorPrefix(error);
+            if (status === 400) {
+                return jsonResponse({ error: message || 'Failed to save the image' }, 400);
             }
-
-            throw error;
+            return jsonResponse({ error: 'Failed to save the image' }, 500);
         }
     });
 
-    router.get('/user/files/*', async ({ wildcard }) => {
-        const relativePath = decodeRoutePath(wildcard).replace(/^\/+/, '');
-        if (!relativePath) {
-            return textResponse('Not Found', 404);
+    router.post('/api/images/list', async ({ body }) => {
+        if (body?.folder === undefined || body?.folder === null || String(body.folder).trim() === '') {
+            return jsonResponse({ error: 'No folder specified' }, 400);
         }
 
         try {
-            const payload = await context.safeInvoke('read_user_file_asset', {
-                relative_path: relativePath,
+            const images = await context.safeInvoke('list_user_images', {
+                folder: body.folder,
+                media_type: body.type,
+                sort_field: body.sortField,
+                sort_order: body.sortOrder,
             });
-            const bytes = decodeBase64ToBytes(payload?.content_base64 || '');
-            return new Response(bytes, {
-                status: 200,
-                headers: {
-                    'Content-Type': payload?.mime_type || 'application/octet-stream',
-                    'Cache-Control': 'no-store',
-                },
-            });
+            return jsonResponse(Array.isArray(images) ? images : []);
         } catch (error) {
-            if (isNotFoundError(error)) {
-                return textResponse('Not Found', 404);
+            const status = parseCommandErrorStatus(error);
+            const message = stripCommandErrorPrefix(error);
+            if (status === 400) {
+                return jsonResponse({ error: message || 'Unable to retrieve files' }, 400);
             }
-
-            throw error;
+            return jsonResponse({ error: 'Unable to retrieve files' }, 500);
         }
     });
 
-    router.get('/User%20Avatars/*', serveUserAvatarAsset);
-    router.get('/User Avatars/*', serveUserAvatarAsset);
+    router.post('/api/images/list/*', async ({ body, wildcard }) => {
+        if (wildcard && body?.folder) {
+            return jsonResponse({ error: 'Folder specified in both URL and body' }, 400);
+        }
+
+        const folder = wildcard ? wildcard.replace(/^\/+/, '') : (body?.folder ?? '');
+        if (!folder || String(folder).trim() === '') {
+            return jsonResponse({ error: 'No folder specified' }, 400);
+        }
+
+        try {
+            const images = await context.safeInvoke('list_user_images', {
+                folder,
+                media_type: body?.type,
+                sort_field: body?.sortField,
+                sort_order: body?.sortOrder,
+            });
+            return jsonResponse(Array.isArray(images) ? images : []);
+        } catch (error) {
+            const status = parseCommandErrorStatus(error);
+            const message = stripCommandErrorPrefix(error);
+            if (status === 400) {
+                return jsonResponse({ error: message || 'Unable to retrieve files' }, 400);
+            }
+            return jsonResponse({ error: 'Unable to retrieve files' }, 500);
+        }
+    });
+
+    router.post('/api/images/folders', async () => {
+        try {
+            const folders = await context.safeInvoke('list_user_image_folders');
+            return jsonResponse(Array.isArray(folders) ? folders : []);
+        } catch (error) {
+            const status = parseCommandErrorStatus(error);
+            const message = stripCommandErrorPrefix(error);
+            if (status === 400) {
+                return jsonResponse({ error: message || 'Unable to retrieve folders' }, 400);
+            }
+            return jsonResponse({ error: 'Unable to retrieve folders' }, 500);
+        }
+    });
+
+    router.post('/api/images/delete', async ({ body }) => {
+        const path = String(body?.path || '').trim();
+        if (!path) {
+            return textResponse('No path specified', 400);
+        }
+
+        try {
+            await context.safeInvoke('delete_user_image', { path });
+            return jsonResponse({ ok: true });
+        } catch (error) {
+            if (isNotFoundError(error)) {
+                return textResponse('File not found', 404);
+            }
+
+            const status = parseCommandErrorStatus(error);
+            const message = stripCommandErrorPrefix(error);
+            if (status === 400) {
+                return textResponse(message || 'Invalid path', 400);
+            }
+            return textResponse('Internal Server Error', 500);
+        }
+    });
 
     router.post('/api/avatars/get', async () => {
         const avatars = await context.safeInvoke('get_avatars');
@@ -207,6 +251,7 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
 
     router.post('/api/backgrounds/delete', async ({ body }) => {
         await context.safeInvoke('delete_background', { dto: { bg: body?.bg || '' } });
+        context.invalidateInvokeAll('read_thumbnail_asset');
         return jsonResponse({ ok: true });
     });
 
@@ -218,6 +263,7 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             },
         });
 
+        context.invalidateInvokeAll('read_thumbnail_asset');
         return jsonResponse({ ok: true });
     });
 
@@ -239,6 +285,7 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
 
         const data = Array.from(new Uint8Array(await file.arrayBuffer()));
         const uploaded = await context.safeInvoke('upload_background', { filename, data });
+        context.invalidateInvokeAll('read_thumbnail_asset');
 
         return textResponse(String(uploaded || filename));
     });

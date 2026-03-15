@@ -37,6 +37,15 @@ https://github.com/tauri-apps/tauri/issues/14240
   - `--tt-safe-area-top/right/left/bottom`（系统安全区）
   - `--tt-ime-bottom`（输入法可见时的底部 inset）
   - `--tt-viewport-bottom-inset`（前端通过 `max()` 合成有效底部 inset）
+
+Android 语义说明：
+
+- `--tt-safe-area-*` 表示**当前布局应避开的有效安全区**；
+- 非沉浸模式下，它反映 system bars + `displayCutout`（刘海/打孔）的可见/稳定 inset；
+- 沉浸模式下，它会回落为 `0`，允许应用顶部 UI 与第三方 fixed 浮层以 full-bleed 方式沉入状态栏区域。
+
+注入时序约束：
+
 - 注入前先检查页面就绪：
   - `document.readyState !== 'loading'`
   - `location.href !== 'about:blank'`
@@ -190,10 +199,10 @@ https://v2.tauri.app/develop/resources/#android
 
 已落地方案：
 
-- 在 `src/scripts/browser-fixes.js` 增加移动端按需兼容层：
-  - 仅在移动端且检测到缺失 API 时执行；
-  - 仅执行一次；
-  - 桌面端零开销。
+- 在 Tauri mobile 启动期安装运行时兼容层：
+  - 实现：`src/tauri/main/compat/mobile/mobile-runtime-compat.js`
+  - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
+  - 行为：仅补齐缺失 API，且只执行一次；桌面端/移动端 Web 不启用。
 
 ### 6.2 插件面板样式大面积失效（如 `TH-custom-tailwind` 布局错乱）
 
@@ -232,15 +241,17 @@ https://v2.tauri.app/develop/resources/#android
 
 已落地方案：
 
-- 在 `src/scripts/browser-fixes.js` 增加移动端动态样式补丁：
-  - 监听运行时新增 `<style>`，修正固定定位规则中的 `top`；
-  - 同步监听节点新增与 `class/style` 变更，兜底修正第三方浮层 fixed 元素行内/计算后的 `top`；
-  - 把未包含 safe-area 的 `top` 统一重写为 `max(var(--tt-safe-area-top), <原值>)`。
+- 在 Tauri mobile 安装 overlay safe-area 兼容控制器：
+  - 实现：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
+  - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
+  - 策略：只观察 `document.body` 直接子节点新增/移除；对疑似第三方浮层（`position: fixed` 且顶边贴近 0）按元素级别设置 `top: max(var(--tt-safe-area-top), <原top>) !important`；并在 `html.style`/`visualViewport` 变化时重新校验。
+  - 依赖：`--tt-safe-area-top` 表示当前布局策略；因此非沉浸模式下会提供顶部避让，沉浸模式下会自然退化为 no-op。
 
 设计约束：
 
-- 仅移动端生效；
-- 仅作用于第三方浮层与运行时动态 `<style>`，不改静态主样式文件；
+- 仅 Tauri mobile 生效；
+- 仅处理 top safe-area 策略，不处理其他边；沉浸模式下不会额外强制避开刘海/状态栏；
+- 仅作用于第三方浮层节点，不改写全局 `<style>` 文本与静态主样式文件；
 - 明确排除 `body/#sheld/#chat` 等应用核心容器，避免牵连应用本体布局；
 - 不侵入第三方扩展资源加载链路（与 `third-party-runtime.js` 解耦）。
 

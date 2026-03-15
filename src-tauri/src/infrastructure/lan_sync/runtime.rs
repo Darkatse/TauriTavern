@@ -44,6 +44,10 @@ impl LanSyncRuntime {
         }
     }
 
+    pub fn app_handle(&self) -> &AppHandle {
+        &self.app_handle
+    }
+
     pub fn try_acquire_sync_permit(&self) -> Result<OwnedSemaphorePermit, DomainError> {
         self.sync_permit
             .clone()

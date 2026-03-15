@@ -1,4 +1,5 @@
 import { DOMPurify, Bowser } from '../lib.js';
+import { ChatInputFocusIntent, focusChatInput } from './chat-input-focus.js';
 
 import {
     characters,
@@ -1046,12 +1047,12 @@ export function initRossMods() {
             const reasoningMesDone = $('.mes_reasoning_edit_done:visible');
             if (editMesDone.length > 0) {
                 console.debug('Accepting edits with Ctrl+Enter');
-                $('#send_textarea').trigger('focus');
+                focusChatInput(ChatInputFocusIntent.EDITING);
                 editMesDone.trigger('click');
                 return;
             } else if (reasoningMesDone.length > 0) {
                 console.debug('Accepting edits with Ctrl+Enter');
-                $('#send_textarea').trigger('focus');
+                focusChatInput(ChatInputFocusIntent.EDITING);
                 reasoningMesDone.trigger('click');
                 return;
             }

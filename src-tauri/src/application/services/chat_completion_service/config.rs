@@ -99,19 +99,24 @@ async fn resolve_api_config(
     match source {
         ChatCompletionSource::Custom => {
             let base_url = resolve_custom_base_url(custom_url, reverse_proxy)?;
-            let extra_headers = custom_parameters::parse_string_map(custom_headers_raw)?;
+            let mut extra_headers = custom_parameters::parse_string_map(custom_headers_raw)?;
+            let authorization_header = take_header_value(&mut extra_headers, "Authorization");
+            let uses_reverse_proxy = custom_url.is_empty() && !reverse_proxy.is_empty();
 
-            let api_key = if reverse_proxy.is_empty() {
+            let api_key = if authorization_header.is_some() {
+                String::new()
+            } else if uses_reverse_proxy {
+                proxy_password.to_string()
+            } else {
                 read_optional_secret(secret_repository, SecretKeys::CUSTOM)
                     .await?
                     .unwrap_or_default()
-            } else {
-                proxy_password.to_string()
             };
 
             Ok(ChatCompletionApiConfig {
                 base_url,
                 api_key,
+                authorization_header,
                 extra_headers,
             })
         }
@@ -138,10 +143,41 @@ async fn resolve_api_config(
             Ok(ChatCompletionApiConfig {
                 base_url,
                 api_key,
+                authorization_header: None,
                 extra_headers: source_extra_headers(source),
             })
         }
     }
+}
+
+fn take_header_value(headers: &mut HashMap<String, String>, header_name: &str) -> Option<String> {
+    let mut matching_keys = headers
+        .keys()
+        .filter(|key| key.eq_ignore_ascii_case(header_name))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if matching_keys.is_empty() {
+        return None;
+    }
+
+    matching_keys.sort_unstable();
+
+    let preferred_key = matching_keys
+        .iter()
+        .find(|key| key.as_str() == header_name)
+        .cloned()
+        .unwrap_or_else(|| matching_keys[0].clone());
+
+    let value = headers.remove(&preferred_key);
+
+    for key in matching_keys {
+        if key != preferred_key {
+            headers.remove(&key);
+        }
+    }
+
+    value
 }
 
 fn resolve_custom_base_url(
@@ -283,12 +319,74 @@ fn is_zai_coding_endpoint(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use serde_json::json;
+
+    use crate::application::dto::chat_completion_dto::{
+        ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
+    };
+    use crate::domain::errors::DomainError;
+    use crate::domain::models::secret::Secrets;
     use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
+    use crate::domain::repositories::secret_repository::SecretRepository;
 
     use super::{
         ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, OPENROUTER_API_BASE, ZAI_API_BASE_CODING,
-        default_base_url, source_extra_headers, supports_reverse_proxy,
+        default_base_url, resolve_generate_api_config, resolve_status_api_config,
+        source_extra_headers, supports_reverse_proxy, take_header_value,
     };
+
+    struct TestSecretRepository {
+        secrets: HashMap<String, String>,
+    }
+
+    #[async_trait]
+    impl SecretRepository for TestSecretRepository {
+        async fn save(&self, _secrets: &Secrets) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+
+        async fn load(&self) -> Result<Secrets, DomainError> {
+            unimplemented!()
+        }
+
+        async fn write_secret(
+            &self,
+            _key: &str,
+            _value: &str,
+            _label: &str,
+        ) -> Result<String, DomainError> {
+            unimplemented!()
+        }
+
+        async fn read_secret(
+            &self,
+            key: &str,
+            _id: Option<&str>,
+        ) -> Result<Option<String>, DomainError> {
+            Ok(self.secrets.get(key).cloned())
+        }
+
+        async fn delete_secret(&self, _key: &str, _id: Option<&str>) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+
+        async fn rotate_secret(&self, _key: &str, _id: &str) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+
+        async fn rename_secret(
+            &self,
+            _key: &str,
+            _id: &str,
+            _label: &str,
+        ) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+    }
 
     #[test]
     fn deepseek_status_uses_non_beta_base() {
@@ -329,5 +427,145 @@ mod tests {
     fn moonshot_and_zai_support_reverse_proxy() {
         assert!(supports_reverse_proxy(ChatCompletionSource::Moonshot));
         assert!(supports_reverse_proxy(ChatCompletionSource::Zai));
+    }
+
+    #[test]
+    fn take_header_value_removes_all_case_variants() {
+        let mut headers = HashMap::from([
+            ("authorization".to_string(), "Bearer lower".to_string()),
+            ("Authorization".to_string(), "Bearer exact".to_string()),
+            ("x-extra".to_string(), "ok".to_string()),
+        ]);
+
+        let value = take_header_value(&mut headers, "Authorization");
+
+        assert_eq!(value.as_deref(), Some("Bearer exact"));
+        assert!(
+            headers
+                .keys()
+                .all(|key| !key.eq_ignore_ascii_case("authorization"))
+        );
+        assert_eq!(headers.get("x-extra").map(String::as_str), Some("ok"));
+    }
+
+    #[tokio::test]
+    async fn custom_status_authorization_header_overrides_saved_secret() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
+            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
+        });
+        let dto = ChatCompletionStatusRequestDto {
+            chat_completion_source: "custom".to_string(),
+            custom_url: "https://example.com/v1".to_string(),
+            custom_include_headers: "Authorization: \"Bearer override\"\nX-Trace: abc".to_string(),
+            ..Default::default()
+        };
+
+        let config =
+            resolve_status_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
+                .await
+                .expect("status config should resolve");
+
+        assert_eq!(config.base_url, "https://example.com/v1");
+        assert!(config.api_key.is_empty());
+        assert_eq!(
+            config.authorization_header.as_deref(),
+            Some("Bearer override")
+        );
+        assert_eq!(
+            config.extra_headers.get("X-Trace").map(String::as_str),
+            Some("abc")
+        );
+        assert!(
+            config
+                .extra_headers
+                .keys()
+                .all(|key| !key.eq_ignore_ascii_case("authorization"))
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_generate_falls_back_to_saved_secret_without_authorization_header() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
+            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
+        });
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "custom",
+                "custom_url": "https://example.com/v1",
+                "custom_include_headers": "X-Trace: abc"
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
+                .await
+                .expect("generate config should resolve");
+
+        assert_eq!(config.api_key, "saved-secret");
+        assert_eq!(config.authorization_header, None);
+        assert_eq!(
+            config.extra_headers.get("X-Trace").map(String::as_str),
+            Some("abc")
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_status_prefers_saved_secret_when_custom_url_present_even_if_reverse_proxy_present()
+    {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
+            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
+        });
+        let dto = ChatCompletionStatusRequestDto {
+            chat_completion_source: "custom".to_string(),
+            reverse_proxy: "https://proxy.example.com/v1".to_string(),
+            proxy_password: "proxy-secret".to_string(),
+            custom_url: "https://example.com/v1".to_string(),
+            custom_include_headers: "X-Trace: abc".to_string(),
+            ..Default::default()
+        };
+
+        let config =
+            resolve_status_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
+                .await
+                .expect("status config should resolve");
+
+        assert_eq!(config.base_url, "https://example.com/v1");
+        assert_eq!(config.api_key, "saved-secret");
+        assert_eq!(config.authorization_header, None);
+        assert_eq!(
+            config.extra_headers.get("X-Trace").map(String::as_str),
+            Some("abc")
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_status_uses_proxy_password_when_custom_url_missing_and_reverse_proxy_present() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
+            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
+        });
+        let dto = ChatCompletionStatusRequestDto {
+            chat_completion_source: "custom".to_string(),
+            reverse_proxy: "https://proxy.example.com/v1".to_string(),
+            proxy_password: "proxy-secret".to_string(),
+            custom_url: "".to_string(),
+            custom_include_headers: "X-Trace: abc".to_string(),
+            ..Default::default()
+        };
+
+        let config =
+            resolve_status_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
+                .await
+                .expect("status config should resolve");
+
+        assert_eq!(config.base_url, "https://proxy.example.com/v1");
+        assert_eq!(config.api_key, "proxy-secret");
+        assert_eq!(config.authorization_header, None);
+        assert_eq!(
+            config.extra_headers.get("X-Trace").map(String::as_str),
+            Some("abc")
+        );
     }
 }

@@ -13,8 +13,8 @@ pub(super) async fn delete_extension(
     tracing::info!("Deleting extension: {}", extension_name);
 
     let scope = ExtensionStoreScope::from_global(global);
-    let extension_folder_name = repository.normalize_extension_name(extension_name)?;
-    let extension_path = repository.resolve_extension_path(extension_name, global)?;
+    let extension_folder_name = repository.extension_folder_name_from_identifier(extension_name)?;
+    let extension_path = repository.resolve_extension_path(&extension_folder_name, global);
     if !extension_path.exists() {
         return Err(DomainError::NotFound(format!(
             "Extension not found at '{}'",

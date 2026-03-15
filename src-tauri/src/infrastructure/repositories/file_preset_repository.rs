@@ -5,14 +5,15 @@ use std::sync::Arc;
 use tauri::AppHandle;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::preset::{DefaultPreset, Preset, PresetType, sanitize_filename};
+use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use crate::domain::repositories::content_repository::ContentRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::infrastructure::assets::read_resource_json;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::{
-    delete_file, list_files_with_extension, read_json_file, write_json_file,
+    delete_file, read_json_file, write_json_file,
 };
+use crate::infrastructure::preset_file_naming::{PresetFilePaths, load_named_preset_files};
 
 /// File-based implementation of the PresetRepository
 pub struct FilePresetRepository {
@@ -49,11 +50,17 @@ impl FilePresetRepository {
         self.user_dir.join(preset_type.directory_name())
     }
 
-    /// Get the full file path for a preset
-    fn get_preset_path(&self, name: &str, preset_type: &PresetType) -> PathBuf {
-        let directory = self.get_preset_directory(preset_type);
-        let filename = format!("{}{}", sanitize_filename(name), preset_type.extension());
-        directory.join(filename)
+    /// Resolve canonical and deprecated legacy preset file paths for a logical preset name.
+    fn get_preset_paths(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<PresetFilePaths, DomainError> {
+        PresetFilePaths::new(
+            name,
+            &self.get_preset_directory(preset_type),
+            preset_type.extension(),
+        )
     }
 
     /// Ensure the preset directory exists
@@ -164,8 +171,10 @@ impl PresetRepository for FilePresetRepository {
         // Ensure directory exists
         self.ensure_directory_exists(&preset.preset_type).await?;
 
-        // Get file path
-        let file_path = self.get_preset_path(&preset.name, &preset.preset_type);
+        let file_path = self
+            .get_preset_paths(&preset.name, &preset.preset_type)?
+            .prepare_for_save()
+            .await?;
 
         // Prepare data with name included
         let data_with_name = preset.data_with_name();
@@ -183,11 +192,10 @@ impl PresetRepository for FilePresetRepository {
             name, preset_type
         ));
 
-        let file_path = self.get_preset_path(name, preset_type);
-
-        if !file_path.exists() {
-            return Err(DomainError::NotFound(format!("Preset not found: {}", name)));
-        }
+        let file_path = self
+            .get_preset_paths(name, preset_type)?
+            .resolve_existing()?
+            .ok_or_else(|| DomainError::NotFound(format!("Preset not found: {}", name)))?;
 
         delete_file(&file_path).await?;
 
@@ -200,8 +208,10 @@ impl PresetRepository for FilePresetRepository {
         name: &str,
         preset_type: &PresetType,
     ) -> Result<bool, DomainError> {
-        let file_path = self.get_preset_path(name, preset_type);
-        Ok(file_path.exists())
+        Ok(self
+            .get_preset_paths(name, preset_type)?
+            .resolve_existing()?
+            .is_some())
     }
 
     async fn get_preset(
@@ -211,11 +221,12 @@ impl PresetRepository for FilePresetRepository {
     ) -> Result<Option<Preset>, DomainError> {
         logger::debug(&format!("Getting preset: {} (type: {})", name, preset_type));
 
-        let file_path = self.get_preset_path(name, preset_type);
-
-        if !file_path.exists() {
+        let Some(file_path) = self
+            .get_preset_paths(name, preset_type)?
+            .resolve_existing()?
+        else {
             return Ok(None);
-        }
+        };
 
         let data: Value = read_json_file(&file_path).await?;
 
@@ -234,16 +245,10 @@ impl PresetRepository for FilePresetRepository {
             return Ok(vec![]);
         }
 
-        let files = list_files_with_extension(&directory, preset_type.extension()).await?;
-
-        let preset_names: Vec<String> = files
+        let preset_names: Vec<String> = load_named_preset_files(&directory)
+            .await?
             .into_iter()
-            .filter_map(|file_path| {
-                file_path
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .map(|s| s.to_string())
-            })
+            .map(|entry| entry.name)
             .collect();
 
         logger::debug(&format!(

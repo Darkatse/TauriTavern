@@ -3,10 +3,11 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
+use crate::domain::errors::DomainError;
 use crate::domain::models::extension::{
-    Extension, ExtensionAssetPayload, ExtensionInstallResult, ExtensionUpdateResult,
-    ExtensionVersion,
+    Extension, ExtensionInstallResult, ExtensionUpdateResult, ExtensionVersion,
 };
+use crate::infrastructure::logging::logger;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -36,7 +37,15 @@ pub async fn install_extension(
         .extension_service
         .install_extension(&url, global, branch)
         .await
-        .map_err(map_command_error("Failed to install extension"))
+        .map_err(|error| {
+            let message = format!("Failed to install extension: {}", error);
+            if matches!(&error, DomainError::RateLimited { .. }) {
+                logger::warn(&message);
+            } else {
+                logger::error(&message);
+            }
+            error.into()
+        })
 }
 
 #[tauri::command]
@@ -101,23 +110,4 @@ pub async fn move_extension(
         .move_extension(&extension_name, &source, &destination)
         .await
         .map_err(map_command_error("Failed to move extension"))
-}
-
-#[tauri::command]
-pub async fn read_third_party_extension_asset(
-    extension_name: String,
-    relative_path: String,
-    location_hint: Option<String>,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<ExtensionAssetPayload, CommandError> {
-    log_command(format!(
-        "read_third_party_extension_asset {} / {}",
-        extension_name, relative_path
-    ));
-
-    app_state
-        .extension_service
-        .read_third_party_asset(&extension_name, &relative_path, location_hint.as_deref())
-        .await
-        .map_err(map_command_error("Failed to read extension asset"))
 }

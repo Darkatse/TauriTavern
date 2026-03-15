@@ -249,6 +249,9 @@ function isTauriRuntime() {
 }
 
 function isMobileRuntime() {
+    // NOTE: Intentionally self-contained UA check.
+    // `file-export` is used from multiple entry points (web + Tauri). Keeping this local avoids
+    // cross-module dependencies/cycles for a small, runtime-only decision.
     if (typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') {
         return false;
     }

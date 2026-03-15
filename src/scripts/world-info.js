@@ -883,6 +883,7 @@ export const wi_anchor_position = {
  * @type {StructuredCloneMap<string,object>}
  * */
 export const worldInfoCache = new StructuredCloneMap({ cloneOnGet: true, cloneOnSet: false });
+const worldInfoInFlight = new Map();
 
 /**
  * Gets the world info based on chat messages.
@@ -2029,6 +2030,61 @@ export async function showWorldEditor(name) {
     await displayWorldEntries(name, wiData);
 }
 
+async function prefetchWorldInfos(names) {
+    const missing = [];
+    const seen = new Set();
+
+    for (const rawName of names) {
+        const name = String(rawName || '').trim();
+        if (!name || seen.has(name) || worldInfoCache.has(name)) {
+            continue;
+        }
+
+        seen.add(name);
+        missing.push(name);
+    }
+
+    if (!missing.length) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/worldinfo/get-batch', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ names: missing }),
+            cache: 'no-cache',
+        });
+
+        if (response.ok) {
+            const payload = await response.json();
+            const items = Array.isArray(payload?.items) ? payload.items : [];
+            for (const item of items) {
+                const name = String(item?.name || '').trim();
+                if (!name) {
+                    continue;
+                }
+
+                const data = item?.data;
+                if (!data || typeof data !== 'object' || Array.isArray(data)) {
+                    continue;
+                }
+
+                worldInfoCache.set(name, data);
+            }
+        } else {
+            console.warn(`[WI] World info get-batch failed: ${response.status}`);
+        }
+    } catch (error) {
+        console.warn('[WI] World info get-batch failed:', error);
+    }
+
+    const stillMissing = missing.filter((name) => !worldInfoCache.has(name));
+    if (stillMissing.length) {
+        await Promise.allSettled(stillMissing.map((name) => loadWorldInfo(name)));
+    }
+}
+
 /**
  * Loads world info from the backend.
  *
@@ -2038,28 +2094,43 @@ export async function showWorldEditor(name) {
  * @return {Promise<Object|null>} A promise that resolves to the loaded world information, or null if the request fails.
  */
 export async function loadWorldInfo(name) {
-    if (!name) {
-        return;
-    }
+    name = String(name || '').trim();
+    if (!name) return;
 
     if (worldInfoCache.has(name)) {
         return worldInfoCache.get(name);
     }
 
-    const response = await fetch('/api/worldinfo/get', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ name: name }),
-        cache: 'no-cache',
-    });
-
-    if (response.ok) {
-        const data = await response.json();
-        worldInfoCache.set(name, data);
-        return data;
+    const inFlight = worldInfoInFlight.get(name);
+    if (inFlight) {
+        return inFlight;
     }
 
-    return null;
+    const task = (async () => {
+        const response = await fetch('/api/worldinfo/get', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ name: name }),
+            cache: 'no-cache',
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            worldInfoCache.set(name, data);
+            return data;
+        }
+
+        return null;
+    })();
+
+    worldInfoInFlight.set(name, task);
+    task.finally(() => {
+        if (worldInfoInFlight.get(name) === task) {
+            worldInfoInFlight.delete(name);
+        }
+    });
+
+    return task;
 }
 
 export async function updateWorldInfoList() {
@@ -4271,11 +4342,9 @@ export async function createNewWorldInfo(worldName, { interactive = false } = {}
     return true;
 }
 
-async function getCharacterLore() {
+function collectCharacterWorldsToSearch() {
     const character = characters[this_chid];
-    const name = character?.name;
-    /** @type {Set<string>} */
-    let worldsToSearch = new Set();
+    const worldsToSearch = new Set();
 
     const baseWorldName = character?.data?.extensions?.world;
     if (baseWorldName) {
@@ -4286,8 +4355,16 @@ async function getCharacterLore() {
     const fileName = getCharaFilename(this_chid);
     const extraCharLore = world_info.charLore?.find((e) => e.name === fileName);
     if (extraCharLore) {
-        worldsToSearch = new Set([...worldsToSearch, ...extraCharLore.extraBooks]);
+        for (const worldName of extraCharLore.extraBooks) {
+            worldsToSearch.add(worldName);
+        }
     }
+
+    return { characterName: character?.name, worldsToSearch };
+}
+
+async function getCharacterLore() {
+    const { characterName: name, worldsToSearch } = collectCharacterWorldsToSearch();
 
     if (!worldsToSearch.size) {
         return [];
@@ -4310,7 +4387,7 @@ async function getCharacterLore() {
             continue;
         }
 
-        const data = await loadWorldInfo(worldName);
+        const data = worldInfoCache.get(worldName);
         const newEntries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: worldName, ...rest })) : [];
         entries = entries.concat(newEntries);
 
@@ -4330,7 +4407,7 @@ async function getGlobalLore() {
 
     let entries = [];
     for (const worldName of selected_world_info) {
-        const data = await loadWorldInfo(worldName);
+        const data = worldInfoCache.get(worldName);
         const newEntries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: worldName, ...rest })) : [];
         entries = entries.concat(newEntries);
     }
@@ -4352,7 +4429,7 @@ async function getChatLore() {
         return [];
     }
 
-    const data = await loadWorldInfo(chatWorld);
+    const data = worldInfoCache.get(chatWorld);
     const entries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: chatWorld, ...rest })) : [];
 
     console.debug(`[WI] Chat lore has ${entries.length} entries`, [chatWorld]);
@@ -4378,7 +4455,7 @@ async function getPersonaLore() {
         return [];
     }
 
-    const data = await loadWorldInfo(personaWorld);
+    const data = worldInfoCache.get(personaWorld);
     const entries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: personaWorld, ...rest })) : [];
 
     console.debug(`[WI] Persona lore has ${entries.length} entries`, [personaWorld]);
@@ -4388,6 +4465,28 @@ async function getPersonaLore() {
 
 export async function getSortedEntries() {
     try {
+        const worldsToPrefetch = new Set();
+        for (const worldName of selected_world_info || []) {
+            worldsToPrefetch.add(worldName);
+        }
+
+        const { worldsToSearch } = collectCharacterWorldsToSearch();
+        for (const worldName of worldsToSearch) {
+            worldsToPrefetch.add(worldName);
+        }
+
+        const chatWorld = chat_metadata[METADATA_KEY];
+        if (chatWorld) {
+            worldsToPrefetch.add(chatWorld);
+        }
+
+        const personaWorld = power_user.persona_description_lorebook;
+        if (personaWorld) {
+            worldsToPrefetch.add(personaWorld);
+        }
+
+        await prefetchWorldInfos(worldsToPrefetch);
+
         const [
             globalLore,
             characterLore,

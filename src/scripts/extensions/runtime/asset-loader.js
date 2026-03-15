@@ -1,3 +1,5 @@
+import { resolveExtensionAssetPath } from './manifest-assets.js';
+
 async function withTimeout(taskFactory, timeoutMs, timeoutErrorFactory) {
     return await new Promise((resolve, reject) => {
         let settled = false;
@@ -60,16 +62,17 @@ function toScriptTimeoutError(name, url, timeoutMs) {
     return new Error(`Extension "${name}" script load timed out after ${timeoutMs}ms: ${url}`);
 }
 
-function toScriptPrepareTimeoutError(name, url, timeoutMs) {
-    return new Error(`Extension "${name}" script preprocessing timed out after ${timeoutMs}ms: ${url}`);
+function toInvalidAssetFieldError(name, fieldName) {
+    return new Error(
+        `Extension "${name}" manifest field "${fieldName}" must be a string or single-item string array.`,
+    );
 }
 
 export function createExtensionAssetLoader({
     sanitizeSelector,
     getExtensionResourceUrl,
     isThirdPartyExtension,
-    resolveThirdPartyModuleBlobUrl,
-    resolveThirdPartyStylesheetBlobUrl,
+    resolveThirdPartyStylesheetUrl,
     scriptLoadTimeoutMs = 30000,
     styleLoadTimeoutMs = 15000,
 }) {
@@ -88,10 +91,15 @@ export function createExtensionAssetLoader({
             existing.remove();
         }
 
-        let styleUrl = getExtensionResourceUrl(name, manifest.css);
+        const stylePath = resolveExtensionAssetPath(manifest.css);
+        if (!stylePath) {
+            throw toInvalidAssetFieldError(name, 'css');
+        }
+
+        let styleUrl = getExtensionResourceUrl(name, stylePath);
         if (isThirdPartyExtension(name)) {
             styleUrl = await withTimeout(
-                () => resolveThirdPartyStylesheetBlobUrl(styleUrl),
+                () => resolveThirdPartyStylesheetUrl(styleUrl),
                 styleLoadTimeoutMs,
                 () => toStylePrepareTimeoutError(name, styleUrl, styleLoadTimeoutMs),
             );
@@ -150,14 +158,12 @@ export function createExtensionAssetLoader({
             existing.remove();
         }
 
-        let scriptUrl = getExtensionResourceUrl(name, manifest.js);
-        if (isThirdPartyExtension(name)) {
-            scriptUrl = await withTimeout(
-                () => resolveThirdPartyModuleBlobUrl(scriptUrl),
-                scriptLoadTimeoutMs,
-                () => toScriptPrepareTimeoutError(name, scriptUrl, scriptLoadTimeoutMs),
-            );
+        const scriptPath = resolveExtensionAssetPath(manifest.js);
+        if (!scriptPath) {
+            throw toInvalidAssetFieldError(name, 'js');
         }
+
+        let scriptUrl = getExtensionResourceUrl(name, scriptPath);
 
         await new Promise((resolve, reject) => {
             let settled = false;

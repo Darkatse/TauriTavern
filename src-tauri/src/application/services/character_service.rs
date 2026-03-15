@@ -334,10 +334,9 @@ impl CharacterService {
     }
 
     /// Clear the character cache
-    pub async fn clear_cache(&self) -> Result<(), ApplicationError> {
+    pub async fn clear_cache(&self) -> Result<(), DomainError> {
         logger::debug("Clearing character cache");
-        self.repository.clear_cache().await?;
-        Ok(())
+        self.repository.clear_cache().await
     }
 
     /// Validate a character

@@ -6,7 +6,8 @@ use crate::app::AppState;
 use crate::application::dto::tokenization_dto::{
     OpenAiDecodeRequestDto, OpenAiDecodeResponseDto, OpenAiEncodeRequestDto,
     OpenAiEncodeResponseDto, OpenAiLogitBiasRequestDto, OpenAiLogitBiasResponseDto,
-    OpenAiTokenCountRequestDto, OpenAiTokenCountResponseDto,
+    OpenAiTokenCountBatchRequestDto, OpenAiTokenCountBatchResponseDto, OpenAiTokenCountRequestDto,
+    OpenAiTokenCountResponseDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -23,6 +24,20 @@ pub async fn count_openai_tokens(
         .count_openai_tokens(dto)
         .await
         .map_err(map_command_error("Failed to count OpenAI tokens"))
+}
+
+#[tauri::command]
+pub async fn count_openai_tokens_batch(
+    dto: OpenAiTokenCountBatchRequestDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<OpenAiTokenCountBatchResponseDto, CommandError> {
+    log_command("count_openai_tokens_batch");
+
+    app_state
+        .tokenization_service
+        .count_openai_tokens_batch(dto)
+        .await
+        .map_err(map_command_error("Failed to count OpenAI tokens batch"))
 }
 
 #[tauri::command]

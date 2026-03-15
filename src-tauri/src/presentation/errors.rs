@@ -14,6 +14,9 @@ pub enum CommandError {
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
+    #[error("{0}")]
+    TooManyRequests(String),
+
     #[error("Internal server error: {0}")]
     InternalServerError(String),
 }
@@ -25,6 +28,7 @@ impl From<ApplicationError> for CommandError {
             ApplicationError::NotFound(msg) => CommandError::NotFound(msg),
             ApplicationError::Unauthorized(msg) => CommandError::Unauthorized(msg),
             ApplicationError::PermissionDenied(msg) => CommandError::Unauthorized(msg),
+            ApplicationError::RateLimited(msg) => CommandError::TooManyRequests(msg),
             ApplicationError::InternalError(msg) => CommandError::InternalServerError(msg),
         }
     }
@@ -37,6 +41,7 @@ impl From<DomainError> for CommandError {
             DomainError::InvalidData(msg) => CommandError::BadRequest(msg),
             DomainError::AuthenticationError(msg) => CommandError::Unauthorized(msg),
             DomainError::InternalError(msg) => CommandError::InternalServerError(msg),
+            DomainError::RateLimited { message } => CommandError::TooManyRequests(message),
         }
     }
 }

@@ -17,6 +17,25 @@ pub struct OpenAiTokenCountResponseDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OpenAiTokenCountBatchItemDto {
+    #[serde(default)]
+    pub messages: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OpenAiTokenCountBatchRequestDto {
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub requests: Vec<OpenAiTokenCountBatchItemDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OpenAiTokenCountBatchResponseDto {
+    pub token_counts: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OpenAiEncodeRequestDto {
     #[serde(default)]
     pub model: String,

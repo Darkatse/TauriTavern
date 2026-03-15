@@ -7,6 +7,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_repository::ChatPayloadCursor;
+use crate::infrastructure::persistence::file_system::replace_file_with_fallback;
 
 pub(super) const WINDOW_READ_CHUNK_BYTES: usize = 64 * 1024;
 
@@ -249,12 +250,7 @@ pub(super) async fn write_jsonl_lines_at_end(
 }
 
 pub(super) async fn replace_file(temp_path: &Path, target_path: &Path) -> Result<(), DomainError> {
-    fs::rename(temp_path, target_path).await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to move chat payload file {:?}: {}",
-            target_path, error
-        ))
-    })
+    replace_file_with_fallback(temp_path, target_path).await
 }
 
 pub(super) fn verify_cursor_signature(
