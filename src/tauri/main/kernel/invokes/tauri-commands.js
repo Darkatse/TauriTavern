@@ -33,6 +33,7 @@ export {};
  *   | 'delete_quick_reply_set'
  *   | 'delete_secret'
  *   | 'delete_theme'
+ *   | 'delete_user_image'
  *   | 'delete_user_file'
  *   | 'delete_world_info'
  *   | 'download_external_import_url'
@@ -67,6 +68,8 @@ export {};
  *   | 'list_chat_backups'
  *   | 'list_recent_chat_summaries'
  *   | 'list_recent_group_chat_summaries'
+ *   | 'list_user_image_folders'
+ *   | 'list_user_images'
  *   | 'load_settings_snapshot'
  *   | 'move_extension'
  *   | 'read_secret_state'
@@ -99,10 +102,10 @@ export {};
  *   | 'update_group'
  *   | 'upload_avatar'
  *   | 'upload_background'
+ *   | 'upload_user_image'
  *   | 'upload_user_file'
  *   | 'verify_user_files'
  *   | 'view_secrets'
  *   | 'write_secret'
  * )} TauriInvokeCommand
  */
-

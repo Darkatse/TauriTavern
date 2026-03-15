@@ -13,6 +13,33 @@ function sanitizeFileName(value) {
         .trim();
 }
 
+function parseCommandErrorStatus(error) {
+    const message = String(error?.message || error || '');
+    if (message.startsWith('Bad request:')) {
+        return 400;
+    }
+    if (message.startsWith('Not found:')) {
+        return 404;
+    }
+    if (message.startsWith('Unauthorized:')) {
+        return 401;
+    }
+    if (message.startsWith('Too many requests:')) {
+        return 429;
+    }
+    return 500;
+}
+
+function stripCommandErrorPrefix(error) {
+    const message = String(error?.message || error || '').trim();
+    for (const prefix of ['Bad request:', 'Not found:', 'Unauthorized:', 'Too many requests:', 'Internal server error:']) {
+        if (message.startsWith(prefix)) {
+            return message.slice(prefix.length).trim();
+        }
+    }
+    return message;
+}
+
 export function registerResourceRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/files/sanitize-filename', async ({ body }) => {
         const sanitized = sanitizeFileName(body?.fileName || '');
@@ -69,6 +96,122 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
         const urls = body.urls.map((url) => String(url || '').trim()).filter(Boolean);
         const verified = await context.safeInvoke('verify_user_files', { urls });
         return jsonResponse(verified && typeof verified === 'object' ? verified : {});
+    });
+
+    router.post('/api/images/upload', async ({ body }) => {
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+            return jsonResponse({ error: 'No data provided' }, 400);
+        }
+
+        const image = typeof body.image === 'string' ? body.image.trim() : '';
+        if (!image) {
+            return jsonResponse({ error: 'No image data provided' }, 400);
+        }
+
+        try {
+            const uploaded = await context.safeInvoke('upload_user_image', {
+                image_base64: image,
+                format: body.format,
+                filename: body.filename,
+                ch_name: body.ch_name,
+            });
+            return jsonResponse(uploaded || {});
+        } catch (error) {
+            const status = parseCommandErrorStatus(error);
+            const message = stripCommandErrorPrefix(error);
+            if (status === 400) {
+                return jsonResponse({ error: message || 'Failed to save the image' }, 400);
+            }
+            return jsonResponse({ error: 'Failed to save the image' }, 500);
+        }
+    });
+
+    router.post('/api/images/list', async ({ body }) => {
+        if (body?.folder === undefined || body?.folder === null || String(body.folder).trim() === '') {
+            return jsonResponse({ error: 'No folder specified' }, 400);
+        }
+
+        try {
+            const images = await context.safeInvoke('list_user_images', {
+                folder: body.folder,
+                media_type: body.type,
+                sort_field: body.sortField,
+                sort_order: body.sortOrder,
+            });
+            return jsonResponse(Array.isArray(images) ? images : []);
+        } catch (error) {
+            const status = parseCommandErrorStatus(error);
+            const message = stripCommandErrorPrefix(error);
+            if (status === 400) {
+                return jsonResponse({ error: message || 'Unable to retrieve files' }, 400);
+            }
+            return jsonResponse({ error: 'Unable to retrieve files' }, 500);
+        }
+    });
+
+    router.post('/api/images/list/*', async ({ body, wildcard }) => {
+        if (wildcard && body?.folder) {
+            return jsonResponse({ error: 'Folder specified in both URL and body' }, 400);
+        }
+
+        const folder = wildcard ? wildcard.replace(/^\/+/, '') : (body?.folder ?? '');
+        if (!folder || String(folder).trim() === '') {
+            return jsonResponse({ error: 'No folder specified' }, 400);
+        }
+
+        try {
+            const images = await context.safeInvoke('list_user_images', {
+                folder,
+                media_type: body?.type,
+                sort_field: body?.sortField,
+                sort_order: body?.sortOrder,
+            });
+            return jsonResponse(Array.isArray(images) ? images : []);
+        } catch (error) {
+            const status = parseCommandErrorStatus(error);
+            const message = stripCommandErrorPrefix(error);
+            if (status === 400) {
+                return jsonResponse({ error: message || 'Unable to retrieve files' }, 400);
+            }
+            return jsonResponse({ error: 'Unable to retrieve files' }, 500);
+        }
+    });
+
+    router.post('/api/images/folders', async () => {
+        try {
+            const folders = await context.safeInvoke('list_user_image_folders');
+            return jsonResponse(Array.isArray(folders) ? folders : []);
+        } catch (error) {
+            const status = parseCommandErrorStatus(error);
+            const message = stripCommandErrorPrefix(error);
+            if (status === 400) {
+                return jsonResponse({ error: message || 'Unable to retrieve folders' }, 400);
+            }
+            return jsonResponse({ error: 'Unable to retrieve folders' }, 500);
+        }
+    });
+
+    router.post('/api/images/delete', async ({ body }) => {
+        const path = String(body?.path || '').trim();
+        if (!path) {
+            return textResponse('No path specified', 400);
+        }
+
+        try {
+            await context.safeInvoke('delete_user_image', { path });
+            return jsonResponse({ ok: true });
+        } catch (error) {
+            if (isNotFoundError(error)) {
+                return textResponse('File not found', 404);
+            }
+
+            const status = parseCommandErrorStatus(error);
+            const message = stripCommandErrorPrefix(error);
+            if (status === 400) {
+                return textResponse(message || 'Invalid path', 400);
+            }
+            return textResponse('Internal Server Error', 500);
+        }
     });
 
     router.post('/api/avatars/get', async () => {

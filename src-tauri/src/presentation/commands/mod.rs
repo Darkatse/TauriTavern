@@ -11,6 +11,7 @@ pub mod extension_commands;
 pub mod file_commands;
 pub mod group_commands;
 pub mod helpers;
+pub mod image_commands;
 pub mod lan_sync_commands;
 pub mod preset_commands;
 pub mod quick_reply_commands;

@@ -123,6 +123,11 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::file_commands::read_user_file_asset,
         super::file_commands::delete_user_file,
         super::file_commands::verify_user_files,
+        // Image commands
+        super::image_commands::upload_user_image,
+        super::image_commands::list_user_images,
+        super::image_commands::list_user_image_folders,
+        super::image_commands::delete_user_image,
         // Avatar commands
         super::avatar_commands::get_avatars,
         super::avatar_commands::delete_avatar,
