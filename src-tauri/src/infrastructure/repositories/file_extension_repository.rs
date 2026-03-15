@@ -46,6 +46,7 @@ const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "code-render",
     "connection-manager",
     "data-migration",
+    "attachments",
     "quick-reply",
     "tauritavern-version",
 ];
