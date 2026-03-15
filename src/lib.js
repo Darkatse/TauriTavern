@@ -60,6 +60,66 @@ export async function getReadability() {
 }
 
 /**
+ * SillyTavern compatibility: slide-toggle animation helper used by some third-party extensions.
+ *
+ * @param {HTMLElement} el
+ * @param {{ miliseconds?: number, transitionFunction?: string, onAnimationEnd?: ((el: HTMLElement) => void) }} [options]
+ */
+export function slideToggle(el, options = {}) {
+    if (!(el instanceof HTMLElement)) {
+        throw new Error('slideToggle: expected HTMLElement');
+    }
+
+    const duration = Number(options.miliseconds ?? 0) || 0;
+    const easing = String(options.transitionFunction ?? 'ease-in-out');
+    const onAnimationEnd = options.onAnimationEnd ?? null;
+
+    const $ = globalThis.jQuery || globalThis.$;
+    if (typeof $ !== 'function') {
+        throw new Error('slideToggle: jQuery is not available');
+    }
+
+    const $el = $(el);
+    if (typeof $el.transition !== 'function') {
+        $el.stop(true, true).slideToggle(duration, () => onAnimationEnd?.(el));
+        return;
+    }
+
+    const style = getComputedStyle(el);
+    const isHidden = style.display === 'none' || el.getBoundingClientRect().height === 0;
+
+    if (isHidden) {
+        const display = style.display !== 'none'
+            ? style.display
+            : (el.classList.contains('fillLeft') || el.classList.contains('fillRight') ? 'flex' : 'block');
+        $el.css({ display, overflow: 'hidden', height: 0 });
+        const targetHeight = el.scrollHeight || el.getBoundingClientRect().height;
+        $el.transition({
+            height: targetHeight,
+            duration,
+            easing,
+            complete: () => {
+                $el.css({ height: '', overflow: '' });
+                onAnimationEnd?.(el);
+            },
+        });
+        return;
+    }
+
+    const startHeight = el.getBoundingClientRect().height;
+    $el.css({ overflow: 'hidden', height: startHeight });
+    $el.transition({
+        height: 0,
+        duration,
+        easing,
+        complete: () => {
+            $el.css({ display: 'none', height: '', overflow: '' });
+            onAnimationEnd?.(el);
+        },
+    });
+}
+
+/**
  * Expose selected libraries on window for third-party extension compatibility.
  * New code should import from lib.js directly.
  */
