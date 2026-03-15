@@ -71,6 +71,12 @@ export let user_avatar = '';
 /** @type {FilterHelper} Filter helper for the persona list */
 export const personasFilter = new FilterHelper(debounce(getUserAvatars, debounce_timeout.quick));
 
+let primedUserAvatars = null;
+
+export function primeUserAvatarsSnapshot(snapshot) {
+    primedUserAvatars = snapshot;
+}
+
 /** @type {string} The last loaded chat id to remember for persona loading */
 let personaLastLoadedChatId = null;
 
@@ -295,13 +301,7 @@ function addMissingPersonas(avatarsList) {
  * @returns {Promise<string[]>} List of avatar file names
  */
 export async function getUserAvatars(doRender = true, openPageAt = '') {
-    const response = await fetch('/api/avatars/get', {
-        method: 'POST',
-        headers: getRequestHeaders({ omitContentType: true }),
-    });
-    if (response.ok) {
-        const allEntities = await response.json();
-
+    const renderAvatars = (allEntities) => {
         if (!Array.isArray(allEntities)) {
             return [];
         }
@@ -369,7 +369,24 @@ export async function getUserAvatars(doRender = true, openPageAt = '') {
         openPageAt && navigateToAvatar(openPageAt);
 
         return allEntities;
+    };
+
+    if (primedUserAvatars !== null) {
+        const allEntities = primedUserAvatars;
+        primedUserAvatars = null;
+        return renderAvatars(allEntities);
     }
+
+    const response = await fetch('/api/avatars/get', {
+        method: 'POST',
+        headers: getRequestHeaders({ omitContentType: true }),
+    });
+    if (!response.ok) {
+        return;
+    }
+
+    const allEntities = await response.json();
+    return renderAvatars(allEntities);
 }
 
 /**

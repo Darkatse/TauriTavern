@@ -113,6 +113,7 @@ export {
     deleteGroup,
     getGroupAvatar,
     getGroups,
+    applyGroupsSnapshot,
     regenerateGroup,
     resetSelectedGroup,
     select_group_chats,
@@ -873,30 +874,34 @@ async function getGroups() {
     if (response.ok) {
         /** @type {Group[]} */
         const data = await response.json();
-        groups = data.slice();
+        applyGroupsSnapshot(data);
+    }
+}
 
-        // Convert groups to new format
-        for (const group of groups) {
-            if (typeof group.id === 'number') {
-                group.id = String(group.id);
-            }
-            if (group.disabled_members == undefined) {
-                group.disabled_members = [];
-            }
-            if (group.chat_id == undefined) {
-                group.chat_id = group.id;
-                group.chats = [group.id];
-                group.members = group.members
-                    .map(x => characters.find(y => y.name == x)?.avatar)
-                    .filter(x => x)
-                    .filter(onlyUnique);
-            }
-            if (typeof group.chat_id === 'number') {
-                group.chat_id = String(group.chat_id);
-            }
-            if (Array.isArray(group.chats) && group.chats.some(x => typeof x === 'number')) {
-                group.chats = group.chats.map(x => String(x));
-            }
+function applyGroupsSnapshot(data) {
+    groups = data.slice();
+
+    // Convert groups to new format
+    for (const group of groups) {
+        if (typeof group.id === 'number') {
+            group.id = String(group.id);
+        }
+        if (group.disabled_members == undefined) {
+            group.disabled_members = [];
+        }
+        if (group.chat_id == undefined) {
+            group.chat_id = group.id;
+            group.chats = [group.id];
+            group.members = group.members
+                .map(x => characters.find(y => y.name == x)?.avatar)
+                .filter(x => x)
+                .filter(onlyUnique);
+        }
+        if (typeof group.chat_id === 'number') {
+            group.chat_id = String(group.chat_id);
+        }
+        if (Array.isArray(group.chats) && group.chats.some(x => typeof x === 'number')) {
+            group.chats = group.chats.map(x => String(x));
         }
     }
 }

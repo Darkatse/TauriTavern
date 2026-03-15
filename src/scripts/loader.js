@@ -5,6 +5,15 @@ let loaderPopup;
 
 let preloaderYoinked = false;
 
+export function removePreloader() {
+    if (preloaderYoinked) return;
+    const preloader = document.getElementById('preloader');
+    if (preloader) {
+        preloader.remove();
+    }
+    preloaderYoinked = true;
+}
+
 export function showLoader() {
     // Two loaders don't make sense. Don't await, we can overlay the old loader while it closes
     if (loaderPopup) loaderPopup.complete(POPUP_RESULT.CANCELLED);
@@ -51,7 +60,7 @@ export async function hideLoader() {
             $('#loader').remove();
             // Yoink preloader entirely; it only exists to cover up unstyled content while loading JS
             // If it's present, we remove it once and then it's gone.
-            yoinkPreloader();
+            removePreloader();
 
             loaderPopup.complete(POPUP_RESULT.AFFIRMATIVE)
                 .catch((err) => console.error('Error completing loaderPopup:', err))
@@ -69,8 +78,3 @@ export async function hideLoader() {
     });
 }
 
-function yoinkPreloader() {
-    if (preloaderYoinked) return;
-    document.getElementById('preloader').remove();
-    preloaderYoinked = true;
-}

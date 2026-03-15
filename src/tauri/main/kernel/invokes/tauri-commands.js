@@ -50,6 +50,7 @@ export {};
  *   | 'get_character_chats_by_id'
  *   | 'get_chat_backup_raw'
  *   | 'get_chat_completions_status'
+ *   | 'get_bootstrap_snapshot'
  *   | 'get_client_version'
  *   | 'get_data_archive_imports_root'
  *   | 'get_data_archive_job_status'

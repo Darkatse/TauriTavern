@@ -98,4 +98,4 @@ export const event_types = {
     MEDIA_ATTACHMENT_DELETED: 'media_attachment_deleted',
 };
 
-export const eventSource = new EventEmitter([event_types.APP_READY, event_types.APP_INITIALIZED]);
+export const eventSource = new EventEmitter([event_types.APP_READY, event_types.APP_INITIALIZED, event_types.SETTINGS_LOADED]);

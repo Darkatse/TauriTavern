@@ -72,6 +72,10 @@ export function createHostInvokePolicies({ thumbnailBlobCacheLimit }) {
     const thumbnailCacheLimit = Math.max(0, Math.floor(Number(thumbnailBlobCacheLimit) || 0));
 
     return {
+        get_bootstrap_snapshot: {
+            kind: 'dedupe',
+            key: () => 'singleton',
+        },
         get_sillytavern_settings: {
             kind: 'dedupe',
             key: () => 'singleton',
@@ -105,4 +109,3 @@ export function createHostInvokePolicies({ thumbnailBlobCacheLimit }) {
         },
     };
 }
-

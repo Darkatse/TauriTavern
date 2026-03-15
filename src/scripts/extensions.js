@@ -70,6 +70,7 @@ let connectedToApi = false;
  * @type {Record<string, object>}
  */
 let manifests = {};
+let offlineExtensionsDiscoveryPromise = null;
 
 /**
  * Default URL for the Extras API.
@@ -319,6 +320,27 @@ async function discoverExtensions() {
     }
 }
 
+export function startOfflineExtensionsDiscovery({ forceRefresh = false } = {}) {
+    if (forceRefresh) {
+        offlineExtensionsDiscoveryPromise = null;
+    }
+
+    if (offlineExtensionsDiscoveryPromise) {
+        return offlineExtensionsDiscoveryPromise;
+    }
+
+    offlineExtensionsDiscoveryPromise = (async () => {
+        await waitForTauriMainReady();
+        const extensions = await discoverExtensions();
+        extensionNames = extensions.map(x => x.name);
+        extensionTypes = Object.fromEntries(extensions.map(x => [x.name, x.type]));
+        manifests = await getManifests(extensionNames);
+        return extensions;
+    })();
+
+    return offlineExtensionsDiscoveryPromise;
+}
+
 function onDisableExtensionClick() {
     const name = $(this).data('name');
     disableExtension(name, false);
@@ -470,24 +492,26 @@ async function getManifests(names) {
  * Tries to activate all available extensions that are not already active.
  * @returns {Promise<void>}
  */
-async function activateExtensions() {
+async function activateExtensions({ parallelism = 1 } = {}) {
     extensionLoadErrors.clear();
     const clientVersion = CLIENT_VERSION.split(':')[1];
     const extensions = Object.entries(manifests).sort((a, b) => sortManifestsByOrder(a[1], b[1]));
     const extensionNames = extensions.map(x => x[0]);
-    const promises = [];
 
-    for (let entry of extensions) {
-        const name = entry[0];
-        const manifest = entry[1];
+    const shouldActivateExtension = ({ name, manifest }) => {
+        if (activeExtensions.has(name)) {
+            return { activate: false, reason: 'already-active' };
+        }
+
+        const isDisabled = extension_settings.disabledExtensions.includes(name);
+        if (isDisabled) {
+            return { activate: false, reason: 'disabled' };
+        }
+
         const extrasRequirements = manifest.requires;
         const extensionDependencies = manifest.dependencies;
         const minClientVersion = manifest.minimum_client_version;
-        const displayName = manifest.display_name || name;
 
-        if (activeExtensions.has(name)) {
-            continue;
-        }
         // Client version requirement: pass if 'minimum_client_version' is undefined or null.
         let meetsClientMinimumVersion = true;
         if (minClientVersion !== undefined) {
@@ -528,42 +552,89 @@ async function activateExtensions() {
             }
         }
 
-        const isDisabled = extension_settings.disabledExtensions.includes(name);
-
-        if (meetsModuleRequirements && meetsExtensionDeps && meetsClientMinimumVersion && !isDisabled) {
-            try {
-                console.debug('Activating extension', name);
-                const promise = addExtensionLocale(name, manifest).finally(() =>
-                    Promise.all([addExtensionScript(name, manifest), addExtensionStyle(name, manifest)]),
-                );
-                await promise
-                    .then(() => activeExtensions.add(name))
-                    .catch(err => {
-                        console.log('Could not activate extension', name, err);
-                        extensionLoadErrors.add(t`Extension "${displayName}" failed to load: ${err}`);
-                    });
-                promises.push(promise);
-            } catch (error) {
-                console.error('Could not activate extension', name, error);
-            }
-        } else if (!meetsModuleRequirements && !isDisabled) {
-            console.warn(t`Extension "${name}" did not load. Missing required Extras module(s): "${missingModules.join(', ')}"`);
-            extensionLoadErrors.add(t`Extension "${displayName}" did not load. Missing required Extras module(s): "${missingModules.join(', ')}"`);
-        } else if (!meetsExtensionDeps && !isDisabled) {
-            if (disabledDependencies.length > 0) {
-                console.warn(t`Extension "${name}" did not load. Required extensions exist but are disabled: "${disabledDependencies.join(', ')}". Enable them first, then reload.`);
-                extensionLoadErrors.add(t`Extension "${displayName}" did not load. Required extensions exist but are disabled: "${disabledDependencies.join(', ')}". Enable them first, then reload.`);
-            } else {
-                console.warn(t`Extension "${name}" did not load. Missing required extensions: "${missingDependencies.join(', ')}"`);
-                extensionLoadErrors.add(t`Extension "${displayName}" did not load. Missing required extensions: "${missingDependencies.join(', ')}"`);
-            }
-        } else if (!meetsClientMinimumVersion && !isDisabled) {
-            console.warn(t`Extension "${name}" did not load. Requires ST client version ${minClientVersion}, but current version is ${clientVersion}.`);
-            extensionLoadErrors.add(t`Extension "${displayName}" did not load. Requires ST client version ${minClientVersion}, but current version is ${clientVersion}.`);
+        if (!meetsModuleRequirements) {
+            return { activate: false, reason: 'missing-modules', missingModules };
         }
+
+        if (!meetsExtensionDeps) {
+            return { activate: false, reason: 'missing-deps', missingDependencies, disabledDependencies };
+        }
+
+        if (!meetsClientMinimumVersion) {
+            return { activate: false, reason: 'min-client-version', minClientVersion };
+        }
+
+        return { activate: true };
+    };
+
+    const activateSingleExtension = async ({ name, manifest }) => {
+        const decision = shouldActivateExtension({ name, manifest });
+        const displayName = manifest.display_name || name;
+
+        if (!decision.activate) {
+            if (decision.reason === 'missing-modules') {
+                console.warn(t`Extension "${name}" did not load. Missing required Extras module(s): "${decision.missingModules.join(', ')}"`);
+                extensionLoadErrors.add(t`Extension "${displayName}" did not load. Missing required Extras module(s): "${decision.missingModules.join(', ')}"`);
+            } else if (decision.reason === 'missing-deps') {
+                if (decision.disabledDependencies.length > 0) {
+                    console.warn(t`Extension "${name}" did not load. Required extensions exist but are disabled: "${decision.disabledDependencies.join(', ')}". Enable them first, then reload.`);
+                    extensionLoadErrors.add(t`Extension "${displayName}" did not load. Required extensions exist but are disabled: "${decision.disabledDependencies.join(', ')}". Enable them first, then reload.`);
+                } else {
+                    console.warn(t`Extension "${name}" did not load. Missing required extensions: "${decision.missingDependencies.join(', ')}"`);
+                    extensionLoadErrors.add(t`Extension "${displayName}" did not load. Missing required extensions: "${decision.missingDependencies.join(', ')}"`);
+                }
+            } else if (decision.reason === 'min-client-version') {
+                console.warn(t`Extension "${name}" did not load. Requires ST client version ${decision.minClientVersion}, but current version is ${clientVersion}.`);
+                extensionLoadErrors.add(t`Extension "${displayName}" did not load. Requires ST client version ${decision.minClientVersion}, but current version is ${clientVersion}.`);
+            }
+
+            return;
+        }
+
+        try {
+            console.debug('Activating extension', name);
+            await addExtensionLocale(name, manifest);
+            await Promise.all([addExtensionScript(name, manifest), addExtensionStyle(name, manifest)]);
+            activeExtensions.add(name);
+        } catch (err) {
+            console.log('Could not activate extension', name, err);
+            extensionLoadErrors.add(t`Extension "${displayName}" failed to load: ${err}`);
+        }
+    };
+
+    let currentGroup = [];
+    let currentOrder = null;
+
+    const flushGroup = async () => {
+        if (currentGroup.length === 0) {
+            return;
+        }
+
+        for (let i = 0; i < currentGroup.length; i += parallelism) {
+            const chunk = currentGroup.slice(i, i + parallelism);
+            await Promise.all(chunk.map((entry) => activateSingleExtension(entry)));
+
+            await delay(0);
+        }
+
+        currentGroup = [];
+    };
+
+    for (const [name, manifest] of extensions) {
+        const order = Number.parseInt(String(manifest.loading_order ?? '0'), 10) || 0;
+        if (currentOrder === null) {
+            currentOrder = order;
+        }
+
+        if (order !== currentOrder) {
+            await flushGroup();
+            currentOrder = order;
+        }
+
+        currentGroup.push({ name, manifest });
     }
 
-    await Promise.allSettled(promises);
+    await flushGroup();
     $('#extensions_details').toggleClass('warning', extensionLoadErrors.size > 0);
 }
 
@@ -622,6 +693,42 @@ async function addExtensionsButtonAndMenu() {
             isDropdownVisible = false;
         }
     });
+}
+
+let extensionsUiReadyPromise = null;
+
+function syncExtensionSettingsUi() {
+    $('#extensions_url').val(extension_settings.apiUrl);
+    $('#extensions_api_key').val(extension_settings.apiKey);
+    $('#extensions_autoconnect').prop('checked', extension_settings.autoConnect);
+    $('#extensions_notify_updates').prop('checked', extension_settings.notifyUpdates);
+}
+
+async function ensureExtensionsUiReady() {
+    if (extensionsUiReadyPromise) {
+        return extensionsUiReadyPromise;
+    }
+
+    extensionsUiReadyPromise = (async () => {
+        await addExtensionsButtonAndMenu();
+        $('#extensionsMenuButton').css('display', 'flex');
+
+        syncExtensionSettingsUi();
+
+        $('#extensions_connect').on('click', connectClickHandler);
+        $('#extensions_autoconnect').on('input', autoConnectInputHandler);
+        $('#extensions_details').on('click', showExtensionsDetails);
+        $('#extensions_notify_updates').on('input', notifyUpdatesInputHandler);
+        $(document).on('click', '.extensions_info .extension_block .toggle_disable', onDisableExtensionClick);
+        $(document).on('click', '.extensions_info .extension_block .toggle_enable', onEnableExtensionClick);
+        $(document).on('click', '.extensions_info .extension_block .btn_update', onUpdateClick);
+        $(document).on('click', '.extensions_info .extension_block .btn_delete', onDeleteClick);
+        $(document).on('click', '.extensions_info .extension_block .btn_move', onMoveClick);
+        $(document).on('click', '.extensions_info .extension_block .btn_branch', onBranchClick);
+        $('#third_party_extension_button').on('click', () => openThirdPartyExtensionMenu());
+    })();
+
+    return extensionsUiReadyPromise;
 }
 
 function notifyUpdatesInputHandler() {
@@ -1437,33 +1544,41 @@ export async function installExtension(url, global, branch = '') {
  * @param {boolean} versionChanged Is this a version change?
  * @param {boolean} enableAutoUpdate Enable auto-update
  */
-export async function loadExtensionSettings(settings, versionChanged, enableAutoUpdate) {
-    await waitForTauriMainReady();
-
+export function applyExtensionSettings(settings) {
     if (settings.extension_settings) {
         Object.assign(extension_settings, settings.extension_settings);
     }
 
-    $('#extensions_url').val(extension_settings.apiUrl);
-    $('#extensions_api_key').val(extension_settings.apiKey);
-    $('#extensions_autoconnect').prop('checked', extension_settings.autoConnect);
-    $('#extensions_notify_updates').prop('checked', extension_settings.notifyUpdates);
+    syncExtensionSettingsUi();
+}
+
+export async function activateOfflineExtensions({ versionChanged, enableAutoUpdate, parallelism = 1, forceRefresh = false } = {}) {
+    await waitForTauriMainReady();
+    const uiReady = ensureExtensionsUiReady();
 
     // Activate offline extensions
     await eventSource.emit(event_types.EXTENSIONS_FIRST_LOAD);
-    const extensions = await discoverExtensions();
-    extensionNames = extensions.map(x => x.name);
-    extensionTypes = Object.fromEntries(extensions.map(x => [x.name, x.type]));
-    manifests = await getManifests(extensionNames);
+    await startOfflineExtensionsDiscovery({ forceRefresh });
 
     if (versionChanged && enableAutoUpdate) {
         await autoUpdateExtensions(false);
     }
 
-    await activateExtensions();
+    await uiReady;
+    await activateExtensions({ parallelism });
     if (extension_settings.autoConnect && extension_settings.apiUrl) {
         connectToApi(extension_settings.apiUrl);
     }
+}
+
+export async function loadExtensionSettings(settings, versionChanged, enableAutoUpdate, options = {}) {
+    applyExtensionSettings(settings);
+    await activateOfflineExtensions({
+        versionChanged,
+        enableAutoUpdate,
+        forceRefresh: true,
+        parallelism: Number(options.parallelism) || 1,
+    });
 }
 
 export function doDailyExtensionUpdatesCheck() {
@@ -1775,24 +1890,10 @@ export async function openThirdPartyExtensionMenu(suggestUrl = '') {
 }
 
 export async function initExtensions() {
-    await addExtensionsButtonAndMenu();
-    $('#extensionsMenuButton').css('display', 'flex');
-
-    $('#extensions_connect').on('click', connectClickHandler);
-    $('#extensions_autoconnect').on('input', autoConnectInputHandler);
-    $('#extensions_details').on('click', showExtensionsDetails);
-    $('#extensions_notify_updates').on('input', notifyUpdatesInputHandler);
-    $(document).on('click', '.extensions_info .extension_block .toggle_disable', onDisableExtensionClick);
-    $(document).on('click', '.extensions_info .extension_block .toggle_enable', onEnableExtensionClick);
-    $(document).on('click', '.extensions_info .extension_block .btn_update', onUpdateClick);
-    $(document).on('click', '.extensions_info .extension_block .btn_delete', onDeleteClick);
-    $(document).on('click', '.extensions_info .extension_block .btn_move', onMoveClick);
-    $(document).on('click', '.extensions_info .extension_block .btn_branch', onBranchClick);
-
-    /**
-     * Handles the click event for the third-party extension import button.
-     *
-     * @listens #third_party_extension_button#click - The click event of the '#third_party_extension_button' element.
-     */
-    $('#third_party_extension_button').on('click', () => openThirdPartyExtensionMenu());
+    eventSource.once(event_types.APP_READY, () => {
+        void (async () => {
+            await delay(0);
+            await ensureExtensionsUiReady();
+        })();
+    });
 }

@@ -58,6 +58,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::user_commands::create_user,
         super::user_commands::update_user,
         super::user_commands::delete_user,
+        // Bootstrap commands
+        super::bootstrap_commands::get_bootstrap_snapshot,
         // Settings commands
         super::settings_commands::get_tauritavern_settings,
         super::settings_commands::update_tauritavern_settings,

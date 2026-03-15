@@ -1,6 +1,7 @@
 // Tauri commands
 pub mod avatar_commands;
 pub mod background_commands;
+pub mod bootstrap_commands;
 pub mod bridge;
 pub mod character_commands;
 pub mod chat_commands;

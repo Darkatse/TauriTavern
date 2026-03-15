@@ -86,6 +86,7 @@ import {
     selected_group,
     saveGroupChat,
     getGroups,
+    applyGroupsSnapshot,
     generateGroupWrapper,
     is_group_generating,
     resetSelectedGroup,
@@ -217,7 +218,7 @@ import {
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
 
-import { cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, runGenerationInterceptors } from './scripts/extensions.js';
+import { activateOfflineExtensions, applyExtensionSettings, cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, runGenerationInterceptors, startOfflineExtensionsDiscovery } from './scripts/extensions.js';
 import { COMMENT_NAME_DEFAULT, CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, initSlashCommandAutoComplete, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
 import { initMacroAutoComplete } from './scripts/autocomplete/MacroAutoComplete.js';
 import {
@@ -243,7 +244,7 @@ import {
     tag_import_setting,
     applyCharacterTagsToMessageDivs,
 } from './scripts/tags.js';
-import { initSecrets, readSecretState } from './scripts/secrets.js';
+import { initSecrets, primeSecretStateSnapshot, readSecretState } from './scripts/secrets.js';
 import { markdownExclusionExt } from './scripts/showdown-exclusion.js';
 import { markdownUnderscoreExt } from './scripts/showdown-underscore.js';
 import { NOTE_MODULE_NAME, initAuthorsNote, metadata_keys, setFloatingPrompt, shouldWIAddPrompt } from './scripts/authors-note.js';
@@ -264,6 +265,7 @@ import { initLocales, t, translate } from './scripts/i18n.js';
 import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
 import {
     user_avatar,
+    primeUserAvatarsSnapshot,
     getUserAvatars,
     getUserAvatar,
     setUserAvatar,
@@ -274,7 +276,7 @@ import {
     isPersonaPanelOpen,
 } from './scripts/personas.js';
 import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_settings } from './scripts/backgrounds.js';
-import { hideLoader, showLoader } from './scripts/loader.js';
+import { hideLoader, showLoader, removePreloader } from './scripts/loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
 import { initTextGenModels } from './scripts/textgen-models.js';
 import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
@@ -325,6 +327,7 @@ import { MacroEnvBuilder } from './scripts/macros/engine/MacroEnvBuilder.js';
 import { MacroEngine } from './scripts/macros/engine/MacroEngine.js';
 import { addChatBackupsBrowser } from './scripts/chat-backups.js';
 import { onboardingExperimentalMacroEngine } from './scripts/macros/engine/MacroDiagnostics.js';
+import { createStartupStatusOverlay } from './scripts/tauri/startup/startup-status-overlay.js';
 
 // API OBJECT FOR EXTERNAL WIRING
 globalThis.SillyTavern = {
@@ -796,12 +799,55 @@ export async function pingServer() {
     }
 }
 
+async function fetchBootstrapSnapshot() {
+    const response = await fetch('/api/bootstrap', {
+        method: 'POST',
+        headers: getRequestHeaders({ omitContentType: true }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Bootstrap snapshot request failed with status ${response.status}`);
+    }
+
+    return response.json();
+}
+
 //MARK: firstLoadInit
 async function firstLoadInit() {
-    // Ensure bridge/interceptors are installed before first /api/* calls.
-    await waitForTauriMainReady();
+    const startupStatus = createStartupStatusOverlay();
+    const perfEnabled = globalThis.__TAURITAVERN_PERF_ENABLED__ === true;
+    const perfMark = (name) => perfEnabled && globalThis.performance?.mark?.(name);
+
+    const setStage = (stage, message) => {
+        globalThis.__TAURITAVERN_STARTUP_STAGE__ = stage;
+        startupStatus.setText(message);
+        perfMark(`tt:startup:${stage}`);
+    };
+
+    const nextPaint = () => new Promise((resolve) => requestAnimationFrame(resolve));
+
+    const hostReadyPromise = waitForTauriMainReady();
+
+    perfMark('tt:startup:start');
 
     try {
+        setStage('shell', '启动中：渲染界面…（扩展稍后加载）');
+        removePreloader();
+        await nextPaint();
+
+        registerPromptManagerMigration();
+        initDomHandlers();
+        initStandaloneMode();
+        initLibraryShims();
+        addShowdownPatch(showdown);
+        addDOMPurifyHooks();
+        reloadMarkdownProcessor();
+        applyBrowserFixes();
+
+        // Ensure bridge/interceptors are installed before first /api/* calls.
+        setStage('core', '启动中：连接后端…');
+        await hostReadyPromise;
+
         const tokenResponse = await fetch('/csrf-token');
         if (!tokenResponse.ok) {
             throw new Error(`CSRF request failed with status ${tokenResponse.status}`);
@@ -811,80 +857,107 @@ async function firstLoadInit() {
             throw new Error('CSRF token is missing');
         }
         token = tokenData.token;
-    } catch (error) {
-        if (window.__TAURI_INTERNALS__ !== undefined) {
-            console.warn('CSRF token unavailable in Tauri; using fallback token.', error);
-            token = 'tauri-dummy-token';
-        } else {
-            toastr.error(t`Couldn't get CSRF token. Please refresh the page.`, t`Error`, { timeOut: 0, extendedTimeOut: 0, preventDuplicates: true });
-            throw new Error('Initialization failed');
-        }
-    }
 
-    showLoader();
-    registerPromptManagerMigration();
-    initDomHandlers();
-    initStandaloneMode();
-    initLibraryShims();
-    addShowdownPatch(showdown);
-    addDOMPurifyHooks();
-    reloadMarkdownProcessor();
-    applyBrowserFixes();
-    await getClientVersion();
-    await initSecrets();
-    await readSecretState();
-    await initLocales();
-    initChatUtilities();
-    initDefaultSlashCommands();
-    initTextGenModels();
-    initOpenAI();
-    initTextGenSettings();
-    initKoboldSettings();
-    initNovelAISettings();
-    initSystemPrompts();
-    initExtensions();
-    initExtensionSlashCommands();
-    ToolManager.initToolSlashCommands();
-    await initPresetManager();
-    await initSystemMessages();
-    await getSettings();
-    syncMobileImmersiveFullscreenUi();
-    initKeyboard();
-    initDynamicStyles();
-    initTags();
-    initBookmarks();
-    await getUserAvatars(true, user_avatar);
-    await getCharacters();
-    await getBackgrounds();
-    await initTokenizers();
-    initBackgrounds();
-    initAuthorsNote();
-    await initPersonas();
-    await initSlashCommandAutoComplete();
-    initMacroAutoComplete();
-    initWorldInfo();
-    initHorde();
-    initRossMods();
-    initStats();
-    initCfg();
-    initLogprobs();
-    initInputMarkdown();
-    initServerHistory();
-    initSettingsSearch();
-    initBulkEdit();
-    initReasoning();
-    initWelcomeScreen();
-    await initScrapers();
-    initCustomSelectedSamplers();
-    initDataMaid();
-    initItemizedPrompts();
-    initAccessibility();
-    addDebugFunctions();
-    doDailyExtensionUpdatesCheck();
-    await eventSource.emit(event_types.APP_INITIALIZED);
-    await hideLoader();
-    await fixViewport();
-    await eventSource.emit(event_types.APP_READY);
+        const bootstrapPromise = fetchBootstrapSnapshot();
+
+        setStage('core', '启动中：加载核心数据…');
+        const clientVersionPromise = getClientVersion();
+        await initSecrets();
+        const bootstrapSnapshot = await bootstrapPromise;
+        const extensionsEnabled = Boolean(bootstrapSnapshot.settings?.enable_extensions)
+            && bootstrapSnapshot.settings?.result != 'file not find'
+            && Boolean(bootstrapSnapshot.settings?.settings);
+        const extensionsDiscoveryPromise = extensionsEnabled ? startOfflineExtensionsDiscovery() : null;
+        primeSecretStateSnapshot(bootstrapSnapshot.secret_state);
+        await readSecretState();
+        await clientVersionPromise;
+        await initLocales();
+        initChatUtilities();
+        initDefaultSlashCommands();
+        initTextGenModels();
+        initOpenAI();
+        initTextGenSettings();
+        initKoboldSettings();
+        initNovelAISettings();
+        initSystemPrompts();
+
+        setStage('full', '启动中：加载扩展与可选模块…');
+        initExtensions();
+        initExtensionSlashCommands();
+        ToolManager.initToolSlashCommands();
+        await initPresetManager();
+        await initSystemMessages();
+        await applySettingsSnapshot(bootstrapSnapshot.settings);
+        syncMobileImmersiveFullscreenUi();
+        initKeyboard();
+        initDynamicStyles();
+        initTags();
+        initBookmarks();
+        primeUserAvatarsSnapshot(bootstrapSnapshot.avatars);
+        await getUserAvatars(true, user_avatar);
+        const appliedCharacters = await applyCharactersSnapshot(bootstrapSnapshot.characters);
+        if (!appliedCharacters) {
+            return;
+        }
+        applyGroupsSnapshot(bootstrapSnapshot.groups);
+        await printCharacters(true);
+        await getBackgrounds();
+        initBackgrounds();
+        initAuthorsNote();
+        await initPersonas();
+        await initSlashCommandAutoComplete();
+        initMacroAutoComplete();
+        initWorldInfo();
+        initHorde();
+        initRossMods();
+        initStats();
+        initCfg();
+        initLogprobs();
+        initInputMarkdown();
+        initServerHistory();
+        initSettingsSearch();
+        initBulkEdit();
+        initReasoning();
+        initWelcomeScreen();
+        initCustomSelectedSamplers();
+        initDataMaid();
+        initItemizedPrompts();
+        initAccessibility();
+        addDebugFunctions();
+
+        if (extensionsEnabled) {
+            await extensionsDiscoveryPromise;
+            const enableAutoUpdate = Boolean(bootstrapSnapshot.settings?.enable_extensions_auto_update);
+            const isVersionChanged = settings.currentVersion !== currentVersion;
+
+            const isAndroid = /android/i.test(navigator.userAgent || '');
+            const extensionParallelism = isAndroid ? 1 : 2;
+
+            await activateOfflineExtensions({
+                versionChanged: isVersionChanged,
+                enableAutoUpdate,
+                parallelism: extensionParallelism,
+            });
+            await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED);
+            doDailyExtensionUpdatesCheck();
+        }
+
+        await eventSource.emit(event_types.APP_INITIALIZED);
+        await fixViewport();
+        await eventSource.emit(event_types.APP_READY);
+
+        startupStatus.remove();
+        perfMark('tt:startup:ready');
+
+        void (async () => {
+            await nextPaint();
+            await initTokenizers();
+            await nextPaint();
+            await initScrapers();
+        })();
+    } finally {
+        startupStatus.remove();
+    }
 }
 
 async function fixViewport() {
@@ -1390,6 +1463,37 @@ export function getCharacterSource(chId = this_chid) {
     return '';
 }
 
+async function applyCharactersSnapshot(getData) {
+    const previousAvatar = this_chid !== undefined ? characters[this_chid]?.avatar : null;
+    characters.splice(0, characters.length);
+
+    for (let i = 0; i < getData.length; i++) {
+        characters[i] = getData[i];
+        characters[i].name = DOMPurify.sanitize(characters[i].name);
+
+        // For dropped-in cards
+        if (!characters[i].chat) {
+            characters[i].chat = `${characters[i].name} - ${humanizedDateTime()}`;
+        }
+
+        characters[i].chat = String(characters[i].chat);
+    }
+
+    if (previousAvatar) {
+        const newCharacterId = characters.findIndex(x => x.avatar === previousAvatar);
+        if (newCharacterId >= 0) {
+            setCharacterId(newCharacterId);
+            await selectCharacterById(newCharacterId, { switchMenu: false });
+        } else {
+            await Popup.show.text(t`ERROR: The active character is no longer available.`, t`The page will be refreshed to prevent data loss. Press "OK" to continue.`);
+            location.reload();
+            return false;
+        }
+    }
+
+    return true;
+}
+
 export async function getCharacters() {
     const response = await fetch('/api/characters/all', {
         method: 'POST',
@@ -1397,30 +1501,10 @@ export async function getCharacters() {
         body: JSON.stringify({}),
     });
     if (response.ok) {
-        const previousAvatar = this_chid !== undefined ? characters[this_chid]?.avatar : null;
-        characters.splice(0, characters.length);
         const getData = await response.json();
-        for (let i = 0; i < getData.length; i++) {
-            characters[i] = getData[i];
-            characters[i].name = DOMPurify.sanitize(characters[i].name);
-
-            // For dropped-in cards
-            if (!characters[i].chat) {
-                characters[i].chat = `${characters[i].name} - ${humanizedDateTime()}`;
-            }
-
-            characters[i].chat = String(characters[i].chat);
-        }
-
-        if (previousAvatar) {
-            const newCharacterId = characters.findIndex(x => x.avatar === previousAvatar);
-            if (newCharacterId >= 0) {
-                setCharacterId(newCharacterId);
-                await selectCharacterById(newCharacterId, { switchMenu: false });
-            } else {
-                await Popup.show.text(t`ERROR: The active character is no longer available.`, t`The page will be refreshed to prevent data loss. Press "OK" to continue.`);
-                return location.reload();
-            }
+        const applied = await applyCharactersSnapshot(getData);
+        if (!applied) {
+            return;
         }
 
         await getGroups();
@@ -8120,23 +8204,7 @@ function reloadLoop() {
     }
 }
 
-//MARK: getSettings()
-///////////////////////////////////////////
-export async function getSettings() {
-    const response = await fetch('/api/settings/get', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({}),
-        cache: 'no-cache',
-    });
-
-    if (!response.ok) {
-        reloadLoop();
-        toastr.error(t`Settings could not be loaded after multiple attempts. Please try again later.`);
-        throw new Error('Error getting settings');
-    }
-
-    const data = await response.json();
+async function applySettingsSnapshot(data) {
     if (data.result != 'file not find' && data.settings) {
         settings = JSON.parse(data.settings);
         if (settings.username !== undefined && settings.username !== '') {
@@ -8230,10 +8298,7 @@ export async function getSettings() {
         initMacros();
 
         if (data.enable_extensions) {
-            const enableAutoUpdate = Boolean(data.enable_extensions_auto_update);
-            const isVersionChanged = settings.currentVersion !== currentVersion;
-            await loadExtensionSettings(settings, isVersionChanged, enableAutoUpdate);
-            await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED);
+            applyExtensionSettings(settings);
         }
 
         firstRun = !!settings.firstRun;
@@ -8247,6 +8312,26 @@ export async function getSettings() {
     await validateDisabledSamplers();
     settingsReady = true;
     await eventSource.emit(event_types.SETTINGS_LOADED);
+}
+
+//MARK: getSettings()
+///////////////////////////////////////////
+export async function getSettings() {
+    const response = await fetch('/api/settings/get', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({}),
+        cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+        reloadLoop();
+        toastr.error(t`Settings could not be loaded after multiple attempts. Please try again later.`);
+        throw new Error('Error getting settings');
+    }
+
+    const data = await response.json();
+    await applySettingsSnapshot(data);
 }
 
 //MARK: saveSettings()
