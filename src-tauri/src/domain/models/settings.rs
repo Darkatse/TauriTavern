@@ -6,7 +6,7 @@ fn default_perf_profile() -> String {
 }
 
 fn default_panel_runtime_profile() -> String {
-    "compat".to_string()
+    "off".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

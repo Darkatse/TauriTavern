@@ -14,7 +14,7 @@ const PANEL_RUNTIME_PROFILE_STORAGE_KEY = 'tt:panelRuntimeProfile';
 
 export function preinstallPanelRuntime() {
     const profile = String(localStorage.getItem(PANEL_RUNTIME_PROFILE_STORAGE_KEY) || '').trim();
-    if (profile === 'off') {
+    if (!profile || profile === 'off') {
         return;
     }
 

@@ -15,7 +15,7 @@ const PANEL_RUNTIME_PROFILE_STORAGE_KEY = 'tt:panelRuntimeProfile';
 
 export function installPanelRuntime() {
     const ready = getTauriTavernSettings().then((settings) => {
-        const profileName = String(settings.panel_runtime_profile || '').trim();
+        const profileName = String(settings.panel_runtime_profile || 'off').trim();
         localStorage.setItem(PANEL_RUNTIME_PROFILE_STORAGE_KEY, profileName);
 
         if (profileName === 'off') {

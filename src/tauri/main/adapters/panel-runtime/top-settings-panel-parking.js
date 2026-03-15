@@ -286,7 +286,7 @@ function registerDrawerParking(manager, { panelId, parkedSelector, pinnedSelecto
  * Phase 0: Park the heaviest closed drawers under #top-settings-holder by
  * detaching their heavy subtrees from the main document tree.
  *
- * Controlled by `tauritavern-settings.panel_runtime_profile` (default: compat).
+ * Controlled by `tauritavern-settings.panel_runtime_profile` (default: off).
  *
  * @param {{ manager: EmbeddedRuntimeManager }} options
  */

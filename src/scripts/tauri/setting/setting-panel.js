@@ -359,7 +359,7 @@ async function openTauriTavernSettingsPopup() {
     }
 
     const currentPanelRuntimeProfile = settings.panel_runtime_profile;
-    profileSelect.value = typeof currentPanelRuntimeProfile === 'string' && currentPanelRuntimeProfile ? currentPanelRuntimeProfile : 'compat';
+    profileSelect.value = typeof currentPanelRuntimeProfile === 'string' && currentPanelRuntimeProfile ? currentPanelRuntimeProfile : 'off';
 
     const embeddedOverride = String(localStorage.getItem('tt:runtimeProfile') || '').trim();
     const currentEmbeddedRuntimeProfile = embeddedOverride === 'compat' || embeddedOverride === 'mobile-safe'
