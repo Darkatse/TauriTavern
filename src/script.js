@@ -2,7 +2,6 @@ import {
     showdown,
     moment,
     DOMPurify,
-    hljs,
     Handlebars,
     SVGInject,
     Popper,

@@ -1,5 +1,5 @@
-import { hljs } from '../../lib.js';
 import { t } from '../i18n.js';
+import { getCodeHighlightCoordinator } from '../tauri/perf/code-highlight-coordinator.js';
 import { SlashCommandAbortController } from './SlashCommandAbortController.js';
 import { SlashCommandArgument, SlashCommandNamedArgument } from './SlashCommandArgument.js';
 import { SlashCommandClosure } from './SlashCommandClosure.js';
@@ -414,7 +414,6 @@ export class SlashCommand {
                 help.innerHTML = helpString;
                 for (const code of help.querySelectorAll('pre > code')) {
                     code.classList.add('language-stscript');
-                    hljs.highlightElement(/**@type {HTMLElement}*/(code));
                 }
                 frag.append(help);
             }
@@ -435,6 +434,14 @@ export class SlashCommand {
         }
         const frag = document.createDocumentFragment();
         frag.append(this.helpDetailsCache[key].cloneNode(true));
+
+        const codeBlocks = Array.from(frag.querySelectorAll('pre > code')).filter((code) => code instanceof HTMLElement);
+        queueMicrotask(() => {
+            const coordinator = getCodeHighlightCoordinator();
+            for (const code of codeBlocks) {
+                coordinator.request(/** @type {HTMLElement} */ (code));
+            }
+        });
         return frag;
     }
 }

@@ -16,7 +16,7 @@
 当前前端启动顺序如下：
 
 1. `src/init.js` 动态导入：`lib.js` -> `tauri-main.js` -> `script.js`
-2. `src/lib.js` 静态导入 `src/dist/lib.bundle.js`，统一提供 ESM 导出
+2. `src/lib.js` 静态导入 `src/dist/lib.core.bundle.js`，统一提供 ESM 导出；重/可选库通过 `getHljs()/getReadability()` 动态加载 `src/dist/lib.optional.bundle.js`
 3. `src/tauri-main.js` 仅调用 `bootstrapTauriMain()`（薄入口）
 4. `src/tauri/main/bootstrap.js` 负责：
    - 创建运行上下文（`context`）

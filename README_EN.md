@@ -30,7 +30,7 @@ TauriTavern ports SillyTavern into a native desktop app with Tauri v2 + Rust bac
 Frontend startup flow:
 
 1. `src/init.js` loads `lib.js` -> `tauri-main.js` -> `script.js`
-2. `src/lib.js` statically imports `src/dist/lib.bundle.js` and re-exports a stable ESM library surface
+2. `src/lib.js` statically imports `src/dist/lib.core.bundle.js` and re-exports a stable ESM library surface (heavy/optional libs are loaded on demand via `getHljs()/getReadability()` from `src/dist/lib.optional.bundle.js`)
 3. `src/tauri-main.js` delegates to `bootstrapTauriMain()`
 4. `src/tauri/main/bootstrap.js` creates context/router/interceptors, installs the `window.__TAURITAVERN__` platform ABI, and injects a trace header for host-handled routes
 
@@ -42,7 +42,8 @@ src/
 ├── tauri-main.js                # thin bootstrap entry
 ├── init.js                      # startup orchestrator
 ├── lib.js                       # library facade (ESM exports)
-├── dist/lib.bundle.js           # webpack-built vendor bundle
+├── dist/lib.core.bundle.js      # webpack-built core vendor bundle (startup-critical)
+├── dist/lib.optional.bundle.js  # webpack-built optional vendor bundle (on-demand)
 └── tauri/main/
     ├── bootstrap.js             # composition root
     ├── context.js               # compatibility shim (re-export `context/index`)

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { hljs } from '../../../lib.js';
+import { getHljs } from '../../../lib.js';
 
 let singleton = null;
 
@@ -61,22 +61,36 @@ function createCodeHighlightCoordinator() {
         scheduled = true;
 
         if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(run, { timeout: 500 });
+            requestIdleCallback((deadline) => {
+                runAsync(deadline);
+            }, { timeout: 500 });
             return;
         }
 
-        requestAnimationFrame(() => run(null));
+        requestAnimationFrame(() => runAsync(null));
     }
 
     /**
      * @param {IdleDeadline | null} deadline
      */
-    function run(deadline) {
-        scheduled = false;
+    function runAsync(deadline) {
+        void runAsyncImpl(deadline).catch((err) => {
+            queueMicrotask(() => {
+                throw err;
+            });
+        });
+    }
+
+    /**
+     * @param {IdleDeadline | null} deadline
+     */
+    async function runAsyncImpl(deadline) {
         if (queue.size === 0) {
+            scheduled = false;
             return;
         }
 
+        const hljs = await getHljs();
         if (!hljs || typeof hljs.highlightElement !== 'function') {
             throw new Error('CodeHighlightCoordinator: hljs.highlightElement is unavailable');
         }
@@ -109,6 +123,7 @@ function createCodeHighlightCoordinator() {
             }
         }
 
+        scheduled = false;
         schedule();
     }
 

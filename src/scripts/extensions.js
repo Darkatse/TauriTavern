@@ -1,4 +1,4 @@
-import { DOMPurify, Popper } from '../lib.js';
+import { DOMPurify, Popper, getHljs } from '../lib.js';
 
 import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION } from '../script.js';
 import { showLoader } from './loader.js';
@@ -59,6 +59,7 @@ const extensionAssetLoader = createExtensionAssetLoader({
 });
 const addExtensionScript = extensionAssetLoader.addExtensionScript;
 const addExtensionStyle = extensionAssetLoader.addExtensionStyle;
+let thirdPartyHljsPromise = null;
 
 const getApiUrl = () => extension_settings.apiUrl;
 const sortManifestsByOrder = (a, b) => parseInt(a.loading_order) - parseInt(b.loading_order) || String(a.display_name).localeCompare(String(b.display_name));
@@ -593,6 +594,10 @@ async function activateExtensions({ parallelism = 1 } = {}) {
 
         try {
             console.debug('Activating extension', name);
+            if (isThirdPartyExtension(name)) {
+                thirdPartyHljsPromise ??= getHljs();
+                await thirdPartyHljsPromise;
+            }
             await addExtensionLocale(name, manifest);
             await Promise.all([addExtensionScript(name, manifest), addExtensionStyle(name, manifest)]);
             activeExtensions.add(name);

@@ -14,7 +14,7 @@ function isDrawerOpen(drawerContent) {
     return drawerContent.classList.contains('openDrawer') && !drawerContent.classList.contains('closedDrawer');
 }
 
-const COMPAT_ALWAYS_CONNECTED_EXTENSION_CONTAINER_IDS = new Set([
+const ALWAYS_CONNECTED_EXTENSION_CONTAINER_IDS = new Set([
     'regex_container',
     'qr_container',
 ]);
@@ -64,9 +64,7 @@ export function installExtensionsSubtreeGates({ manager }) {
     }
 
     const host = mustGetElementById('rm_extensions_block');
-    const alwaysConnectedContainerIds = manager.profile === 'compat'
-        ? COMPAT_ALWAYS_CONNECTED_EXTENSION_CONTAINER_IDS
-        : null;
+    const alwaysConnectedContainerIds = ALWAYS_CONNECTED_EXTENSION_CONTAINER_IDS;
 
     const drawer = host.closest('.drawer');
     if (!(drawer instanceof HTMLElement)) {

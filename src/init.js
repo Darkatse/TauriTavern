@@ -123,8 +123,9 @@ async function initializeApplication() {
             safePerfMeasure('tt:init:dev-sw', 'tt:init:dev-sw:start', 'tt:init:dev-sw:end');
         }
 
-        // lib.js statically imports ./dist/lib.bundle.js, so this guarantees
-        // all library exports are ready before loading the app.
+        // lib.js statically imports ./dist/lib.core.bundle.js, so this guarantees
+        // core library exports are ready before loading the app. Heavy optional
+        // libs are loaded on demand from ./dist/lib.optional.bundle.js.
         if (PERF_ENABLED) {
             safePerfMark('tt:init:import:lib:start');
         }

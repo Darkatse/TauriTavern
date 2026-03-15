@@ -13,7 +13,8 @@ export default {
     cacheDirectory: path.resolve(__dirname, '.cache/webpack'),
   },
   entry: {
-    lib: './src/lib-bundle.js'
+    'lib.core': './src/lib-bundle-core.js',
+    'lib.optional': './src/lib-bundle-optional.js',
   },
   output: {
     filename: '[name].bundle.js',
