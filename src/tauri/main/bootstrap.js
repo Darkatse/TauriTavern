@@ -11,6 +11,7 @@ import { installMobileOverlayCompatController } from './compat/mobile/mobile-ove
 import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compat.js';
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
 import { installBackendErrorBridge } from './bootstrap/backend-error-bridge.js';
+import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
 import {
     getMethod,
     getMethodHint,
@@ -259,6 +260,7 @@ export function bootstrapTauriMain() {
 
     const context = createTauriMainContext({ invoke, convertFileSrc });
     installHostAbi(context);
+    installMainApiOptionParking();
     if (perfEnabled) {
         perfReadyPromise = import('./perf/perf-hud.js')
             .then(({ installPerfHud }) => installPerfHud({ context }))
