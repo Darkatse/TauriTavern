@@ -443,6 +443,7 @@ fn show_menu() -> Result<bool> {
     let selections = &[
         "🚀 启动开发模式 (Dev)",
         "📱 启动 Android 开发模式 (Android Dev)",
+        "🍎 启动 iOS 开发模式 (iOS Dev)",
         "🔨 构建生产版本 (Build)",
         "⭐ 检查更新 (Git Pull)",
         "🧰 工具箱 (Toolbox)",
@@ -466,18 +467,22 @@ fn show_menu() -> Result<bool> {
             Ok(true)
         }
         2 => {
-            run_build()?;
+            run_ios_dev()?;
             Ok(true)
         }
         3 => {
-            update_repository()?;
+            show_build_menu()?;
             Ok(true)
         }
         4 => {
-            show_toolbox_menu()?;
+            update_repository()?;
             Ok(true)
         }
         5 => {
+            show_toolbox_menu()?;
+            Ok(true)
+        }
+        6 => {
             show_debug_menu()?;
             Ok(true)
         }
@@ -728,8 +733,51 @@ fn run_android_dev() -> Result<()> {
     Ok(())
 }
 
-fn run_build() -> Result<()> {
-    log_info("正在构建生产版本...");
+fn run_ios_dev() -> Result<()> {
+    log_info("正在启动 iOS 开发模式...");
+
+    let status = run_sequential_attempts(&[
+        ("pnpm", vec!["run", "ios:dev"]),
+        ("corepack", vec!["pnpm", "run", "ios:dev"]),
+        ("npm", vec!["run", "ios:dev"]),
+    ])?;
+
+    if !status.success() {
+        log_error("iOS 开发模式启动失败");
+        pause();
+    }
+    Ok(())
+}
+
+fn show_build_menu() -> Result<()> {
+    loop {
+        let selections = &[
+            "🖥️ 构建桌面端 (Desktop Build)",
+            "🤖 构建 Android (Split ABI)",
+            "🍎 构建 iOS (iOS Build)",
+            "📦 构建便携版 (Portable Build)",
+            "🔙 返回主菜单 (Back)",
+        ];
+
+        let selection = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("构建生产版本 (Build)")
+            .default(0)
+            .items(&selections[..])
+            .interact()?;
+
+        match selection {
+            0 => run_desktop_build()?,
+            1 => run_android_build_split_abi()?,
+            2 => run_ios_build()?,
+            3 => run_portable_build()?,
+            _ => break,
+        }
+    }
+    Ok(())
+}
+
+fn run_desktop_build() -> Result<()> {
+    log_info("正在构建桌面端生产版本...");
 
     let status = run_sequential_attempts(&[
         ("pnpm", vec!["run", "tauri:build"]),
@@ -739,6 +787,66 @@ fn run_build() -> Result<()> {
 
     if status.success() {
         log_success("构建成功！安装包位于 src-tauri/target/release/bundle/");
+        pause();
+    } else {
+        log_error("构建失败");
+        pause();
+    }
+    Ok(())
+}
+
+fn run_android_build_split_abi() -> Result<()> {
+    log_info("正在构建 Android 生产版本 (Split ABI)...");
+
+    let status = run_sequential_attempts(&[
+        ("pnpm", vec!["run", "android:build", "--", "--split-per-abi"]),
+        (
+            "corepack",
+            vec!["pnpm", "run", "android:build", "--", "--split-per-abi"],
+        ),
+        ("npm", vec!["run", "android:build", "--", "--split-per-abi"]),
+    ])?;
+
+    if status.success() {
+        log_success("构建成功！产物通常位于 src-tauri/gen/android/app/build/outputs/");
+        pause();
+    } else {
+        log_error("构建失败");
+        pause();
+    }
+    Ok(())
+}
+
+fn run_ios_build() -> Result<()> {
+    log_info("正在构建 iOS 生产版本...");
+
+    let status = run_sequential_attempts(&[
+        ("pnpm", vec!["run", "ios:build"]),
+        ("corepack", vec!["pnpm", "run", "ios:build"]),
+        ("npm", vec!["run", "ios:build"]),
+    ])?;
+
+    if status.success() {
+        log_success("构建成功！产物通常位于 src-tauri/gen/apple/build/");
+        pause();
+    } else {
+        log_error("构建失败");
+        pause();
+    }
+    Ok(())
+}
+
+fn run_portable_build() -> Result<()> {
+    log_info("正在构建便携版生产版本...");
+
+    let status = run_sequential_attempts(&[
+        ("pnpm", vec!["run", "tauri:build:portable"]),
+        ("corepack", vec!["pnpm", "run", "tauri:build:portable"]),
+        ("npm", vec!["run", "tauri:build:portable"]),
+    ])?;
+
+    if status.success() {
+        log_success("构建成功！便携版默认输出到 release/portable/");
         pause();
     } else {
         log_error("构建失败");
