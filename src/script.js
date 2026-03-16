@@ -12634,14 +12634,16 @@ jQuery(async function () {
         }
         const drawer = $(this).closest('.inline-drawer');
         const drawerEl = drawer.get(0);
-        if (!(drawerEl instanceof HTMLElement)) {
-            throw new Error('Inline drawer element not found');
+        if (!drawerEl || drawerEl.nodeType !== 1) {
+            console.debug('inline-drawer-toggle: .inline-drawer ancestor not found', this);
+            return;
         }
         const icon = drawer.find('>.inline-drawer-header .inline-drawer-icon');
         const drawerContent = drawer.find('>.inline-drawer-content');
         const drawerContentEl = drawerContent.get(0);
-        if (!(drawerContentEl instanceof HTMLElement)) {
-            throw new Error('Inline drawer content not found');
+        if (!drawerContentEl || drawerContentEl.nodeType !== 1) {
+            console.debug('inline-drawer-toggle: .inline-drawer-content not found', drawerEl);
+            return;
         }
 
         const open = !isInlineDrawerContentOpen(drawerContentEl);
