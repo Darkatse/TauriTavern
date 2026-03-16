@@ -46,6 +46,92 @@ async function setupDevThirdPartyExtensionServiceWorker() {
         return;
     }
 
+    const announceDevSwProxyBridge = () => {
+        try {
+            const controller = navigator.serviceWorker?.controller;
+            if (controller && typeof controller.postMessage === 'function') {
+                controller.postMessage({ type: 'tt-ext-proxy-ready' });
+            }
+        } catch {
+            // Ignore.
+        }
+    };
+
+    const installClientProxyBridge = () => {
+        if (!('serviceWorker' in navigator)) {
+            return;
+        }
+
+        const BRIDGE_KEY = '__TAURITAVERN_DEV_SW_PROXY_BRIDGE__';
+        if (window[BRIDGE_KEY]) {
+            return;
+        }
+        window[BRIDGE_KEY] = true;
+
+        const allowedPrefixes = [
+            '/thumbnail',
+            '/scripts/extensions/third-party/',
+            '/characters/',
+            '/backgrounds/',
+            '/assets/',
+            '/user/images/',
+            '/user/files/',
+            '/User Avatars/',
+            '/User%20Avatars/',
+        ];
+
+        const isAllowedUrl = (url) => {
+            try {
+                const parsed = new URL(String(url || '').trim());
+                if (parsed.protocol !== 'tt-ext:' || parsed.hostname !== 'localhost') {
+                    return false;
+                }
+
+                const pathname = parsed.pathname || '';
+                return allowedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(prefix));
+            } catch {
+                return false;
+            }
+        };
+
+        navigator.serviceWorker.addEventListener('message', (event) => {
+            const data = event?.data;
+            if (!data || data.type !== 'tt-ext-proxy-request') {
+                return;
+            }
+
+            const port = event.ports?.[0];
+            if (!port || typeof port.postMessage !== 'function') {
+                return;
+            }
+
+            const url = String(data.url || '').trim();
+            if (!isAllowedUrl(url)) {
+                port.postMessage({ ok: false, error: 'Blocked tt-ext proxy request' });
+                return;
+            }
+
+            const method = String(data.method || 'GET').toUpperCase();
+            const body = data.body || undefined;
+
+            fetch(url, { method, body, credentials: 'omit' })
+                .then(async (response) => {
+                    const buffer = await response.arrayBuffer();
+                    const headers = Array.from(response.headers.entries());
+                    port.postMessage({
+                        ok: true,
+                        status: response.status,
+                        statusText: response.statusText,
+                        headers,
+                        body: buffer,
+                    }, [buffer]);
+                })
+                .catch((error) => {
+                    port.postMessage({ ok: false, error: String(error?.message || error) });
+                });
+        });
+    };
+
     const protocol = window.location?.protocol || '';
     const hostname = window.location?.hostname || '';
     if (!hostname || protocol === 'tauri:' || hostname === 'tauri.localhost') {
@@ -66,6 +152,7 @@ async function setupDevThirdPartyExtensionServiceWorker() {
     const swUrl = `/tt-ext-sw.js?base=${encodeURIComponent(ttExtBaseUrl)}`;
 
     try {
+        installClientProxyBridge();
         await navigator.serviceWorker.register(swUrl, { scope: '/' });
         await navigator.serviceWorker.ready;
 
@@ -78,6 +165,9 @@ async function setupDevThirdPartyExtensionServiceWorker() {
                 }, { once: true });
             });
         }
+
+        announceDevSwProxyBridge();
+        navigator.serviceWorker.addEventListener('controllerchange', announceDevSwProxyBridge);
     } catch (error) {
         console.warn('TauriTavern: Failed to enable dev third-party extension endpoint:', error);
     }

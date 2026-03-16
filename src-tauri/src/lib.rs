@@ -10,7 +10,7 @@ use infrastructure::paths::resolve_runtime_paths;
 use infrastructure::third_party_assets::ThirdPartyExtensionDirs;
 use infrastructure::user_data_dirs::DefaultUserWebDirs;
 use presentation::commands::registry::invoke_handler;
-#[cfg(dev)]
+#[cfg(any(dev, debug_assertions))]
 use presentation::web_resources::dev_protocol_endpoint::handle_dev_protocol_request;
 use presentation::web_resources::third_party_endpoint::handle_third_party_asset_web_request;
 use presentation::web_resources::thumbnail_endpoint::handle_thumbnail_web_request;
@@ -27,7 +27,7 @@ pub async fn run() {
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
 
-    #[cfg(dev)]
+    #[cfg(any(dev, debug_assertions))]
     let builder = builder.register_uri_scheme_protocol("tt-ext", move |ctx, request| {
         handle_dev_protocol_request(ctx, request)
     });

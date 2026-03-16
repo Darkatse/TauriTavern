@@ -17,7 +17,7 @@ use crate::presentation::web_resources::user_data_endpoint::handle_user_data_ass
 
 const DEV_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
 
-#[cfg(dev)]
+#[cfg(any(dev, debug_assertions))]
 pub fn handle_dev_protocol_request<R: tauri::Runtime>(
     ctx: tauri::UriSchemeContext<'_, R>,
     request: tauri::http::Request<Vec<u8>>,
