@@ -25,6 +25,7 @@ use crate::domain::errors::DomainError;
 use crate::infrastructure::paths::RuntimePaths;
 
 mod bootstrap;
+mod migrations;
 
 pub struct AppState {
     pub character_service: Arc<CharacterService>,
@@ -60,6 +61,10 @@ impl AppState {
         );
 
         let data_directory = bootstrap::initialize_data_directory(&runtime_paths.data_root).await?;
+
+        #[allow(deprecated)]
+        migrations::migrate_legacy_character_create_date_once(&data_directory).await?;
+
         let services = bootstrap::build_services(&app_handle, &data_directory)?;
 
         tracing::info!("Application initialized successfully");

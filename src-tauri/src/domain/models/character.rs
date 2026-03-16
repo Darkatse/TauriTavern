@@ -1,8 +1,10 @@
-use chrono::{DateTime, Utc};
+use chrono::{SecondsFormat, Utc};
 use serde::de::{self};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
+
+use crate::domain::models::chat::humanized_date as humanized_chat_date;
 
 /// Character model representing a character card in SillyTavern format
 /// Supports both V2 and V3 character card formats
@@ -284,8 +286,8 @@ impl Character {
     pub fn new(name: String, description: String, personality: String, first_mes: String) -> Self {
         let now = Utc::now();
         let timestamp = now.timestamp_millis();
-        let formatted_date = humanized_date(now);
-        let chat = format!("{} - {}", name, formatted_date);
+        let create_date = now.to_rfc3339_opts(SecondsFormat::Millis, true);
+        let chat = format!("{} - {}", name, humanized_chat_date(now));
 
         Self {
             spec: default_spec(),
@@ -302,7 +304,7 @@ impl Character {
             creator_notes: String::new(),
             character_version: String::new(),
             tags: Vec::new(),
-            create_date: formatted_date.clone(),
+            create_date,
             talkativeness: 0.5,
             fav: false,
             data: CharacterData {
@@ -427,9 +429,4 @@ pub fn sanitize_filename(name: &str) -> String {
         .collect::<String>();
 
     sanitized.trim().to_string()
-}
-
-/// Format a date in a human-readable format
-pub fn humanized_date(date: DateTime<Utc>) -> String {
-    date.format("%Y-%m-%d %H:%M:%S UTC").to_string()
 }

@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{SecondsFormat, Utc};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -294,7 +294,7 @@ impl FileCharacterRepository {
         character.chat = Self::normalize_chat_file_stem(&character.chat, &character.name);
 
         if character.create_date.trim().is_empty() {
-            character.create_date = Utc::now().to_rfc3339();
+            character.create_date = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         }
 
         Ok(())
@@ -414,6 +414,8 @@ impl FileCharacterRepository {
         let file_stem =
             self.resolve_import_file_stem(&character, source_path, preserve_file_name)?;
 
+        // Match SillyTavern import semantics: create_date represents import time, not the source card timestamp.
+        character.create_date = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         character.file_name = Some(file_stem.clone());
         character.avatar = format!("{}.png", file_stem);
         character.chat = Self::normalize_chat_file_stem(&character.chat, &character.name);
@@ -438,6 +440,8 @@ impl FileCharacterRepository {
         let file_stem =
             self.resolve_import_file_stem(&character, source_path, preserve_file_name)?;
 
+        // Match SillyTavern import semantics: create_date represents import time, not the source card timestamp.
+        character.create_date = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         character.file_name = Some(file_stem.clone());
         character.avatar = format!("{}.png", file_stem);
         character.chat = Self::normalize_chat_file_stem(&character.chat, &character.name);
