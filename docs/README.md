@@ -12,6 +12,7 @@
 6. [实施计划](./ImplementationPlan.md) - 项目实施的阶段和里程碑
 7. [移动端开发说明](./MobileDevelopment.md) - Android/iOS 关键坑位、资源访问与路径解析方案
 8. [现状说明](./CurrentState/README.md) - 当前实现状态快照与持续开发约束
+9. [性能重构计划：Prompt History Backfill](./PerformanceRefactoringPlan.md) - Windowed Payload 下补齐生成上下文的方案（方案 C + 页缓存）
 
 ## 项目概述
 

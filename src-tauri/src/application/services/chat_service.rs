@@ -423,6 +423,45 @@ impl ChatService {
             .map_err(Into::into)
     }
 
+    /// Get multiple windows of JSONL lines before the current character chat window cursor.
+    ///
+    /// This is equivalent to calling `get_chat_payload_before_lines` repeatedly, but returns
+    /// multiple pages in one IPC round-trip.
+    pub async fn get_chat_payload_before_pages_lines(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        cursor: ChatPayloadCursor,
+        max_lines: usize,
+        max_pages: usize,
+    ) -> Result<Vec<ChatPayloadChunk>, ApplicationError> {
+        if max_lines == 0 || max_pages == 0 {
+            return Err(ApplicationError::ValidationError(
+                "max_lines and max_pages must be greater than 0".to_string(),
+            ));
+        }
+
+        let mut pages = Vec::with_capacity(max_pages);
+        let mut next_cursor = cursor;
+
+        for _ in 0..max_pages {
+            let page = self
+                .chat_repository
+                .get_chat_payload_before_lines(character_name, file_name, next_cursor, max_lines)
+                .await?;
+
+            next_cursor = page.cursor;
+            let done = page.lines.is_empty() || !page.has_more_before;
+            pages.push(page);
+
+            if done {
+                break;
+            }
+        }
+
+        Ok(pages)
+    }
+
     /// Save a windowed character chat payload by preserving bytes before cursor.offset and
     /// overwriting from cursor.offset using the provided JSONL lines.
     pub async fn save_chat_payload_windowed(
@@ -519,6 +558,44 @@ impl ChatService {
             .get_group_chat_payload_before_lines(chat_id, cursor, max_lines)
             .await
             .map_err(Into::into)
+    }
+
+    /// Get multiple windows of JSONL lines before the current group chat window cursor.
+    ///
+    /// This is equivalent to calling `get_group_chat_payload_before_lines` repeatedly, but returns
+    /// multiple pages in one IPC round-trip.
+    pub async fn get_group_chat_payload_before_pages_lines(
+        &self,
+        chat_id: &str,
+        cursor: ChatPayloadCursor,
+        max_lines: usize,
+        max_pages: usize,
+    ) -> Result<Vec<ChatPayloadChunk>, ApplicationError> {
+        if max_lines == 0 || max_pages == 0 {
+            return Err(ApplicationError::ValidationError(
+                "max_lines and max_pages must be greater than 0".to_string(),
+            ));
+        }
+
+        let mut pages = Vec::with_capacity(max_pages);
+        let mut next_cursor = cursor;
+
+        for _ in 0..max_pages {
+            let page = self
+                .chat_repository
+                .get_group_chat_payload_before_lines(chat_id, next_cursor, max_lines)
+                .await?;
+
+            next_cursor = page.cursor;
+            let done = page.lines.is_empty() || !page.has_more_before;
+            pages.push(page);
+
+            if done {
+                break;
+            }
+        }
+
+        Ok(pages)
     }
 
     /// Save a windowed group chat payload by preserving bytes before cursor.offset and

@@ -2,7 +2,7 @@ import { invoke, isTauriEnv } from '../../../tauri-bridge.js';
 import { fetchAssetStream, writeTempFileFromBytesIterable } from './asset-io.js';
 import { jsonlStreamToPayload, jsonlToPayload, payloadToJsonlByteChunks } from './jsonl.js';
 
-function normalizeChatFileName(fileName) {
+export function normalizeChatFileName(fileName) {
     const value = String(fileName || '').trim();
     if (!value) {
         return '';
@@ -47,7 +47,7 @@ function getAvatarInternalId(avatar) {
     return fileName.replace(/\.[^/.]+$/, '') || null;
 }
 
-function resolveCharacterDirectoryId(characterName, avatarUrl) {
+export function resolveCharacterDirectoryId(characterName, avatarUrl) {
     const fromAvatar = getAvatarInternalId(avatarUrl);
     if (fromAvatar) {
         return fromAvatar;
@@ -154,6 +154,32 @@ export async function loadCharacterChatPayloadBefore({ characterName, avatarUrl,
     const text = (result?.lines || []).join('\n');
     const messages = jsonlToPayload(text);
     return { messages, cursor: result.cursor, hasMoreBefore: Boolean(result.hasMoreBefore) };
+}
+
+export async function loadCharacterChatPayloadBeforePages({ characterName, avatarUrl, fileName, cursor, maxLines, maxPages }) {
+    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
+    const normalizedFile = normalizeChatFileName(fileName);
+    if (!normalizedCharacter || !normalizedFile) {
+        throw new Error('Invalid character chat before pages request');
+    }
+
+    const result = await invoke('get_chat_payload_before_pages', {
+        characterName: normalizedCharacter,
+        fileName: normalizedFile,
+        cursor,
+        maxLines: Number(maxLines),
+        maxPages: Number(maxPages),
+    });
+
+    if (!Array.isArray(result) || result.length === 0) {
+        return [];
+    }
+
+    return result.map((page) => {
+        const text = (page?.lines || []).join('\n');
+        const messages = jsonlToPayload(text);
+        return { messages, cursor: page.cursor, hasMoreBefore: Boolean(page.hasMoreBefore) };
+    });
 }
 
 export async function saveCharacterChatPayload({ characterName, avatarUrl, fileName, payload, force = false }) {
@@ -275,6 +301,30 @@ export async function loadGroupChatPayloadBefore({ id, cursor, maxLines }) {
     const text = (result?.lines || []).join('\n');
     const messages = jsonlToPayload(text);
     return { messages, cursor: result.cursor, hasMoreBefore: Boolean(result.hasMoreBefore) };
+}
+
+export async function loadGroupChatPayloadBeforePages({ id, cursor, maxLines, maxPages }) {
+    const normalizedId = normalizeChatFileName(id);
+    if (!normalizedId) {
+        throw new Error('Invalid group chat before pages request');
+    }
+
+    const result = await invoke('get_group_chat_payload_before_pages', {
+        id: normalizedId,
+        cursor,
+        maxLines: Number(maxLines),
+        maxPages: Number(maxPages),
+    });
+
+    if (!Array.isArray(result) || result.length === 0) {
+        return [];
+    }
+
+    return result.map((page) => {
+        const text = (page?.lines || []).join('\n');
+        const messages = jsonlToPayload(text);
+        return { messages, cursor: page.cursor, hasMoreBefore: Boolean(page.hasMoreBefore) };
+    });
 }
 
 export async function saveGroupChatPayload({ id, payload, force = false }) {

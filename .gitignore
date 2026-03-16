@@ -31,4 +31,4 @@ FasTools.exe
 release/portable/
 
 # Local upstream checkout (junction/symlink)
-sillytavern-*/
+sillytavern-*

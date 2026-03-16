@@ -1,9 +1,15 @@
 import { isMobileRuntime } from './platform.js';
+import {
+    DEFAULT_CHAT_WINDOW_LINES_DESKTOP,
+    DEFAULT_CHAT_WINDOW_LINES_MOBILE,
+} from './windowed-defaults.js';
 
 let currentWindow = null;
 
-export const DEFAULT_CHAT_WINDOW_LINES_DESKTOP = 100;
-export const DEFAULT_CHAT_WINDOW_LINES_MOBILE = 50;
+export {
+    DEFAULT_CHAT_WINDOW_LINES_DESKTOP,
+    DEFAULT_CHAT_WINDOW_LINES_MOBILE,
+} from './windowed-defaults.js';
 export const DEFAULT_CHAT_WINDOW_LINES = isMobileRuntime()
     ? DEFAULT_CHAT_WINDOW_LINES_MOBILE
     : DEFAULT_CHAT_WINDOW_LINES_DESKTOP;

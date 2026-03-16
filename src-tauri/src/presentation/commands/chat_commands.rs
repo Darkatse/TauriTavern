@@ -438,6 +438,36 @@ pub async fn get_chat_payload_before(
 }
 
 #[tauri::command]
+pub async fn get_chat_payload_before_pages(
+    character_name: String,
+    file_name: String,
+    cursor: ChatPayloadCursor,
+    max_lines: usize,
+    max_pages: usize,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ChatPayloadChunk>, CommandError> {
+    log_command(format!(
+        "get_chat_payload_before_pages {}/{}",
+        character_name, file_name
+    ));
+
+    app_state
+        .chat_service
+        .get_chat_payload_before_pages_lines(
+            &character_name,
+            &file_name,
+            cursor,
+            max_lines,
+            max_pages,
+        )
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to get chat payload before pages {}/{}",
+            character_name, file_name
+        )))
+}
+
+#[tauri::command]
 pub async fn save_chat_payload_windowed(
     dto: SaveChatWindowedDto,
     app_state: State<'_, Arc<AppState>>,
@@ -573,6 +603,26 @@ pub async fn get_group_chat_payload_before(
         .await
         .map_err(map_command_error(format!(
             "Failed to get group chat payload before {}",
+            id
+        )))
+}
+
+#[tauri::command]
+pub async fn get_group_chat_payload_before_pages(
+    id: String,
+    cursor: ChatPayloadCursor,
+    max_lines: usize,
+    max_pages: usize,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ChatPayloadChunk>, CommandError> {
+    log_command(format!("get_group_chat_payload_before_pages {}", id));
+
+    app_state
+        .chat_service
+        .get_group_chat_payload_before_pages_lines(&id, cursor, max_lines, max_pages)
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to get group chat payload before pages {}",
             id
         )))
 }

@@ -34,3 +34,7 @@
 4. `docs/CurrentState/StartupOptimization.md`
    - 开屏启动优化（Shell/Core/Full 分阶段启动）的当前实现快照
    - 包含前端启动编排、bootstrap 快照、扩展发现/激活、按需加载与可观测性约束
+
+5. `docs/CurrentState/WindowedPayload.md`
+   - windowed payload（聊天记录分片读写）现状：tail 小窗口、before 分页、windowed patch/save 写入
+   - 包含 Prompt-backfill（生成时按需回填）、页缓存与批量 IPC 的端到端链路与持续开发约束

@@ -32,6 +32,10 @@ import {
     setWindowedChatState,
     shiftWindowedMessageSaveState,
 } from './scripts/tauri/chat/windowed-state.js';
+import {
+    buildGenerationChatWithBackfill,
+    isWindowedCursorInvalidError,
+} from './scripts/tauri/chat/prompt-backfill.js';
 import { extension_prompt_roles, extension_prompt_types } from './scripts/extension-prompts.js';
 import { waitForTauriMainReady } from './scripts/extensions/runtime/tauri-ready.js';
 import {
@@ -142,6 +146,7 @@ import {
     selected_proxy,
     initOpenAI,
 } from './scripts/openai.js';
+import { stripCommandErrorPrefixes } from './scripts/util/command-error-utils.js';
 
 import {
     generateNovelWithStreaming,
@@ -4707,15 +4712,64 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         setExtensionPrompt(inject_ids.DEPTH_PROMPT, depthPromptText, extension_prompt_types.IN_CHAT, depthPromptDepth, extension_settings.note.allowWIScan, depthPromptRole);
     }
 
+    // Determine token limit (used for context backfill and interceptors).
+    let this_max_context = getMaxContextSize();
+
     // First message in fresh 1-on-1 chat reacts to user/character settings changes
     if (chat.length) {
         chat[0].mes = substituteParams(chat[0].mes);
     }
 
+    // Build a per-generation history that can extend beyond the UI window (Tauri windowed payload).
+    let generationChat = chat;
+
+    if (isTauriChatPayloadTransportEnabled()) {
+        const windowState = getWindowedChatState();
+
+        if (windowState?.cursor && windowState.hasMoreBefore) {
+            try {
+                const backfillResult = await buildGenerationChatWithBackfill({
+                    baseMessages: chat,
+                    windowState,
+                    contextBudgetTokens: this_max_context,
+                });
+
+                generationChat = backfillResult.chat;
+                backfillResult.added.forEach(ensureMessageMediaIsArray);
+            } catch (error) {
+                if (isWindowedCursorInvalidError(error)) {
+                    const rawMessage = error?.message ?? error;
+                    const details = stripCommandErrorPrefixes(rawMessage) || t`Windowed chat cursor is invalid`;
+                    const reloadHint = t`Reload the chat to resync.`;
+
+                    toastr.warning(
+                        `${details}. ${reloadHint}`,
+                        t`Context backfill failed`,
+                        { preventDuplicates: true },
+                    );
+                    console.error('Context backfill failed, continuing with current window:', {
+                        error,
+                        windowState: {
+                            kind: windowState.kind,
+                            id: windowState.id,
+                            characterName: windowState.characterName,
+                            fileName: windowState.fileName,
+                            cursor: windowState.cursor,
+                        },
+                    });
+
+                    generationChat = chat;
+                } else {
+                    throw error;
+                }
+            }
+        }
+    }
+
     // Collect messages with usable content
     const canUseTools = ToolManager.isToolCallingSupported();
     const canPerformToolCalls = !dryRun && ToolManager.canPerformToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
-    let coreChat = chat.filter(x => !x.is_system || (canUseTools && Array.isArray(x.extra?.tool_invocations)));
+    let coreChat = generationChat.filter(x => !x.is_system || (canUseTools && Array.isArray(x.extra?.tool_invocations)));
     if (type === 'swipe') {
         coreChat.pop();
     }
@@ -4772,9 +4826,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
     }
 
-    // Determine token limit
-    let this_max_context = getMaxContextSize();
-
     if (!dryRun) {
         console.debug('Running extension interceptors');
         const aborted = await runGenerationInterceptors(coreChat, this_max_context, type);
@@ -4820,7 +4871,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
     }
 
-    console.log(`Core/all messages: ${coreChat.length}/${chat.length}`);
+    console.log(`Core/all messages: ${coreChat.length}/${generationChat.length}`);
 
     if ((promptBias && !isUserPromptBias) || power_user.always_force_name2 || main_api == 'novel') {
         force_name2 = true;
