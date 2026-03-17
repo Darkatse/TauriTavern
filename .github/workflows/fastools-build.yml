@@ -2,22 +2,99 @@ name: FasTools Build
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "fastools/**"
-      - ".github/workflows/fastools-build.yml"
+  schedule:
+    - cron: "20 */12 * * *"
 
 concurrency:
   group: fastools-build-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
+  check-for-relevant-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      reason: ${{ steps.check.outputs.reason }}
+    steps:
+      - name: Check whether FasTools has relevant new commits to build
+        id: check
+        uses: actions/github-script@v7
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        with:
+          script: |
+            const core = require("@actions/core");
+
+            if (context.eventName !== "schedule") {
+              core.setOutput("should_build", "true");
+              core.setOutput("reason", `Run requested by ${context.eventName}.`);
+              core.info("Manual or non-scheduled run detected, build will proceed.");
+              return;
+            }
+
+            const workflowRef = process.env.WORKFLOW_REF || "";
+            const workflowFile = workflowRef.split("/.github/workflows/")[1]?.split("@")[0];
+            if (!workflowFile) {
+              throw new Error(`Unable to resolve workflow file from ${workflowRef}`);
+            }
+
+            const { owner, repo } = context.repo;
+            const branch = context.payload.repository.default_branch;
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner,
+              repo,
+              workflow_id: workflowFile,
+              branch,
+              status: "completed",
+              per_page: 100,
+            });
+
+            const previousRun = runs[0];
+            if (!previousRun) {
+              core.setOutput("should_build", "true");
+              core.setOutput("reason", "No previous completed FasTools run was found.");
+              core.info("No previous completed FasTools run was found, build will proceed.");
+              return;
+            }
+
+            if (previousRun.head_sha === context.sha) {
+              const reason = `No new commits since previous completed run: ${previousRun.head_sha}.`;
+              core.setOutput("should_build", "false");
+              core.setOutput("reason", reason);
+              core.info(reason);
+              return;
+            }
+
+            const comparison = await github.rest.repos.compareCommits({
+              owner,
+              repo,
+              base: previousRun.head_sha,
+              head: context.sha,
+            });
+
+            const relevantPrefixes = ["fastools/"];
+            const relevantFiles = new Set([".github/workflows/fastools-build.yml"]);
+            const changedFiles = comparison.data.files || [];
+            const hasRelevantChanges = changedFiles.some((file) =>
+              relevantPrefixes.some((prefix) => file.filename.startsWith(prefix)) ||
+              relevantFiles.has(file.filename)
+            );
+
+            const reason = hasRelevantChanges
+              ? `Relevant FasTools changes detected between ${previousRun.head_sha} and ${context.sha}.`
+              : `No FasTools changes detected between ${previousRun.head_sha} and ${context.sha}.`;
+
+            core.setOutput("should_build", hasRelevantChanges ? "true" : "false");
+            core.setOutput("reason", reason);
+            core.info(reason);
+
   build-fastools:
+    needs: check-for-relevant-changes
+    if: needs.check-for-relevant-changes.outputs.should_build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -91,3 +168,10 @@ jobs:
           name: fastools-${{ matrix.name }}
           path: dist-fastools/${{ matrix.name }}/${{ matrix.out_name }}
 
+  skip-build:
+    needs: check-for-relevant-changes
+    if: needs.check-for-relevant-changes.outputs.should_build != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip build because no relevant change was found
+        run: echo "${{ needs.check-for-relevant-changes.outputs.reason }}"

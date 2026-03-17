@@ -1,9 +1,8 @@
 name: Mobile Auto Pre-Release
 
 on:
-  push:
-    branches:
-      - main
+  schedule:
+    - cron: "20 */12 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -11,10 +10,69 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
+  check-for-new-commits:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      reason: ${{ steps.check.outputs.reason }}
+    steps:
+      - name: Check whether this workflow has new commits to build
+        id: check
+        uses: actions/github-script@v7
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        with:
+          script: |
+            const core = require("@actions/core");
+
+            if (context.eventName !== "schedule") {
+              core.setOutput("should_build", "true");
+              core.setOutput("reason", `Run requested by ${context.eventName}.`);
+              core.info("Manual or non-scheduled run detected, build will proceed.");
+              return;
+            }
+
+            const workflowRef = process.env.WORKFLOW_REF || "";
+            const workflowFile = workflowRef.split("/.github/workflows/")[1]?.split("@")[0];
+            if (!workflowFile) {
+              throw new Error(`Unable to resolve workflow file from ${workflowRef}`);
+            }
+
+            const { owner, repo } = context.repo;
+            const branch = context.payload.repository.default_branch;
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner,
+              repo,
+              workflow_id: workflowFile,
+              branch,
+              status: "completed",
+              per_page: 100,
+            });
+
+            const previousRun = runs[0];
+            if (!previousRun) {
+              core.setOutput("should_build", "true");
+              core.setOutput("reason", "No previous completed build was found.");
+              core.info("No previous completed build was found, build will proceed.");
+              return;
+            }
+
+            const shouldBuild = previousRun.head_sha !== context.sha;
+            const reason = shouldBuild
+              ? `New commit detected: ${context.sha} (previous completed run: ${previousRun.head_sha}).`
+              : `No new commits since previous completed run: ${previousRun.head_sha}.`;
+
+            core.setOutput("should_build", shouldBuild ? "true" : "false");
+            core.setOutput("reason", reason);
+            core.info(reason);
+
   build-and-publish:
+    needs: check-for-new-commits
+    if: needs.check-for-new-commits.outputs.should_build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -22,7 +80,7 @@ jobs:
           - name: android
             platform: ubuntu-latest
             mobile: android
-            args: --verbose --debug --apk
+            args: --verbose --apk
           - name: ios
             platform: macos-latest
             mobile: ios
@@ -87,6 +145,16 @@ jobs:
       - name: Build frontend assets
         run: pnpm build
 
+      - name: Setup Android signing
+        if: matrix.mobile == 'android'
+        shell: bash
+        run: |
+          cd src-tauri/gen/android
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
+          echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
+          base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+
       - name: Build and upload mobile pre-release
         uses: tauri-apps/tauri-action@acc588b4e23a3fbc5bfc5d77ba29df93f3e43c64
         env:
@@ -113,3 +181,11 @@ jobs:
           uploadWorkflowArtifacts: true
           uploadPlainBinary: true
           uploadUpdaterSignatures: false
+
+  skip-build:
+    needs: check-for-new-commits
+    if: needs.check-for-new-commits.outputs.should_build != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip build because no new commit was found
+        run: echo "${{ needs.check-for-new-commits.outputs.reason }}"
