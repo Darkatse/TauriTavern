@@ -22,11 +22,12 @@
 
 ### 2.1 发现与激活
 
-1. `src/scripts/extensions.js` 中的 `loadExtensionSettings()` 等待 `waitForTauriMainReady()`
-2. 前端请求 `/api/extensions/discover`
-3. `src/tauri/main/routes/extensions-routes.js` 将请求转给 Rust 命令 `get_extensions`
-4. `ExtensionService -> FileExtensionRepository::discover_extensions()`
-5. 返回扩展列表后，前端继续读取 manifest、排序并激活扩展
+1. `src/scripts/extensions.js` 中的 `startOfflineExtensionsDiscovery()` 在 Host Ready 后请求 `/api/extensions/discover`
+2. `src/tauri/main/routes/extensions-routes.js` 将请求转给 Rust 命令 `get_extensions`
+3. `ExtensionService -> FileExtensionRepository::discover_extensions()`
+4. 返回扩展列表后，前端继续读取 manifest 并缓存激活计划
+5. 启动期先执行 `activateStartupSystemExtensions()`，只激活系统扩展
+6. 若存在启用中的 local/global third-party 扩展，则在 `APP_READY` 后执行 `activateDeferredThirdPartyExtensions()`
 
 补充约束：
 
@@ -37,6 +38,12 @@
 
 - 系统扩展：`regex`、`quick-reply` 等
 - 第三方扩展：统一命名为 `third-party/<folder>`
+
+当前启动时序约束：
+
+- third-party 扩展 discovery 可以提前，但 local/global third-party 模块求值不再阻塞 `APP_READY`
+- `APP_READY` 发出后，晚加载的 third-party 扩展仍可依赖 `eventSource` 对 `APP_READY` 的 auto-fire 语义完成 ready 钩子
+- `EXTENSION_SETTINGS_LOADED` 在存在待激活 third-party 扩展时会延后到 deferred activation 完成后再发出
 
 ### 2.2 前端资源加载
 

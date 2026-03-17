@@ -222,7 +222,7 @@ import {
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
 
-import { activateOfflineExtensions, applyExtensionSettings, cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, runGenerationInterceptors, startOfflineExtensionsDiscovery } from './scripts/extensions.js';
+import { activateDeferredThirdPartyExtensions, activateStartupSystemExtensions, applyExtensionSettings, cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, runGenerationInterceptors, startOfflineExtensionsDiscovery } from './scripts/extensions.js';
 import { COMMENT_NAME_DEFAULT, CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, initSlashCommandAutoComplete, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
 import { initMacroAutoComplete } from './scripts/autocomplete/MacroAutoComplete.js';
 import {
@@ -929,21 +929,25 @@ async function firstLoadInit() {
         initAccessibility();
         addDebugFunctions();
 
+        let deferThirdPartyExtensions = false;
         if (extensionsEnabled) {
             await extensionsDiscoveryPromise;
             const enableAutoUpdate = Boolean(bootstrapSnapshot.settings?.enable_extensions_auto_update);
             const isVersionChanged = settings.currentVersion !== currentVersion;
 
             const isAndroid = /android/i.test(navigator.userAgent || '');
-            const extensionParallelism = isAndroid ? 1 : 2;
+            const startupExtensionParallelism = isAndroid ? 1 : 2;
 
-            await activateOfflineExtensions({
+            deferThirdPartyExtensions = await activateStartupSystemExtensions({
                 versionChanged: isVersionChanged,
                 enableAutoUpdate,
-                parallelism: extensionParallelism,
+                parallelism: startupExtensionParallelism,
             });
-            await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED);
-            doDailyExtensionUpdatesCheck();
+
+            if (!deferThirdPartyExtensions) {
+                await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED);
+                doDailyExtensionUpdatesCheck();
+            }
         }
 
         await eventSource.emit(event_types.APP_INITIALIZED);
@@ -958,6 +962,13 @@ async function firstLoadInit() {
             await initTokenizers();
             await nextPaint();
             await initScrapers();
+
+            if (extensionsEnabled && deferThirdPartyExtensions) {
+                await nextPaint();
+                await activateDeferredThirdPartyExtensions({ parallelism: 1 });
+                await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED);
+                doDailyExtensionUpdatesCheck();
+            }
         })();
     } finally {
         startupStatus.remove();

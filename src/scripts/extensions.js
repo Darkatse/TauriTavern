@@ -72,6 +72,7 @@ let connectedToApi = false;
  */
 let manifests = {};
 let offlineExtensionsDiscoveryPromise = null;
+let offlineExtensionsPreparationPromise = null;
 
 /**
  * Default URL for the Extras API.
@@ -271,6 +272,23 @@ function getExtensionType(externalId) {
     return id ? extensionTypes[id] : '';
 }
 
+function isSystemExtension(name) {
+    return getExtensionType(name) === 'system';
+}
+
+function isDeferredThirdPartyExtension(name) {
+    const type = getExtensionType(name);
+    return type === 'local' || type === 'global';
+}
+
+function hasPendingDeferredThirdPartyActivation() {
+    return extensionNames.some((name) =>
+        isDeferredThirdPartyExtension(name)
+        && !extension_settings.disabledExtensions.includes(name)
+        && !activeExtensions.has(name),
+    );
+}
+
 /**
  * Performs a fetch of the Extras API.
  * @param {string|URL} endpoint Extras API endpoint
@@ -340,6 +358,37 @@ export function startOfflineExtensionsDiscovery({ forceRefresh = false } = {}) {
     })();
 
     return offlineExtensionsDiscoveryPromise;
+}
+
+async function prepareOfflineExtensionsActivation({
+    versionChanged = false,
+    enableAutoUpdate = false,
+    forceRefresh = false,
+} = {}) {
+    if (forceRefresh) {
+        offlineExtensionsPreparationPromise = null;
+    }
+
+    if (offlineExtensionsPreparationPromise) {
+        return offlineExtensionsPreparationPromise;
+    }
+
+    offlineExtensionsPreparationPromise = (async () => {
+        await waitForTauriMainReady();
+        const uiReady = ensureExtensionsUiReady();
+
+        extensionLoadErrors.clear();
+        await eventSource.emit(event_types.EXTENSIONS_FIRST_LOAD);
+        await startOfflineExtensionsDiscovery({ forceRefresh });
+
+        if (versionChanged && enableAutoUpdate) {
+            await autoUpdateExtensions(false);
+        }
+
+        await uiReady;
+    })();
+
+    return offlineExtensionsPreparationPromise;
 }
 
 function onDisableExtensionClick() {
@@ -493,11 +542,16 @@ async function getManifests(names) {
  * Tries to activate all available extensions that are not already active.
  * @returns {Promise<void>}
  */
-async function activateExtensions({ parallelism = 1 } = {}) {
-    extensionLoadErrors.clear();
+async function activateExtensions({ parallelism = 1, includeExtension = () => true, resetErrors = true } = {}) {
+    if (resetErrors) {
+        extensionLoadErrors.clear();
+    }
+
     const clientVersion = CLIENT_VERSION.split(':')[1];
-    const extensions = Object.entries(manifests).sort((a, b) => sortManifestsByOrder(a[1], b[1]));
-    const extensionNames = extensions.map(x => x[0]);
+    const discoveredExtensionNames = Object.keys(manifests);
+    const extensions = Object.entries(manifests)
+        .filter(([name, manifest]) => includeExtension(name, manifest))
+        .sort((a, b) => sortManifestsByOrder(a[1], b[1]));
 
     const shouldActivateExtension = ({ name, manifest }) => {
         if (activeExtensions.has(name)) {
@@ -538,8 +592,8 @@ async function activateExtensions({ parallelism = 1 } = {}) {
         if (extensionDependencies !== undefined) {
             if (Array.isArray(extensionDependencies)) {
                 // Check if all dependencies exist
-                meetsExtensionDeps = isSubsetOf(extensionNames, extensionDependencies);
-                missingDependencies = extensionDependencies.filter(dep => !extensionNames.includes(dep));
+                meetsExtensionDeps = isSubsetOf(discoveredExtensionNames, extensionDependencies);
+                missingDependencies = extensionDependencies.filter(dep => !discoveredExtensionNames.includes(dep));
                 // Check for disabled dependencies
                 if (meetsExtensionDeps) {
                     disabledDependencies = extensionDependencies.filter(dep => extension_settings.disabledExtensions.includes(dep));
@@ -750,7 +804,7 @@ function notifyUpdatesInputHandler() {
  * @param {string} baseUrl Extras API base URL
  * @returns {Promise<void>}
  */
-async function connectToApi(baseUrl) {
+async function connectToApi(baseUrl, { parallelism = 1, includeExtension = () => true, resetErrors = true } = {}) {
     if (!baseUrl) {
         return;
     }
@@ -764,7 +818,7 @@ async function connectToApi(baseUrl) {
         if (getExtensionsResult.ok) {
             const data = await getExtensionsResult.json();
             modules = data.modules;
-            await activateExtensions();
+            await activateExtensions({ parallelism, includeExtension, resetErrors });
             await eventSource.emit(event_types.EXTRAS_CONNECTED, modules);
         }
 
@@ -1557,22 +1611,71 @@ export function applyExtensionSettings(settings) {
     syncExtensionSettingsUi();
 }
 
-export async function activateOfflineExtensions({ versionChanged, enableAutoUpdate, parallelism = 1, forceRefresh = false } = {}) {
-    await waitForTauriMainReady();
-    const uiReady = ensureExtensionsUiReady();
+export async function activateStartupSystemExtensions({
+    versionChanged,
+    enableAutoUpdate,
+    parallelism = 1,
+    forceRefresh = false,
+} = {}) {
+    await prepareOfflineExtensionsActivation({
+        versionChanged,
+        enableAutoUpdate,
+        forceRefresh,
+    });
 
-    // Activate offline extensions
-    await eventSource.emit(event_types.EXTENSIONS_FIRST_LOAD);
-    await startOfflineExtensionsDiscovery({ forceRefresh });
+    await activateExtensions({
+        parallelism,
+        includeExtension: (name) => isSystemExtension(name),
+        resetErrors: true,
+    });
 
-    if (versionChanged && enableAutoUpdate) {
-        await autoUpdateExtensions(false);
+    if (extension_settings.autoConnect && extension_settings.apiUrl) {
+        await connectToApi(extension_settings.apiUrl, {
+            parallelism,
+            includeExtension: (name) => isSystemExtension(name),
+            resetErrors: true,
+        });
     }
 
-    await uiReady;
-    await activateExtensions({ parallelism });
+    return hasPendingDeferredThirdPartyActivation();
+}
+
+export async function activateDeferredThirdPartyExtensions({ parallelism = 1 } = {}) {
+    await prepareOfflineExtensionsActivation();
+
+    if (!hasPendingDeferredThirdPartyActivation()) {
+        return;
+    }
+
+    if (!connectedToApi && extension_settings.autoConnect && extension_settings.apiUrl) {
+        await connectToApi(extension_settings.apiUrl, {
+            parallelism,
+            includeExtension: (name) => isDeferredThirdPartyExtension(name),
+            resetErrors: false,
+        });
+        return;
+    }
+
+    await activateExtensions({
+        parallelism,
+        includeExtension: (name) => isDeferredThirdPartyExtension(name),
+        resetErrors: false,
+    });
+}
+
+export async function activateOfflineExtensions({ versionChanged, enableAutoUpdate, parallelism = 1, forceRefresh = false } = {}) {
+    await prepareOfflineExtensionsActivation({
+        versionChanged,
+        enableAutoUpdate,
+        forceRefresh,
+    });
+
+    await activateExtensions({ parallelism, resetErrors: true });
     if (extension_settings.autoConnect && extension_settings.apiUrl) {
-        connectToApi(extension_settings.apiUrl);
+        await connectToApi(extension_settings.apiUrl, {
+            parallelism,
+            resetErrors: true,
+        });
     }
 }
 
