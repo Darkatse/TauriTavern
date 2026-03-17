@@ -128,7 +128,9 @@ pub async fn migrate_legacy_character_create_date_once(
     }
 
     settings.migrations.character_create_date_iso_v1 = true;
-    settings_repository.save_tauritavern_settings(&settings).await?;
+    settings_repository
+        .save_tauritavern_settings(&settings)
+        .await?;
 
     tracing::info!(
         "Deprecated migration completed: character create_date ISO normalization (v1). Updated {} file(s).",
@@ -137,4 +139,3 @@ pub async fn migrate_legacy_character_create_date_once(
 
     Ok(())
 }
-

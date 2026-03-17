@@ -19,7 +19,9 @@ pub async fn get_bootstrap_snapshot(
             .settings_service
             .get_sillytavern_settings()
             .await
-            .map_err(map_command_error("Failed to load bootstrap settings snapshot"))
+            .map_err(map_command_error(
+                "Failed to load bootstrap settings snapshot",
+            ))
     };
 
     let characters_fut = async {
@@ -27,7 +29,9 @@ pub async fn get_bootstrap_snapshot(
             .character_service
             .get_all_characters(true)
             .await
-            .map_err(map_command_error("Failed to load bootstrap characters snapshot"))
+            .map_err(map_command_error(
+                "Failed to load bootstrap characters snapshot",
+            ))
     };
 
     let groups_fut = async {
@@ -36,7 +40,9 @@ pub async fn get_bootstrap_snapshot(
             .get_all_groups()
             .await
             .map(|groups| groups.into_iter().map(GroupDto::from).collect())
-            .map_err(map_command_error("Failed to load bootstrap groups snapshot"))
+            .map_err(map_command_error(
+                "Failed to load bootstrap groups snapshot",
+            ))
     };
 
     let avatars_fut = async {
@@ -44,7 +50,9 @@ pub async fn get_bootstrap_snapshot(
             .avatar_service
             .get_avatars()
             .await
-            .map_err(map_command_error("Failed to load bootstrap avatars snapshot"))
+            .map_err(map_command_error(
+                "Failed to load bootstrap avatars snapshot",
+            ))
     };
 
     let secret_state_fut = async {
@@ -73,4 +81,3 @@ pub async fn get_bootstrap_snapshot(
         secret_state,
     })
 }
-

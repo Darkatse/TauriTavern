@@ -514,7 +514,7 @@ mod tests {
 
     #[tokio::test]
     async fn custom_status_prefers_saved_secret_when_custom_url_present_even_if_reverse_proxy_present()
-    {
+     {
         let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
             secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
         });

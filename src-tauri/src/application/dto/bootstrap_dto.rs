@@ -13,4 +13,3 @@ pub struct BootstrapSnapshotDto {
     pub avatars: Vec<String>,
     pub secret_state: SecretStateDto,
 }
-

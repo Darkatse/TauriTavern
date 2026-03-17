@@ -198,7 +198,9 @@ fn build_claude_payload(
     Ok(request)
 }
 
-fn convert_messages(messages: Option<&Value>) -> Result<(Vec<Value>, Vec<Value>), ApplicationError> {
+fn convert_messages(
+    messages: Option<&Value>,
+) -> Result<(Vec<Value>, Vec<Value>), ApplicationError> {
     let mut converted = Vec::new();
     let mut system_parts: Vec<Value> = Vec::new();
 
@@ -272,10 +274,8 @@ fn convert_messages(messages: Option<&Value>) -> Result<(Vec<Value>, Vec<Value>)
                         }],
                     }));
                 } else {
-                    let blocks = convert_message_content_to_claude_blocks(
-                        message.get("content"),
-                        name,
-                    )?;
+                    let blocks =
+                        convert_message_content_to_claude_blocks(message.get("content"), name)?;
                     let blocks = if blocks.is_empty() {
                         vec![normalize_claude_text_block("")]
                     } else {
@@ -356,7 +356,10 @@ fn convert_message_content_to_claude_blocks(
                     }
                     Value::Object(object) => match object.get("type").and_then(Value::as_str) {
                         Some("text") => {
-                            let text = object.get("text").and_then(Value::as_str).unwrap_or_default();
+                            let text = object
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
                             blocks.push(normalize_claude_text_block(&prefix_name(text, name)));
                         }
                         Some("image_url") => {
@@ -422,7 +425,8 @@ fn move_assistant_images_to_next_user_message(messages: &mut Vec<Value>) {
 
         {
             let mut collected_images = Vec::new();
-            let Some(message_object) = messages.get_mut(index).and_then(Value::as_object_mut) else {
+            let Some(message_object) = messages.get_mut(index).and_then(Value::as_object_mut)
+            else {
                 index += 1;
                 continue;
             };
@@ -1055,16 +1059,20 @@ mod tests {
             .get("content")
             .and_then(Value::as_array)
             .expect("assistant content must be array");
-        assert!(!assistant_content
-            .iter()
-            .any(|block| block.get("type").and_then(Value::as_str) == Some("image")));
+        assert!(
+            !assistant_content
+                .iter()
+                .any(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+        );
 
         let user_content = messages[1]
             .get("content")
             .and_then(Value::as_array)
             .expect("user content must be array");
-        assert!(user_content
-            .iter()
-            .any(|block| block.get("type").and_then(Value::as_str) == Some("image")));
+        assert!(
+            user_content
+                .iter()
+                .any(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+        );
     }
 }

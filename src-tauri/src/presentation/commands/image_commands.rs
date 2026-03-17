@@ -12,8 +12,8 @@ use crate::presentation::commands::helpers::log_command;
 use crate::presentation::errors::CommandError;
 
 const MEDIA_EXTENSIONS: &[&str] = &[
-    "bmp", "png", "jpg", "webp", "jpeg", "jfif", "gif", "mp4", "avi", "mov", "wmv", "flv",
-    "webm", "3gp", "mkv", "mpg", "mp3", "wav", "ogg", "flac", "aac", "m4a", "aiff",
+    "bmp", "png", "jpg", "webp", "jpeg", "jfif", "gif", "mp4", "avi", "mov", "wmv", "flv", "webm",
+    "3gp", "mkv", "mpg", "mp3", "wav", "ogg", "flac", "aac", "m4a", "aiff",
 ];
 
 const MEDIA_REQUEST_IMAGE: u32 = 0b001;
@@ -39,7 +39,10 @@ fn sanitize_filename(filename: &str) -> String {
 }
 
 fn remove_last_extension(filename: &str) -> &str {
-    filename.rsplit_once('.').map(|(base, _)| base).unwrap_or(filename)
+    filename
+        .rsplit_once('.')
+        .map(|(base, _)| base)
+        .unwrap_or(filename)
 }
 
 fn to_url_path(path: &Path) -> String {
@@ -60,7 +63,10 @@ fn client_relative_path(root: &Path, path: &Path) -> Result<String, CommandError
 async fn get_default_user_image_directory(
     app_state: &Arc<AppState>,
 ) -> Result<(PathBuf, PathBuf), CommandError> {
-    let directory = app_state.user_directory_service.get_default_user_directory().await?;
+    let directory = app_state
+        .user_directory_service
+        .get_default_user_directory()
+        .await?;
     let root_dir = PathBuf::from(directory.root);
     let images_dir = PathBuf::from(directory.user_images);
 
@@ -179,7 +185,10 @@ async fn list_media_files(
             continue;
         }
 
-        let Some(name) = path.file_name().map(|value| value.to_string_lossy().to_string()) else {
+        let Some(name) = path
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+        else {
             continue;
         };
 
@@ -285,11 +294,7 @@ pub async fn list_user_image_folders(
             continue;
         }
 
-        let Some(name) = entry
-            .file_name()
-            .to_str()
-            .map(|value| value.to_string())
-        else {
+        let Some(name) = entry.file_name().to_str().map(|value| value.to_string()) else {
             continue;
         };
 
@@ -341,19 +346,23 @@ pub async fn delete_user_image(
     let (_root_dir, images_dir) = get_default_user_image_directory(&app_state).await?;
     let target_path = images_dir.join(&relative);
 
-    let metadata = fs::metadata(&target_path).await.map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => CommandError::NotFound("File not found".to_string()),
-        _ => CommandError::InternalServerError(format!("Failed to stat file: {}", error)),
-    })?;
+    let metadata = fs::metadata(&target_path)
+        .await
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => CommandError::NotFound("File not found".to_string()),
+            _ => CommandError::InternalServerError(format!("Failed to stat file: {}", error)),
+        })?;
 
     if !metadata.is_file() {
         return Err(CommandError::NotFound("File not found".to_string()));
     }
 
-    fs::remove_file(&target_path).await.map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => CommandError::NotFound("File not found".to_string()),
-        _ => CommandError::InternalServerError(format!("Failed to delete file: {}", error)),
-    })?;
+    fs::remove_file(&target_path)
+        .await
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => CommandError::NotFound("File not found".to_string()),
+            _ => CommandError::InternalServerError(format!("Failed to delete file: {}", error)),
+        })?;
 
     Ok(())
 }
@@ -422,4 +431,3 @@ mod tests {
         assert_eq!(listed, vec!["a.png".to_string(), "b.mp4".to_string()]);
     }
 }
-
