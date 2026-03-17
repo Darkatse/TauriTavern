@@ -232,9 +232,9 @@ src/
 - 触发条件：仅处理第三方浮层节点（`position: fixed` 且顶边贴近 0）。
 - 处理策略：
   - 观察 `document.body` 直接子节点新增/移除；
-  - 对命中元素设置 `top: max(var(--tt-safe-area-top), <原top>) !important`；
+  - 对命中元素设置 `top: max(var(--tt-inset-top), <原top>) !important`；
   - 明确排除 `body/#sheld/#chat` 等应用核心容器，避免影响主界面布局。
-- Android 变量语义：`--tt-safe-area-top` 表示当前布局应避开的有效 inset；非沉浸模式下反映顶部 safe area，沉浸模式下回落为 `0`，因此 overlay patch 不再额外避开顶部状态栏/刘海区域。
+- Android 变量语义：`--tt-inset-top` 表示当前布局应避开的有效 inset；非沉浸模式下反映顶部 safe area，沉浸模式下回落为 `0`，因此 overlay patch 不再额外避开顶部状态栏/刘海区域。
 
 该策略用于修复 JS-Slash-Runner 等脚本在运行时注入固定定位弹窗样式时，关闭按钮落入状态栏导致不可点击的问题。
 

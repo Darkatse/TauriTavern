@@ -1,4 +1,5 @@
 use std::error::Error;
+#[cfg(not(target_os = "ios"))]
 use std::io;
 #[cfg(target_os = "android")]
 use std::path::Path;
@@ -6,7 +7,9 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager};
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const RUNTIME_MODE_ENV: &str = "TAURITAVERN_RUNTIME_MODE";
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const PORTABLE_MARKER_FILE: &str = "portable.flag";
 const DATA_ARCHIVE_ROOT_DIR: &str = ".data-archive";
 const DATA_ARCHIVE_IMPORTS_DIR: &str = "imports";
@@ -15,6 +18,7 @@ const DATA_ARCHIVE_EXPORTS_DIR: &str = "exports";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeMode {
     Standard,
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     Portable,
 }
 

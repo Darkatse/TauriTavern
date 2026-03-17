@@ -88,9 +88,9 @@ const defaultExampleSeparator = '***';
 const defaultChatStart = '***';
 const defaultToastPosition = 'toast-top-center';
 const MOBILE_THEME_CHAT_WIDTH_VW = 100;
-const MOBILE_SAFE_AREA_TOP = 'max(var(--tt-safe-area-top), 0px)';
-const MOBILE_SAFE_AREA_RIGHT = 'max(var(--tt-safe-area-right), 0px)';
-const MOBILE_SAFE_AREA_LEFT = 'max(var(--tt-safe-area-left), 0px)';
+const MOBILE_INSET_TOP = 'max(var(--tt-inset-top), 0px)';
+const MOBILE_INSET_RIGHT = 'max(var(--tt-inset-right), 0px)';
+const MOBILE_INSET_LEFT = 'max(var(--tt-inset-left), 0px)';
 
 const avatar_styles = {
     ROUND: 0,
@@ -1181,9 +1181,9 @@ function enforceMobileTopBarSafeArea() {
             continue;
         }
 
-        element.style.setProperty('top', MOBILE_SAFE_AREA_TOP, 'important');
-        element.style.setProperty('padding-right', MOBILE_SAFE_AREA_RIGHT, 'important');
-        element.style.setProperty('padding-left', MOBILE_SAFE_AREA_LEFT, 'important');
+        element.style.setProperty('top', MOBILE_INSET_TOP, 'important');
+        element.style.setProperty('padding-right', MOBILE_INSET_RIGHT, 'important');
+        element.style.setProperty('padding-left', MOBILE_INSET_LEFT, 'important');
     }
 }
 

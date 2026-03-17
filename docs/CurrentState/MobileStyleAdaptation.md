@@ -11,13 +11,15 @@
 
 结论（当前实现的核心要点）：
 
-1. **Safe‑area 是“宿主提供的布局契约”**：Android 由 native 监听 `WindowInsets` 并注入当前布局应避开的 `--tt-safe-area-*`；iOS 以 CSS `env(safe-area-inset-*)` 为主。
-2. **沉浸模式是 full-bleed 策略开关**：Android 沉浸（system bars 隐藏）时，`--tt-safe-area-*` 回落为 `0`，因此第一方顶部 UI 与第三方 fixed 浮层都允许沉入状态栏/刘海区域。
+1. **Insets 是“宿主提供的布局契约”**：前端布局只消费 `--tt-inset-*`；Android 由 native 监听 `WindowInsets` 并直接注入当前布局应避开的 inset（`--tt-inset-*`），iOS 以 CSS `env(safe-area-inset-*)` 提供 `--tt-inset-*`。
+2. **沉浸模式是 full-bleed 策略开关**：Android 沉浸（system bars 隐藏）时，`--tt-inset-*` 回落为 `0`，因此第一方顶部 UI 与第三方 fixed 浮层都允许沉入状态栏/刘海区域。
 3. **第三方浮层只做元素级最小修正**：不重写 `<style>` 文本，不做全局 subtree observer；仅在出现“顶边贴近 0 的 fixed 浮层”时 patch `top`。
+4. **iOS 禁用 WKWebView 的自动 content inset 调整**：将 `scrollView.contentInsetAdjustmentBehavior = .never` 并清空 `contentInset/scrollIndicatorInsets`，确保 `window.innerHeight` 真正覆盖到全屏；safe-area 只通过 `env(safe-area-inset-*)` 交给前端消费。
 
 本目录记录“现状快照”，更完整的问题推导与历史路径见：
 
-- `docs/MobileDevelopment.md`（6.3）
+- `docs/AndroidDevelopment.md`
+- `docs/iOSDevelopment.md`
 - `docs/MobileDynamicStyleSafeAreaPatch.md`（历史链路）
 
 ## 2. 端到端链路（Android）
@@ -30,7 +32,7 @@
 
 - `WindowCompat.setDecorFitsSystemWindows(window, false)`：启用 edge‑to‑edge。
 - 状态栏/导航栏透明；允许内容延伸到系统栏区域。
-- `layoutInDisplayCutoutMode = SHORT_EDGES`：允许在刘海区域布局；是否避让由 `--tt-safe-area-*` 的当前策略决定。
+- `layoutInDisplayCutoutMode = SHORT_EDGES`：允许在刘海区域布局；是否避让由 `--tt-inset-*` 的当前策略决定。
 - system bars behavior 使用 `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`。
 
 沉浸模式：
@@ -47,14 +49,14 @@
 
 CSS 变量（对前端的稳定契约）：
 
-- `--tt-safe-area-top/right/left/bottom`：安全区 inset（px）。
-- `--tt-ime-bottom`：输入法可见时的底部 inset（px），注入在 `#sheld`（优先）或 `html`。
+- `--tt-inset-top/right/left/bottom`：布局消费的有效避让 inset（px）。
+- `--tt-ime-bottom`：输入法可见时的底部 inset（px），注入在 `#sheld`。
 - `--tt-base-viewport-height`：记录“无 IME 时”的基准 viewport 高度（用于稳定高度计算）。
 
 关键语义（沉浸模式 + 刘海）：
 
-- Android 非沉浸模式下，`--tt-safe-area-*` 反映当前布局应避开的可见/稳定 safe area；
-- Android 沉浸模式下，`--tt-safe-area-*` 回落为 `0`，应用以 full-bleed 方式覆盖到状态栏/刘海区域。
+- Android 非沉浸模式下，`--tt-inset-*` 反映当前布局应避开的可见/稳定 safe area；
+- Android 沉浸模式下，`--tt-inset-*` 回落为 `0`，应用以 full-bleed 方式覆盖到状态栏/刘海区域。
 
 ## 3. 前端消费（CSS / JS）
 
@@ -62,8 +64,8 @@ CSS 变量（对前端的稳定契约）：
 
 `src/style.css` 提供默认值（iOS/浏览器主要依赖）：
 
-- `--tt-safe-area-* = env(safe-area-inset-*, 0px)`
-- `--tt-viewport-bottom-inset = max(var(--tt-safe-area-bottom), var(--tt-ime-bottom))`
+- `--tt-inset-* = env(safe-area-inset-*, 0px)`（iOS）
+- `--tt-viewport-bottom-inset = max(var(--tt-inset-bottom), var(--tt-ime-bottom))`
 
 补充兜底：
 
@@ -77,8 +79,8 @@ Android 说明：
 
 `src/css/mobile-styles.css` 消费上述变量，主要约束点：
 
-- 顶部容器（如 `#top-settings-holder/#top-bar`）使用 `top: max(var(--tt-safe-area-top), 0px)` 并加入左右 padding。
-- 主容器 `#sheld` 以 `safe-area-top + topBarBlockSize` 定位，并用 `--tt-base-viewport-height`/`--doc-height` 计算高度；底部通过 `--tt-safe-area-bottom` 与 `--tt-ime-bottom` 合成有效 bottom inset。
+- 顶部容器（如 `#top-settings-holder/#top-bar`）使用 `top: max(var(--tt-inset-top), 0px)` 并加入左右 padding。
+- 主容器 `#sheld` 以 `inset-top + topBarBlockSize` 定位，并用 `--tt-base-viewport-height`/`--doc-height` 计算高度；底部通过 `#form_sheld { padding-bottom: var(--tt-inset-bottom) }` 消化 safe-area，同时用 `--tt-ime-bottom` 推导键盘偏移。
 
 这些规则的目标是：在非沉浸模式下避开顶部/底部安全区与键盘，在沉浸模式下保持 full-bleed。
 
@@ -91,11 +93,11 @@ Android 说明：
 
 - **Admission**：仅观察 `document.body` 的直系子节点新增/移除（`subtree: false`）。
 - **判定**：对 `position: fixed` 且计算后的 `top` 贴近 0（阈值范围内）的元素进行处理。
-- **补丁**：对命中元素设置 `top: max(var(--tt-safe-area-top), <原top>) !important`。
+- **补丁**：对命中元素设置 `top: max(var(--tt-inset-top), <原top>) !important`。
 - **排除**：明确跳过 `body/#sheld/#chat` 等核心容器（避免影响主界面）。
 - **Revalidate**：监听 `html.style` 变化（native 注入会触发）+ `visualViewport`/`resize`/`orientationchange` 以重新校验 active set。
 
-该控制器的边界是：只对“第三方顶层浮层贴顶”做最小修正，不承担全局样式重写职责；在沉浸模式下由于 `--tt-safe-area-top = 0`，该补丁会自然退化为不额外避让顶部安全区。
+该控制器的边界是：只对“第三方顶层浮层贴顶”做最小修正，不承担全局样式重写职责；在沉浸模式下由于 `--tt-inset-top = 0`，该补丁会自然退化为不额外避让顶部安全区。
 
 ### 3.4 旧 WebView JS 能力补齐（移动端）
 
@@ -133,10 +135,10 @@ native 侧实现：`src-tauri/gen/android/app/src/main/java/com/tauritavern/clie
 
 已支持：
 
-- Android edge‑to‑edge + safe‑area 变量注入（包含 IME）。
-- Android 沉浸模式下以 full-bleed 策略运行，顶部 safe-area 不再额外避让刘海/状态栏。
-- iOS `viewport-fit=cover` + `env(safe-area-inset-*)` 消费。
-- 第三方脚本 fixed 浮层的 safe‑area top 元素级修正（移动端）。
+- Android edge‑to‑edge + inset 契约变量（包含 IME）。
+- Android 沉浸模式下以 full-bleed 策略运行，顶部 inset 不再额外避让刘海/状态栏。
+- iOS `viewport-fit=cover` + `env(safe-area-inset-*)` 提供 `--tt-inset-*`。
+- 第三方脚本 fixed 浮层的 inset top 元素级修正（移动端）。
 - 聊天导航类场景不再自动聚焦 `#send_textarea`，移动端键盘只在真正进入输入/编辑意图时弹出。
 
 明确不支持 / 不承诺：
@@ -155,7 +157,7 @@ native 侧实现：`src-tauri/gen/android/app/src/main/java/com/tauritavern/clie
 
 快速调试点：
 
-- `getComputedStyle(document.documentElement).getPropertyValue('--tt-safe-area-top')`
+- `getComputedStyle(document.documentElement).getPropertyValue('--tt-inset-top')`
   - 沉浸模式期望接近 `0px`
   - 非沉浸模式期望反映当前顶部 safe area
 - `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__` 是否已安装

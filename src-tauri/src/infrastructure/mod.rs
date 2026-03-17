@@ -2,6 +2,8 @@
 pub mod apis;
 pub mod assets;
 pub mod http_client;
+#[cfg(target_os = "ios")]
+pub mod ios_webview;
 pub mod lan_sync;
 pub mod logging;
 pub mod paths;

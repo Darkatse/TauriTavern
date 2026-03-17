@@ -1,7 +1,7 @@
 const CONTROLLER_KEY = '__TAURITAVERN_MOBILE_OVERLAY_COMPAT__';
 
-const SAFE_AREA_TOP_VAR = '--tt-safe-area-top';
-const SAFE_AREA_TOP_REFERENCE_PATTERN = /(?:--tt-safe-area-top|safe-area-inset-top)/i;
+const INSET_TOP_VAR = '--tt-inset-top';
+const INSET_TOP_REFERENCE_PATTERN = /(?:--tt-inset-top|safe-area-inset-top)/i;
 const NON_NUMERIC_TOP_VALUE_PATTERN = /^(auto|inherit|initial|unset|revert|revert-layer)$/i;
 const ZERO_TOP_VALUE_PATTERN = /^0(?:\.0+)?(?:[a-z%]+)?$/i;
 
@@ -228,9 +228,9 @@ function parsePixelValue(rawValue) {
     return Number.isFinite(parsed) ? parsed : null;
 }
 
-function normalizeSafeAreaTopValue(rawValue) {
+function normalizeInsetTopValue(rawValue) {
     const value = String(rawValue || '').trim();
-    if (!value || SAFE_AREA_TOP_REFERENCE_PATTERN.test(value)) {
+    if (!value || INSET_TOP_REFERENCE_PATTERN.test(value)) {
         return null;
     }
 
@@ -240,7 +240,7 @@ function normalizeSafeAreaTopValue(rawValue) {
     }
 
     const normalizedBaseValue = ZERO_TOP_VALUE_PATTERN.test(baseValue) ? '0px' : baseValue;
-    return `max(var(${SAFE_AREA_TOP_VAR}), ${normalizedBaseValue})`;
+    return `max(var(${INSET_TOP_VAR}), ${normalizedBaseValue})`;
 }
 
 function patchOverlayTop(element) {
@@ -260,16 +260,16 @@ function patchOverlayTop(element) {
     }
 
     const inlineTop = String(element.style.getPropertyValue('top') || '').trim();
-    const safeAreaTopValue = normalizeSafeAreaTopValue(inlineTop || computedTop);
-    if (!safeAreaTopValue) {
+    const insetTopValue = normalizeInsetTopValue(inlineTop || computedTop);
+    if (!insetTopValue) {
         return;
     }
 
     const currentTop = String(element.style.getPropertyValue('top') || '').trim();
     const currentPriority = element.style.getPropertyPriority('top') || '';
-    if (currentTop === safeAreaTopValue && currentPriority === 'important') {
+    if (currentTop === insetTopValue && currentPriority === 'important') {
         return;
     }
 
-    element.style.setProperty('top', safeAreaTopValue, 'important');
+    element.style.setProperty('top', insetTopValue, 'important');
 }

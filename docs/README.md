@@ -10,9 +10,11 @@
 4. [前端宿主契约](./FrontendHostContract.md) - Host Kernel 对上游/插件/脚本可观察行为的契约清单（重构必读）
 5. [后端结构](./BackendStructure.md) - 后端架构和模块说明
 6. [实施计划](./ImplementationPlan.md) - 项目实施的阶段和里程碑
-7. [移动端开发说明](./MobileDevelopment.md) - Android/iOS 关键坑位、资源访问与路径解析方案
-8. [现状说明](./CurrentState/README.md) - 当前实现状态快照与持续开发约束
-9. [性能重构计划：Prompt History Backfill](./PerformanceRefactoringPlan.md) - Windowed Payload 下补齐生成上下文的方案（方案 C + 页缓存）
+7. [Android 端开发说明](./AndroidDevelopment.md) - Android WebView/Insets 注入、资源访问与路径解析方案
+8. [iOS 端开发说明](./iOSDevelopment.md) - WKWebView 行为差异、safe-area/viewport-fit 与底部死区修复
+9. [现状说明](./CurrentState/README.md) - 当前实现状态快照与持续开发约束
+10. [性能重构计划：Prompt History Backfill](./PerformanceRefactoringPlan.md) - Windowed Payload 下补齐生成上下文的方案（方案 C + 页缓存）
+11. [移动端 Insets 解耦重构计划](./MobileInsetsDecouplingPlan.md) - Android 原生注入与 iOS CSS safe-area 解耦，修复底部死区并收敛契约
 
 ## 项目概述
 

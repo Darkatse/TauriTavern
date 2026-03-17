@@ -24,17 +24,19 @@ class WebViewInsetsStyleApplier(private val resources: Resources) {
   }
 
   private fun buildApplyScript(snapshot: InsetsSnapshot): String {
-    val safeTop = toCssPxNumber(snapshot.systemBars.top)
-    val safeRight = toCssPxNumber(snapshot.systemBars.right)
-    val safeLeft = toCssPxNumber(snapshot.systemBars.left)
-    val safeBottom = toCssPxNumber(snapshot.systemBars.bottom)
+    val insetTop = toCssPxNumber(snapshot.systemBars.top)
+    val insetRight = toCssPxNumber(snapshot.systemBars.right)
+    val insetLeft = toCssPxNumber(snapshot.systemBars.left)
+    val insetBottom = toCssPxNumber(snapshot.systemBars.bottom)
     val imeBottom = toCssPxNumber(snapshot.imeBottom)
 
     return """
       (() => {
         const bridge = window.__TAURITAVERN_INSETS__;
-        if (!bridge || typeof bridge.apply !== 'function') return;
-        bridge.apply($safeTop, $safeRight, $safeLeft, $safeBottom, $imeBottom);
+        if (!bridge || typeof bridge.apply !== 'function') {
+          throw new Error('[TauriTavern] Android insets bridge unavailable.');
+        }
+        bridge.apply($insetTop, $insetRight, $insetLeft, $insetBottom, $imeBottom);
       })();
       """.trimIndent()
   }
@@ -54,29 +56,27 @@ class WebViewInsetsStyleApplier(private val resources: Resources) {
         const state = {
           baseViewportHeight: 0,
           baseViewportHeightCss: '',
-          safeAreaTop: '',
-          safeAreaRight: '',
-          safeAreaLeft: '',
-          safeAreaBottom: '',
+          insetTop: '',
+          insetRight: '',
+          insetLeft: '',
+          insetBottom: '',
           imeBottom: '',
-          imeTargetId: '',
-          imeTargetRef: null,
         };
 
         const setVarIfChanged = (target, cssName, stateKey, nextValue) => {
-          if (!target || state[stateKey] === nextValue) {
+          if (state[stateKey] === nextValue) {
             return;
           }
           state[stateKey] = nextValue;
           target.style.setProperty(cssName, nextValue);
         };
 
-        const resolveImeTarget = (root) => document.getElementById('sheld') || root;
-
         window.__TAURITAVERN_INSETS__ = {
-          apply(safeTop, safeRight, safeLeft, safeBottom, imeBottom) {
+          apply(insetTop, insetRight, insetLeft, insetBottom, imeBottom) {
             const root = document.documentElement;
-            if (!root) return;
+            if (!root) {
+              throw new Error('[TauriTavern] documentElement unavailable while applying insets.');
+            }
 
             const viewport = window.visualViewport;
             const viewportHeight =
@@ -104,34 +104,17 @@ class WebViewInsetsStyleApplier(private val resources: Resources) {
                 : 0;
             const effectiveImeBottom = Math.max(0, imeBottom - viewportShrink);
 
-            setVarIfChanged(root, '--tt-safe-area-top', 'safeAreaTop', safeTop.toFixed(2) + 'px');
-            setVarIfChanged(root, '--tt-safe-area-right', 'safeAreaRight', safeRight.toFixed(2) + 'px');
-            setVarIfChanged(root, '--tt-safe-area-left', 'safeAreaLeft', safeLeft.toFixed(2) + 'px');
-            setVarIfChanged(
-              root,
-              '--tt-safe-area-bottom',
-              'safeAreaBottom',
-              safeBottom.toFixed(2) + 'px',
-            );
+            setVarIfChanged(root, '--tt-inset-top', 'insetTop', insetTop.toFixed(2) + 'px');
+            setVarIfChanged(root, '--tt-inset-right', 'insetRight', insetRight.toFixed(2) + 'px');
+            setVarIfChanged(root, '--tt-inset-left', 'insetLeft', insetLeft.toFixed(2) + 'px');
+            setVarIfChanged(root, '--tt-inset-bottom', 'insetBottom', insetBottom.toFixed(2) + 'px');
 
             const imeBottomCss = effectiveImeBottom.toFixed(2) + 'px';
-            const imeTarget = resolveImeTarget(root);
-            const imeTargetId = imeTarget === root ? 'root' : 'sheld';
-
-            if (
-              state.imeTargetRef &&
-              state.imeTargetRef !== imeTarget &&
-              state.imeTargetRef.isConnected
-            ) {
-              state.imeTargetRef.style.removeProperty('--tt-ime-bottom');
+            const imeTarget = document.getElementById('sheld');
+            if (!imeTarget) {
+              throw new Error('[TauriTavern] #sheld unavailable while applying IME insets.');
             }
-
-            if (state.imeBottom !== imeBottomCss || state.imeTargetId !== imeTargetId) {
-              state.imeBottom = imeBottomCss;
-              state.imeTargetId = imeTargetId;
-              state.imeTargetRef = imeTarget;
-              imeTarget.style.setProperty('--tt-ime-bottom', imeBottomCss);
-            }
+            setVarIfChanged(imeTarget, '--tt-ime-bottom', 'imeBottom', imeBottomCss);
           },
         };
       })();

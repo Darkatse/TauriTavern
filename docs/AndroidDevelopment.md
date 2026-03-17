@@ -1,6 +1,6 @@
-# TauriTavern 移动端开发说明
+# TauriTavern Android 端开发说明
 
-本文档记录当前移动端（Android / iOS）开发中已经踩过的关键问题、根因分析、已落地方案，以及对应的架构改动。目标是避免重复踩坑，并为后续替换官方修复留出清晰迁移路径。
+本文档记录当前移 Android 端开发中已经踩过的关键问题、根因分析、已落地方案，以及对应的架构改动。目标是避免重复踩坑，并为后续替换官方修复留出清晰迁移路径。
 
 ## 1. Android WebView 安全区注入时机竞态
 
@@ -33,14 +33,17 @@ https://github.com/tauri-apps/tauri/issues/14240
 
 - 保留 edge-to-edge 与透明系统栏配置（沉浸基础）；
 - 监听系统栏与 IME inset；
-- 将 inset 写入前端 CSS 变量：
-  - `--tt-safe-area-top/right/left/bottom`（系统安全区）
+- Android native 注入的 CSS 变量（provider 层）：
+  - `--tt-inset-top/right/left/bottom`（布局应避开的有效 inset：system bars + cutout 等，沉浸模式下为 0）
   - `--tt-ime-bottom`（输入法可见时的底部 inset）
+  - `--tt-base-viewport-height`（无 IME 时的基准 viewport 高度）
+- 前端布局消费的 CSS 变量（contract 层）：
+  - `--tt-inset-top/right/left/bottom`（有效避让 inset；iOS 由 `env()` 提供，Android 由 native 注入覆盖）
   - `--tt-viewport-bottom-inset`（前端通过 `max()` 合成有效底部 inset）
 
-Android 语义说明：
+Android 语义说明（以 contract 层为准）：
 
-- `--tt-safe-area-*` 表示**当前布局应避开的有效安全区**；
+- `--tt-inset-*` 表示**当前布局应避开的有效 inset**；
 - 非沉浸模式下，它反映 system bars + `displayCutout`（刘海/打孔）的可见/稳定 inset；
 - 沉浸模式下，它会回落为 `0`，允许应用顶部 UI 与第三方 fixed 浮层以 full-bleed 方式沉入状态栏区域。
 
@@ -54,7 +57,7 @@ Android 语义说明：
 前端消费变量在：
 
 - `src/style.css`（变量定义与 fallback）
-- `src/css/mobile-styles.css`（顶部栏与容器定位使用变量）
+- `src/css/mobile-styles.css`（顶部栏与容器定位使用 contract 变量）
 
 ### 1.4 维护原则
 
@@ -165,7 +168,7 @@ https://v2.tauri.app/develop/resources/#android
 ### 4.4 前端接入点
 
 - `src/scripts/templates.js`：模板读取在 Tauri 环境下走 `invoke('read_frontend_template')`
-- `src/css/mobile-styles.css` + `src/style.css`：通过 `--tt-safe-area-*` 消费原生注入的安全区变量
+- `src/css/mobile-styles.css` + `src/style.css`：通过 `--tt-inset-*` 消费布局契约
 
 ---
 
@@ -244,8 +247,8 @@ https://v2.tauri.app/develop/resources/#android
 - 在 Tauri mobile 安装 overlay safe-area 兼容控制器：
   - 实现：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
   - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
-  - 策略：只观察 `document.body` 直接子节点新增/移除；对疑似第三方浮层（`position: fixed` 且顶边贴近 0）按元素级别设置 `top: max(var(--tt-safe-area-top), <原top>) !important`；并在 `html.style`/`visualViewport` 变化时重新校验。
-  - 依赖：`--tt-safe-area-top` 表示当前布局策略；因此非沉浸模式下会提供顶部避让，沉浸模式下会自然退化为 no-op。
+  - 策略：只观察 `document.body` 直接子节点新增/移除；对疑似第三方浮层（`position: fixed` 且顶边贴近 0）按元素级别设置 `top: max(var(--tt-inset-top), <原top>) !important`；并在 `html.style`/`visualViewport` 变化时重新校验。
+  - 依赖：`--tt-inset-top` 表示当前布局策略；因此非沉浸模式下会提供顶部避让，沉浸模式下会自然退化为 no-op。
 
 设计约束：
 

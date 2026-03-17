@@ -113,13 +113,13 @@
     --topBarBlockSize: calc(var(--topBarIconSize) + var(--topBarBlockPadding));
     --topBarBlockPadding: calc(var(--mainFontSize) / 3);
 
-    /* Android WebView can report zero env(safe-area-*) values. Native layer overrides these on Android. */
-    --tt-safe-area-top: env(safe-area-inset-top, 0px);
-    --tt-safe-area-right: env(safe-area-inset-right, 0px);
-    --tt-safe-area-left: env(safe-area-inset-left, 0px);
-    --tt-safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    /* Layout contract: Android is native-injected, iOS uses env(safe-area-inset-*). */
+    --tt-inset-top: env(safe-area-inset-top, 0px);
+    --tt-inset-right: env(safe-area-inset-right, 0px);
+    --tt-inset-left: env(safe-area-inset-left, 0px);
+    --tt-inset-bottom: env(safe-area-inset-bottom, 0px);
     --tt-ime-bottom: 0px;
-    --tt-viewport-bottom-inset: max(var(--tt-safe-area-bottom), var(--tt-ime-bottom));
+    --tt-viewport-bottom-inset: max(var(--tt-inset-bottom), var(--tt-ime-bottom));
 
     /*styles for the color picker*/
     --tool-cool-color-picker-btn-bg: transparent;

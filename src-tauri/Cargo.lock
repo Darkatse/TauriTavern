@@ -5026,6 +5026,8 @@ dependencies = [
  "local-ip-address",
  "miktik",
  "mime_guess",
+ "objc2",
+ "objc2-ui-kit",
  "percent-encoding",
  "png",
  "qrcode",

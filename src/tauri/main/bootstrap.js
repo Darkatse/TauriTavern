@@ -351,7 +351,6 @@ export function bootstrapTauriMain() {
             .catch(() => {});
     }
 }
-
 async function initializeTauriIntegration(context, interceptors, downloadBridge, perfEnabled, perfReadyPromise) {
     if (perfEnabled && perfReadyPromise) {
         try {
@@ -360,7 +359,6 @@ async function initializeTauriIntegration(context, interceptors, downloadBridge,
             // Ignore perf HUD load failures.
         }
     }
-
     if (perfEnabled) {
         safePerfMark('tt:tauri:init:start');
     }

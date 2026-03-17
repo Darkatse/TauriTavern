@@ -87,7 +87,7 @@ fn create_main_window(
     let global_extensions_dir = third_party_dirs.global_dir;
     let user_dirs = user_dirs;
 
-    tauri::webview::WebviewWindowBuilder::from_config(app.handle(), window_config)?
+    let _window = tauri::webview::WebviewWindowBuilder::from_config(app.handle(), window_config)?
         .on_web_resource_request(move |request, response| {
             handle_third_party_asset_web_request(
                 &local_extensions_dir,
@@ -99,6 +99,9 @@ fn create_main_window(
             handle_user_data_asset_web_request(&user_dirs, &request, response);
         })
         .build()?;
+
+    #[cfg(target_os = "ios")]
+    infrastructure::ios_webview::disable_wkwebview_content_inset_adjustment(&_window)?;
 
     Ok(())
 }
