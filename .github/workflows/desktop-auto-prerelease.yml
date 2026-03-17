@@ -27,8 +27,6 @@ jobs:
           WORKFLOW_REF: ${{ github.workflow_ref }}
         with:
           script: |
-            const core = require("@actions/core");
-
             if (context.eventName !== "schedule") {
               core.setOutput("should_build", "true");
               core.setOutput("reason", `Run requested by ${context.eventName}.`);
