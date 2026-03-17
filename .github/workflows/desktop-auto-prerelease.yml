@@ -91,7 +91,7 @@ jobs:
             args: --bundles appimage,deb,rpm
           - name: linux-arm64
             platform: ubuntu-22.04-arm
-            args: --bundles appimage,deb,rpm
+            args: --bundles deb,rpm
 
     runs-on: ${{ matrix.platform }}
     name: build-${{ matrix.name }}
