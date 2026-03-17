@@ -186,6 +186,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::bridge::get_version,
         super::bridge::get_client_version,
         super::bridge::is_ready,
+        #[cfg(any(dev, debug_assertions))]
+        super::bridge::read_dev_web_resource,
         super::bridge::read_frontend_template,
         super::bridge::read_frontend_extension_template,
         super::bridge::show_system_notification,

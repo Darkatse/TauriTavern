@@ -55,6 +55,40 @@ function safePerfMeasure(name, startMark, endMark) {
     }
 }
 
+const DEV_SW_PROXY_ALLOWED_PATH_PREFIXES = [
+    '/thumbnail',
+    '/scripts/extensions/third-party/',
+    '/characters/',
+    '/backgrounds/',
+    '/assets/',
+    '/user/images/',
+    '/user/files/',
+    '/User Avatars/',
+    '/User%20Avatars/',
+];
+
+function shouldAllowDevSwProxyPath(pathname) {
+    return DEV_SW_PROXY_ALLOWED_PATH_PREFIXES
+        .some((prefix) => pathname === prefix || pathname.startsWith(prefix));
+}
+
+function normalizeInvokeBytes(value) {
+    if (Array.isArray(value)) {
+        return Uint8Array.from(value);
+    }
+
+    if (value && typeof value === 'object') {
+        const numericKeys = Object.keys(value)
+            .filter((key) => /^\d+$/.test(key))
+            .sort((left, right) => Number(left) - Number(right));
+        if (numericKeys.length > 0) {
+            return Uint8Array.from(numericKeys.map((key) => Number(value[key]) || 0));
+        }
+    }
+
+    return new Uint8Array(0);
+}
+
 async function setupDevThirdPartyExtensionServiceWorker() {
     if (typeof window === 'undefined') {
         return;
@@ -81,32 +115,8 @@ async function setupDevThirdPartyExtensionServiceWorker() {
             return;
         }
         window[BRIDGE_KEY] = true;
-
-        const allowedPrefixes = [
-            '/thumbnail',
-            '/scripts/extensions/third-party/',
-            '/characters/',
-            '/backgrounds/',
-            '/assets/',
-            '/user/images/',
-            '/user/files/',
-            '/User Avatars/',
-            '/User%20Avatars/',
-        ];
-
-        const isAllowedUrl = (url) => {
-            try {
-                const parsed = new URL(String(url || '').trim());
-                if (parsed.protocol !== 'tt-ext:' || parsed.hostname !== 'localhost') {
-                    return false;
-                }
-
-                const pathname = parsed.pathname || '';
-                return allowedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(prefix));
-            } catch {
-                return false;
-            }
-        };
+        const invoke = window.__TAURI__?.core?.invoke
+            || window.__TAURI_INTERNALS__?.invoke;
 
         navigator.serviceWorker.addEventListener('message', (event) => {
             const data = event?.data;
@@ -119,24 +129,33 @@ async function setupDevThirdPartyExtensionServiceWorker() {
                 return;
             }
 
-            const url = String(data.url || '').trim();
-            if (!isAllowedUrl(url)) {
+            const pathname = String(data.pathname ?? '').trim();
+            if (!shouldAllowDevSwProxyPath(pathname)) {
                 port.postMessage({ ok: false, error: 'Blocked tt-ext proxy request' });
                 return;
             }
+            if (typeof invoke !== 'function') {
+                port.postMessage({ ok: false, error: 'Tauri invoke is unavailable' });
+                return;
+            }
 
+            const search = String(data.search ?? '');
             const method = String(data.method || 'GET').toUpperCase();
-            const body = data.body || undefined;
-
-            fetch(url, { method, body, credentials: 'omit' })
-                .then(async (response) => {
-                    const buffer = await response.arrayBuffer();
-                    const headers = Array.from(response.headers.entries());
+            invoke('read_dev_web_resource', {
+                request: {
+                    pathname,
+                    search,
+                    method,
+                },
+            })
+                .then((response) => {
+                    const bytes = normalizeInvokeBytes(response?.body);
+                    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
                     port.postMessage({
                         ok: true,
-                        status: response.status,
-                        statusText: response.statusText,
-                        headers,
+                        status: response?.status || 200,
+                        statusText: response?.statusText || '',
+                        headers: response?.headers || [],
                         body: buffer,
                     }, [buffer]);
                 })

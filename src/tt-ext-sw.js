@@ -84,7 +84,7 @@ async function proxyWebAssetRequest(event, requestUrl) {
     }
 
     if (proxyViaClient) {
-        return proxyViaClientBridge(event, targetUrl, init, new TypeError('Service Worker proxy fetch is disabled'));
+        return proxyViaClientBridge(event, requestUrl, init, new TypeError('Service Worker proxy fetch is disabled'));
     }
 
     try {
@@ -104,11 +104,11 @@ async function proxyWebAssetRequest(event, requestUrl) {
             console.warn('TauriTavern SW: proxy fetch failed, falling back to client bridge:', error);
         }
 
-        return proxyViaClientBridge(event, targetUrl, init, error);
+        return proxyViaClientBridge(event, requestUrl, init, error);
     }
 }
 
-async function proxyViaClientBridge(event, targetUrl, init, originalError) {
+async function proxyViaClientBridge(event, requestUrl, init, originalError) {
     const candidates = await resolveProxyClients(event);
     if (!candidates || candidates.length === 0) {
         throw originalError;
@@ -117,7 +117,7 @@ async function proxyViaClientBridge(event, targetUrl, init, originalError) {
     let lastError = originalError;
     for (const client of candidates) {
         try {
-            const payload = await sendProxyRequestToClient(client, targetUrl, init, originalError);
+            const payload = await sendProxyRequestToClient(client, requestUrl, init, originalError);
             const headers = new Headers(payload.headers || []);
             return new Response(payload.body || null, {
                 status: payload.status || 200,
@@ -132,7 +132,7 @@ async function proxyViaClientBridge(event, targetUrl, init, originalError) {
     throw lastError || originalError;
 }
 
-function sendProxyRequestToClient(client, targetUrl, init, originalError) {
+function sendProxyRequestToClient(client, requestUrl, init, originalError) {
     if (!client || typeof client.postMessage !== 'function') {
         return Promise.reject(originalError);
     }
@@ -193,9 +193,9 @@ function sendProxyRequestToClient(client, targetUrl, init, originalError) {
         try {
             client.postMessage({
                 type: PROXY_REQUEST_MESSAGE_TYPE,
-                url: targetUrl.href,
+                pathname: requestUrl.pathname,
+                search: requestUrl.search,
                 method: init.method,
-                body: init.body || null,
             }, [channel.port2]);
         } catch (error) {
             fail(error);

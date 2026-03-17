@@ -6,6 +6,8 @@ use tauri_plugin_notification::{NotificationExt, PermissionState};
 use crate::infrastructure::assets::read_resource_text;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+#[cfg(any(dev, debug_assertions))]
+use crate::presentation::web_resources::dev_resource_dispatch::dispatch_dev_web_resource_request;
 
 const SILLYTAVERN_COMPAT_VERSION: &str = "1.16.0";
 const BUILD_GIT_REVISION: &str = env!("TAURITAVERN_GIT_REVISION");
@@ -91,6 +93,68 @@ fn normalize_optional_build_value(value: &str) -> Option<String> {
 #[tauri::command]
 pub fn is_ready() -> Result<bool, CommandError> {
     Ok(true)
+}
+
+#[cfg(any(dev, debug_assertions))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevWebResourceRequest {
+    pub pathname: String,
+    pub search: Option<String>,
+    pub method: Option<String>,
+}
+
+#[cfg(any(dev, debug_assertions))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevWebResourceResponse {
+    pub status: u16,
+    pub status_text: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+#[cfg(any(dev, debug_assertions))]
+#[tauri::command]
+pub fn read_dev_web_resource(
+    app: tauri::AppHandle,
+    request: DevWebResourceRequest,
+) -> Result<DevWebResourceResponse, CommandError> {
+    let method = request.method.unwrap_or_else(|| "GET".to_string());
+    let uri = format!("{}{}", request.pathname, request.search.unwrap_or_default());
+    let request = tauri::http::Request::builder()
+        .method(method.as_str())
+        .uri(uri)
+        .body(Vec::new())
+        .map_err(|error| CommandError::BadRequest(error.to_string()))?;
+    let mut response = tauri::http::Response::new(std::borrow::Cow::Owned(Vec::new()));
+
+    dispatch_dev_web_resource_request(&app, &request, &mut response);
+
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            Ok::<_, CommandError>((
+                name.as_str().to_string(),
+                value
+                    .to_str()
+                    .map_err(|error| CommandError::InternalServerError(error.to_string()))?
+                    .to_string(),
+            ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(DevWebResourceResponse {
+        status: response.status().as_u16(),
+        status_text: response
+            .status()
+            .canonical_reason()
+            .unwrap_or_default()
+            .to_string(),
+        headers,
+        body: response.body().to_vec(),
+    })
 }
 
 fn validate_resource_segment(value: &str, field: &str) -> Result<(), CommandError> {
