@@ -99,19 +99,12 @@ export function createCharacterFormService({
     function buildCharacterExtensions(formData) {
         const extensions = parseJsonSafe(stringFromForm(formData, 'extensions', ''), {});
 
-        const world = stringFromForm(formData, 'world', '').trim();
-        if (world) {
-            extensions.world = world;
-        }
-
-        const depthPrompt = stringFromForm(formData, 'depth_prompt_prompt', '').trim();
-        if (depthPrompt) {
-            extensions.depth_prompt = {
-                prompt: depthPrompt,
-                depth: numberFromForm(formData, 'depth_prompt_depth', 4),
-                role: stringFromForm(formData, 'depth_prompt_role', 'system'),
-            };
-        }
+        extensions.world = stringFromForm(formData, 'world', '').trim();
+        extensions.depth_prompt = {
+            prompt: stringFromForm(formData, 'depth_prompt_prompt', ''),
+            depth: numberFromForm(formData, 'depth_prompt_depth', 4),
+            role: stringFromForm(formData, 'depth_prompt_role', 'system'),
+        };
 
         extensions.talkativeness = numberFromForm(formData, 'talkativeness', 0.5);
         extensions.fav = boolFromForm(formData, 'fav');

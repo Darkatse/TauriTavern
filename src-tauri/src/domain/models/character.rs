@@ -131,7 +131,7 @@ pub struct CharacterExtensions {
 }
 
 /// Depth prompt structure
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepthPrompt {
     #[serde(default)]
     pub prompt: String,
@@ -139,6 +139,16 @@ pub struct DepthPrompt {
     pub depth: i32,
     #[serde(default = "default_role")]
     pub role: String,
+}
+
+impl Default for DepthPrompt {
+    fn default() -> Self {
+        Self {
+            prompt: String::new(),
+            depth: default_depth(),
+            role: default_role(),
+        }
+    }
 }
 
 fn default_spec() -> String {

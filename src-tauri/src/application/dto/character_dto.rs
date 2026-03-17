@@ -1,6 +1,7 @@
-use crate::domain::models::character::Character;
+use crate::domain::models::character::{Character, CharacterExtensions};
 use crate::domain::repositories::character_repository::{CharacterChat, ImageCrop};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Character response DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,9 +194,48 @@ impl From<Character> for CharacterDto {
     }
 }
 
+fn replace_character_extensions(
+    character: &mut Character,
+    extensions: Option<Value>,
+) -> Result<(), serde_json::Error> {
+    if let Some(extensions) = extensions {
+        character.data.extensions = serde_json::from_value::<CharacterExtensions>(extensions)?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn merge_character_extensions(
+    character: &mut Character,
+    extensions: Value,
+) -> Result<(), serde_json::Error> {
+    let mut current = serde_json::to_value(&character.data.extensions)?;
+    merge_json_value(&mut current, extensions);
+    character.data.extensions = serde_json::from_value::<CharacterExtensions>(current)?;
+    Ok(())
+}
+
+fn merge_json_value(current: &mut Value, updates: Value) {
+    match (current, updates) {
+        (Value::Object(current_object), Value::Object(updates_object)) => {
+            for (key, value) in updates_object {
+                match current_object.get_mut(&key) {
+                    Some(current_value) => merge_json_value(current_value, value),
+                    None => {
+                        current_object.insert(key, value);
+                    }
+                }
+            }
+        }
+        (current_value, updates_value) => *current_value = updates_value,
+    }
+}
+
 /// Convert from DTO to domain model
-impl From<CreateCharacterDto> for Character {
-    fn from(dto: CreateCharacterDto) -> Self {
+impl TryFrom<CreateCharacterDto> for Character {
+    type Error = serde_json::Error;
+
+    fn try_from(dto: CreateCharacterDto) -> Result<Self, Self::Error> {
         let mut character =
             Character::new(dto.name, dto.description, dto.personality, dto.first_mes);
 
@@ -219,21 +259,11 @@ impl From<CreateCharacterDto> for Character {
         character.data.system_prompt = dto.system_prompt.unwrap_or_default();
         character.data.post_history_instructions =
             dto.post_history_instructions.unwrap_or_default();
+        replace_character_extensions(&mut character, dto.extensions)?;
         character.data.extensions.talkativeness = character.talkativeness;
         character.data.extensions.fav = character.fav;
 
-        // Set extensions if provided
-        if let Some(extensions) = dto.extensions {
-            if let Ok(ext_map) =
-                serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(extensions)
-            {
-                for (key, value) in ext_map {
-                    character.data.extensions.additional.insert(key, value);
-                }
-            }
-        }
-
-        character
+        Ok(character)
     }
 }
 
@@ -260,5 +290,120 @@ impl From<ImageCropDto> for ImageCrop {
             height: dto.height,
             want_resize: dto.want_resize,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CreateCharacterDto, merge_character_extensions};
+    use crate::domain::models::character::Character;
+    use serde_json::json;
+
+    #[test]
+    fn try_from_create_character_dto_maps_structured_extensions() {
+        let character = Character::try_from(CreateCharacterDto {
+            name: "Test".to_string(),
+            description: "desc".to_string(),
+            personality: "persona".to_string(),
+            scenario: String::new(),
+            first_mes: "hello".to_string(),
+            mes_example: String::new(),
+            creator: None,
+            creator_notes: None,
+            character_version: None,
+            tags: None,
+            talkativeness: Some(0.75),
+            fav: Some(true),
+            alternate_greetings: None,
+            system_prompt: None,
+            post_history_instructions: None,
+            extensions: Some(json!({
+                "world": "bound-book",
+                "depth_prompt": {
+                    "prompt": "focus",
+                    "depth": 7,
+                    "role": "assistant"
+                },
+                "custom": "value"
+            })),
+        })
+        .expect("character conversion should succeed");
+
+        assert_eq!(character.data.extensions.world, "bound-book");
+        assert_eq!(character.data.extensions.depth_prompt.prompt, "focus");
+        assert_eq!(character.data.extensions.depth_prompt.depth, 7);
+        assert_eq!(character.data.extensions.depth_prompt.role, "assistant");
+        assert_eq!(
+            character.data.extensions.additional.get("custom"),
+            Some(&json!("value"))
+        );
+        assert_eq!(character.talkativeness, 0.75);
+        assert!(character.fav);
+        assert_eq!(character.data.extensions.talkativeness, 0.75);
+        assert!(character.data.extensions.fav);
+    }
+
+    #[test]
+    fn merge_character_extensions_preserves_existing_fields() {
+        let mut character = Character::new(
+            "Test".to_string(),
+            "desc".to_string(),
+            "persona".to_string(),
+            "hello".to_string(),
+        );
+        character.data.extensions.world = "existing".to_string();
+        character
+            .data
+            .extensions
+            .additional
+            .insert("custom".to_string(), json!("old"));
+
+        merge_character_extensions(
+            &mut character,
+            json!({
+                "world": "",
+                "fav": true,
+                "custom_2": "new"
+            }),
+        )
+        .expect("extensions merge should succeed");
+
+        assert_eq!(character.data.extensions.world, "");
+        assert!(character.data.extensions.fav);
+        assert_eq!(
+            character.data.extensions.additional.get("custom"),
+            Some(&json!("old"))
+        );
+        assert_eq!(
+            character.data.extensions.additional.get("custom_2"),
+            Some(&json!("new"))
+        );
+    }
+
+    #[test]
+    fn merge_character_extensions_preserves_nested_fields() {
+        let mut character = Character::new(
+            "Test".to_string(),
+            "desc".to_string(),
+            "persona".to_string(),
+            "hello".to_string(),
+        );
+        character.data.extensions.depth_prompt.prompt = "old".to_string();
+        character.data.extensions.depth_prompt.depth = 7;
+        character.data.extensions.depth_prompt.role = "assistant".to_string();
+
+        merge_character_extensions(
+            &mut character,
+            json!({
+                "depth_prompt": {
+                    "prompt": "new"
+                }
+            }),
+        )
+        .expect("extensions merge should succeed");
+
+        assert_eq!(character.data.extensions.depth_prompt.prompt, "new");
+        assert_eq!(character.data.extensions.depth_prompt.depth, 7);
+        assert_eq!(character.data.extensions.depth_prompt.role, "assistant");
     }
 }

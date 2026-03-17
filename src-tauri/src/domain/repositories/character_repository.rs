@@ -31,8 +31,13 @@ pub trait CharacterRepository: Send + Sync {
         preserve_file_name: Option<String>,
     ) -> Result<Character, DomainError>;
 
-    /// Export a character to a file
-    async fn export_character(&self, name: &str, target_path: &Path) -> Result<(), DomainError>;
+    /// Export a character card to a target path without mutating the stored source file.
+    async fn export_character(
+        &self,
+        name: &str,
+        target_path: &Path,
+        character_card_json: &str,
+    ) -> Result<(), DomainError>;
 
     /// Export a character card as PNG bytes by writing supplied card JSON metadata.
     async fn export_character_png_bytes(
@@ -52,7 +57,7 @@ pub trait CharacterRepository: Send + Sync {
     /// Update a character's avatar
     async fn update_avatar(
         &self,
-        name: &str,
+        character: &Character,
         avatar_path: &Path,
         crop: Option<ImageCrop>,
     ) -> Result<(), DomainError>;

@@ -226,17 +226,55 @@ impl CharacterRepository for FileCharacterRepository {
         }
     }
 
-    async fn export_character(&self, name: &str, target_path: &Path) -> Result<(), DomainError> {
-        self.find_by_name(name).await?;
+    async fn export_character(
+        &self,
+        name: &str,
+        target_path: &Path,
+        character_card_json: &str,
+    ) -> Result<(), DomainError> {
+        let extension = target_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
 
-        let file_path = self.get_character_path(name);
-
-        fs::copy(&file_path, target_path).await.map_err(|e| {
-            logger::error(&format!("Failed to export character: {}", e));
-            DomainError::InternalError(format!("Failed to export character: {}", e))
-        })?;
-
-        Ok(())
+        match extension.as_str() {
+            "png" => {
+                let png_bytes = self
+                    .export_character_png_bytes(name, character_card_json)
+                    .await?;
+                fs::write(target_path, png_bytes).await.map_err(|error| {
+                    logger::error(&format!(
+                        "Failed to write exported character PNG: {}",
+                        error
+                    ));
+                    DomainError::InternalError(format!(
+                        "Failed to write exported character PNG: {}",
+                        error
+                    ))
+                })?;
+                Ok(())
+            }
+            "json" => {
+                fs::write(target_path, character_card_json.as_bytes())
+                    .await
+                    .map_err(|error| {
+                        logger::error(&format!(
+                            "Failed to write exported character JSON: {}",
+                            error
+                        ));
+                        DomainError::InternalError(format!(
+                            "Failed to write exported character JSON: {}",
+                            error
+                        ))
+                    })?;
+                Ok(())
+            }
+            _ => Err(DomainError::InvalidData(format!(
+                "Unsupported file format: {}",
+                extension
+            ))),
+        }
     }
 
     async fn export_character_png_bytes(
@@ -308,12 +346,10 @@ impl CharacterRepository for FileCharacterRepository {
 
     async fn update_avatar(
         &self,
-        name: &str,
+        character: &Character,
         avatar_path: &Path,
         crop: Option<ImageCrop>,
     ) -> Result<(), DomainError> {
-        let character = self.find_by_name(name).await?;
-
         let file_data = fs::read(avatar_path).await.map_err(|e| {
             logger::error(&format!("Failed to read avatar file: {}", e));
             DomainError::InternalError(format!("Failed to read avatar file: {}", e))
@@ -330,12 +366,17 @@ impl CharacterRepository for FileCharacterRepository {
 
         let new_image_data = write_character_data_to_png(&image_data, &json_data)?;
 
-        let file_path = self.get_character_path(name);
+        let file_name = character.get_file_name();
+        let file_path = self.get_character_path(&file_name);
 
         fs::write(&file_path, new_image_data).await.map_err(|e| {
             logger::error(&format!("Failed to write character file: {}", e));
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
+
+        let cached_character = Self::with_storage_identity(character, &file_name);
+        let mut cache = self.memory_cache.lock().await;
+        cache.set(file_name, cached_character);
 
         Ok(())
     }

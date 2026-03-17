@@ -5996,7 +5996,6 @@ export async function moveWorldInfoEntry(sourceName, targetName, uid, { deleteOr
  * @param {string} name - The name of the world info to link to the character.
  */
 export async function charUpdatePrimaryWorld(name) {
-    const previousValue = $('#character_world').val();
     $('#character_world').val(name);
 
     console.debug('Character world selected:', name);
@@ -6004,22 +6003,6 @@ export async function charUpdatePrimaryWorld(name) {
     if (menu_type == 'create') {
         create_save.world = name;
         return;
-    }
-
-    if (previousValue && !name) {
-        try {
-            // Dirty hack to remove embedded lorebook from character JSON data.
-            const data = JSON.parse(String($('#character_json_data').val()));
-
-            if (data?.data?.character_book) {
-                data.data.character_book = undefined;
-            }
-
-            $('#character_json_data').val(JSON.stringify(data));
-            toastr.info(t`Embedded lorebook will be removed from this character.`);
-        } catch {
-            console.error('Failed to parse character JSON data.');
-        }
     }
 
     await createOrEditCharacter();
