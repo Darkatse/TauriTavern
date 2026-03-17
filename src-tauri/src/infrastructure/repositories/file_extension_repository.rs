@@ -48,6 +48,8 @@ const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "data-migration",
     "attachments",
     "quick-reply",
+    "stable-diffusion",
+    "vectors",
     "tauritavern-version",
 ];
 const SOURCE_METADATA_FILE: &str = ".tauritavern-source.json";
