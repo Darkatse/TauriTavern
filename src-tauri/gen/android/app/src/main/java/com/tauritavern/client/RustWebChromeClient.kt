@@ -52,6 +52,7 @@ class RustWebChromeClient(appActivity: WryActivity) : WebChromeClient() {
   private var activityLauncher: ActivityResultLauncher<Intent>
   private var permissionListener: PermissionListener? = null
   private var activityListener: ActivityResultListener? = null
+  private val extensionMimeOverrides = mapOf("jsonl" to "application/octet-stream")
 
   init {
     activity = appActivity
@@ -397,8 +398,8 @@ class RustWebChromeClient(appActivity: WryActivity) : WebChromeClient() {
     val mtm = MimeTypeMap.getSingleton()
     for (mime in currentTypes) {
       if (mime.startsWith(".")) {
-        val extension = mime.substring(1)
-        val extensionMime = mtm.getMimeTypeFromExtension(extension)
+        val extension = mime.substring(1).lowercase()
+        val extensionMime = mtm.getMimeTypeFromExtension(extension) ?: extensionMimeOverrides[extension]
         if (extensionMime != null && !validTypes.contains(extensionMime)) {
           validTypes.add(extensionMime)
         }
