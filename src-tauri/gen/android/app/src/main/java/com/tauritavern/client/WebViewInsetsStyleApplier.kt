@@ -78,9 +78,8 @@ class WebViewInsetsStyleApplier(private val resources: Resources) {
               throw new Error('[TauriTavern] documentElement unavailable while applying insets.');
             }
 
-            const viewport = window.visualViewport;
             const viewportHeight =
-              viewport && Number.isFinite(viewport.height) ? viewport.height : window.innerHeight;
+              Number.isFinite(window.innerHeight) ? window.innerHeight : 0;
             const imeVisible = imeBottom > 0;
 
             if (!imeVisible && viewportHeight > 0) {
@@ -98,18 +97,12 @@ class WebViewInsetsStyleApplier(private val resources: Resources) {
               );
             }
 
-            const viewportShrink =
-              imeVisible && state.baseViewportHeight > 0
-                ? Math.max(0, state.baseViewportHeight - viewportHeight)
-                : 0;
-            const effectiveImeBottom = Math.max(0, imeBottom - viewportShrink);
-
             setVarIfChanged(root, '--tt-inset-top', 'insetTop', insetTop.toFixed(2) + 'px');
             setVarIfChanged(root, '--tt-inset-right', 'insetRight', insetRight.toFixed(2) + 'px');
             setVarIfChanged(root, '--tt-inset-left', 'insetLeft', insetLeft.toFixed(2) + 'px');
             setVarIfChanged(root, '--tt-inset-bottom', 'insetBottom', insetBottom.toFixed(2) + 'px');
 
-            const imeBottomCss = effectiveImeBottom.toFixed(2) + 'px';
+            const imeBottomCss = Math.max(0, imeBottom).toFixed(2) + 'px';
             const imeTarget = document.getElementById('sheld');
             if (!imeTarget) {
               throw new Error('[TauriTavern] #sheld unavailable while applying IME insets.');

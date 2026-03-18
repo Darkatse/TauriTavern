@@ -2,6 +2,20 @@ import { getParsedUA, isMobile } from './RossAscends-mods.js';
 
 const isFirefox = () => /firefox/i.test(navigator.userAgent);
 
+function getSafariEnvironmentFlags() {
+    const userAgent = getParsedUA();
+    const isMobileSafari = /iPad|iPhone|iPod/.test(navigator.platform) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isDesktopSafari = userAgent?.browser?.name === 'Safari' && userAgent?.platform?.type === 'desktop';
+    const isIOS = userAgent?.os?.name === 'iOS';
+
+    return {
+        userAgent,
+        isMobileSafari,
+        isDesktopSafari,
+        isIOS,
+    };
+}
+
 function sanitizeInlineQuotationOnCopy() {
     // STRG+C, STRG+V on firefox leads to duplicate double quotes when inline quotation elements are copied.
     // To work around this, take the selection and transform <q> to <span> before calling toString().
@@ -53,13 +67,8 @@ function sanitizeInlineQuotationOnCopy() {
     });
 }
 
-function addSafariPatch() {
-    const userAgent = getParsedUA();
+function addSafariPatch({ userAgent, isMobileSafari, isDesktopSafari, isIOS }) {
     console.debug('User Agent', userAgent);
-    const isMobileSafari = /iPad|iPhone|iPod/.test(navigator.platform) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    const isDesktopSafari = userAgent?.browser?.name === 'Safari' && userAgent?.platform?.type === 'desktop';
-    const isIOS = userAgent?.os?.name === 'iOS';
-
     if (isIOS || isMobileSafari || isDesktopSafari) {
         document.body.classList.add('safari');
     }
@@ -70,7 +79,9 @@ function applyBrowserFixes() {
         sanitizeInlineQuotationOnCopy();
     }
 
-    if (isMobile()) {
+    const safariEnvironment = getSafariEnvironmentFlags();
+
+    if (isMobile() && (safariEnvironment.isIOS || safariEnvironment.isMobileSafari)) {
         const fixFunkyPositioning = () => {
             console.debug('[Mobile] Device viewport change detected.');
             document.documentElement.style.position = 'fixed';
@@ -80,7 +91,7 @@ function applyBrowserFixes() {
         window.addEventListener('orientationchange', fixFunkyPositioning);
     }
 
-    addSafariPatch();
+    addSafariPatch(safariEnvironment);
 }
 
 export { isFirefox, applyBrowserFixes };

@@ -33,6 +33,7 @@ https://github.com/tauri-apps/tauri/issues/14240
 
 - 保留 edge-to-edge 与透明系统栏配置（沉浸基础）；
 - 监听系统栏与 IME inset；
+- 在 native 侧消费 IME 语义并把底部避让作为 CSS 变量注入；不再让 descendant WebView 将 IME 继续解释为 viewport resize；
 - Android native 注入的 CSS 变量（provider 层）：
   - `--tt-inset-top/right/left/bottom`（布局应避开的有效 inset：system bars + cutout 等，沉浸模式下为 0）
   - `--tt-ime-bottom`（输入法可见时的底部 inset）
@@ -46,6 +47,7 @@ Android 语义说明（以 contract 层为准）：
 - `--tt-inset-*` 表示**当前布局应避开的有效 inset**；
 - 非沉浸模式下，它反映 system bars + `displayCutout`（刘海/打孔）的可见/稳定 inset；
 - 沉浸模式下，它会回落为 `0`，允许应用顶部 UI 与第三方 fixed 浮层以 full-bleed 方式沉入状态栏区域。
+- `--tt-ime-bottom` 是 Android 上唯一的键盘布局信号；WebView 本身不应再把 IME 当作页面 viewport 缩放来源。
 
 注入时序约束：
 

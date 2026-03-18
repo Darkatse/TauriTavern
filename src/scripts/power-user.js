@@ -3345,10 +3345,21 @@ jQuery(() => {
     var coreTruthWinHeight = window.innerHeight;
 
     $(window).on('resize', async () => {
-        adjustAutocompleteDebounced();
-        setHotswapsDebounced();
+        const nextWidth = window.innerWidth;
+        const nextHeight = window.innerHeight;
+        const isMobileResize = isMobile();
+        const hasWidthChange = nextWidth !== coreTruthWinWidth;
 
-        if (isMobile()) {
+        // IME open/close is height-only on mobile; keep resize side effects for
+        // real viewport geometry changes instead of keyboard churn.
+        if (!isMobileResize || hasWidthChange) {
+            adjustAutocompleteDebounced();
+            setHotswapsDebounced();
+        }
+
+        if (isMobileResize) {
+            coreTruthWinWidth = nextWidth;
+            coreTruthWinHeight = nextHeight;
             return;
         }
 
@@ -3356,8 +3367,8 @@ jQuery(() => {
 
         //attempt to scale movingUI elements naturally across window resizing/zooms
         //this will still break if the zoom level causes mobile styles to come into play.
-        const scaleY = parseFloat(Number(window.innerHeight / coreTruthWinHeight).toFixed(4));
-        const scaleX = parseFloat(Number(window.innerWidth / coreTruthWinWidth).toFixed(4));
+        const scaleY = parseFloat(Number(nextHeight / coreTruthWinHeight).toFixed(4));
+        const scaleX = parseFloat(Number(nextWidth / coreTruthWinWidth).toFixed(4));
 
         if (Object.keys(power_user.movingUIState).length > 0) {
             for (var elmntName of Object.keys(power_user.movingUIState)) {
@@ -3400,8 +3411,8 @@ jQuery(() => {
             console.debug('aborting MUI reset', Object.keys(power_user.movingUIState).length);
         }
         saveSettingsDebounced();
-        coreTruthWinWidth = window.innerWidth;
-        coreTruthWinHeight = window.innerHeight;
+        coreTruthWinWidth = nextWidth;
+        coreTruthWinHeight = nextHeight;
     });
 
     // Settings that go to settings.json

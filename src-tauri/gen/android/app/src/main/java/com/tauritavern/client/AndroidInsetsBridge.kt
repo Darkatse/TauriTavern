@@ -120,7 +120,7 @@ class AndroidInsetsBridge(
     val contentRoot = contentRootProvider() ?: return
     ViewCompat.setOnApplyWindowInsetsListener(contentRoot) { _, insets ->
       updateWindowInsets(insets)
-      insets
+      filterInsetsForDescendants(insets)
     }
     isInsetsListenerAttached = true
   }
@@ -156,6 +156,18 @@ class AndroidInsetsBridge(
   private fun updateImeInsets(insets: WindowInsetsCompat) {
     val imeType = WindowInsetsCompat.Type.ime()
     imeBottomInset = if (insets.isVisible(imeType)) insets.getInsets(imeType).bottom else 0
+  }
+
+  private fun filterInsetsForDescendants(insets: WindowInsetsCompat): WindowInsetsCompat {
+    val imeType = WindowInsetsCompat.Type.ime()
+    // The WebView consumes IME as a host CSS contract (`--tt-ime-bottom`), so
+    // descendants must not also reinterpret it as a viewport resize. IME does
+    // not support the "ignoring visibility" contract, so we only zero the live
+    // inset and visibility state here.
+    return WindowInsetsCompat.Builder(insets)
+      .setInsets(imeType, Insets.NONE)
+      .setVisible(imeType, false)
+      .build()
   }
 
   private fun pushInsetsToWebView(force: Boolean) {

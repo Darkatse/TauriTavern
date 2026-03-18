@@ -12,9 +12,10 @@
 结论（当前实现的核心要点）：
 
 1. **Insets 是“宿主提供的布局契约”**：前端布局只消费 `--tt-inset-*`；Android 由 native 监听 `WindowInsets` 并直接注入当前布局应避开的 inset（`--tt-inset-*`），iOS 以 CSS `env(safe-area-inset-*)` 提供 `--tt-inset-*`。
-2. **沉浸模式是 full-bleed 策略开关**：Android 沉浸（system bars 隐藏）时，`--tt-inset-*` 回落为 `0`，因此第一方顶部 UI 与第三方 fixed 浮层都允许沉入状态栏/刘海区域。
-3. **第三方浮层只做元素级最小修正**：不重写 `<style>` 文本，不做全局 subtree observer；仅在出现“顶边贴近 0 的 fixed 浮层”时 patch `top`。
-4. **iOS 禁用 WKWebView 的自动 content inset 调整**：将 `scrollView.contentInsetAdjustmentBehavior = .never` 并清空 `contentInset/scrollIndicatorInsets`，确保 `window.innerHeight` 真正覆盖到全屏；safe-area 只通过 `env(safe-area-inset-*)` 交给前端消费。
+2. **Android 的 IME 是宿主语义，不再透传为 WebView viewport resize**：native 读取 IME inset 后只以 `--tt-ime-bottom` / `--tt-base-viewport-height` 提供给前端，避免一份键盘语义在 WebView 内再被解释一次。
+3. **沉浸模式是 full-bleed 策略开关**：Android 沉浸（system bars 隐藏）时，`--tt-inset-*` 回落为 `0`，因此第一方顶部 UI 与第三方 fixed 浮层都允许沉入状态栏/刘海区域。
+4. **第三方浮层只做元素级最小修正**：不重写 `<style>` 文本，不做全局 subtree observer；仅在出现“顶边贴近 0 的 fixed 浮层”时 patch `top`。
+5. **iOS 禁用 WKWebView 的自动 content inset 调整**：将 `scrollView.contentInsetAdjustmentBehavior = .never` 并清空 `contentInset/scrollIndicatorInsets`，确保 `window.innerHeight` 真正覆盖到全屏；safe-area 只通过 `env(safe-area-inset-*)` 交给前端消费。
 
 本目录记录“现状快照”，更完整的问题推导与历史路径见：
 
@@ -57,6 +58,7 @@ CSS 变量（对前端的稳定契约）：
 
 - Android 非沉浸模式下，`--tt-inset-*` 反映当前布局应避开的可见/稳定 safe area；
 - Android 沉浸模式下，`--tt-inset-*` 回落为 `0`，应用以 full-bleed 方式覆盖到状态栏/刘海区域。
+- Android IME 不再向 descendant WebView 继续透传为 viewport resize；页面内键盘位移只由 `--tt-ime-bottom` 驱动。
 
 ## 3. 前端消费（CSS / JS）
 
