@@ -47,6 +47,14 @@ const LEFT_NAV_MAIN_API_BLOCKS = Object.freeze({
     },
 });
 
+// Keep the OpenAI control surface connected in compat mode so third-party
+// scripts can continue to drive preset/context settings while the drawer is parked.
+const LEFT_NAV_COMPAT_PINNED_SELECTORS = Object.freeze([
+    '#openai_api-presets',
+    '#completion_prompt_manager',
+    '#openai_api',
+]);
+
 /**
  * @param {string} id
  * @param {string} display
@@ -108,7 +116,7 @@ function syncLeftNavMainApiUi() {
 
 /**
  * @param {EmbeddedRuntimeManager} manager
- * @param {{ panelId: string; parkedSelector: string; pinnedSelectors?: string[]; afterHydrate?: (reason: string) => void }} config
+ * @param {{ panelId: string; parkedSelector: string; pinnedSelectors?: readonly string[]; afterHydrate?: (reason: string) => void }} config
  */
 function registerDrawerParking(manager, { panelId, parkedSelector, pinnedSelectors = [], afterHydrate }) {
     const host = document.getElementById(panelId);
@@ -292,7 +300,7 @@ function registerDrawerParking(manager, { panelId, parkedSelector, pinnedSelecto
  */
 export function installTopSettingsPanelParking({ manager }) {
     const leftNavPinnedSelectors = manager.profile === 'compat'
-        ? ['#openai_preset_import_file', '#completion_prompt_manager']
+        ? LEFT_NAV_COMPAT_PINNED_SELECTORS
         : [];
 
     const registrations = [

@@ -33,10 +33,11 @@ export function validatePanelRuntimeInvariants({ profileName }) {
     mustGetConnectedElementById('regex_container');
     mustGetConnectedElementById('qr_container');
 
-    // Anchor-zone compatibility: third-party scripts expect these anchors to be selectable even when parked.
+    // Compat anchor-zone surface: keep the OpenAI preset / prompt / control hosts selectable while parked.
     if (profile === 'compat') {
-        mustGetConnectedElementById('openai_preset_import_file');
+        mustGetConnectedElementById('openai_api-presets');
         mustGetConnectedElementById('completion_prompt_manager');
+        mustGetConnectedElementById('openai_api');
     }
 
     // API connections control surface (only meaningful when left-nav is hydrated).
