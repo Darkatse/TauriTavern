@@ -5025,7 +5025,7 @@ dependencies = [
 
 [[package]]
 name = "tauritavern"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "async-trait",
  "axum",
