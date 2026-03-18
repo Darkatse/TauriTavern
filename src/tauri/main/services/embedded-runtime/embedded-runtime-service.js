@@ -5,8 +5,11 @@ import { resolveEmbeddedRuntimeProfile } from './embedded-runtime-profiles.js';
 
 const GLOBAL_KEY = '__TAURITAVERN_EMBEDDED_RUNTIME__';
 
-export function createEmbeddedRuntimeService() {
-    const profile = resolveEmbeddedRuntimeProfile();
+/**
+ * @param {{ profileName: string }} options
+ */
+export function createEmbeddedRuntimeService({ profileName }) {
+    const profile = resolveEmbeddedRuntimeProfile(profileName);
     const root = document.querySelector('#chat');
     if (!(root instanceof HTMLElement)) {
         throw new Error('EmbeddedRuntimeService: #chat root not found');

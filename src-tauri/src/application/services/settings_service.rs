@@ -50,6 +50,10 @@ impl SettingsService {
             settings.panel_runtime_profile = panel_runtime_profile;
         }
 
+        if let Some(embedded_runtime_profile) = dto.embedded_runtime_profile {
+            settings.embedded_runtime_profile = embedded_runtime_profile;
+        }
+
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;

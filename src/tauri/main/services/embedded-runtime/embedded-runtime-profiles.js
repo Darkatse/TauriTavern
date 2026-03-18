@@ -1,5 +1,12 @@
 // @ts-check
 
+import {
+    EMBEDDED_RUNTIME_PROFILE_AUTO,
+    EMBEDDED_RUNTIME_PROFILE_COMPAT,
+    EMBEDDED_RUNTIME_PROFILE_MOBILE_SAFE,
+    EMBEDDED_RUNTIME_PROFILE_OFF,
+    normalizeEmbeddedRuntimeProfileName,
+} from './embedded-runtime-profile-state.js';
 import { EmbeddedRuntimeKind } from './runtime-kinds.js';
 
 /**
@@ -13,11 +20,6 @@ function isMobileUserAgent() {
     }
 
     return navigator?.platform === 'MacIntel' && navigator?.maxTouchPoints > 1;
-}
-
-function readProfileOverride() {
-    const raw = String(globalThis.localStorage?.getItem('tt:runtimeProfile') || '').trim();
-    return raw || null;
 }
 
 /** @type {EmbeddedRuntimeProfile} */
@@ -57,13 +59,23 @@ export const EMBEDDED_RUNTIME_PROFILES = Object.freeze({
     'mobile-safe': MOBILE_SAFE_PROFILE,
 });
 
-export function resolveEmbeddedRuntimeProfile() {
-    const override = readProfileOverride();
-    if (override === 'compat') {
+/** @param {string} profileName */
+export function resolveEmbeddedRuntimeProfile(profileName) {
+    const normalized = normalizeEmbeddedRuntimeProfileName(profileName);
+    if (normalized === EMBEDDED_RUNTIME_PROFILE_OFF) {
+        throw new Error('Embedded runtime profile "off" does not resolve to a runtime manager profile');
+    }
+
+    if (normalized === EMBEDDED_RUNTIME_PROFILE_COMPAT) {
         return COMPAT_PROFILE;
     }
-    if (override === 'mobile-safe') {
+
+    if (normalized === EMBEDDED_RUNTIME_PROFILE_MOBILE_SAFE) {
         return MOBILE_SAFE_PROFILE;
+    }
+
+    if (normalized !== EMBEDDED_RUNTIME_PROFILE_AUTO) {
+        throw new Error(`Unsupported embedded runtime profile: ${normalized}`);
     }
 
     if (isMobileUserAgent()) {

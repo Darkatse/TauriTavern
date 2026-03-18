@@ -2,6 +2,12 @@ import { callGenericPopup, POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.j
 import { isMobile } from '../../RossAscends-mods.js';
 import { t, translate } from '../../i18n.js';
 import { getTauriTavernSettings, updateTauriTavernSettings } from '../../../tauri-bridge.js';
+import {
+    clearLegacyEmbeddedRuntimeProfileName,
+    normalizeEmbeddedRuntimeProfileName,
+    resolveEffectiveEmbeddedRuntimeProfileName,
+    setEmbeddedRuntimeBootstrapProfileName,
+} from '../../../tauri/main/services/embedded-runtime/embedded-runtime-profile-state.js';
 
 const TAURITAVERN_SETTINGS_BUTTON_ID = 'tauritavern_settings_button';
 const LAN_SYNC_DEVICES_CHANGED_EVENT = 'tauritavern:lan_sync_devices_changed';
@@ -331,6 +337,7 @@ async function openTauriTavernSettingsPopup() {
                         <option value="auto" data-i18n="Auto (Recommended)">Auto (Recommended)</option>
                         <option value="compat" data-i18n="Balanced">Balanced</option>
                         <option value="mobile-safe" data-i18n="Power Saver">Power Saver</option>
+                        <option value="off" data-i18n="Off (Legacy)">Off (Legacy)</option>
                     </select>
                 </div>
 
@@ -361,10 +368,8 @@ async function openTauriTavernSettingsPopup() {
     const currentPanelRuntimeProfile = settings.panel_runtime_profile;
     profileSelect.value = typeof currentPanelRuntimeProfile === 'string' && currentPanelRuntimeProfile ? currentPanelRuntimeProfile : 'off';
 
-    const embeddedOverride = String(localStorage.getItem('tt:runtimeProfile') || '').trim();
-    const currentEmbeddedRuntimeProfile = embeddedOverride === 'compat' || embeddedOverride === 'mobile-safe'
-        ? embeddedOverride
-        : 'auto';
+    const configuredEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(settings.embedded_runtime_profile);
+    const currentEmbeddedRuntimeProfile = resolveEffectiveEmbeddedRuntimeProfileName(configuredEmbeddedRuntimeProfile);
     embeddedProfileSelect.value = currentEmbeddedRuntimeProfile;
 
     const openLanSyncButton = root.querySelector('#tt-open-lan-sync');
@@ -410,6 +415,7 @@ async function openTauriTavernSettingsPopup() {
             content.style.gap = '8px';
             content.innerHTML = `
                 <b data-i18n="Embedded Runtime">Embedded Runtime</b>
+                <div data-i18n="Embedded Runtime help: off">Off: disables TauriTavern runtime takeover and uses upstream SillyTavern behavior.</div>
                 <div data-i18n="Embedded Runtime help: auto">Auto: picks a profile based on your device.</div>
                 <div data-i18n="Embedded Runtime help: balanced">Balanced: keeps more runtimes active for compatibility.</div>
                 <div data-i18n="Embedded Runtime help: saver">Power Saver: reduces memory/CPU by parking more aggressively.</div>
@@ -436,20 +442,29 @@ async function openTauriTavernSettingsPopup() {
     }
 
     const nextPanelRuntimeProfile = String(profileSelect.value || '').trim();
-    const nextEmbeddedRuntimeProfile = String(embeddedProfileSelect.value || '').trim();
+    const nextEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(embeddedProfileSelect.value);
 
     const hasPanelRuntimeChange = Boolean(nextPanelRuntimeProfile) && nextPanelRuntimeProfile !== currentPanelRuntimeProfile;
-    const hasEmbeddedRuntimeChange = Boolean(nextEmbeddedRuntimeProfile) && nextEmbeddedRuntimeProfile !== currentEmbeddedRuntimeProfile;
+    const requiresEmbeddedRuntimeMigration = configuredEmbeddedRuntimeProfile !== currentEmbeddedRuntimeProfile;
+    const hasEmbeddedRuntimeChange = Boolean(nextEmbeddedRuntimeProfile)
+        && (nextEmbeddedRuntimeProfile !== currentEmbeddedRuntimeProfile || requiresEmbeddedRuntimeMigration);
 
     if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange) {
         return;
     }
 
+    /** @type {Record<string, string>} */
+    const nextSettings = {};
     if (hasPanelRuntimeChange) {
-        await updateTauriTavernSettings({
-            panel_runtime_profile: nextPanelRuntimeProfile,
-        });
+        nextSettings.panel_runtime_profile = nextPanelRuntimeProfile;
+    }
+    if (hasEmbeddedRuntimeChange) {
+        nextSettings.embedded_runtime_profile = nextEmbeddedRuntimeProfile;
+    }
 
+    await updateTauriTavernSettings(nextSettings);
+
+    if (hasPanelRuntimeChange) {
         // Keep in sync with:
         // - src/tauri/main/services/panel-runtime/preinstall.js
         // - src/tauri/main/services/panel-runtime/install.js
@@ -460,14 +475,8 @@ async function openTauriTavernSettingsPopup() {
     }
 
     if (hasEmbeddedRuntimeChange) {
-        // Keep in sync with: src/tauri/main/services/embedded-runtime/embedded-runtime-profiles.js
-        //
-        // `auto` is represented by removing the override key.
-        if (nextEmbeddedRuntimeProfile === 'auto') {
-            localStorage.removeItem('tt:runtimeProfile');
-        } else {
-            localStorage.setItem('tt:runtimeProfile', nextEmbeddedRuntimeProfile);
-        }
+        setEmbeddedRuntimeBootstrapProfileName(nextEmbeddedRuntimeProfile);
+        clearLegacyEmbeddedRuntimeProfileName();
     }
 
     window.location.reload();

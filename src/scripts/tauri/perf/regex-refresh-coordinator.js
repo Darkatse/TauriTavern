@@ -1,7 +1,7 @@
 // @ts-check
 
 import { addCopyToCodeBlocks, chat, messageFormatting } from '../../../script.js';
-import { replaceMesTextHtmlPreservingEmbeddedRuntimes } from '../../../tauri/main/adapters/embedded-runtime/message-render-transaction.js';
+import { replaceMesTextHtmlWithRuntimePolicy } from '../message/mes-text-write.js';
 
 let singleton = null;
 
@@ -111,7 +111,7 @@ function createRegexRefreshCoordinator() {
     function refreshMessage(entry) {
         const message = entry.message;
         const text = message?.extra?.display_text ?? message.mes;
-        replaceMesTextHtmlPreservingEmbeddedRuntimes(
+        replaceMesTextHtmlWithRuntimePolicy(
             entry.element,
             messageFormatting(text, message.name, message.is_system, message.is_user, entry.messageId, {}, false),
         );

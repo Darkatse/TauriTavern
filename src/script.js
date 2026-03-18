@@ -11,7 +11,7 @@ import {
 } from './lib.js';
 import { getClientVersion as getBridgeClientVersion } from './tauri-bridge.js';
 import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
-import { replaceMesTextHtmlPreservingEmbeddedRuntimes } from './tauri/main/adapters/embedded-runtime/message-render-transaction.js';
+import { replaceMesTextHtmlWithRuntimePolicy } from './scripts/tauri/message/mes-text-write.js';
 import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
 import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
 import {
@@ -2303,7 +2303,7 @@ export function updateMessageBlock(messageId, message, { rerenderMessage = true 
     const messageElement = chatElement.find(`[mesid="${messageId}"]`);
     if (rerenderMessage) {
         const text = message?.extra?.display_text ?? message.mes;
-        replaceMesTextHtmlPreservingEmbeddedRuntimes(
+        replaceMesTextHtmlWithRuntimePolicy(
             /** @type {HTMLElement} */ (messageElement[0]),
             messageFormatting(text, message.name, message.is_system, message.is_user, messageId, {}, false),
         );
@@ -2992,7 +2992,7 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
     });
 
     appendMediaToMessage(mes, messageElement, adjustMediaScroll);
-    replaceMesTextHtmlPreservingEmbeddedRuntimes(
+    replaceMesTextHtmlWithRuntimePolicy(
         /** @type {HTMLElement} */ (messageElement[0]),
         messageHTML,
     );
@@ -8834,7 +8834,7 @@ async function messageEditDone(div) {
         editStash.remove();
     }
 
-    replaceMesTextHtmlPreservingEmbeddedRuntimes(
+    replaceMesTextHtmlWithRuntimePolicy(
         /** @type {HTMLElement} */ (mesBlock[0]),
         messageFormatting(
             text,

@@ -10,6 +10,7 @@ pub struct TauriTavernSettingsDto {
     pub updates: TauriTavernUpdateSettingsDto,
     pub perf_profile: String,
     pub panel_runtime_profile: String,
+    pub embedded_runtime_profile: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +28,7 @@ pub struct UpdateTauriTavernSettingsDto {
     pub updates: Option<TauriTavernUpdateSettingsDto>,
     pub perf_profile: Option<String>,
     pub panel_runtime_profile: Option<String>,
+    pub embedded_runtime_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -98,6 +100,7 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             updates: TauriTavernUpdateSettingsDto::from(settings.updates),
             perf_profile: settings.perf_profile,
             panel_runtime_profile: settings.panel_runtime_profile,
+            embedded_runtime_profile: settings.embedded_runtime_profile,
         }
     }
 }

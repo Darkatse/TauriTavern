@@ -256,14 +256,18 @@ src/
 当前落地点（代码）：
 
 - 安装入口：`src/tauri/main/services/embedded-runtime/install.js`
-  - `bootstrap.js` 在 main ready 后加载；在 `APP_READY` 后安装 chat adapters。
+  - `bootstrap.js` 在 main ready 后按 bootstrap mirror 决定是否加载；在 `APP_READY` 后安装 chat adapters。
 - Manager 与 profiles：`src/tauri/main/services/embedded-runtime/*`
   - 全局调试入口：`globalThis.__TAURITAVERN_EMBEDDED_RUNTIME__`
-  - profile 覆盖：`localStorage tt:runtimeProfile = 'compat' | 'mobile-safe'`
+  - 配置来源：`tauritavern-settings.embedded_runtime_profile`
+  - bootstrap mirror：`localStorage tt:embeddedRuntimeProfile = 'off' | 'auto' | 'compat' | 'mobile-safe'`
+  - 旧版 `localStorage tt:runtimeProfile` 仅用于迁移
 - DOM detectors：`src/tauri/main/adapters/embedded-runtime/*-runtime-adapter.js`
   - 已支持：JS-Slash-Runner（`.TH-render`）与 LittleWhiteBox（`.xiaobaix-iframe-wrapper`）。
+- 消息写入 facade：`src/scripts/tauri/message/mes-text-write.js`
+  - 上游调用点统一依赖 facade；`off` 时直接恢复普通 `.mes_text` HTML 写入语义。
 - 渲染事务（ER-3.0）：`src/tauri/main/adapters/embedded-runtime/message-render-transaction.js`
-  - 宿主侧重渲染消息内容时应优先使用 `replaceMesTextHtmlPreservingEmbeddedRuntimes(mesEl, html)`，避免把 iframe runtime 当成普通 DOM 反复销毁重建。
+  - 作为 facade 在 ER 开启时的底层实现，避免把 iframe runtime 当成普通 DOM 反复销毁重建。
 
 当前边界说明：
 

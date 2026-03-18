@@ -2800,6 +2800,7 @@
     "Embedded Runtime help: auto": "自動：依你的裝置自動選擇設定。",
     "Embedded Runtime help: balanced": "均衡：保留更多執行階段為活躍狀態，以提升相容性。",
     "Embedded Runtime help: saver": "省電：更積極地停放執行階段，降低記憶體/CPU 壓力。",
+    "Embedded Runtime help: off": "關閉：停用 TauriTavern 對執行階段的接管，恢復上游 SillyTavern 的行為。",
     "LAN Sync": "LAN 同步",
     "LAN Sync pairing request": "LAN 同步配對請求",
     "LAN Sync progress": "LAN 同步進度",

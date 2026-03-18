@@ -9,6 +9,10 @@ fn default_panel_runtime_profile() -> String {
     "off".to_string()
 }
 
+fn default_embedded_runtime_profile() -> String {
+    "auto".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TauriTavernMigrationState {
     /// One-time migration for legacy character cards whose `create_date` was stored as
@@ -24,6 +28,8 @@ pub struct TauriTavernSettings {
     pub perf_profile: String,
     #[serde(default = "default_panel_runtime_profile")]
     pub panel_runtime_profile: String,
+    #[serde(default = "default_embedded_runtime_profile")]
+    pub embedded_runtime_profile: String,
     #[serde(default)]
     pub migrations: TauriTavernMigrationState,
 }
@@ -34,6 +40,7 @@ impl Default for TauriTavernSettings {
             updates: TauriTavernUpdateSettings::default(),
             perf_profile: default_perf_profile(),
             panel_runtime_profile: default_panel_runtime_profile(),
+            embedded_runtime_profile: default_embedded_runtime_profile(),
             migrations: TauriTavernMigrationState::default(),
         }
     }

@@ -2358,6 +2358,7 @@
     "Embedded Runtime help: auto": "自动：根据你的设备自动选择配置。",
     "Embedded Runtime help: balanced": "均衡：保持更多运行时处于活跃状态，以获得更好的兼容性。",
     "Embedded Runtime help: saver": "省电：更积极地停放运行时，降低内存/CPU 压力。",
+    "Embedded Runtime help: off": "关闭：禁用 TauriTavern 对运行时的接管，恢复上游 SillyTavern 的行为。",
     "LAN Sync": "LAN 同步",
     "LAN Sync pairing request": "LAN 同步配对请求",
     "LAN Sync progress": "LAN 同步进度",

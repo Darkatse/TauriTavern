@@ -38,7 +38,10 @@
 
 - `src/tauri/main/services/embedded-runtime/embedded-runtime-profiles.js`
   - `compat` / `mobile-safe`
-  - 覆盖方式：`localStorage tt:runtimeProfile = 'compat' | 'mobile-safe'`
+- `src/tauri/main/services/embedded-runtime/embedded-runtime-profile-state.js`
+  - 正式配置：`tauritavern-settings.embedded_runtime_profile = 'off' | 'auto' | 'compat' | 'mobile-safe'`
+  - bootstrap mirror：`localStorage tt:embeddedRuntimeProfile`
+  - 旧版 `localStorage tt:runtimeProfile` 仅用于迁移
 
 ### 2.3 Managed iframe slot（park/hydrate + 软停车）
 
@@ -77,13 +80,18 @@
 
 ### 3.1 安装时序
 
-1) `src/tauri/main/bootstrap.js` 在 main ready 后动态导入 `installEmbeddedRuntime()`
+1) `src/tauri/main/bootstrap.js` 先读取 bootstrap mirror；仅当 profile 不是 `off` 时，才在 main ready 后动态导入 `installEmbeddedRuntime()`
 2) `installEmbeddedRuntime()` 创建 manager（全局可见）
 3) `APP_READY` 事件触发后安装 chat adapters，开始扫描与注册 slot
 
 ### 3.2 消息重渲染（ER-3.0：渲染事务）
 
-宿主侧已收敛关键 `.mes_text` 重渲染入口到“渲染事务”：
+宿主侧已收敛关键 `.mes_text` 重渲染入口到“消息写入 facade + 渲染事务”：
+
+- `src/scripts/tauri/message/mes-text-write.js`
+  - `replaceMesTextHtmlWithRuntimePolicy(mesEl, html)`
+  - `off` 时直接恢复普通 `.mes_text` HTML 写入语义
+  - 其余 profile 下委托给渲染事务
 
 - `src/tauri/main/adapters/embedded-runtime/message-render-transaction.js`
   - `replaceMesTextHtmlPreservingEmbeddedRuntimes(mesEl, html)`
@@ -153,4 +161,3 @@ reconcile 后 manager 会根据 profile 预算与可见性选择：
   - 移动保护：`data-tt-runtime-moving="1"`（渲染事务搬运 wrapper 时的临时标记）
   - 内部移除标记：`data-tt-runtime-managed="1"`（一次性，避免被误判为外部破坏）
   - LWB 稳定标记：`data-xb-final / data-xb-hash`（避免 LWB 重渲染）
-
