@@ -430,13 +430,109 @@ impl Character {
 
 /// Sanitize a filename to be safe for file systems
 pub fn sanitize_filename(name: &str) -> String {
-    let sanitized = name
-        .chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ => c,
-        })
-        .collect::<String>();
+    const MAX_FILENAME_BYTES: usize = 255;
 
-    sanitized.trim().to_string()
+    fn is_illegal_character(ch: char) -> bool {
+        matches!(ch, '/' | '?' | '<' | '>' | '\\' | ':' | '*' | '|' | '"')
+    }
+
+    fn is_control_code(ch: char) -> bool {
+        let value = ch as u32;
+        (0x00..=0x1F).contains(&value) || (0x80..=0x9F).contains(&value)
+    }
+
+    fn is_reserved_dots_only(value: &str) -> bool {
+        !value.is_empty() && value.chars().all(|ch| ch == '.')
+    }
+
+    fn is_windows_reserved_name(value: &str) -> bool {
+        if value.is_empty() {
+            return false;
+        }
+
+        let lower = value.to_ascii_lowercase();
+        let stem = lower.split('.').next().unwrap_or(lower.as_str());
+
+        matches!(stem, "con" | "prn" | "aux" | "nul")
+            || stem
+                .strip_prefix("com")
+                .is_some_and(|suffix| suffix.len() == 1 && suffix.as_bytes()[0].is_ascii_digit())
+            || stem
+                .strip_prefix("lpt")
+                .is_some_and(|suffix| suffix.len() == 1 && suffix.as_bytes()[0].is_ascii_digit())
+    }
+
+    fn truncate_utf8_bytes(value: &str, max_bytes: usize) -> &str {
+        if value.len() <= max_bytes {
+            return value;
+        }
+
+        let mut end = 0usize;
+        for (index, ch) in value.char_indices() {
+            let next = index + ch.len_utf8();
+            if next > max_bytes {
+                break;
+            }
+            end = next;
+        }
+
+        &value[..end]
+    }
+
+    let mut sanitized = String::with_capacity(name.len());
+    for ch in name.chars() {
+        if is_illegal_character(ch) || is_control_code(ch) {
+            continue;
+        }
+
+        sanitized.push(ch);
+    }
+
+    if is_reserved_dots_only(&sanitized) || is_windows_reserved_name(&sanitized) {
+        sanitized.clear();
+    }
+
+    while sanitized.ends_with('.') || sanitized.ends_with(' ') {
+        sanitized.pop();
+    }
+
+    let trimmed = sanitized.trim();
+    truncate_utf8_bytes(trimmed, MAX_FILENAME_BYTES).to_string()
+}
+
+#[cfg(test)]
+mod filename_tests {
+    use super::sanitize_filename;
+
+    #[test]
+    fn sanitize_filename_removes_illegal_characters() {
+        assert_eq!(sanitize_filename("a:b*c?.png"), "abc.png");
+        assert_eq!(sanitize_filename("中文/测试"), "中文测试");
+    }
+
+    #[test]
+    fn sanitize_filename_removes_reserved_names() {
+        assert_eq!(sanitize_filename("."), "");
+        assert_eq!(sanitize_filename(".."), "");
+        assert_eq!(sanitize_filename("CON"), "");
+        assert_eq!(sanitize_filename("com1.txt"), "");
+    }
+
+    #[test]
+    fn sanitize_filename_strips_trailing_dots_and_spaces() {
+        assert_eq!(sanitize_filename("name. "), "name");
+        assert_eq!(sanitize_filename("name..."), "name");
+    }
+
+    #[test]
+    fn sanitize_filename_truncates_by_utf8_bytes() {
+        let long_ascii = "a".repeat(300);
+        let sanitized = sanitize_filename(&long_ascii);
+        assert_eq!(sanitized.len(), 255);
+
+        let long_cjk = "中".repeat(200);
+        let sanitized = sanitize_filename(&long_cjk);
+        assert_eq!(sanitized, "中".repeat(85));
+        assert_eq!(sanitized.as_bytes().len(), 255);
+    }
 }

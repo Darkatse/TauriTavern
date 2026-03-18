@@ -47,6 +47,70 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
 }
 
 #[tokio::test]
+async fn create_with_avatar_allocates_unique_file_stems() {
+    let (repository, root) = setup_repository().await;
+
+    let first = Character::new(
+        "Duplicate".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "First greeting".to_string(),
+    );
+    let created_first = repository
+        .create_with_avatar(&first, None, None)
+        .await
+        .expect("create first character");
+
+    let second = Character::new(
+        "Duplicate".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "Second greeting".to_string(),
+    );
+    let created_second = repository
+        .create_with_avatar(&second, None, None)
+        .await
+        .expect("create second character");
+
+    assert_eq!(created_first.avatar, "Duplicate.png");
+    assert_eq!(created_second.avatar, "Duplicate1.png");
+
+    let loaded_first = repository
+        .find_by_name("Duplicate")
+        .await
+        .expect("load first character");
+    let loaded_second = repository
+        .find_by_name("Duplicate1")
+        .await
+        .expect("load second character");
+
+    assert_eq!(loaded_first.first_mes, "First greeting");
+    assert_eq!(loaded_second.first_mes, "Second greeting");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn create_with_avatar_sanitizes_file_stem_like_sillytavern() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Unsafe/Name".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "Hi".to_string(),
+    );
+    let created = repository
+        .create_with_avatar(&character, None, None)
+        .await
+        .expect("create character");
+
+    assert_eq!(created.avatar, "UnsafeName.png");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn import_png_does_not_eagerly_create_chat_file() {
     let (repository, root) = setup_repository().await;
 
@@ -388,9 +452,9 @@ async fn save_character_cache_exposes_real_avatar_file_name() {
         .await
         .expect("load characters from cache-backed list");
     assert_eq!(loaded.len(), 1);
-    assert_eq!(loaded[0].avatar, "Invalid_Name.png");
+    assert_eq!(loaded[0].avatar, "InvalidName.png");
 
-    assert!(root.join("characters").join("Invalid_Name.png").exists());
+    assert!(root.join("characters").join("InvalidName.png").exists());
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -534,10 +598,10 @@ async fn rename_sanitizes_target_file_name_and_moves_chat_directory() {
         .expect("rename character");
 
     assert_eq!(renamed.name, "Renamed:/Name");
-    assert_eq!(renamed.avatar, "Renamed__Name.png");
-    assert!(root.join("characters").join("Renamed__Name.png").exists());
+    assert_eq!(renamed.avatar, "RenamedName.png");
+    assert!(root.join("characters").join("RenamedName.png").exists());
     assert!(!root.join("characters").join("Source.png").exists());
-    assert!(root.join("chats").join("Renamed__Name").exists());
+    assert!(root.join("chats").join("RenamedName").exists());
     assert!(!root.join("chats").join("Source").exists());
 
     let _ = fs::remove_dir_all(&root).await;

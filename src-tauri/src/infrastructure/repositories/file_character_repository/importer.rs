@@ -354,7 +354,7 @@ impl FileCharacterRepository {
         Ok(self.ensure_unique_file_stem(&base))
     }
 
-    fn ensure_unique_file_stem(&self, base: &str) -> String {
+    pub(super) fn ensure_unique_file_stem(&self, base: &str) -> String {
         let mut candidate = base.to_string();
         let mut suffix = 1;
 

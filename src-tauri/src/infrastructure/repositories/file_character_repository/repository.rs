@@ -308,6 +308,8 @@ impl CharacterRepository for FileCharacterRepository {
         avatar_path: Option<&Path>,
         crop: Option<ImageCrop>,
     ) -> Result<Character, DomainError> {
+        self.ensure_directory_exists().await?;
+
         let image_data = if let Some(path) = avatar_path {
             let file_data = fs::read(path).await.map_err(|e| {
                 logger::error(&format!("Failed to read avatar file: {}", e));
@@ -328,7 +330,8 @@ impl CharacterRepository for FileCharacterRepository {
 
         let new_image_data = write_character_data_to_png(&image_data, &json_data)?;
 
-        let file_name = character.get_file_name();
+        let base = Self::normalize_character_file_stem(&character.name)?;
+        let file_name = self.ensure_unique_file_stem(&base);
         let file_path = self.get_character_path(&file_name);
 
         fs::write(&file_path, new_image_data).await.map_err(|e| {

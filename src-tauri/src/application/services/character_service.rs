@@ -64,18 +64,17 @@ impl CharacterService {
 
         // Convert DTO to domain model
         let mut character = Character::try_from(dto).map_err(Self::map_extensions_error)?;
-        let file_name = character.get_file_name();
-        character.file_name = Some(file_name.clone());
-        character.avatar = format!("{}.png", file_name);
 
         // Validate character
         self.validate_character(&character)?;
         self.materialize_primary_lorebook(&mut character).await?;
 
-        // Save character
-        self.repository.save(&character).await?;
+        let created = self
+            .repository
+            .create_with_avatar(&character, None, None)
+            .await?;
 
-        Ok(CharacterDto::from(character))
+        Ok(CharacterDto::from(created))
     }
 
     /// Create a character with an avatar
@@ -396,12 +395,6 @@ impl CharacterService {
         if name.trim().is_empty() {
             return Err(DomainError::InvalidData(
                 "Character name is required".to_string(),
-            ));
-        }
-
-        if name.len() > 100 {
-            return Err(DomainError::InvalidData(
-                "Character name is too long (max 100 characters)".to_string(),
             ));
         }
 
