@@ -103,6 +103,12 @@ jobs:
           node-version: lts/*
           cache: pnpm
 
+      - name: Install Android host build dependencies
+        if: matrix.mobile == 'android'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglib2.0-dev
+
       - name: Install Rust toolchain (Android targets)
         if: matrix.mobile == 'android'
         uses: dtolnay/rust-toolchain@stable
@@ -153,11 +159,29 @@ jobs:
           base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
           echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
 
+      - name: Setup App Store Connect API key
+        if: matrix.mobile == 'ios'
+        shell: bash
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          : "${APPLE_API_ISSUER:?Missing APPLE_API_ISSUER secret}"
+          : "${APPLE_API_KEY:?Missing APPLE_API_KEY secret}"
+          : "${APPLE_API_KEY_P8:?Missing APPLE_API_KEY_P8 secret}"
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          umask 077
+          printf '%s' "$APPLE_API_KEY_P8" > "$KEY_PATH"
+          echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
       - name: Build and upload mobile pre-release
         uses: tauri-apps/tauri-action@acc588b4e23a3fbc5bfc5d77ba29df93f3e43c64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NDK_HOME: ${{ matrix.mobile == 'android' && steps.setup-ndk.outputs.ndk-path || '' }}
+          APPLE_API_ISSUER: ${{ matrix.mobile == 'ios' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY: ${{ matrix.mobile == 'ios' && secrets.APPLE_API_KEY || '' }}
         with:
           tagName: mobile-auto-v__VERSION__
           releaseName: TauriTavern 移动端自动构建 v__VERSION__ / TauriTavern Mobile Auto Build v__VERSION__
