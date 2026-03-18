@@ -117,6 +117,7 @@ Android 说明：
 - `#send_textarea` 的程序化聚焦按意图分为 `navigation` / `restoration` / `editing`。
 - 移动端会拒绝 `navigation` 与 `restoration`，因此切角色、读历史聊天、welcome screen 创建临时聊天、按钮回焦都不会自动把键盘弹起。
 - 显式编辑流仍允许聚焦，例如消息编辑收尾、Quick Reply 把内容注入聊天输入框后继续编辑。
+- Tauri Android 在文档进入 `hidden` 时，若 `#send_textarea` 仍持有焦点，会主动 `blur()` 并清空 restoration 状态；因此从系统后台返回时不会因为旧焦点被恢复而自动弹出键盘。
 - 该策略完全留在前端共享模块，不依赖 native/WebView 对 `focus()` 做拦截。
 
 ## 4. 沉浸模式开关（Android）
@@ -141,7 +142,7 @@ native 侧实现：`src-tauri/gen/android/app/src/main/java/com/tauritavern/clie
 - Android 沉浸模式下以 full-bleed 策略运行，顶部 inset 不再额外避让刘海/状态栏。
 - iOS `viewport-fit=cover` + `env(safe-area-inset-*)` 提供 `--tt-inset-*`。
 - 第三方脚本 fixed 浮层的 inset top 元素级修正（移动端）。
-- 聊天导航类场景不再自动聚焦 `#send_textarea`，移动端键盘只在真正进入输入/编辑意图时弹出。
+- 聊天导航类场景不再自动聚焦 `#send_textarea`，Tauri Android 从系统后台恢复时也不会恢复聊天输入焦点；移动端键盘只在真正进入输入/编辑意图时弹出。
 
 明确不支持 / 不承诺：
 

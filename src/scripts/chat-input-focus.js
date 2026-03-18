@@ -18,6 +18,7 @@ const RESTORE_TRIGGER_SELECTOR = [
     '#mes_impersonate',
 ].join(', ');
 
+const ANDROID_USER_AGENT_PATTERN = /android/i;
 const MOBILE_USER_AGENT_PATTERN = /android|iphone|ipad|ipod/i;
 
 let focusKeeperInstalled = false;
@@ -84,6 +85,18 @@ export function installChatInputFocusKeeper() {
     textarea.addEventListener('focus', rememberChatInputFocus);
     textarea.addEventListener('click', rememberChatInputFocus);
 
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'hidden' || !shouldBlurChatInputOnDocumentHidden()) {
+            return;
+        }
+
+        shouldRestoreFocus = false;
+
+        if (document.activeElement === textarea) {
+            textarea.blur();
+        }
+    });
+
     document.addEventListener('click', (event) => {
         const target = event.target;
         if (!(target instanceof Element)) {
@@ -117,4 +130,13 @@ function isMobileChatInputEnvironment() {
     }
 
     return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+}
+
+function shouldBlurChatInputOnDocumentHidden() {
+    if (globalThis.__TAURI_RUNNING__ !== true || typeof navigator === 'undefined') {
+        return false;
+    }
+
+    const userAgent = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
+    return ANDROID_USER_AGENT_PATTERN.test(userAgent);
 }
