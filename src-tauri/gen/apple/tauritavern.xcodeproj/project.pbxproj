@@ -18,7 +18,6 @@
 		AA3812A8AB49B932DA7D1FE2 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = C11991D4BBA9ED50B2CBD16A /* libapp.a */; };
 		BE9048F0BE508CFBCBAAE845 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 87CD80661131CB327DEBC646 /* LaunchScreen.storyboard */; };
 		CD0EE93A72D73C678ED1D675 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 581C420CD09C276B28F81159 /* assets */; };
-		EA65CA1E6500175D7775DBA9 /* libapp.a in Resources */ = {isa = PBXBuildFile; fileRef = 3DF579298F528439D611A8DE /* libapp.a */; };
 		F64A8E669FCED0F94A1592A1 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = E494B2830348E4D8EB0AEEAD /* main.mm */; };
 /* End PBXBuildFile section */
 
@@ -847,7 +846,6 @@
 				88452944535A8DB9D80683ED /* Assets.xcassets in Resources */,
 				BE9048F0BE508CFBCBAAE845 /* LaunchScreen.storyboard in Resources */,
 				CD0EE93A72D73C678ED1D675 /* assets in Resources */,
-				EA65CA1E6500175D7775DBA9 /* libapp.a in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

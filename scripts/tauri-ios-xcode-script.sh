@@ -55,6 +55,16 @@ run_tauri_ios_xcode_script() {
     ${ARCHS:?}
 }
 
+normalize_ios_app_icons() {
+  local app_icon_set="$REPO_ROOT/src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset"
+  xcrun --sdk macosx swift "$SCRIPT_DIR/ios-opaque-app-icons.swift" "$app_icon_set"
+}
+
+build_tauri_ios_target() {
+  run_tauri_ios_xcode_script "$@"
+  normalize_ios_app_icons
+}
+
 if ! ensure_node_on_path; then
   echo "error: node was not found in Xcode's PATH." >&2
   echo "error: install Node in a stable location, or configure fnm/volta so GUI apps can resolve it." >&2
@@ -63,12 +73,12 @@ if ! ensure_node_on_path; then
 fi
 
 if command -v pnpm >/dev/null 2>&1; then
-  run_tauri_ios_xcode_script pnpm
+  build_tauri_ios_target pnpm
   exit 0
 fi
 
 if command -v corepack >/dev/null 2>&1; then
-  run_tauri_ios_xcode_script corepack pnpm
+  build_tauri_ios_target corepack pnpm
   exit 0
 fi
 
