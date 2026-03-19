@@ -12,7 +12,7 @@ use crate::domain::repositories::character_repository::{
 };
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::png_utils::{
-    process_avatar_image, write_character_data_to_png,
+    process_avatar_image, read_character_data_from_png, write_character_data_to_png,
 };
 
 use super::FileCharacterRepository;
@@ -275,6 +275,27 @@ impl CharacterRepository for FileCharacterRepository {
                 extension
             ))),
         }
+    }
+
+    async fn read_character_card_json(&self, name: &str) -> Result<String, DomainError> {
+        let file_path = self.get_character_path(name);
+        if !file_path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Character not found: {}",
+                name
+            )));
+        }
+
+        let image_data = fs::read(&file_path).await.map_err(|error| {
+            logger::error(&format!(
+                "Failed to read character file {}: {}",
+                file_path.display(),
+                error
+            ));
+            DomainError::InternalError(format!("Failed to read character file: {}", error))
+        })?;
+
+        read_character_data_from_png(&image_data)
     }
 
     async fn export_character_png_bytes(

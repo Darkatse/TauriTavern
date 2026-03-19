@@ -39,6 +39,9 @@ pub trait CharacterRepository: Send + Sync {
         character_card_json: &str,
     ) -> Result<(), DomainError>;
 
+    /// Read the raw character card JSON payload as stored (PNG metadata, preferring V3 when available).
+    async fn read_character_card_json(&self, name: &str) -> Result<String, DomainError>;
+
     /// Export a character card as PNG bytes by writing supplied card JSON metadata.
     async fn export_character_png_bytes(
         &self,

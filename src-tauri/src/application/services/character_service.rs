@@ -289,9 +289,7 @@ impl CharacterService {
             "Exporting character: {} to {}",
             dto.name, dto.target_path
         ));
-        let mut character = self.repository.find_by_name(&dto.name).await?;
-        self.materialize_primary_lorebook(&mut character).await?;
-        let export_value = Self::build_export_card_value(&character)?;
+        let export_value = self.build_export_card_value(&dto.name).await?;
         let export_json = serde_json::to_string_pretty(&export_value).map_err(|error| {
             ApplicationError::InternalError(format!(
                 "Failed to serialize exported character JSON: {}",
@@ -318,9 +316,7 @@ impl CharacterService {
             )));
         }
 
-        let mut character = self.repository.find_by_name(&dto.name).await?;
-        self.materialize_primary_lorebook(&mut character).await?;
-        let export_value = Self::build_export_card_value(&character)?;
+        let export_value = self.build_export_card_value(&dto.name).await?;
 
         if format == "json" {
             let pretty_json = serde_json::to_string_pretty(&export_value).map_err(|error| {
@@ -525,23 +521,102 @@ impl CharacterService {
         Ok(base_name)
     }
 
-    fn build_export_card_value(character: &Character) -> Result<Value, DomainError> {
-        let mut export_card = character.to_v2();
-        export_card.fav = false;
-        export_card.data.extensions.fav = false;
-
-        let mut export_value = serde_json::to_value(&export_card).map_err(|error| {
+    async fn build_export_card_value(&self, name: &str) -> Result<Value, DomainError> {
+        let raw_json = self.repository.read_character_card_json(name).await?;
+        let mut export_value: Value = serde_json::from_str(&raw_json).map_err(|error| {
             DomainError::InvalidData(format!(
-                "Failed to build exported character payload: {}",
+                "Failed to parse stored character payload: {}",
                 error
             ))
         })?;
 
-        if let Some(object) = export_value.as_object_mut() {
-            object.remove("chat");
-        }
+        self.materialize_primary_lorebook_value(&mut export_value)
+            .await?;
+        Self::unset_private_fields(&mut export_value)?;
 
         Ok(export_value)
+    }
+
+    async fn materialize_primary_lorebook_value(
+        &self,
+        export_value: &mut Value,
+    ) -> Result<(), DomainError> {
+        let world_name = export_value
+            .pointer("/data/extensions/world")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+
+        if world_name.is_empty() {
+            if let Some(data_object) = export_value
+                .get_mut("data")
+                .and_then(Value::as_object_mut)
+            {
+                data_object.remove("character_book");
+            }
+            return Ok(());
+        }
+
+        let world_info = self
+            .world_info_repository
+            .get_world_info(world_name, false)
+            .await?
+            .ok_or_else(|| {
+                DomainError::NotFound(format!("World info file {} doesn't exist", world_name))
+            })?;
+        let character_book = world_info_to_character_book(world_name, &world_info)?;
+
+        let Some(root_object) = export_value.as_object_mut() else {
+            return Err(DomainError::InvalidData(
+                "Character payload must be a JSON object".to_string(),
+            ));
+        };
+
+        let data = root_object
+            .entry("data")
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        let Some(data_object) = data.as_object_mut() else {
+            return Err(DomainError::InvalidData(
+                "Character payload data must be a JSON object".to_string(),
+            ));
+        };
+
+        data_object.insert("character_book".to_string(), character_book);
+
+        Ok(())
+    }
+
+    fn unset_private_fields(export_value: &mut Value) -> Result<(), DomainError> {
+        let Some(root_object) = export_value.as_object_mut() else {
+            return Err(DomainError::InvalidData(
+                "Character payload must be a JSON object".to_string(),
+            ));
+        };
+
+        root_object.insert("fav".to_string(), Value::Bool(false));
+        root_object.remove("chat");
+
+        let data = root_object
+            .entry("data")
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        let Some(data_object) = data.as_object_mut() else {
+            return Err(DomainError::InvalidData(
+                "Character payload data must be a JSON object".to_string(),
+            ));
+        };
+
+        let extensions = data_object
+            .entry("extensions")
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        let Some(extensions_object) = extensions.as_object_mut() else {
+            return Err(DomainError::InvalidData(
+                "Character payload extensions must be a JSON object".to_string(),
+            ));
+        };
+
+        extensions_object.insert("fav".to_string(), Value::Bool(false));
+
+        Ok(())
     }
 }
 
@@ -558,6 +633,9 @@ mod tests {
     use crate::domain::repositories::world_info_repository::WorldInfoRepository;
     use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
     use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
+    use crate::infrastructure::persistence::png_utils::{
+        read_character_data_from_png, write_character_data_to_png,
+    };
     use image::{DynamicImage, ImageFormat, RgbaImage};
     use rand::random;
     use serde_json::json;
@@ -565,6 +643,21 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use tokio::fs;
+
+    async fn write_character_png(
+        root: &PathBuf,
+        file_stem: &str,
+        payload: &serde_json::Value,
+    ) {
+        let png_bytes = write_character_data_to_png(
+            &build_minimal_png(),
+            &serde_json::to_string(payload).expect("serialize card payload"),
+        )
+        .expect("embed card in png");
+        fs::write(root.join("characters").join(format!("{}.png", file_stem)), png_bytes)
+            .await
+            .expect("write character png");
+    }
 
     fn unique_temp_root() -> PathBuf {
         std::env::temp_dir().join(format!("tauritavern-character-service-{}", random::<u64>()))
@@ -841,8 +934,10 @@ mod tests {
         character.fav = true;
         character.data.extensions.fav = true;
 
-        let export_value = CharacterService::build_export_card_value(&character)
-            .expect("export payload should be built");
+        let mut export_value =
+            serde_json::to_value(&character.to_v2()).expect("build export payload");
+        CharacterService::unset_private_fields(&mut export_value)
+            .expect("private fields should be removed");
 
         assert!(
             export_value.get("chat").is_none(),
@@ -858,6 +953,131 @@ mod tests {
                 .and_then(|value| value.as_bool()),
             Some(false)
         );
+    }
+
+    #[tokio::test]
+    async fn export_character_content_preserves_unknown_card_fields() {
+        let (service, _character_repository, _world_info_repository, root) = setup_service().await;
+
+        let card_payload = json!({
+            "spec": "chara_card_v3",
+            "spec_version": "3.0",
+            "name": "Unknown Export",
+            "first_mes": "Hello",
+            "creatorcomment": "legacy field",
+            "x_custom_top": { "nested": true },
+            "data": {
+                "name": "Unknown Export",
+                "first_mes": "Hello",
+                "extensions": {
+                    "talkativeness": 0.5,
+                    "fav": false,
+                    "world": "",
+                    "depth_prompt": {
+                        "prompt": "",
+                        "depth": 4,
+                        "role": "system",
+                    },
+                },
+                "x_custom_data": 123,
+            },
+        });
+
+        write_character_png(&root, "Unknown Export", &card_payload).await;
+
+        let exported = service
+            .export_character_content(ExportCharacterContentDto {
+                name: "Unknown Export".to_string(),
+                format: "json".to_string(),
+            })
+            .await
+            .expect("export should succeed");
+
+        let exported_json = String::from_utf8(exported.data).expect("export json utf8");
+        let exported_value: serde_json::Value =
+            serde_json::from_str(&exported_json).expect("parse exported json");
+
+        assert!(
+            exported_value.get("x_custom_top").is_some(),
+            "exported json should preserve unknown top-level fields"
+        );
+        assert!(
+            exported_value.pointer("/data/x_custom_data").is_some(),
+            "exported json should preserve unknown data fields"
+        );
+
+        let _ = fs::remove_dir_all(&root).await;
+    }
+
+    #[tokio::test]
+    async fn export_character_content_png_preserves_unknown_card_fields() {
+        let (service, _character_repository, _world_info_repository, root) = setup_service().await;
+
+        let card_payload = json!({
+            "spec": "chara_card_v3",
+            "spec_version": "3.0",
+            "name": "Unknown Export PNG",
+            "first_mes": "Hello",
+            "chat": "private-chat-name",
+            "fav": true,
+            "creatorcomment": "legacy field",
+            "x_custom_top": { "nested": true },
+            "data": {
+                "name": "Unknown Export PNG",
+                "first_mes": "Hello",
+                "extensions": {
+                    "talkativeness": 0.5,
+                    "fav": true,
+                    "world": "",
+                    "depth_prompt": {
+                        "prompt": "",
+                        "depth": 4,
+                        "role": "system",
+                    },
+                },
+                "x_custom_data": 123,
+            },
+        });
+
+        write_character_png(&root, "Unknown Export PNG", &card_payload).await;
+
+        let exported = service
+            .export_character_content(ExportCharacterContentDto {
+                name: "Unknown Export PNG".to_string(),
+                format: "png".to_string(),
+            })
+            .await
+            .expect("export should succeed");
+
+        let exported_json =
+            read_character_data_from_png(&exported.data).expect("read exported png metadata");
+        let exported_value: serde_json::Value =
+            serde_json::from_str(&exported_json).expect("parse exported json");
+
+        assert!(
+            exported_value.get("x_custom_top").is_some(),
+            "exported png should preserve unknown top-level fields"
+        );
+        assert!(
+            exported_value.pointer("/data/x_custom_data").is_some(),
+            "exported png should preserve unknown data fields"
+        );
+        assert!(
+            exported_value.get("chat").is_none(),
+            "chat should be removed from exported payload"
+        );
+        assert_eq!(
+            exported_value.get("fav").and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            exported_value
+                .pointer("/data/extensions/fav")
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
+
+        let _ = fs::remove_dir_all(&root).await;
     }
 
     #[tokio::test]

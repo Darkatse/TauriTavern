@@ -82,22 +82,27 @@ export function createCharacterFormService({
         return [];
     }
 
-    /** @param {any} value @param {any} [fallback] */
-    function parseJsonSafe(value, fallback = {}) {
+    /** @param {any} value @param {any} [fallback] @param {string} [label] */
+    function parseJsonStrict(value, fallback = {}, label = 'JSON payload') {
         if (typeof value !== 'string' || !value.trim()) {
             return fallback;
         }
 
         try {
-            return JSON.parse(value);
-        } catch {
-            return fallback;
+            const parsed = JSON.parse(value);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                throw new Error('Expected JSON object');
+            }
+            return parsed;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            throw new Error(`Invalid ${label}: ${message}`);
         }
     }
 
     /** @param {FormData} formData */
     function buildCharacterExtensions(formData) {
-        const extensions = parseJsonSafe(stringFromForm(formData, 'extensions', ''), {});
+        const extensions = parseJsonStrict(stringFromForm(formData, 'extensions', ''), {}, "extensions JSON");
 
         extensions.world = stringFromForm(formData, 'world', '').trim();
         extensions.depth_prompt = {
