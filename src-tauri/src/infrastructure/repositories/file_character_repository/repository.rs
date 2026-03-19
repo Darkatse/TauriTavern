@@ -157,13 +157,50 @@ impl CharacterRepository for FileCharacterRepository {
         let target_file_stem = self.resolve_renamed_file_stem(new_name, old_name)?;
         let new_path = self.get_character_path(&target_file_stem);
 
-        let mut character = self.read_character_from_file(&old_path).await?;
+        let old_image_data = fs::read(&old_path).await.map_err(|e| {
+            logger::error(&format!("Failed to read character file: {}", e));
+            DomainError::InternalError(format!("Failed to read character file: {}", e))
+        })?;
 
-        character.name = new_name.to_string();
-        character.data.name = new_name.to_string();
-        let character = Self::with_storage_identity(&character, &target_file_stem);
+        let card_json = read_character_data_from_png(&old_image_data)?;
+        let mut card_value: serde_json::Value = serde_json::from_str(&card_json).map_err(|e| {
+            logger::error(&format!("Failed to parse character data: {}", e));
+            DomainError::InvalidData(format!("Failed to parse character data: {}", e))
+        })?;
 
-        self.save(&character).await?;
+        let card_object = card_value.as_object_mut().ok_or_else(|| {
+            DomainError::InvalidData("Character card data is not a JSON object".to_string())
+        })?;
+
+        card_object.insert(
+            "name".to_string(),
+            serde_json::Value::String(new_name.to_string()),
+        );
+
+        let data_value = card_object.entry("data").or_insert_with(|| {
+            serde_json::Value::Object(serde_json::Map::new())
+        });
+
+        let data_object = data_value.as_object_mut().ok_or_else(|| {
+            DomainError::InvalidData("Character card data field is invalid".to_string())
+        })?;
+
+        data_object.insert(
+            "name".to_string(),
+            serde_json::Value::String(new_name.to_string()),
+        );
+
+        let patched_json = serde_json::to_string(&card_value).map_err(|e| {
+            logger::error(&format!("Failed to serialize character data: {}", e));
+            DomainError::InvalidData(format!("Failed to serialize character data: {}", e))
+        })?;
+
+        let new_image_data = write_character_data_to_png(&old_image_data, &patched_json)?;
+
+        fs::write(&new_path, new_image_data).await.map_err(|e| {
+            logger::error(&format!("Failed to write character file: {}", e));
+            DomainError::InternalError(format!("Failed to write character file: {}", e))
+        })?;
 
         let old_chat_dir = self.get_chat_directory(old_name);
         let new_chat_dir = self.get_chat_directory(&target_file_stem);
@@ -184,9 +221,14 @@ impl CharacterRepository for FileCharacterRepository {
             })?;
         }
 
-        if old_name != target_file_stem {
+        let remove_old_cache_entry = old_name != target_file_stem;
+        let character = self.read_character_from_file(&new_path).await?;
+        {
             let mut cache = self.memory_cache.lock().await;
-            cache.remove(old_name);
+            cache.set(target_file_stem.clone(), character.clone());
+            if remove_old_cache_entry {
+                cache.remove(old_name);
+            }
         }
 
         Ok(character)

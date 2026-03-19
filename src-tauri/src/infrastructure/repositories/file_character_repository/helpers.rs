@@ -31,13 +31,9 @@ impl FileCharacterRepository {
     pub(crate) fn resolve_renamed_file_stem(
         &self,
         requested_name: &str,
-        current_file_stem: &str,
+        _current_file_stem: &str,
     ) -> Result<String, DomainError> {
         let base = Self::normalize_character_file_stem(requested_name)?;
-
-        if base == current_file_stem {
-            return Ok(base);
-        }
 
         let mut candidate = base.clone();
         let mut suffix = 1usize;

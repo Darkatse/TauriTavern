@@ -1,7 +1,7 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 
-use image::{DynamicImage, ImageFormat, RgbaImage};
+use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use rand::random;
 use serde_json::json;
 use tokio::fs;
@@ -18,6 +18,22 @@ fn unique_temp_root() -> PathBuf {
 
 fn build_minimal_png() -> Vec<u8> {
     let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 1));
+    let mut output = Vec::new();
+    let mut cursor = Cursor::new(&mut output);
+    image
+        .write_to(&mut cursor, ImageFormat::Png)
+        .expect("should build png image");
+    output
+}
+
+fn build_distinct_png() -> Vec<u8> {
+    let mut image = RgbaImage::new(2, 2);
+    image.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
+    image.put_pixel(1, 0, Rgba([0, 255, 0, 255]));
+    image.put_pixel(0, 1, Rgba([0, 0, 255, 255]));
+    image.put_pixel(1, 1, Rgba([255, 255, 0, 255]));
+
+    let image = DynamicImage::ImageRgba8(image);
     let mut output = Vec::new();
     let mut cursor = Cursor::new(&mut output);
     image
@@ -636,6 +652,75 @@ async fn rename_uses_next_available_file_stem_when_target_exists() {
     assert_eq!(renamed.avatar, "Taken1.png");
     assert!(root.join("characters").join("Taken.png").exists());
     assert!(root.join("characters").join("Taken1.png").exists());
+    assert!(!root.join("characters").join("Source.png").exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn rename_preserves_avatar_pixel_data() {
+    let (repository, root) = setup_repository().await;
+
+    let avatar_path = root.join("custom.png");
+    fs::write(&avatar_path, build_distinct_png())
+        .await
+        .expect("write custom avatar png");
+
+    let character = Character::new(
+        "Original".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+
+    let created = repository
+        .create_with_avatar(&character, Some(&avatar_path), None)
+        .await
+        .expect("create character with avatar");
+
+    let old_file_path = root.join("characters").join(&created.avatar);
+    let old_bytes = fs::read(&old_file_path)
+        .await
+        .expect("read old character file");
+
+    let renamed = repository
+        .rename("Original", "Renamed")
+        .await
+        .expect("rename character");
+
+    let new_file_path = root.join("characters").join(&renamed.avatar);
+    let new_bytes = fs::read(&new_file_path)
+        .await
+        .expect("read renamed character file");
+
+    let old_image = image::load_from_memory(&old_bytes).expect("decode old avatar png");
+    let new_image = image::load_from_memory(&new_bytes).expect("decode renamed avatar png");
+    assert_eq!(old_image.to_rgba8(), new_image.to_rgba8());
+
+    assert!(!old_file_path.exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn rename_allocates_new_file_stem_even_when_base_matches_current() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Source".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    repository.save(&character).await.expect("save character");
+
+    let renamed = repository
+        .rename("Source", "Source. ")
+        .await
+        .expect("rename character with trimmed stem");
+
+    assert_eq!(renamed.avatar, "Source1.png");
+    assert!(root.join("characters").join("Source1.png").exists());
     assert!(!root.join("characters").join("Source.png").exists());
 
     let _ = fs::remove_dir_all(&root).await;
