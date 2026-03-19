@@ -81,7 +81,82 @@ export let world_info_use_group_scoring = false;
 export let world_info_character_strategy = world_info_insertion_strategy.character_first;
 export let world_info_budget_cap = 0;
 export let world_info_max_recursion_steps = 0;
-const saveWorldDebounced = debounce(async (name, data) => await _save(name, data), debounce_timeout.relaxed);
+/** @type {Map<string, { data: any; revision: number }>} */
+const dirtyWorldInfos = new Map();
+let worldInfoDirtyRevision = 0;
+/** @type {Promise<void>} */
+let worldInfoFlushChain = Promise.resolve();
+
+/**
+ * Flushes pending debounced lorebook saves to disk.
+ *
+ * This is required for correctness because some extensions/scripts run inside
+ * isolated iframes (e.g. JSR/MVU) and therefore read lorebooks via /api (disk),
+ * while the editor uses debounced persistence.
+ *
+ * @param {string} [reason]
+ */
+export function flushWorldInfoSaves(reason = 'worldinfo_flush') {
+    const task = worldInfoFlushChain.then(async () => {
+        if (dirtyWorldInfos.size === 0) {
+            return;
+        }
+
+        const pending = Array.from(dirtyWorldInfos.keys());
+        for (const name of pending) {
+            const latest = dirtyWorldInfos.get(name);
+            if (!latest?.data) {
+                continue;
+            }
+
+            await _save(name, latest.data, latest.revision);
+        }
+    });
+
+    worldInfoFlushChain = task.catch(() => undefined);
+    return task;
+}
+
+const saveWorldDebounced = debounce(() => {
+    flushWorldInfoSaves('worldinfo_debounced_save').catch((error) => console.error(error));
+}, debounce_timeout.relaxed);
+
+let worldInfoFlushHooksInstalled = false;
+function installWorldInfoFlushHooks() {
+    if (worldInfoFlushHooksInstalled) {
+        return;
+    }
+    worldInfoFlushHooksInstalled = true;
+
+    /** @param {string} event */
+    const flushBefore = (event) => {
+        eventSource.makeFirst(event, async () => {
+            await flushWorldInfoSaves(`event:${event}`);
+        });
+    };
+
+    flushBefore(event_types.CHAT_CHANGED);
+    flushBefore(event_types.CHAT_LOADED);
+    flushBefore(event_types.GENERATION_STARTED);
+    flushBefore(event_types.GENERATE_BEFORE_COMBINE_PROMPTS);
+
+    /** @param {string} reason */
+    const flushSoon = (reason) => {
+        if (dirtyWorldInfos.size === 0) {
+            return;
+        }
+        flushWorldInfoSaves(reason).catch((error) => console.error(error));
+    };
+
+    window.addEventListener('pagehide', () => flushSoon('pagehide'));
+    window.addEventListener('beforeunload', () => flushSoon('beforeunload'));
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+            flushSoon('visibilitychange:hidden');
+        }
+    });
+}
+installWorldInfoFlushHooks();
 const saveSettingsDebounced = debounce(() => {
     Object.assign(world_info, { globalSelect: selected_world_info });
     saveSettings();
@@ -4126,16 +4201,43 @@ export function createWorldInfoEntry(_name, data) {
     return newEntry;
 }
 
-async function _save(name, data) {
+async function _save(name, data, revision = 0) {
     // Prevent double saving if both immediate and debounced save are called
     cancelDebounce(saveWorldDebounced);
 
-    await fetch('/api/worldinfo/edit', {
+    const response = await fetch('/api/worldinfo/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({ name: name, data: data }),
     });
+    if (!response.ok) {
+        let message = response.statusText || 'Unknown error';
+        try {
+            const payload = await response.json();
+            message = payload?.error || payload?.message || message;
+        } catch {
+            try {
+                const text = await response.text();
+                if (text && text.trim()) {
+                    message = text.trim();
+                }
+            } catch {
+                // Preserve previous error message.
+            }
+        }
+
+        const error = new Error(`World info save failed (${response.status}) for "${name}": ${message}`);
+        toastr.error(error.message);
+        throw error;
+    }
+
     await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
+    if (revision > 0) {
+        const latest = dirtyWorldInfos.get(name);
+        if (latest?.revision === revision) {
+            dirtyWorldInfos.delete(name);
+        }
+    }
 }
 
 
@@ -4153,18 +4255,21 @@ async function _save(name, data) {
  * @return {Promise<void>} A promise that resolves when the world info is saved
  */
 export async function saveWorldInfo(name, data, immediately = false) {
+    name = String(name || '').trim();
     if (!name || !data) {
         return;
     }
 
     // Update cache immediately, so any future call can pull from this
     worldInfoCache.set(name, data);
+    const revision = (worldInfoDirtyRevision += 1);
+    dirtyWorldInfos.set(name, { data, revision });
 
     if (immediately) {
-        return await _save(name, data);
+        return await _save(name, data, revision);
     }
 
-    saveWorldDebounced(name, data);
+    saveWorldDebounced();
 }
 
 async function renameWorldInfo(name, data) {
@@ -4214,6 +4319,8 @@ async function renameWorldInfo(name, data) {
  * @returns {Promise<boolean>} A promise that resolves to true if the world info was successfully deleted, false otherwise
  */
 export async function deleteWorldInfo(worldInfoName) {
+    worldInfoName = String(worldInfoName || '').trim();
+    dirtyWorldInfos.delete(worldInfoName);
     if (!world_names.includes(worldInfoName)) {
         return false;
     }
