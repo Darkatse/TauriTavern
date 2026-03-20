@@ -1,6 +1,6 @@
 use crate::domain::models::settings::{
-    SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings, TauriTavernUpdateSettings,
-    UserSettings,
+    ChatHistoryMode, SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings,
+    TauriTavernUpdateSettings, UserSettings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,6 +11,7 @@ pub struct TauriTavernSettingsDto {
     pub perf_profile: String,
     pub panel_runtime_profile: String,
     pub embedded_runtime_profile: String,
+    pub chat_history_mode: ChatHistoryMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +30,7 @@ pub struct UpdateTauriTavernSettingsDto {
     pub perf_profile: Option<String>,
     pub panel_runtime_profile: Option<String>,
     pub embedded_runtime_profile: Option<String>,
+    pub chat_history_mode: Option<ChatHistoryMode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -101,6 +103,7 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             perf_profile: settings.perf_profile,
             panel_runtime_profile: settings.panel_runtime_profile,
             embedded_runtime_profile: settings.embedded_runtime_profile,
+            chat_history_mode: settings.chat_history_mode,
         }
     }
 }

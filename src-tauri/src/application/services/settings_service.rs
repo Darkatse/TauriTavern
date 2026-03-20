@@ -54,6 +54,10 @@ impl SettingsService {
             settings.embedded_runtime_profile = embedded_runtime_profile;
         }
 
+        if let Some(chat_history_mode) = dto.chat_history_mode {
+            settings.chat_history_mode = chat_history_mode;
+        }
+
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;

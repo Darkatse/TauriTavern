@@ -8,6 +8,11 @@ import {
     resolveEffectiveEmbeddedRuntimeProfileName,
     setEmbeddedRuntimeBootstrapProfileName,
 } from '../../../tauri/main/services/embedded-runtime/embedded-runtime-profile-state.js';
+import {
+    CHAT_HISTORY_MODE_WINDOWED,
+    normalizeChatHistoryModeName,
+    setChatHistoryBootstrapModeName,
+} from '../../../tauri/main/services/chat-history/chat-history-mode-state.js';
 
 const TAURITAVERN_SETTINGS_BUTTON_ID = 'tauritavern_settings_button';
 const LAN_SYNC_DEVICES_CHANGED_EVENT = 'tauritavern:lan_sync_devices_changed';
@@ -341,6 +346,16 @@ async function openTauriTavernSettingsPopup() {
                     </select>
                 </div>
 
+                <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                    <div class="flex-container alignItemsBaseline" style="gap: 8px; min-width: 220px; flex: 1;">
+                        <span data-i18n="Chat History">Chat History</span>
+                    </div>
+                    <select id="tt-chat-history-mode" class="text_pole" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;">
+                        <option value="windowed" data-i18n="Windowed (Recommended)">Windowed (Recommended)</option>
+                        <option value="off" data-i18n="Off (Upstream full history)">Off (Upstream full history)</option>
+                    </select>
+                </div>
+
                 <small style="opacity: 0.85;" data-i18n="Requires reload to apply.">Requires reload to apply.</small>
             </div>
 
@@ -365,12 +380,24 @@ async function openTauriTavernSettingsPopup() {
         throw new Error('TauriTavern settings: embedded runtime selector not found');
     }
 
+    const chatHistoryModeSelect = root.querySelector('#tt-chat-history-mode');
+    if (!(chatHistoryModeSelect instanceof HTMLSelectElement)) {
+        throw new Error('TauriTavern settings: chat history mode selector not found');
+    }
+
     const currentPanelRuntimeProfile = settings.panel_runtime_profile;
     profileSelect.value = typeof currentPanelRuntimeProfile === 'string' && currentPanelRuntimeProfile ? currentPanelRuntimeProfile : 'off';
 
     const configuredEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(settings.embedded_runtime_profile);
     const currentEmbeddedRuntimeProfile = resolveEffectiveEmbeddedRuntimeProfileName(configuredEmbeddedRuntimeProfile);
     embeddedProfileSelect.value = currentEmbeddedRuntimeProfile;
+
+    const currentChatHistoryMode = normalizeChatHistoryModeName(
+        typeof settings.chat_history_mode === 'string' && settings.chat_history_mode
+            ? settings.chat_history_mode
+            : CHAT_HISTORY_MODE_WINDOWED,
+    );
+    chatHistoryModeSelect.value = currentChatHistoryMode;
 
     const openLanSyncButton = root.querySelector('#tt-open-lan-sync');
     if (!(openLanSyncButton instanceof HTMLElement)) {
@@ -443,13 +470,15 @@ async function openTauriTavernSettingsPopup() {
 
     const nextPanelRuntimeProfile = String(profileSelect.value || '').trim();
     const nextEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(embeddedProfileSelect.value);
+    const nextChatHistoryMode = normalizeChatHistoryModeName(chatHistoryModeSelect.value);
 
     const hasPanelRuntimeChange = Boolean(nextPanelRuntimeProfile) && nextPanelRuntimeProfile !== currentPanelRuntimeProfile;
     const requiresEmbeddedRuntimeMigration = configuredEmbeddedRuntimeProfile !== currentEmbeddedRuntimeProfile;
     const hasEmbeddedRuntimeChange = Boolean(nextEmbeddedRuntimeProfile)
         && (nextEmbeddedRuntimeProfile !== currentEmbeddedRuntimeProfile || requiresEmbeddedRuntimeMigration);
+    const hasChatHistoryModeChange = nextChatHistoryMode !== currentChatHistoryMode;
 
-    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange) {
+    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange) {
         return;
     }
 
@@ -460,6 +489,9 @@ async function openTauriTavernSettingsPopup() {
     }
     if (hasEmbeddedRuntimeChange) {
         nextSettings.embedded_runtime_profile = nextEmbeddedRuntimeProfile;
+    }
+    if (hasChatHistoryModeChange) {
+        nextSettings.chat_history_mode = nextChatHistoryMode;
     }
 
     await updateTauriTavernSettings(nextSettings);
@@ -477,6 +509,10 @@ async function openTauriTavernSettingsPopup() {
     if (hasEmbeddedRuntimeChange) {
         setEmbeddedRuntimeBootstrapProfileName(nextEmbeddedRuntimeProfile);
         clearLegacyEmbeddedRuntimeProfileName();
+    }
+
+    if (hasChatHistoryModeChange) {
+        setChatHistoryBootstrapModeName(nextChatHistoryMode);
     }
 
     window.location.reload();

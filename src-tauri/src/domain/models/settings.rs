@@ -13,6 +13,17 @@ fn default_embedded_runtime_profile() -> String {
     "auto".to_string()
 }
 
+fn default_chat_history_mode() -> ChatHistoryMode {
+    ChatHistoryMode::Windowed
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatHistoryMode {
+    Windowed,
+    Off,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TauriTavernMigrationState {
     /// One-time migration for legacy character cards whose `create_date` was stored as
@@ -30,6 +41,8 @@ pub struct TauriTavernSettings {
     pub panel_runtime_profile: String,
     #[serde(default = "default_embedded_runtime_profile")]
     pub embedded_runtime_profile: String,
+    #[serde(default = "default_chat_history_mode")]
+    pub chat_history_mode: ChatHistoryMode,
     #[serde(default)]
     pub migrations: TauriTavernMigrationState,
 }
@@ -41,6 +54,7 @@ impl Default for TauriTavernSettings {
             perf_profile: default_perf_profile(),
             panel_runtime_profile: default_panel_runtime_profile(),
             embedded_runtime_profile: default_embedded_runtime_profile(),
+            chat_history_mode: default_chat_history_mode(),
             migrations: TauriTavernMigrationState::default(),
         }
     }

@@ -1,6 +1,10 @@
 import { invoke, isTauriEnv } from '../../../tauri-bridge.js';
 import { fetchAssetStream, writeTempFileFromBytesIterable } from './asset-io.js';
 import { jsonlStreamToPayload, jsonlToPayload, payloadToJsonlByteChunks } from './jsonl.js';
+import {
+    CHAT_HISTORY_MODE_WINDOWED,
+    getChatHistoryBootstrapModeName,
+} from '../../../tauri/main/services/chat-history/chat-history-mode-state.js';
 
 export function normalizeChatFileName(fileName) {
     const value = String(fileName || '').trim();
@@ -87,7 +91,11 @@ async function withTempFile(bytesIterable, options, handler) {
 }
 
 export function isTauriChatPayloadTransportEnabled() {
-    return isTauriEnv;
+    if (!isTauriEnv) {
+        return false;
+    }
+
+    return getChatHistoryBootstrapModeName() === CHAT_HISTORY_MODE_WINDOWED;
 }
 
 export async function loadCharacterChatPayload({ characterName, avatarUrl, fileName, allowNotFound = true }) {
