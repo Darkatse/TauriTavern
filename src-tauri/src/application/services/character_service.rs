@@ -548,10 +548,7 @@ impl CharacterService {
             .trim();
 
         if world_name.is_empty() {
-            if let Some(data_object) = export_value
-                .get_mut("data")
-                .and_then(Value::as_object_mut)
-            {
+            if let Some(data_object) = export_value.get_mut("data").and_then(Value::as_object_mut) {
                 data_object.remove("character_book");
             }
             return Ok(());
@@ -631,11 +628,11 @@ mod tests {
     use crate::domain::models::character::Character;
     use crate::domain::repositories::character_repository::CharacterRepository;
     use crate::domain::repositories::world_info_repository::WorldInfoRepository;
-    use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
-    use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
     use crate::infrastructure::persistence::png_utils::{
         read_character_data_from_png, write_character_data_to_png,
     };
+    use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
+    use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
     use image::{DynamicImage, ImageFormat, RgbaImage};
     use rand::random;
     use serde_json::json;
@@ -644,19 +641,18 @@ mod tests {
     use std::sync::Arc;
     use tokio::fs;
 
-    async fn write_character_png(
-        root: &PathBuf,
-        file_stem: &str,
-        payload: &serde_json::Value,
-    ) {
+    async fn write_character_png(root: &PathBuf, file_stem: &str, payload: &serde_json::Value) {
         let png_bytes = write_character_data_to_png(
             &build_minimal_png(),
             &serde_json::to_string(payload).expect("serialize card payload"),
         )
         .expect("embed card in png");
-        fs::write(root.join("characters").join(format!("{}.png", file_stem)), png_bytes)
-            .await
-            .expect("write character png");
+        fs::write(
+            root.join("characters").join(format!("{}.png", file_stem)),
+            png_bytes,
+        )
+        .await
+        .expect("write character png");
     }
 
     fn unique_temp_root() -> PathBuf {

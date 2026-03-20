@@ -66,6 +66,8 @@ export {};
  *   | 'import_group_chat_payload'
  *   | 'import_world_info'
  *   | 'install_extension'
+ *   | 'ios_import_data_archive_from_picker'
+ *   | 'ios_share_export_data_archive'
  *   | 'list_chat_backups'
  *   | 'list_recent_chat_summaries'
  *   | 'list_recent_group_chat_summaries'

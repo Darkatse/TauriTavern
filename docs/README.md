@@ -12,9 +12,10 @@
 6. [实施计划](./ImplementationPlan.md) - 项目实施的阶段和里程碑
 7. [Android 端开发说明](./AndroidDevelopment.md) - Android WebView/Insets 注入、资源访问与路径解析方案
 8. [iOS 端开发说明](./iOSDevelopment.md) - WKWebView 行为差异、safe-area/viewport-fit 与底部死区修复
-9. [现状说明](./CurrentState/README.md) - 当前实现状态快照与持续开发约束
-10. [性能重构计划：Prompt History Backfill](./PerformanceRefactoringPlan.md) - Windowed Payload 下补齐生成上下文的方案（方案 C + 页缓存）
-11. [移动端 Insets 解耦重构计划](./MobileInsetsDecouplingPlan.md) - Android 原生注入与 iOS CSS safe-area 解耦，修复底部死区并收敛契约
+9. [iOS Data Migration 原生桥接计划书](./iOSDataMigrationNativeBridge.md) - iOS Document Picker / Share Sheet 桥接，修复 data-migration 导入导出体验
+10. [现状说明](./CurrentState/README.md) - 当前实现状态快照与持续开发约束
+11. [性能重构计划：Prompt History Backfill](./PerformanceRefactoringPlan.md) - Windowed Payload 下补齐生成上下文的方案（方案 C + 页缓存）
+12. [移动端 Insets 解耦重构计划](./MobileInsetsDecouplingPlan.md) - Android 原生注入与 iOS CSS safe-area 解耦，修复底部死区并收敛契约
 
 ## 项目概述
 

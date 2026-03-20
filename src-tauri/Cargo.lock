@@ -2963,8 +2963,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d87d638e33c06f577498cbcc50491496a3ed4246998a7fbba7ccb98b1e7eab22"
 dependencies = [
  "bitflags 2.11.0",
+ "block2",
  "objc2",
  "objc2-core-foundation",
+ "objc2-foundation",
+ "objc2-uniform-type-identifiers",
+]
+
+[[package]]
+name = "objc2-uniform-type-identifiers"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7902ac02859fc1f7045f8b598c63f1ae0cc7efeaa06a9bc9f3d9a3c955974fa4"
+dependencies = [
+ "objc2",
  "objc2-foundation",
 ]
 
@@ -5030,6 +5042,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "block2",
  "bytes",
  "chrono",
  "filetime",
@@ -5040,7 +5053,9 @@ dependencies = [
  "miktik",
  "mime_guess",
  "objc2",
+ "objc2-foundation",
  "objc2-ui-kit",
+ "objc2-uniform-type-identifiers",
  "percent-encoding",
  "png",
  "qrcode",

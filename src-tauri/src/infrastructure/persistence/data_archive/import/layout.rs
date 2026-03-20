@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -90,6 +91,14 @@ pub fn scan_archive_layout(archive_path: &Path) -> Result<LayoutMeta, DomainErro
                 "Archive contains too many entries (>{})",
                 MAX_ARCHIVE_ENTRIES
             )));
+        }
+
+        if matches!(
+            sanitized_path.components().next(),
+            Some(std::path::Component::Normal(component))
+                if component == OsStr::new("__MACOSX")
+        ) {
+            continue;
         }
 
         let components = path_components(&sanitized_path);
@@ -384,6 +393,50 @@ mod tests {
             &[
                 ("__MACOSX/._junk", b"junk"),
                 ("default-user/characters/a.json", b"{}"),
+            ],
+        );
+
+        let layout = scan_archive_layout(&zip_path).expect("scan layout");
+        assert_eq!(layout.kind, LayoutKind::UserHandleRoot);
+        assert!(layout.source_prefix.as_os_str().is_empty());
+
+        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn ignores_macosx_resource_forks_for_data_root_layout() {
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
+        let zip_path = root.join("fixture.zip");
+        fs::create_dir_all(&root).expect("create root");
+
+        write_zip(
+            &zip_path,
+            &[
+                ("data/default-user/characters/a.json", b"{}"),
+                ("__MACOSX/data/default-user/characters/._a.json", b"junk"),
+            ],
+        );
+
+        let layout = scan_archive_layout(&zip_path).expect("scan layout");
+        assert_eq!(layout.kind, LayoutKind::DataRoot);
+        assert_eq!(layout.source_prefix, PathBuf::from("data"));
+
+        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn ignores_macosx_resource_forks_for_user_handle_layout() {
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
+        let zip_path = root.join("fixture.zip");
+        fs::create_dir_all(&root).expect("create root");
+
+        write_zip(
+            &zip_path,
+            &[
+                ("default-user/characters/a.json", b"{}"),
+                ("__MACOSX/default-user/characters/._a.json", b"junk"),
             ],
         );
 

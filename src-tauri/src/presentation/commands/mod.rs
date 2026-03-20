@@ -13,6 +13,8 @@ pub mod file_commands;
 pub mod group_commands;
 pub mod helpers;
 pub mod image_commands;
+#[cfg(target_os = "ios")]
+pub mod ios_file_bridge_commands;
 pub mod lan_sync_commands;
 pub mod preset_commands;
 pub mod quick_reply_commands;

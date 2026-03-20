@@ -49,3 +49,58 @@ WKWebView 内部是 `UIScrollView` 承载 Web 内容；在默认行为下，iOS 
 - `screen.height - window.innerHeight` 接近 0（允许 1px 内的 rounding）
 - `--tt-inset-bottom` 仍保持合理的 safe-area 值（如 `34px`），且输入框/按钮不被 home indicator 遮挡
 
+## 2. data-migration：iOS 原生 Document Picker / Share Sheet 桥接
+
+### 2.1 现象
+
+- **导出**：UI 虽提示完成，但仅得到 iOS 沙盒内路径（对普通用户不可达），无法“拿到文件”。
+- **导入**：能弹出文件选择器，但选择 zip 后无反馈/不启动导入。
+
+### 2.2 根因（第一性原理）
+
+iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
+
+- WebView 无法向用户暴露可操作的沙盒路径（即使文件写入成功，用户也无法访问）。
+- `<input type="file">` 在 WKWebView 上对 zip 的行为差异较大，不适合作为 data-migration 的唯一入口。
+- `window.confirm()` 在 iOS WebView 上存在不可靠性（可能不弹出/阻塞），会导致“看起来无反应”。
+
+### 2.3 已落地方案（当前状态：已稳定可用）
+
+仅在 iOS 平台启用原生桥接：
+
+1) **Import（Document Picker）**
+   - 使用 `UIDocumentPickerViewController` 选择 `.zip`。
+   - 将选中的 `file://` URL 复制到 app 内部 `archive_imports_root/incoming` staging，再启动现有 import job（job/轮询语义不变）。
+
+2) **Export（Share Sheet）**
+   - export job 生成 zip 后，不再尝试“保存到 Downloads 并展示路径”。
+   - 直接使用 `UIActivityViewController` 打开 Share Sheet，让用户保存到 Files / AirDrop / 其它 App。
+
+3) **UI 线程与呈现约束**
+   - 所有 UIKit present 均通过 `WebviewWindow::run_on_main_thread` 执行，并通过 `UIApplication.windows` 解析 top-most presenting VC。
+   - iPad 走 popoverPresentationController 绑定 sourceView/sourceRect，避免崩溃。
+
+4) **确认弹窗**
+   - iOS 导入确认使用 `Popup.show.confirm`（避免 `window.confirm` 在 iOS 上不可靠）。
+   - 其他平台保持原语义不变。
+
+### 2.4 重要实现位置（便于维护与回归）
+
+- 前端扩展入口：`src/scripts/extensions/data-migration/index.js`
+- Host Kernel 路由：`src/tauri/main/routes/extensions-routes.js`
+- iOS-only Tauri commands：`src-tauri/src/presentation/commands/ios_file_bridge_commands.rs`
+- iOS UIKit 封装：
+  - `src-tauri/src/infrastructure/ios_ui.rs`
+  - `src-tauri/src/infrastructure/ios_document_picker.rs`
+  - `src-tauri/src/infrastructure/ios_share_sheet.rs`
+
+### 2.5 macOS 元数据导致的“布局歧义”问题
+
+部分 zip（尤其是从 macOS Finder 打包/转发）会携带 `__MACOSX/**` 资源分叉条目；它会在布局探测阶段制造“存在多个候选根”的假象，触发错误：
+
+- `Invalid data: Archive layout is ambiguous`
+
+当前实现会在 **布局扫描** 与 **解压归一化** 两阶段一致忽略 `__MACOSX` 条目，保证这类 zip 可正常导入：
+
+- `src-tauri/src/infrastructure/persistence/data_archive/import/layout.rs`
+- `src-tauri/src/infrastructure/persistence/data_archive/import/extract.rs`

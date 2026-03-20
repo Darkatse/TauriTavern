@@ -56,7 +56,7 @@ pub(super) fn parse_object(raw: &str) -> Result<Map<String, Value>, ApplicationE
                         return Err(ApplicationError::ValidationError(
                             "Custom parameter map must be an object or a list of objects."
                                 .to_string(),
-                        ))
+                        ));
                     }
                 }
             }
@@ -94,12 +94,10 @@ pub(super) fn parse_key_list(raw: &str) -> Result<Vec<String>, ApplicationError>
                         }
                     }
                     Value::Null => continue,
-                    _ => {
-                        return Err(ApplicationError::ValidationError(
-                            "Custom exclude list must be an array of strings, an object, or a string."
-                                .to_string(),
-                        ))
-                    }
+                    _ => return Err(ApplicationError::ValidationError(
+                        "Custom exclude list must be an array of strings, an object, or a string."
+                            .to_string(),
+                    )),
                 }
             }
             Ok(keys.into_iter().collect())

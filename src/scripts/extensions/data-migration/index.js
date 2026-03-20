@@ -1,5 +1,7 @@
 import { renderExtensionTemplateAsync } from '../../extensions.js';
 import { t } from '../../i18n.js';
+import { Popup } from '../../popup.js';
+import { isAndroidRuntime, isIosRuntime } from '../../util/mobile-runtime.js';
 
 const MODULE_NAME = 'data-migration';
 const JOB_POLL_INTERVAL_MS = 1200;
@@ -55,14 +57,6 @@ function requireJobId(payload, errorMessage) {
     return payload.job_id.trim();
 }
 
-function isAndroidRuntime() {
-    if (typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') {
-        return false;
-    }
-
-    return /android/i.test(navigator.userAgent);
-}
-
 async function requestImportJob(url, init) {
     const response = await fetch(url, init);
     if (!response.ok) {
@@ -111,6 +105,27 @@ async function pickAndroidImportArchive() {
     return contentUri;
 }
 
+async function startImportJobFromIosPicker() {
+    const response = await fetch('/api/extensions/data-migration/import/ios', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+    });
+
+    if (!response.ok) {
+        throw new Error(await readFailureMessage(response));
+    }
+
+    const payload = await response.json();
+    if (payload?.cancelled) {
+        return null;
+    }
+
+    return requireJobId(payload, t`Import job id is missing`);
+}
+
 async function saveExportArchive(jobId) {
     if (isAndroidRuntime()) {
         const response = await fetch('/api/extensions/data-migration/export/android/save', {
@@ -128,6 +143,27 @@ async function saveExportArchive(jobId) {
         return {
             mode: 'mobile-native',
             savedPath: String(payload?.saved_target || ''),
+        };
+    }
+
+    if (isIosRuntime()) {
+        const response = await fetch('/api/extensions/data-migration/export/ios/share', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ job_id: jobId }),
+        });
+        if (!response.ok) {
+            throw new Error(await readFailureMessage(response));
+        }
+
+        const payload = await response.json();
+        return {
+            mode: 'ios-native-share',
+            completed: Boolean(payload?.completed),
+            activity: payload?.activity ? String(payload.activity) : null,
+            cleanupError: payload?.cleanup_error ? String(payload.cleanup_error) : null,
         };
     }
 
@@ -177,7 +213,7 @@ function refreshExportActions() {
     }
 
     const savedPath = String(jobState.lastExportSavedPath || '').trim();
-    const visible = Boolean(savedPath) && !isAndroidRuntime();
+    const visible = Boolean(savedPath) && !isAndroidRuntime() && !isIosRuntime();
     actions.toggle(visible);
 
     $('#data_migration_reveal_export_button').prop('disabled', !visible);
@@ -246,17 +282,28 @@ async function onRevealExportClick() {
 }
 
 async function onImportButtonClick() {
-    if (hasActiveJob()) {
-        toastr.warning(t`A migration job is already running`);
-        return;
-    }
+    try {
+        if (hasActiveJob()) {
+            toastr.warning(t`A migration job is already running`);
+            return;
+        }
 
-    if (isAndroidRuntime()) {
-        await onAndroidImportButtonClick();
-        return;
-    }
+        if (isAndroidRuntime()) {
+            await onAndroidImportButtonClick();
+            return;
+        }
 
-    $('#data_migration_import_input').trigger('click');
+        if (isIosRuntime()) {
+            await onIosImportButtonClick();
+            return;
+        }
+
+        $('#data_migration_import_input').trigger('click');
+    } catch (error) {
+        const failureMessage = normalizeCaughtError(error);
+        toastr.error(failureMessage, t`Data import failed`);
+        setStatusText(failureMessage);
+    }
 }
 
 async function startExportJob() {
@@ -398,6 +445,15 @@ async function runMigrationJob(kind, startJob) {
         markJobStarting();
         preparingProgress?.start();
         const jobId = await startJob();
+        if (!jobId) {
+            if (kind === 'import') {
+                toastr.info(t`Import cancelled`);
+                setStatusText(t`Import cancelled`);
+                return;
+            }
+
+            throw new Error(t`Migration job did not return a job id`);
+        }
         preparingProgress?.complete();
         startJobTracking(jobId);
 
@@ -422,6 +478,22 @@ async function runMigrationJob(kind, startJob) {
                 }, 800);
             } else {
                 const saveResult = await saveExportArchive(jobId);
+                if (saveResult.mode === 'ios-native-share') {
+                    if (saveResult.cleanupError) {
+                        toastr.warning(saveResult.cleanupError, t`Export cleanup failed`);
+                    }
+
+                    if (saveResult.completed) {
+                        toastr.success(t`Data archive is ready to share/save`, t`Export completed`, { timeOut: 8000 });
+                        setStatusText(t`Export completed`);
+                    } else {
+                        toastr.info(t`Sharing cancelled`, t`Export cancelled`);
+                        setStatusText(t`Export cancelled`);
+                    }
+
+                    return;
+                }
+
                 if (saveResult.mode === 'mobile-native') {
                     void cleanupExportArchive(jobId).catch((error) => {
                         console.warn('Failed to cleanup export archive:', error);
@@ -483,10 +555,15 @@ async function onAndroidImportButtonClick() {
     });
 }
 
+async function onIosImportButtonClick() {
+    await runConfirmedImport(() => startImportJobFromIosPicker());
+}
+
 async function runConfirmedImport(startJob) {
-    const confirmed = window.confirm(
-        t`Importing will merge into the current local data directory (same-path files will be overwritten). Continue?`,
-    );
+    const prompt = t`Importing will merge into the current local data directory (same-path files will be overwritten). Continue?`;
+    const confirmed = isIosRuntime()
+        ? await Popup.show.confirm(t`Confirm data import`, prompt)
+        : window.confirm(prompt);
     if (!confirmed) {
         return;
     }

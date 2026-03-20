@@ -177,9 +177,9 @@ impl CharacterRepository for FileCharacterRepository {
             serde_json::Value::String(new_name.to_string()),
         );
 
-        let data_value = card_object.entry("data").or_insert_with(|| {
-            serde_json::Value::Object(serde_json::Map::new())
-        });
+        let data_value = card_object
+            .entry("data")
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
 
         let data_object = data_value.as_object_mut().ok_or_else(|| {
             DomainError::InvalidData("Character card data field is invalid".to_string())

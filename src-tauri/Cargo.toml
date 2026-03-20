@@ -61,7 +61,10 @@ webpki-roots = "1"
 
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6.4"
-objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "UIGeometry", "UIScrollView"] }
+block2 = "0.6.2"
+objc2-uniform-type-identifiers = { version = "0.3.2", default-features = false, features = ["std", "UTType"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSError", "NSFileManager", "NSString", "NSURL"] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "UIActivity", "UIActivityViewController", "UIDocumentPickerViewController", "UIPopoverPresentationController", "UIPresentationController", "UIResponder", "UIScrollView", "UIView", "UIViewController", "UIWindow", "UIGeometry"] }
 
 [features]
 default = ["custom-protocol"]

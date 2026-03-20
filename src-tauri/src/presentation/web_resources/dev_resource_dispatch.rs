@@ -21,12 +21,7 @@ pub fn dispatch_dev_web_resource_request<R: tauri::Runtime>(
     let path = request.uri().path();
     if path.starts_with(THIRD_PARTY_EXTENSION_ROUTE_PREFIX) {
         let dirs = app_handle.state::<ThirdPartyExtensionDirs>();
-        handle_third_party_asset_web_request(
-            &dirs.local_dir,
-            &dirs.global_dir,
-            request,
-            response,
-        );
+        handle_third_party_asset_web_request(&dirs.local_dir, &dirs.global_dir, request, response);
         return;
     }
 

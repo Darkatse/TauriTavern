@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
@@ -52,6 +53,20 @@ pub fn extract_to_normalized_root_streaming(
         }
 
         processed_entries = processed_entries.saturating_add(1);
+
+        if matches!(
+            sanitized_path.components().next(),
+            Some(std::path::Component::Normal(component))
+                if component == OsStr::new("__MACOSX")
+        ) {
+            maybe_report_extraction_progress(
+                processed_entries,
+                total_entries,
+                &mut last_reported_percent,
+                report_progress,
+            );
+            continue;
+        }
 
         let Some(rel_components) = components_after_prefix(&sanitized_path, &layout.source_prefix)
         else {
