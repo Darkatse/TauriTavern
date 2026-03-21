@@ -304,12 +304,12 @@
     }
 
     /* Host-private IME nodes keep Android keyboard lift off the theme-controlled shell. */
-    #form_sheld>[data-tt-android-ime-lift] {
+    #form_sheld[data-tt-android-ime-host]>[data-tt-android-ime-lift] {
         transform: translate3d(0, calc(-1 * var(--tt-keyboard-offset)), 0) !important;
         will-change: transform;
     }
 
-    #form_sheld>[data-tt-android-ime-spacer] {
+    #form_sheld[data-tt-android-ime-host]>[data-tt-android-ime-spacer] {
         display: block !important;
         height: var(--tt-keyboard-offset) !important;
         pointer-events: none !important;

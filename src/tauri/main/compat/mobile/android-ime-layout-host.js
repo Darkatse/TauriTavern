@@ -1,6 +1,7 @@
 import { isAndroidRuntime } from '../../../../scripts/util/mobile-runtime.js';
 
 const CONTROLLER_KEY = '__TAURITAVERN_ANDROID_IME_LAYOUT_HOST__';
+const HOST_ATTR = 'data-tt-android-ime-host';
 const LIFT_ATTR = 'data-tt-android-ime-lift';
 const SPACER_ATTR = 'data-tt-android-ime-spacer';
 
@@ -40,6 +41,7 @@ export function installAndroidImeLayoutHost() {
     }
 
     const formShell = requireHTMLElement('form_sheld');
+    formShell.setAttribute(HOST_ATTR, '');
 
     const liftRoot = document.createElement('div');
     liftRoot.setAttribute(LIFT_ATTR, '');
@@ -54,7 +56,9 @@ export function installAndroidImeLayoutHost() {
         moveNodeIntoLiftRoot(formShell.firstChild, liftRoot);
     }
 
-    formShell.append(liftRoot, spacer);
+    // Spacer must come first so it only contributes layout height (shrinking #chat)
+    // without also shifting liftRoot in-flow (liftRoot is compositor-translated).
+    formShell.append(spacer, liftRoot);
 
     const observer = new MutationObserver((records) => {
         for (const record of records) {
