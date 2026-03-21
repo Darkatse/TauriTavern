@@ -7,7 +7,11 @@ use tokio::sync::Mutex;
 
 mod backup;
 mod cache;
+mod extension_metadata;
+mod extension_store;
 mod importing;
+mod locate;
+mod message_search;
 mod paths;
 mod payload;
 mod repository_impl;

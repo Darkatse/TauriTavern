@@ -623,6 +623,55 @@ impl FileChatRepository {
         Ok(summary)
     }
 
+    pub(super) async fn get_character_chat_summary_internal(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        include_metadata: bool,
+    ) -> Result<ChatSearchResult, DomainError> {
+        self.ensure_directory_exists().await?;
+
+        let path = self.get_chat_path(character_name, file_name);
+        if !path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Chat not found: {}/{}",
+                character_name, file_name
+            )));
+        }
+
+        let descriptor = ChatFileDescriptor {
+            character_name: character_name.to_string(),
+            file_name: Self::normalize_jsonl_file_name(file_name),
+            path,
+        };
+
+        self.get_chat_summary(&descriptor, include_metadata).await
+    }
+
+    pub(super) async fn get_group_chat_summary_internal(
+        &self,
+        chat_id: &str,
+        include_metadata: bool,
+    ) -> Result<ChatSearchResult, DomainError> {
+        self.ensure_directory_exists().await?;
+
+        let path = self.get_group_chat_path(chat_id);
+        if !path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Group chat not found: {}",
+                chat_id
+            )));
+        }
+
+        let descriptor = ChatFileDescriptor {
+            character_name: String::new(),
+            file_name: Self::normalize_jsonl_file_name(chat_id),
+            path,
+        };
+
+        self.get_chat_summary(&descriptor, include_metadata).await
+    }
+
     pub(super) fn file_stem_matches_all(file_stem: &str, fragments: &[String]) -> bool {
         if fragments.is_empty() {
             return true;

@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use serde_json::Value;
+
 use crate::application::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, DeleteGroupChatDto, ExportChatDto,
     ImportCharacterChatsDto, ImportChatDto, ImportGroupChatDto, RenameChatDto, RenameGroupChatDto,
@@ -11,8 +13,9 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp,
-    ChatPayloadTail, ChatRepository, PinnedCharacterChat, PinnedGroupChat,
+    ChatExportFormat, ChatImportFormat, ChatMessageSearchHit, ChatMessageSearchQuery,
+    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail, ChatRepository,
+    FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
 };
 
 /// Service for managing chats
@@ -375,6 +378,217 @@ impl ChatService {
             .delete_chat_backup(backup_file_name)
             .await
             .map_err(Into::into)
+    }
+
+    pub async fn get_character_chat_summary(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        include_metadata: bool,
+    ) -> Result<ChatSearchResultDto, ApplicationError> {
+        let summary = self
+            .chat_repository
+            .get_character_chat_summary(character_name, file_name, include_metadata)
+            .await?;
+        Ok(ChatSearchResultDto::from(summary))
+    }
+
+    pub async fn get_group_chat_summary(
+        &self,
+        chat_id: &str,
+        include_metadata: bool,
+    ) -> Result<ChatSearchResultDto, ApplicationError> {
+        let summary = self
+            .chat_repository
+            .get_group_chat_summary(chat_id, include_metadata)
+            .await?;
+        Ok(ChatSearchResultDto::from(summary))
+    }
+
+    pub async fn get_character_chat_metadata(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Value, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .get_character_chat_metadata(character_name, file_name)
+            .await?)
+    }
+
+    pub async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Value, ApplicationError> {
+        Ok(self.chat_repository.get_group_chat_metadata(chat_id).await?)
+    }
+
+    pub async fn set_character_chat_metadata_extension(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        value: Value,
+    ) -> Result<(), ApplicationError> {
+        self.chat_repository
+            .set_character_chat_metadata_extension(character_name, file_name, namespace, value)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_group_chat_metadata_extension(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        value: Value,
+    ) -> Result<(), ApplicationError> {
+        self.chat_repository
+            .set_group_chat_metadata_extension(chat_id, namespace, value)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<Value, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .get_character_chat_store_json(character_name, file_name, namespace, key)
+            .await?)
+    }
+
+    pub async fn get_group_chat_store_json(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<Value, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .get_group_chat_store_json(chat_id, namespace, key)
+            .await?)
+    }
+
+    pub async fn set_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), ApplicationError> {
+        self.chat_repository
+            .set_character_chat_store_json(character_name, file_name, namespace, key, value)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_group_chat_store_json(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), ApplicationError> {
+        self.chat_repository
+            .set_group_chat_store_json(chat_id, namespace, key, value)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<(), ApplicationError> {
+        self.chat_repository
+            .delete_character_chat_store_json(character_name, file_name, namespace, key)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_group_chat_store_json(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<(), ApplicationError> {
+        self.chat_repository
+            .delete_group_chat_store_json(chat_id, namespace, key)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_character_chat_store_keys(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+    ) -> Result<Vec<String>, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .list_character_chat_store_keys(character_name, file_name, namespace)
+            .await?)
+    }
+
+    pub async fn list_group_chat_store_keys(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+    ) -> Result<Vec<String>, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .list_group_chat_store_keys(chat_id, namespace)
+            .await?)
+    }
+
+    pub async fn find_last_character_chat_message(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        query: FindLastMessageQuery,
+    ) -> Result<Option<LocatedChatMessage>, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .find_last_character_chat_message(character_name, file_name, query)
+            .await?)
+    }
+
+    pub async fn find_last_group_chat_message(
+        &self,
+        chat_id: &str,
+        query: FindLastMessageQuery,
+    ) -> Result<Option<LocatedChatMessage>, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .find_last_group_chat_message(chat_id, query)
+            .await?)
+    }
+
+    pub async fn search_character_chat_messages(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        query: ChatMessageSearchQuery,
+    ) -> Result<Vec<ChatMessageSearchHit>, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .search_character_chat_messages(character_name, file_name, query)
+            .await?)
+    }
+
+    pub async fn search_group_chat_messages(
+        &self,
+        chat_id: &str,
+        query: ChatMessageSearchQuery,
+    ) -> Result<Vec<ChatMessageSearchHit>, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .search_group_chat_messages(chat_id, query)
+            .await?)
     }
 
     /// Clear the chat cache

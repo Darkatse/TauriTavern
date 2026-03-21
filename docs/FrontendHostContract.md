@@ -93,12 +93,14 @@
 
 为避免未来继续扩散 `window.__TAURITAVERN_*` 零散符号，宿主层额外提供一个**统一出口**：
 
-- `window.__TAURITAVERN__ : { abiVersion, traceHeader, ready, invoke, assets }`
+- `window.__TAURITAVERN__ : { abiVersion, traceHeader, ready, invoke, assets, api }`
   - `abiVersion: number`：ABI 版本号（语义化破坏改动时递增）。
   - `traceHeader: string`：请求追踪 header 名（见 4.4）。
   - `ready: Promise<void> | null`：与 `__TAURITAVERN_MAIN_READY__` 语义一致。
   - `invoke.safeInvoke(...)` / `invoke.flushAll()`：对 `context` invoke 能力的稳定包装。
   - `assets.*`：对资源路径/缩略图相关全局 API 的统一引用。
+  - `api.chat`：TauriTavern 独有的扩展 API（聊天摘要/元数据/历史分页/稳定存储/后端定位/纯文本检索），供记忆类扩展一键上手。
+    - 详细签名与示例见：`docs/API/Chat.md`。
 
 > 注意：`window.__TAURITAVERN__` 是“平台 ABI”，应保持**小而稳定**；不要把内部实现对象整个暴露出去。
 

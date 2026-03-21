@@ -76,6 +76,14 @@ src/
 - Host 侧已知的 Rust 命令名收敛为类型：`src/tauri/main/kernel/invokes/tauri-commands.js`（`TauriInvokeCommand`）。
 - 与第三方直接交互的全局符号（如缩略图 helpers）属于 Public Contract（见 `docs/FrontendHostContract.md`）。
 
+#### 4.2.1 `window.__TAURITAVERN__.api.chat`（扩展/记忆类插件 API）
+
+> 这是 TauriTavern 独有 API 的**唯一入口**（刻意不做 alias），用于在 windowed payload 模式下仍然给扩展提供稳定、可维护的“历史/定位/检索/持久化”能力。
+
+- 安装位置：`src/tauri/main/api/chat.js`（在 `src/tauri/main/bootstrap.js` 中安装到 `window.__TAURITAVERN__.api.chat`）。
+- 类型声明：`src/types.d.ts`（便于扩展作者用 TS/JSDoc 一键上手）。
+- 详细 API 文档与适配指南：`docs/API/`。
+
 ### 4.3 `interceptors.js`
 
 - 代理 `window.fetch`。

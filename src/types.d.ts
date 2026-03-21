@@ -40,6 +40,16 @@ interface Window {
             avatarPath?: (file: string) => string | null;
             personaPath?: (file: string) => string;
         };
+        api?: {
+            chat?: {
+                open: (ref: TauriTavernChatRef) => TauriTavernChatHandle;
+                current: {
+                    ref: () => TauriTavernChatRef;
+                    handle: () => TauriTavernChatHandle;
+                    windowInfo: () => Promise<TauriTavernChatWindowInfo>;
+                };
+            };
+        };
     };
 
     __TAURITAVERN_THUMBNAIL__?: (type: string, file: string, useTimestamp?: boolean) => string;
@@ -78,3 +88,85 @@ interface Window {
         getPerfSnapshot: () => any;
     };
 }
+
+type TauriTavernChatRef =
+    | { kind: 'character'; characterId: string; fileName: string }
+    | { kind: 'group'; chatId: string };
+
+type TauriTavernChatSummary = {
+    character_name: string;
+    file_name: string;
+    file_size: number;
+    message_count: number;
+    preview: string;
+    date: number;
+    chat_id: string | null;
+    chat_metadata?: unknown | null;
+};
+
+type TauriTavernChatHistoryPage = {
+    startIndex: number;
+    totalCount: number;
+    messages: ChatMessage[];
+    cursor: any;
+    hasMoreBefore: boolean;
+};
+
+type TauriTavernChatWindowInfo = {
+    mode: 'windowed' | 'off';
+    chatKind: TauriTavernChatRef['kind'];
+    chatRef: TauriTavernChatRef;
+    totalCount: number;
+    windowStartIndex: number;
+    windowLength: number;
+};
+
+type TauriTavernChatMessageSearchFilters = {
+    role?: 'user' | 'assistant' | 'system';
+    startIndex?: number;
+    endIndex?: number;
+    scanLimit?: number;
+};
+
+type TauriTavernChatMessageSearchHit = {
+    index: number;
+    score: number;
+    snippet: string;
+    role: 'user' | 'assistant' | 'system';
+    text: string;
+};
+
+type TauriTavernChatHandle = {
+    ref: TauriTavernChatRef;
+    summary: (options?: { includeMetadata?: boolean }) => Promise<TauriTavernChatSummary>;
+    stableId: () => Promise<string>;
+    searchMessages: (options: {
+        query: string;
+        limit?: number;
+        filters?: TauriTavernChatMessageSearchFilters;
+    }) => Promise<TauriTavernChatMessageSearchHit[]>;
+    metadata: {
+        get: () => Promise<ChatMetadata>;
+        setExtension: (options: { namespace: string; value: unknown }) => Promise<void>;
+    };
+    store: {
+        getJson: (options: { namespace: string; key: string }) => Promise<unknown>;
+        setJson: (options: { namespace: string; key: string; value: unknown }) => Promise<void>;
+        deleteJson: (options: { namespace: string; key: string }) => Promise<void>;
+        listKeys: (options: { namespace: string }) => Promise<string[]>;
+    };
+    locate: {
+        findLastMessage: (query?: unknown) => Promise<{ index: number; message: ChatMessage } | null>;
+    };
+    history: {
+        tail: (options: { limit: number }) => Promise<TauriTavernChatHistoryPage>;
+        before: (
+            page: TauriTavernChatHistoryPage,
+            options: { limit: number },
+        ) => Promise<TauriTavernChatHistoryPage>;
+        beforePages: (
+            page: TauriTavernChatHistoryPage,
+            options: { limit: number; pages: number },
+        ) => Promise<TauriTavernChatHistoryPage[]>;
+    };
+};

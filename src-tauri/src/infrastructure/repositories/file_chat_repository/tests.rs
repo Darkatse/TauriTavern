@@ -9,7 +9,8 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::character::sanitize_filename;
 use crate::domain::repositories::chat_repository::{
-    ChatPayloadPatchOp, ChatRepository, PinnedCharacterChat, PinnedGroupChat,
+    ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchQuery, ChatPayloadPatchOp,
+    ChatRepository, PinnedCharacterChat, PinnedGroupChat,
 };
 
 use super::FileChatRepository;
@@ -701,6 +702,176 @@ async fn search_group_chats_respects_query_and_chat_filter() {
         .await
         .expect("search group chats no match");
     assert!(no_match.is_empty());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn search_character_chat_messages_returns_scored_hits_and_respects_role_filter() {
+    let (repository, root) = setup_repository().await;
+
+    let payload = vec![
+        json!({
+            "chat_metadata": {
+                "integrity": "search-a",
+            },
+            "user_name": "unused",
+            "character_name": "unused",
+        }),
+        json!({
+            "name": "User",
+            "is_user": true,
+            "is_system": false,
+            "send_date": "2026-01-01T00:00:00.000Z",
+            "mes": "今天我们去北京吃烤鸭。",
+            "extra": {},
+        }),
+        json!({
+            "name": "Alice",
+            "is_user": false,
+            "is_system": false,
+            "send_date": "2026-01-01T00:00:01.000Z",
+            "mes": "我最喜欢北京烤鸭，还有豆汁儿。",
+            "extra": {},
+        }),
+        json!({
+            "name": "System",
+            "is_user": false,
+            "is_system": true,
+            "send_date": "2026-01-01T00:00:02.000Z",
+            "mes": "系统提示：请注意安全。",
+            "extra": {},
+        }),
+        json!({
+            "name": "Alice",
+            "is_user": false,
+            "is_system": false,
+            "send_date": "2026-01-01T00:00:03.000Z",
+            "mes": "明天去上海吧。",
+            "extra": {},
+        }),
+    ];
+
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
+        .await
+        .expect("save payload");
+
+    let hits = repository
+        .search_character_chat_messages(
+            "alice",
+            "session",
+            ChatMessageSearchQuery {
+                query: "北京烤鸭".to_string(),
+                limit: 2,
+                filters: None,
+            },
+        )
+        .await
+        .expect("search messages");
+
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].index, 1);
+    assert_eq!(hits[0].role, ChatMessageRole::Assistant);
+    assert!(hits[0].text.contains("北京烤鸭"));
+    assert!(hits[0].score > 0.9);
+
+    let user_hits = repository
+        .search_character_chat_messages(
+            "alice",
+            "session",
+            ChatMessageSearchQuery {
+                query: "北京烤鸭".to_string(),
+                limit: 10,
+                filters: Some(ChatMessageSearchFilters {
+                    role: Some(ChatMessageRole::User),
+                    start_index: None,
+                    end_index: None,
+                    scan_limit: None,
+                }),
+            },
+        )
+        .await
+        .expect("search messages with role filter");
+
+    assert_eq!(user_hits.len(), 1);
+    assert_eq!(user_hits[0].index, 0);
+    assert_eq!(user_hits[0].role, ChatMessageRole::User);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn search_group_chat_messages_respects_scan_limit() {
+    let (repository, root) = setup_repository().await;
+
+    let payload = vec![
+        json!({
+            "chat_metadata": {
+                "integrity": "group-search-a",
+            },
+            "user_name": "User",
+            "character_name": "unused",
+        }),
+        json!({
+            "name": "Narrator",
+            "is_user": false,
+            "is_system": false,
+            "send_date": "2026-01-01T00:00:00.000Z",
+            "mes": "dragon appears",
+            "extra": {},
+        }),
+        json!({
+            "name": "Narrator",
+            "is_user": false,
+            "is_system": false,
+            "send_date": "2026-01-01T00:00:01.000Z",
+            "mes": "unicorn appears",
+            "extra": {},
+        }),
+    ];
+
+    save_group_chat_payload_from_values(&repository, &root, "group-one", &payload, false)
+        .await
+        .expect("save group payload");
+
+    let limited = repository
+        .search_group_chat_messages(
+            "group-one",
+            ChatMessageSearchQuery {
+                query: "dragon".to_string(),
+                limit: 10,
+                filters: Some(ChatMessageSearchFilters {
+                    role: None,
+                    start_index: None,
+                    end_index: None,
+                    scan_limit: Some(1),
+                }),
+            },
+        )
+        .await
+        .expect("search group messages with scan limit");
+
+    assert!(limited.is_empty());
+
+    let full = repository
+        .search_group_chat_messages(
+            "group-one",
+            ChatMessageSearchQuery {
+                query: "dragon".to_string(),
+                limit: 10,
+                filters: Some(ChatMessageSearchFilters {
+                    role: None,
+                    start_index: None,
+                    end_index: None,
+                    scan_limit: Some(10),
+                }),
+            },
+        )
+        .await
+        .expect("search group messages without scan limit");
+
+    assert_eq!(full.len(), 1);
+    assert_eq!(full[0].index, 0);
 
     let _ = fs::remove_dir_all(&root).await;
 }

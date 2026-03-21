@@ -12,6 +12,7 @@ import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compa
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
 import { installBackendErrorBridge } from './bootstrap/backend-error-bridge.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
+import { installChatApi } from './api/chat.js';
 import {
     getMethod,
     getMethodHint,
@@ -24,7 +25,6 @@ import {
 import { registerRoutes } from './routes/index.js';
 import { isEmbeddedRuntimeTakeoverDisabled } from './services/embedded-runtime/embedded-runtime-profile-state.js';
 import { preinstallPanelRuntime } from './services/panel-runtime/preinstall.js';
-
 let bootstrapped = false;
 const HOST_ABI_VERSION = 1;
 
@@ -260,7 +260,7 @@ export function bootstrapTauriMain() {
     installNativeShareBridge();
 
     const context = createTauriMainContext({ invoke, convertFileSrc });
-    installHostAbi(context);
+    installHostAbi(context); installChatApi(context);
     installMainApiOptionParking();
     if (perfEnabled) {
         perfReadyPromise = import('./perf/perf-hud.js')

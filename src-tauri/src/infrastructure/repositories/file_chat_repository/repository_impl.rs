@@ -8,8 +8,9 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage};
 use crate::domain::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp,
-    ChatPayloadTail, ChatRepository, ChatSearchResult, PinnedCharacterChat, PinnedGroupChat,
+    ChatExportFormat, ChatImportFormat, ChatMessageSearchHit, ChatMessageSearchQuery,
+    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail, ChatRepository,
+    ChatSearchResult, FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
 };
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::chat_format_importers::{
@@ -1020,6 +1021,183 @@ impl ChatRepository for FileChatRepository {
         self.remove_summary_cache_for_path(&target_path).await;
 
         Ok(chat_id)
+    }
+
+    async fn get_character_chat_summary(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        include_metadata: bool,
+    ) -> Result<ChatSearchResult, DomainError> {
+        self.get_character_chat_summary_internal(character_name, file_name, include_metadata)
+            .await
+    }
+
+    async fn get_group_chat_summary(
+        &self,
+        chat_id: &str,
+        include_metadata: bool,
+    ) -> Result<ChatSearchResult, DomainError> {
+        self.get_group_chat_summary_internal(chat_id, include_metadata)
+            .await
+    }
+
+    async fn get_character_chat_metadata(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Value, DomainError> {
+        let path = self.get_chat_path(character_name, file_name);
+        self.read_chat_metadata_from_path(&path).await
+    }
+
+    async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Value, DomainError> {
+        let path = self.get_group_chat_path(chat_id);
+        self.read_chat_metadata_from_path(&path).await
+    }
+
+    async fn set_character_chat_metadata_extension(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        value: Value,
+    ) -> Result<(), DomainError> {
+        let path = self.get_chat_path(character_name, file_name);
+        self.set_chat_metadata_extension_in_path(&path, namespace, value)
+            .await
+    }
+
+    async fn set_group_chat_metadata_extension(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        value: Value,
+    ) -> Result<(), DomainError> {
+        let path = self.get_group_chat_path(chat_id);
+        self.set_chat_metadata_extension_in_path(&path, namespace, value)
+            .await
+    }
+
+    async fn get_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<Value, DomainError> {
+        self.get_character_chat_store_json_value(character_name, file_name, namespace, key)
+            .await
+    }
+
+    async fn get_group_chat_store_json(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<Value, DomainError> {
+        self.get_group_chat_store_json_value(chat_id, namespace, key)
+            .await
+    }
+
+    async fn set_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), DomainError> {
+        self.set_character_chat_store_json_value(character_name, file_name, namespace, key, value)
+            .await
+    }
+
+    async fn set_group_chat_store_json(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), DomainError> {
+        self.set_group_chat_store_json_value(chat_id, namespace, key, value)
+            .await
+    }
+
+    async fn delete_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<(), DomainError> {
+        self.delete_character_chat_store_json_value(character_name, file_name, namespace, key)
+            .await
+    }
+
+    async fn delete_group_chat_store_json(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<(), DomainError> {
+        self.delete_group_chat_store_json_value(chat_id, namespace, key)
+            .await
+    }
+
+    async fn list_character_chat_store_keys(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+    ) -> Result<Vec<String>, DomainError> {
+        self.list_character_chat_store_keys_for_namespace(character_name, file_name, namespace)
+            .await
+    }
+
+    async fn list_group_chat_store_keys(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+    ) -> Result<Vec<String>, DomainError> {
+        self.list_group_chat_store_keys_for_namespace(chat_id, namespace)
+            .await
+    }
+
+    async fn find_last_character_chat_message(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        query: FindLastMessageQuery,
+    ) -> Result<Option<LocatedChatMessage>, DomainError> {
+        self.find_last_character_chat_message_internal(character_name, file_name, query)
+            .await
+    }
+
+    async fn find_last_group_chat_message(
+        &self,
+        chat_id: &str,
+        query: FindLastMessageQuery,
+    ) -> Result<Option<LocatedChatMessage>, DomainError> {
+        self.find_last_group_chat_message_internal(chat_id, query).await
+    }
+
+    async fn search_character_chat_messages(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        query: ChatMessageSearchQuery,
+    ) -> Result<Vec<ChatMessageSearchHit>, DomainError> {
+        self.search_character_chat_messages_internal(character_name, file_name, query)
+            .await
+    }
+
+    async fn search_group_chat_messages(
+        &self,
+        chat_id: &str,
+        query: ChatMessageSearchQuery,
+    ) -> Result<Vec<ChatMessageSearchHit>, DomainError> {
+        self.search_group_chat_messages_internal(chat_id, query)
+            .await
     }
 
     async fn clear_cache(&self) -> Result<(), DomainError> {

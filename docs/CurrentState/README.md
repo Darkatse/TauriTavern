@@ -38,3 +38,6 @@
 5. `docs/CurrentState/WindowedPayload.md`
    - windowed payload（聊天记录分片读写）现状：tail 小窗口、before 分页、windowed patch/save 写入
    - 包含 Prompt-backfill（生成时按需回填）、页缓存与批量 IPC 的端到端链路与持续开发约束
+
+6. `docs/CurrentState/MemoryExtensionApi.md`
+   - 记忆类扩展 API（`window.__TAURITAVERN__.api.chat`）的当前落地状态：楼层语义、按需历史、后端定位、纯文本检索与持久化

@@ -5,6 +5,7 @@ pub mod bootstrap_commands;
 pub mod bridge;
 pub mod character_commands;
 pub mod chat_commands;
+pub mod chat_api_commands;
 pub mod chat_completion_commands;
 pub mod content_commands;
 pub mod data_archive_commands;

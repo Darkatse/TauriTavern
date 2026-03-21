@@ -94,6 +94,73 @@ pub enum ChatPayloadPatchOp {
     },
 }
 
+/// Chat message role used for locate queries.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum ChatMessageRole {
+    User,
+    Assistant,
+    System,
+}
+
+/// Query for locating the last matching message in a chat payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FindLastMessageQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ChatMessageRole>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_top_level_keys: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_extra_keys: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan_limit: Option<usize>,
+}
+
+/// Located message result with a 0-based absolute message index.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocatedChatMessage {
+    pub index: usize,
+    pub message: Value,
+}
+
+/// Filters for chat message search queries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessageSearchFilters {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ChatMessageRole>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_index: Option<usize>,
+    /// Maximum number of messages scanned from the end of the chat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan_limit: Option<usize>,
+}
+
+/// Query payload for searching messages inside a chat.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessageSearchQuery {
+    pub query: String,
+    pub limit: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filters: Option<ChatMessageSearchFilters>,
+}
+
+/// Search hit returned for chat message search queries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessageSearchHit {
+    pub index: usize,
+    pub score: f32,
+    pub snippet: String,
+    pub role: ChatMessageRole,
+    pub text: String,
+}
+
 /// Repository interface for chat management
 #[async_trait]
 pub trait ChatRepository: Send + Sync {
@@ -347,6 +414,146 @@ pub trait ChatRepository: Send + Sync {
 
     /// Import a group chat payload and return the created chat id (without extension).
     async fn import_group_chat_payload(&self, file_path: &Path) -> Result<String, DomainError>;
+
+    /// Get a single character chat summary without loading the full payload.
+    async fn get_character_chat_summary(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        include_metadata: bool,
+    ) -> Result<ChatSearchResult, DomainError>;
+
+    /// Get a single group chat summary without loading the full payload.
+    async fn get_group_chat_summary(
+        &self,
+        chat_id: &str,
+        include_metadata: bool,
+    ) -> Result<ChatSearchResult, DomainError>;
+
+    /// Read the character chat metadata (header only).
+    async fn get_character_chat_metadata(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Value, DomainError>;
+
+    /// Read the group chat metadata (header only).
+    async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Value, DomainError>;
+
+    /// Set `chat_metadata.extensions[namespace]` for a character chat (header-only rewrite).
+    async fn set_character_chat_metadata_extension(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        value: Value,
+    ) -> Result<(), DomainError>;
+
+    /// Set `chat_metadata.extensions[namespace]` for a group chat (header-only rewrite).
+    async fn set_group_chat_metadata_extension(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        value: Value,
+    ) -> Result<(), DomainError>;
+
+    /// Read a JSON value from the character chat extension store.
+    async fn get_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<Value, DomainError>;
+
+    /// Read a JSON value from the group chat extension store.
+    async fn get_group_chat_store_json(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<Value, DomainError>;
+
+    /// Write a JSON value to the character chat extension store.
+    async fn set_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), DomainError>;
+
+    /// Write a JSON value to the group chat extension store.
+    async fn set_group_chat_store_json(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), DomainError>;
+
+    /// Delete a JSON value from the character chat extension store.
+    async fn delete_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<(), DomainError>;
+
+    /// Delete a JSON value from the group chat extension store.
+    async fn delete_group_chat_store_json(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+    ) -> Result<(), DomainError>;
+
+    /// List JSON keys in the character chat extension store for the namespace.
+    async fn list_character_chat_store_keys(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+    ) -> Result<Vec<String>, DomainError>;
+
+    /// List JSON keys in the group chat extension store for the namespace.
+    async fn list_group_chat_store_keys(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+    ) -> Result<Vec<String>, DomainError>;
+
+    /// Find the last message that matches the query in a character chat (tail scan).
+    async fn find_last_character_chat_message(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        query: FindLastMessageQuery,
+    ) -> Result<Option<LocatedChatMessage>, DomainError>;
+
+    /// Find the last message that matches the query in a group chat (tail scan).
+    async fn find_last_group_chat_message(
+        &self,
+        chat_id: &str,
+        query: FindLastMessageQuery,
+    ) -> Result<Option<LocatedChatMessage>, DomainError>;
+
+    /// Search messages inside a character chat payload.
+    async fn search_character_chat_messages(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        query: ChatMessageSearchQuery,
+    ) -> Result<Vec<ChatMessageSearchHit>, DomainError>;
+
+    /// Search messages inside a group chat payload.
+    async fn search_group_chat_messages(
+        &self,
+        chat_id: &str,
+        query: ChatMessageSearchQuery,
+    ) -> Result<Vec<ChatMessageSearchHit>, DomainError>;
 
     /// Clear the chat cache
     async fn clear_cache(&self) -> Result<(), DomainError>;

@@ -16,6 +16,7 @@
 10. [现状说明](./CurrentState/README.md) - 当前实现状态快照与持续开发约束
 11. [性能重构计划：Prompt History Backfill](./PerformanceRefactoringPlan.md) - Windowed Payload 下补齐生成上下文的方案（方案 C + 页缓存）
 12. [移动端 Insets 解耦重构计划](./MobileInsetsDecouplingPlan.md) - Android 原生注入与 iOS CSS safe-area 解耦，修复底部死区并收敛契约
+13. [扩展 API 文档](./API/README.md) - `window.__TAURITAVERN__.api.*` 的参考与适配指南（面向扩展作者）
 
 ## 项目概述
 
