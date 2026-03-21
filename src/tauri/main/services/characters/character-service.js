@@ -279,16 +279,11 @@ export function createCharacterService({ safeInvoke }) {
             if (refreshed) {
                 return refreshed;
             }
-
-            // Follow SillyTavern behavior: avatar stem defines chat directory key.
-            if (avatarInternalId) {
-                return avatarInternalId;
-            }
         }
 
         const fallback = String(fallbackName || '').trim();
         if (!fallback) {
-            return null;
+            return avatarInternalId || null;
         }
 
         const cachedByName = characterByDisplayName.get(fallback);
@@ -316,7 +311,7 @@ export function createCharacterService({ safeInvoke }) {
             return refreshedByInternalIdValue;
         }
 
-        return fallback;
+        return avatarInternalId || fallback;
     }
 
     /** @param {any} body */

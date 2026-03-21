@@ -4,10 +4,12 @@ use serde_json::Value;
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::infrastructure::persistence::file_system::{replace_file_with_fallback, unique_temp_path};
+use crate::infrastructure::persistence::file_system::{
+    replace_file_with_fallback, unique_temp_path,
+};
 
-use super::windowed_payload_io::read_first_line_and_end_offset;
 use super::FileChatRepository;
+use super::windowed_payload_io::read_first_line_and_end_offset;
 
 fn validate_store_component(raw: &str, label: &str) -> Result<String, DomainError> {
     let value = raw.trim();
@@ -35,14 +37,18 @@ fn extract_integrity_slug_from_header_value(header: &Value) -> Result<String, Do
     let meta = header
         .get("chat_metadata")
         .and_then(Value::as_object)
-        .ok_or_else(|| DomainError::InvalidData("Chat header is missing chat_metadata".to_string()))?;
+        .ok_or_else(|| {
+            DomainError::InvalidData("Chat header is missing chat_metadata".to_string())
+        })?;
 
     let slug = meta
         .get("integrity")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| DomainError::InvalidData("Chat metadata integrity is missing".to_string()))?;
+        .ok_or_else(|| {
+            DomainError::InvalidData("Chat metadata integrity is missing".to_string())
+        })?;
 
     Ok(slug.to_string())
 }
@@ -56,11 +62,7 @@ async fn read_chat_integrity_slug(path: &Path) -> Result<String, DomainError> {
 }
 
 impl FileChatRepository {
-    fn character_chat_store_root(
-        &self,
-        character_name: &str,
-        integrity: &str,
-    ) -> PathBuf {
+    fn character_chat_store_root(&self, character_name: &str, integrity: &str) -> PathBuf {
         self.get_character_dir(character_name)
             .join(".tauritavern")
             .join(integrity)
@@ -81,7 +83,9 @@ impl FileChatRepository {
         let namespace = validate_store_component(namespace, "namespace")?;
         let chat_path = self.get_chat_path(character_name, file_name);
         let integrity = read_chat_integrity_slug(&chat_path).await?;
-        Ok(self.character_chat_store_root(character_name, &integrity).join(namespace))
+        Ok(self
+            .character_chat_store_root(character_name, &integrity)
+            .join(namespace))
     }
 
     async fn resolve_group_chat_store_dir(
@@ -135,7 +139,9 @@ impl FileChatRepository {
         key: &str,
     ) -> Result<Value, DomainError> {
         let key = validate_store_component(key, "key")?;
-        let dir = self.resolve_group_chat_store_dir(chat_id, namespace).await?;
+        let dir = self
+            .resolve_group_chat_store_dir(chat_id, namespace)
+            .await?;
         let path = dir.join(format!("{}.json", key));
         let bytes = fs::read(&path).await.map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -206,7 +212,9 @@ impl FileChatRepository {
         value: Value,
     ) -> Result<(), DomainError> {
         let key = validate_store_component(key, "key")?;
-        let dir = self.resolve_group_chat_store_dir(chat_id, namespace).await?;
+        let dir = self
+            .resolve_group_chat_store_dir(chat_id, namespace)
+            .await?;
         fs::create_dir_all(&dir).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to create chat store directory {}: {}",
@@ -268,7 +276,9 @@ impl FileChatRepository {
         key: &str,
     ) -> Result<(), DomainError> {
         let key = validate_store_component(key, "key")?;
-        let dir = self.resolve_group_chat_store_dir(chat_id, namespace).await?;
+        let dir = self
+            .resolve_group_chat_store_dir(chat_id, namespace)
+            .await?;
         let path = dir.join(format!("{}.json", key));
         fs::remove_file(&path).await.map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -303,7 +313,9 @@ impl FileChatRepository {
         chat_id: &str,
         namespace: &str,
     ) -> Result<Vec<String>, DomainError> {
-        let dir = self.resolve_group_chat_store_dir(chat_id, namespace).await?;
+        let dir = self
+            .resolve_group_chat_store_dir(chat_id, namespace)
+            .await?;
         list_store_keys(&dir).await
     }
 }
@@ -317,7 +329,7 @@ async fn list_store_keys(dir: &Path) -> Result<Vec<String>, DomainError> {
                 "Failed to read chat store directory {}: {}",
                 dir.display(),
                 error
-            )))
+            )));
         }
     };
 
@@ -333,7 +345,6 @@ async fn list_store_keys(dir: &Path) -> Result<Vec<String>, DomainError> {
         if !path.is_file() {
             continue;
         }
-
         if path.extension().and_then(|value| value.to_str()) != Some("json") {
             continue;
         }
@@ -352,4 +363,3 @@ async fn list_store_keys(dir: &Path) -> Result<Vec<String>, DomainError> {
     keys.sort();
     Ok(keys)
 }
-

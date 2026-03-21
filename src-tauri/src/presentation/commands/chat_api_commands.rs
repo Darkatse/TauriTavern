@@ -303,7 +303,10 @@ pub async fn list_group_chat_store_keys(
     namespace: String,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<String>, CommandError> {
-    log_command(format!("list_group_chat_store_keys {}:{}", chat_id, namespace));
+    log_command(format!(
+        "list_group_chat_store_keys {}:{}",
+        chat_id, namespace
+    ));
 
     app_state
         .chat_service

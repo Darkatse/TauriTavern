@@ -6,8 +6,8 @@ use crate::app::AppState;
 use crate::application::dto::character_dto::{
     CharacterChatDto, CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
     ExportCharacterContentDto, ExportCharacterContentResultDto, ExportCharacterDto,
-    GetCharacterChatsDto, ImportCharacterDto, RenameCharacterDto, UpdateAvatarDto,
-    UpdateCharacterDto,
+    GetCharacterChatsDto, ImportCharacterDto, MergeCharacterCardDataDto, RenameCharacterDto,
+    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -87,6 +87,36 @@ pub async fn update_character(
         .update_character(&name, dto)
         .await
         .map_err(map_command_error("Failed to update character"))
+}
+
+#[tauri::command]
+pub async fn update_character_card_data(
+    name: String,
+    dto: UpdateCharacterCardDataDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<CharacterDto, CommandError> {
+    log_command(format!("update_character_card_data {}", name));
+
+    app_state
+        .character_service
+        .update_character_card_data(&name, dto)
+        .await
+        .map_err(map_command_error("Failed to update character card data"))
+}
+
+#[tauri::command]
+pub async fn merge_character_card_data(
+    name: String,
+    dto: MergeCharacterCardDataDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<CharacterDto, CommandError> {
+    log_command(format!("merge_character_card_data {}", name));
+
+    app_state
+        .character_service
+        .merge_character_card_data(&name, dto)
+        .await
+        .map_err(map_command_error("Failed to merge character card data"))
 }
 
 #[tauri::command]

@@ -61,13 +61,30 @@ pub(super) fn world_info_to_character_book(
         })?;
         character_book.insert("name".to_string(), json!(world_name));
         character_book.insert("entries".to_string(), Value::Array(converted_entries));
+        ensure_character_book_extensions(&mut character_book)?;
         return Ok(Value::Object(character_book));
     }
 
     Ok(json!({
         "name": world_name,
+        "extensions": {},
         "entries": converted_entries,
     }))
+}
+
+fn ensure_character_book_extensions(
+    character_book: &mut Map<String, Value>,
+) -> Result<(), DomainError> {
+    match character_book.get("extensions") {
+        Some(Value::Object(_)) => Ok(()),
+        Some(_) => Err(DomainError::InvalidData(
+            "World info originalData character book extensions must be an object".to_string(),
+        )),
+        None => {
+            character_book.insert("extensions".to_string(), Value::Object(Map::new()));
+            Ok(())
+        }
+    }
 }
 
 fn convert_character_book_entry(entry: &Value, index: usize) -> Value {

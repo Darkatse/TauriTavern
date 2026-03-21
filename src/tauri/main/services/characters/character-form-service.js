@@ -1,5 +1,7 @@
 // @ts-check
 
+import { lodash as _ } from '../../../../lib.js';
+
 /**
  * @typedef {import('../../context/types.js').MaterializedFileInfo} MaterializedFileInfo
  */
@@ -102,19 +104,19 @@ export function createCharacterFormService({
 
     /** @param {FormData} formData */
     function buildCharacterExtensions(formData) {
-        const extensions = parseJsonStrict(stringFromForm(formData, 'extensions', ''), {}, "extensions JSON");
-
-        extensions.world = stringFromForm(formData, 'world', '').trim();
-        extensions.depth_prompt = {
-            prompt: stringFromForm(formData, 'depth_prompt_prompt', ''),
-            depth: numberFromForm(formData, 'depth_prompt_depth', 4),
-            role: stringFromForm(formData, 'depth_prompt_role', 'system'),
+        const defaults = {
+            world: stringFromForm(formData, 'world', '').trim(),
+            depth_prompt: {
+                prompt: stringFromForm(formData, 'depth_prompt_prompt', ''),
+                depth: numberFromForm(formData, 'depth_prompt_depth', 4),
+                role: stringFromForm(formData, 'depth_prompt_role', 'system'),
+            },
+            talkativeness: numberFromForm(formData, 'talkativeness', 0.5),
+            fav: boolFromForm(formData, 'fav'),
         };
+        const parsed = parseJsonStrict(stringFromForm(formData, 'extensions', ''), {}, "extensions JSON");
 
-        extensions.talkativeness = numberFromForm(formData, 'talkativeness', 0.5);
-        extensions.fav = boolFromForm(formData, 'fav');
-
-        return extensions;
+        return _.merge({}, defaults, parsed);
     }
 
     /** @param {FormData} formData */
@@ -143,30 +145,87 @@ export function createCharacterFormService({
         };
     }
 
-    /** @param {FormData} formData */
-    function formDataToUpdateCharacterDto(formData) {
-        const dto = formDataToCreateCharacterDto(formData);
-        const chat = stringFromForm(formData, 'chat', '').trim();
+    /**
+     * @param {Record<string, any>} target
+     * @param {Record<string, any>} values
+     */
+    function assignObjectPaths(target, values) {
+        for (const [path, value] of Object.entries(values)) {
+            _.set(target, path, value);
+        }
+    }
 
-        return {
-            name: dto.name,
-            chat: chat || undefined,
+    /** @param {FormData} formData */
+    function buildCharacterCardFromForm(formData) {
+        const dto = formDataToCreateCharacterDto(formData);
+        const baseCard = parseJsonStrict(stringFromForm(formData, 'json_data', ''), {}, "character json_data");
+        const name = dto.name.trim();
+
+        if (!name) {
+            throw new Error('Character name is required');
+        }
+
+        const chat = formData.has('chat')
+            ? stringFromForm(formData, 'chat', '').trim()
+            : `${name} - ${new Date().toISOString()}`;
+        const createDate = stringFromForm(formData, 'create_date', '').trim();
+        const mergedExtensions = _.merge({}, _.get(baseCard, 'data.extensions', {}), dto.extensions);
+
+        _.unset(baseCard, 'json_data');
+
+        assignObjectPaths(baseCard, {
+            name,
             description: dto.description,
             personality: dto.personality,
             scenario: dto.scenario,
             first_mes: dto.first_mes,
             mes_example: dto.mes_example,
-            creator: dto.creator,
-            creator_notes: dto.creator_notes,
-            character_version: dto.character_version,
-            tags: dto.tags,
+            creatorcomment: dto.creator_notes,
+            avatar: 'none',
             talkativeness: dto.talkativeness,
             fav: dto.fav,
-            alternate_greetings: dto.alternate_greetings,
-            system_prompt: dto.system_prompt,
-            post_history_instructions: dto.post_history_instructions,
-            extensions: dto.extensions,
-        };
+            tags: dto.tags,
+            spec: 'chara_card_v2',
+            spec_version: '2.0',
+            'data.name': name,
+            'data.description': dto.description,
+            'data.personality': dto.personality,
+            'data.scenario': dto.scenario,
+            'data.first_mes': dto.first_mes,
+            'data.mes_example': dto.mes_example,
+            'data.creator_notes': dto.creator_notes,
+            'data.system_prompt': dto.system_prompt,
+            'data.post_history_instructions': dto.post_history_instructions,
+            'data.tags': dto.tags,
+            'data.creator': dto.creator,
+            'data.character_version': dto.character_version,
+            'data.alternate_greetings': dto.alternate_greetings,
+            'data.extensions': mergedExtensions,
+        });
+
+        if (typeof mergedExtensions.world === 'string' && mergedExtensions.world.trim()) {
+            _.unset(baseCard, 'data.character_book');
+        }
+
+        if (formData.has('chat')) {
+            if (chat) {
+                _.set(baseCard, 'chat', chat);
+            } else {
+                _.unset(baseCard, 'chat');
+            }
+        } else {
+            _.set(baseCard, 'chat', chat);
+        }
+
+        if (formData.has('create_date')) {
+            if (createDate) {
+                _.set(baseCard, 'create_date', createDate);
+            } else {
+                _.unset(baseCard, 'create_date');
+            }
+        }
+
+        return baseCard;
     }
 
     /** @param {any} value */
@@ -214,56 +273,6 @@ export function createCharacterFormService({
         }
     }
 
-    /** @param {any} payload */
-    function pickCharacterUpdateFields(payload) {
-        /** @type {Record<string, any>} */
-        const dto = {};
-        const keys = [
-            'name',
-            'chat',
-            'description',
-            'personality',
-            'scenario',
-            'first_mes',
-            'mes_example',
-            'creator',
-            'creator_notes',
-            'character_version',
-            'tags',
-            'talkativeness',
-            'fav',
-            'alternate_greetings',
-            'system_prompt',
-            'post_history_instructions',
-            'extensions',
-        ];
-
-        for (const key of keys) {
-            if (Object.prototype.hasOwnProperty.call(payload, key)) {
-                // @ts-ignore - dynamic indexing by payload schema.
-                dto[key] = payload[key];
-            }
-        }
-
-        const data = payload?.data;
-        if (data && typeof data === 'object') {
-            for (const key of keys) {
-                if (key !== 'extensions' && !Object.prototype.hasOwnProperty.call(dto, key) && Object.prototype.hasOwnProperty.call(data, key)) {
-                    // @ts-ignore - dynamic indexing by payload schema.
-                    dto[key] = data[key];
-                }
-            }
-
-            if (Object.prototype.hasOwnProperty.call(data, 'extensions')) {
-                dto.extensions = Object.prototype.hasOwnProperty.call(dto, 'extensions')
-                    ? { ...dto.extensions, ...data.extensions }
-                    : data.extensions;
-            }
-        }
-
-        return dto;
-    }
-
     /** @param {FormData} formData @param {URL} requestUrl */
     async function createCharacterFromForm(formData, requestUrl) {
         const dto = formDataToCreateCharacterDto(formData);
@@ -306,12 +315,11 @@ export function createCharacterFormService({
             throw new Error('Character not found for edit');
         }
 
-        const dto = formDataToUpdateCharacterDto(formData);
-        await safeInvoke('update_character', { name: originalCharacterId, dto });
-
         const file = formData.get('avatar');
+        const crop = parseCropParam(requestUrl);
+        const card = buildCharacterCardFromForm(formData);
+
         if (file instanceof Blob && file.size > 0) {
-            const crop = parseCropParam(requestUrl);
             const preferredName = file instanceof File ? file.name : '';
             const fileInfo = await materializeUploadFile(file, {
                 preferredName,
@@ -323,11 +331,12 @@ export function createCharacterFormService({
             }
 
             try {
-                await safeInvoke('update_avatar', {
+                await safeInvoke('update_character_card_data', {
+                    name: originalCharacterId,
                     dto: {
-                        name: originalCharacterId,
+                        card_json: JSON.stringify(card),
                         avatar_path: fileInfo.filePath,
-                        crop,
+                        crop: crop || null,
                     },
                 });
 
@@ -335,7 +344,18 @@ export function createCharacterFormService({
             } finally {
                 await fileInfo.cleanup?.();
             }
+
+            return;
         }
+
+        await safeInvoke('update_character_card_data', {
+            name: originalCharacterId,
+            dto: {
+                card_json: JSON.stringify(card),
+                avatar_path: null,
+                crop: crop || null,
+            },
+        });
     }
 
     /** @param {FormData} formData @param {URL} requestUrl */
@@ -372,7 +392,6 @@ export function createCharacterFormService({
     }
 
     return {
-        pickCharacterUpdateFields,
         createCharacterFromForm,
         editCharacterFromForm,
         uploadAvatarFromForm,

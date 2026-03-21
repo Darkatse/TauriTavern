@@ -18,10 +18,15 @@ use crate::infrastructure::persistence::png_utils::{
 use super::FileCharacterRepository;
 
 impl FileCharacterRepository {
-    fn with_storage_identity(character: &Character, file_name: &str) -> Character {
+    fn with_storage_identity_and_json(
+        character: &Character,
+        file_name: &str,
+        json_data: Option<String>,
+    ) -> Character {
         let mut stored = character.clone();
         stored.file_name = Some(file_name.to_string());
         stored.avatar = format!("{}.png", file_name);
+        stored.json_data = json_data;
         stored.shallow = false;
         stored
     }
@@ -58,7 +63,8 @@ impl CharacterRepository for FileCharacterRepository {
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 
-        let cached_character = Self::with_storage_identity(character, &file_name);
+        let cached_character =
+            Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
 
         let mut cache = self.memory_cache.lock().await;
         cache.set(file_name, cached_character);
@@ -140,6 +146,50 @@ impl CharacterRepository for FileCharacterRepository {
         }
 
         self.save(character).await
+    }
+
+    async fn write_character_card_json(
+        &self,
+        name: &str,
+        character_card_json: &str,
+        avatar_path: Option<&Path>,
+        crop: Option<ImageCrop>,
+    ) -> Result<Character, DomainError> {
+        let file_path = self.get_character_path(name);
+
+        if !file_path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Character not found: {}",
+                name
+            )));
+        }
+
+        let image_data = if let Some(avatar_path) = avatar_path {
+            let file_data = fs::read(avatar_path).await.map_err(|e| {
+                logger::error(&format!("Failed to read avatar file: {}", e));
+                DomainError::InternalError(format!("Failed to read avatar file: {}", e))
+            })?;
+
+            process_avatar_image(&file_data, crop).await?
+        } else {
+            fs::read(&file_path).await.map_err(|e| {
+                logger::error(&format!("Failed to read character file: {}", e));
+                DomainError::InternalError(format!("Failed to read character file: {}", e))
+            })?
+        };
+
+        let new_image_data = write_character_data_to_png(&image_data, character_card_json)?;
+
+        fs::write(&file_path, new_image_data).await.map_err(|e| {
+            logger::error(&format!("Failed to write character file: {}", e));
+            DomainError::InternalError(format!("Failed to write character file: {}", e))
+        })?;
+
+        let character = self.read_character_from_file(&file_path).await?;
+        let mut cache = self.memory_cache.lock().await;
+        cache.set(name.to_string(), character.clone());
+
+        Ok(character)
     }
 
     async fn rename(&self, old_name: &str, new_name: &str) -> Result<Character, DomainError> {
@@ -402,7 +452,8 @@ impl CharacterRepository for FileCharacterRepository {
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 
-        let stored_character = Self::with_storage_identity(character, &file_name);
+        let stored_character =
+            Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
 
         let mut cache = self.memory_cache.lock().await;
         cache.set(file_name, stored_character.clone());
@@ -440,7 +491,8 @@ impl CharacterRepository for FileCharacterRepository {
             DomainError::InternalError(format!("Failed to write character file: {}", e))
         })?;
 
-        let cached_character = Self::with_storage_identity(character, &file_name);
+        let cached_character =
+            Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
         let mut cache = self.memory_cache.lock().await;
         cache.set(file_name, cached_character);
 

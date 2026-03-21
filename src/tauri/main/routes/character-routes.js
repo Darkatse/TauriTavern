@@ -1,5 +1,17 @@
 import { normalizeBinaryPayload, sanitizeAttachmentFileName } from '../binary-utils.js';
 
+/** @param {Record<string, any>} body */
+function buildCharacterMergeUpdate(body) {
+    const update = { ...body };
+
+    if (!Object.prototype.hasOwnProperty.call(update, 'avatar') && update.avatar_url !== undefined) {
+        update.avatar = update.avatar_url;
+    }
+
+    delete update.avatar_url;
+    return update;
+}
+
 export function registerCharacterRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/characters/all', async () => {
         const characters = await context.getAllCharacters({ shallow: true, forceRefresh: true });
@@ -145,18 +157,25 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     });
 
     router.post('/api/characters/merge-attributes', async ({ body }) => {
-        const avatar = body?.avatar;
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+            return jsonResponse({ error: 'Expected JSON object body' }, 400);
+        }
+
+        const update = buildCharacterMergeUpdate(body);
+        const avatar = body?.avatar ?? body?.avatar_url;
         const characterId = await context.resolveCharacterId({ avatar, fallbackName: body?.name });
 
         if (!characterId) {
-            return jsonResponse({ ok: true });
+            return jsonResponse({ error: 'Character not found' }, 404);
         }
 
-        const dto = context.pickCharacterUpdateFields(body || {});
-        if (Object.keys(dto).length > 0) {
-            await context.safeInvoke('update_character', { name: characterId, dto });
-            await context.getAllCharacters({ shallow: true, forceRefresh: true });
-        }
+        await context.safeInvoke('merge_character_card_data', {
+            name: characterId,
+            dto: {
+                update,
+            },
+        });
+        await context.getAllCharacters({ shallow: true, forceRefresh: true });
 
         return jsonResponse({ ok: true });
     });

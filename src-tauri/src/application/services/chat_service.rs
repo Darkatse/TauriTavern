@@ -417,7 +417,10 @@ impl ChatService {
     }
 
     pub async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Value, ApplicationError> {
-        Ok(self.chat_repository.get_group_chat_metadata(chat_id).await?)
+        Ok(self
+            .chat_repository
+            .get_group_chat_metadata(chat_id)
+            .await?)
     }
 
     pub async fn set_character_chat_metadata_extension(

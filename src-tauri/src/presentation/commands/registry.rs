@@ -6,6 +6,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::character_commands::create_character,
         super::character_commands::create_character_with_avatar,
         super::character_commands::update_character,
+        super::character_commands::update_character_card_data,
+        super::character_commands::merge_character_card_data,
         super::character_commands::delete_character,
         super::character_commands::rename_character,
         super::character_commands::import_character,

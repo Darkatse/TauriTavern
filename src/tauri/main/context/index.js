@@ -165,7 +165,6 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         exportChatAsJsonl,
         findAvatarByCharacterId: characterService.findAvatarByCharacterId,
         uniqueCharacterName: characterService.uniqueCharacterName,
-        pickCharacterUpdateFields: characterFormService.pickCharacterUpdateFields,
         createCharacterFromForm: characterFormService.createCharacterFromForm,
         editCharacterFromForm: characterFormService.editCharacterFromForm,
         uploadAvatarFromForm: characterFormService.uploadAvatarFromForm,

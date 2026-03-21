@@ -97,9 +97,7 @@ impl FileChatRepository {
                 continue;
             }
 
-            let index = total_count
-                .saturating_sub(1)
-                .saturating_sub(from_end);
+            let index = total_count.saturating_sub(1).saturating_sub(from_end);
             return Ok(Some(LocatedChatMessage { index, message }));
         }
 
@@ -118,7 +116,9 @@ impl FileChatRepository {
         }
 
         let scan_limit = resolve_scan_limit(&query)?;
-        let tail = self.get_group_payload_tail_lines(chat_id, scan_limit).await?;
+        let tail = self
+            .get_group_payload_tail_lines(chat_id, scan_limit)
+            .await?;
         let lines = tail.lines;
         if lines.is_empty() {
             return Ok(None);
@@ -145,13 +145,10 @@ impl FileChatRepository {
                 continue;
             }
 
-            let index = total_count
-                .saturating_sub(1)
-                .saturating_sub(from_end);
+            let index = total_count.saturating_sub(1).saturating_sub(from_end);
             return Ok(Some(LocatedChatMessage { index, message }));
         }
 
         Ok(None)
     }
 }
-

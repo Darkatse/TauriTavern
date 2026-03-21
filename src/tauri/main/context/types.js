@@ -78,7 +78,6 @@ export {};
  *   exportChatAsJsonl: (frontendChat: any[]) => string;
  *   findAvatarByCharacterId: (characterId: any) => string;
  *   uniqueCharacterName: (baseName: string) => Promise<string>;
- *   pickCharacterUpdateFields: (payload: any) => Record<string, any>;
  *   createCharacterFromForm: (formData: FormData, requestUrl: URL) => Promise<any>;
  *   editCharacterFromForm: (formData: FormData, requestUrl: URL) => Promise<void>;
  *   uploadAvatarFromForm: (formData: FormData, requestUrl: URL) => Promise<any>;

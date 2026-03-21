@@ -8,8 +8,8 @@ use crate::domain::errors::DomainError;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::replace_file_with_fallback;
 
-use super::windowed_payload_io::{open_existing_payload_file, read_first_line_and_end_offset};
 use super::FileChatRepository;
+use super::windowed_payload_io::{open_existing_payload_file, read_first_line_and_end_offset};
 
 fn ensure_object(value: Value, label: &str) -> Result<Map<String, Value>, DomainError> {
     match value {
@@ -42,21 +42,21 @@ fn apply_metadata_extension_update(
         .as_object_mut()
         .ok_or_else(|| DomainError::InvalidData("Chat header is not a JSON object".to_string()))?;
 
-    let meta_value = header_map
-        .get_mut("chat_metadata")
-        .ok_or_else(|| DomainError::InvalidData("Chat header is missing chat_metadata".to_string()))?;
+    let meta_value = header_map.get_mut("chat_metadata").ok_or_else(|| {
+        DomainError::InvalidData("Chat header is missing chat_metadata".to_string())
+    })?;
 
-    let meta_map = meta_value
-        .as_object_mut()
-        .ok_or_else(|| DomainError::InvalidData("chat_metadata is not a JSON object".to_string()))?;
+    let meta_map = meta_value.as_object_mut().ok_or_else(|| {
+        DomainError::InvalidData("chat_metadata is not a JSON object".to_string())
+    })?;
 
     let extensions_value = meta_map
         .entry("extensions".to_string())
         .or_insert_with(|| Value::Object(Map::new()));
 
-    let extensions_map = extensions_value
-        .as_object_mut()
-        .ok_or_else(|| DomainError::InvalidData("chat_metadata.extensions is not a JSON object".to_string()))?;
+    let extensions_map = extensions_value.as_object_mut().ok_or_else(|| {
+        DomainError::InvalidData("chat_metadata.extensions is not a JSON object".to_string())
+    })?;
 
     if value.is_null() {
         extensions_map.remove(namespace);
@@ -75,10 +75,9 @@ impl FileChatRepository {
         let (header, _) = read_first_line_and_end_offset(path).await?;
         let header_value = parse_header_json(&header)?;
         let header_map = ensure_object(header_value, "Chat header")?;
-        let meta = header_map
-            .get("chat_metadata")
-            .cloned()
-            .ok_or_else(|| DomainError::InvalidData("Chat header is missing chat_metadata".to_string()))?;
+        let meta = header_map.get("chat_metadata").cloned().ok_or_else(|| {
+            DomainError::InvalidData("Chat header is missing chat_metadata".to_string())
+        })?;
         ensure_object(meta, "chat_metadata").map(Value::Object)
     }
 
@@ -103,9 +102,11 @@ impl FileChatRepository {
             ))
         })?;
 
-        out.write_all(serialized.as_bytes()).await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to write chat header: {}", error))
-        })?;
+        out.write_all(serialized.as_bytes())
+            .await
+            .map_err(|error| {
+                DomainError::InternalError(format!("Failed to write chat header: {}", error))
+            })?;
         out.write_all(b"\n").await.map_err(|error| {
             DomainError::InternalError(format!("Failed to write chat header newline: {}", error))
         })?;

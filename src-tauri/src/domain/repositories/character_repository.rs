@@ -21,6 +21,15 @@ pub trait CharacterRepository: Send + Sync {
     /// Update an existing character
     async fn update(&self, character: &Character) -> Result<(), DomainError>;
 
+    /// Persist raw character card JSON into the existing character file.
+    async fn write_character_card_json(
+        &self,
+        name: &str,
+        character_card_json: &str,
+        avatar_path: Option<&Path>,
+        crop: Option<ImageCrop>,
+    ) -> Result<Character, DomainError>;
+
     /// Rename a character
     async fn rename(&self, old_name: &str, new_name: &str) -> Result<Character, DomainError>;
 

@@ -10,7 +10,8 @@ use crate::domain::models::chat::{Chat, ChatMessage};
 use crate::domain::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatMessageSearchHit, ChatMessageSearchQuery,
     ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail, ChatRepository,
-    ChatSearchResult, FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
+    ChatSearchResult, FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat,
+    PinnedGroupChat,
 };
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::chat_format_importers::{
@@ -1178,7 +1179,8 @@ impl ChatRepository for FileChatRepository {
         chat_id: &str,
         query: FindLastMessageQuery,
     ) -> Result<Option<LocatedChatMessage>, DomainError> {
-        self.find_last_group_chat_message_internal(chat_id, query).await
+        self.find_last_group_chat_message_internal(chat_id, query)
+            .await
     }
 
     async fn search_character_chat_messages(

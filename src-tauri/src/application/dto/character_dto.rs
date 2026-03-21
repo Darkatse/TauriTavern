@@ -30,6 +30,7 @@ pub struct CharacterDto {
     pub post_history_instructions: String,
     pub extensions: Option<serde_json::Value>,
     pub character_book: Option<serde_json::Value>,
+    pub json_data: Option<String>,
 }
 
 /// Character creation DTO
@@ -73,6 +74,20 @@ pub struct UpdateCharacterDto {
     pub system_prompt: Option<String>,
     pub post_history_instructions: Option<String>,
     pub extensions: Option<serde_json::Value>,
+}
+
+/// Raw character card update DTO used by upstream-compatible HTTP routes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateCharacterCardDataDto {
+    pub card_json: String,
+    pub avatar_path: Option<String>,
+    pub crop: Option<ImageCropDto>,
+}
+
+/// Raw character card merge DTO used by upstream-compatible HTTP routes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergeCharacterCardDataDto {
+    pub update: serde_json::Value,
 }
 
 /// Character rename DTO
@@ -190,7 +205,15 @@ impl From<Character> for CharacterDto {
                 serde_json::to_value(&character.data.extensions).unwrap_or(serde_json::Value::Null),
             ),
             character_book: character.data.character_book.clone(),
+            json_data: None,
         }
+    }
+}
+
+impl CharacterDto {
+    pub fn with_json_data(mut self, json_data: Option<String>) -> Self {
+        self.json_data = json_data;
+        self
     }
 }
 
@@ -215,7 +238,7 @@ pub(crate) fn merge_character_extensions(
     Ok(())
 }
 
-fn merge_json_value(current: &mut Value, updates: Value) {
+pub(crate) fn merge_json_value(current: &mut Value, updates: Value) {
     match (current, updates) {
         (Value::Object(current_object), Value::Object(updates_object)) => {
             for (key, value) in updates_object {

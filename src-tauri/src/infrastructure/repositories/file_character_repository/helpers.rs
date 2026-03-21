@@ -153,7 +153,7 @@ impl FileCharacterRepository {
             .unwrap_or("")
             .to_string();
 
-        character.json_data = None;
+        character.json_data = Some(json_data);
 
         let metadata = fs::metadata(path).await.map_err(|e| {
             logger::error(&format!("Failed to read file metadata: {}", e));

@@ -41,7 +41,13 @@ fn normalize_query(value: &str) -> String {
         .trim()
         .to_lowercase()
         .chars()
-        .map(|ch| if ch.is_alphanumeric() || ch == '_' { ch } else { ' ' })
+        .map(|ch| {
+            if ch.is_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -122,7 +128,11 @@ fn dedup_and_limit_tokens(tokens: Vec<String>) -> Vec<String> {
     }
 
     let step = (unique.len() + MAX_QUERY_TOKENS - 1) / MAX_QUERY_TOKENS;
-    unique.into_iter().step_by(step).take(MAX_QUERY_TOKENS).collect()
+    unique
+        .into_iter()
+        .step_by(step)
+        .take(MAX_QUERY_TOKENS)
+        .collect()
 }
 
 fn build_query_tokens(query: &str) -> Vec<String> {
@@ -195,11 +205,7 @@ fn snippet_from_text(text: &str, match_byte: Option<usize>) -> String {
     }
 
     if let Some(byte_index) = match_byte {
-        let prefix_chars = text
-            .get(..byte_index)
-            .unwrap_or_default()
-            .chars()
-            .count();
+        let prefix_chars = text.get(..byte_index).unwrap_or_default().chars().count();
         let start = prefix_chars.saturating_sub(SNIPPET_CONTEXT_BEFORE);
         let end = (start + SNIPPET_MAX_CHARS).min(total_chars);
         let snippet: String = text
@@ -296,7 +302,9 @@ impl FileChatRepository {
     ) -> Result<Vec<ChatMessageSearchHit>, DomainError> {
         let query_text = query.query.trim();
         if query_text.is_empty() {
-            return Err(DomainError::InvalidData("query must not be empty".to_string()));
+            return Err(DomainError::InvalidData(
+                "query must not be empty".to_string(),
+            ));
         }
         if query.limit == 0 {
             return Err(DomainError::InvalidData(
@@ -363,7 +371,9 @@ impl FileChatRepository {
             has_more_before = chunk.has_more_before;
             window_start_index = window_start_index.saturating_sub(chunk.lines.len());
 
-            let chunk_end_index = window_start_index.saturating_add(chunk.lines.len()).saturating_sub(1);
+            let chunk_end_index = window_start_index
+                .saturating_add(chunk.lines.len())
+                .saturating_sub(1);
             if chunk.lines.is_empty() || chunk_end_index < start_index {
                 break;
             }
@@ -393,7 +403,9 @@ impl FileChatRepository {
     ) -> Result<Vec<ChatMessageSearchHit>, DomainError> {
         let query_text = query.query.trim();
         if query_text.is_empty() {
-            return Err(DomainError::InvalidData("query must not be empty".to_string()));
+            return Err(DomainError::InvalidData(
+                "query must not be empty".to_string(),
+            ));
         }
         if query.limit == 0 {
             return Err(DomainError::InvalidData(
@@ -425,7 +437,9 @@ impl FileChatRepository {
         let mut heap: BinaryHeap<Reverse<Candidate>> = BinaryHeap::new();
 
         let page_size = SEARCH_PAGE_SIZE.min(remaining_scan);
-        let tail = self.get_group_payload_tail_lines(chat_id, page_size).await?;
+        let tail = self
+            .get_group_payload_tail_lines(chat_id, page_size)
+            .await?;
 
         let mut window_start_index = total_count.saturating_sub(tail.lines.len());
 
@@ -456,7 +470,9 @@ impl FileChatRepository {
             has_more_before = chunk.has_more_before;
             window_start_index = window_start_index.saturating_sub(chunk.lines.len());
 
-            let chunk_end_index = window_start_index.saturating_add(chunk.lines.len()).saturating_sub(1);
+            let chunk_end_index = window_start_index
+                .saturating_add(chunk.lines.len())
+                .saturating_sub(1);
             if chunk.lines.is_empty() || chunk_end_index < start_index {
                 break;
             }
@@ -526,10 +542,7 @@ impl FileChatRepository {
                 continue;
             }
 
-            let should_insert = heap
-                .peek()
-                .map(|entry| candidate > entry.0)
-                .unwrap_or(true);
+            let should_insert = heap.peek().map(|entry| candidate > entry.0).unwrap_or(true);
             if should_insert {
                 heap.pop();
                 heap.push(Reverse(candidate));
