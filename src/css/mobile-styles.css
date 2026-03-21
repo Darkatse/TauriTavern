@@ -298,15 +298,15 @@
     #form_sheld {
         position: relative;
         z-index: 31;
+        padding-right: max(var(--tt-inset-right), 0px) !important;
+        padding-left: max(var(--tt-inset-left), 0px) !important;
+        padding-bottom: var(--tt-bottom-inset) !important;
     }
 
     /* Host-private IME nodes keep Android keyboard lift off the theme-controlled shell. */
     #form_sheld>[data-tt-android-ime-lift] {
         transform: translate3d(0, calc(-1 * var(--tt-keyboard-offset)), 0) !important;
         will-change: transform;
-        padding-right: max(var(--tt-inset-right), 0px) !important;
-        padding-left: max(var(--tt-inset-left), 0px) !important;
-        padding-bottom: var(--tt-bottom-inset) !important;
     }
 
     #form_sheld>[data-tt-android-ime-spacer] {
