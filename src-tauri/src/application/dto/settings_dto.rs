@@ -12,6 +12,7 @@ pub struct TauriTavernSettingsDto {
     pub panel_runtime_profile: String,
     pub embedded_runtime_profile: String,
     pub chat_history_mode: ChatHistoryMode,
+    pub close_to_tray_on_close: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +32,7 @@ pub struct UpdateTauriTavernSettingsDto {
     pub panel_runtime_profile: Option<String>,
     pub embedded_runtime_profile: Option<String>,
     pub chat_history_mode: Option<ChatHistoryMode>,
+    pub close_to_tray_on_close: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -104,6 +106,7 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             panel_runtime_profile: settings.panel_runtime_profile,
             embedded_runtime_profile: settings.embedded_runtime_profile,
             chat_history_mode: settings.chat_history_mode,
+            close_to_tray_on_close: settings.close_to_tray_on_close,
         }
     }
 }

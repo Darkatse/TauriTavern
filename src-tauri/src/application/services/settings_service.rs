@@ -58,6 +58,10 @@ impl SettingsService {
             settings.chat_history_mode = chat_history_mode;
         }
 
+        if let Some(close_to_tray_on_close) = dto.close_to_tray_on_close {
+            settings.close_to_tray_on_close = close_to_tray_on_close;
+        }
+
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;

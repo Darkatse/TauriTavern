@@ -23,6 +23,27 @@ pub async fn get_tauritavern_settings(
         .map_err(map_command_error("Failed to get TauriTavern settings"))
 }
 
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn update_tauritavern_settings(
+    dto: UpdateTauriTavernSettingsDto,
+    app_state: State<'_, Arc<AppState>>,
+    tray_state: State<'_, Arc<crate::presentation::windows_tray::WindowsTrayState>>,
+) -> Result<TauriTavernSettingsDto, CommandError> {
+    log_command("update_tauritavern_settings");
+
+    let settings = app_state
+        .settings_service
+        .update_tauritavern_settings(dto)
+        .await
+        .map_err(map_command_error("Failed to update TauriTavern settings"))?;
+
+    tray_state.set_close_to_tray_on_close(settings.close_to_tray_on_close);
+
+    Ok(settings)
+}
+
+#[cfg(not(target_os = "windows"))]
 #[tauri::command]
 pub async fn update_tauritavern_settings(
     dto: UpdateTauriTavernSettingsDto,

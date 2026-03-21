@@ -23,6 +23,11 @@ let syncListenerInstalled = false;
 let syncProgressPopup = null;
 let syncProgressElements = null;
 
+function isWindowsPlatform() {
+    return typeof navigator !== 'undefined'
+        && /windows/i.test(String(navigator.userAgent || ''));
+}
+
 async function showErrorPopup(error) {
     const message = error?.message ? String(error.message) : String(error);
     await callGenericPopup(translate(message), POPUP_TYPE.TEXT, '', {
@@ -304,6 +309,24 @@ async function scanPairUriFromCamera() {
 
 async function openTauriTavernSettingsPopup() {
     const settings = await getTauriTavernSettings();
+    const supportsCloseToTrayOnClose = isWindowsPlatform() && !isMobile();
+
+    const closeToTrayRow = supportsCloseToTrayOnClose
+        ? `
+            <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                <div class="flex-container alignItemsBaseline" style="gap: 8px; min-width: 220px; flex: 1;">
+                    <span data-i18n="Minimize to tray on close (Windows)">Minimize to tray on close (Windows)</span>
+                    <a id="tt-help-close-to-tray" class="notes-link" href="javascript:void(0);">
+                        <span class="fa-solid fa-circle-question note-link-span" title="Learn more" data-i18n="[title]Learn more"></span>
+                    </a>
+                </div>
+                <select id="tt-close-to-tray-on-close" class="text_pole" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;">
+                    <option value="on" data-i18n="On">On</option>
+                    <option value="off" data-i18n="Off">Off</option>
+                </select>
+            </div>
+        `.trim()
+        : '';
 
     const root = document.createElement('div');
     root.className = 'flex-container flexFlowColumn';
@@ -359,6 +382,8 @@ async function openTauriTavernSettingsPopup() {
                     </select>
                 </div>
 
+                ${closeToTrayRow}
+
                 <small style="opacity: 0.85;" data-i18n="Requires reload to apply.">Requires reload to apply.</small>
             </div>
 
@@ -388,6 +413,15 @@ async function openTauriTavernSettingsPopup() {
         throw new Error('TauriTavern settings: chat history mode selector not found');
     }
 
+    /** @type {HTMLSelectElement | null} */
+    let closeToTraySelect = null;
+    if (supportsCloseToTrayOnClose) {
+        closeToTraySelect = root.querySelector('#tt-close-to-tray-on-close');
+        if (!(closeToTraySelect instanceof HTMLSelectElement)) {
+            throw new Error('TauriTavern settings: close to tray selector not found');
+        }
+    }
+
     const currentPanelRuntimeProfile = settings.panel_runtime_profile;
     profileSelect.value = typeof currentPanelRuntimeProfile === 'string' && currentPanelRuntimeProfile ? currentPanelRuntimeProfile : 'off';
 
@@ -401,6 +435,11 @@ async function openTauriTavernSettingsPopup() {
             : CHAT_HISTORY_MODE_WINDOWED,
     );
     chatHistoryModeSelect.value = currentChatHistoryMode;
+
+    const currentCloseToTrayOnClose = Boolean(settings.close_to_tray_on_close);
+    if (closeToTraySelect) {
+        closeToTraySelect.value = currentCloseToTrayOnClose ? 'on' : 'off';
+    }
 
     const openLanSyncButton = root.querySelector('#tt-open-lan-sync');
     if (!(openLanSyncButton instanceof HTMLElement)) {
@@ -483,6 +522,33 @@ async function openTauriTavernSettingsPopup() {
         });
     });
 
+    if (supportsCloseToTrayOnClose) {
+        const closeToTrayHelp = root.querySelector('#tt-help-close-to-tray');
+        if (!(closeToTrayHelp instanceof HTMLElement)) {
+            throw new Error('TauriTavern settings: close to tray help button not found');
+        }
+        closeToTrayHelp.addEventListener('click', (event) => {
+            event.preventDefault();
+            runOrPopup(async () => {
+                const content = document.createElement('div');
+                content.className = 'flex-container flexFlowColumn';
+                content.style.gap = '8px';
+                content.innerHTML = `
+                    <b data-i18n="Minimize to tray on close (Windows)">Minimize to tray on close (Windows)</b>
+                    <div data-i18n="Minimize to tray help: on">On: clicking the window close button hides TauriTavern to the system tray.</div>
+                    <div data-i18n="Minimize to tray help: off">Off: clicking close exits the app.</div>
+                    <div data-i18n="Minimize to tray help: exit">Use the tray icon menu to show the window or exit.</div>
+                `.trim();
+                await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+                    okButton: translate('Close'),
+                    allowVerticalScrolling: true,
+                    wide: false,
+                    large: false,
+                });
+            });
+        });
+    }
+
     const result = await callGenericPopup(root, POPUP_TYPE.CONFIRM, '', {
         okButton: translate('Save'),
         cancelButton: translate('Close'),
@@ -498,18 +564,22 @@ async function openTauriTavernSettingsPopup() {
     const nextPanelRuntimeProfile = String(profileSelect.value || '').trim();
     const nextEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(embeddedProfileSelect.value);
     const nextChatHistoryMode = normalizeChatHistoryModeName(chatHistoryModeSelect.value);
+    const nextCloseToTrayOnClose = closeToTraySelect
+        ? closeToTraySelect.value === 'on'
+        : currentCloseToTrayOnClose;
 
     const hasPanelRuntimeChange = Boolean(nextPanelRuntimeProfile) && nextPanelRuntimeProfile !== currentPanelRuntimeProfile;
     const requiresEmbeddedRuntimeMigration = configuredEmbeddedRuntimeProfile !== currentEmbeddedRuntimeProfile;
     const hasEmbeddedRuntimeChange = Boolean(nextEmbeddedRuntimeProfile)
         && (nextEmbeddedRuntimeProfile !== currentEmbeddedRuntimeProfile || requiresEmbeddedRuntimeMigration);
     const hasChatHistoryModeChange = nextChatHistoryMode !== currentChatHistoryMode;
+    const hasCloseToTrayOnCloseChange = nextCloseToTrayOnClose !== currentCloseToTrayOnClose;
 
-    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange) {
+    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange) {
         return;
     }
 
-    /** @type {Record<string, string>} */
+    /** @type {Record<string, unknown>} */
     const nextSettings = {};
     if (hasPanelRuntimeChange) {
         nextSettings.panel_runtime_profile = nextPanelRuntimeProfile;
@@ -519,6 +589,9 @@ async function openTauriTavernSettingsPopup() {
     }
     if (hasChatHistoryModeChange) {
         nextSettings.chat_history_mode = nextChatHistoryMode;
+    }
+    if (hasCloseToTrayOnCloseChange) {
+        nextSettings.close_to_tray_on_close = nextCloseToTrayOnClose;
     }
 
     await updateTauriTavernSettings(nextSettings);

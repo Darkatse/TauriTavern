@@ -61,7 +61,24 @@ pub async fn run() {
             let user_dirs = DefaultUserWebDirs::from_data_root(&runtime_paths.data_root);
             app.manage(third_party_dirs.clone());
             app.manage(user_dirs.clone());
-            create_main_window(app, third_party_dirs, user_dirs)?;
+            let _main_window = create_main_window(app, third_party_dirs, user_dirs)?;
+
+            #[cfg(target_os = "windows")]
+            {
+                let close_to_tray_on_close =
+                    load_close_to_tray_on_close_setting(&runtime_paths.data_root)?;
+                let tray_state = std::sync::Arc::new(
+                    presentation::windows_tray::WindowsTrayState::new(
+                        close_to_tray_on_close,
+                    ),
+                );
+                presentation::windows_tray::install_windows_tray(
+                    &app_handle,
+                    &_main_window,
+                    tray_state,
+                )?;
+            }
+
             spawn_initialization(app_handle.clone(), runtime_paths.clone());
             Ok(())
         })
@@ -74,7 +91,7 @@ fn create_main_window(
     app: &mut tauri::App,
     third_party_dirs: ThirdPartyExtensionDirs,
     user_dirs: DefaultUserWebDirs,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<tauri::webview::WebviewWindow, Box<dyn std::error::Error>> {
     let window_config = app
         .config()
         .app
@@ -87,7 +104,7 @@ fn create_main_window(
     let global_extensions_dir = third_party_dirs.global_dir;
     let user_dirs = user_dirs;
 
-    let _window = tauri::webview::WebviewWindowBuilder::from_config(app.handle(), window_config)?
+    let window = tauri::webview::WebviewWindowBuilder::from_config(app.handle(), window_config)?
         .on_web_resource_request(move |request, response| {
             handle_third_party_asset_web_request(
                 &local_extensions_dir,
@@ -101,7 +118,26 @@ fn create_main_window(
         .build()?;
 
     #[cfg(target_os = "ios")]
-    infrastructure::ios_webview::disable_wkwebview_content_inset_adjustment(&_window)?;
+    infrastructure::ios_webview::disable_wkwebview_content_inset_adjustment(&window)?;
 
-    Ok(())
+    Ok(window)
+}
+
+#[cfg(target_os = "windows")]
+fn load_close_to_tray_on_close_setting(
+    data_root: &std::path::Path,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let path = data_root
+        .join("default-user")
+        .join("tauritavern-settings.json");
+
+    if !path.is_file() {
+        return Ok(true);
+    }
+
+    let raw = std::fs::read_to_string(&path)?;
+    let settings: crate::domain::models::settings::TauriTavernSettings =
+        serde_json::from_str(&raw)?;
+
+    Ok(settings.close_to_tray_on_close)
 }

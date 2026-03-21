@@ -17,6 +17,10 @@ fn default_chat_history_mode() -> ChatHistoryMode {
     ChatHistoryMode::Windowed
 }
 
+fn default_close_to_tray_on_close() -> bool {
+    cfg!(target_os = "windows")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatHistoryMode {
@@ -43,6 +47,8 @@ pub struct TauriTavernSettings {
     pub embedded_runtime_profile: String,
     #[serde(default = "default_chat_history_mode")]
     pub chat_history_mode: ChatHistoryMode,
+    #[serde(default = "default_close_to_tray_on_close")]
+    pub close_to_tray_on_close: bool,
     #[serde(default)]
     pub migrations: TauriTavernMigrationState,
 }
@@ -55,6 +61,7 @@ impl Default for TauriTavernSettings {
             panel_runtime_profile: default_panel_runtime_profile(),
             embedded_runtime_profile: default_embedded_runtime_profile(),
             chat_history_mode: default_chat_history_mode(),
+            close_to_tray_on_close: default_close_to_tray_on_close(),
             migrations: TauriTavernMigrationState::default(),
         }
     }
