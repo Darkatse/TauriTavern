@@ -1,16 +1,19 @@
 # TauriTavern Extension APIs
 
-本目录面向 **扩展作者**，描述 TauriTavern 提供的“宿主专属 API”（区别于上游 SillyTavern 的 `getContext()`）。
+**为扩展开发者提供 SillyTavern 从未内置的核心能力。**
 
-核心设计点：
+TauriTavern 专属 API 统一入口：`window.__TAURITAVERN__.api.chat`
 
-- **唯一入口**：`window.__TAURITAVERN__.api.chat`（不做 alias，避免与上游契约混淆）
-- **面向 windowed payload**：历史按需读，避免全量 chat 常驻 JS 内存
-- **移动端友好**：支持后端定位/检索 + 扫描上限（`scanLimit`）
-- **状态持久化落地**：提供 per-chat 的 `metadata` 与 `store` 接口
+### ✨ 亮点
 
-## 文档列表
+- **`findLastMessage()`** — 一行代码定位最后一条特定消息，告别手动 `reverse().find()`
+- **`searchMessages()`** — 内置全文检索，CJK 优化，替代手写关键词扫描
+- **`store.*`** — 真正的 per-chat 扩展数据持久化，数据不再塞进消息体
+- **`metadata.*`** — 标准化的轻量配置/进度存储
 
-- `docs/API/Chat.md`：`window.__TAURITAVERN__.api.chat` API 参考
-- `docs/API/Migration.md`：从 SillyTavern 扩展迁移/适配的实战指南（尤其是记忆类扩展）
+### 文档
 
+| 文档 | 内容 |
+| --- | --- |
+| [Chat.md](Chat.md) | API 完整参考——接口签名、参数、返回值 |
+| [Migration.md](Migration.md) | 适配指南——从 SillyTavern 扩展快速适配到 TauriTavern |

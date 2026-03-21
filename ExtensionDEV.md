@@ -1,63 +1,170 @@
-# Extension Development (TauriTavern)
+# TauriTavern Extension Development Guide
 
-本文档面向 **SillyTavern 风格的 third-party 前端扩展作者**，描述在 TauriTavern 中开发/适配扩展时的关键约束与专属 API。
+本文档面向 **SillyTavern 扩展开发者**，介绍 TauriTavern 提供的专属 API——让你的扩展更强大、更优雅。
 
-> 目标：让扩展作者在 windowed payload（聊天记录分片加载）下仍能“正确拿到历史 + 能持久化状态 + 能做检索”，并且对移动端友好。
+> **一句话总结**：TauriTavern 为扩展提供了 `findLastMessage()` 精准定位、`searchMessages()` 全文检索、以及 `store.*` 状态持久化——这些都是 SillyTavern 从未内置，而开发者一直在手动造轮子的能力。
 
-## 1. 扩展目录与资源契约
+---
 
-TauriTavern 当前的 third-party 扩展目录布局与优先级：
+## 为什么值得适配？
 
-- local third-party 扩展：`data/default-user/extensions/<folder>`
-- global third-party 扩展：`data/extensions/third-party/<folder>`
-- 同名覆盖：**local 优先**（会覆盖 global）
+在 SillyTavern 中，扩展开发者长期面临这些痛点：
 
-扩展资源在浏览器侧必须通过同源端点加载：
+| 痛点 | 传统做法 | TauriTavern 方案 |
+| --- | --- | --- |
+| **找最后一条特定消息** | `chat.slice().reverse().find(...)` 手动遍历 | ✅ `findLastMessage()` 一行搞定，后端高效定位 |
+| **搜索历史消息** | 手写关键词扫描，CJK 断词全靠运气 | ✅ `searchMessages()` 内置全文检索，CJK 优化 |
+| **扩展数据持久化** | 塞进消息体、手动 `saveChat()`，数据与消息耦合 | ✅ `store.*` 独立 KV 存储，干净可靠 |
+| **小配置/进度保存** | 各种 hack 写入 `chat_metadata` | ✅ `metadata.*` 标准化接口，语义清晰 |
 
-- `/scripts/extensions/third-party/<folder>/<path>`
+** TauriTavern，让你的扩展制作更简单。**
 
-更完整的“发现/激活/资源端点”现状说明见：
+---
 
-- `docs/CurrentState/ThirdPartyExtensions.md`
+## 关于窗口化聊天
 
-## 2. 运行时探测与 ready
+TauriTavern 采用**窗口化加载**（windowed payload）的设计：前端只保留最近 N 条消息在内存中，而非一次性加载全部聊天记录。这让长对话和移动端体验更流畅，同时也意味着 `getContext().chat` 只反映当前窗口内的消息。
 
-TauriTavern 会在宿主层安装稳定 ABI：
+你**不需要**关心底层细节——上面提到的 `findLastMessage()`、`searchMessages()`、`history.*` 等 API 已经帮你透明地处理了窗口边界，后端会扫描完整历史。只需调用 API，其余交给 Rust。
 
-- `window.__TAURITAVERN__`
-- `window.__TAURITAVERN_MAIN_READY__ : Promise<void>`
+---
 
-扩展侧推荐：
+## 1. 快速开始
+
+### 1.1 扩展目录
+
+TauriTavern 的 third-party 扩展目录与 SillyTavern 兼容：
+
+- local：`data/default-user/extensions/<folder>`
+- global：`data/extensions/third-party/<folder>`
+- 同名时 **local 优先**
+
+资源端点：`/scripts/extensions/third-party/<folder>/<path>`
+
+> 更多细节：[ThirdPartyExtensions.md](docs/CurrentState/ThirdPartyExtensions.md)
+
+### 1.2 等待宿主就绪
 
 ```js
 await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
+const api = window.__TAURITAVERN__.api.chat;
 ```
 
-## 3. TauriTavern 专属 API（唯一入口）
+TauriTavern 在宿主层暴露 `window.__TAURITAVERN__`，你只需等待 `ready` 即可使用所有 API。
 
-为避免与上游 SillyTavern 的 `getContext()` 语义混淆，TauriTavern 的扩展专属 API **不做 alias**，唯一入口是：
+### 1.3 判断是否在 TauriTavern 中运行
 
-- `window.__TAURITAVERN__.api.chat`
+```js
+if (window.__TAURITAVERN__) {
+  // TauriTavern 环境，可以使用增强 API
+} else {
+  // 标准 SillyTavern 环境，走原有逻辑
+}
+```
 
-它提供与“记忆/数据库类扩展”强相关的能力：
+这样你的扩展可以轻松做到**两端兼容**。
 
-- 只读摘要与稳定 ID：`summary()` / `stableId()`
-- 历史按需读取：`history.tail/before/beforePages`
-- 后端定位：`locate.findLastMessage(...)`
-- 状态持久化（每 chat）：`metadata.*` / `store.*`
-- 纯文本检索（不向量，CJK 优化）：`searchMessages(...)`
+---
 
-API 参考：
+## 2. 核心能力一览
 
-- `docs/API/Chat.md`
+TauriTavern 专属 API 的唯一入口：
 
-适配指南（如何把 `getContext().chat` 扫描迁移到后端分页/定位/检索）：
+```
+window.__TAURITAVERN__.api.chat
+```
 
-- `docs/API/Migration.md`
+### `findLastMessage()` — 再也不用手动遍历
 
-## 4. 移动端（Android/iOS）性能建议
+以前为了找最后一条包含特定扩展数据的消息，你得：
 
-- 永远不要假设 `getContext().chat` 是全量数组；在 windowed 模式下它只代表最近窗口。
-- 检索/定位尽量交给 `window.__TAURITAVERN__.api.chat`，并使用 `scanLimit` 控制“向前回溯”的上限。
-- 大状态不要塞进消息体；优先 `store.setJson()`，小状态优先 `metadata.setExtension()`。
+```js
+// ❌ 以前的做法
+const hit = context.chat.slice().reverse().find(
+  msg => msg.extra?.TavernDB_ACU_IsolatedData
+);
+```
 
+现在只需要：
+
+```js
+// ✅ TauriTavern
+const hit = await handle.locate.findLastMessage({
+  role: 'assistant',
+  hasExtraKeys: ['TavernDB_ACU_IsolatedData'],
+  scanLimit: 2000,
+});
+// hit = { index, message } 或 null
+```
+
+后端 Rust 处理，快速、高效、准确。
+
+### `searchMessages()` — 内置全文检索，告别手写搜索
+
+以前你要在聊天记录里搜关键词？只能自己 `filter/includes`，CJK 用户更是一言难尽。
+
+现在：
+
+```js
+// ✅ TauriTavern
+const hits = await handle.searchMessages({
+  query: 'AUV，您吉祥',
+  limit: 20,
+  filters: { role: 'assistant' },
+});
+// hits = [{ index, score, snippet, role, text }, ...]
+```
+
+- 内置 CJK bigram 分词优化
+- 支持按角色、索引范围过滤
+- `scanLimit` 控制性能开销
+
+### `store.*` — 真正的扩展数据持久化
+
+这是 **SillyTavern 从未实现** 的功能。以前存数据的"标准做法"是塞进消息体：
+
+```js
+// ❌ 以前的做法：把数据塞进最后一条消息
+lastMsg.extra.myExtensionData = hugeJsonObject;
+saveChat(); // 放大 payload，容易出问题
+```
+
+现在你有独立的 per-chat KV 存储：
+
+```js
+// ✅ TauriTavern
+await handle.store.setJson({ namespace: 'my-ext', key: 'index', value: data });
+const data = await handle.store.getJson({ namespace: 'my-ext', key: 'index' });
+const keys = await handle.store.listKeys({ namespace: 'my-ext' });
+await handle.store.deleteJson({ namespace: 'my-ext', key: 'old-key' });
+```
+
+数据与消息彻底解耦，干净、可靠、不膨胀 payload。
+
+### `metadata.*` — 轻量配置存储
+
+适合存储进度、配置项、短摘要等小状态：
+
+```js
+await handle.metadata.setExtension({ namespace: 'my-ext', value: { lastFloor: 42 } });
+const meta = await handle.metadata.get();
+```
+
+---
+
+## 3. 完整 API 参考
+
+详细参数与返回值请查阅：
+
+- 📖 **[API 参考](docs/API/Chat.md)** — 完整接口说明
+- 🔄 **[适配指南](docs/API/Migration.md)** — 从 SillyTavern 扩展快速适配
+
+---
+
+## 4. 移动端性能建议
+
+TauriTavern 同时运行在桌面和移动端（Android/iOS），以下建议让你的扩展在移动端也流畅运行：
+
+- 检索和定位交给后端 API（`findLastMessage` / `searchMessages`），避免在 JS 侧做 O(N) 扫描
+- 大状态用 `store.setJson()` 持久化，不要塞进消息体，小状态优先 `metadata.*`
+- 使用 `scanLimit` 控制扫描上限，保护低端设备性能

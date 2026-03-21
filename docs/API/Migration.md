@@ -1,24 +1,29 @@
-# 从 SillyTavern 扩展适配到 TauriTavern（记忆类扩展指南）
+# 从 SillyTavern 扩展适配到 TauriTavern
 
-本指南面向“记忆/数据库/召回”类扩展作者，目标是把对 `getContext().chat`（全量数组假设）的依赖迁移到：
+本指南帮你把现有 SillyTavern 扩展快速适配到 TauriTavern，**解锁 SillyTavern 没有的强大能力**。
 
-- `window.__TAURITAVERN__.api.chat`（唯一入口）
+> **好消息**：大部分适配工作就是把你以前手写的"找消息、搜消息、存数据"逻辑，替换成一行 API 调用。代码通常会变得更短、更清晰。
 
-从而在 windowed payload 下仍保持正确性与性能（尤其是移动端）。
+## 快速对照表
 
-## 0. 背景：为什么必须迁移
+先看你的代码里有没有这些模式——如果有，TauriTavern 提供了更好的原生替代：
 
-TauriTavern 默认启用 windowed payload：前端只加载最近 N 条消息。
+| 你以前的做法 | 问题 | TauriTavern 替代 |
+| --- | --- | --- |
+| `chat.slice().reverse().find(...)` | 手动遍历，可能在窗口外找不到 | ✅ `handle.locate.findLastMessage()` |
+| 手写关键词 `filter/includes` | CJK 不友好，无评分排序 | ✅ `handle.searchMessages()` |
+| 数据塞进消息体 + `saveChat()` | 膨胀 payload，数据与消息耦合 | ✅ `handle.store.setJson()` |
+| hack 写入 `chat_metadata` | 容量有限，语义不清 | ✅ `handle.metadata.setExtension()` |
+| `context.chat.length` 当总楼层数 | 窗口模式下不准确 | ✅ `windowInfo().totalCount` |
+| `context.chat.slice(-N)` | 可能拿不到完整历史 | ✅ `handle.history.tail({ limit: N })` |
 
-这意味着：
+## 背景：窗口化聊天
 
-- `getContext().chat.length` 不再代表全量楼层数
-- `getContext().chat[i]` 的 `i` 是“窗口索引”，不是“绝对楼层索引”
-- 扩展里常见的 `slice/map/filter/reverse` 全量扫描会直接失真或性能崩溃
+TauriTavern 默认采用窗口化加载——前端只保留最近 N 条消息，不会把整个聊天历史塞进 JS 内存。这在长对话和移动端上带来显著的性能优势。
 
-## 1. 最小迁移套路（强烈推荐）
+对扩展开发者来说，唯一需要注意的是：**`getContext().chat` 现在只包含窗口内的消息**。但别担心——TauriTavern 提供的 API（`findLastMessage`、`searchMessages`、`history.*`）会透明地穿越窗口边界，在后端扫描完整历史。你只需要把旧代码里的手动遍历换成 API 调用即可。
 
-### 1.1 等待宿主 ready
+## 第 1 步：初始化 API
 
 ```js
 await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
@@ -26,110 +31,121 @@ const api = window.__TAURITAVERN__.api.chat;
 const handle = api.current.handle();
 ```
 
-### 1.2 “楼层语义”迁移：用 `windowInfo()`
+> 💡 **两端兼容**：用 `if (window.__TAURITAVERN__)` 判断运行环境，让同一个扩展在 SillyTavern 和 TauriTavern 上都能工作。
+
+## 第 2 步：替换"找最后一条消息"
+
+这是最常见的适配场景——几乎所有记忆/数据库类扩展都在做这件事。
+
+**之前**：
+```js
+const hit = context.chat.slice().reverse().find(
+  msg => msg.extra?.MyExtData
+);
+```
+
+**之后**：
+```js
+const hit = await handle.locate.findLastMessage({
+  role: 'assistant',
+  hasExtraKeys: ['MyExtData'],
+  scanLimit: 2000,
+});
+// hit = { index, message } 或 null
+```
+
+Rust 后端处理，即使万条消息也毫秒响应。
+
+## 第 3 步：替换关键词搜索
+
+**之前**：
+```js
+const results = context.chat.filter(msg =>
+  msg.mes.includes('关键词')
+);
+```
+
+**之后**：
+```js
+const hits = await handle.searchMessages({
+  query: '关键词 或 中文短语',
+  limit: 20,
+  filters: { role: 'assistant', scanLimit: 5000 },
+});
+```
+
+内置 CJK 优化，自动分词，带匹配评分和摘要片段。
+
+## 第 4 步：迁移数据持久化
+
+这是最令人兴奋的改进——SillyTavern **从未提供** 标准的扩展数据持久化机制。
+
+### 大数据 → `store.*`
+
+**之前**（常见 hack）：
+```js
+// 把数据塞进最后一条消息...
+lastMsg.extra.myData = hugeJsonObject;
+saveChat(); // 膨胀聊天文件
+```
+
+**之后**：
+```js
+await handle.store.setJson({
+  namespace: 'my-ext',
+  key: 'index',
+  value: hugeJsonObject,
+});
+```
+
+独立存储，不影响聊天文件大小。
+
+### 小配置 → `metadata.*`
+
+```js
+await handle.metadata.setExtension({
+  namespace: 'my-ext',
+  value: { lastProcessedFloor: 42, enabled: true },
+});
+```
+
+存储在 `chat_metadata.extensions[namespace]`，语义清晰。
+
+## 第 5 步：索引语义迁移
+
+如果你的扩展会持久化"已处理到第几楼"之类的进度，注意使用**绝对索引**：
 
 ```js
 const info = await api.current.windowInfo();
-// 全量楼层数（不含 header）
-const total = info.totalCount;
-// 将 window index 映射为绝对 index
-const absIndex = info.windowStartIndex + windowIndex;
+const total = info.totalCount;       // 全量消息数
+const absIndex = info.windowStartIndex + windowIndex;  // 窗口索引 → 绝对索引
 ```
 
-迁移建议：
+> ⚠️ 持久化时永远存**绝对索引**，不要存窗口索引。
 
-- 任何需要持久化跟踪的进度（`lastProcessedFloor`）都存**绝对索引**
-- 永远不要把“窗口索引”写入持久化状态
+## 第 6 步（可选）：历史遍历
 
-### 1.3 历史读取：用 `history.tail/before/beforePages`
-
-替代：
-
-- `context.chat.slice(-N)` / `context.chat.map(...)`
-
-使用：
+如果你确实需要遍历历史消息，使用分页读取：
 
 ```js
 let page = await handle.history.tail({ limit: 100 });
 while (page.hasMoreBefore) {
-  // page.messages: ChatMessage[]
+  for (const msg of page.messages) { /* 处理消息 */ }
   page = await handle.history.before(page, { limit: 100 });
 }
 ```
 
-移动端建议：
-
-- 用 `beforePages()` 拉多页减少 IPC：
+移动端推荐批量拉取减少 IPC 调用：
 
 ```js
 const pages = await handle.history.beforePages(page, { limit: 200, pages: 5 });
 ```
 
-### 1.4 “从后往前找最后一条状态消息”：用 `locate.findLastMessage()`
+## 移动端性能建议
 
-替代：
+TauriTavern 运行在桌面和移动端，几条简单规则让你的扩展在低端设备上也流畅：
 
-- `context.chat.slice().reverse().find(...)`
-
-使用：
-
-```js
-const hit = await handle.locate.findLastMessage({
-  role: 'assistant',
-  hasExtraKeys: ['TavernDB_ACU_IsolatedData'],
-  scanLimit: 2000,
-});
-```
-
-### 1.5 状态持久化：优先 `metadata` / `store`
-
-推荐策略：
-
-- 小状态（进度、配置、短摘要）→ `metadata.setExtension({ namespace, value })`
-- 大状态（表格/索引/数据库）→ `store.setJson({ namespace, key, value })`
-
-不要再做：
-
-- 把大 JSON 塞进最后一条消息，然后 `saveChat()`（会放大 payload，且窗口化下定位成本很高）
-
-### 1.6 召回/检索：用 `searchMessages()`
-
-替代：
-
-- 扩展侧对 `chat` 的关键词扫描（尤其是 CJK 场景）
-
-使用：
-
-```js
-const hits = await handle.searchMessages({
-  query: '关键词 或 中文短语',
-  limit: 20,
-  filters: {
-    role: 'assistant',
-    scanLimit: 5000,
-  },
-});
-```
-
-要点：
-
-- `scanLimit` 是移动端的“性能上限开关”，建议总是设置
-- `startIndex/endIndex` 可用于把检索限制在某个范围（例如只检索最近 2k 楼）
-
-## 2. 常见替换对照表
-
-| 上游 SillyTavern 用法 | TauriTavern 推荐替代 |
-| --- | --- |
-| `getContext().chat.length` | `await api.current.windowInfo().totalCount` |
-| `chat[chat.length - 1]` | `await handle.history.tail({ limit: 1 })` |
-| `chat.slice(-N)` | `await handle.history.tail({ limit: N })` |
-| “倒序找最后状态” | `await handle.locate.findLastMessage({ ... })` |
-| 把扩展状态塞进消息体 | `handle.store.setJson(...)` / `handle.metadata.setExtension(...)` |
-| 关键词扫描召回 | `await handle.searchMessages({ query, limit, filters })` |
-
-## 3. 你应该坚持的移动端约束
-
-- 不要把全量历史对象数组塞回 JS（哪怕你能读到）
-- 不要在高频事件里做 O(N) 扫描（`slice/map/filter/reverse`）
-- 让 Rust 后端承担：定位、检索、按需分页读取
-
+- ✅ 用 `findLastMessage` / `searchMessages` 替代 JS 侧遍历
+- ✅ 用 `store.*` 存大数据，不塞消息体
+- ✅ 总是设置 `scanLimit`，避免全量扫描
+- ✅ 用 `beforePages()` 批量分页，减少 IPC 往返

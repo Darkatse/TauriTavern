@@ -1,42 +1,43 @@
-# `window.__TAURITAVERN__.api.chat`
+# `window.__TAURITAVERN__.api.chat` — API 参考
 
-这是 TauriTavern 对“记忆/数据库/检索类扩展”提供的宿主专属 API。
+TauriTavern 为“记忆/数据库/检索类扩展”扩展开发者提供的增强 API。
 
-设计目标：
+> **核心理念**：把 SillyTavern 扩展开发中最常见的脏活累活——找消息、搜内容、存数据——变成一行 API 调用。Rust 后端处理重活，JS 侧只管调接口。
 
-- 在 **windowed payload**（聊天记录分片加载）下，仍然让扩展拿到稳定的“楼层语义”（绝对索引）
-- 历史按需读、后端定位/检索、稳定的持久化接口
-- 纯文本检索优先（不向量），并对 CJK 做专门优化
-
-> 重要：该 API 是 TauriTavern 独有能力的**唯一入口**，不提供 `getContext().tauritavern` 或 `TauriTavern.getContext()` 之类 alias。
-
-## 0. Ready（扩展侧建议）
+## 0. 快速上手
 
 ```js
 await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
 const api = window.__TAURITAVERN__.api.chat;
+const handle = api.current.handle();
 ```
+
+> **窗口化聊天**：TauriTavern 前端只加载最近 N 条消息（windowed payload），`getContext().chat` 仅反映当前窗口。下面的 API 会透明地穿越窗口边界，在 Rust 后端访问完整历史——你无需关心分页细节。
 
 ## 1. 核心入口
 
-- `window.__TAURITAVERN__.api.chat.open(ref) -> ChatHandle`
-- `window.__TAURITAVERN__.api.chat.current.ref() -> ChatRef`
-- `window.__TAURITAVERN__.api.chat.current.handle() -> ChatHandle`
-- `window.__TAURITAVERN__.api.chat.current.windowInfo() -> Promise<WindowInfo>`
+| 方法 | 返回值 | 说明 |
+| --- | --- | --- |
+| `api.chat.open(ref)` | `ChatHandle` | 打开指定聊天 |
+| `api.chat.current.ref()` | `ChatRef` | 当前聊天的引用 |
+| `api.chat.current.handle()` | `ChatHandle` | 当前聊天的操作句柄 |
+| `api.chat.current.windowInfo()` | `Promise<WindowInfo>` | 当前窗口状态信息 |
 
-`ChatRef`：
+**`ChatRef` 类型**：
 
 - 角色聊天：`{ kind: 'character', characterId, fileName }`
 - 群聊：`{ kind: 'group', chatId }`
 
-`WindowInfo`：
+**`WindowInfo` 类型**：
 
-- `mode: 'windowed' | 'off'`
-- `totalCount`: 当前 chat 的总消息数（不含 header）
-- `windowStartIndex`: 当前前端窗口起始的**绝对消息索引**（0-based）
-- `windowLength`: 当前前端窗口消息数
+| 字段 | 说明 |
+| --- | --- |
+| `mode` | `'windowed' \| 'off'` |
+| `totalCount` | 聊天总消息数（不含 header） |
+| `windowStartIndex` | 当前窗口起始的绝对索引（0-based） |
+| `windowLength` | 当前窗口消息数 |
 
-当你拿到上游事件里的 “window index”（例如 `MESSAGE_*` 的 `messageId`），映射到绝对索引：
+**索引映射示例**：
 
 ```js
 const info = await api.current.windowInfo();
@@ -45,93 +46,136 @@ const absIndex = info.windowStartIndex + windowIndex;
 
 ## 2. ChatHandle 能力
 
-从 `api.open(ref)` 或 `api.current.handle()` 得到 `ChatHandle`，它代表“某一个具体 chat”。
+通过 `api.open(ref)` 或 `api.current.handle()` 获取 `ChatHandle`。
 
-### 2.1 `summary()` / `stableId()`
+---
 
-- `handle.summary({ includeMetadata? })`
-  - 读取 chat 摘要，不加载全量 payload
-- `handle.stableId()`
-  - 获取可用于持久化跟踪的稳定 ID（character chat 基于 header 的 `integrity`；group chat 直接为 `chatId`）
+### `locate.findLastMessage()` — 精准定位，不再手动遍历
 
-### 2.2 `history.*`（按需读取历史）
-
-用于在 windowed 模式下读取历史消息（不会把全量塞回 JS）。
-
-- `handle.history.tail({ limit }) -> { startIndex, totalCount, messages, cursor, hasMoreBefore }`
-- `handle.history.before(page, { limit }) -> page`
-- `handle.history.beforePages(page, { limit, pages }) -> page[]`（减少 IPC 往返，移动端更划算）
-
-`startIndex` 永远是这页第一条消息的**绝对索引**（0-based）。
-
-### 2.3 `locate.findLastMessage()`（后端定位）
-
-用于替代扩展侧对 `getContext().chat` 的“反复倒序扫描”：
+> 💡 **解决的痛点**：SillyTavern 中定位最后一条包含特定数据的消息，需要 `chat.slice().reverse().find(...)` 手动遍历，耗时且存在窗口边界问题。
 
 ```js
 const hit = await handle.locate.findLastMessage({
-  role: 'assistant',
-  hasExtraKeys: ['TavernDB_ACU_IsolatedData'],
-  scanLimit: 2000,
+  role: 'assistant',                              // 可选：限定角色
+  hasExtraKeys: ['TavernDB_ACU_IsolatedData'],     // 可选：消息必须包含的 extra 键
+  scanLimit: 2000,                                 // 可选：最多扫描多少条
 });
 ```
 
-返回：
+**返回值**：
+- 命中：`{ index, message }` — 绝对索引 + 原始消息对象
+- 未命中：`null`
 
-- `null`：未命中
-- `{ index, message }`：命中消息的绝对索引 + 原始消息对象
+全部由 Rust 后端高效执行——即使 10000 条消息也毫无压力。
 
-### 2.4 `metadata.*`（小状态：写 header 的 extensions）
+---
 
-- `handle.metadata.get() -> ChatMetadata`
-- `handle.metadata.setExtension({ namespace, value })`
-  - 写入 `chat_metadata.extensions[namespace]`
-  - `value` 设为 `null` 表示删除（与后端实现一致）
+### `searchMessages()` — 内置全文检索
 
-推荐：把“进度/配置/短文本摘要”等小状态落到这里（跨端可迁移，且开销稳定）。
-
-### 2.5 `store.*`（大状态：每 chat 的稳定 KV JSON store）
-
-- `handle.store.getJson({ namespace, key })`
-- `handle.store.setJson({ namespace, key, value })`
-- `handle.store.deleteJson({ namespace, key })`
-- `handle.store.listKeys({ namespace })`
-
-推荐：把“表格/数据库/索引”等大 JSON 状态落到 store，而不是塞进消息体。
-
-### 2.6 `searchMessages()`（Phase 2：纯文本检索，CJK 优化）
+> 💡 **解决的痛点**：SillyTavern 没有内置的消息搜索 API，扩展开发者只能手写 `filter/includes` 扫描，CJK 内容更是无法正常匹配。
 
 ```js
 const hits = await handle.searchMessages({
-  query: '北京烤鸭',
+  query: '是啊，吃什么',
   limit: 20,
   filters: {
-    role: 'assistant',
-    scanLimit: 5000,
+    role: 'assistant',          // 可选：限定角色
+    startIndex: 100,            // 可选：起始索引
+    endIndex: 5000,             // 可选：结束索引
+    scanLimit: 5000,            // 可选：从尾部向前最多扫描条数
   },
 });
 ```
 
-参数：
+**返回 `SearchHit[]`**：
 
-- `query: string`：必填，非空
-- `limit?: number`：默认 20
-- `filters?`：
-  - `role?: 'user' | 'assistant' | 'system'`
-  - `startIndex?: number` / `endIndex?: number`：限制绝对索引范围
-  - `scanLimit?: number`：从尾部向前最多扫描多少条消息（**移动端强烈建议设置**）
+| 字段 | 说明 |
+| --- | --- |
+| `index` | 绝对索引（0-based） |
+| `score` | 匹配评分（0~1，越大越匹配） |
+| `snippet` | 可直接用于 UI 展示的短片段 |
+| `role` | `'user' \| 'assistant' \| 'system'` |
+| `text` | 命中消息的完整 `mes` 文本 |
 
-返回 `SearchHit[]`：
+**技术特点**：
+- 基于片段命中评分 + TopK 召回（非向量检索，轻量高效）
+- CJK / 无空格文本自动 bigram 分词，大幅提升中日韩文匹配率
+- `scanLimit` 控制性能上限，移动端友好
 
-- `index: number`：绝对索引（0-based）
-- `score: number`：命中评分（0~1，越大越匹配）
-- `snippet: string`：用于 UI/日志的短片段
-- `role: 'user' | 'assistant' | 'system'`
-- `text: string`：命中的原始 `mes`
+---
 
-当前实现特性（重要）：
+### `store.*` — 扩展数据持久化
 
-- 不使用向量检索；基于“片段命中评分 + TopK”做召回
-- 对 CJK/无空格输入会自动扩展为 bigram tokens（降低“必须全词匹配”的失败率）
-- 从 chat 尾部开始按页向前扫描；因此 `scanLimit` 是性能上限开关
+> 💡 **解决的痛点**：SillyTavern **从未提供** 扩展数据持久化方案。开发者只能把数据塞进消息体（放大 payload、数据耦合），或 hack 写入 `chat_metadata`（容量有限、语义不清）。
 
+TauriTavern 提供每个聊天独立的 KV JSON 存储：
+
+```js
+// 写入
+await handle.store.setJson({ namespace: 'my-ext', key: 'index', value: largeData });
+
+// 读取
+const data = await handle.store.getJson({ namespace: 'my-ext', key: 'index' });
+
+// 列出所有键
+const keys = await handle.store.listKeys({ namespace: 'my-ext' });
+
+// 删除
+await handle.store.deleteJson({ namespace: 'my-ext', key: 'old-key' });
+```
+
+**适用场景**：表格、索引、数据库快照等大 JSON 数据。数据与消息彻底解耦，不会膨胀聊天文件。
+
+---
+
+### `metadata.*` — 轻量配置存储
+
+适合存储进度、配置项、短摘要等小状态：
+
+```js
+// 读取 chat 元数据
+const meta = await handle.metadata.get();
+
+// 写入扩展配置
+await handle.metadata.setExtension({ namespace: 'my-ext', value: { lastFloor: 42 } });
+
+// 删除（value 设为 null）
+await handle.metadata.setExtension({ namespace: 'my-ext', value: null });
+```
+
+数据存储在 `chat_metadata.extensions[namespace]` 中，跨端可迁移，开销稳定。
+
+---
+
+### `summary()` / `stableId()`
+
+```js
+// 获取聊天摘要（不需要加载完整消息）
+const summary = await handle.summary({ includeMetadata: true });
+
+// 获取可持久化的稳定 ID
+const id = await handle.stableId();
+```
+
+---
+
+### `history.*` — 按需分页读取
+
+需要遍历历史消息时使用（不会一次性把全量数据载入 JS）：
+
+```js
+let page = await handle.history.tail({ limit: 100 });
+while (page.hasMoreBefore) {
+  // page.messages: ChatMessage[]
+  // page.startIndex: 本页首条消息的绝对索引
+  page = await handle.history.before(page, { limit: 100 });
+}
+```
+
+| 方法 | 说明 |
+| --- | --- |
+| `history.tail({ limit })` | 获取最新的 N 条消息 |
+| `history.before(page, { limit })` | 向前翻一页 |
+| `history.beforePages(page, { limit, pages })` | 一次拉多页（减少 IPC 往返，移动端推荐） |
+
+返回值包含 `startIndex`（本页首条消息的绝对索引，0-based）和 `hasMoreBefore`（是否还有更早的消息）。
