@@ -30,10 +30,45 @@ const TEXT_COMPLETION_MODELS: &[&str] = &[
     "code-search-ada-code-001",
 ];
 
+const OPENAI_REASONING_EFFORT_MODELS: &[&str] = &[
+    "o1",
+    "o3-mini",
+    "o3-mini-2025-01-31",
+    "o4-mini",
+    "o4-mini-2025-04-16",
+    "o3",
+    "o3-2025-04-16",
+    "gpt-5",
+    "gpt-5-2025-08-07",
+    "gpt-5-mini",
+    "gpt-5-mini-2025-08-07",
+    "gpt-5-nano",
+    "gpt-5-nano-2025-08-07",
+    "gpt-5.1",
+    "gpt-5.1-2025-11-13",
+    "gpt-5.1-chat-latest",
+    "gpt-5.2",
+    "gpt-5.2-2025-12-11",
+    "gpt-5.2-chat-latest",
+    "gpt-5.4",
+    "gpt-5.4-2026-03-05",
+    "gpt-5.4-chat-latest",
+    "gpt-5.4-mini",
+    "gpt-5.4-mini-2026-03-17",
+    "gpt-5.4-nano",
+    "gpt-5.4-nano-2026-03-17",
+];
+
 pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
     let mut payload = payload;
+    let source = payload
+        .get("chat_completion_source")
+        .and_then(Value::as_str)
+        .unwrap_or("openai")
+        .trim()
+        .to_ascii_lowercase();
     strip_internal_fields(&mut payload);
-    build_clean(payload)
+    build_clean(payload, &source)
 }
 
 pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
@@ -52,7 +87,7 @@ pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
     }
 }
 
-fn build_clean(payload: Map<String, Value>) -> (String, Value) {
+fn build_clean(payload: Map<String, Value>, source: &str) -> (String, Value) {
     if is_text_completion(&payload) {
         (
             "/completions".to_string(),
@@ -61,7 +96,7 @@ fn build_clean(payload: Map<String, Value>) -> (String, Value) {
     } else {
         (
             "/chat/completions".to_string(),
-            Value::Object(build_chat_completion_payload(&payload)),
+            Value::Object(build_chat_completion_payload(&payload, source)),
         )
     }
 }
@@ -104,7 +139,7 @@ fn build_text_completion_payload(payload: &Map<String, Value>) -> Map<String, Va
     request
 }
 
-fn build_chat_completion_payload(payload: &Map<String, Value>) -> Map<String, Value> {
+fn build_chat_completion_payload(payload: &Map<String, Value>, source: &str) -> Map<String, Value> {
     let mut request = Map::new();
 
     for key in [
@@ -122,11 +157,36 @@ fn build_chat_completion_payload(payload: &Map<String, Value>) -> Map<String, Va
         "logit_bias",
         "seed",
         "n",
-        "reasoning_effort",
-        "verbosity",
         "user",
     ] {
         insert_if_present(&mut request, payload, key);
+    }
+
+    if let Some(model) = payload.get("model").and_then(Value::as_str) {
+        if should_forward_openai_reasoning_effort(source, model) {
+            if let Some(reasoning_effort) = payload
+                .get("reasoning_effort")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                request.insert(
+                    "reasoning_effort".to_string(),
+                    Value::String(map_openai_reasoning_effort(reasoning_effort).to_string()),
+                );
+            }
+        }
+
+        if should_forward_openai_verbosity(source, model) {
+            if let Some(verbosity) = payload
+                .get("verbosity")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                request.insert("verbosity".to_string(), Value::String(verbosity.to_string()));
+            }
+        }
     }
 
     if let Some(tools) = payload.get("tools").filter(|value| value.is_array()) {
@@ -141,6 +201,22 @@ fn build_chat_completion_payload(payload: &Map<String, Value>) -> Map<String, Va
     }
 
     request
+}
+
+fn should_forward_openai_reasoning_effort(source: &str, model: &str) -> bool {
+    matches!(source, "openai" | "custom") && OPENAI_REASONING_EFFORT_MODELS.contains(&model.trim())
+}
+
+fn should_forward_openai_verbosity(source: &str, model: &str) -> bool {
+    matches!(source, "openai" | "custom") && model.trim().to_ascii_lowercase().starts_with("gpt-5")
+}
+
+fn map_openai_reasoning_effort(value: &str) -> &str {
+    if value.eq_ignore_ascii_case("min") {
+        "minimal"
+    } else {
+        value
+    }
 }
 
 fn map_chat_logprobs(request: &mut Map<String, Value>, payload: &Map<String, Value>) {
@@ -282,4 +358,95 @@ fn is_text_completion(payload: &Map<String, Value>) -> bool {
         .get("model")
         .and_then(Value::as_str)
         .is_some_and(|model| TEXT_COMPLETION_MODELS.contains(&model))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::build;
+
+    #[test]
+    fn custom_payload_does_not_forward_reasoning_effort_for_non_openai_models() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "model": "claude-opus-4-5",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "high",
+            "verbosity": "high"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (endpoint, upstream) = build(payload);
+        assert_eq!(endpoint, "/chat/completions");
+
+        let body = upstream.as_object().expect("payload must be object");
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(body.get("verbosity").is_none());
+    }
+
+    #[test]
+    fn custom_payload_forwards_reasoning_effort_for_supported_openai_models() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "model": "gpt-5-2025-08-07",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "min"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload);
+        let body = upstream.as_object().expect("payload must be object");
+        assert_eq!(
+            body.get("reasoning_effort")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "minimal"
+        );
+    }
+
+    #[test]
+    fn custom_payload_forwards_verbosity_only_for_gpt5_models() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "model": "gpt-5-mini",
+            "messages": [{"role": "user", "content": "hello"}],
+            "verbosity": "low"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload);
+        let body = upstream.as_object().expect("payload must be object");
+        assert_eq!(
+            body.get("verbosity")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "low"
+        );
+    }
+
+    #[test]
+    fn non_custom_sources_do_not_forward_reasoning_effort_or_verbosity() {
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "gpt-5",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "high",
+            "verbosity": "high"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload);
+        let body = upstream.as_object().expect("payload must be object");
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(body.get("verbosity").is_none());
+    }
 }
