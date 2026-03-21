@@ -22,6 +22,7 @@ impl ThirdPartyExtensionDirs {
 pub struct ResolvedThirdPartyAsset {
     pub path: PathBuf,
     pub mime_type: String,
+    pub size_bytes: u64,
 }
 
 pub fn resolve_third_party_extension_asset(
@@ -34,7 +35,21 @@ pub fn resolve_third_party_extension_asset(
         let extension_root = base_dir.join(extension_folder);
         let asset_path = extension_root.join(relative_path);
 
-        if !asset_path.is_file() {
+        let metadata = match std::fs::metadata(&asset_path) {
+            Ok(value) => value,
+            Err(error) => match error.kind() {
+                std::io::ErrorKind::NotFound => continue,
+                _ => {
+                    return Err(DomainError::InternalError(format!(
+                        "Failed to stat third-party extension asset ({}): {}",
+                        asset_path.display(),
+                        error
+                    )))
+                }
+            },
+        };
+
+        if !metadata.is_file() {
             continue;
         }
 
@@ -46,6 +61,7 @@ pub fn resolve_third_party_extension_asset(
         return Ok(ResolvedThirdPartyAsset {
             path: asset_path,
             mime_type,
+            size_bytes: metadata.len(),
         });
     }
 
@@ -114,6 +130,7 @@ mod tests {
             local_root.join(extension_folder).join("manifest.json")
         );
         assert_eq!(resolved.mime_type, "application/json");
+        assert_eq!(resolved.size_bytes, br#"{ "source": "local" }"#.len() as u64);
     }
 
     #[test]

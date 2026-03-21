@@ -1,6 +1,7 @@
 // Infrastructure layer - implements interfaces defined in the domain layer
 pub mod apis;
 pub mod assets;
+pub mod css_compat;
 pub mod http_client;
 #[cfg(target_os = "ios")]
 pub mod ios_document_picker;

@@ -224,13 +224,12 @@ https://v2.tauri.app/develop/resources/#android
 
 - 在 `src/scripts/extensions/runtime/third-party-runtime.js` 的样式加载链路中：
   - 先探测当前 WebView 是否支持 `@layer`；
-  - 不支持时用 `css-tools` 将 `@layer` 规则展平后再注入。
+  - 不支持时为样式 URL 附加 `ttCompat=layer`；由 Rust 端点返回展平后的 CSS bytes。
 
 性能策略：
 
-- 支持 `@layer` 的环境走快路径，不转换；
-- 能力检测结果缓存；
-- 预处理结果走现有样式缓存，避免重复计算。
+- 支持 `@layer` 的环境走快路径，不改写 URL；
+- 不再在前端预取/Blob 注入，避免低端设备 CSS AST 处理导致的卡顿与超时。
 
 
 ### 6.3 JS-Slash-Runner 脚本弹窗贴顶（关闭按钮落入状态栏）

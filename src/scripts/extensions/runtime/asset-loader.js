@@ -58,10 +58,6 @@ function toScriptLoadError(name, url, error) {
     return new Error(`Extension "${name}" script load failed (${errorType}): ${url}`);
 }
 
-function toScriptTimeoutError(name, url, timeoutMs) {
-    return new Error(`Extension "${name}" script load timed out after ${timeoutMs}ms: ${url}`);
-}
-
 function toInvalidAssetFieldError(name, fieldName) {
     return new Error(
         `Extension "${name}" manifest field "${fieldName}" must be a string or single-item string array.`,
@@ -73,7 +69,6 @@ export function createExtensionAssetLoader({
     getExtensionResourceUrl,
     isThirdPartyExtension,
     resolveThirdPartyStylesheetUrl,
-    scriptLoadTimeoutMs = 30000,
     styleLoadTimeoutMs = 15000,
 }) {
     async function addExtensionStyle(name, manifest) {
@@ -166,36 +161,17 @@ export function createExtensionAssetLoader({
         let scriptUrl = getExtensionResourceUrl(name, scriptPath);
 
         await new Promise((resolve, reject) => {
-            let settled = false;
             const script = document.createElement('script');
-            const timeoutId = setTimeout(() => {
-                if (settled) {
-                    return;
-                }
-                settled = true;
-                script.dataset.tauritavernLoaded = 'false';
-                reject(toScriptTimeoutError(name, scriptUrl, scriptLoadTimeoutMs));
-            }, scriptLoadTimeoutMs);
 
             script.id = id;
             script.type = 'module';
             script.src = scriptUrl;
             script.async = true;
             script.onerror = function (err) {
-                if (settled) {
-                    return;
-                }
-                settled = true;
-                clearTimeout(timeoutId);
                 script.dataset.tauritavernLoaded = 'false';
                 reject(toScriptLoadError(name, scriptUrl, err));
             };
             script.onload = function () {
-                if (settled) {
-                    return;
-                }
-                settled = true;
-                clearTimeout(timeoutId);
                 script.dataset.tauritavernLoaded = 'true';
                 resolve();
             };

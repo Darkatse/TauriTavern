@@ -56,7 +56,7 @@
 
 - JS 入口由 `asset-loader.js` 直接作为 `<script type="module" src="...">` 注入
 - CSS 默认直接 `<link rel="stylesheet" href="...">` 加载
-- 只有旧 WebView 不支持 CSS `@layer` 时，`third-party-runtime.js` 才会预取 CSS、展平 `@layer`、绝对化 `url()` / `@import`，再回落到 Blob URL
+- 只有旧 WebView 不支持 CSS `@layer` 时，`third-party-runtime.js` 才会为样式 URL 附加 `ttCompat=layer`，并由 Rust 端点返回展平后的 CSS bytes
 - `js` / `css` 字段显式接受 `string` 或单元素 `string[]`；不为多元素数组建立新的加载顺序语义
 
 额外兼容层：

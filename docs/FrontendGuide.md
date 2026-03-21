@@ -155,7 +155,7 @@ src/
 - `src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`：Tauri mobile overlay safe-area top 兜底（遵循当前顶部 safe-area 布局策略）。
 - `src/scripts/extensions/runtime/resource-paths.js`：扩展资源路径规范化与 third-party 判定。
 - `src/scripts/extensions/runtime/tauri-ready.js`：等待 `__TAURITAVERN_MAIN_READY__`，避免 bridge 未就绪时提前加载。
-- `src/scripts/extensions/runtime/third-party-runtime.js`：第三方扩展样式兼容层（仅处理 legacy WebView 的 `@layer` 降级与 `url()` 绝对化；必要时返回 Blob URL，否则返回原始 URL）。
+- `src/scripts/extensions/runtime/third-party-runtime.js`：第三方扩展样式兼容层（legacy WebView 下为样式 URL 附加 `ttCompat=layer`，触发 Rust 端点做 `@layer` 展平；不再走前端预取/Blob 注入）。
 - `src/scripts/extensions/runtime/asset-loader.js`：脚本与样式注入、超时保护、重复注入幂等控制。
 
 ### 7.3 端到端加载链路
@@ -165,7 +165,7 @@ src/
 3. 对每个扩展执行 `addExtensionLocale()` + `addExtensionScript()` + `addExtensionStyle()`。
 4. 当扩展为 `third-party/*` 时：
    - JS 入口脚本直接从 `/scripts/extensions/third-party/*` 加载（真实同源静态资源端点）。
-   - CSS 仅在旧 WebView 不支持 `@layer` 时经 runtime 预处理为 Blob URL（否则仍走原始 URL）。
+   - CSS 仅在旧 WebView 不支持 `@layer` 时由 runtime 附加 `ttCompat=layer` query；由 Rust 端点返回展平后的 CSS bytes（否则仍走原始 URL）。
 5. `/scripts/extensions/third-party/*` 由 Rust 协议层端点提供（WebView `on_web_resource_request` hook），统一返回 bytes + `Content-Type` + 404 语义。
 
 ### 7.3.1 当前实现结论
@@ -189,8 +189,8 @@ src/
   - 优先检查 `/scripts/extensions/third-party/*` 是否被协议层端点正确响应（应返回 404 或 JS bytes，而不是 `index.html`）。
 - `missing required key extensionName`：
   - 表示 invoke 参数命名不匹配，检查路由 body -> 命令参数映射。
-- `stylesheet preprocessing timed out`：
-  - 卡在第三方 CSS 预处理阶段，需检查样式资源可达性与 WebView 环境（是否触发 `@layer` 降级分支）。
+- legacy WebView 样式 `@layer` 仍不生效：
+  - 检查样式请求是否带 `?ttCompat=layer`；并验证 `/scripts/extensions/third-party/*` 端点返回的是 `text/css` bytes（非 404/HTML）。
 
 ### 7.6 后续开发规则
 
@@ -223,13 +223,8 @@ src/
   - 样式内容包含 `@layer`；
   - 当前 WebView 不支持 CSS Cascade Layers。
 - 处理方式：
-  - 通过 `css-tools` 解析 CSS AST；
-  - 将 `layer` 规则展平为普通规则；
-  - 再生成压缩后的 CSS 文本注入 Blob URL。
-- 缓存与性能：
-  - 能力检测结果缓存（`supportsCssCascadeLayers`）；
-  - 样式结果走现有 `styleBlobCache`，同一文件不重复处理；
-  - 支持 `@layer` 的环境走快路径，不做转换。
+  - runtime 将样式 URL 改写为 `...?ttCompat=layer`；
+  - Rust 协议层端点识别该 query 并移除 `@layer` 包裹（展平层级），返回可被旧 WebView 直接应用的 CSS。
 
 该策略用于修复移动端插件面板（如 `TH-custom-tailwind`）样式大面积失效导致的布局错乱。
 
@@ -252,7 +247,7 @@ src/
   - 检查是否为 Tauri mobile 会话，并确认 `window.__TAURITAVERN_MOBILE_RUNTIME_COMPAT__ === true`。
 - 若插件样式错乱但 CSS 已成功请求：
   - 优先检查是否命中 `@layer` 降级分支；
-  - 关注 `resolveStylesheetUrl()` 是否返回预处理后的 Blob URL。
+  - 关注 `resolveStylesheetUrl()` 是否返回带 `ttCompat=layer` 的 URL。
 - 若脚本弹窗贴顶到状态栏：
   - 检查脚本是否通过 `<style>` 或行内 `style` 设置了固定定位顶边；
   - 检查 `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__` 是否已安装。
