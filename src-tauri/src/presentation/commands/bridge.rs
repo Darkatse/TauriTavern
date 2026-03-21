@@ -218,7 +218,29 @@ pub struct ShowSystemNotificationDto {
     pub body: String,
 }
 
-fn ensure_notification_permission(app: &tauri::AppHandle) -> Result<bool, CommandError> {
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationPermissionStateDto {
+    Granted,
+    Denied,
+    Prompt,
+}
+
+fn normalize_notification_permission_state(
+    state: PermissionState,
+) -> NotificationPermissionStateDto {
+    match state {
+        PermissionState::Granted => NotificationPermissionStateDto::Granted,
+        PermissionState::Denied => NotificationPermissionStateDto::Denied,
+        PermissionState::Prompt | PermissionState::PromptWithRationale => {
+            NotificationPermissionStateDto::Prompt
+        }
+    }
+}
+
+fn get_notification_permission_state_inner(
+    app: &tauri::AppHandle,
+) -> Result<NotificationPermissionStateDto, CommandError> {
     let notification = app.notification();
     let current_state = notification.permission_state().map_err(|error| {
         CommandError::InternalServerError(format!(
@@ -227,22 +249,38 @@ fn ensure_notification_permission(app: &tauri::AppHandle) -> Result<bool, Comman
         ))
     })?;
 
-    if matches!(current_state, PermissionState::Granted) {
-        return Ok(true);
+    Ok(normalize_notification_permission_state(current_state))
+}
+
+#[tauri::command]
+pub fn get_notification_permission_state(
+    app: tauri::AppHandle,
+) -> Result<NotificationPermissionStateDto, CommandError> {
+    log_command("get_notification_permission_state");
+    get_notification_permission_state_inner(&app)
+}
+
+#[tauri::command]
+pub fn request_notification_permission(
+    app: tauri::AppHandle,
+) -> Result<NotificationPermissionStateDto, CommandError> {
+    log_command("request_notification_permission");
+
+    if !matches!(
+        get_notification_permission_state_inner(&app)?,
+        NotificationPermissionStateDto::Prompt
+    ) {
+        return get_notification_permission_state_inner(&app);
     }
 
-    if matches!(current_state, PermissionState::Denied) {
-        return Ok(false);
-    }
-
-    let requested_state = notification.request_permission().map_err(|error| {
+    let requested_state = app.notification().request_permission().map_err(|error| {
         CommandError::InternalServerError(format!(
             "Failed to request notification permission: {}",
             error
         ))
     })?;
 
-    Ok(matches!(requested_state, PermissionState::Granted))
+    Ok(normalize_notification_permission_state(requested_state))
 }
 
 #[tauri::command]
@@ -256,11 +294,18 @@ pub fn show_system_notification(
     let body = dto.body.trim();
 
     if title.is_empty() && body.is_empty() {
-        return Ok(());
+        return Err(CommandError::BadRequest(
+            "Notification title and body cannot both be empty".to_string(),
+        ));
     }
 
-    if !ensure_notification_permission(&app)? {
-        return Ok(());
+    if !matches!(
+        get_notification_permission_state_inner(&app)?,
+        NotificationPermissionStateDto::Granted
+    ) {
+        return Err(CommandError::Unauthorized(
+            "Notification permission is not granted".to_string(),
+        ));
     }
 
     app.notification()

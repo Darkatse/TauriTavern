@@ -1,6 +1,9 @@
 import { createTokenCountBroker, estimateTokenCount, trimOpenAiMessage } from '../brokers/token-count-broker.js';
 import { createAndroidGenerationBridge } from '../adapters/android/android-generation-bridge.js';
 import { translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
+import { createGenerationLifecycleService } from '../services/ai/generation-lifecycle-service.js';
+import { createGenerationStatusBridge } from '../services/ai/generation-status-bridge.js';
+import { createSystemNotificationService } from '../services/notifications/system-notification-service.js';
 import { listen } from '../../../tauri-bridge.js';
 import { stripCommandErrorPrefixes } from '../../../scripts/util/command-error-utils.js';
 
@@ -64,11 +67,9 @@ const i18nNotificationFallbacks = Object.freeze({
     failureTitle: 'AI reply failed',
     failureBody: 'Generation failed. Tap to return to TauriTavern',
 });
-const mobileGenerationState = {
-    activeCount: 0,
-};
 
 const androidGenerationBridge = createAndroidGenerationBridge({ bridgeName: ANDROID_GENERATION_BRIDGE_NAME });
+const generationStatusBridge = createGenerationStatusBridge({ bridge: androidGenerationBridge });
 
 function extractHttpStatusCode(errorMessage) {
     const text = String(errorMessage || '');
@@ -115,22 +116,6 @@ function getGenerationNotificationTexts() {
         failureTitle: translateNotificationText(i18nNotificationKeys.failureTitle, i18nNotificationFallbacks.failureTitle),
         failureBody: translateNotificationText(i18nNotificationKeys.failureBody, i18nNotificationFallbacks.failureBody),
     };
-}
-
-function showSystemNotification(context, title, body) {
-    if (typeof context?.safeInvoke !== 'function') {
-        return;
-    }
-
-    void context.safeInvoke('show_system_notification', {
-        dto: {
-            title: String(title || ''),
-            body: String(body || ''),
-        },
-    })
-        .catch((error) => {
-            console.debug('Failed to show system notification:', error);
-        })
 }
 
 function pickFirstStringValue(source) {
@@ -194,65 +179,6 @@ function normalizeFailureNotificationBody(errorMessage) {
     }
 
     return normalized;
-}
-
-function createGenerationLifecycle(context, payload) {
-    const shouldNotifyResult = !isQuietRequest(payload);
-    let active = false;
-
-    return {
-        begin() {
-            if (active) {
-                return;
-            }
-
-            active = true;
-            mobileGenerationState.activeCount += 1;
-
-            if (mobileGenerationState.activeCount === 1) {
-                androidGenerationBridge.call('onGenerationStart');
-            }
-        },
-        finish({ success = false, errorMessage = '', notifyFailure = true } = {}) {
-            if (!active) {
-                return;
-            }
-
-            active = false;
-
-            mobileGenerationState.activeCount = Math.max(0, mobileGenerationState.activeCount - 1);
-            if (mobileGenerationState.activeCount === 0) {
-                const shouldNotify = shouldNotifyResult && shouldNotifyCompletion();
-                const statusCode = notifyFailure ? extractHttpStatusCode(errorMessage) : 0;
-                const supportsLiveUpdates = androidGenerationBridge.get('supportsLiveUpdates') === true;
-
-                if (supportsLiveUpdates && androidGenerationBridge.has('onGenerationFinish')) {
-                    androidGenerationBridge.call(
-                        'onGenerationFinish',
-                        JSON.stringify({
-                            success: Boolean(success),
-                            status_code: statusCode,
-                            show_completion_notification: Boolean(shouldNotify && (success || notifyFailure)),
-                        }),
-                    );
-                    return;
-                }
-
-                if (success && shouldNotify) {
-                    const texts = getGenerationNotificationTexts();
-                    showSystemNotification(context, texts.successTitle, texts.successBody);
-                }
-
-                if (!success && notifyFailure && shouldNotify) {
-                    const texts = getGenerationNotificationTexts();
-                    const normalizedBody = normalizeFailureNotificationBody(errorMessage) || texts.failureBody;
-                    showSystemNotification(context, texts.failureTitle, normalizedBody);
-                }
-
-                androidGenerationBridge.call('onGenerationStop');
-            }
-        },
-    };
 }
 
 function getChatCompletionSource(payload) {
@@ -460,13 +386,6 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
     const streamId = createStreamId();
     const eventName = `chat-completion-stream:${streamId}`;
     const encoder = new TextEncoder();
-    const androidSupportsLiveUpdates = androidGenerationBridge.get('supportsLiveUpdates') === true;
-    const androidCanReportTokens = androidSupportsLiveUpdates && androidGenerationBridge.has('onGenerationProgress');
-    const androidOutputChunks = [];
-    let androidOutputChars = 0;
-    let androidLastTokenCount = 0;
-    let androidLastTokenCharCount = 0;
-    let androidLastTokenReportAt = 0;
 
     let isClosed = false;
     let sawDone = false;
@@ -567,7 +486,7 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
 
         const isSuccessfulCompletion = sawDone && !cancelUpstream && !errorPayload;
         const shouldNotifyFailure = !isSuccessfulCompletion && !cancelUpstream && Boolean(failureMessage || errorPayload);
-        lifecycle?.finish({
+        await lifecycle?.finish({
             success: isSuccessfulCompletion,
             errorMessage: failureMessage,
             notifyFailure: shouldNotifyFailure,
@@ -597,39 +516,7 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                 return;
             }
 
-            if (androidCanReportTokens) {
-                try {
-                    const parsed = JSON.parse(data);
-                    const delta = asObject(parsed?.choices?.[0]?.delta);
-                    const chunkText = typeof delta.content === 'string' ? delta.content : '';
-                    if (chunkText) {
-                        androidOutputChunks.push(chunkText);
-                        androidOutputChars += chunkText.length;
-
-                        const now = Date.now();
-                        const shouldCompute = shouldNotifyCompletion()
-                            && now - androidLastTokenReportAt >= ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS
-                            && androidOutputChars - androidLastTokenCharCount >= ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA;
-
-                        if (shouldCompute) {
-                            androidLastTokenReportAt = now;
-                            const charCountAtRequest = androidOutputChars;
-                            const textSnapshot = androidOutputChunks.join('');
-                            androidOutputChunks.length = 0;
-                            androidOutputChunks.push(textSnapshot);
-
-                            const normalized = estimateTokenCount(textSnapshot);
-                            androidLastTokenCharCount = charCountAtRequest;
-                            if (!isClosed && normalized !== androidLastTokenCount) {
-                                androidLastTokenCount = normalized;
-                                androidGenerationBridge.call('onGenerationProgress', normalized);
-                            }
-                        }
-                    }
-                } catch {
-                    // Ignore non-JSON chunks (e.g. keep-alives).
-                }
-            }
+            lifecycle?.reportStreamChunk(data);
 
             scheduleFlush();
             return;
@@ -717,6 +604,18 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
 
 export function registerAiRoutes(router, context, { jsonResponse }) {
     const tokenCountBroker = createTokenCountBroker({ context });
+    const notificationService = createSystemNotificationService({ safeInvoke: context.safeInvoke });
+    const generationLifecycleService = createGenerationLifecycleService({
+        notificationService,
+        statusBridge: generationStatusBridge,
+        shouldNotifyCompletion,
+        getNotificationTexts: getGenerationNotificationTexts,
+        normalizeFailureNotificationBody,
+        extractFailureStatusCode: extractHttpStatusCode,
+        estimateTokenCount,
+        progressThrottleMs: ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS,
+        progressMinCharsDelta: ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA,
+    });
 
     router.post('/api/backends/chat-completions/status', async ({ body }) => {
         const payload = asObject(body);
@@ -748,7 +647,9 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
     router.post('/api/backends/chat-completions/generate', async ({ body, init }) => {
         const payload = { ...asObject(body) };
         const wantsStream = Boolean(payload.stream);
-        const lifecycle = createGenerationLifecycle(context, payload);
+        const lifecycle = generationLifecycleService.createLifecycle({
+            quiet: isQuietRequest(payload),
+        });
         lifecycle.begin();
 
         try {
@@ -757,14 +658,14 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
             }
 
             const completion = await invokeChatCompletionWithAbort(context, payload, init?.signal);
-            lifecycle.finish({ success: true });
+            await lifecycle.finish({ success: true });
             return jsonResponse(completion || {});
         } catch (error) {
             const errorMessage = getErrorMessage(error);
             const aborted = isAbortError(error)
                 || /generation cancelled by user/i.test(errorMessage);
 
-            lifecycle.finish({
+            await lifecycle.finish({
                 success: false,
                 errorMessage: aborted ? '' : errorMessage,
                 notifyFailure: !aborted,

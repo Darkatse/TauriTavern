@@ -88,6 +88,7 @@ export {};
  *   | 'read_thumbnail_asset'
  *   | 'read_user_avatar_asset'
  *   | 'read_user_file_asset'
+ *   | 'request_notification_permission'
  *   | 'rename_background'
  *   | 'rename_character'
  *   | 'rename_chat'
@@ -136,5 +137,6 @@ export {};
  *   | 'get_group_chat_payload_tail'
  *   | 'get_group_chat_payload_before'
  *   | 'get_group_chat_payload_before_pages'
+ *   | 'get_notification_permission_state'
  * )} TauriInvokeCommand
  */
