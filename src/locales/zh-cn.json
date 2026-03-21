@@ -2428,5 +2428,9 @@
     "Mirror mode will delete files on the target device that do not exist on the source device. This is risky and may cause data loss.": "镜像模式会删除目标设备上源设备不存在的文件。请悉知这可能导致数据丢失。",
     "This will set LAN Sync to mirror mode by default. All future syncs may delete files on the target device.\n\nContinue?": "LAN Sync 的默认同步模式设将会设置为镜像模式。之后所有同步都可能删除目标设备上的文件。\n\n是否继续？",
     "Deleted: ${0}": "已删除：${0}",
-    "Deleting": "删除中"
+    "Deleting": "删除中",
+    "Chat History help: windowed": "分片加载：仅加载最近的消息，可大幅提升长聊天的加载速度并减少内存占用。",
+    "Chat History help: off": "关闭：上游旧版行为，一次性加载完整的聊天记录。",
+    "Windowed (Recommended)": "分片加载（推荐）",
+    "Off (Upstream full history)": "关闭（全量加载）"
 }

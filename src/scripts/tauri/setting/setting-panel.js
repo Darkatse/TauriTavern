@@ -349,6 +349,9 @@ async function openTauriTavernSettingsPopup() {
                 <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
                     <div class="flex-container alignItemsBaseline" style="gap: 8px; min-width: 220px; flex: 1;">
                         <span data-i18n="Chat History">Chat History</span>
+                        <a id="tt-help-chat-history" class="notes-link" href="javascript:void(0);">
+                            <span class="fa-solid fa-circle-question note-link-span" title="Learn more" data-i18n="[title]Learn more"></span>
+                        </a>
                     </div>
                     <select id="tt-chat-history-mode" class="text_pole" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;">
                         <option value="windowed" data-i18n="Windowed (Recommended)">Windowed (Recommended)</option>
@@ -446,6 +449,30 @@ async function openTauriTavernSettingsPopup() {
                 <div data-i18n="Embedded Runtime help: auto">Auto: picks a profile based on your device.</div>
                 <div data-i18n="Embedded Runtime help: balanced">Balanced: keeps more runtimes active for compatibility.</div>
                 <div data-i18n="Embedded Runtime help: saver">Power Saver: reduces memory/CPU by parking more aggressively.</div>
+            `.trim();
+            await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+                okButton: translate('Close'),
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+            });
+        });
+    });
+
+    const chatHistoryHelp = root.querySelector('#tt-help-chat-history');
+    if (!(chatHistoryHelp instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: chat history help button not found');
+    }
+    chatHistoryHelp.addEventListener('click', (event) => {
+        event.preventDefault();
+        runOrPopup(async () => {
+            const content = document.createElement('div');
+            content.className = 'flex-container flexFlowColumn';
+            content.style.gap = '8px';
+            content.innerHTML = `
+                <b data-i18n="Chat History">Chat History</b>
+                <div data-i18n="Chat History help: windowed">Windowed: drastically improves loading speed and reduces memory usage for long chats by loading only the most recent messages.</div>
+                <div data-i18n="Chat History help: off">Off: legacy upstream behavior, loads the entire chat history at once.</div>
             `.trim();
             await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
                 okButton: translate('Close'),
