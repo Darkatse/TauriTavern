@@ -320,10 +320,19 @@ async function openTauriTavernSettingsPopup() {
                         <span class="fa-solid fa-circle-question note-link-span" title="Learn more" data-i18n="[title]Learn more"></span>
                     </a>
                 </div>
-                <select id="tt-close-to-tray-on-close" class="text_pole" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;">
-                    <option value="on" data-i18n="On">On</option>
-                    <option value="off" data-i18n="Off">Off</option>
-                </select>
+                <input id="tt-close-to-tray-on-close" type="checkbox" style="margin: 0;" />
+            </div>
+        `.trim()
+        : '';
+
+    const interfacePanel = closeToTrayRow
+        ? `
+            <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
+                <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
+                    <b data-i18n="Interface">Interface</b>
+                </div>
+
+                ${closeToTrayRow}
             </div>
         `.trim()
         : '';
@@ -334,6 +343,8 @@ async function openTauriTavernSettingsPopup() {
     root.innerHTML = `
         <div class="flex-container flexFlowColumn" style="gap: 12px;">
             <b data-i18n="TauriTavern Settings">TauriTavern Settings</b>
+
+            ${interfacePanel}
 
             <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
                 <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
@@ -382,8 +393,6 @@ async function openTauriTavernSettingsPopup() {
                     </select>
                 </div>
 
-                ${closeToTrayRow}
-
                 <small style="opacity: 0.85;" data-i18n="Requires reload to apply.">Requires reload to apply.</small>
             </div>
 
@@ -413,12 +422,12 @@ async function openTauriTavernSettingsPopup() {
         throw new Error('TauriTavern settings: chat history mode selector not found');
     }
 
-    /** @type {HTMLSelectElement | null} */
-    let closeToTraySelect = null;
+    /** @type {HTMLInputElement | null} */
+    let closeToTrayToggle = null;
     if (supportsCloseToTrayOnClose) {
-        closeToTraySelect = root.querySelector('#tt-close-to-tray-on-close');
-        if (!(closeToTraySelect instanceof HTMLSelectElement)) {
-            throw new Error('TauriTavern settings: close to tray selector not found');
+        closeToTrayToggle = root.querySelector('#tt-close-to-tray-on-close');
+        if (!(closeToTrayToggle instanceof HTMLInputElement)) {
+            throw new Error('TauriTavern settings: close to tray toggle not found');
         }
     }
 
@@ -437,8 +446,8 @@ async function openTauriTavernSettingsPopup() {
     chatHistoryModeSelect.value = currentChatHistoryMode;
 
     const currentCloseToTrayOnClose = Boolean(settings.close_to_tray_on_close);
-    if (closeToTraySelect) {
-        closeToTraySelect.value = currentCloseToTrayOnClose ? 'on' : 'off';
+    if (closeToTrayToggle) {
+        closeToTrayToggle.checked = currentCloseToTrayOnClose;
     }
 
     const openLanSyncButton = root.querySelector('#tt-open-lan-sync');
@@ -564,8 +573,8 @@ async function openTauriTavernSettingsPopup() {
     const nextPanelRuntimeProfile = String(profileSelect.value || '').trim();
     const nextEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(embeddedProfileSelect.value);
     const nextChatHistoryMode = normalizeChatHistoryModeName(chatHistoryModeSelect.value);
-    const nextCloseToTrayOnClose = closeToTraySelect
-        ? closeToTraySelect.value === 'on'
+    const nextCloseToTrayOnClose = closeToTrayToggle
+        ? closeToTrayToggle.checked
         : currentCloseToTrayOnClose;
 
     const hasPanelRuntimeChange = Boolean(nextPanelRuntimeProfile) && nextPanelRuntimeProfile !== currentPanelRuntimeProfile;

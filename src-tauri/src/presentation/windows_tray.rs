@@ -61,7 +61,6 @@ pub fn install_windows_tray(
     let main_window_for_menu = main_window.clone();
     let app_handle_for_menu = app_handle.clone();
 
-    let state_for_tray = state.clone();
     let main_window_for_tray = main_window.clone();
 
     TrayIconBuilder::with_id(TRAY_ID)
@@ -92,9 +91,9 @@ pub fn install_windows_tray(
         })
         .build(app_handle)?;
 
-    let state_for_close = state_for_tray;
-    let main_window_for_close = main_window;
-    main_window_for_close.on_window_event(move |event| {
+    let state_for_close = state.clone();
+    let main_window_for_close = main_window.clone();
+    main_window.on_window_event(move |event| {
         let WindowEvent::CloseRequested { api, .. } = event else {
             return;
         };
@@ -114,4 +113,3 @@ pub fn install_windows_tray(
 
     Ok(())
 }
-

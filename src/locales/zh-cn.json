@@ -2343,6 +2343,7 @@
     "tauritavern_ai_notification_failure_body": "生成失败，点击返回 TauriTavern",
     "TauriTavern Settings": "TauriTavern 设置",
     "Performance": "性能",
+    "Interface": "界面",
     "Learn more": "了解更多",
     "Panel Runtime": "后台面板自动冻结",
     "Embedded Runtime": "前端角色卡渲染管理",
