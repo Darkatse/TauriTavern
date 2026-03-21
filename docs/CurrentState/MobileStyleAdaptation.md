@@ -82,7 +82,8 @@ Android 说明：
 `src/css/mobile-styles.css` 消费上述变量，主要约束点：
 
 - 顶部容器（如 `#top-settings-holder/#top-bar`）使用 `top: max(var(--tt-inset-top), 0px)` 并加入左右 padding。
-- 主容器 `#sheld` 以 `inset-top + topBarBlockSize` 定位，并用 `--tt-base-viewport-height`/`--doc-height` 计算高度；底部通过 `#form_sheld { padding-bottom: var(--tt-inset-bottom) }` 消化 safe-area，同时用 `--tt-ime-bottom` 推导键盘偏移。
+- 主容器 `#sheld` 以 `inset-top + topBarBlockSize` 定位，并用 `--tt-base-viewport-height`/`--doc-height` 计算高度。
+- Android 的键盘抬升不再直接绑定在主题可覆写的 `#form_sheld` 上；宿主层会在 `#form_sheld` 内安装私有 IME lift/spacer 节点，由它们消费 `--tt-ime-bottom` 推导出的偏移并保留底部占位。
 
 这些规则的目标是：在非沉浸模式下避开顶部/底部安全区与键盘，在沉浸模式下保持 full-bleed。
 

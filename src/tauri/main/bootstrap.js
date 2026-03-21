@@ -7,6 +7,7 @@ import { installBackNavigationBridge } from './back-navigation.js';
 import { installNativeShareBridge } from './share-target-bridge.js';
 import { downloadBlobWithRuntime, isNativeMobileDownloadRuntime } from '../../scripts/file-export.js';
 import { showExportSuccessToast } from '../../scripts/download-feedback.js';
+import { installAndroidImeLayoutHost } from './compat/mobile/android-ime-layout-host.js';
 import { installMobileOverlayCompatController } from './compat/mobile/mobile-overlay-compat-controller.js';
 import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compat.js';
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
@@ -91,16 +92,16 @@ function isMobileUserAgent() {
 }
 
 function installTauriMobileCompat() {
-    try {
-        installMobileRuntimeCompat();
-    } catch (error) {
-        console.error('Failed to install mobile runtime compat:', error);
-    }
-
-    try {
-        installMobileOverlayCompatController();
-    } catch (error) {
-        console.error('Failed to install mobile overlay compat controller:', error);
+    for (const [install, label] of [
+        [installMobileRuntimeCompat, 'mobile runtime compat'],
+        [installAndroidImeLayoutHost, 'Android IME layout host'],
+        [installMobileOverlayCompatController, 'mobile overlay compat controller'],
+    ]) {
+        try {
+            install();
+        } catch (error) {
+            console.error(`Failed to install ${label}:`, error);
+        }
     }
 }
 
@@ -251,7 +252,6 @@ export function bootstrapTauriMain() {
     if (perfEnabled) {
         safePerfMark('tt:tauri:bootstrap:start');
     }
-
     if (isMobileUserAgent()) {
         installTauriMobileCompat();
     }

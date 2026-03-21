@@ -298,11 +298,21 @@
     #form_sheld {
         position: relative;
         z-index: 31;
-        transform: translate3d(0, calc(-1 * var(--tt-keyboard-offset)), 0);
+    }
+
+    /* Host-private IME nodes keep Android keyboard lift off the theme-controlled shell. */
+    #form_sheld>[data-tt-android-ime-lift] {
+        transform: translate3d(0, calc(-1 * var(--tt-keyboard-offset)), 0) !important;
         will-change: transform;
-        padding-right: max(var(--tt-inset-right), 0px);
-        padding-left: max(var(--tt-inset-left), 0px);
-        padding-bottom: var(--tt-bottom-inset);
+        padding-right: max(var(--tt-inset-right), 0px) !important;
+        padding-left: max(var(--tt-inset-left), 0px) !important;
+        padding-bottom: var(--tt-bottom-inset) !important;
+    }
+
+    #form_sheld>[data-tt-android-ime-spacer] {
+        display: block !important;
+        height: var(--tt-keyboard-offset) !important;
+        pointer-events: none !important;
     }
 
     #chat {
@@ -315,7 +325,6 @@
         max-height: none;
         overflow-y: auto;
         overflow-x: hidden;
-        padding-bottom: var(--tt-keyboard-offset);
         overscroll-behavior-y: contain;
     }
 
@@ -337,16 +346,11 @@
 
     body #form_sheld {
         position: relative !important;
-        transform: translate3d(0, calc(-1 * var(--tt-keyboard-offset)), 0) !important;
-        padding-right: max(var(--tt-inset-right), 0px) !important;
-        padding-left: max(var(--tt-inset-left), 0px) !important;
-        padding-bottom: var(--tt-bottom-inset) !important;
     }
 
     body #chat {
         min-height: 0 !important;
         max-height: none !important;
-        padding-bottom: var(--tt-keyboard-offset) !important;
     }
 
     .mes_buttons {
