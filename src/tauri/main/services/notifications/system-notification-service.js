@@ -7,6 +7,8 @@
 
 const NOTIFICATION_PERMISSION_STATES = new Set(['granted', 'denied', 'prompt']);
 
+let suppressPermissionRationaleInSession = false;
+
 /**
  * @param {unknown} value
  * @returns {NotificationPermissionState}
@@ -23,11 +25,14 @@ function normalizePermissionState(value) {
 /**
  * @param {{
  *   safeInvoke: SafeInvokeFn;
+ *   confirmPermissionRationale: () => Promise<boolean>;
  * }} deps
  */
-export function createSystemNotificationService({ safeInvoke }) {
+export function createSystemNotificationService({ safeInvoke, confirmPermissionRationale }) {
     /** @type {Promise<NotificationPermissionState> | null} */
     let permissionRequestPromise = null;
+    /** @type {Promise<boolean> | null} */
+    let permissionRationalePromise = null;
 
     async function getPermissionState() {
         return normalizePermissionState(await safeInvoke('get_notification_permission_state'));
@@ -45,9 +50,33 @@ export function createSystemNotificationService({ safeInvoke }) {
         return permissionRequestPromise;
     }
 
+    async function confirmPermissionRationaleOnce() {
+        if (suppressPermissionRationaleInSession) {
+            return false;
+        }
+
+        if (!permissionRationalePromise) {
+            permissionRationalePromise = confirmPermissionRationale().finally(() => {
+                permissionRationalePromise = null;
+            });
+        }
+
+        const accepted = await permissionRationalePromise;
+        if (!accepted) {
+            suppressPermissionRationaleInSession = true;
+        }
+
+        return accepted;
+    }
+
     async function preparePermission() {
         const currentState = await getPermissionState();
         if (currentState !== 'prompt') {
+            return currentState;
+        }
+
+        const accepted = await confirmPermissionRationaleOnce();
+        if (!accepted) {
             return currentState;
         }
 

@@ -138,36 +138,17 @@ export function createGenerationLifecycleService({
     let activeCount = 0;
 
     /**
-     * @param {Promise<NotificationPermissionState> | null} permissionPreparation
-     * @returns {Promise<NotificationPermissionState>}
-     */
-    async function resolvePermissionState(permissionPreparation) {
-        if (permissionPreparation) {
-            return permissionPreparation;
-        }
-
-        return notificationService.getPermissionState();
-    }
-
-    /**
      * @param {{
      *   success: boolean;
      *   errorMessage: string;
      *   notifyFailure: boolean;
-     *   permissionPreparation: Promise<NotificationPermissionState> | null;
      * }} params
      */
     async function showCompletionNotification({
         success,
         errorMessage,
         notifyFailure,
-        permissionPreparation,
     }) {
-        const permissionState = await resolvePermissionState(permissionPreparation);
-        if (permissionState !== 'granted') {
-            return;
-        }
-
         const texts = getNotificationTexts();
 
         if (success) {
@@ -194,8 +175,8 @@ export function createGenerationLifecycleService({
          */
         createLifecycle({ quiet }) {
             let active = false;
-            /** @type {Promise<NotificationPermissionState> | null} */
-            let permissionPreparation = null;
+            /** @type {NotificationPermissionState | null} */
+            let preparedPermissionState = null;
             const progressReporter = createStreamProgressReporter({
                 enabled: !quiet,
                 statusBridge,
@@ -215,10 +196,14 @@ export function createGenerationLifecycleService({
                     activeCount += 1;
 
                     if (!quiet) {
-                        permissionPreparation = notificationService.preparePermission().catch((error) => {
-                            console.error('Failed to prepare notification permission:', error);
-                            return 'prompt';
-                        });
+                        void notificationService.preparePermission()
+                            .then((state) => {
+                                preparedPermissionState = state;
+                            })
+                            .catch((error) => {
+                                console.error('Failed to prepare notification permission:', error);
+                                preparedPermissionState = 'prompt';
+                            });
                     }
 
                     if (activeCount === 1) {
@@ -254,12 +239,17 @@ export function createGenerationLifecycleService({
 
                     if (!handledByNative && shouldNotify) {
                         try {
-                            await showCompletionNotification({
-                                success: Boolean(success),
-                                errorMessage,
-                                notifyFailure: Boolean(notifyFailure),
-                                permissionPreparation,
-                            });
+                            const permissionState = preparedPermissionState
+                                ?? await notificationService.getPermissionState();
+                            preparedPermissionState = permissionState;
+
+                            if (permissionState === 'granted') {
+                                await showCompletionNotification({
+                                    success: Boolean(success),
+                                    errorMessage,
+                                    notifyFailure: Boolean(notifyFailure),
+                                });
+                            }
                         } catch (error) {
                             console.error('Failed to show generation completion notification:', error);
                         }

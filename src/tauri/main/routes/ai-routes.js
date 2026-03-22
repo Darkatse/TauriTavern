@@ -1,5 +1,6 @@
 import { createTokenCountBroker, estimateTokenCount, trimOpenAiMessage } from '../brokers/token-count-broker.js';
 import { createAndroidGenerationBridge } from '../adapters/android/android-generation-bridge.js';
+import { confirmAiNotificationPermissionRationale } from '../adapters/st/ai-notification-permission-rationale-popup.js';
 import { translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
 import { createGenerationLifecycleService } from '../services/ai/generation-lifecycle-service.js';
 import { createGenerationStatusBridge } from '../services/ai/generation-status-bridge.js';
@@ -604,7 +605,10 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
 
 export function registerAiRoutes(router, context, { jsonResponse }) {
     const tokenCountBroker = createTokenCountBroker({ context });
-    const notificationService = createSystemNotificationService({ safeInvoke: context.safeInvoke });
+    const notificationService = createSystemNotificationService({
+        safeInvoke: context.safeInvoke,
+        confirmPermissionRationale: confirmAiNotificationPermissionRationale,
+    });
     const generationLifecycleService = createGenerationLifecycleService({
         notificationService,
         statusBridge: generationStatusBridge,
