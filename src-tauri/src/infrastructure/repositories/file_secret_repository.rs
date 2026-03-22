@@ -103,6 +103,12 @@ impl SecretRepository for FileSecretRepository {
         Ok(secrets)
     }
 
+    async fn clear_cache(&self) -> Result<(), DomainError> {
+        let mut cache = self.cache.lock().await;
+        *cache = None;
+        Ok(())
+    }
+
     async fn write_secret(
         &self,
         key: &str,

@@ -104,6 +104,7 @@ impl AppState {
         self.character_service.clear_cache().await?;
         self.chat_service.clear_cache().await?;
         self.group_service.clear_cache().await?;
+        self.secret_service.clear_cache().await?;
 
         Ok(())
     }

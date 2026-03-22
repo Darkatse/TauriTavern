@@ -11,6 +11,9 @@ pub trait SecretRepository: Send + Sync {
     /// 加载所有密钥
     async fn load(&self) -> Result<Secrets, DomainError>;
 
+    /// Clear in-memory repository cache to reflect external file changes.
+    async fn clear_cache(&self) -> Result<(), DomainError>;
+
     /// 写入单个密钥，返回新密钥 ID
     async fn write_secret(
         &self,

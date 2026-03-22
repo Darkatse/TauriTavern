@@ -4,6 +4,7 @@ use crate::application::dto::secret_dto::{
     AllSecretsDto, FindSecretResponseDto, SecretStateDto, SecretStateItemDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::domain::errors::DomainError;
 use crate::domain::models::secret::SecretKeys;
 use crate::domain::repositories::secret_repository::SecretRepository;
 
@@ -18,6 +19,10 @@ impl SecretService {
             secret_repository,
             allow_keys_exposure,
         }
+    }
+
+    pub async fn clear_cache(&self) -> Result<(), DomainError> {
+        self.secret_repository.clear_cache().await
     }
 
     /// 写入密钥并返回新密钥 ID

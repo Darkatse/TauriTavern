@@ -353,6 +353,10 @@ mod tests {
             unimplemented!()
         }
 
+        async fn clear_cache(&self) -> Result<(), DomainError> {
+            Ok(())
+        }
+
         async fn write_secret(
             &self,
             _key: &str,
