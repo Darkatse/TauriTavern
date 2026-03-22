@@ -24,8 +24,8 @@ pub(super) async fn list_models(
 ) -> Result<Value, DomainError> {
     let url = HttpChatCompletionRepository::build_url(&config.base_url, "/models");
 
-    let request = repository
-        .client
+    let client = repository.client()?;
+    let request = client
         .get(url)
         .header(ACCEPT, "application/json")
         .header("anthropic-version", ANTHROPIC_VERSION);
@@ -70,8 +70,8 @@ pub(super) async fn generate(
 
     let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
 
-    let request = repository
-        .client
+    let client = repository.client()?;
+    let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
@@ -126,8 +126,8 @@ pub(super) async fn generate_stream(
 
     let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
 
-    let request = repository
-        .stream_client
+    let client = repository.stream_client()?;
+    let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "text/event-stream")

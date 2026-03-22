@@ -398,6 +398,52 @@ async function openTauriTavernSettingsPopup() {
 
             <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
                 <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
+                    <b data-i18n="System">System</b>
+                </div>
+
+                <style>
+                    #tt-request-proxy-details > summary::-webkit-details-marker { display: none; }
+                    #tt-request-proxy-details > summary::marker { content: ""; }
+                    #tt-request-proxy-summary-chevron { transition: transform 140ms ease; }
+                    #tt-request-proxy-details[open] #tt-request-proxy-summary-chevron { transform: rotate(180deg); }
+                    #tt-request-proxy-details > summary:hover { background: rgba(0,0,0,0.18); }
+                </style>
+
+                <details id="tt-request-proxy-details">
+                    <summary id="tt-request-proxy-summary" class="flex-container alignItemsCenter" style="cursor: pointer; gap: 12px; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; background: rgba(0,0,0,0.10); user-select: none;">
+                        <div class="flex-container alignItemsCenter" style="gap: 8px; flex: 1; min-width: 220px;">
+                            <span data-i18n="Request Proxy (Advanced)">Request Proxy (Advanced)</span>
+                        </div>
+                        <div class="flex-container alignItemsCenter" style="gap: 8px;">
+                            <small id="tt-request-proxy-summary-hint" style="opacity: 0.75;"></small>
+                            <i id="tt-request-proxy-summary-chevron" class="fa-solid fa-chevron-down" style="opacity: 0.8;"></i>
+                        </div>
+                    </summary>
+
+                    <div class="flex-container flexFlowColumn" style="gap: 10px; padding-top: 10px;">
+                        <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                            <span data-i18n="Enable Request Proxy">Enable Request Proxy</span>
+                            <input id="tt-request-proxy-enabled" type="checkbox" style="margin: 0;" />
+                        </div>
+
+                        <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                            <span data-i18n="Request Proxy URL">Request Proxy URL</span>
+                            <input id="tt-request-proxy-url" class="text_pole" type="text" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;" placeholder="http://127.0.0.1:7890" />
+                        </div>
+
+                        <div class="flex-container flexFlowColumn" style="gap: 6px;">
+                            <span data-i18n="Bypass (one per line)">Bypass (one per line)</span>
+                            <textarea id="tt-request-proxy-bypass" rows="6" style="width: 100%; resize: vertical;" placeholder="localhost&#10;127.0.0.1&#10;10.0.0.0/8"></textarea>
+                            <small style="opacity: 0.85;" data-i18n="Matching hosts will connect directly (no proxy).">Matching hosts will connect directly (no proxy).</small>
+                        </div>
+
+                        <small style="opacity: 0.85;" data-i18n="Applies to all backend requests.">Applies to all backend requests.</small>
+                    </div>
+                </details>
+            </div>
+
+            <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
+                <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
                     <b data-i18n="LAN Sync">LAN Sync</b>
                 </div>
                 <div class="flex-container flexFlowRow" style="gap: 10px;">
@@ -420,6 +466,31 @@ async function openTauriTavernSettingsPopup() {
     const chatHistoryModeSelect = root.querySelector('#tt-chat-history-mode');
     if (!(chatHistoryModeSelect instanceof HTMLSelectElement)) {
         throw new Error('TauriTavern settings: chat history mode selector not found');
+    }
+
+    const requestProxyDetails = root.querySelector('#tt-request-proxy-details');
+    if (!(requestProxyDetails instanceof HTMLDetailsElement)) {
+        throw new Error('TauriTavern settings: request proxy details not found');
+    }
+
+    const requestProxySummaryHint = root.querySelector('#tt-request-proxy-summary-hint');
+    if (!(requestProxySummaryHint instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: request proxy summary hint not found');
+    }
+
+    const requestProxyEnabledToggle = root.querySelector('#tt-request-proxy-enabled');
+    if (!(requestProxyEnabledToggle instanceof HTMLInputElement)) {
+        throw new Error('TauriTavern settings: request proxy toggle not found');
+    }
+
+    const requestProxyUrlInput = root.querySelector('#tt-request-proxy-url');
+    if (!(requestProxyUrlInput instanceof HTMLInputElement)) {
+        throw new Error('TauriTavern settings: request proxy url input not found');
+    }
+
+    const requestProxyBypassInput = root.querySelector('#tt-request-proxy-bypass');
+    if (!(requestProxyBypassInput instanceof HTMLTextAreaElement)) {
+        throw new Error('TauriTavern settings: request proxy bypass input not found');
     }
 
     /** @type {HTMLInputElement | null} */
@@ -449,6 +520,41 @@ async function openTauriTavernSettingsPopup() {
     if (closeToTrayToggle) {
         closeToTrayToggle.checked = currentCloseToTrayOnClose;
     }
+
+    const currentRequestProxyEnabled = Boolean(settings.request_proxy?.enabled);
+    const currentRequestProxyUrl = typeof settings.request_proxy?.url === 'string' ? settings.request_proxy.url : '';
+    const currentRequestProxyBypass = Array.isArray(settings.request_proxy?.bypass) ? settings.request_proxy.bypass : [];
+
+    requestProxyDetails.open = currentRequestProxyEnabled;
+
+    const syncRequestProxySummaryHint = () => {
+        requestProxySummaryHint.textContent = translate(
+            requestProxyDetails.open ? 'Click to collapse' : 'Click to expand',
+        );
+    };
+    requestProxyDetails.addEventListener('toggle', syncRequestProxySummaryHint);
+    syncRequestProxySummaryHint();
+
+    requestProxyEnabledToggle.checked = currentRequestProxyEnabled;
+    requestProxyUrlInput.value = currentRequestProxyUrl;
+    requestProxyBypassInput.value = currentRequestProxyBypass.join('\n');
+
+    const syncRequestProxyInputs = () => {
+        const enabled = requestProxyEnabledToggle.checked;
+        requestProxyUrlInput.disabled = !enabled;
+        requestProxyBypassInput.disabled = !enabled;
+        if (enabled) {
+            requestProxyDetails.open = true;
+        }
+    };
+
+    requestProxyEnabledToggle.addEventListener('change', () => {
+        syncRequestProxyInputs();
+        if (requestProxyEnabledToggle.checked) {
+            requestProxyUrlInput.focus();
+        }
+    });
+    syncRequestProxyInputs();
 
     const openLanSyncButton = root.querySelector('#tt-open-lan-sync');
     if (!(openLanSyncButton instanceof HTMLElement)) {
@@ -577,14 +683,46 @@ async function openTauriTavernSettingsPopup() {
         ? closeToTrayToggle.checked
         : currentCloseToTrayOnClose;
 
+    const normalizeRequestProxyBypass = (value) => {
+        return String(value || '')
+            .split(/\r?\n/)
+            .flatMap((line) => line.split(','))
+            .map((entry) => entry.trim())
+            .filter(Boolean);
+    };
+
+    const nextRequestProxyEnabled = requestProxyEnabledToggle.checked;
+    const nextRequestProxyUrl = String(requestProxyUrlInput.value || '').trim();
+    const nextRequestProxyBypass = normalizeRequestProxyBypass(requestProxyBypassInput.value);
+
+    const normalizedCurrentRequestProxyBypass = normalizeRequestProxyBypass(currentRequestProxyBypass.join('\n'));
+    const normalizedCurrentRequestProxyUrl = String(currentRequestProxyUrl || '').trim();
+
+    const arraysEqual = (left, right) => {
+        if (left.length !== right.length) {
+            return false;
+        }
+
+        for (let index = 0; index < left.length; index += 1) {
+            if (left[index] !== right[index]) {
+                return false;
+            }
+        }
+
+        return true;
+    };
+
     const hasPanelRuntimeChange = Boolean(nextPanelRuntimeProfile) && nextPanelRuntimeProfile !== currentPanelRuntimeProfile;
     const requiresEmbeddedRuntimeMigration = configuredEmbeddedRuntimeProfile !== currentEmbeddedRuntimeProfile;
     const hasEmbeddedRuntimeChange = Boolean(nextEmbeddedRuntimeProfile)
         && (nextEmbeddedRuntimeProfile !== currentEmbeddedRuntimeProfile || requiresEmbeddedRuntimeMigration);
     const hasChatHistoryModeChange = nextChatHistoryMode !== currentChatHistoryMode;
     const hasCloseToTrayOnCloseChange = nextCloseToTrayOnClose !== currentCloseToTrayOnClose;
+    const hasRequestProxyChange = nextRequestProxyEnabled !== currentRequestProxyEnabled
+        || nextRequestProxyUrl !== normalizedCurrentRequestProxyUrl
+        || !arraysEqual(nextRequestProxyBypass, normalizedCurrentRequestProxyBypass);
 
-    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange) {
+    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange && !hasRequestProxyChange) {
         return;
     }
 
@@ -601,6 +739,13 @@ async function openTauriTavernSettingsPopup() {
     }
     if (hasCloseToTrayOnCloseChange) {
         nextSettings.close_to_tray_on_close = nextCloseToTrayOnClose;
+    }
+    if (hasRequestProxyChange) {
+        nextSettings.request_proxy = {
+            enabled: nextRequestProxyEnabled,
+            url: nextRequestProxyUrl,
+            bypass: nextRequestProxyBypass,
+        };
     }
 
     await updateTauriTavernSettings(nextSettings);
@@ -624,7 +769,9 @@ async function openTauriTavernSettingsPopup() {
         setChatHistoryBootstrapModeName(nextChatHistoryMode);
     }
 
-    window.location.reload();
+    if (hasPanelRuntimeChange || hasEmbeddedRuntimeChange || hasChatHistoryModeChange) {
+        window.location.reload();
+    }
 }
 
 async function openLanSyncPopup() {

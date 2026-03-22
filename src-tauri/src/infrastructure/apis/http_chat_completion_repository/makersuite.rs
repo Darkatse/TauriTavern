@@ -17,8 +17,8 @@ pub(super) async fn list_models(
 ) -> Result<Value, DomainError> {
     let url = build_gemini_url(&config.base_url, "models");
 
-    let request = repository
-        .client
+    let client = repository.client()?;
+    let request = client
         .get(url)
         .header(ACCEPT, "application/json");
     let request = HttpChatCompletionRepository::apply_header_if_present(
@@ -108,8 +108,8 @@ pub(super) async fn generate(
     let model_path = format!("{}:{method}", normalize_gemini_model(model));
     let url = build_gemini_url(&config.base_url, &model_path);
 
-    let request = repository
-        .client
+    let client = repository.client()?;
+    let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
@@ -173,8 +173,8 @@ pub(super) async fn generate_stream(
     let model_path = format!("{}:{method}", normalize_gemini_model(model));
     let url = build_gemini_url(&config.base_url, &model_path);
 
-    let request = repository
-        .stream_client
+    let client = repository.stream_client()?;
+    let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "text/event-stream")

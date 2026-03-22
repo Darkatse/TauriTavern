@@ -9,8 +9,8 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use reqwest::Client;
 use serde_json::json;
+use tauri::Manager;
 use tokio::sync::oneshot;
 use tokio_util::io::ReaderStream;
 
@@ -18,7 +18,7 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::lan_sync::{
     LanSyncDiffPlan, LanSyncManifest, LanSyncPairRequest, LanSyncPairResponse, LanSyncPairedDevice,
 };
-use crate::infrastructure::http_client::build_http_client;
+use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 use crate::infrastructure::lan_sync::crypto::{derive_pair_secret, verify_request_signature};
 use crate::infrastructure::lan_sync::manifest::{diff_manifests, scan_manifest};
 use crate::infrastructure::lan_sync::paths::{resolve_relative_path, validate_relative_path};
@@ -352,8 +352,25 @@ async fn handle_sync_pull_inner(
     tokio::spawn(async move {
         let _permit = permit;
 
-        let http_client =
-            build_http_client(Client::builder()).expect("Failed to build LAN sync HTTP client");
+        let http_clients = runtime_for_task
+            .app_handle()
+            .state::<Arc<HttpClientPool>>()
+            .inner()
+            .clone();
+        let http_client = match http_clients.client(HttpClientProfile::Default) {
+            Ok(client) => client,
+            Err(error) => {
+                if let Err(error) = runtime_for_task.emit_sync_error(
+                    crate::domain::models::lan_sync::LanSyncSyncErrorEvent {
+                        message: error.to_string(),
+                    },
+                ) {
+                    tracing::error!("Failed to emit LAN sync error: {}", error);
+                }
+
+                return;
+            }
+        };
 
         match crate::infrastructure::lan_sync::client::merge_sync_from_device(
             runtime_for_task.clone(),

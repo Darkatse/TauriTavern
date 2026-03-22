@@ -1,9 +1,11 @@
 use bytes::Bytes;
-use reqwest::{Client, Response, StatusCode};
+use reqwest::{Response, StatusCode};
 use serde::Deserialize;
+use std::sync::Arc;
 use url::Url;
 
 use crate::domain::errors::DomainError;
+use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
 use super::{
     ExtensionSourceProvider, ProviderHttpError, parse_bytes_or_error, parse_json_or_error,
@@ -31,12 +33,12 @@ struct GithubApiErrorResponse {
 }
 
 pub(super) struct GithubProvider {
-    http_client: Client,
+    http_clients: Arc<HttpClientPool>,
 }
 
 impl GithubProvider {
-    pub(super) fn new(http_client: Client) -> Self {
-        Self { http_client }
+    pub(super) fn new(http_clients: Arc<HttpClientPool>) -> Self {
+        Self { http_clients }
     }
 
     fn build_api_url(&self, segments: &[&str]) -> Result<Url, DomainError> {
@@ -85,8 +87,8 @@ impl ExtensionSourceProvider for GithubProvider {
         let (owner, repo) = split_owner_repo(repo_path, self.host())?;
         let url = self.build_api_url(&["repos", owner, repo])?;
 
-        let response = self
-            .http_client
+        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
+        let response = http_client
             .get(url.clone())
             .header("Accept", "application/vnd.github+json")
             .send()
@@ -111,8 +113,8 @@ impl ExtensionSourceProvider for GithubProvider {
         let (owner, repo) = split_owner_repo(repo_path, self.host())?;
         let url = self.build_api_url(&["repos", owner, repo, "commits", reference])?;
 
-        let response = self
-            .http_client
+        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
+        let response = http_client
             .get(url.clone())
             .header("Accept", "application/vnd.github+json")
             .send()
@@ -141,8 +143,8 @@ impl ExtensionSourceProvider for GithubProvider {
         let (owner, repo) = split_owner_repo(repo_path, self.host())?;
         let url = self.build_api_url(&["repos", owner, repo, "zipball", commit])?;
 
-        let response = self
-            .http_client
+        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
+        let response = http_client
             .get(url.clone())
             .header("Accept", "application/vnd.github+json")
             .send()

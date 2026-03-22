@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use reqwest::Client;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::extension::{
@@ -8,7 +8,7 @@ use crate::domain::models::extension::{
     ExtensionVersion,
 };
 use crate::domain::repositories::extension_repository::ExtensionRepository;
-use crate::infrastructure::http_client::build_http_client;
+use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::persistence::file_system::read_json_file;
 use crate::infrastructure::third_party_paths::{
     parse_third_party_extension_folder_name, sanitize_third_party_extension_folder_name,
@@ -59,13 +59,10 @@ impl FileExtensionRepository {
         user_extensions_dir: PathBuf,
         global_extensions_dir: PathBuf,
         source_store_root: PathBuf,
+        http_clients: Arc<HttpClientPool>,
     ) -> Result<Self, DomainError> {
-        let http_client = build_http_client(Client::builder()).map_err(|error| {
-            DomainError::InternalError(format!("Failed to build extension HTTP client: {}", error))
-        })?;
-
         let source_store = ExtensionSourceStore::new(source_store_root);
-        let providers = ExtensionSourceProviders::new(http_client);
+        let providers = ExtensionSourceProviders::new(http_clients);
         let repository = Self {
             user_extensions_dir,
             global_extensions_dir,

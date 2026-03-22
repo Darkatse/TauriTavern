@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use reqwest::header::AUTHORIZATION;
@@ -11,41 +11,31 @@ use crate::domain::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
     ChatCompletionSource, ChatCompletionStreamSender,
 };
-use crate::infrastructure::http_client::build_http_client;
+use crate::infrastructure::http_client_pool::{
+    HttpClientPool, HttpClientProfile, CHAT_COMPLETION_CONNECT_TIMEOUT,
+};
 
 mod claude;
 mod makersuite;
 mod normalizers;
 mod openai;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
-const NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-
 pub struct HttpChatCompletionRepository {
-    client: Client,
-    stream_client: Client,
+    http_clients: Arc<HttpClientPool>,
 }
 
 impl HttpChatCompletionRepository {
-    pub fn new() -> Result<Self, DomainError> {
-        let client = build_http_client(
-            Client::builder()
-                .connect_timeout(CONNECT_TIMEOUT)
-                .timeout(NON_STREAM_REQUEST_TIMEOUT),
-        )
-        .map_err(|error| {
-            DomainError::InternalError(format!("Failed to build HTTP client: {error}"))
-        })?;
+    pub fn new(http_clients: Arc<HttpClientPool>) -> Self {
+        Self { http_clients }
+    }
 
-        let stream_client = build_http_client(Client::builder().connect_timeout(CONNECT_TIMEOUT))
-            .map_err(|error| {
-            DomainError::InternalError(format!("Failed to build streaming HTTP client: {error}"))
-        })?;
+    fn client(&self) -> Result<Client, DomainError> {
+        self.http_clients.client(HttpClientProfile::ChatCompletion)
+    }
 
-        Ok(Self {
-            client,
-            stream_client,
-        })
+    fn stream_client(&self) -> Result<Client, DomainError> {
+        self.http_clients
+            .client(HttpClientProfile::ChatCompletionStream)
     }
 
     fn build_url(base_url: &str, path: &str) -> String {
@@ -154,7 +144,7 @@ impl HttpChatCompletionRepository {
                     }
                     continue;
                 }
-                chunk = tokio::time::timeout(CONNECT_TIMEOUT, response.chunk()) => {
+                chunk = tokio::time::timeout(CHAT_COMPLETION_CONNECT_TIMEOUT, response.chunk()) => {
                     match chunk {
                         Ok(chunk) => chunk.map_err(|error| DomainError::InternalError(format!(
                             "{provider_name} stream read failed: {error}"
@@ -162,7 +152,7 @@ impl HttpChatCompletionRepository {
                         Err(_) => {
                             return Err(DomainError::InternalError(format!(
                                 "{provider_name} stream read failed: idle timeout after {}s",
-                                CONNECT_TIMEOUT.as_secs()
+                                CHAT_COMPLETION_CONNECT_TIMEOUT.as_secs()
                             )));
                         }
                     }

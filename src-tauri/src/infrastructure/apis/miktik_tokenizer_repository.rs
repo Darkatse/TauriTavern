@@ -3,17 +3,15 @@ use std::collections::HashSet;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use flate2::read::GzDecoder;
 use miktik::{TokenizerError, TokenizerRegistry};
-use reqwest::Client;
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
-use crate::infrastructure::http_client::build_http_client;
+use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
 const CLAUDE_JSON_BYTES: &[u8] = include_bytes!("../../../resources/tokenizers/claude.json");
 const GEMMA_MODEL_BYTES: &[u8] = include_bytes!("../../../resources/tokenizers/gemma.model");
@@ -33,31 +31,22 @@ struct ModelResourceSpec {
 pub struct MiktikTokenizerRepository {
     registry: Arc<TokenizerRegistry>,
     cache_dir: PathBuf,
-    http_client: Client,
+    http_clients: Arc<HttpClientPool>,
     ready_hf_models: RwLock<HashSet<&'static str>>,
     registration_guard: Mutex<()>,
 }
 
 impl MiktikTokenizerRepository {
-    pub fn new(cache_dir: PathBuf) -> Result<Self, DomainError> {
-        let http_client = build_http_client(
-            Client::builder()
-                .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(60)),
-        )
-        .map_err(|error| {
-            DomainError::InternalError(format!("Failed to build HTTP client: {error}"))
-        })?;
-
+    pub fn new(cache_dir: PathBuf, http_clients: Arc<HttpClientPool>) -> Self {
         let repository = Self {
             registry: Arc::new(TokenizerRegistry::new()),
             cache_dir,
-            http_client,
+            http_clients,
             ready_hf_models: RwLock::new(HashSet::new()),
             registration_guard: Mutex::new(()),
         };
 
-        Ok(repository)
+        repository
     }
 
     fn canonical_model(requested_model: &str) -> &'static str {
@@ -234,8 +223,8 @@ impl MiktikTokenizerRepository {
     }
 
     async fn download_model_bytes(&self, url: &str, gzip: bool) -> Result<Vec<u8>, DomainError> {
-        let response = self
-            .http_client
+        let http_client = self.http_clients.client(HttpClientProfile::Tokenizer)?;
+        let response = http_client
             .get(url)
             .send()
             .await
@@ -493,12 +482,14 @@ impl MiktikTokenizerRepository {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use serde_json::json;
 
     use super::MiktikTokenizerRepository;
     use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
+    use crate::infrastructure::http_client_pool::HttpClientPool;
 
     #[test]
     fn canonical_model_aligns_sillytavern_aliases() {
@@ -555,11 +546,15 @@ mod tests {
         ))
     }
 
+    fn test_http_clients() -> Arc<HttpClientPool> {
+        Arc::new(HttpClientPool::new())
+    }
+
     #[tokio::test]
     async fn bundled_models_are_usable_without_network() {
         let cache_dir = unique_temp_cache_dir();
-        let repository = MiktikTokenizerRepository::new(cache_dir.clone())
-            .expect("repository should initialize with bundled models");
+        let repository =
+            MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
         let messages = vec![json!({"role": "user", "content": "hello world"})];
 
         TokenizerRepository::ensure_model_ready(&repository, "claude-3-7-sonnet")
@@ -584,8 +579,8 @@ mod tests {
     #[tokio::test]
     async fn new_does_not_eagerly_register_bundled_models() {
         let cache_dir = unique_temp_cache_dir();
-        let repository = MiktikTokenizerRepository::new(cache_dir.clone())
-            .expect("repository should initialize");
+        let repository =
+            MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
 
         assert!(!repository.is_model_ready("claude").await);
         assert!(!repository.is_model_ready("gemma").await);
@@ -595,8 +590,8 @@ mod tests {
     #[tokio::test]
     async fn bundled_models_do_not_write_cache_files_on_first_use() {
         let cache_dir = unique_temp_cache_dir();
-        let repository = MiktikTokenizerRepository::new(cache_dir.clone())
-            .expect("repository should initialize");
+        let repository =
+            MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
         let messages = vec![json!({"role": "user", "content": "hello world"})];
 
         TokenizerRepository::ensure_model_ready(&repository, "claude")
@@ -620,13 +615,6 @@ mod tests {
             "gemma bundled tokenizer should not be materialized to cache"
         );
         let _ = std::fs::remove_dir_all(cache_dir);
-    }
-}
-
-impl Default for MiktikTokenizerRepository {
-    fn default() -> Self {
-        let fallback_cache = std::env::temp_dir().join("tauritavern-tokenizers");
-        Self::new(fallback_cache).expect("failed to initialize MiktikTokenizerRepository")
     }
 }
 

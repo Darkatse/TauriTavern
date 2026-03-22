@@ -1,9 +1,10 @@
 use bytes::Bytes;
-use reqwest::Client;
 use serde::Deserialize;
+use std::sync::Arc;
 use url::Url;
 
 use crate::domain::errors::DomainError;
+use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
 use super::{ExtensionSourceProvider, parse_bytes_or_error, parse_json_or_error};
 use crate::infrastructure::repositories::file_extension_repository::repo_url::HOST_GITLAB;
@@ -21,12 +22,12 @@ struct GitLabCommit {
 }
 
 pub(super) struct GitLabProvider {
-    http_client: Client,
+    http_clients: Arc<HttpClientPool>,
 }
 
 impl GitLabProvider {
-    pub(super) fn new(http_client: Client) -> Self {
-        Self { http_client }
+    pub(super) fn new(http_clients: Arc<HttpClientPool>) -> Self {
+        Self { http_clients }
     }
 
     fn encode_project_id(repo_path: &str) -> String {
@@ -60,8 +61,8 @@ impl ExtensionSourceProvider for GitLabProvider {
     async fn default_branch(&self, repo_path: &str) -> Result<String, DomainError> {
         let url = self.project_base_url(repo_path)?;
 
-        let response = self
-            .http_client
+        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
+        let response = http_client
             .get(url.clone())
             .send()
             .await
@@ -87,8 +88,8 @@ impl ExtensionSourceProvider for GitLabProvider {
             .append_pair("ref_name", reference)
             .append_pair("per_page", "1");
 
-        let response = self
-            .http_client
+        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
+        let response = http_client
             .get(url.clone())
             .send()
             .await
@@ -123,8 +124,8 @@ impl ExtensionSourceProvider for GitLabProvider {
         url.set_path(&format!("{}/repository/archive.zip", url.path()));
         url.query_pairs_mut().append_pair("sha", commit);
 
-        let response = self
-            .http_client
+        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
+        let response = http_client
             .get(url.clone())
             .header("Accept", "application/zip")
             .send()

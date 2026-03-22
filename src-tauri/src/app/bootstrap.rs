@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
@@ -44,6 +44,7 @@ use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
 use crate::infrastructure::apis::http_chat_completion_repository::HttpChatCompletionRepository;
 use crate::infrastructure::apis::miktik_tokenizer_repository::MiktikTokenizerRepository;
+use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::persistence::file_system::DataDirectory;
 use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
 use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
@@ -157,10 +158,12 @@ pub(super) fn build_services(
     let user_directory_service = Arc::new(UserDirectoryService::new(
         repositories.user_directory_repository,
     ));
+    let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
     let lan_sync_service = Arc::new(LanSyncService::new(
         app_handle.clone(),
         data_directory.root().to_path_buf(),
         data_directory.default_user().to_path_buf(),
+        http_client_pool,
     ));
 
     // Do not expose secrets by default; this can be enabled by configuration later.
@@ -193,6 +196,7 @@ fn build_repositories(
     app_handle: &AppHandle,
     data_directory: &DataDirectory,
 ) -> Result<AppRepositories, DomainError> {
+    let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
     let data_root = data_directory.root().to_path_buf();
     let default_user_dir = data_directory.default_user().to_path_buf();
 
@@ -235,6 +239,7 @@ fn build_repositories(
             default_user_dir.join("extensions"),
             data_directory.global_extensions().to_path_buf(),
             data_directory.extension_sources().to_path_buf(),
+            http_client_pool.clone(),
         )?);
 
     let avatar_repository: Arc<dyn AvatarRepository> = Arc::new(FileAvatarRepository::new(
@@ -265,15 +270,19 @@ fn build_repositories(
     );
 
     let chat_completion_repository: Arc<dyn ChatCompletionRepository> =
-        Arc::new(HttpChatCompletionRepository::new()?);
+        Arc::new(HttpChatCompletionRepository::new(http_client_pool.clone()));
     let tokenizer_cache_dir = data_root.join("_cache").join("tokenizers");
     let tokenizer_repository: Arc<dyn TokenizerRepository> =
-        Arc::new(MiktikTokenizerRepository::new(tokenizer_cache_dir)?);
+        Arc::new(MiktikTokenizerRepository::new(
+            tokenizer_cache_dir,
+            http_client_pool.clone(),
+        ));
     let world_info_repository: Arc<dyn WorldInfoRepository> = Arc::new(
         FileWorldInfoRepository::new(data_directory.default_user().join("worlds")),
     );
 
-    let update_repository: Arc<dyn UpdateRepository> = Arc::new(GitHubUpdateRepository::new()?);
+    let update_repository: Arc<dyn UpdateRepository> =
+        Arc::new(GitHubUpdateRepository::new(http_client_pool.clone()));
 
     Ok(AppRepositories {
         character_repository,

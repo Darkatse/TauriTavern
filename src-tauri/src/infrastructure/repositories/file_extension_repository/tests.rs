@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use rand::random;
 use serde_json::json;
@@ -6,6 +7,7 @@ use tokio::fs;
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::extension_repository::ExtensionRepository;
+use crate::infrastructure::http_client_pool::HttpClientPool;
 
 use super::FileExtensionRepository;
 
@@ -50,6 +52,10 @@ fn legacy_source_metadata() -> serde_json::Value {
     })
 }
 
+fn test_http_clients() -> Arc<HttpClientPool> {
+    Arc::new(HttpClientPool::new())
+}
+
 #[tokio::test]
 async fn startup_migration_moves_legacy_source_state_into_new_store() {
     let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
@@ -68,6 +74,7 @@ async fn startup_migration_moves_legacy_source_state_into_new_store() {
         user_extensions_dir.clone(),
         global_extensions_dir,
         source_store_root.clone(),
+        test_http_clients(),
     )
     .expect("create extension repository");
 
@@ -132,6 +139,7 @@ async fn startup_migration_rebuilds_missing_source_state_from_git_dir() {
         user_extensions_dir.clone(),
         global_extensions_dir,
         source_store_root.clone(),
+        test_http_clients(),
     )
     .expect("create extension repository");
 
@@ -197,6 +205,7 @@ async fn startup_migration_rebuilds_missing_source_state_from_git_dir_for_gitlab
         user_extensions_dir.clone(),
         global_extensions_dir,
         source_store_root.clone(),
+        test_http_clients(),
     )
     .expect("create extension repository");
 
@@ -262,6 +271,7 @@ async fn startup_migration_rebuilds_missing_source_state_from_git_dir_for_gitee(
         user_extensions_dir.clone(),
         global_extensions_dir,
         source_store_root.clone(),
+        test_http_clients(),
     )
     .expect("create extension repository");
 
@@ -334,6 +344,7 @@ async fn startup_migration_rebuilds_missing_source_state_from_gitfile_commondir_
         user_extensions_dir.clone(),
         global_extensions_dir,
         source_store_root.clone(),
+        test_http_clients(),
     )
     .expect("create extension repository");
 
@@ -380,6 +391,7 @@ async fn move_extension_moves_source_state_between_scopes() {
         user_extensions_dir.clone(),
         global_extensions_dir.clone(),
         source_store_root.clone(),
+        test_http_clients(),
     )
     .expect("create extension repository");
 
@@ -432,6 +444,7 @@ async fn delete_extension_removes_source_state_file() {
         user_extensions_dir.clone(),
         global_extensions_dir,
         source_store_root.clone(),
+        test_http_clients(),
     )
     .expect("create extension repository");
 
@@ -462,6 +475,7 @@ async fn delete_extension_rejects_nested_extension_identifier() {
         user_extensions_dir,
         global_extensions_dir,
         source_store_root,
+        test_http_clients(),
     )
     .expect("create extension repository");
 
@@ -497,6 +511,7 @@ async fn discover_extensions_keeps_extensions_without_source_state_as_unmanaged(
         user_extensions_dir.clone(),
         global_extensions_dir,
         source_store_root,
+        test_http_clients(),
     )
     .expect("create extension repository");
 
@@ -547,6 +562,7 @@ async fn discover_extensions_accepts_single_item_asset_arrays_in_manifest() {
         user_extensions_dir,
         global_extensions_dir,
         source_store_root,
+        test_http_clients(),
     )
     .expect("create extension repository");
 

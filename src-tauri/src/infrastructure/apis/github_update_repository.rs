@@ -1,11 +1,11 @@
 use async_trait::async_trait;
-use reqwest::Client;
 use serde::Deserialize;
+use std::sync::Arc;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::update::ReleaseInfo;
 use crate::domain::repositories::update_repository::UpdateRepository;
-use crate::infrastructure::http_client::build_http_client;
+use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
 const GITHUB_API_LATEST_RELEASE: &str =
     "https://api.github.com/repos/Darkatse/TauriTavern/releases/latest";
@@ -21,24 +21,20 @@ struct GitHubRelease {
 }
 
 pub struct GitHubUpdateRepository {
-    client: Client,
+    http_clients: Arc<HttpClientPool>,
 }
 
 impl GitHubUpdateRepository {
-    pub fn new() -> Result<Self, DomainError> {
-        let client = build_http_client(Client::builder()).map_err(|error| {
-            DomainError::InternalError(format!("Failed to build HTTP client: {error}"))
-        })?;
-
-        Ok(Self { client })
+    pub fn new(http_clients: Arc<HttpClientPool>) -> Self {
+        Self { http_clients }
     }
 }
 
 #[async_trait]
 impl UpdateRepository for GitHubUpdateRepository {
     async fn get_latest_release(&self) -> Result<ReleaseInfo, DomainError> {
-        let response: GitHubRelease = self
-            .client
+        let client = self.http_clients.client(HttpClientProfile::Default)?;
+        let response: GitHubRelease = client
             .get(GITHUB_API_LATEST_RELEASE)
             .header("Accept", "application/vnd.github+json")
             .send()

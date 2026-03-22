@@ -4,7 +4,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use local_ip_address::{list_afinet_netifas, local_ip};
 use qrcode::QrCode;
-use reqwest::Client;
 use tauri::AppHandle;
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -16,25 +15,27 @@ use crate::domain::models::lan_sync::{
     LanSyncPairRequest, LanSyncPairResponse, LanSyncPairedDevice, LanSyncStatus,
     LanSyncSyncCompletedEvent, LanSyncSyncErrorEvent, LanSyncSyncMode,
 };
-use crate::infrastructure::http_client::build_http_client;
+use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 use crate::infrastructure::lan_sync::crypto::{derive_pair_secret, random_base64url, sign_request};
 use crate::infrastructure::lan_sync::runtime::{LanSyncPairingSession, LanSyncRuntime};
 use crate::infrastructure::lan_sync::server::{LanSyncServerHandle, spawn_lan_sync_server};
 
 pub struct LanSyncService {
     runtime: Arc<LanSyncRuntime>,
-    http_client: Client,
+    http_clients: Arc<HttpClientPool>,
     server: Mutex<Option<LanSyncServerHandle>>,
 }
 
 impl LanSyncService {
-    pub fn new(app_handle: AppHandle, sync_root: PathBuf, store_root: PathBuf) -> Self {
-        let http_client =
-            build_http_client(Client::builder()).expect("Failed to build LAN sync HTTP client");
-
+    pub fn new(
+        app_handle: AppHandle,
+        sync_root: PathBuf,
+        store_root: PathBuf,
+        http_clients: Arc<HttpClientPool>,
+    ) -> Self {
         Self {
             runtime: Arc::new(LanSyncRuntime::new(app_handle, sync_root, store_root)),
-            http_client,
+            http_clients,
             server: Mutex::new(None),
         }
     }
@@ -267,8 +268,8 @@ impl LanSyncService {
         let signature = sign_request(parsed.pair_code.as_bytes(), "POST", "/v1/pair", &body);
 
         let url = format!("{}/v1/pair", parsed.address.trim_end_matches('/'));
-        let response = self
-            .http_client
+        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
+        let response = http_client
             .post(url)
             .header("X-TT-Signature", signature)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -378,9 +379,10 @@ impl LanSyncService {
         &self,
         device_id: &str,
     ) -> Result<LanSyncSyncCompletedEvent, DomainError> {
+        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
         crate::infrastructure::lan_sync::client::merge_sync_from_device(
             self.runtime.clone(),
-            &self.http_client,
+            &http_client,
             device_id,
         )
         .await
@@ -408,8 +410,8 @@ impl LanSyncService {
 
         let signature = sign_request(peer.pair_secret.as_bytes(), "POST", "/v1/sync/pull", &[]);
 
-        let response = self
-            .http_client
+        let http_client = self.http_clients.client(HttpClientProfile::Default)?;
+        let response = http_client
             .post(url)
             .header("X-TT-Device-Id", identity.device_id)
             .header("X-TT-Signature", signature)

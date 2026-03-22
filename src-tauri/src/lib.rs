@@ -5,6 +5,7 @@ mod infrastructure;
 mod presentation;
 
 use app::spawn_initialization;
+use infrastructure::http_client_pool::HttpClientPool;
 use infrastructure::logging::logger;
 use infrastructure::paths::resolve_runtime_paths;
 use infrastructure::third_party_assets::ThirdPartyExtensionDirs;
@@ -38,6 +39,8 @@ pub async fn run() {
             logger::bind_app_handle(app_handle.clone());
 
             let runtime_paths = resolve_runtime_paths(&app_handle)?;
+            let http_client_pool = std::sync::Arc::new(HttpClientPool::new());
+            app.manage(http_client_pool.clone());
 
             if let Err(error) = logger::init_logger(&runtime_paths.log_root) {
                 eprintln!("Failed to initialize logger: {}", error);
@@ -61,6 +64,11 @@ pub async fn run() {
             let user_dirs = DefaultUserWebDirs::from_data_root(&runtime_paths.data_root);
             app.manage(third_party_dirs.clone());
             app.manage(user_dirs.clone());
+
+            let tauritavern_settings =
+                load_tauritavern_settings(&runtime_paths.data_root)?;
+            http_client_pool
+                .apply_request_proxy_settings(&tauritavern_settings.request_proxy)?;
             let _main_window = create_main_window(app, third_party_dirs, user_dirs)?;
 
             #[cfg(target_os = "windows")]
@@ -127,17 +135,23 @@ fn create_main_window(
 fn load_close_to_tray_on_close_setting(
     data_root: &std::path::Path,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    let settings = load_tauritavern_settings(data_root)?;
+    Ok(settings.close_to_tray_on_close)
+}
+
+fn load_tauritavern_settings(
+    data_root: &std::path::Path,
+) -> Result<crate::domain::models::settings::TauriTavernSettings, Box<dyn std::error::Error>>
+{
     let path = data_root
         .join("default-user")
         .join("tauritavern-settings.json");
 
     if !path.is_file() {
-        return Ok(true);
+        return Ok(crate::domain::models::settings::TauriTavernSettings::default());
     }
 
     let raw = std::fs::read_to_string(&path)?;
-    let settings: crate::domain::models::settings::TauriTavernSettings =
-        serde_json::from_str(&raw)?;
-
-    Ok(settings.close_to_tray_on_close)
+    let settings = serde_json::from_str(&raw)?;
+    Ok(settings)
 }

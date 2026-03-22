@@ -62,6 +62,10 @@ impl SettingsService {
             settings.close_to_tray_on_close = close_to_tray_on_close;
         }
 
+        if let Some(request_proxy) = dto.request_proxy {
+            settings.request_proxy = request_proxy.into();
+        }
+
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;

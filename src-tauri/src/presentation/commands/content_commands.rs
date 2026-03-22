@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use reqwest::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
-use reqwest::redirect::Policy;
 use serde::Serialize;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::infrastructure::http_client::build_http_client;
+use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -49,6 +48,7 @@ pub struct ExternalImportDownloadResult {
 #[tauri::command]
 pub async fn download_external_import_url(
     url: String,
+    http_clients: State<'_, Arc<HttpClientPool>>,
 ) -> Result<ExternalImportDownloadResult, CommandError> {
     log_command("download_external_import_url");
 
@@ -64,7 +64,8 @@ pub async fn download_external_import_url(
         }
     }
 
-    let client = build_http_client(reqwest::Client::builder().redirect(Policy::limited(5)))
+    let client = http_clients
+        .client(HttpClientProfile::Download)
         .map_err(|error| CommandError::InternalServerError(error.to_string()))?;
 
     let response = client

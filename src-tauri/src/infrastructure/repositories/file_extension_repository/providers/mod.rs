@@ -1,10 +1,12 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use reqwest::{Client, Response, StatusCode};
+use reqwest::{Response, StatusCode};
 use serde::de::DeserializeOwned;
+use std::sync::Arc;
 use url::Url;
 
 use crate::domain::errors::DomainError;
+use crate::infrastructure::http_client_pool::HttpClientPool;
 
 use super::repo_url::{HOST_GITEE, HOST_GITHUB, HOST_GITLAB};
 
@@ -39,11 +41,11 @@ pub(super) struct ExtensionSourceProviders {
 }
 
 impl ExtensionSourceProviders {
-    pub(super) fn new(http_client: Client) -> Self {
+    pub(super) fn new(http_clients: Arc<HttpClientPool>) -> Self {
         Self {
-            github: github::GithubProvider::new(http_client.clone()),
-            gitlab: gitlab::GitLabProvider::new(http_client.clone()),
-            gitee: gitee::GiteeProvider::new(http_client),
+            github: github::GithubProvider::new(http_clients.clone()),
+            gitlab: gitlab::GitLabProvider::new(http_clients.clone()),
+            gitee: gitee::GiteeProvider::new(http_clients),
         }
     }
 

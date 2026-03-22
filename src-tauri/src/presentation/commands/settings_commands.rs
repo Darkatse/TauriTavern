@@ -3,6 +3,8 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
+use crate::domain::models::settings::RequestProxySettings;
+use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::application::dto::settings_dto::{
     SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
     UpdateTauriTavernSettingsDto, UserSettingsDto,
@@ -28,9 +30,17 @@ pub async fn get_tauritavern_settings(
 pub async fn update_tauritavern_settings(
     dto: UpdateTauriTavernSettingsDto,
     app_state: State<'_, Arc<AppState>>,
+    http_clients: State<'_, Arc<HttpClientPool>>,
     tray_state: State<'_, Arc<crate::presentation::windows_tray::WindowsTrayState>>,
 ) -> Result<TauriTavernSettingsDto, CommandError> {
     log_command("update_tauritavern_settings");
+
+    let request_proxy_settings: Option<RequestProxySettings> =
+        dto.request_proxy.clone().map(Into::into);
+    if let Some(settings) = request_proxy_settings.as_ref() {
+        HttpClientPool::validate_request_proxy_settings(settings)
+            .map_err(map_command_error("Invalid request proxy settings"))?;
+    }
 
     let settings = app_state
         .settings_service
@@ -40,6 +50,12 @@ pub async fn update_tauritavern_settings(
 
     tray_state.set_close_to_tray_on_close(settings.close_to_tray_on_close);
 
+    if request_proxy_settings.is_some() {
+        http_clients
+            .apply_request_proxy_settings(&settings.request_proxy.clone().into())
+            .map_err(map_command_error("Failed to apply request proxy settings"))?;
+    }
+
     Ok(settings)
 }
 
@@ -48,14 +64,30 @@ pub async fn update_tauritavern_settings(
 pub async fn update_tauritavern_settings(
     dto: UpdateTauriTavernSettingsDto,
     app_state: State<'_, Arc<AppState>>,
+    http_clients: State<'_, Arc<HttpClientPool>>,
 ) -> Result<TauriTavernSettingsDto, CommandError> {
     log_command("update_tauritavern_settings");
 
-    app_state
+    let request_proxy_settings: Option<RequestProxySettings> =
+        dto.request_proxy.clone().map(Into::into);
+    if let Some(settings) = request_proxy_settings.as_ref() {
+        HttpClientPool::validate_request_proxy_settings(settings)
+            .map_err(map_command_error("Invalid request proxy settings"))?;
+    }
+
+    let settings = app_state
         .settings_service
         .update_tauritavern_settings(dto)
         .await
-        .map_err(map_command_error("Failed to update TauriTavern settings"))
+        .map_err(map_command_error("Failed to update TauriTavern settings"))?;
+
+    if request_proxy_settings.is_some() {
+        http_clients
+            .apply_request_proxy_settings(&settings.request_proxy.clone().into())
+            .map_err(map_command_error("Failed to apply request proxy settings"))?;
+    }
+
+    Ok(settings)
 }
 
 #[tauri::command]

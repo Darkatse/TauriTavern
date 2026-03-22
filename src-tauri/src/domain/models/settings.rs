@@ -21,11 +21,44 @@ fn default_close_to_tray_on_close() -> bool {
     cfg!(target_os = "windows")
 }
 
+fn default_request_proxy_bypass() -> Vec<String> {
+    vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+        "10.0.0.0/8".to_string(),
+        "172.16.0.0/12".to_string(),
+        "192.168.0.0/16".to_string(),
+        "169.254.0.0/16".to_string(),
+        ".local".to_string(),
+    ]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatHistoryMode {
     Windowed,
     Off,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestProxySettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default = "default_request_proxy_bypass")]
+    pub bypass: Vec<String>,
+}
+
+impl Default for RequestProxySettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: String::new(),
+            bypass: default_request_proxy_bypass(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -50,6 +83,8 @@ pub struct TauriTavernSettings {
     #[serde(default = "default_close_to_tray_on_close")]
     pub close_to_tray_on_close: bool,
     #[serde(default)]
+    pub request_proxy: RequestProxySettings,
+    #[serde(default)]
     pub migrations: TauriTavernMigrationState,
 }
 
@@ -62,6 +97,7 @@ impl Default for TauriTavernSettings {
             embedded_runtime_profile: default_embedded_runtime_profile(),
             chat_history_mode: default_chat_history_mode(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
+            request_proxy: RequestProxySettings::default(),
             migrations: TauriTavernMigrationState::default(),
         }
     }
