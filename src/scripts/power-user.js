@@ -87,7 +87,7 @@ const defaultStoryString = '{{#if system}}{{system}}\n{{/if}}{{#if description}}
 const defaultExampleSeparator = '***';
 const defaultChatStart = '***';
 const defaultToastPosition = 'toast-top-center';
-const MOBILE_THEME_CHAT_WIDTH_VW = 100;
+const MOBILE_PORTRAIT_CHAT_WIDTH_VW = 100;
 const MOBILE_INSET_TOP = 'max(var(--tt-inset-top), 0px)';
 const MOBILE_INSET_RIGHT = 'max(var(--tt-inset-right), 0px)';
 const MOBILE_INSET_LEFT = 'max(var(--tt-inset-left), 0px)';
@@ -1096,24 +1096,37 @@ function applyToastrPosition() {
     $(`#toastr_position option[value="${power_user.toastr_position}"]`).prop('selected', true);
 }
 
+function isMobilePortraitViewport() {
+    return isMobile() && window.matchMedia('(orientation: portrait)').matches;
+}
+
+function getEffectiveChatWidth() {
+    return isMobilePortraitViewport() ? MOBILE_PORTRAIT_CHAT_WIDTH_VW : power_user.chat_width;
+}
+
 function applyChatWidth(type) {
+    const effectiveChatWidth = getEffectiveChatWidth();
+    const isChatWidthForced = isMobilePortraitViewport();
+    const chatWidthSlider = $('#chat_width_slider');
+    const chatWidthCounter = $('#chat_width_slider_counter');
+
     if (type === 'forced') {
-        let r = document.documentElement;
-        r.style.setProperty('--sheldWidth', `${power_user.chat_width}vw`);
-        $('#chat_width_slider').val(power_user.chat_width);
+        const rootStyle = document.documentElement.style;
+        rootStyle.setProperty('--sheldWidth', `${effectiveChatWidth}vw`);
         //document.documentElement.style.setProperty('--sheldWidth', power_user.chat_width);
     } else {
         //this is to prevent the slider from updating page in real time
-        $('#chat_width_slider').off('mouseup touchend').on('mouseup touchend', async () => {
+        chatWidthSlider.off('mouseup touchend').on('mouseup touchend', async () => {
             // This is a hack for Firefox to let it render before applying the block width.
             // Otherwise it takes the incorrect slider position with the new value AFTER the resizing.
             await delay(1);
-            document.documentElement.style.setProperty('--sheldWidth', `${power_user.chat_width}vw`);
+            document.documentElement.style.setProperty('--sheldWidth', `${getEffectiveChatWidth()}vw`);
             await delay(1);
         });
     }
 
-    $('#chat_width_slider_counter').val(power_user.chat_width);
+    chatWidthSlider.prop('disabled', isChatWidthForced).val(effectiveChatWidth);
+    chatWidthCounter.prop('disabled', isChatWidthForced).val(effectiveChatWidth);
 }
 
 function applyThemeColor(type) {
@@ -1157,15 +1170,6 @@ function applyThemeColor(type) {
     if (type === 'border') {
         document.documentElement.style.setProperty('--SmartThemeBorderColor', power_user.border_color);
     }
-}
-
-function normalizeThemeForMobile(theme) {
-    if (!isMobile() || typeof theme !== 'object' || theme === null) {
-        return theme;
-    }
-
-    theme.chat_width = MOBILE_THEME_CHAT_WIDTH_VW;
-    return theme;
 }
 
 function enforceMobileTopBarSafeArea() {
@@ -1270,8 +1274,7 @@ function showMediaDisplayReloadPrompt() {
 }
 
 function applyTheme(name) {
-    const rawTheme = themes.find(x => x.name == name);
-    const theme = normalizeThemeForMobile(rawTheme);
+    const theme = themes.find(x => x.name == name);
 
     if (!theme) {
         return;
@@ -2641,7 +2644,7 @@ function getNewTheme(parsed) {
             theme[key] = parsed[key];
         }
     }
-    return normalizeThemeForMobile(theme);
+    return theme;
 }
 
 async function saveMovingUI() {
@@ -3358,6 +3361,10 @@ jQuery(() => {
         }
 
         if (isMobileResize) {
+            if (hasWidthChange) {
+                applyChatWidth('forced');
+            }
+
             coreTruthWinWidth = nextWidth;
             coreTruthWinHeight = nextHeight;
             return;
