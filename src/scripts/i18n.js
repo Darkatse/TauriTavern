@@ -167,11 +167,52 @@ function findLang(language) {
 }
 
 /**
+ * Splits a data-i18n attribute value into semicolon-delimited keys while preserving HTML entities.
+ * @param {string} value Raw data-i18n attribute value
+ * @returns {string[]} Parsed keys
+ */
+function splitDataI18nKeys(value) {
+    const keys = [];
+    let current = '';
+
+    for (let index = 0; index < value.length; index++) {
+        const char = value[index];
+
+        if (char === '&') {
+            const entityMatch = value.slice(index).match(/^&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);/);
+            if (entityMatch) {
+                current += entityMatch[0];
+                index += entityMatch[0].length - 1;
+                continue;
+            }
+        }
+
+        if (char === ';') {
+            const key = current.trim();
+            if (key) {
+                keys.push(key);
+            }
+            current = '';
+            continue;
+        }
+
+        current += char;
+    }
+
+    const tail = current.trim();
+    if (tail) {
+        keys.push(tail);
+    }
+
+    return keys;
+}
+
+/**
  * Translates a given element based on its data-i18n attribute.
  * @param {Element} element The element to translate
  */
 function translateElement(element) {
-    const keys = element.getAttribute('data-i18n').split(';'); // Multi-key entries are ; delimited
+    const keys = splitDataI18nKeys(element.getAttribute('data-i18n')); // Multi-key entries are ; delimited
     for (const key of keys) {
         const attributeMatch = key.match(/\[(\S+)\](.+)/); // [attribute]key
         if (attributeMatch) { // attribute-tagged key
