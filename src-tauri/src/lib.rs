@@ -18,6 +18,37 @@ use presentation::web_resources::thumbnail_endpoint::handle_thumbnail_web_reques
 use presentation::web_resources::user_data_endpoint::handle_user_data_asset_web_request;
 use tauri::Manager;
 
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+fn desktop_window_state_flags() -> tauri_plugin_window_state::StateFlags {
+    use tauri_plugin_window_state::StateFlags;
+
+    StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED
+}
+
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+fn install_window_state_plugin(
+    app_handle: &tauri::AppHandle,
+    data_root: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let flags = desktop_window_state_flags();
+    let state_path = data_root.join("_tauritavern").join(".window-state.json");
+    std::fs::create_dir_all(
+        state_path
+            .parent()
+            .expect("Window state path must have parent directory"),
+    )?;
+
+    app_handle.plugin(
+        tauri_plugin_window_state::Builder::new()
+            .with_state_flags(flags)
+            .with_filename(state_path.to_string_lossy())
+            .skip_initial_state("main")
+            .build(),
+    )?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub async fn run() {
     let builder = tauri::Builder::default()
@@ -41,6 +72,9 @@ pub async fn run() {
             let runtime_paths = resolve_runtime_paths(&app_handle)?;
             let http_client_pool = std::sync::Arc::new(HttpClientPool::new());
             app.manage(http_client_pool.clone());
+
+            #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+            install_window_state_plugin(&app_handle, &runtime_paths.data_root)?;
 
             if let Err(error) = logger::init_logger(&runtime_paths.log_root) {
                 eprintln!("Failed to initialize logger: {}", error);
@@ -112,7 +146,7 @@ fn create_main_window(
     let global_extensions_dir = third_party_dirs.global_dir;
     let user_dirs = user_dirs;
 
-    let window = tauri::webview::WebviewWindowBuilder::from_config(app.handle(), window_config)?
+    let builder = tauri::webview::WebviewWindowBuilder::from_config(app.handle(), window_config)?
         .on_web_resource_request(move |request, response| {
             handle_third_party_asset_web_request(
                 &local_extensions_dir,
@@ -122,11 +156,25 @@ fn create_main_window(
             );
             handle_thumbnail_web_request(&user_dirs, &request, response);
             handle_user_data_asset_web_request(&user_dirs, &request, response);
-        })
-        .build()?;
+        });
+
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    let builder = builder.visible(false);
+
+    let window = builder.build()?;
 
     #[cfg(target_os = "ios")]
     infrastructure::ios_webview::disable_wkwebview_content_inset_adjustment(&window)?;
+
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    {
+        use tauri_plugin_window_state::WindowExt;
+
+        let flags = desktop_window_state_flags();
+        window.restore_state(flags)?;
+        window.show()?;
+        window.set_focus()?;
+    }
 
     Ok(window)
 }

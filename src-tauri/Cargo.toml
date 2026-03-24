@@ -63,6 +63,9 @@ webpki-roots = "1"
 ttsync-contract = { git = "https://github.com/Darkatse/TT-Sync.git", rev = "9915067541833e8f1363c36393fd973222dcfff5" }
 ttsync-core = { git = "https://github.com/Darkatse/TT-Sync.git", rev = "9915067541833e8f1363c36393fd973222dcfff5" }
 
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-window-state = "2.4.1"
+
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6.4"
 block2 = "0.6.2"
