@@ -16,7 +16,9 @@ import {
 
 const TAURITAVERN_SETTINGS_BUTTON_ID = 'tauritavern_settings_button';
 const LAN_SYNC_DEVICES_CHANGED_EVENT = 'tauritavern:lan_sync_devices_changed';
-const DEVICE_ALIAS_STORAGE_PREFIX = 'tauritavern:lan_sync_device_alias:';
+const TT_SYNC_SERVERS_CHANGED_EVENT = 'tauritavern:tt_sync_servers_changed';
+const LAN_SYNC_DEVICE_ALIAS_STORAGE_PREFIX = 'tauritavern:lan_sync_device_alias:';
+const TT_SYNC_SERVER_ALIAS_STORAGE_PREFIX = 'tauritavern:tt_sync_server_alias:';
 const LAN_SYNC_ADVERTISE_ADDRESS_STORAGE_KEY = 'tauritavern:lan_sync_advertise_address';
 let pairingListenerInstalled = false;
 let syncListenerInstalled = false;
@@ -48,7 +50,7 @@ function runOrPopup(task) {
     })();
 }
 
-export function installLanSyncPanel() {
+export function installTauriTavernSettingsPanel() {
     installPairingListener();
     installSyncListeners();
 
@@ -58,6 +60,35 @@ export function installLanSyncPanel() {
     }
 
     bindLanSyncButton();
+}
+
+function buildMirrorWarningContent(titleText, detailText) {
+    const content = document.createElement('div');
+    content.className = 'flex-container flexFlowColumn';
+    content.style.gap = '10px';
+
+    const header = document.createElement('div');
+    header.className = 'flex-container alignItemsBaseline';
+    header.style.gap = '8px';
+
+    const icon = document.createElement('i');
+    icon.className = 'fa-solid fa-triangle-exclamation';
+    icon.style.color = 'var(--fullred)';
+    header.appendChild(icon);
+
+    const title = document.createElement('b');
+    title.textContent = translate(titleText);
+    header.appendChild(title);
+
+    content.appendChild(header);
+
+    const details = document.createElement('div');
+    details.style.opacity = '0.95';
+    details.style.whiteSpace = 'pre-wrap';
+    details.textContent = translate(detailText);
+    content.appendChild(details);
+
+    return content;
 }
 
 function bindLanSyncButton() {
@@ -139,7 +170,7 @@ function installSyncListeners() {
         await listen('lan_sync:progress', (event) => {
             const payload = event.payload;
 
-            ensureSyncProgressPopup();
+            ensureSyncProgressPopup('LAN Sync progress');
             updateSyncProgressPopup(payload);
         });
 
@@ -190,11 +221,76 @@ function installSyncListeners() {
                 large: false,
             });
         });
+
+        await listen('tt_sync:progress', (event) => {
+            const payload = event.payload;
+
+            ensureSyncProgressPopup('TT-Sync progress');
+            updateSyncProgressPopup(payload);
+        });
+
+        await listen('tt_sync:completed', async (event) => {
+            const payload = event.payload;
+
+            if (syncProgressPopup) {
+                await syncProgressPopup.completeAffirmative();
+            }
+            syncProgressPopup = null;
+            syncProgressElements = null;
+
+            window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
+
+            const files = payload.files_total;
+            const bytes = payload.bytes_total;
+            const deleted = payload.files_deleted;
+            const direction = payload.direction === 'Push' ? translate('Push') : translate('Pull');
+
+            const message = [
+                t`TT-Sync ${direction} completed.`,
+                t`Files: ${files}`,
+                typeof deleted === 'number' && deleted > 0 ? t`Deleted: ${deleted}` : null,
+                t`Bytes: ${formatBytes(bytes)}`,
+                payload.direction === 'Pull' ? '' : null,
+                payload.direction === 'Pull' ? translate('The app will now reload to refresh data.') : null,
+            ].filter(Boolean).join('\n');
+
+            await callGenericPopup(message, POPUP_TYPE.TEXT, '', {
+                okButton: translate('OK'),
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+            });
+
+            if (payload.direction === 'Pull') {
+                window.location.reload();
+            }
+        });
+
+        await listen('tt_sync:error', async (event) => {
+            const payload = event.payload;
+
+            if (syncProgressPopup) {
+                await syncProgressPopup.completeAffirmative();
+            }
+            syncProgressPopup = null;
+            syncProgressElements = null;
+
+            const message = translate(payload.message);
+            await callGenericPopup(String(message), POPUP_TYPE.TEXT, '', {
+                okButton: translate('OK'),
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+            });
+        });
     })();
 }
 
-function ensureSyncProgressPopup() {
+function ensureSyncProgressPopup(titleText) {
     if (syncProgressPopup) {
+        if (syncProgressElements?.title && titleText) {
+            syncProgressElements.title.textContent = translate(titleText);
+        }
         return syncProgressPopup;
     }
 
@@ -203,7 +299,7 @@ function ensureSyncProgressPopup() {
     root.style.gap = '10px';
 
     const title = document.createElement('b');
-    title.textContent = translate('LAN Sync progress');
+    title.textContent = translate(titleText || 'Sync progress');
     root.appendChild(title);
 
     const phase = document.createElement('div');
@@ -220,7 +316,7 @@ function ensureSyncProgressPopup() {
     current.style.opacity = '0.9';
     root.appendChild(current);
 
-    syncProgressElements = { phase, counts, bytes, current };
+    syncProgressElements = { title, phase, counts, bytes, current };
     updateSyncProgressPopup({
         phase: 'Starting',
         files_done: 0,
@@ -252,6 +348,7 @@ function updateSyncProgressPopup(payload) {
         return;
     }
 
+    const direction = payload.direction || null;
     const phase = payload.phase;
     const filesDone = payload.files_done;
     const filesTotal = payload.files_total;
@@ -259,22 +356,77 @@ function updateSyncProgressPopup(payload) {
     const bytesTotal = payload.bytes_total;
     const currentPath = payload.current_path;
 
-    syncProgressElements.phase.textContent = t`Phase: ${translate(phase)}`;
+    syncProgressElements.phase.textContent = direction
+        ? t`Phase: ${translate(direction)} / ${translate(phase)}`
+        : t`Phase: ${translate(phase)}`;
     syncProgressElements.counts.textContent = t`Files: ${filesDone}/${filesTotal}`;
     syncProgressElements.bytes.textContent = t`Bytes: ${formatBytes(bytesDone)}/${formatBytes(bytesTotal)}`;
     syncProgressElements.current.textContent = currentPath ? t`Current: ${currentPath}` : '';
 }
 
-function getDeviceAlias(deviceId) {
-    return localStorage.getItem(`${DEVICE_ALIAS_STORAGE_PREFIX}${deviceId}`) || '';
+function getLocalAlias(storagePrefix, id) {
+    return localStorage.getItem(`${storagePrefix}${id}`) || '';
 }
 
-function setDeviceAlias(deviceId, alias) {
-    localStorage.setItem(`${DEVICE_ALIAS_STORAGE_PREFIX}${deviceId}`, alias);
+function setLocalAlias(storagePrefix, id, alias) {
+    localStorage.setItem(`${storagePrefix}${id}`, alias);
 }
 
-function clearDeviceAlias(deviceId) {
-    localStorage.removeItem(`${DEVICE_ALIAS_STORAGE_PREFIX}${deviceId}`);
+function clearLocalAlias(storagePrefix, id) {
+    localStorage.removeItem(`${storagePrefix}${id}`);
+}
+
+function bindLocalRename(nameElement, storagePrefix, id, fallbackName, rerender) {
+    nameElement.style.cursor = 'pointer';
+    nameElement.title = translate('Click to rename');
+    nameElement.addEventListener('click', () => {
+        runOrPopup(async () => {
+            const existing = getLocalAlias(storagePrefix, id);
+            const initial = existing || fallbackName;
+            const result = await callGenericPopup(
+                translate('Rename paired device (local only). Leave empty to reset.'),
+                POPUP_TYPE.INPUT,
+                initial,
+                {
+                    okButton: translate('Save'),
+                    cancelButton: translate('Cancel'),
+                    rows: 1,
+                    allowVerticalScrolling: true,
+                    wide: false,
+                    large: false,
+                },
+            );
+
+            if (typeof result !== 'string') {
+                return;
+            }
+
+            const trimmed = result.trim();
+            if (!trimmed) {
+                clearLocalAlias(storagePrefix, id);
+            } else {
+                setLocalAlias(storagePrefix, id, trimmed);
+            }
+
+            rerender();
+        });
+    });
+}
+
+function buildRenamableNameLine(displayName, storagePrefix, id, fallbackName, rerender) {
+    const name = document.createElement('b');
+    name.textContent = displayName;
+
+    const edit = document.createElement('i');
+    edit.className = 'fa-solid fa-pen-to-square';
+    edit.style.marginLeft = '6px';
+    edit.style.opacity = '0.7';
+    edit.style.fontSize = '0.85em';
+
+    name.appendChild(edit);
+
+    bindLocalRename(name, storagePrefix, id, fallbackName, rerender);
+    return name;
 }
 
 function getLanSyncAdvertiseAddress() {
@@ -444,10 +596,10 @@ async function openTauriTavernSettingsPopup() {
 
             <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
                 <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
-                    <b data-i18n="LAN Sync">LAN Sync</b>
+                    <b data-i18n="Sync">Sync</b>
                 </div>
                 <div class="flex-container flexFlowRow" style="gap: 10px;">
-                    <div id="tt-open-lan-sync" class="menu_button" data-i18n="Open Panel">Open Panel</div>
+                    <div id="tt-open-sync" class="menu_button" data-i18n="Open Panel">Open Panel</div>
                 </div>
             </div>
         </div>
@@ -556,11 +708,11 @@ async function openTauriTavernSettingsPopup() {
     });
     syncRequestProxyInputs();
 
-    const openLanSyncButton = root.querySelector('#tt-open-lan-sync');
-    if (!(openLanSyncButton instanceof HTMLElement)) {
-        throw new Error('TauriTavern settings: LAN sync button not found');
+    const openSyncButton = root.querySelector('#tt-open-sync');
+    if (!(openSyncButton instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: sync button not found');
     }
-    openLanSyncButton.addEventListener('click', () => runOrPopup(openLanSyncPopup));
+    openSyncButton.addEventListener('click', () => runOrPopup(openSyncPopup));
 
     const panelRuntimeHelp = root.querySelector('#tt-help-panel-runtime');
     if (!(panelRuntimeHelp instanceof HTMLElement)) {
@@ -774,13 +926,18 @@ async function openTauriTavernSettingsPopup() {
     }
 }
 
-async function openLanSyncPopup() {
-    const panel = buildLanSyncPopup();
+async function openSyncPopup() {
+    const panel = buildSyncPopup();
 
     const onDevicesChanged = () => {
         void panel.refresh();
     };
+    const onServersChanged = () => {
+        void panel.refresh();
+    };
+
     window.addEventListener(LAN_SYNC_DEVICES_CHANGED_EVENT, onDevicesChanged);
+    window.addEventListener(TT_SYNC_SERVERS_CHANGED_EVENT, onServersChanged);
 
     await callGenericPopup(panel.root, POPUP_TYPE.TEXT, '', {
         okButton: translate('Close'),
@@ -789,17 +946,22 @@ async function openLanSyncPopup() {
         large: false,
         onClose: () => {
             window.removeEventListener(LAN_SYNC_DEVICES_CHANGED_EVENT, onDevicesChanged);
+            window.removeEventListener(TT_SYNC_SERVERS_CHANGED_EVENT, onServersChanged);
         },
     });
+}
+
+function buildSyncPopup() {
+    return buildLanSyncPopup();
 }
 
 function buildLanSyncPopup() {
     const root = document.createElement('div');
     root.className = 'flex-container flexFlowColumn';
     root.innerHTML = `
-        <div class="flex-container flexFlowColumn" style="gap: 10px;">
+            <div class="flex-container flexFlowColumn" style="gap: 10px;">
             <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
-                <b data-i18n="LAN Sync">LAN Sync</b>
+                <b data-i18n="Sync">Sync</b>
                 <div class="flex-container" style="gap: 10px;">
                     <div id="lan-sync-mode-button" class="menu_button menu_button_icon margin0" title="Sync mode" data-i18n="[title]Sync mode">
                         <i class="fa-solid fa-code-branch"></i>
@@ -893,6 +1055,7 @@ function buildLanSyncPopup() {
     const invoke = window.__TAURI__.core.invoke;
     let currentStatus = null;
     let currentDevices = [];
+    let currentServers = [];
     let currentAdvertiseAddress = null;
 
     const getModeLabel = (status) => {
@@ -915,35 +1078,6 @@ function buildLanSyncPopup() {
         } else {
             modeButton.classList.remove('red_button');
         }
-    };
-
-    const buildMirrorWarningContent = (titleText, detailText) => {
-        const content = document.createElement('div');
-        content.className = 'flex-container flexFlowColumn';
-        content.style.gap = '10px';
-
-        const header = document.createElement('div');
-        header.className = 'flex-container alignItemsBaseline';
-        header.style.gap = '8px';
-
-        const icon = document.createElement('i');
-        icon.className = 'fa-solid fa-triangle-exclamation';
-        icon.style.color = 'var(--fullred)';
-        header.appendChild(icon);
-
-        const title = document.createElement('b');
-        title.textContent = translate(titleText);
-        header.appendChild(title);
-
-        content.appendChild(header);
-
-        const details = document.createElement('div');
-        details.style.opacity = '0.95';
-        details.style.whiteSpace = 'pre-wrap';
-        details.textContent = translate(detailText);
-        content.appendChild(details);
-
-        return content;
     };
 
     modeButton.addEventListener('click', () => runOrPopup(async () => {
@@ -1066,10 +1200,10 @@ function buildLanSyncPopup() {
         qrWrap.appendChild(img);
     };
 
-    const renderDevices = (devices) => {
+    const renderDevices = (devices, servers) => {
         devicesContainer.innerHTML = '';
 
-        if (devices.length === 0) {
+        if (devices.length === 0 && servers.length === 0) {
             const empty = document.createElement('div');
             empty.style.opacity = '0.7';
             empty.textContent = translate('No paired devices');
@@ -1090,39 +1224,13 @@ function buildLanSyncPopup() {
             meta.className = 'flex-container flexFlowColumn';
             meta.style.gap = '2px';
 
-            const name = document.createElement('b');
-            const alias = getDeviceAlias(deviceId);
-            name.textContent = alias || deviceName;
-            name.style.cursor = 'pointer';
-            name.title = translate('Click to rename');
-            name.addEventListener('click', () => {
-                runOrPopup(async () => {
-                    const existing = getDeviceAlias(deviceId);
-                    const initial = existing || deviceName;
-                    const result = await callGenericPopup(translate('Rename paired device (local only). Leave empty to reset.'), POPUP_TYPE.INPUT, initial, {
-                        okButton: translate('Save'),
-                        cancelButton: translate('Cancel'),
-                        rows: 1,
-                        allowVerticalScrolling: true,
-                        wide: false,
-                        large: false,
-                    });
-
-                    if (typeof result !== 'string') {
-                        return;
-                    }
-
-                    const trimmed = result.trim();
-                    if (!trimmed) {
-                        clearDeviceAlias(deviceId);
-                    } else {
-                        setDeviceAlias(deviceId, trimmed);
-                    }
-
-                    renderDevices(currentDevices);
-                });
-            });
-            meta.appendChild(name);
+            meta.appendChild(buildRenamableNameLine(
+                getLocalAlias(LAN_SYNC_DEVICE_ALIAS_STORAGE_PREFIX, deviceId) || deviceName,
+                LAN_SYNC_DEVICE_ALIAS_STORAGE_PREFIX,
+                deviceId,
+                deviceName,
+                () => renderDevices(currentDevices, currentServers),
+            ));
 
             const deviceIdLine = document.createElement('div');
             deviceIdLine.style.opacity = '0.8';
@@ -1199,6 +1307,103 @@ function buildLanSyncPopup() {
 
             devicesContainer.appendChild(row);
         }
+
+        for (const server of servers) {
+            const serverDeviceId = server.server_device_id;
+            const serverDeviceName = server.server_device_name;
+            const baseUrl = server.base_url;
+
+            const row = document.createElement('div');
+            row.className = 'flex-container alignItemsBaseline';
+            row.style.justifyContent = 'space-between';
+            row.style.gap = '10px';
+
+            const meta = document.createElement('div');
+            meta.className = 'flex-container flexFlowColumn';
+            meta.style.gap = '2px';
+
+            meta.appendChild(buildRenamableNameLine(
+                getLocalAlias(TT_SYNC_SERVER_ALIAS_STORAGE_PREFIX, serverDeviceId) || serverDeviceName,
+                TT_SYNC_SERVER_ALIAS_STORAGE_PREFIX,
+                serverDeviceId,
+                serverDeviceName,
+                () => renderDevices(currentDevices, currentServers),
+            ));
+
+            const deviceIdLine = document.createElement('div');
+            deviceIdLine.style.opacity = '0.8';
+            deviceIdLine.style.fontSize = '0.9em';
+            deviceIdLine.textContent = serverDeviceId;
+            meta.appendChild(deviceIdLine);
+
+            const addressLine = document.createElement('div');
+            addressLine.style.opacity = '0.8';
+            addressLine.style.fontSize = '0.9em';
+            addressLine.style.wordBreak = 'break-word';
+            const urlText = document.createElement('span');
+            urlText.textContent = baseUrl;
+            addressLine.appendChild(urlText);
+            const badge = document.createElement('code');
+            badge.textContent = 'TT-Sync';
+            badge.style.marginLeft = '6px';
+            badge.style.fontSize = '0.85em';
+            addressLine.appendChild(badge);
+            meta.appendChild(addressLine);
+
+            const syncInfo = document.createElement('div');
+            syncInfo.style.opacity = '0.8';
+            syncInfo.style.fontSize = '0.9em';
+            const lastSync = server.last_sync_ms ? formatTimestamp(server.last_sync_ms) : translate('Never');
+            syncInfo.textContent = t`Last sync: ${lastSync}`;
+            meta.appendChild(syncInfo);
+
+            row.appendChild(meta);
+
+            const actions = document.createElement('div');
+            actions.className = 'flex-container';
+            actions.style.gap = '10px';
+
+            const download = document.createElement('div');
+            download.className = 'menu_button menu_button_icon margin0';
+            download.title = translate('Download (pull from this server)');
+            download.innerHTML = '<i class="fa-solid fa-download"></i>';
+            download.addEventListener('click', () => runOrPopup(async () => {
+                if (!currentStatus) {
+                    await refresh();
+                }
+                const mode = currentStatus?.sync_mode ?? 'Incremental';
+                await invoke('tt_sync_pull', { serverDeviceId, mode });
+            }));
+
+            const upload = document.createElement('div');
+            upload.className = 'menu_button menu_button_icon margin0';
+            upload.title = translate('Upload (push to this server)');
+            upload.innerHTML = '<i class="fa-solid fa-upload"></i>';
+            upload.addEventListener('click', () => runOrPopup(async () => {
+                if (!currentStatus) {
+                    await refresh();
+                }
+                const mode = currentStatus?.sync_mode ?? 'Incremental';
+                await invoke('tt_sync_push', { serverDeviceId, mode });
+            }));
+
+            const remove = document.createElement('div');
+            remove.className = 'menu_button menu_button_icon margin0';
+            remove.title = translate('Remove server');
+            remove.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+            remove.addEventListener('click', () => runOrPopup(async () => {
+                await invoke('tt_sync_remove_server', { serverDeviceId });
+                window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
+                await refresh();
+            }));
+
+            actions.appendChild(download);
+            actions.appendChild(upload);
+            actions.appendChild(remove);
+            row.appendChild(actions);
+
+            devicesContainer.appendChild(row);
+        }
     };
 
     const refresh = async () => {
@@ -1257,7 +1462,14 @@ function buildLanSyncPopup() {
             throw new Error('lan_sync_list_devices returned non-array');
         }
         currentDevices = devices;
-        renderDevices(currentDevices);
+
+        const servers = await invoke('tt_sync_list_servers');
+        if (!Array.isArray(servers)) {
+            throw new Error('tt_sync_list_servers returned non-array');
+        }
+        currentServers = servers;
+
+        renderDevices(currentDevices, currentServers);
     };
 
     devicesRefreshButton.addEventListener('click', () => runOrPopup(refresh));
@@ -1283,8 +1495,73 @@ function buildLanSyncPopup() {
         await navigator.clipboard.writeText(value);
     }));
 
+    const confirmAndPairTtSync = async (pairUri) => {
+        const parsed = parseTtSyncPairUri(pairUri);
+
+        const content = document.createElement('div');
+        content.className = 'flex-container flexFlowColumn';
+        content.style.gap = '10px';
+
+        const title = document.createElement('b');
+        title.textContent = translate('TT-Sync pairing confirmation (v2 client)');
+        content.appendChild(title);
+
+        const meta = document.createElement('div');
+        meta.className = 'flex-container flexFlowColumn';
+        meta.style.gap = '6px';
+
+        const urlLine = document.createElement('div');
+        urlLine.style.wordBreak = 'break-word';
+        urlLine.textContent = t`URL: ${parsed.baseUrl}`;
+        meta.appendChild(urlLine);
+
+        const spkiLine = document.createElement('div');
+        spkiLine.style.wordBreak = 'break-word';
+        const spkiLabel = document.createElement('span');
+        spkiLabel.textContent = `${translate('SPKI')}: `;
+        spkiLine.appendChild(spkiLabel);
+        const spkiValue = document.createElement('code');
+        spkiValue.textContent = parsed.spki;
+        spkiLine.appendChild(spkiValue);
+        meta.appendChild(spkiLine);
+
+        if (parsed.expiresAtMs) {
+            const expLine = document.createElement('div');
+            expLine.textContent = t`Expires: ${formatTimestamp(parsed.expiresAtMs)}`;
+            meta.appendChild(expLine);
+        }
+
+        content.appendChild(meta);
+
+        const result = await callGenericPopup(content, POPUP_TYPE.CONFIRM, '', {
+            okButton: translate('Trust & Pair'),
+            cancelButton: translate('Cancel'),
+            allowVerticalScrolling: true,
+            wide: false,
+            large: false,
+            defaultResult: POPUP_RESULT.NEGATIVE,
+        });
+
+        if (result !== POPUP_RESULT.AFFIRMATIVE) {
+            return;
+        }
+
+        await invoke('tt_sync_pair', { pairUri });
+        window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
+    };
+
     const requestPairing = async (pairUri) => {
-        await invoke('lan_sync_request_pairing', { pairUri });
+        const trimmed = String(pairUri || '').trim();
+        const parsedUrl = new URL(trimmed);
+
+        if (parsedUrl.hostname.toLowerCase() === 'tt-sync') {
+            await confirmAndPairTtSync(trimmed);
+            requestPairUriTextArea.value = '';
+            await refresh();
+            return;
+        }
+
+        await invoke('lan_sync_request_pairing', { pairUri: trimmed });
         requestPairUriTextArea.value = '';
         await refresh();
     };
@@ -1320,6 +1597,42 @@ function buildLanSyncPopup() {
 
     void refresh();
     return { root, refresh };
+}
+
+function parseTtSyncPairUri(pairUri) {
+    const parsed = new URL(pairUri);
+    if (parsed.protocol.toLowerCase() !== 'tauritavern:') {
+        throw new Error(translate('Pair URI must start with tauritavern://'));
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    if (host !== 'tt-sync' || path !== '/pair') {
+        throw new Error(translate('Pair URI is not a TT-Sync pairing link'));
+    }
+
+    const version = parsed.searchParams.get('v') || '';
+    if (version !== '2') {
+        throw new Error(translate('Pair URI must be v=2'));
+    }
+
+    const baseUrl = parsed.searchParams.get('url') || '';
+    if (!baseUrl) {
+        throw new Error(translate('Pair URI missing url'));
+    }
+
+    const spki = parsed.searchParams.get('spki') || '';
+    if (!spki) {
+        throw new Error(translate('Pair URI missing spki'));
+    }
+
+    const expiresAtMsRaw = parsed.searchParams.get('exp') || '';
+    const expiresAtMs = expiresAtMsRaw ? Number(expiresAtMsRaw) : null;
+    if (expiresAtMsRaw && (expiresAtMs === null || Number.isNaN(expiresAtMs))) {
+        throw new Error(translate('Pair URI has invalid exp'));
+    }
+
+    return { baseUrl, spki, expiresAtMs };
 }
 
 function formatTimestamp(ms) {

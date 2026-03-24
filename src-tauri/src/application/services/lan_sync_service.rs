@@ -7,6 +7,7 @@ use qrcode::QrCode;
 use tauri::AppHandle;
 use tauri::Manager;
 use tokio::sync::Mutex;
+use tokio::sync::Semaphore;
 use url::Url;
 
 use crate::app::AppState;
@@ -32,9 +33,15 @@ impl LanSyncService {
         sync_root: PathBuf,
         store_root: PathBuf,
         http_clients: Arc<HttpClientPool>,
+        sync_permit: Arc<Semaphore>,
     ) -> Self {
         Self {
-            runtime: Arc::new(LanSyncRuntime::new(app_handle, sync_root, store_root)),
+            runtime: Arc::new(LanSyncRuntime::new(
+                app_handle,
+                sync_root,
+                store_root,
+                sync_permit,
+            )),
             http_clients,
             server: Mutex::new(None),
         }

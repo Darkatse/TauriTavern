@@ -31,12 +31,17 @@ pub struct LanSyncRuntime {
 }
 
 impl LanSyncRuntime {
-    pub fn new(app_handle: AppHandle, sync_root: PathBuf, store_root: PathBuf) -> Self {
+    pub fn new(
+        app_handle: AppHandle,
+        sync_root: PathBuf,
+        store_root: PathBuf,
+        sync_permit: Arc<Semaphore>,
+    ) -> Self {
         Self {
             app_handle,
             sync_root,
             store: LanSyncStore::new(store_root),
-            sync_permit: Arc::new(Semaphore::new(1)),
+            sync_permit,
             pairing_session: Mutex::new(None),
             sync_mode_override: Mutex::new(None),
             pending_pairings: Mutex::new(HashMap::new()),

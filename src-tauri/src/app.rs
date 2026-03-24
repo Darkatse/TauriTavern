@@ -17,6 +17,7 @@ use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
+use crate::application::services::tt_sync_service::TtSyncService;
 use crate::application::services::update_service::UpdateService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
@@ -46,6 +47,7 @@ pub struct AppState {
     pub tokenization_service: Arc<TokenizationService>,
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
+    pub tt_sync_service: Arc<TtSyncService>,
     pub update_service: Arc<UpdateService>,
 }
 
@@ -88,6 +90,7 @@ impl AppState {
             tokenization_service: services.tokenization_service,
             world_info_service: services.world_info_service,
             lan_sync_service: services.lan_sync_service,
+            tt_sync_service: services.tt_sync_service,
             update_service: services.update_service,
         })
     }

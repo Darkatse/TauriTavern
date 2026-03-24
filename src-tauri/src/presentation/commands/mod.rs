@@ -17,6 +17,7 @@ pub mod image_commands;
 #[cfg(target_os = "ios")]
 pub mod ios_file_bridge_commands;
 pub mod lan_sync_commands;
+pub mod tt_sync_commands;
 pub mod preset_commands;
 pub mod quick_reply_commands;
 pub mod registry;

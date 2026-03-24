@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
+use tokio::sync::Semaphore;
 
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
@@ -22,6 +23,7 @@ use crate::application::services::update_service::UpdateService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
+use crate::application::services::tt_sync_service::TtSyncService;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::avatar_repository::AvatarRepository;
 use crate::domain::repositories::background_repository::BackgroundRepository;
@@ -81,6 +83,7 @@ pub(super) struct AppServices {
     pub tokenization_service: Arc<TokenizationService>,
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
+    pub tt_sync_service: Arc<TtSyncService>,
     pub update_service: Arc<UpdateService>,
 }
 
@@ -159,11 +162,19 @@ pub(super) fn build_services(
         repositories.user_directory_repository,
     ));
     let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
+    let sync_permit = Arc::new(Semaphore::new(1));
     let lan_sync_service = Arc::new(LanSyncService::new(
         app_handle.clone(),
         data_directory.root().to_path_buf(),
         data_directory.default_user().to_path_buf(),
         http_client_pool,
+        sync_permit.clone(),
+    ));
+    let tt_sync_service = Arc::new(TtSyncService::new(
+        app_handle.clone(),
+        data_directory.root().to_path_buf(),
+        data_directory.default_user().to_path_buf(),
+        sync_permit,
     ));
 
     // Do not expose secrets by default; this can be enabled by configuration later.
@@ -188,6 +199,7 @@ pub(super) fn build_services(
         tokenization_service,
         world_info_service,
         lan_sync_service,
+        tt_sync_service,
         update_service,
     })
 }

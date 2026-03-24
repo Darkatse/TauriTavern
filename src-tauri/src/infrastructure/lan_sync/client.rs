@@ -1,9 +1,9 @@
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures_util::TryStreamExt;
 use reqwest::Client;
-use tokio::io::AsyncWriteExt;
 use tokio::task::JoinSet;
+use tokio_util::io::StreamReader;
 use url::Url;
 
 use crate::domain::errors::DomainError;
@@ -15,6 +15,8 @@ use crate::infrastructure::lan_sync::crypto::sign_request;
 use crate::infrastructure::lan_sync::manifest::scan_manifest;
 use crate::infrastructure::lan_sync::paths::resolve_relative_path;
 use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
+use crate::infrastructure::sync_fs;
+use crate::infrastructure::sync_transfer;
 
 pub async fn merge_sync_from_device(
     runtime: Arc<LanSyncRuntime>,
@@ -99,7 +101,7 @@ pub async fn merge_sync_from_device(
         current_path: None,
     })?;
 
-    let download_concurrency = default_download_concurrency();
+    let download_concurrency = sync_transfer::default_transfer_concurrency();
     let mut join_set = JoinSet::new();
     let mut download_iter = plan.download.into_iter();
     let mut in_flight = 0usize;
@@ -132,7 +134,7 @@ pub async fn merge_sync_from_device(
         files_done += 1;
         bytes_done += joined.size_bytes;
 
-        if should_emit_progress(files_done, files_total) {
+        if sync_transfer::should_emit_progress(files_done, files_total) {
             runtime.emit_sync_progress(LanSyncSyncProgressEvent {
                 phase: LanSyncSyncPhase::Downloading,
                 files_done,
@@ -175,7 +177,7 @@ pub async fn merge_sync_from_device(
                 .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
             files_deleted += 1;
-            if should_emit_progress(files_deleted, delete_total) {
+            if sync_transfer::should_emit_progress(files_deleted, delete_total) {
                 runtime.emit_sync_progress(LanSyncSyncProgressEvent {
                     phase: LanSyncSyncPhase::Deleting,
                     files_done: files_deleted,
@@ -189,7 +191,7 @@ pub async fn merge_sync_from_device(
     }
 
     let mut updated_peer = peer;
-    updated_peer.last_sync_ms = Some(now_ms());
+    updated_peer.last_sync_ms = Some(sync_transfer::now_ms());
     runtime.upsert_paired_device(updated_peer).await?;
 
     Ok(LanSyncSyncCompletedEvent {
@@ -202,17 +204,6 @@ pub async fn merge_sync_from_device(
 struct DownloadResult {
     relative_path: String,
     size_bytes: u64,
-}
-
-fn download_tmp_path(full_path: &std::path::Path) -> std::path::PathBuf {
-    match full_path.extension() {
-        Some(ext) if !ext.is_empty() => {
-            let mut tmp_ext = ext.to_os_string();
-            tmp_ext.push(".ttsync.tmp");
-            full_path.with_extension(tmp_ext)
-        }
-        _ => full_path.with_extension("ttsync.tmp"),
-    }
 }
 
 fn spawn_download_task(
@@ -247,17 +238,11 @@ async fn download_one(
 ) -> Result<DownloadResult, DomainError> {
     let full_path = resolve_relative_path(sync_root, &entry.relative_path)?;
 
-    if let Some(parent) = full_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-    }
-
     let file_url = build_source_file_url(address, &entry.relative_path)?;
     let canonical_path = format!("/v1/sync/file/{}", entry.relative_path);
     let signature = sign_request(pair_secret.as_bytes(), "GET", &canonical_path, &[]);
 
-    let mut response = http_client
+    let response = http_client
         .get(file_url)
         .header("X-TT-Device-Id", device_id.to_string())
         .header("X-TT-Signature", signature)
@@ -277,47 +262,12 @@ async fn download_one(
         )));
     }
 
-    let tmp_path = download_tmp_path(&full_path);
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&tmp_path)
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let stream = response
+        .bytes_stream()
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error));
+    let mut reader = StreamReader::new(stream);
 
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?
-    {
-        file.write_all(&chunk)
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-    }
-
-    file.flush()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
-    drop(file);
-
-    match tokio::fs::rename(&tmp_path, &full_path).await {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            match tokio::fs::remove_file(&full_path).await {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(DomainError::InternalError(error.to_string())),
-            }
-
-            tokio::fs::rename(&tmp_path, &full_path)
-                .await
-                .map_err(|error| DomainError::InternalError(error.to_string()))?;
-        }
-        Err(error) => return Err(DomainError::InternalError(error.to_string())),
-    }
-
-    set_file_modified_ms(&full_path, entry.modified_ms)?;
+    sync_fs::write_file_atomic(&full_path, &mut reader, entry.modified_ms).await?;
 
     Ok(DownloadResult {
         relative_path: entry.relative_path,
@@ -358,77 +308,4 @@ fn build_source_file_url(address: &str, relative_path: &str) -> Result<Url, Doma
     }
 
     Ok(url)
-}
-
-fn set_file_modified_ms(path: &std::path::Path, modified_ms: u64) -> Result<(), DomainError> {
-    let secs = (modified_ms / 1000) as i64;
-    let nanos = ((modified_ms % 1000) * 1_000_000) as u32;
-    let mtime = filetime::FileTime::from_unix_time(secs, nanos);
-
-    filetime::set_file_mtime(path, mtime)
-        .map_err(|error| DomainError::InternalError(error.to_string()))
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
-}
-
-fn default_download_concurrency() -> usize {
-    if cfg!(any(target_os = "android", target_os = "ios")) {
-        2
-    } else {
-        4
-    }
-}
-
-fn should_emit_progress(files_done: usize, files_total: usize) -> bool {
-    files_done == files_total || files_done == 1 || files_done % 10 == 0
-}
-
-#[cfg(test)]
-mod tests {
-    use super::download_tmp_path;
-
-    #[test]
-    fn download_tmp_path_preserves_original_extension() {
-        let pack = std::path::Path::new("pack-abc.pack");
-        let idx = std::path::Path::new("pack-abc.idx");
-        let rev = std::path::Path::new("pack-abc.rev");
-
-        assert_ne!(download_tmp_path(pack), download_tmp_path(idx));
-        assert_ne!(download_tmp_path(pack), download_tmp_path(rev));
-        assert_ne!(download_tmp_path(idx), download_tmp_path(rev));
-
-        assert_eq!(
-            download_tmp_path(pack).file_name().unwrap(),
-            std::ffi::OsStr::new("pack-abc.pack.ttsync.tmp")
-        );
-        assert_eq!(
-            download_tmp_path(idx).file_name().unwrap(),
-            std::ffi::OsStr::new("pack-abc.idx.ttsync.tmp")
-        );
-        assert_eq!(
-            download_tmp_path(rev).file_name().unwrap(),
-            std::ffi::OsStr::new("pack-abc.rev.ttsync.tmp")
-        );
-    }
-
-    #[test]
-    fn download_tmp_path_avoids_stem_collisions_for_lock_files() {
-        let config = std::path::Path::new("config");
-        let config_lock = std::path::Path::new("config.lock");
-
-        assert_ne!(download_tmp_path(config), download_tmp_path(config_lock));
-        assert_eq!(
-            download_tmp_path(config).file_name().unwrap(),
-            std::ffi::OsStr::new("config.ttsync.tmp")
-        );
-        assert_eq!(
-            download_tmp_path(config_lock).file_name().unwrap(),
-            std::ffi::OsStr::new("config.lock.ttsync.tmp")
-        );
-    }
 }
