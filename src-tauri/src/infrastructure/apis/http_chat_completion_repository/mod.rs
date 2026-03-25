@@ -19,6 +19,7 @@ mod claude;
 mod makersuite;
 mod normalizers;
 mod openai;
+mod vertexai;
 
 pub struct HttpChatCompletionRepository {
     http_clients: Arc<HttpClientPool>,
@@ -261,6 +262,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             ChatCompletionSource::Zai => openai::list_models(self, config, "Z.AI (GLM)").await,
             ChatCompletionSource::Claude => claude::list_models(self, config).await,
             ChatCompletionSource::Makersuite => makersuite::list_models(self, config).await,
+            ChatCompletionSource::VertexAi => vertexai::list_models(self, config).await,
         }
     }
 
@@ -298,6 +300,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             }
             ChatCompletionSource::Makersuite => {
                 makersuite::generate(self, config, endpoint_path, payload).await
+            }
+            ChatCompletionSource::VertexAi => {
+                vertexai::generate(self, config, endpoint_path, payload).await
             }
         }
     }
@@ -401,6 +406,10 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             }
             ChatCompletionSource::Makersuite => {
                 makersuite::generate_stream(self, config, endpoint_path, payload, sender, cancel)
+                    .await
+            }
+            ChatCompletionSource::VertexAi => {
+                vertexai::generate_stream(self, config, endpoint_path, payload, sender, cancel)
                     .await
             }
         }

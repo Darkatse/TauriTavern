@@ -17,6 +17,7 @@ use crate::domain::repositories::secret_repository::SecretRepository;
 mod config;
 mod custom_parameters;
 mod payload;
+mod vertexai_auth;
 
 const OPENAI_SOURCE: &str = "openai";
 
@@ -52,6 +53,12 @@ impl ChatCompletionService {
         }
 
         let source = self.resolve_source(&dto.chat_completion_source)?;
+        if source == ChatCompletionSource::VertexAi {
+            return Ok(json!({
+                "bypass": true,
+                "data": []
+            }));
+        }
         let config =
             config::resolve_status_api_config(source, &dto, &self.secret_repository).await?;
 

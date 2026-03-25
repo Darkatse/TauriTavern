@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::application::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
@@ -14,11 +14,13 @@ use crate::domain::repositories::chat_completion_repository::{
 use crate::domain::repositories::secret_repository::SecretRepository;
 
 use super::custom_parameters;
+use super::vertexai_auth;
 
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 const CLAUDE_API_BASE: &str = "https://api.anthropic.com/v1";
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com";
+const VERTEXAI_GLOBAL_BASE: &str = "https://aiplatform.googleapis.com";
 const DEEPSEEK_API_BASE: &str = "https://api.deepseek.com/beta";
 const DEEPSEEK_STATUS_API_BASE: &str = "https://api.deepseek.com";
 const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
@@ -71,6 +73,16 @@ pub(super) async fn resolve_generate_api_config(
     let custom_url = custom_url_raw.trim();
     let custom_headers_raw = get_payload_string(&dto.payload, "custom_include_headers");
     let zai_endpoint = get_payload_string(&dto.payload, "zai_endpoint");
+
+    if source == ChatCompletionSource::VertexAi {
+        return resolve_vertexai_generate_api_config(
+            &dto.payload,
+            reverse_proxy,
+            proxy_password,
+            secret_repository,
+        )
+        .await;
+    }
 
     resolve_api_config(
         source,
@@ -242,6 +254,7 @@ fn default_base_url(
         ChatCompletionSource::OpenRouter => OPENROUTER_API_BASE.to_string(),
         ChatCompletionSource::Claude => CLAUDE_API_BASE.to_string(),
         ChatCompletionSource::Makersuite => GEMINI_API_BASE.to_string(),
+        ChatCompletionSource::VertexAi => VERTEXAI_GLOBAL_BASE.to_string(),
         ChatCompletionSource::DeepSeek => match purpose {
             ApiConfigPurpose::Status => DEEPSEEK_STATUS_API_BASE.to_string(),
             ApiConfigPurpose::Generate => DEEPSEEK_API_BASE.to_string(),
@@ -265,6 +278,7 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
         ChatCompletionSource::OpenRouter => Some(SecretKeys::OPENROUTER),
         ChatCompletionSource::Claude => Some(SecretKeys::CLAUDE),
         ChatCompletionSource::Makersuite => Some(SecretKeys::MAKERSUITE),
+        ChatCompletionSource::VertexAi => Some(SecretKeys::VERTEXAI),
         ChatCompletionSource::DeepSeek => Some(SecretKeys::DEEPSEEK),
         ChatCompletionSource::Moonshot => Some(SecretKeys::MOONSHOT),
         ChatCompletionSource::SiliconFlow => Some(SecretKeys::SILICONFLOW),
@@ -279,6 +293,7 @@ fn source_display_name(source: ChatCompletionSource) -> &'static str {
         ChatCompletionSource::OpenRouter => "OpenRouter",
         ChatCompletionSource::Claude => "Claude",
         ChatCompletionSource::Makersuite => "Google Gemini",
+        ChatCompletionSource::VertexAi => "Google Vertex AI",
         ChatCompletionSource::DeepSeek => "DeepSeek",
         ChatCompletionSource::Moonshot => "Moonshot AI",
         ChatCompletionSource::SiliconFlow => "SiliconFlow",
@@ -293,10 +308,106 @@ fn supports_reverse_proxy(source: ChatCompletionSource) -> bool {
         ChatCompletionSource::OpenAi
             | ChatCompletionSource::Claude
             | ChatCompletionSource::Makersuite
+            | ChatCompletionSource::VertexAi
             | ChatCompletionSource::DeepSeek
             | ChatCompletionSource::Moonshot
             | ChatCompletionSource::Zai
     )
+}
+
+async fn resolve_vertexai_generate_api_config(
+    payload: &Map<String, Value>,
+    reverse_proxy: &str,
+    proxy_password: &str,
+    secret_repository: &Arc<dyn SecretRepository>,
+) -> Result<ChatCompletionApiConfig, ApplicationError> {
+    let extra_headers = HashMap::new();
+
+    if !reverse_proxy.is_empty() {
+        return Ok(ChatCompletionApiConfig {
+            base_url: format!("{}/v1", reverse_proxy.trim_end_matches('/')),
+            api_key: String::new(),
+            authorization_header: Some(format!("Bearer {}", proxy_password)),
+            extra_headers,
+        });
+    }
+
+    let mode = payload
+        .get("vertexai_auth_mode")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("express")
+        .to_ascii_lowercase();
+
+    let region = payload
+        .get("vertexai_region")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("us-central1");
+
+    let project_override = payload
+        .get("vertexai_express_project_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    match mode.as_str() {
+        "express" => {
+            let api_key = read_required_secret(
+                secret_repository,
+                SecretKeys::VERTEXAI,
+                "Google Vertex AI",
+            )
+            .await?;
+
+            let base_url = if let Some(project_id) = project_override {
+                format!(
+                    "{VERTEXAI_GLOBAL_BASE}/v1/projects/{project_id}/locations/{region}",
+                )
+            } else {
+                format!("{}/v1", vertexai_host(region))
+            };
+
+            Ok(ChatCompletionApiConfig {
+                base_url,
+                api_key,
+                authorization_header: None,
+                extra_headers,
+            })
+        }
+        "full" => {
+            let service_account_json =
+                read_required_secret(secret_repository, SecretKeys::VERTEXAI_SERVICE_ACCOUNT, "Google Vertex AI")
+                    .await?;
+            let (project_id, access_token) =
+                vertexai_auth::get_service_account_access_token(&service_account_json).await?;
+
+            let base_url = format!(
+                "{}/v1/projects/{project_id}/locations/{region}",
+                vertexai_host(region)
+            );
+
+            Ok(ChatCompletionApiConfig {
+                base_url,
+                api_key: String::new(),
+                authorization_header: Some(format!("Bearer {}", access_token)),
+                extra_headers,
+            })
+        }
+        other => Err(ApplicationError::ValidationError(format!(
+            "Unsupported Vertex AI authentication mode: {other}",
+        ))),
+    }
+}
+
+fn vertexai_host(region: &str) -> String {
+    if region.trim().eq_ignore_ascii_case("global") {
+        VERTEXAI_GLOBAL_BASE.to_string()
+    } else {
+        format!("https://{}-aiplatform.googleapis.com", region.trim())
+    }
 }
 
 fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String> {

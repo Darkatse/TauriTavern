@@ -14,6 +14,7 @@ mod prompt_cache;
 mod prompt_post_processing;
 mod shared;
 mod tool_calls;
+mod vertexai;
 mod zai;
 
 pub(super) fn build_payload(
@@ -37,5 +38,6 @@ pub(super) fn build_payload(
         ChatCompletionSource::Custom => custom::build(payload),
         ChatCompletionSource::Claude => Ok(claude::build(payload)?),
         ChatCompletionSource::Makersuite => Ok(makersuite::build(payload)?),
+        ChatCompletionSource::VertexAi => Ok(vertexai::build(payload)?),
     }
 }

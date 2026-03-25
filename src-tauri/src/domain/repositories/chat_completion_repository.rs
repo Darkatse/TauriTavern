@@ -12,6 +12,7 @@ pub enum ChatCompletionSource {
     Custom,
     Claude,
     Makersuite,
+    VertexAi,
     DeepSeek,
     Moonshot,
     SiliconFlow,
@@ -26,6 +27,7 @@ impl ChatCompletionSource {
             "custom" => Some(Self::Custom),
             "claude" => Some(Self::Claude),
             "makersuite" | "gemini" | "google" => Some(Self::Makersuite),
+            "vertexai" | "vertex-ai" | "vertex ai" => Some(Self::VertexAi),
             "deepseek" => Some(Self::DeepSeek),
             "moonshot" | "moonshot ai" => Some(Self::Moonshot),
             "siliconflow" | "silicon flow" => Some(Self::SiliconFlow),
@@ -98,6 +100,10 @@ mod tests {
         assert_eq!(
             ChatCompletionSource::parse("zai"),
             Some(ChatCompletionSource::Zai)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("vertexai"),
+            Some(ChatCompletionSource::VertexAi)
         );
     }
 }

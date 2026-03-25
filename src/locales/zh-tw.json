@@ -3469,7 +3469,7 @@
     "Prompt import complete.": "提示詞匯入完成。",
     "Add reasoning block": "新增推理區塊",
     "Thinking...": "思考中...",
-    "Thought for ${0}": "關於${0}的想法",
+    "Thought for ${0}": "思考${0}",
     "Get the contents of a reasoning block of a message. Returns an empty string if the message does not have a reasoning block.": "取得訊息的推理區塊內容。如果訊息沒有推理區塊，則返回空字串。",
     "Set the reasoning block of a message. Returns the reasoning block content.": "設定訊息的推理區塊。返回推理區塊內容。",
     "Extracts the reasoning block from a string using the Reasoning Formatting settings.": "使用推理格式設定從字串中提取推理區塊。",

@@ -3029,7 +3029,7 @@
     "Could not import prompts. Export failed validation.": "无法导入提示词。导出未通过验证。",
     "Hidden reasoning - Add reasoning block": "隐藏推理 - 添加推理模块",
     "Add reasoning block": "添加推理块",
-    "Thought for ${0}": "为${0}的想法",
+    "Thought for ${0}": "思考了${0}",
     "Thinking...": "思考中...",
     "Extracts the reasoning block from a string using the Reasoning Formatting settings.": "使用推理格式设置从字符串中提取推理块。",
     "Set the reasoning block of a message. Returns the reasoning block content.": "设置消息的推理模块。返回推理模块内容。",
