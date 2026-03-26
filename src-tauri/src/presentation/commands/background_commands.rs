@@ -183,6 +183,24 @@ pub async fn upload_background(
 }
 
 #[tauri::command]
+pub async fn upload_background_from_path(
+    app_state: State<'_, Arc<AppState>>,
+    filename: String,
+    file_path: String,
+) -> Result<String, CommandError> {
+    log_command(format!(
+        "upload_background_from_path, filename: {}",
+        filename
+    ));
+
+    app_state
+        .background_service
+        .upload_background_from_path(&filename, std::path::Path::new(&file_path))
+        .await
+        .map_err(map_command_error("Failed to upload background from path"))
+}
+
+#[tauri::command]
 pub async fn read_thumbnail_asset(
     app_state: State<'_, Arc<AppState>>,
     thumbnail_type: String,

@@ -314,6 +314,37 @@ impl BackgroundRepository for FileBackgroundRepository {
         Ok(normalized)
     }
 
+    async fn upload_background_from_path(
+        &self,
+        filename: &str,
+        source_path: &Path,
+    ) -> Result<String, DomainError> {
+        logger::debug(&format!(
+            "FileBackgroundRepository: Uploading background from path: {}",
+            filename
+        ));
+
+        self.ensure_backgrounds_dir_exists().await?;
+
+        let normalized = self.normalize_filename(filename)?;
+        let file_path = self.backgrounds_dir.join(&normalized);
+
+        fs::copy(source_path, &file_path).await.map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                return DomainError::NotFound(format!(
+                    "Source background file not found: {}",
+                    source_path.display()
+                ));
+            }
+
+            logger::error(&format!("Failed to copy background file: {}", error));
+            DomainError::InternalError(format!("Failed to copy background file: {}", error))
+        })?;
+
+        self.invalidate_thumbnail_cache(&normalized).await?;
+        Ok(normalized)
+    }
+
     async fn read_background_thumbnail(
         &self,
         filename: &str,
@@ -338,6 +369,7 @@ impl BackgroundRepository for FileBackgroundRepository {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use crate::domain::repositories::background_repository::BackgroundRepository;
 
     use super::FileBackgroundRepository;
 
@@ -361,5 +393,48 @@ mod tests {
             PathBuf::from("thumbnails/bg"),
         );
         assert!(repository.normalize_filename(" ... ").is_err());
+    }
+
+    struct TempDirGuard {
+        path: PathBuf,
+    }
+
+    impl TempDirGuard {
+        fn new(test_name: &str) -> Self {
+            let mut path = std::env::temp_dir();
+            path.push(format!("tauritavern-{test_name}-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_background_from_path_copies_file() {
+        let temp = TempDirGuard::new("background-upload-from-path");
+        let backgrounds_dir = temp.path.join("backgrounds");
+        let thumbnails_dir = temp.path.join("thumbnails/bg");
+        let source_path = temp.path.join("source.bin");
+
+        tokio::fs::write(&source_path, b"ok")
+            .await
+            .expect("write source");
+
+        let repository = FileBackgroundRepository::new(backgrounds_dir.clone(), thumbnails_dir);
+        let uploaded = repository
+            .upload_background_from_path("a.bin", &source_path)
+            .await
+            .expect("upload");
+
+        assert_eq!(uploaded, "a.bin");
+        let dest_bytes = tokio::fs::read(backgrounds_dir.join("a.bin"))
+            .await
+            .expect("read destination");
+        assert_eq!(dest_bytes, b"ok");
     }
 }

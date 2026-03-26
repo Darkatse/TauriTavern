@@ -283,11 +283,24 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             return jsonResponse({ error: 'Invalid filename' }, 400);
         }
 
-        const data = Array.from(new Uint8Array(await file.arrayBuffer()));
-        const uploaded = await context.safeInvoke('upload_background', { filename, data });
-        context.invalidateInvokeAll('read_thumbnail_asset');
+        const fileInfo = await context.materializeUploadFile(file, {
+            preferredName: rawFilename,
+        });
+        if (!fileInfo?.filePath) {
+            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
+            throw new Error(`Unable to access background file path${reason}`);
+        }
 
-        return textResponse(String(uploaded || filename));
+        try {
+            const uploaded = await context.safeInvoke('upload_background_from_path', {
+                filename,
+                file_path: fileInfo.filePath,
+            });
+            context.invalidateInvokeAll('read_thumbnail_asset');
+            return textResponse(String(uploaded || filename));
+        } finally {
+            await fileInfo.cleanup?.();
+        }
     });
 
     router.post('/api/themes/save', async ({ body }) => {

@@ -4,6 +4,7 @@ use crate::domain::models::background::{
 };
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::infrastructure::logging::logger;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Service for managing background images
@@ -94,6 +95,34 @@ impl BackgroundService {
         }
 
         self.repository.upload_background(filename, data).await
+    }
+
+    pub async fn upload_background_from_path(
+        &self,
+        filename: &str,
+        source_path: impl AsRef<Path>,
+    ) -> Result<String, DomainError> {
+        logger::debug(&format!(
+            "BackgroundService: Uploading background from path: {}",
+            filename
+        ));
+
+        if filename.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Background filename cannot be empty".to_string(),
+            ));
+        }
+
+        let source_path = source_path.as_ref();
+        if source_path.as_os_str().is_empty() {
+            return Err(DomainError::InvalidData(
+                "Background source path cannot be empty".to_string(),
+            ));
+        }
+
+        self.repository
+            .upload_background_from_path(filename, source_path)
+            .await
     }
 
     pub async fn read_background_thumbnail(

@@ -3,6 +3,7 @@ use crate::domain::models::background::{
     Background, BackgroundAsset, BackgroundImageMetadataIndex,
 };
 use async_trait::async_trait;
+use std::path::Path;
 
 /// Repository interface for background images
 #[async_trait]
@@ -22,6 +23,13 @@ pub trait BackgroundRepository: Send + Sync {
 
     /// Upload a new background image
     async fn upload_background(&self, filename: &str, data: &[u8]) -> Result<String, DomainError>;
+
+    /// Upload a new background image from a local path.
+    async fn upload_background_from_path(
+        &self,
+        filename: &str,
+        source_path: &Path,
+    ) -> Result<String, DomainError>;
 
     /// Read a background thumbnail asset.
     async fn read_background_thumbnail(

@@ -129,6 +129,7 @@ export {};
  *   | 'merge_character_card_data'
  *   | 'upload_avatar'
  *   | 'upload_background'
+ *   | 'upload_background_from_path'
  *   | 'upload_user_image'
  *   | 'upload_user_file'
  *   | 'verify_user_files'

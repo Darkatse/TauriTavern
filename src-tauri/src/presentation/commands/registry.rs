@@ -191,6 +191,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::background_commands::delete_background,
         super::background_commands::rename_background,
         super::background_commands::upload_background,
+        super::background_commands::upload_background_from_path,
         super::background_commands::read_thumbnail_asset,
         // Theme commands
         super::theme_commands::save_theme,
