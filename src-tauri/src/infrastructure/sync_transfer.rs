@@ -18,4 +18,3 @@ pub(crate) fn now_ms() -> u64 {
         .unwrap()
         .as_millis() as u64
 }
-

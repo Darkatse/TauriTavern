@@ -3,6 +3,7 @@
 import { addCopyToCodeBlocks, chat, messageFormatting } from '../../../script.js';
 import { replaceMesTextHtmlWithRuntimePolicy } from '../message/mes-text-write.js';
 
+/** @type {ReturnType<typeof createRegexRefreshCoordinator> | null} */
 let singleton = null;
 
 export function getRegexRefreshCoordinator() {
@@ -20,7 +21,7 @@ function createRegexRefreshCoordinator() {
     /** @type {ReturnType<typeof setTimeout> | null} */
     let debounceTimeoutId = null;
 
-    /** @type {{ resolve: () => void }[]} */
+    /** @type {{ resolve: (value?: unknown) => void }[]} */
     const waiters = [];
 
     /** @type {{ messageId: number; message: any; element: HTMLElement }[]} */
@@ -153,7 +154,7 @@ function createRegexRefreshCoordinator() {
             const entry = queue[queueIndex];
             queueIndex += 1;
 
-            refreshMessage(entry);
+            refreshMessage(/** @type {{ messageId: number; message: any; element: HTMLElement }} */ (entry));
 
             if (deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() < 1) {
                 break;

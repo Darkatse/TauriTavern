@@ -44,7 +44,7 @@ pub fn resolve_third_party_extension_asset(
                         "Failed to stat third-party extension asset ({}): {}",
                         asset_path.display(),
                         error
-                    )))
+                    )));
                 }
             },
         };
@@ -130,7 +130,10 @@ mod tests {
             local_root.join(extension_folder).join("manifest.json")
         );
         assert_eq!(resolved.mime_type, "application/json");
-        assert_eq!(resolved.size_bytes, br#"{ "source": "local" }"#.len() as u64);
+        assert_eq!(
+            resolved.size_bytes,
+            br#"{ "source": "local" }"#.len() as u64
+        );
     }
 
     #[test]

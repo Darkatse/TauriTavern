@@ -6,6 +6,7 @@ use crate::application::dto::settings_dto::{
     UpdateTauriTavernSettingsDto, UserSettingsDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::domain::models::settings::DevLoggingSettings;
 use crate::domain::repositories::settings_repository::SettingsRepository;
 
 pub struct SettingsService {
@@ -64,6 +65,21 @@ impl SettingsService {
 
         if let Some(request_proxy) = dto.request_proxy {
             settings.request_proxy = request_proxy.into();
+        }
+
+        if let Some(dev) = dto.dev {
+            if let Some(frontend_console_capture) = dev.frontend_console_capture {
+                settings.dev.frontend_console_capture = frontend_console_capture;
+            }
+
+            if let Some(llm_api_keep) = dev.llm_api_keep {
+                if !DevLoggingSettings::is_valid_llm_api_keep(llm_api_keep) {
+                    return Err(ApplicationError::ValidationError(
+                        "LLM API keep must be a positive number".to_string(),
+                    ));
+                }
+                settings.dev.llm_api_keep = llm_api_keep;
+            }
         }
 
         self.settings_repository

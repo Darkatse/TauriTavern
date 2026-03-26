@@ -10,6 +10,8 @@ use tracing_subscriber::{
     prelude::*,
 };
 
+use super::devtools::BackendLogStore;
+
 static INIT: Once = Once::new();
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
@@ -25,7 +27,10 @@ pub fn bind_app_handle(app_handle: AppHandle) {
 }
 
 /// Initialize the logger with file and console output
-pub fn init_logger(log_dir: &Path) -> Result<(), String> {
+pub fn init_logger(
+    log_dir: &Path,
+    backend_log_store: Option<std::sync::Arc<BackendLogStore>>,
+) -> Result<(), String> {
     std::fs::create_dir_all(log_dir)
         .map_err(|error| format!("Failed to create log directory {:?}: {}", log_dir, error))?;
 
@@ -56,7 +61,8 @@ pub fn init_logger(log_dir: &Path) -> Result<(), String> {
                     .with_ansi(false)
                     .with_span_events(FmtSpan::CLOSE)
                     .with_target(true),
-            );
+            )
+            .with(backend_log_store.map(|store| store.layer()));
 
         if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
             eprintln!("Failed to set global default subscriber: {}", e);

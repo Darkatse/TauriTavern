@@ -62,13 +62,9 @@ impl ExtensionSourceProvider for GitLabProvider {
         let url = self.project_base_url(repo_path)?;
 
         let http_client = self.http_clients.client(HttpClientProfile::Default)?;
-        let response = http_client
-            .get(url.clone())
-            .send()
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!("GitLab request failed: {}", error))
-            })?;
+        let response = http_client.get(url.clone()).send().await.map_err(|error| {
+            DomainError::InternalError(format!("GitLab request failed: {}", error))
+        })?;
 
         let info: GitLabProjectInfo = parse_json_or_error(response, &url, "GitLab").await?;
         if info.default_branch.trim().is_empty() {
@@ -89,13 +85,9 @@ impl ExtensionSourceProvider for GitLabProvider {
             .append_pair("per_page", "1");
 
         let http_client = self.http_clients.client(HttpClientProfile::Default)?;
-        let response = http_client
-            .get(url.clone())
-            .send()
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!("GitLab request failed: {}", error))
-            })?;
+        let response = http_client.get(url.clone()).send().await.map_err(|error| {
+            DomainError::InternalError(format!("GitLab request failed: {}", error))
+        })?;
 
         let commits: Vec<GitLabCommit> = parse_json_or_error(response, &url, "GitLab").await?;
         let commit = commits.first().ok_or_else(|| {

@@ -596,6 +596,18 @@ async function openTauriTavernSettingsPopup() {
 
             <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
                 <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
+                    <b data-i18n="Development">Development</b>
+                </div>
+
+                <div class="flex-container flexFlowRow" style="gap: 10px; flex-wrap: wrap;">
+                    <div id="tt-open-frontend-logs" class="menu_button" data-i18n="Frontend Logs">Frontend Logs</div>
+                    <div id="tt-open-backend-logs" class="menu_button" data-i18n="Backend Logs">Backend Logs</div>
+                    <div id="tt-open-llm-api-logs" class="menu_button" data-i18n="LLM API Logs">LLM API Logs</div>
+                </div>
+            </div>
+
+            <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
+                <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
                     <b data-i18n="Sync">Sync</b>
                 </div>
                 <div class="flex-container flexFlowRow" style="gap: 10px;">
@@ -653,6 +665,33 @@ async function openTauriTavernSettingsPopup() {
             throw new Error('TauriTavern settings: close to tray toggle not found');
         }
     }
+
+    const openFrontendLogsButton = root.querySelector('#tt-open-frontend-logs');
+    if (!(openFrontendLogsButton instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: open frontend logs button not found');
+    }
+    openFrontendLogsButton.addEventListener('click', () => runOrPopup(async () => {
+        const { openFrontendLogsPanel } = await import('./dev-logs.js');
+        await openFrontendLogsPanel();
+    }));
+
+    const openBackendLogsButton = root.querySelector('#tt-open-backend-logs');
+    if (!(openBackendLogsButton instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: open backend logs button not found');
+    }
+    openBackendLogsButton.addEventListener('click', () => runOrPopup(async () => {
+        const { openBackendLogsPanel } = await import('./dev-logs.js');
+        await openBackendLogsPanel();
+    }));
+
+    const openLlmApiLogsButton = root.querySelector('#tt-open-llm-api-logs');
+    if (!(openLlmApiLogsButton instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: open llm api logs button not found');
+    }
+    openLlmApiLogsButton.addEventListener('click', () => runOrPopup(async () => {
+        const { openLlmApiLogsPanel } = await import('./dev-logs.js');
+        await openLlmApiLogsPanel();
+    }));
 
     const currentPanelRuntimeProfile = settings.panel_runtime_profile;
     profileSelect.value = typeof currentPanelRuntimeProfile === 'string' && currentPanelRuntimeProfile ? currentPanelRuntimeProfile : 'off';

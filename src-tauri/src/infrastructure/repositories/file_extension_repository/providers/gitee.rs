@@ -61,13 +61,9 @@ impl ExtensionSourceProvider for GiteeProvider {
         let url = self.build_api_url(&["repos", owner, repo])?;
 
         let http_client = self.http_clients.client(HttpClientProfile::Default)?;
-        let response = http_client
-            .get(url.clone())
-            .send()
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!("Gitee request failed: {}", error))
-            })?;
+        let response = http_client.get(url.clone()).send().await.map_err(|error| {
+            DomainError::InternalError(format!("Gitee request failed: {}", error))
+        })?;
 
         let info: GiteeRepoInfo = parse_json_or_error(response, &url, "Gitee").await?;
         if info.default_branch.trim().is_empty() {
@@ -89,13 +85,9 @@ impl ExtensionSourceProvider for GiteeProvider {
             .append_pair("per_page", "1");
 
         let http_client = self.http_clients.client(HttpClientProfile::Default)?;
-        let response = http_client
-            .get(url.clone())
-            .send()
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!("Gitee request failed: {}", error))
-            })?;
+        let response = http_client.get(url.clone()).send().await.map_err(|error| {
+            DomainError::InternalError(format!("Gitee request failed: {}", error))
+        })?;
 
         let commits: Vec<GiteeCommit> = parse_json_or_error(response, &url, "Gitee").await?;
         let commit = commits.first().ok_or_else(|| {

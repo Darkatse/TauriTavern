@@ -33,7 +33,9 @@ pub(super) fn ensure_readable_character_card(card_value: &Value) -> Result<(), A
     Ok(())
 }
 
-pub(super) fn normalize_v2_character_book_extensions(card_value: &mut Value) -> Result<(), DomainError> {
+pub(super) fn normalize_v2_character_book_extensions(
+    card_value: &mut Value,
+) -> Result<(), DomainError> {
     if card_value.get("spec").and_then(Value::as_str) != Some("chara_card_v2") {
         return Ok(());
     }
@@ -47,7 +49,9 @@ pub(super) fn normalize_v2_character_book_extensions(card_value: &mut Value) -> 
 
     match character_book_object.get("extensions") {
         Some(Value::Object(_)) => Ok(()),
-        Some(_) => Err(invalid_character_card_field("data.character_book.extensions")),
+        Some(_) => Err(invalid_character_card_field(
+            "data.character_book.extensions",
+        )),
         None => {
             character_book_object.insert(
                 "extensions".to_string(),
@@ -183,15 +187,22 @@ fn validate_v2_character_card(card_value: &Value) -> Result<(), DomainError> {
         };
 
         if !character_book.contains_key("extensions") {
-            return Err(missing_character_card_field("data.character_book.extensions"));
+            return Err(missing_character_card_field(
+                "data.character_book.extensions",
+            ));
         }
 
         if !character_book.contains_key("entries") {
             return Err(missing_character_card_field("data.character_book.entries"));
         }
 
-        if !character_book.get("extensions").is_some_and(Value::is_object) {
-            return Err(invalid_character_card_field("data.character_book.extensions"));
+        if !character_book
+            .get("extensions")
+            .is_some_and(Value::is_object)
+        {
+            return Err(invalid_character_card_field(
+                "data.character_book.extensions",
+            ));
         }
 
         if !character_book.get("entries").is_some_and(Value::is_array) {
@@ -233,4 +244,3 @@ fn missing_character_card_field(field: &str) -> DomainError {
 fn invalid_character_card_field(field: &str) -> DomainError {
     DomainError::InvalidData(format!("Character card field {} is invalid", field))
 }
-

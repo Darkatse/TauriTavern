@@ -17,6 +17,12 @@ fn default_chat_history_mode() -> ChatHistoryMode {
     ChatHistoryMode::Windowed
 }
 
+fn default_llm_api_keep() -> u32 {
+    5
+}
+
+pub const MIN_LLM_API_KEEP: u32 = 1;
+
 fn default_close_to_tray_on_close() -> bool {
     cfg!(target_os = "windows")
 }
@@ -70,6 +76,33 @@ pub struct TauriTavernMigrationState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevLoggingSettings {
+    #[serde(default)]
+    pub frontend_console_capture: bool,
+    #[serde(default = "default_llm_api_keep")]
+    pub llm_api_keep: u32,
+}
+
+impl Default for DevLoggingSettings {
+    fn default() -> Self {
+        Self {
+            frontend_console_capture: false,
+            llm_api_keep: default_llm_api_keep(),
+        }
+    }
+}
+
+impl DevLoggingSettings {
+    pub fn effective_llm_api_keep(&self) -> u32 {
+        self.llm_api_keep.max(MIN_LLM_API_KEEP)
+    }
+
+    pub fn is_valid_llm_api_keep(value: u32) -> bool {
+        value >= MIN_LLM_API_KEEP
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TauriTavernSettings {
     pub updates: TauriTavernUpdateSettings,
     #[serde(default = "default_perf_profile")]
@@ -86,6 +119,8 @@ pub struct TauriTavernSettings {
     pub request_proxy: RequestProxySettings,
     #[serde(default)]
     pub migrations: TauriTavernMigrationState,
+    #[serde(default)]
+    pub dev: DevLoggingSettings,
 }
 
 impl Default for TauriTavernSettings {
@@ -99,6 +134,7 @@ impl Default for TauriTavernSettings {
             close_to_tray_on_close: default_close_to_tray_on_close(),
             request_proxy: RequestProxySettings::default(),
             migrations: TauriTavernMigrationState::default(),
+            dev: DevLoggingSettings::default(),
         }
     }
 }
@@ -131,5 +167,26 @@ impl Default for UserSettings {
         Self {
             data: Value::Object(Map::new()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DevLoggingSettings;
+
+    #[test]
+    fn effective_llm_api_keep_has_minimum_of_one() {
+        let settings = DevLoggingSettings {
+            frontend_console_capture: false,
+            llm_api_keep: 0,
+        };
+
+        assert_eq!(settings.effective_llm_api_keep(), 1);
+    }
+
+    #[test]
+    fn llm_api_keep_validation_requires_positive_values() {
+        assert!(!DevLoggingSettings::is_valid_llm_api_keep(0));
+        assert!(DevLoggingSettings::is_valid_llm_api_keep(1));
     }
 }

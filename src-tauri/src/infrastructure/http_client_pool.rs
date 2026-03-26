@@ -1,5 +1,5 @@
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::RwLock;
 use std::time::Duration;
 
@@ -109,9 +109,8 @@ fn proxy_from_settings(settings: &RequestProxySettings) -> Result<Option<Proxy>,
         ));
     }
 
-    let mut proxy = Proxy::all(url).map_err(|error| {
-        DomainError::InvalidData(format!("Invalid request proxy URL: {error}"))
-    })?;
+    let mut proxy = Proxy::all(url)
+        .map_err(|error| DomainError::InvalidData(format!("Invalid request proxy URL: {error}")))?;
 
     let bypass = normalized_bypass_csv(&settings.bypass);
     if !bypass.is_empty() {
@@ -145,7 +144,9 @@ fn build_profile_client(
         HttpClientProfile::ChatCompletion => builder
             .connect_timeout(CHAT_COMPLETION_CONNECT_TIMEOUT)
             .timeout(CHAT_COMPLETION_NON_STREAM_REQUEST_TIMEOUT),
-        HttpClientProfile::ChatCompletionStream => builder.connect_timeout(CHAT_COMPLETION_CONNECT_TIMEOUT),
+        HttpClientProfile::ChatCompletionStream => {
+            builder.connect_timeout(CHAT_COMPLETION_CONNECT_TIMEOUT)
+        }
     };
 
     if let Some(proxy) = proxy {

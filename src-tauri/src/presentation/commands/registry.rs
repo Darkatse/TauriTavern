@@ -92,6 +92,14 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::settings_commands::get_settings_snapshots,
         super::settings_commands::load_settings_snapshot,
         super::settings_commands::restore_settings_snapshot,
+        // Dev logging commands
+        super::dev_logging_commands::devlog_append_frontend_logs,
+        super::dev_logging_commands::devlog_set_backend_log_stream_enabled,
+        super::dev_logging_commands::devlog_get_backend_log_tail,
+        super::dev_logging_commands::devlog_set_llm_api_log_stream_enabled,
+        super::dev_logging_commands::devlog_get_llm_api_log_index,
+        super::dev_logging_commands::devlog_get_llm_api_log_preview,
+        super::dev_logging_commands::devlog_get_llm_api_log_raw,
         // World info commands
         super::world_info_commands::get_world_info,
         super::world_info_commands::get_world_infos_batch,

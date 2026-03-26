@@ -53,13 +53,13 @@ export function registerStscriptLanguage(hljs) {
         scope: 'comment',
         begin: /\/\*/,
         end: /\*\|/,
-        contains: [],
+        contains: /** @type {any[]} */ ([]),
     };
     const COMMENT = {
         scope: 'comment',
         begin: /\/[/#]/,
         end: /\||$|:}/,
-        contains: [],
+        contains: /** @type {any[]} */ ([]),
     };
     const ABORT = {
         begin: /\/(abort|breakpoint)/,
@@ -67,7 +67,7 @@ export function registerStscriptLanguage(hljs) {
         end: /\||$|(?=:})/,
         excludeEnd: false,
         returnEnd: true,
-        contains: [],
+        contains: /** @type {any[]} */ ([]),
     };
     const IMPORT = {
         scope: 'command',
@@ -76,7 +76,7 @@ export function registerStscriptLanguage(hljs) {
         end: /\||$|(?=:})/,
         excludeEnd: false,
         returnEnd: true,
-        contains: [],
+        contains: /** @type {any[]} */ ([]),
     };
     const BREAK = {
         scope: 'command',
@@ -85,7 +85,7 @@ export function registerStscriptLanguage(hljs) {
         end: /\||$|(?=:})/,
         excludeEnd: false,
         returnEnd: true,
-        contains: [],
+        contains: /** @type {any[]} */ ([]),
     };
     const LET = {
         begin: [
@@ -97,7 +97,7 @@ export function registerStscriptLanguage(hljs) {
         end: /\||$|:}/,
         excludeEnd: false,
         returnEnd: true,
-        contains: [],
+        contains: /** @type {any[]} */ ([]),
     };
     const SETVAR = {
         begin: /\/(setvar|setglobalvar)\s+/,
@@ -105,7 +105,7 @@ export function registerStscriptLanguage(hljs) {
         end: /\||$|:}/,
         excludeEnd: false,
         returnEnd: true,
-        contains: [],
+        contains: /** @type {any[]} */ ([]),
     };
     const GETVAR = {
         begin: /\/(getvar|getglobalvar)\s+/,
@@ -113,7 +113,7 @@ export function registerStscriptLanguage(hljs) {
         end: /\||$|:}/,
         excludeEnd: false,
         returnEnd: true,
-        contains: [],
+        contains: /** @type {any[]} */ ([]),
     };
     const RUN = {
         match: [
@@ -125,7 +125,7 @@ export function registerStscriptLanguage(hljs) {
             1: 'variable.language',
             2: 'title.function.invoke',
         },
-        contains: [], // defined later
+        contains: /** @type {any[]} */ ([]), // defined later
     };
     const COMMAND = {
         scope: 'command',
@@ -134,7 +134,7 @@ export function registerStscriptLanguage(hljs) {
         end: /\||$|(?=:})/,
         excludeEnd: false,
         returnEnd: true,
-        contains: [], // defined later
+        contains: /** @type {any[]} */ ([]), // defined later
     };
     const CLOSURE = {
         scope: 'closure',
@@ -142,7 +142,7 @@ export function registerStscriptLanguage(hljs) {
         end: /:}(\(\))?/,
         beginScope: 'punctuation',
         endScope: 'punctuation',
-        contains: [], // defined later
+        contains: /** @type {any[]} */ ([]), // defined later
     };
     const NAMED_ARG = {
         scope: 'property',
@@ -272,4 +272,3 @@ export function registerStscriptLanguage(hljs) {
         ],
     }));
 }
-

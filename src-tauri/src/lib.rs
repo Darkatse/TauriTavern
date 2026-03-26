@@ -6,7 +6,7 @@ mod presentation;
 
 use app::spawn_initialization;
 use infrastructure::http_client_pool::HttpClientPool;
-use infrastructure::logging::logger;
+use infrastructure::logging::{devtools, llm_api_logs, logger};
 use infrastructure::paths::resolve_runtime_paths;
 use infrastructure::third_party_assets::ThirdPartyExtensionDirs;
 use infrastructure::user_data_dirs::DefaultUserWebDirs;
@@ -70,13 +70,37 @@ pub async fn run() {
             logger::bind_app_handle(app_handle.clone());
 
             let runtime_paths = resolve_runtime_paths(&app_handle)?;
+            app.manage(runtime_paths.clone());
+
+            if let Err(error) = devtools::purge_old_log_files(
+                &runtime_paths.log_root,
+                std::time::Duration::from_secs(14 * 24 * 60 * 60),
+            ) {
+                eprintln!(
+                    "Failed to purge old log files in {:?}: {}",
+                    runtime_paths.log_root, error
+                );
+            }
+
             let http_client_pool = std::sync::Arc::new(HttpClientPool::new());
             app.manage(http_client_pool.clone());
 
             #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
             install_window_state_plugin(&app_handle, &runtime_paths.data_root)?;
 
-            if let Err(error) = logger::init_logger(&runtime_paths.log_root) {
+            let backend_log_store =
+                std::sync::Arc::new(devtools::BackendLogStore::new(app_handle.clone()));
+            app.manage(backend_log_store.clone());
+
+            let llm_api_log_store = std::sync::Arc::new(llm_api_logs::LlmApiLogStore::new(
+                app_handle.clone(),
+                runtime_paths.log_root.clone(),
+            ));
+            app.manage(llm_api_log_store.clone());
+
+            if let Err(error) =
+                logger::init_logger(&runtime_paths.log_root, Some(backend_log_store))
+            {
                 eprintln!("Failed to initialize logger: {}", error);
             }
 
@@ -99,10 +123,9 @@ pub async fn run() {
             app.manage(third_party_dirs.clone());
             app.manage(user_dirs.clone());
 
-            let tauritavern_settings =
-                load_tauritavern_settings(&runtime_paths.data_root)?;
-            http_client_pool
-                .apply_request_proxy_settings(&tauritavern_settings.request_proxy)?;
+            let tauritavern_settings = load_tauritavern_settings(&runtime_paths.data_root)?;
+            http_client_pool.apply_request_proxy_settings(&tauritavern_settings.request_proxy)?;
+            llm_api_log_store.apply_settings(tauritavern_settings.dev.effective_llm_api_keep());
             let _main_window = create_main_window(app, third_party_dirs, user_dirs)?;
 
             #[cfg(target_os = "windows")]
@@ -110,9 +133,7 @@ pub async fn run() {
                 let close_to_tray_on_close =
                     load_close_to_tray_on_close_setting(&runtime_paths.data_root)?;
                 let tray_state = std::sync::Arc::new(
-                    presentation::windows_tray::WindowsTrayState::new(
-                        close_to_tray_on_close,
-                    ),
+                    presentation::windows_tray::WindowsTrayState::new(close_to_tray_on_close),
                 );
                 presentation::windows_tray::install_windows_tray(
                     &app_handle,
@@ -189,8 +210,7 @@ fn load_close_to_tray_on_close_setting(
 
 fn load_tauritavern_settings(
     data_root: &std::path::Path,
-) -> Result<crate::domain::models::settings::TauriTavernSettings, Box<dyn std::error::Error>>
-{
+) -> Result<crate::domain::models::settings::TauriTavernSettings, Box<dyn std::error::Error>> {
     let path = data_root
         .join("default-user")
         .join("tauritavern-settings.json");

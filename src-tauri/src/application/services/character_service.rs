@@ -1,5 +1,5 @@
-mod lorebook_codec;
 mod card_contract;
+mod lorebook_codec;
 
 use crate::application::dto::character_dto::{
     CharacterChatDto, CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
@@ -715,9 +715,7 @@ impl CharacterService {
 
         Ok(())
     }
-
 }
-
 
 #[cfg(test)]
 mod tests;

@@ -184,7 +184,10 @@ fn build_chat_completion_payload(payload: &Map<String, Value>, source: &str) -> 
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                request.insert("verbosity".to_string(), Value::String(verbosity.to_string()));
+                request.insert(
+                    "verbosity".to_string(),
+                    Value::String(verbosity.to_string()),
+                );
             }
         }
     }

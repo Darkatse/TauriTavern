@@ -16,9 +16,7 @@ pub(super) async fn list_models(
     let url = HttpChatCompletionRepository::build_url(&config.base_url, "/models");
 
     let client = repository.client()?;
-    let request = client
-        .get(url)
-        .header(ACCEPT, "application/json");
+    let request = client.get(url).header(ACCEPT, "application/json");
     let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 

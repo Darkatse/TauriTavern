@@ -355,17 +355,12 @@ async fn resolve_vertexai_generate_api_config(
 
     match mode.as_str() {
         "express" => {
-            let api_key = read_required_secret(
-                secret_repository,
-                SecretKeys::VERTEXAI,
-                "Google Vertex AI",
-            )
-            .await?;
+            let api_key =
+                read_required_secret(secret_repository, SecretKeys::VERTEXAI, "Google Vertex AI")
+                    .await?;
 
             let base_url = if let Some(project_id) = project_override {
-                format!(
-                    "{VERTEXAI_GLOBAL_BASE}/v1/projects/{project_id}/locations/{region}",
-                )
+                format!("{VERTEXAI_GLOBAL_BASE}/v1/projects/{project_id}/locations/{region}",)
             } else {
                 format!("{}/v1", vertexai_host(region))
             };
@@ -378,9 +373,12 @@ async fn resolve_vertexai_generate_api_config(
             })
         }
         "full" => {
-            let service_account_json =
-                read_required_secret(secret_repository, SecretKeys::VERTEXAI_SERVICE_ACCOUNT, "Google Vertex AI")
-                    .await?;
+            let service_account_json = read_required_secret(
+                secret_repository,
+                SecretKeys::VERTEXAI_SERVICE_ACCOUNT,
+                "Google Vertex AI",
+            )
+            .await?;
             let (project_id, access_token) =
                 vertexai_auth::get_service_account_access_token(&service_account_json).await?;
 

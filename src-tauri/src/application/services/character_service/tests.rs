@@ -1,7 +1,7 @@
 use super::CharacterService;
 use crate::application::dto::character_dto::{
-    CreateCharacterDto, ExportCharacterContentDto, ExportCharacterDto,
-    MergeCharacterCardDataDto, UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
+    CreateCharacterDto, ExportCharacterContentDto, ExportCharacterDto, MergeCharacterCardDataDto,
+    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::domain::models::character::Character;
@@ -331,8 +331,7 @@ fn build_export_card_value_removes_private_fields() {
     character.fav = true;
     character.data.extensions.fav = true;
 
-    let mut export_value =
-        serde_json::to_value(&character.to_v2()).expect("build export payload");
+    let mut export_value = serde_json::to_value(&character.to_v2()).expect("build export payload");
     super::card_contract::unset_private_fields(&mut export_value)
         .expect("private fields should be removed");
 

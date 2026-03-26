@@ -38,12 +38,14 @@ pub(super) async fn get_service_account_access_token(
     let cached = match cached {
         Some(cached) => cached,
         None => {
-            let service_account_key = serde_json::from_str::<ServiceAccountKey>(service_account_json)
-                .map_err(|error| {
-                    ApplicationError::ValidationError(format!(
-                        "Vertex AI service account JSON parse failed: {error}"
-                    ))
-                })?;
+            let service_account_key = serde_json::from_str::<ServiceAccountKey>(
+                service_account_json,
+            )
+            .map_err(|error| {
+                ApplicationError::ValidationError(format!(
+                    "Vertex AI service account JSON parse failed: {error}"
+                ))
+            })?;
 
             let project_id = service_account_key
                 .project_id
@@ -88,7 +90,9 @@ pub(super) async fn get_service_account_access_token(
         })?;
 
     let access_token = token.token().ok_or_else(|| {
-        ApplicationError::InternalError("Vertex AI access token response is missing token".to_string())
+        ApplicationError::InternalError(
+            "Vertex AI access token response is missing token".to_string(),
+        )
     })?;
 
     Ok((cached.project_id, access_token.to_string()))
@@ -102,4 +106,3 @@ fn sha256_hex(input: &str) -> String {
     let digest = Sha256::digest(input.as_bytes());
     format!("{digest:x}")
 }
-

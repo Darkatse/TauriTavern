@@ -1,6 +1,6 @@
 use crate::domain::models::settings::{
-    ChatHistoryMode, RequestProxySettings, SettingsSnapshot, StartupUpdatePopupSettings,
-    TauriTavernSettings, TauriTavernUpdateSettings, UserSettings,
+    ChatHistoryMode, DevLoggingSettings, RequestProxySettings, SettingsSnapshot,
+    StartupUpdatePopupSettings, TauriTavernSettings, TauriTavernUpdateSettings, UserSettings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,6 +14,7 @@ pub struct TauriTavernSettingsDto {
     pub chat_history_mode: ChatHistoryMode,
     pub close_to_tray_on_close: bool,
     pub request_proxy: RequestProxySettingsDto,
+    pub dev: DevLoggingSettingsDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +36,19 @@ pub struct UpdateTauriTavernSettingsDto {
     pub chat_history_mode: Option<ChatHistoryMode>,
     pub close_to_tray_on_close: Option<bool>,
     pub request_proxy: Option<RequestProxySettingsDto>,
+    pub dev: Option<UpdateDevLoggingSettingsDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevLoggingSettingsDto {
+    pub frontend_console_capture: bool,
+    pub llm_api_keep: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateDevLoggingSettingsDto {
+    pub frontend_console_capture: Option<bool>,
+    pub llm_api_keep: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +131,16 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             chat_history_mode: settings.chat_history_mode,
             close_to_tray_on_close: settings.close_to_tray_on_close,
             request_proxy: RequestProxySettingsDto::from(settings.request_proxy),
+            dev: DevLoggingSettingsDto::from(settings.dev),
+        }
+    }
+}
+
+impl From<DevLoggingSettings> for DevLoggingSettingsDto {
+    fn from(settings: DevLoggingSettings) -> Self {
+        Self {
+            frontend_console_capture: settings.frontend_console_capture,
+            llm_api_keep: settings.effective_llm_api_keep(),
         }
     }
 }

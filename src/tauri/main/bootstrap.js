@@ -1,4 +1,4 @@
-import { initializeBridge, invoke, isTauri as isTauriRuntime, convertFileSrc } from '../../tauri-bridge.js';
+import { invoke, isTauri as isTauriRuntime, convertFileSrc } from '../../tauri-bridge.js';
 import { createTauriMainContext } from './context.js';
 import { createDownloadBridge } from './download-bridge.js';
 import { createInterceptors } from './interceptors.js';
@@ -11,9 +11,9 @@ import { installAndroidImeLayoutHost } from './compat/mobile/android-ime-layout-
 import { installMobileOverlayCompatController } from './compat/mobile/mobile-overlay-compat-controller.js';
 import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compat.js';
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
-import { installBackendErrorBridge } from './bootstrap/backend-error-bridge.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
 import { installChatApi } from './api/chat.js';
+import { initializeTauriIntegration } from './bootstrap/initialize-tauri-integration.js';
 import {
     getMethod,
     getMethodHint,
@@ -25,6 +25,7 @@ import {
 } from './http-utils.js';
 import { registerRoutes } from './routes/index.js';
 import { isEmbeddedRuntimeTakeoverDisabled } from './services/embedded-runtime/embedded-runtime-profile-state.js';
+import { installFrontendLogCapture, setFrontendLogBackendForwardingEnabled } from './services/dev-logging/frontend-log-capture.js';
 import { preinstallPanelRuntime } from './services/panel-runtime/preinstall.js';
 let bootstrapped = false;
 const HOST_ABI_VERSION = 1;
@@ -256,6 +257,8 @@ export function bootstrapTauriMain() {
         installTauriMobileCompat();
     }
 
+    installFrontendLogCapture();
+
     installBackNavigationBridge();
     installNativeShareBridge();
 
@@ -286,6 +289,7 @@ export function bootstrapTauriMain() {
     };
 
     const routeRequest = async (url, input, init, _targetWindow) => {
+        const startedAt = globalThis.performance?.now?.() ?? Date.now();
         const traceId = nextTraceId();
         const method = await getMethod(input, init);
         const body = await readRequestBody(input, init);
@@ -301,6 +305,7 @@ export function bootstrapTauriMain() {
 
         const finalResponse = response || jsonResponse({ error: `Unsupported endpoint: ${url.pathname}` }, 404);
         finalResponse.headers.set(DEFAULT_TRACE_HEADER, traceId);
+        const durationMs = (globalThis.performance?.now?.() ?? Date.now()) - startedAt;
         return finalResponse;
     };
 
@@ -329,6 +334,7 @@ export function bootstrapTauriMain() {
         downloadBridge,
         perfEnabled,
         perfReadyPromise,
+        safePerfMark,
     ).catch((error) => {
         console.error('Failed to initialize Tauri integration:', error);
     });
@@ -336,6 +342,8 @@ export function bootstrapTauriMain() {
     if (window.__TAURITAVERN__) {
         window.__TAURITAVERN__.ready = readyPromise;
     }
+
+    void readyPromise.then(() => setFrontendLogBackendForwardingEnabled(true));
 
     void readyPromise.then(() => import('../../scripts/tauri/setting/setting-panel.js').then(({ installTauriTavernSettingsPanel }) => installTauriTavernSettingsPanel()).catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
     void readyPromise.then(() => import('./services/chat-history/install.js').then(({ installChatHistoryMode }) => installChatHistoryMode()));
@@ -350,33 +358,4 @@ export function bootstrapTauriMain() {
             })
             .catch(() => {});
     }
-}
-async function initializeTauriIntegration(context, interceptors, downloadBridge, perfEnabled, perfReadyPromise) {
-    if (perfEnabled && perfReadyPromise) {
-        try {
-            await perfReadyPromise;
-        } catch {
-            // Ignore perf HUD load failures.
-        }
-    }
-    if (perfEnabled) {
-        safePerfMark('tt:tauri:init:start');
-    }
-    await initializeBridge();
-    if (perfEnabled) {
-        safePerfMark('tt:tauri:init:bridge-ready');
-    }
-    await installBackendErrorBridge();
-    if (perfEnabled) {
-        safePerfMark('tt:tauri:init:error-bridge-ready');
-    }
-    await context.initialize();
-    if (perfEnabled) {
-        safePerfMark('tt:tauri:init:context-ready');
-    }
-
-    // Re-apply runtime patches in case third-party code recreated fetch/jQuery or download bindings after bootstrap.
-    interceptors.patchFetch();
-    interceptors.patchJQueryAjax();
-    downloadBridge.patchWindow();
 }

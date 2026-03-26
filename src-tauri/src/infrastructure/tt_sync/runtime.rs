@@ -8,7 +8,9 @@ use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use ttsync_contract::peer::DeviceId;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncErrorEvent, TtSyncPairedServer, TtSyncProgressEvent};
+use crate::domain::models::tt_sync::{
+    TtSyncCompletedEvent, TtSyncErrorEvent, TtSyncPairedServer, TtSyncProgressEvent,
+};
 use crate::infrastructure::tt_sync::store::TtSyncStore;
 
 pub struct TtSyncRuntime {
@@ -93,15 +95,12 @@ impl TtSyncRuntime {
             .map(|server| (server.server_device_id.to_string(), server))
             .collect::<HashMap<_, _>>();
 
-        let result = map
-            .get(server_device_id.as_str())
-            .cloned()
-            .ok_or_else(|| {
-                DomainError::NotFound(format!(
-                    "Paired TT-Sync server not found: {}",
-                    server_device_id
-                ))
-            })?;
+        let result = map.get(server_device_id.as_str()).cloned().ok_or_else(|| {
+            DomainError::NotFound(format!(
+                "Paired TT-Sync server not found: {}",
+                server_device_id
+            ))
+        })?;
 
         {
             let mut cache = self.paired_servers_cache.lock().await;
@@ -127,7 +126,10 @@ impl TtSyncRuntime {
         Ok(())
     }
 
-    pub async fn remove_paired_server(&self, server_device_id: &DeviceId) -> Result<(), DomainError> {
+    pub async fn remove_paired_server(
+        &self,
+        server_device_id: &DeviceId,
+    ) -> Result<(), DomainError> {
         self.store.remove_paired_server(server_device_id).await?;
 
         let mut cache = self.paired_servers_cache.lock().await;

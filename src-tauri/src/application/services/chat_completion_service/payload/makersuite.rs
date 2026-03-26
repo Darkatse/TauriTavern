@@ -93,8 +93,10 @@ fn build_google_payload(
     let is_gemma = model.contains("gemma");
     let is_learnlm = model.contains("learnlm");
 
-    let enable_image_modality =
-        request_images && GOOGLE_IMAGE_GENERATION_MODELS.iter().any(|entry| *entry == model);
+    let enable_image_modality = request_images
+        && GOOGLE_IMAGE_GENERATION_MODELS
+            .iter()
+            .any(|entry| *entry == model);
 
     let use_system_prompt = payload
         .get("use_sysprompt")
@@ -103,7 +105,8 @@ fn build_google_payload(
         && !enable_image_modality
         && !is_gemma;
 
-    let (contents, system_prompt) = convert_messages(payload.get("messages"), model, use_system_prompt);
+    let (contents, system_prompt) =
+        convert_messages(payload.get("messages"), model, use_system_prompt);
 
     let mut generation_config = Map::new();
     generation_config.insert(
@@ -180,17 +183,17 @@ fn build_google_payload(
     }
 
     if enable_image_modality {
-        generation_config.insert(
-            "responseModalities".to_string(),
-            json!(["text", "image"]),
-        );
+        generation_config.insert("responseModalities".to_string(), json!(["text", "image"]));
 
         let enable_image_config = aspect_ratio.is_some() || image_size.is_some();
         if enable_image_config {
             let mut image_config = Map::new();
 
             if let Some(image_size) = image_size.filter(|_| is_google_image_size_model(model)) {
-                image_config.insert("imageSize".to_string(), Value::String(image_size.to_string()));
+                image_config.insert(
+                    "imageSize".to_string(),
+                    Value::String(image_size.to_string()),
+                );
             }
 
             if let Some(aspect_ratio) = aspect_ratio {
@@ -256,7 +259,9 @@ fn build_google_payload(
         if enable_web_search
             && !is_learnlm
             && !GOOGLE_NO_SEARCH_MODELS.iter().any(|entry| *entry == model)
-            && !tools.iter().any(|tool| tool.get("function_declarations").is_some())
+            && !tools
+                .iter()
+                .any(|tool| tool.get("function_declarations").is_some())
         {
             tools.push(json!({ "google_search": {} }));
         }
@@ -395,10 +400,7 @@ fn convert_messages(
                     continue;
                 };
 
-                let is_text_part = part_object
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .is_some();
+                let is_text_part = part_object.get("text").and_then(Value::as_str).is_some();
 
                 if let Some(text_signature) = text_signature {
                     if is_text_part {
@@ -669,7 +671,9 @@ fn split_openai_tools(tools: &Value) -> (Vec<Value>, Vec<Value>) {
 
             let mut function = function.clone();
 
-            if let Some(parameters) = function.get_mut("parameters").and_then(Value::as_object_mut)
+            if let Some(parameters) = function
+                .get_mut("parameters")
+                .and_then(Value::as_object_mut)
             {
                 parameters.remove("$schema");
 
@@ -779,10 +783,7 @@ fn inject_google_thinking_config(
         }
     }
 
-    thinking_config.insert(
-        "includeThoughts".to_string(),
-        Value::Bool(include_thoughts),
-    );
+    thinking_config.insert("includeThoughts".to_string(), Value::Bool(include_thoughts));
 
     generation_config.insert("thinkingConfig".to_string(), Value::Object(thinking_config));
 }
@@ -1284,7 +1285,10 @@ mod tests {
             .and_then(Value::as_object)
             .expect("thinkingConfig must be object");
 
-        assert_eq!(thinking.get("thinkingBudget").and_then(Value::as_i64), Some(0));
+        assert_eq!(
+            thinking.get("thinkingBudget").and_then(Value::as_i64),
+            Some(0)
+        );
         assert_eq!(
             thinking.get("includeThoughts").and_then(Value::as_bool),
             Some(false)

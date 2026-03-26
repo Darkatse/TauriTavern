@@ -2,6 +2,7 @@
 
 import { getHljs } from '../../../lib.js';
 
+/** @type {ReturnType<typeof createCodeHighlightCoordinator> | null} */
 let singleton = null;
 
 export function getCodeHighlightCoordinator() {
@@ -41,6 +42,7 @@ function createCodeHighlightCoordinator() {
         })
         : null;
 
+    /** @param {HTMLElement} codeEl */
     function enqueue(codeEl) {
         if (codeEl.dataset.ttHljsState === 'done') {
             return;

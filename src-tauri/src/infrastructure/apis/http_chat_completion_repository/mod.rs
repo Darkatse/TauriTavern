@@ -12,7 +12,7 @@ use crate::domain::repositories::chat_completion_repository::{
     ChatCompletionSource, ChatCompletionStreamSender,
 };
 use crate::infrastructure::http_client_pool::{
-    HttpClientPool, HttpClientProfile, CHAT_COMPLETION_CONNECT_TIMEOUT,
+    CHAT_COMPLETION_CONNECT_TIMEOUT, HttpClientPool, HttpClientProfile,
 };
 
 mod claude;

@@ -8,8 +8,8 @@ use ttsync_contract::manifest::ManifestEntryV2;
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::plan::{PlanId, SyncPlan};
 use ttsync_contract::session::SessionToken;
-use ttsync_contract::sync::SyncPhase;
 use ttsync_contract::sync::SyncMode;
+use ttsync_contract::sync::SyncPhase;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
@@ -219,9 +219,9 @@ fn spawn_download_task(
     plan_id: PlanId,
     entry: ManifestEntryV2,
 ) {
-    join_set.spawn(async move {
-        download_one(&api, &sync_root, &session_token, &plan_id, entry).await
-    });
+    join_set.spawn(
+        async move { download_one(&api, &sync_root, &session_token, &plan_id, entry).await },
+    );
 }
 
 async fn download_one(
@@ -233,7 +233,9 @@ async fn download_one(
 ) -> Result<DownloadResult, DomainError> {
     let full_path = transfer::resolve_to_local(sync_root, &entry.path);
 
-    let response = api.download_file(session_token, plan_id, &entry.path).await?;
+    let response = api
+        .download_file(session_token, plan_id, &entry.path)
+        .await?;
     let stream = response
         .bytes_stream()
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error));

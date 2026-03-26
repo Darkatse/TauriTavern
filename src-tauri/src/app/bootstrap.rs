@@ -19,11 +19,11 @@ use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
+use crate::application::services::tt_sync_service::TtSyncService;
 use crate::application::services::update_service::UpdateService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
-use crate::application::services::tt_sync_service::TtSyncService;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::avatar_repository::AvatarRepository;
 use crate::domain::repositories::background_repository::BackgroundRepository;
@@ -47,6 +47,9 @@ use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepositor
 use crate::infrastructure::apis::http_chat_completion_repository::HttpChatCompletionRepository;
 use crate::infrastructure::apis::miktik_tokenizer_repository::MiktikTokenizerRepository;
 use crate::infrastructure::http_client_pool::HttpClientPool;
+use crate::infrastructure::logging::llm_api_logs::{
+    LlmApiLogStore, LoggingChatCompletionRepository,
+};
 use crate::infrastructure::persistence::file_system::DataDirectory;
 use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
 use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
@@ -281,14 +284,16 @@ fn build_repositories(
         FileQuickReplyRepository::new(data_directory.default_user().join("QuickReplies")),
     );
 
+    let llm_api_log_store = app_handle.state::<Arc<LlmApiLogStore>>().inner().clone();
     let chat_completion_repository: Arc<dyn ChatCompletionRepository> =
-        Arc::new(HttpChatCompletionRepository::new(http_client_pool.clone()));
-    let tokenizer_cache_dir = data_root.join("_cache").join("tokenizers");
-    let tokenizer_repository: Arc<dyn TokenizerRepository> =
-        Arc::new(MiktikTokenizerRepository::new(
-            tokenizer_cache_dir,
-            http_client_pool.clone(),
+        Arc::new(LoggingChatCompletionRepository::new(
+            Arc::new(HttpChatCompletionRepository::new(http_client_pool.clone())),
+            llm_api_log_store,
         ));
+    let tokenizer_cache_dir = data_root.join("_cache").join("tokenizers");
+    let tokenizer_repository: Arc<dyn TokenizerRepository> = Arc::new(
+        MiktikTokenizerRepository::new(tokenizer_cache_dir, http_client_pool.clone()),
+    );
     let world_info_repository: Arc<dyn WorldInfoRepository> = Arc::new(
         FileWorldInfoRepository::new(data_directory.default_user().join("worlds")),
     );

@@ -178,8 +178,13 @@ mod tests {
 
         std::fs::create_dir_all(root.join("default-user").join("chats"))
             .expect("create chats directory");
-        std::fs::create_dir_all(root.join("default-user").join("user").join("lan-sync").join("tt-sync-v2"))
-            .expect("create tt sync state directory");
+        std::fs::create_dir_all(
+            root.join("default-user")
+                .join("user")
+                .join("lan-sync")
+                .join("tt-sync-v2"),
+        )
+        .expect("create tt sync state directory");
 
         std::fs::write(
             root.join("default-user").join("chats").join("chat.jsonl"),
@@ -215,4 +220,3 @@ mod tests {
         std::fs::remove_dir_all(&root).expect("remove temp root");
     }
 }
-

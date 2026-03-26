@@ -18,9 +18,7 @@ pub(super) async fn list_models(
     let url = build_gemini_url(&config.base_url, "models");
 
     let client = repository.client()?;
-    let request = client
-        .get(url)
-        .header(ACCEPT, "application/json");
+    let request = client.get(url).header(ACCEPT, "application/json");
     let request = HttpChatCompletionRepository::apply_header_if_present(
         request,
         "x-goog-api-key",

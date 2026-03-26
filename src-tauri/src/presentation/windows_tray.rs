@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
@@ -27,7 +27,8 @@ impl WindowsTrayState {
     }
 
     pub fn set_close_to_tray_on_close(&self, enabled: bool) {
-        self.close_to_tray_on_close.store(enabled, Ordering::Relaxed);
+        self.close_to_tray_on_close
+            .store(enabled, Ordering::Relaxed);
     }
 
     fn set_quitting(&self) {

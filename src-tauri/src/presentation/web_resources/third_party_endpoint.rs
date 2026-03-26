@@ -120,8 +120,8 @@ fn handle_third_party_asset_route_request(
                 return;
             }
 
-            let should_apply_layer_compat = resolved.mime_type == "text/css"
-                && should_apply_third_party_layer_compat(request);
+            let should_apply_layer_compat =
+                resolved.mime_type == "text/css" && should_apply_third_party_layer_compat(request);
 
             match std::fs::read(&resolved.path) {
                 Ok(bytes) => {

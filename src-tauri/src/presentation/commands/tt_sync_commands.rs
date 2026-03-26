@@ -70,7 +70,12 @@ pub async fn tt_sync_list_servers(
         .tt_sync_service
         .list_servers()
         .await
-        .map(|servers| servers.into_iter().map(TtSyncPairedServerDto::from).collect())
+        .map(|servers| {
+            servers
+                .into_iter()
+                .map(TtSyncPairedServerDto::from)
+                .collect()
+        })
         .map_err(map_command_error("Failed to list TT-Sync servers"))
 }
 

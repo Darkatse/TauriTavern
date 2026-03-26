@@ -13,8 +13,8 @@ use crate::app::AppState;
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncDirection, TtSyncErrorEvent, TtSyncPairedServer};
 use crate::infrastructure::tt_sync::identity::device_pubkey_b64url;
-use crate::infrastructure::tt_sync::push::push_to_server;
 use crate::infrastructure::tt_sync::pull::pull_from_server;
+use crate::infrastructure::tt_sync::push::push_to_server;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 use crate::infrastructure::tt_sync::v2_api::TtSyncV2Api;
 
@@ -30,7 +30,12 @@ impl TtSyncService {
         sync_permit: Arc<Semaphore>,
     ) -> Self {
         Self {
-            runtime: Arc::new(TtSyncRuntime::new(app_handle, sync_root, store_root, sync_permit)),
+            runtime: Arc::new(TtSyncRuntime::new(
+                app_handle,
+                sync_root,
+                store_root,
+                sync_permit,
+            )),
         }
     }
 

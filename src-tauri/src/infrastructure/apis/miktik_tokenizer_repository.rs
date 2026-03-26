@@ -553,8 +553,7 @@ mod tests {
     #[tokio::test]
     async fn bundled_models_are_usable_without_network() {
         let cache_dir = unique_temp_cache_dir();
-        let repository =
-            MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
         let messages = vec![json!({"role": "user", "content": "hello world"})];
 
         TokenizerRepository::ensure_model_ready(&repository, "claude-3-7-sonnet")
@@ -579,8 +578,7 @@ mod tests {
     #[tokio::test]
     async fn new_does_not_eagerly_register_bundled_models() {
         let cache_dir = unique_temp_cache_dir();
-        let repository =
-            MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
 
         assert!(!repository.is_model_ready("claude").await);
         assert!(!repository.is_model_ready("gemma").await);
@@ -590,8 +588,7 @@ mod tests {
     #[tokio::test]
     async fn bundled_models_do_not_write_cache_files_on_first_use() {
         let cache_dir = unique_temp_cache_dir();
-        let repository =
-            MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
         let messages = vec![json!({"role": "user", "content": "hello world"})];
 
         TokenizerRepository::ensure_model_ready(&repository, "claude")

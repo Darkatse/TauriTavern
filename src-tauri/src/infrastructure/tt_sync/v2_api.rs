@@ -1,5 +1,5 @@
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use reqwest::Client;
 use url::Url;
 
@@ -9,7 +9,10 @@ use ttsync_contract::pair::{PairCompleteRequest, PairCompleteResponse};
 use ttsync_contract::path::SyncPath;
 use ttsync_contract::peer::DeviceId;
 use ttsync_contract::plan::{CommitResponse, PlanId, PullPlanRequest, PushPlanRequest, SyncPlan};
-use ttsync_contract::session::{SessionOpenRequest, SessionOpenResponse, SessionToken, HEADER_DEVICE_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_TIMESTAMP_MS};
+use ttsync_contract::session::{
+    HEADER_DEVICE_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_TIMESTAMP_MS, SessionOpenRequest,
+    SessionOpenResponse, SessionToken,
+};
 use ttsync_contract::sync::SyncMode;
 
 use crate::domain::errors::DomainError;
@@ -26,8 +29,8 @@ pub struct TtSyncV2Api {
 
 impl TtSyncV2Api {
     pub fn new(base_url: String, spki_sha256: String) -> Result<Self, DomainError> {
-        let parsed = Url::parse(&base_url)
-            .map_err(|error| DomainError::InvalidData(error.to_string()))?;
+        let parsed =
+            Url::parse(&base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
         if parsed.scheme() != "https" {
             return Err(DomainError::InvalidData(format!(
                 "TT-Sync base_url must be https: {}",
@@ -37,8 +40,7 @@ impl TtSyncV2Api {
 
         let tls = build_spki_pinned_tls_config(&spki_sha256)?;
 
-        let builder = apply_default_user_agent(Client::builder())
-            .use_preconfigured_tls(tls);
+        let builder = apply_default_user_agent(Client::builder()).use_preconfigured_tls(tls);
 
         let http = builder
             .build()
@@ -254,7 +256,8 @@ impl TtSyncV2Api {
 }
 
 fn pair_complete_url(base_url: &str, token: &str) -> Result<Url, DomainError> {
-    let mut url = Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    let mut url =
+        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
     url.set_path("/v2/pair/complete");
     url.set_query(None);
     url.query_pairs_mut().append_pair("token", token);
@@ -262,38 +265,40 @@ fn pair_complete_url(base_url: &str, token: &str) -> Result<Url, DomainError> {
 }
 
 fn session_open_url(base_url: &str) -> Result<Url, DomainError> {
-    let mut url = Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    let mut url =
+        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
     url.set_path("/v2/session/open");
     url.set_query(None);
     Ok(url)
 }
 
 fn pull_plan_url(base_url: &str) -> Result<Url, DomainError> {
-    let mut url = Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    let mut url =
+        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
     url.set_path("/v2/sync/pull-plan");
     url.set_query(None);
     Ok(url)
 }
 
 fn push_plan_url(base_url: &str) -> Result<Url, DomainError> {
-    let mut url = Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    let mut url =
+        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
     url.set_path("/v2/sync/push-plan");
     url.set_query(None);
     Ok(url)
 }
 
 fn file_download_url(base_url: &str, plan_id: &PlanId, path_b64: &str) -> Result<Url, DomainError> {
-    let mut url = Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
-    url.set_path(&format!(
-        "/v2/plans/{}/files/{}",
-        plan_id.0, path_b64
-    ));
+    let mut url =
+        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    url.set_path(&format!("/v2/plans/{}/files/{}", plan_id.0, path_b64));
     url.set_query(None);
     Ok(url)
 }
 
 fn commit_url(base_url: &str, plan_id: &PlanId) -> Result<Url, DomainError> {
-    let mut url = Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    let mut url =
+        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
     url.set_path(&format!("/v2/plans/{}/commit", plan_id.0));
     url.set_query(None);
     Ok(url)

@@ -64,10 +64,12 @@ pub(super) async fn generate(
     })?;
 
     if !response.status().is_success() {
-        return Err(
-            HttpChatCompletionRepository::map_error_response(PROVIDER_NAME, response, "Generation request failed")
-                .await,
-        );
+        return Err(HttpChatCompletionRepository::map_error_response(
+            PROVIDER_NAME,
+            response,
+            "Generation request failed",
+        )
+        .await);
     }
 
     let body = response.json::<Value>().await.map_err(|error| {
@@ -126,14 +128,15 @@ pub(super) async fn generate_stream(
     })?;
 
     if !response.status().is_success() {
-        return Err(
-            HttpChatCompletionRepository::map_error_response(PROVIDER_NAME, response, "Generation request failed")
-                .await,
-        );
+        return Err(HttpChatCompletionRepository::map_error_response(
+            PROVIDER_NAME,
+            response,
+            "Generation request failed",
+        )
+        .await);
     }
 
-    HttpChatCompletionRepository::stream_sse_response(PROVIDER_NAME, response, sender, cancel)
-        .await
+    HttpChatCompletionRepository::stream_sse_response(PROVIDER_NAME, response, sender, cancel).await
 }
 
 fn resolve_generation_method(endpoint_path: &str, stream: bool) -> &'static str {
@@ -153,4 +156,3 @@ fn resolve_generation_method(endpoint_path: &str, stream: bool) -> &'static str 
         "generateContent"
     }
 }
-

@@ -219,9 +219,8 @@ fn spawn_upload_task(
     plan_id: PlanId,
     entry: ManifestEntryV2,
 ) {
-    join_set.spawn(async move {
-        upload_one(&api, &sync_root, &session_token, &plan_id, entry).await
-    });
+    join_set
+        .spawn(async move { upload_one(&api, &sync_root, &session_token, &plan_id, entry).await });
 }
 
 async fn upload_one(
