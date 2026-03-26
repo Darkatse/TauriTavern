@@ -5706,20 +5706,20 @@ export function checkEmbeddedWorld(chid) {
             accountStorage.setItem(checkKey, 'true');
 
             if (power_user.world_import_dialog) {
-                const html = `<h3>This character has an embedded World/Lorebook.</h3>
-                <h3>Would you like to import it now?</h3>
-                <div class="m-b-1">If you want to import it later, select "Import Card Lore" in the "More..." dropdown menu on the character panel.</div>`;
+                const popupHeader = t`This character has an embedded World/Lorebook.`;
+                const popupBody = `<h3>${t`Would you like to import it now?`}</h3>
+                <div class="m-b-1">${t`If you want to import it later, select "Import Card Lore" in the "More..." dropdown menu on the character panel.`}</div>`;
                 const checkResult = (result) => {
                     if (result) {
                         importEmbeddedWorldInfo(true);
                     }
                 };
-                callGenericPopup(html, POPUP_TYPE.CONFIRM, '', { okButton: 'Yes' }).then(checkResult);
+                Popup.show.confirm(popupHeader, popupBody, { okButton: t`Yes` }).then(checkResult);
             }
             else {
                 toastr.info(
-                    'To import and use it, select "Import Card Lore" in the "More..." dropdown menu on the character panel.',
-                    `${characters[chid].name} has an embedded World/Lorebook`,
+                    t`To import and use it, select "Import Card Lore" in the "More..." dropdown menu on the character panel.`,
+                    t`${characters[chid].name} has an embedded World/Lorebook`,
                     { timeOut: 5000, extendedTimeOut: 10000 },
                 );
             }
