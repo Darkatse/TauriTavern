@@ -5713,8 +5713,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "ttsync-contract"
-version = "0.1.0"
-source = "git+https://github.com/Darkatse/TT-Sync.git?rev=9915067541833e8f1363c36393fd973222dcfff5#9915067541833e8f1363c36393fd973222dcfff5"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c676651619c641d33124f4bea2719913480527eb07b76a4ae82f6128627a6599"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -5724,8 +5725,9 @@ dependencies = [
 
 [[package]]
 name = "ttsync-core"
-version = "0.1.0"
-source = "git+https://github.com/Darkatse/TT-Sync.git?rev=9915067541833e8f1363c36393fd973222dcfff5#9915067541833e8f1363c36393fd973222dcfff5"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7935aae284eee368f06a7ac1d468fad23b627114f242aede210fe9210ee939f6"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",

@@ -60,9 +60,9 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 rustls = "0.23"
 webpki-roots = "1"
 
-# TT-Sync v2 shared contract/scope (pinned for reproducibility)
-ttsync-contract = { git = "https://github.com/Darkatse/TT-Sync.git", rev = "9915067541833e8f1363c36393fd973222dcfff5" }
-ttsync-core = { git = "https://github.com/Darkatse/TT-Sync.git", rev = "9915067541833e8f1363c36393fd973222dcfff5" }
+# TT-Sync v2 shared contract/scope (crates.io)
+ttsync-contract = "~1.0.0"
+ttsync-core = "~1.0.0"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-window-state = "2.4.1"
