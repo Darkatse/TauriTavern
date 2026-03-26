@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde_json::{Map, Value};
 
 use super::shared::{insert_if_present, message_content_to_text};
@@ -167,12 +169,11 @@ fn build_chat_completion_payload(payload: &Map<String, Value>, source: &str) -> 
             if let Some(reasoning_effort) = payload
                 .get("reasoning_effort")
                 .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
+                .and_then(normalize_openai_reasoning_effort)
             {
                 request.insert(
                     "reasoning_effort".to_string(),
-                    Value::String(map_openai_reasoning_effort(reasoning_effort).to_string()),
+                    Value::String(reasoning_effort.into_owned()),
                 );
             }
         }
@@ -214,12 +215,17 @@ fn should_forward_openai_verbosity(source: &str, model: &str) -> bool {
     matches!(source, "openai" | "custom") && model.trim().to_ascii_lowercase().starts_with("gpt-5")
 }
 
-fn map_openai_reasoning_effort(value: &str) -> &str {
-    if value.eq_ignore_ascii_case("min") {
-        "minimal"
-    } else {
-        value
+fn normalize_openai_reasoning_effort(value: &str) -> Option<Cow<'_, str>> {
+    let value = value.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("auto") {
+        return None;
     }
+
+    if value.eq_ignore_ascii_case("min") {
+        return Some(Cow::Borrowed("minimal"));
+    }
+
+    Some(Cow::Borrowed(value))
 }
 
 fn map_chat_logprobs(request: &mut Map<String, Value>, payload: &Map<String, Value>) {
@@ -410,6 +416,23 @@ mod tests {
                 .unwrap_or_default(),
             "minimal"
         );
+    }
+
+    #[test]
+    fn custom_payload_omits_auto_reasoning_effort_for_supported_openai_models() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "model": "gpt-5-2025-08-07",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "auto"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload);
+        let body = upstream.as_object().expect("payload must be object");
+        assert!(body.get("reasoning_effort").is_none());
     }
 
     #[test]

@@ -138,4 +138,30 @@ mod tests {
             true
         );
     }
+
+    #[test]
+    fn custom_body_overrides_can_explicitly_set_reasoning_effort() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "model": "gpt-5-2025-08-07",
+            "messages": [{"role": "user", "content": "hello"}],
+            "custom_include_body": "reasoning_effort: auto",
+            "custom_url": "http://localhost:1234/v1"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+        let body = upstream
+            .as_object()
+            .expect("upstream body should be object");
+
+        assert_eq!(
+            body.get("reasoning_effort")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "auto"
+        );
+    }
 }
