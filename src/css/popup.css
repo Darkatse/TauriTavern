@@ -215,3 +215,69 @@ body.no-blur .popup[open]::backdrop {
     /* Fix weird animation issue with font-scaling during popup open */
     backface-visibility: hidden;
 }
+
+.popup.tt-fullscreen-text-viewer-popup {
+    width: 100vw;
+    width: 100dvw;
+    height: 100vh;
+    height: 100dvh;
+    max-width: 100vw;
+    max-width: 100dvw;
+    max-height: 100vh;
+    max-height: 100dvh;
+    margin: 0;
+    inset: 0;
+    padding: 0;
+    border-radius: 0;
+}
+
+.popup.tt-fullscreen-text-viewer-popup .popup-body {
+    max-height: none;
+    min-height: 0;
+    padding:
+        calc(var(--tt-inset-top) + 12px)
+        calc(var(--tt-inset-right) + 12px)
+        calc(var(--tt-viewport-bottom-inset) + 12px)
+        calc(var(--tt-inset-left) + 12px);
+}
+
+.popup.tt-fullscreen-text-viewer-popup .popup-content {
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    height: 100%;
+}
+
+.popup.tt-fullscreen-text-viewer-popup .popup-button-close {
+    top: calc(var(--tt-inset-top) + 8px);
+    right: calc(var(--tt-inset-right) + 8px);
+}
+
+.tt-fullscreen-text-viewer {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    height: 100%;
+    min-height: 0;
+}
+
+.tt-fullscreen-text-viewer__header {
+    display: flex;
+    align-items: center;
+    min-height: 0;
+    padding-right: 44px;
+    text-align: left;
+}
+
+.tt-fullscreen-text-viewer__title {
+    font-size: 1rem;
+}
+
+.tt-fullscreen-text-viewer__textarea {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    margin: 0;
+    resize: none;
+    overflow: auto;
+}

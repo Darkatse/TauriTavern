@@ -7,8 +7,10 @@ import {
     subscribeFrontendLogs,
     setFrontendConsoleCaptureEnabled,
 } from '../../../tauri/main/services/dev-logging/frontend-log-capture.js';
+import { openFullscreenTextViewer } from './text-viewer-popup.js';
 
 const CONSOLE_CAPTURE_STORAGE_KEY = 'tt:devConsoleCapture';
+const MONOSPACE_FONT_FAMILY = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 
 function formatTimestamp(ms) {
     const date = new Date(Number(ms) || 0);
@@ -133,6 +135,65 @@ function runOrPopup(task) {
     })();
 }
 
+function createExpandableTextSection({
+    title,
+    viewerTitle = title,
+    rows,
+    placeholder,
+    beforeExpand = null,
+    viewerWrap = 'soft',
+}) {
+    const section = document.createElement('div');
+    section.className = 'flex-container flexFlowColumn';
+    section.style.gap = '6px';
+
+    const header = document.createElement('div');
+    header.className = 'flex-container alignItemsCenter';
+    header.style.justifyContent = 'space-between';
+    header.style.gap = '8px';
+
+    const titleEl = document.createElement('span');
+    titleEl.textContent = title;
+    titleEl.style.opacity = '0.85';
+    header.appendChild(titleEl);
+
+    const expandButton = document.createElement('div');
+    expandButton.className = 'menu_button menu_button_icon';
+    expandButton.title = translate('Expand view');
+    expandButton.setAttribute('aria-label', expandButton.title);
+
+    const expandIcon = document.createElement('i');
+    expandIcon.className = 'fa-solid fa-expand';
+    expandButton.appendChild(expandIcon);
+    header.appendChild(expandButton);
+
+    const textarea = document.createElement('textarea');
+    textarea.rows = rows;
+    textarea.readOnly = true;
+    textarea.spellcheck = false;
+    textarea.style.width = '100%';
+    textarea.style.resize = 'vertical';
+    textarea.style.fontFamily = MONOSPACE_FONT_FAMILY;
+    textarea.placeholder = placeholder;
+
+    expandButton.addEventListener('click', () => runOrPopup(async () => {
+        if (beforeExpand) {
+            await beforeExpand();
+        }
+
+        await openFullscreenTextViewer({
+            title: viewerTitle,
+            text: textarea.value,
+            wrap: viewerWrap,
+        });
+    }));
+
+    section.appendChild(header);
+    section.appendChild(textarea);
+
+    return { section, textarea };
+}
+
 async function openLiveLogPanel({
     title,
     initialEntries,
@@ -229,7 +290,7 @@ async function openLiveLogPanel({
     logContainer.style.border = '1px solid rgba(255,255,255,0.10)';
     logContainer.style.borderRadius = '10px';
     logContainer.style.background = 'rgba(0,0,0,0.12)';
-    logContainer.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+    logContainer.style.fontFamily = MONOSPACE_FONT_FAMILY;
     logContainer.style.fontSize = '12px';
     root.appendChild(logContainer);
 
@@ -462,23 +523,27 @@ export async function openLlmApiLogsPanel() {
     meta.style.whiteSpace = 'pre-wrap';
     root.appendChild(meta);
 
-    const requestReadableBox = document.createElement('textarea');
-    requestReadableBox.rows = 10;
-    requestReadableBox.readOnly = true;
-    requestReadableBox.style.width = '100%';
-    requestReadableBox.style.resize = 'vertical';
-    requestReadableBox.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
-    requestReadableBox.placeholder = translate('Request body');
-    root.appendChild(requestReadableBox);
+    const requestReadableSection = createExpandableTextSection({
+        title: translate('Request body'),
+        rows: 10,
+        placeholder: translate('Request body'),
+        beforeExpand: async () => {
+            await ensurePreviewLoaded();
+        },
+    });
+    const requestReadableBox = requestReadableSection.textarea;
+    root.appendChild(requestReadableSection.section);
 
-    const responseReadableBox = document.createElement('textarea');
-    responseReadableBox.rows = 14;
-    responseReadableBox.readOnly = true;
-    responseReadableBox.style.width = '100%';
-    responseReadableBox.style.resize = 'vertical';
-    responseReadableBox.style.fontFamily = requestReadableBox.style.fontFamily;
-    responseReadableBox.placeholder = translate('Response body');
-    root.appendChild(responseReadableBox);
+    const responseReadableSection = createExpandableTextSection({
+        title: translate('Response body'),
+        rows: 14,
+        placeholder: translate('Response body'),
+        beforeExpand: async () => {
+            await ensurePreviewLoaded();
+        },
+    });
+    const responseReadableBox = responseReadableSection.textarea;
+    root.appendChild(responseReadableSection.section);
 
     const rawDetails = document.createElement('details');
     rawDetails.style.border = '1px solid rgba(255,255,255,0.10)';
@@ -508,23 +573,38 @@ export async function openLlmApiLogsPanel() {
 
     rawDetails.appendChild(rawControls);
 
-    const requestRawBox = document.createElement('textarea');
-    requestRawBox.rows = 10;
-    requestRawBox.readOnly = true;
-    requestRawBox.style.width = '100%';
-    requestRawBox.style.resize = 'vertical';
-    requestRawBox.style.fontFamily = requestReadableBox.style.fontFamily;
-    requestRawBox.placeholder = translate('Request body');
-    rawDetails.appendChild(requestRawBox);
+    const rawSections = document.createElement('div');
+    rawSections.className = 'flex-container flexFlowColumn';
+    rawSections.style.gap = '10px';
+    rawSections.style.marginTop = '10px';
 
-    const responseRawBox = document.createElement('textarea');
-    responseRawBox.rows = 14;
-    responseRawBox.readOnly = true;
-    responseRawBox.style.width = '100%';
-    responseRawBox.style.resize = 'vertical';
-    responseRawBox.style.fontFamily = requestReadableBox.style.fontFamily;
-    responseRawBox.placeholder = translate('Response body');
-    rawDetails.appendChild(responseRawBox);
+    const requestRawSection = createExpandableTextSection({
+        title: translate('Request body'),
+        viewerTitle: `${translate('Raw JSON/SSE')} - ${translate('Request body')}`,
+        rows: 10,
+        placeholder: translate('Request body'),
+        beforeExpand: async () => {
+            await ensureRawLoaded();
+        },
+        viewerWrap: 'off',
+    });
+    const requestRawBox = requestRawSection.textarea;
+    rawSections.appendChild(requestRawSection.section);
+
+    const responseRawSection = createExpandableTextSection({
+        title: translate('Response body'),
+        viewerTitle: `${translate('Raw JSON/SSE')} - ${translate('Response body')}`,
+        rows: 14,
+        placeholder: translate('Response body'),
+        beforeExpand: async () => {
+            await ensureRawLoaded();
+        },
+        viewerWrap: 'off',
+    });
+    const responseRawBox = responseRawSection.textarea;
+    rawSections.appendChild(responseRawSection.section);
+
+    rawDetails.appendChild(rawSections);
 
     root.appendChild(rawDetails);
 
@@ -563,6 +643,27 @@ export async function openLlmApiLogsPanel() {
                 error: String(error),
             };
         }
+    };
+
+    const hasCurrentPreview = () => Boolean(currentPreview && currentPreview.id === currentId);
+    const hasCurrentRaw = () => Boolean(currentRaw && currentRaw.id === currentId);
+
+    const ensurePreviewLoaded = async () => {
+        if (!currentId || hasCurrentPreview()) {
+            return;
+        }
+
+        await loadPreview(currentId);
+        render();
+    };
+
+    const ensureRawLoaded = async () => {
+        if (!currentId || hasCurrentRaw()) {
+            return;
+        }
+
+        await loadRaw(currentId);
+        render();
     };
 
     const render = () => {
@@ -638,32 +739,22 @@ export async function openLlmApiLogsPanel() {
         render();
     }));
 
-    copyRequestButton.addEventListener('click', async () => {
+    copyRequestButton.addEventListener('click', () => runOrPopup(async () => {
+        await ensurePreviewLoaded();
         await navigator.clipboard.writeText(requestReadableBox.value);
-    });
-    copyResponseButton.addEventListener('click', async () => {
+    }));
+    copyResponseButton.addEventListener('click', () => runOrPopup(async () => {
+        await ensurePreviewLoaded();
         await navigator.clipboard.writeText(responseReadableBox.value);
-    });
-    copyRawRequestButton.addEventListener('click', async () => {
-        if (!currentId) {
-            return;
-        }
-        if (!currentRaw || currentRaw.id !== currentId) {
-            await loadRaw(currentId);
-            render();
-        }
+    }));
+    copyRawRequestButton.addEventListener('click', () => runOrPopup(async () => {
+        await ensureRawLoaded();
         await navigator.clipboard.writeText(requestRawBox.value);
-    });
-    copyRawResponseButton.addEventListener('click', async () => {
-        if (!currentId) {
-            return;
-        }
-        if (!currentRaw || currentRaw.id !== currentId) {
-            await loadRaw(currentId);
-            render();
-        }
+    }));
+    copyRawResponseButton.addEventListener('click', () => runOrPopup(async () => {
+        await ensureRawLoaded();
         await navigator.clipboard.writeText(responseRawBox.value);
-    });
+    }));
 
     rawDetails.addEventListener('toggle', () => runOrPopup(async () => {
         if (!rawDetails.open) {
@@ -675,8 +766,7 @@ export async function openLlmApiLogsPanel() {
         if (!currentId) {
             return;
         }
-        await loadRaw(currentId);
-        render();
+        await ensureRawLoaded();
     }));
 
     const unlisten = await listen('tauritavern-llm-api-log', (event) => {
