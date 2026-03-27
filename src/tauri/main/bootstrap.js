@@ -11,6 +11,7 @@ import { installAndroidImeLayoutHost } from './compat/mobile/android-ime-layout-
 import { installMobileOverlayCompatController } from './compat/mobile/mobile-overlay-compat-controller.js';
 import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compat.js';
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
+import { extractErrorText, resolveHostErrorResponse } from './kernel/host-error-response.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
 import { installChatApi } from './api/chat.js';
 import { initializeTauriIntegration } from './bootstrap/initialize-tauri-integration.js';
@@ -291,22 +292,40 @@ export function bootstrapTauriMain() {
     const routeRequest = async (url, input, init, _targetWindow) => {
         const startedAt = globalThis.performance?.now?.() ?? Date.now();
         const traceId = nextTraceId();
-        const method = await getMethod(input, init);
-        const body = await readRequestBody(input, init);
-        const response = await router.handle({
-            url,
-            path: url.pathname,
-            method,
-            body,
-            input,
-            init,
-            traceId,
-        });
+        let method = 'GET';
+        try {
+            method = await getMethod(input, init);
+            const body = await readRequestBody(input, init);
+            const response = await router.handle({
+                url,
+                path: url.pathname,
+                method,
+                body,
+                input,
+                init,
+                traceId,
+            });
 
-        const finalResponse = response || jsonResponse({ error: `Unsupported endpoint: ${url.pathname}` }, 404);
-        finalResponse.headers.set(DEFAULT_TRACE_HEADER, traceId);
-        const durationMs = (globalThis.performance?.now?.() ?? Date.now()) - startedAt;
-        return finalResponse;
+            const finalResponse = response || jsonResponse({ error: `Unsupported endpoint: ${url.pathname}` }, 404);
+            finalResponse.headers.set(DEFAULT_TRACE_HEADER, traceId);
+            const durationMs = (globalThis.performance?.now?.() ?? Date.now()) - startedAt;
+            return finalResponse;
+        } catch (error) {
+            const message = extractErrorText(error);
+            const resolved = resolveHostErrorResponse(message);
+            const finalResponse = textResponse(resolved.body, resolved.status);
+            finalResponse.headers.set(DEFAULT_TRACE_HEADER, traceId);
+            const durationMs = (globalThis.performance?.now?.() ?? Date.now()) - startedAt;
+            console.error('TauriTavern route handler failed', {
+                traceId,
+                method,
+                path: url.pathname,
+                durationMs,
+                message,
+                error,
+            });
+            return finalResponse;
+        }
     };
 
     const interceptors = createInterceptors({

@@ -87,6 +87,11 @@ export function createInvokeService({ invoke, policies }) {
         }
 
         if (typeof value === 'object') {
+            const commandError = extractCommandErrorText(value, depth + 1);
+            if (commandError) {
+                return commandError;
+            }
+
             const keys = ['message', 'error', 'details', 'reason', 'cause', 'data'];
             for (const key of keys) {
                 if (Object.prototype.hasOwnProperty.call(value, key)) {
@@ -100,6 +105,44 @@ export function createInvokeService({ invoke, policies }) {
         }
 
         return '';
+    }
+
+    /**
+     * @param {Record<string, any>} value
+     * @param {number} depth
+     */
+    function extractCommandErrorText(value, depth) {
+        if (depth > 4 || !value || Array.isArray(value) || value instanceof Error) {
+            return '';
+        }
+
+        const keys = Object.keys(value);
+        if (keys.length !== 1) {
+            return '';
+        }
+
+        const variant = keys[0];
+        // @ts-ignore - dynamic object indexing by contract.
+        const payload = value[variant];
+        const nested = extractErrorText(payload, depth + 1) || String(payload ?? '').trim();
+        if (!nested) {
+            return '';
+        }
+
+        switch (variant) {
+            case 'BadRequest':
+                return `Bad request: ${nested}`;
+            case 'NotFound':
+                return `Not found: ${nested}`;
+            case 'Unauthorized':
+                return `Unauthorized: ${nested}`;
+            case 'InternalServerError':
+                return `Internal server error: ${nested}`;
+            case 'TooManyRequests':
+                return nested;
+            default:
+                return '';
+        }
     }
 
     /**

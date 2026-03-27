@@ -14,7 +14,15 @@ where
     let context = context.as_ref().to_string();
 
     move |error| {
-        logger::error(&format!("{}: {}", context, error));
-        error.into()
+        let error_text = error.to_string();
+        let command_error: CommandError = error.into();
+        let message = format!("{}: {}", context, error_text);
+
+        match &command_error {
+            CommandError::TooManyRequests(_) => logger::warn(&message),
+            _ => logger::error(&message),
+        }
+
+        command_error
     }
 }

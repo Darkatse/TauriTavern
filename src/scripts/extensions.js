@@ -11,6 +11,9 @@ import { addLocaleData, getCurrentLocale, t, translate } from './i18n.js';
 import { debounce_timeout } from './constants.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { stripCommandErrorPrefixes } from './util/command-error-utils.js';
+import { isGitHubRateLimitMessage, isGitHubRateLimitStatus } from './util/github-rate-limit.js';
+import { githubRateLimitStopper } from './util/github-rate-limit-stopper.js';
+import { toUserFacingErrorText } from './util/user-facing-error.js';
 import { SimpleMutex } from './util/SimpleMutex.js';
 import { createThirdPartyStylesheetResolver } from './extensions/runtime/third-party-runtime.js';
 import { createExtensionAssetLoader } from './extensions/runtime/asset-loader.js';
@@ -1201,7 +1204,7 @@ async function showExtensionsDetails() {
         });
         popupPromise = popup.show();
         popup.content.scrollTop = initialScrollTop;
-        checkForUpdatesManual(sortFn, abortController.signal).finally(() => htmlLoading.remove());
+        checkForUpdatesManual(sortFn, abortController).finally(() => htmlLoading.remove());
     } catch (error) {
         toastr.error(t`Error loading extensions. See browser console for details.`);
         console.error(error);
@@ -1242,11 +1245,32 @@ async function onUpdateClick() {
  * Updates a third-party extension via the API.
  * @param {string} extensionName Extension folder name
  * @param {boolean} quiet If true, don't show a success message
- * @param {number?} timeout Timeout in milliseconds to wait for the update to complete. If null, no timeout is set.
+ * @param {object} [options] Update options.
+ * @param {number?} [options.timeoutMs] Timeout in milliseconds to wait for the update to complete.
+ * @param {AbortController?} [options.abortController] Abort controller for batch updates.
  */
-async function updateExtension(extensionName, quiet, timeout = null) {
+async function updateExtension(extensionName, quiet, { timeoutMs = null, abortController = null } = {}) {
+    if (githubRateLimitStopper.isTripped()) {
+        return;
+    }
+
     try {
-        const signal = timeout ? AbortSignal.timeout(timeout) : undefined;
+        let signal = abortController?.signal;
+        if (timeoutMs) {
+            const timeoutSignal = AbortSignal.timeout(timeoutMs);
+            if (!signal) {
+                signal = timeoutSignal;
+            } else if (typeof AbortSignal.any === 'function') {
+                signal = AbortSignal.any([signal, timeoutSignal]);
+            } else {
+                const combined = new AbortController();
+                const abort = () => combined.abort();
+                signal.addEventListener('abort', abort, { once: true });
+                timeoutSignal.addEventListener('abort', abort, { once: true });
+                signal = combined.signal;
+            }
+        }
+
         const response = await fetch('/api/extensions/update', {
             method: 'POST',
             signal: signal,
@@ -1259,7 +1283,15 @@ async function updateExtension(extensionName, quiet, timeout = null) {
 
         if (!response.ok) {
             const text = await response.text();
-            toastr.error(text || response.statusText, t`Extension update failed`, { timeOut: 5000 });
+            const normalized = stripCommandErrorPrefixes(text || response.statusText);
+            if (isGitHubRateLimitStatus(response.status) || isGitHubRateLimitMessage(normalized)) {
+                githubRateLimitStopper.trip();
+                abortController?.abort();
+                return;
+            }
+
+            const message = toUserFacingErrorText(normalized) || normalized || response.statusText;
+            toastr.error(message, t`Extension update failed`, { timeOut: 5000 });
             console.error('Extension update failed', response.status, response.statusText, text);
             return;
         }
@@ -1278,6 +1310,10 @@ async function updateExtension(extensionName, quiet, timeout = null) {
             toastr.success(t`Extension ${extensionName} updated to ${data.shortCommitHash}`, t`Reload the page to apply updates`);
         }
     } catch (error) {
+        if (abortController?.signal?.aborted || githubRateLimitStopper.isTripped()) {
+            return;
+        }
+
         console.error('Extension update error:', error);
     }
 }
@@ -1429,28 +1465,40 @@ export async function deleteExtension(extensionName) {
  * Fetches the version details of a specific extension.
  *
  * @param {string} extensionName - The name of the extension.
- * @param {AbortSignal} [abortSignal] - The signal to abort the operation.
- * @return {Promise<object>} - An object containing the extension's version details.
+ * @param {AbortController} [abortController] - Abort controller for the operation.
+ * @return {Promise<object|null>} - Version details or null when stopped.
  * This object includes the currentBranchName, currentCommitHash, isUpToDate, and remoteUrl.
- * @throws {error} - If there is an error during the fetch operation, it logs the error to the console.
+ * @throws {Error} - When the fetch fails for reasons other than rate limit/stop.
  */
-async function getExtensionVersion(extensionName, abortSignal) {
-    try {
-        const response = await fetch('/api/extensions/version', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                extensionName,
-                global: getExtensionType(extensionName) === 'global',
-            }),
-            signal: abortSignal,
-        });
-
-        const data = await response.json();
-        return data;
-    } catch (error) {
-        console.error('Error:', error);
+async function getExtensionVersion(extensionName, abortController) {
+    if (githubRateLimitStopper.isTripped()) {
+        return null;
     }
+
+    const response = await fetch('/api/extensions/version', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            extensionName,
+            global: getExtensionType(extensionName) === 'global',
+        }),
+        signal: abortController?.signal,
+    });
+
+    if (!response.ok) {
+        const text = await response.text();
+        const normalized = stripCommandErrorPrefixes(text || response.statusText);
+        if (isGitHubRateLimitStatus(response.status) || isGitHubRateLimitMessage(normalized)) {
+            githubRateLimitStopper.trip();
+            cancelQueuedVersionChecks();
+            abortController?.abort();
+            return null;
+        }
+
+        throw new Error(normalized || response.statusText);
+    }
+
+    return response.json();
 }
 
 /**
@@ -1701,20 +1749,41 @@ const concurrencyLimit = 5;
 let activeRequestsCount = 0;
 const versionCheckQueue = [];
 
+function cancelQueuedVersionChecks() {
+    while (versionCheckQueue.length) {
+        const item = versionCheckQueue.shift();
+        item.resolve();
+    }
+}
+
 function enqueueVersionCheck(fn) {
+    if (githubRateLimitStopper.isTripped()) {
+        return Promise.resolve();
+    }
+
     return new Promise((resolve, reject) => {
-        versionCheckQueue.push(() => fn().then(resolve).catch(reject));
+        versionCheckQueue.push({ fn, resolve, reject });
         processVersionCheckQueue();
     });
 }
 
 function processVersionCheckQueue() {
+    if (githubRateLimitStopper.isTripped()) {
+        cancelQueuedVersionChecks();
+        return;
+    }
+
     if (activeRequestsCount >= concurrencyLimit || versionCheckQueue.length === 0) {
         return;
     }
+
     activeRequestsCount++;
-    const fn = versionCheckQueue.shift();
-    fn().finally(() => {
+    const item = versionCheckQueue.shift();
+    item
+        .fn()
+        .then(item.resolve)
+        .catch(item.reject)
+        .finally(() => {
         activeRequestsCount--;
         processVersionCheckQueue();
     });
@@ -1723,16 +1792,16 @@ function processVersionCheckQueue() {
 /**
  * Performs a manual check for updates on all 3rd-party extensions.
  * @param {function} sortFn Sort function
- * @param {AbortSignal} abortSignal Signal to abort the operation
+ * @param {AbortController} abortController Abort controller for the operation
  * @returns {Promise<any[]>}
  */
-async function checkForUpdatesManual(sortFn, abortSignal) {
+async function checkForUpdatesManual(sortFn, abortController) {
     const promises = [];
     for (const id of Object.keys(manifests).filter(x => x.startsWith('third-party')).sort((a, b) => sortFn(manifests[a], manifests[b]))) {
         const externalId = id.replace('third-party', '');
         const promise = enqueueVersionCheck(async () => {
             try {
-                const data = await getExtensionVersion(externalId, abortSignal);
+                const data = await getExtensionVersion(externalId, abortController);
                 const extensionBlock = document.querySelector(`.extension_block[data-name="${externalId}"]`);
                 if (extensionBlock && data) {
                     if (data.isUpToDate === false) {
@@ -1770,6 +1839,9 @@ async function checkForUpdatesManual(sortFn, abortSignal) {
                     }
                 }
             } catch (error) {
+                if (abortController?.signal?.aborted || githubRateLimitStopper.isTripped()) {
+                    return;
+                }
                 console.error('Error checking for extension updates', error);
             }
         });
@@ -1797,6 +1869,11 @@ async function checkForExtensionUpdates(force) {
     }
 
     const isCurrentUserAdmin = isAdmin();
+    if (githubRateLimitStopper.isTripped()) {
+        return;
+    }
+
+    const abortController = new AbortController();
     const updatesAvailable = [];
     const promises = [];
 
@@ -1815,11 +1892,14 @@ async function checkForExtensionUpdates(force) {
         if (manifest.auto_update && id.startsWith('third-party')) {
             const promise = enqueueVersionCheck(async () => {
                 try {
-                    const data = await getExtensionVersion(id.replace('third-party', ''));
-                    if (!data.isUpToDate) {
+                    const data = await getExtensionVersion(id.replace('third-party', ''), abortController);
+                    if (data && !data.isUpToDate) {
                         updatesAvailable.push(manifest.display_name);
                     }
                 } catch (error) {
+                    if (abortController.signal.aborted || githubRateLimitStopper.isTripped()) {
+                        return;
+                    }
                     console.error('Error checking for extension updates', error);
                 }
             });
@@ -1840,32 +1920,45 @@ async function checkForExtensionUpdates(force) {
  * @returns {Promise<void>}
  */
 async function autoUpdateExtensions(forceAll) {
+    if (githubRateLimitStopper.isTripped()) {
+        return;
+    }
+
     if (!Object.values(manifests).some(x => x.auto_update)) {
         return;
     }
 
     const banner = toastr.info(t`Auto-updating extensions. This may take several minutes.`, t`Please wait...`, { timeOut: 10000, extendedTimeOut: 10000 });
     const isCurrentUserAdmin = isAdmin();
-    const promises = [];
+    const abortController = new AbortController();
     const autoUpdateTimeout = 60 * 1000;
-    for (const [id, manifest] of Object.entries(manifests)) {
-        const isDisabled = extension_settings.disabledExtensions.includes(id);
-        if (!forceAll && isDisabled) {
-            console.debug(`Skipping extension: ${manifest.display_name} (${id}) for non-admin user`);
-            continue;
+    try {
+        for (const [id, manifest] of Object.entries(manifests)) {
+            if (abortController.signal.aborted || githubRateLimitStopper.isTripped()) {
+                break;
+            }
+
+            const isDisabled = extension_settings.disabledExtensions.includes(id);
+            if (!forceAll && isDisabled) {
+                console.debug(`Skipping extension: ${manifest.display_name} (${id}) for non-admin user`);
+                continue;
+            }
+            const isGlobal = getExtensionType(id) === 'global';
+            if (isGlobal && !isCurrentUserAdmin) {
+                console.debug(`Skipping global extension: ${manifest.display_name} (${id}) for non-admin user`);
+                continue;
+            }
+            if ((forceAll || manifest.auto_update) && id.startsWith('third-party')) {
+                console.debug(`Auto-updating 3rd-party extension: ${manifest.display_name} (${id})`);
+                await updateExtension(id.replace('third-party', ''), true, {
+                    timeoutMs: autoUpdateTimeout,
+                    abortController,
+                });
+            }
         }
-        const isGlobal = getExtensionType(id) === 'global';
-        if (isGlobal && !isCurrentUserAdmin) {
-            console.debug(`Skipping global extension: ${manifest.display_name} (${id}) for non-admin user`);
-            continue;
-        }
-        if ((forceAll || manifest.auto_update) && id.startsWith('third-party')) {
-            console.debug(`Auto-updating 3rd-party extension: ${manifest.display_name} (${id})`);
-            promises.push(updateExtension(id.replace('third-party', ''), true, autoUpdateTimeout));
-        }
+    } finally {
+        toastr.clear(banner);
     }
-    await Promise.allSettled(promises);
-    toastr.clear(banner);
 }
 
 /**

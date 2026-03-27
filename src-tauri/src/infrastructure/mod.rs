@@ -4,6 +4,7 @@ pub mod assets;
 pub mod css_compat;
 pub mod http_client;
 pub mod http_client_pool;
+pub mod github;
 #[cfg(target_os = "ios")]
 pub mod ios_document_picker;
 #[cfg(target_os = "ios")]

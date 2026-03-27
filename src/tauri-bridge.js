@@ -66,6 +66,24 @@ export const invoke = (...args) => {
     return fn(...args);
 };
 
+function getHostSafeInvoke() {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+
+    const fn = window.__TAURITAVERN__?.invoke?.safeInvoke;
+    return typeof fn === 'function' ? fn : null;
+}
+
+async function invokeWithHostNormalization(command, args) {
+    const safeInvoke = getHostSafeInvoke();
+    if (safeInvoke) {
+        return safeInvoke(command, args);
+    }
+
+    return args === undefined ? invoke(command) : invoke(command, args);
+}
+
 export const listen = (...args) => {
     const fn = getTauri()?.event?.listen;
     if (typeof fn !== 'function') {
@@ -141,12 +159,7 @@ export async function getClientVersion() {
 }
 
 export async function checkForUpdate() {
-    const invokeFn = getInvokeFn();
-    if (!invokeFn) {
-        throw new Error('Tauri invoke is unavailable');
-    }
-
-    return invokeFn('check_for_update');
+    return invokeWithHostNormalization('check_for_update');
 }
 
 export async function getTauriTavernSettings() {

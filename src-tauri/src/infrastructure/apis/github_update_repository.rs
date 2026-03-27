@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::domain::errors::DomainError;
 use crate::domain::models::update::ReleaseInfo;
 use crate::domain::repositories::update_repository::UpdateRepository;
+use crate::infrastructure::github::classify_github_rate_limit;
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
 const GITHUB_API_LATEST_RELEASE: &str =
@@ -34,21 +35,38 @@ impl GitHubUpdateRepository {
 impl UpdateRepository for GitHubUpdateRepository {
     async fn get_latest_release(&self) -> Result<ReleaseInfo, DomainError> {
         let client = self.http_clients.client(HttpClientProfile::Default)?;
-        let response: GitHubRelease = client
+        let response = client
             .get(GITHUB_API_LATEST_RELEASE)
             .header("Accept", "application/vnd.github+json")
             .send()
             .await
             .map_err(|error| {
                 DomainError::InternalError(format!("GitHub API request failed: {error}"))
-            })?
-            .error_for_status()
-            .map_err(|error| DomainError::InternalError(format!("GitHub API error: {error}")))?
-            .json()
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!("Failed to parse GitHub response: {error}"))
             })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            if let Some(domain_error) = classify_github_rate_limit(status, &body) {
+                return Err(domain_error);
+            }
+
+            let snippet = body.trim();
+            let suffix = if snippet.is_empty() {
+                String::new()
+            } else {
+                format!(" ({snippet})")
+            };
+
+            return Err(DomainError::InternalError(format!(
+                "GitHub API error: HTTP {}{}",
+                status, suffix
+            )));
+        }
+
+        let response: GitHubRelease = response.json().await.map_err(|error| {
+            DomainError::InternalError(format!("Failed to parse GitHub response: {error}"))
+        })?;
 
         let version = parse_version_from_tag(&response.tag_name);
 

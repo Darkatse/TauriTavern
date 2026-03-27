@@ -162,8 +162,27 @@ export function createInterceptors({
                 jqXHR.getResponseHeader = (name) => response.headers.get(name);
 
                 const isJson = (options.dataType || '').toLowerCase() !== 'text';
-                const payload = isJson ? await safeJson(response) : await response.text();
-                jqXHR.responseJSON = isJson ? payload : undefined;
+                let payload;
+
+                if (response.ok) {
+                    payload = isJson ? await safeJson(response) : await response.text();
+                } else if (isJson) {
+                    const text = await response.text();
+                    const normalized = String(text ?? '').trim();
+                    if (!normalized) {
+                        payload = '';
+                    } else {
+                        try {
+                            payload = JSON.parse(normalized);
+                        } catch {
+                            payload = normalized;
+                        }
+                    }
+                } else {
+                    payload = await response.text();
+                }
+
+                jqXHR.responseJSON = isJson && typeof payload !== 'string' ? payload : undefined;
                 jqXHR.responseText = typeof payload === 'string' ? payload : JSON.stringify(payload);
 
                 if (response.ok) {

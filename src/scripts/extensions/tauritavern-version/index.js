@@ -10,6 +10,10 @@ import {
 import { renderExtensionTemplateAsync } from '../../extensions.js';
 import { translate } from '../../i18n.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
+import { stripCommandErrorPrefixes } from '../../util/command-error-utils.js';
+import { isGitHubRateLimitMessage } from '../../util/github-rate-limit.js';
+import { githubRateLimitStopper } from '../../util/github-rate-limit-stopper.js';
+import { extractErrorText, toUserFacingErrorText } from '../../util/user-facing-error.js';
 
 const MODULE_NAME = 'tauritavern-version';
 const LINKS = Object.freeze({
@@ -35,8 +39,14 @@ function localizeTemplate(key, fallback, ...values) {
     return template.replace(/\$\{(\d+)\}/g, (_, index) => String(values[Number(index)] ?? ''));
 }
 
-function describeError(error) {
-    return error instanceof Error ? error.message : String(error);
+function tripGitHubRateLimitIfNeeded(error) {
+    const normalized = stripCommandErrorPrefixes(extractErrorText(error));
+    if (!isGitHubRateLimitMessage(normalized)) {
+        return false;
+    }
+
+    githubRateLimitStopper.trip();
+    return true;
 }
 
 function extractCompatVersion(agent) {
@@ -161,7 +171,11 @@ async function openVersionUrl(url) {
         await openExternalUrl(url);
     } catch (error) {
         globalThis.toastr?.error?.(
-            localizeTemplate('ttv_version.open_link_failed', 'Failed to open link: ${0}', describeError(error)),
+            localizeTemplate(
+                'ttv_version.open_link_failed',
+                'Failed to open link: ${0}',
+                toUserFacingErrorText(error) || extractErrorText(error),
+            ),
         );
         throw error;
     }
@@ -233,6 +247,10 @@ function hideUpdateResult() {
 }
 
 async function onCheckUpdateClick() {
+    if (githubRateLimitStopper.isTripped()) {
+        return;
+    }
+
     const $btn = $('#tauritavern_check_update');
     const $icon = $btn.find('i');
     const $text = $btn.find('span');
@@ -253,8 +271,16 @@ async function onCheckUpdateClick() {
             hideUpdateResult();
         }
     } catch (error) {
+        if (tripGitHubRateLimitIfNeeded(error)) {
+            return;
+        }
+
         globalThis.toastr?.error?.(
-            localizeTemplate('ttv_version.check_update_failed', 'Failed to check for updates: ${0}', describeError(error)),
+            localizeTemplate(
+                'ttv_version.check_update_failed',
+                'Failed to check for updates: ${0}',
+                toUserFacingErrorText(error) || extractErrorText(error),
+            ),
         );
     } finally {
         $icon.removeClass('fa-spin');
@@ -372,6 +398,10 @@ async function showStartupUpdatePopup(result) {
 }
 
 async function runStartupUpdateCheck() {
+    if (githubRateLimitStopper.isTripped()) {
+        return;
+    }
+
     if (startupUpdateCheckPromise) {
         return startupUpdateCheckPromise;
     }
@@ -382,6 +412,10 @@ async function runStartupUpdateCheck() {
         try {
             result = await checkForUpdate();
         } catch (error) {
+            if (tripGitHubRateLimitIfNeeded(error)) {
+                return;
+            }
+
             console.warn('Startup update check failed:', error);
             return;
         }
