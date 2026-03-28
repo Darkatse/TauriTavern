@@ -23,6 +23,7 @@ pub mod quick_reply_commands;
 pub mod registry;
 pub mod secret_commands;
 pub mod settings_commands;
+pub mod stable_diffusion_commands;
 pub mod theme_commands;
 pub mod tokenizer_commands;
 pub mod tt_sync_commands;

@@ -15,6 +15,7 @@ use crate::application::services::preset_service::PresetService;
 use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
+use crate::application::services::stable_diffusion_service::StableDiffusionService;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::tt_sync_service::TtSyncService;
@@ -45,6 +46,7 @@ pub struct AppState {
     pub quick_reply_service: Arc<QuickReplyService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
+    pub stable_diffusion_service: Arc<StableDiffusionService>,
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
@@ -88,6 +90,7 @@ impl AppState {
             quick_reply_service: services.quick_reply_service,
             chat_completion_service: services.chat_completion_service,
             tokenization_service: services.tokenization_service,
+            stable_diffusion_service: services.stable_diffusion_service,
             world_info_service: services.world_info_service,
             lan_sync_service: services.lan_sync_service,
             tt_sync_service: services.tt_sync_service,

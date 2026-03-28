@@ -214,6 +214,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_completion_commands::start_chat_completion_stream,
         super::chat_completion_commands::cancel_chat_completion_stream,
         super::chat_completion_commands::cancel_chat_completion_generation,
+        // Stable diffusion (local chain) commands
+        super::stable_diffusion_commands::sd_handle,
+        super::stable_diffusion_commands::cancel_sd_request,
         // Tokenizer commands
         super::tokenizer_commands::count_openai_tokens,
         super::tokenizer_commands::count_openai_tokens_batch,

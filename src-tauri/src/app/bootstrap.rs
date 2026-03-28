@@ -17,6 +17,7 @@ use crate::application::services::preset_service::PresetService;
 use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
+use crate::application::services::stable_diffusion_service::StableDiffusionService;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::tt_sync_service::TtSyncService;
@@ -37,6 +38,7 @@ use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::domain::repositories::quick_reply_repository::QuickReplyRepository;
 use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::domain::repositories::settings_repository::SettingsRepository;
+use crate::domain::repositories::stable_diffusion_repository::StableDiffusionRepository;
 use crate::domain::repositories::theme_repository::ThemeRepository;
 use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
 use crate::domain::repositories::update_repository::UpdateRepository;
@@ -45,6 +47,7 @@ use crate::domain::repositories::user_repository::UserRepository;
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
 use crate::infrastructure::apis::http_chat_completion_repository::HttpChatCompletionRepository;
+use crate::infrastructure::apis::http_stable_diffusion_repository::HttpStableDiffusionRepository;
 use crate::infrastructure::apis::miktik_tokenizer_repository::MiktikTokenizerRepository;
 use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::logging::llm_api_logs::{
@@ -84,6 +87,7 @@ pub(super) struct AppServices {
     pub quick_reply_service: Arc<QuickReplyService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
+    pub stable_diffusion_service: Arc<StableDiffusionService>,
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
@@ -107,6 +111,7 @@ struct AppRepositories {
     quick_reply_repository: Arc<dyn QuickReplyRepository>,
     chat_completion_repository: Arc<dyn ChatCompletionRepository>,
     tokenizer_repository: Arc<dyn TokenizerRepository>,
+    stable_diffusion_repository: Arc<dyn StableDiffusionRepository>,
     world_info_repository: Arc<dyn WorldInfoRepository>,
     update_repository: Arc<dyn UpdateRepository>,
 }
@@ -145,6 +150,9 @@ pub(super) fn build_services(
     ));
     let tokenization_service =
         Arc::new(TokenizationService::new(repositories.tokenizer_repository));
+    let stable_diffusion_service = Arc::new(StableDiffusionService::new(
+        repositories.stable_diffusion_repository,
+    ));
     let world_info_service = Arc::new(WorldInfoService::new(
         repositories.world_info_repository.clone(),
     ));
@@ -200,6 +208,7 @@ pub(super) fn build_services(
         quick_reply_service,
         chat_completion_service,
         tokenization_service,
+        stable_diffusion_service,
         world_info_service,
         lan_sync_service,
         tt_sync_service,
@@ -294,6 +303,13 @@ fn build_repositories(
     let tokenizer_repository: Arc<dyn TokenizerRepository> = Arc::new(
         MiktikTokenizerRepository::new(tokenizer_cache_dir, http_client_pool.clone()),
     );
+
+    let stable_diffusion_repository: Arc<dyn StableDiffusionRepository> =
+        Arc::new(HttpStableDiffusionRepository::new(
+            http_client_pool.clone(),
+            default_user_dir.join("user").join("workflows"),
+        ));
+
     let world_info_repository: Arc<dyn WorldInfoRepository> = Arc::new(
         FileWorldInfoRepository::new(data_directory.default_user().join("worlds")),
     );
@@ -318,6 +334,7 @@ fn build_repositories(
         quick_reply_repository,
         chat_completion_repository,
         tokenizer_repository,
+        stable_diffusion_repository,
         world_info_repository,
         update_repository,
     })

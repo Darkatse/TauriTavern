@@ -14,6 +14,7 @@ pub const CHAT_COMPLETION_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60
 pub const CHAT_COMPLETION_NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const TOKENIZER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const TOKENIZER_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+pub const IMAGE_GENERATION_CONNECT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HttpClientProfile {
@@ -22,6 +23,7 @@ pub enum HttpClientProfile {
     Tokenizer,
     ChatCompletion,
     ChatCompletionStream,
+    ImageGeneration,
 }
 
 #[derive(Default)]
@@ -146,6 +148,9 @@ fn build_profile_client(
             .timeout(CHAT_COMPLETION_NON_STREAM_REQUEST_TIMEOUT),
         HttpClientProfile::ChatCompletionStream => {
             builder.connect_timeout(CHAT_COMPLETION_CONNECT_TIMEOUT)
+        }
+        HttpClientProfile::ImageGeneration => {
+            builder.connect_timeout(IMAGE_GENERATION_CONNECT_TIMEOUT)
         }
     };
 

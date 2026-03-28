@@ -8,6 +8,7 @@ pub mod group_dto;
 pub mod preset_dto;
 pub mod secret_dto;
 pub mod settings_dto;
+pub mod stable_diffusion_dto;
 pub mod theme_dto;
 pub mod tokenization_dto;
 pub mod user_directory_dto;
