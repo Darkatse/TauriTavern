@@ -34,6 +34,15 @@ function readConsoleCaptureBootstrapFlag() {
     }
 }
 
+/** @param {boolean} enabled */
+function writeConsoleCaptureBootstrapFlag(enabled) {
+    try {
+        globalThis.localStorage?.setItem(CONSOLE_CAPTURE_STORAGE_KEY, enabled ? '1' : '0');
+    } catch {
+        // Ignore storage write failures.
+    }
+}
+
 /** @param {FrontendLogEntry} entry */
 function notify(entry) {
     for (const handler of subscribers) {
@@ -268,6 +277,7 @@ export function isFrontendConsoleCaptureEnabled() {
 /** @param {boolean} enabled */
 export function setFrontendConsoleCaptureEnabled(enabled) {
     consoleCaptureEnabled = Boolean(enabled);
+    writeConsoleCaptureBootstrapFlag(consoleCaptureEnabled);
 
     if (consoleCaptureEnabled) {
         patchConsole();

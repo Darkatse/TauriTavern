@@ -1,16 +1,16 @@
 import { callGenericPopup, POPUP_TYPE } from '../../popup.js';
 import { t, translate } from '../../i18n.js';
-import { getTauriTavernSettings, invoke, listen, updateTauriTavernSettings } from '../../../tauri-bridge.js';
-import {
-    getFrontendLogEntries,
-    isFrontendConsoleCaptureEnabled,
-    subscribeFrontendLogs,
-    setFrontendConsoleCaptureEnabled,
-} from '../../../tauri/main/services/dev-logging/frontend-log-capture.js';
 import { openFullscreenTextViewer } from './text-viewer-popup.js';
 
-const CONSOLE_CAPTURE_STORAGE_KEY = 'tt:devConsoleCapture';
 const MONOSPACE_FONT_FAMILY = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+
+function getDevApi() {
+    const api = window.__TAURITAVERN__?.api?.dev;
+    if (!api) {
+        throw new Error('TauriTavern host dev API is unavailable');
+    }
+    return api;
+}
 
 function formatTimestamp(ms) {
     const date = new Date(Number(ms) || 0);
@@ -312,7 +312,7 @@ async function openLiveLogPanel({
 
     renderAll();
 
-    const unsubscribe = subscribe((entry) => {
+    const unsubscribe = await subscribe((entry) => {
         entries.push(entry);
         if (paused || !entryMatchesLevel(entry, filter)) {
             return;
@@ -345,20 +345,22 @@ async function openLiveLogPanel({
         logContainer.textContent = '';
     });
 
-    await callGenericPopup(root, POPUP_TYPE.TEXT, '', {
-        okButton: translate('Close'),
-        allowVerticalScrolling: true,
-        wide: true,
-        large: true,
-        onClose: () => {
-            unsubscribe();
-        },
-    });
+    try {
+        await callGenericPopup(root, POPUP_TYPE.TEXT, '', {
+            okButton: translate('Close'),
+            allowVerticalScrolling: true,
+            wide: true,
+            large: true,
+            onClose: () => {},
+        });
+    } finally {
+        void unsubscribe();
+    }
 }
 
 export async function openFrontendLogsPanel() {
-    const settings = await getTauriTavernSettings();
-    const currentCapture = settings.dev.frontend_console_capture;
+    const devApi = getDevApi();
+    const currentCapture = await devApi.frontendLogs.getConsoleCaptureEnabled();
 
     const captureLabel = document.createElement('label');
     captureLabel.className = 'flex-container alignItemsCenter';
@@ -368,7 +370,7 @@ export async function openFrontendLogsPanel() {
     const captureToggle = document.createElement('input');
     captureToggle.type = 'checkbox';
     captureToggle.style.margin = '0';
-    captureToggle.checked = isFrontendConsoleCaptureEnabled();
+    captureToggle.checked = currentCapture;
 
     const captureText = document.createElement('span');
     captureText.textContent = translate('Capture full console logs');
@@ -377,67 +379,35 @@ export async function openFrontendLogsPanel() {
     captureLabel.appendChild(captureText);
 
     captureToggle.addEventListener('change', () => runOrPopup(async () => {
-        const enabled = captureToggle.checked;
-        localStorage.setItem(CONSOLE_CAPTURE_STORAGE_KEY, enabled ? '1' : '0');
-        setFrontendConsoleCaptureEnabled(enabled);
-        await updateTauriTavernSettings({
-            dev: {
-                frontend_console_capture: enabled,
-            },
-        });
+        await devApi.frontendLogs.setConsoleCaptureEnabled(captureToggle.checked);
     }));
 
-    if (currentCapture !== captureToggle.checked) {
-        localStorage.setItem(CONSOLE_CAPTURE_STORAGE_KEY, currentCapture ? '1' : '0');
-        captureToggle.checked = currentCapture;
-        setFrontendConsoleCaptureEnabled(currentCapture);
-    }
-
-    const initial = getFrontendLogEntries();
+    const initial = await devApi.frontendLogs.list();
     await openLiveLogPanel({
         title: t`Frontend Logs`,
         initialEntries: initial,
-        subscribe: subscribeFrontendLogs,
+        subscribe: (handler) => devApi.frontendLogs.subscribe(handler),
         extraControls: [captureLabel],
         getTarget: (entry) => entry.target,
     });
 }
 
 export async function openBackendLogsPanel() {
-    await invoke('devlog_set_backend_log_stream_enabled', { enabled: true });
-    const initial = await invoke('devlog_get_backend_log_tail', { limit: 800 });
+    const devApi = getDevApi();
+    const initial = await devApi.backendLogs.tail({ limit: 800 });
 
-    /** @type {Set<(entry: any) => void>} */
-    const handlers = new Set();
-
-    const unlisten = await listen('tauritavern-backend-log', (event) => {
-        const entry = event?.payload;
-        for (const handler of handlers) {
-            handler(entry);
-        }
+    await openLiveLogPanel({
+        title: t`Backend Logs`,
+        initialEntries: initial,
+        subscribe: (handler) => devApi.backendLogs.subscribe(handler),
+        getTarget: (entry) => entry.target,
     });
-
-    try {
-        await openLiveLogPanel({
-            title: t`Backend Logs`,
-            initialEntries: initial,
-            subscribe: (handler) => {
-                handlers.add(handler);
-                return () => handlers.delete(handler);
-            },
-            getTarget: (entry) => entry.target,
-        });
-    } finally {
-        await invoke('devlog_set_backend_log_stream_enabled', { enabled: false });
-        await unlisten();
-    }
 }
 
 export async function openLlmApiLogsPanel() {
-    await invoke('devlog_set_llm_api_log_stream_enabled', { enabled: true });
-    const settings = await getTauriTavernSettings();
-    let keep = Math.max(1, settings.dev.llm_api_keep);
-    let indexEntries = await invoke('devlog_get_llm_api_log_index', { limit: keep });
+    const devApi = getDevApi();
+    let keep = await devApi.llmApiLogs.getKeep();
+    let indexEntries = await devApi.llmApiLogs.index({ limit: keep });
 
     let index = Math.max(0, indexEntries.length - 1);
     let currentId = indexEntries[index]?.id ?? 0;
@@ -620,7 +590,7 @@ export async function openLlmApiLogsPanel() {
         }
         currentPreview = null;
         try {
-            currentPreview = await invoke('devlog_get_llm_api_log_preview', { id });
+            currentPreview = await devApi.llmApiLogs.getPreview(id);
         } catch (error) {
             currentPreview = {
                 id,
@@ -636,7 +606,7 @@ export async function openLlmApiLogsPanel() {
         }
         currentRaw = null;
         try {
-            currentRaw = await invoke('devlog_get_llm_api_log_raw', { id });
+            currentRaw = await devApi.llmApiLogs.getRaw(id);
         } catch (error) {
             currentRaw = {
                 id,
@@ -769,8 +739,7 @@ export async function openLlmApiLogsPanel() {
         await ensureRawLoaded();
     }));
 
-    const unlisten = await listen('tauritavern-llm-api-log', (event) => {
-        const payload = event.payload;
+    const unsubscribe = await devApi.llmApiLogs.subscribeIndex((payload) => {
         const shouldFollowLatest = index >= indexEntries.length - 1;
         indexEntries.push(payload);
         if (indexEntries.length > keep) indexEntries.splice(0, indexEntries.length - keep);
@@ -798,13 +767,9 @@ export async function openLlmApiLogsPanel() {
             keep = Math.floor(nextKeepRaw);
             keepInput.value = String(keep);
 
-            await updateTauriTavernSettings({
-                dev: {
-                    llm_api_keep: keep,
-                },
-            });
+            await devApi.llmApiLogs.setKeep(keep);
 
-            indexEntries = await invoke('devlog_get_llm_api_log_index', { limit: keep });
+            indexEntries = await devApi.llmApiLogs.index({ limit: keep });
             index = Math.max(0, indexEntries.length - 1);
             currentId = indexEntries[index]?.id ?? 0;
             currentRaw = null;
@@ -822,7 +787,6 @@ export async function openLlmApiLogsPanel() {
             onClose: () => {},
         });
     } finally {
-        await invoke('devlog_set_llm_api_log_stream_enabled', { enabled: false });
-        await unlisten();
+        void unsubscribe();
     }
 }

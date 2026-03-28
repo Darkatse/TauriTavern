@@ -2095,6 +2095,50 @@ function registerWorldInfoSlashCommands() {
  * @param {string} name - The name of the world
  * @return {Promise<void>} A promise that resolves when the world editor is loaded
  */
+function resetWorldInfoEditorSearch() {
+    $('#world_info_search').val('');
+    worldInfoFilter.setFilterData(FILTER_TYPES.WORLD_INFO_SEARCH, '', true);
+}
+
+/**
+ * @param {string} name
+ * @param {{ navigation?: number | string; flashOnNav?: boolean; wiData?: any; syncSelection?: boolean }} [options]
+ */
+async function renderWorldInfoEditor(name, options = {}) {
+    const worldName = String(name || '').trim();
+    if (!worldName) {
+        await hideWorldEditor();
+        return false;
+    }
+
+    const index = world_names.indexOf(worldName);
+    if (index === -1) {
+        return false;
+    }
+
+    const {
+        navigation = navigation_option.none,
+        flashOnNav = true,
+        wiData = null,
+        syncSelection = false,
+    } = options;
+    const data = wiData ?? await loadWorldInfo(worldName);
+    if (!data || !('entries' in data)) {
+        return false;
+    }
+
+    if (!$('#WorldInfo').is(':visible')) {
+        $('#WIDrawerIcon').trigger('click');
+    }
+
+    resetWorldInfoEditorSearch();
+    if (syncSelection) {
+        $('#world_editor_select').val(index).trigger('change.select2');
+    }
+    await displayWorldEntries(worldName, data, navigation, flashOnNav);
+    return true;
+}
+
 export async function showWorldEditor(name) {
     if (!name) {
         await hideWorldEditor();
@@ -5154,6 +5198,9 @@ export async function checkWorldInfo(chat, maxContext, isDryRun, globalScanData 
                 next: scanState,
                 loopCount: count,
             },
+            trigger: globalScanData.trigger,
+            isDryRun,
+            isFinal: scanState === scan_state.NONE,
             new: {
                 all: newEntries,
                 successful: successfulNewEntries,
@@ -5952,6 +5999,37 @@ export function openWorldInfoEditor(worldName) {
 }
 
 /**
+ * Opens the world info editor and attempts to navigate to a specific entry.
+ * @param {string} worldName
+ * @param {string | number} uid
+ * @param {{ flash?: boolean }} [options]
+ * @returns {Promise<boolean>}
+ */
+export async function openWorldInfoEntry(worldName, uid, options = {}) {
+    const normalizedWorldName = String(worldName || '').trim();
+    if (!normalizedWorldName) {
+        return false;
+    }
+
+    const normalizedUid = Number(uid);
+    if (!Number.isSafeInteger(normalizedUid) || normalizedUid < 0) {
+        return false;
+    }
+
+    const wiData = await loadWorldInfo(normalizedWorldName);
+    if (!wiData || !('entries' in wiData) || !Object.hasOwn(wiData.entries, String(normalizedUid))) {
+        return false;
+    }
+
+    return renderWorldInfoEditor(normalizedWorldName, {
+        navigation: normalizedUid,
+        flashOnNav: options.flash !== false,
+        wiData,
+        syncSelection: true,
+    });
+}
+
+/**
  * Assigns a lorebook to the current chat.
  * @param {JQuery.ClickEvent<Document, undefined, any, any>} event Pointer event
  * @returns {Promise<void>}
@@ -6202,15 +6280,14 @@ export function initWorldInfo() {
     });
 
     $('#world_editor_select').on('change', async () => {
-        $('#world_info_search').val('');
-        worldInfoFilter.setFilterData(FILTER_TYPES.WORLD_INFO_SEARCH, '', true);
+        resetWorldInfoEditorSearch();
         const selectedIndex = String($('#world_editor_select').find(':selected').val());
 
         if (selectedIndex === '') {
             await hideWorldEditor();
         } else {
             const worldName = world_names[selectedIndex];
-            showWorldEditor(worldName);
+            await showWorldEditor(worldName);
         }
     });
 

@@ -14,6 +14,8 @@ import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/tra
 import { extractErrorText, resolveHostErrorResponse } from './kernel/host-error-response.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
 import { installChatApi } from './api/chat.js';
+import { installDevApi } from './api/dev.js';
+import { installWorldInfoApi } from './api/world-info.js';
 import { initializeTauriIntegration } from './bootstrap/initialize-tauri-integration.js';
 import {
     getMethod,
@@ -264,7 +266,7 @@ export function bootstrapTauriMain() {
     installNativeShareBridge();
 
     const context = createTauriMainContext({ invoke, convertFileSrc });
-    installHostAbi(context); installChatApi(context);
+    installHostAbi(context); installChatApi(context); installDevApi(context); installWorldInfoApi();
     installMainApiOptionParking();
     if (perfEnabled) {
         perfReadyPromise = import('./perf/perf-hud.js')

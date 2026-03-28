@@ -99,8 +99,52 @@
   - `ready: Promise<void> | null`：与 `__TAURITAVERN_MAIN_READY__` 语义一致。
   - `invoke.safeInvoke(...)` / `invoke.flushAll()`：对 `context` invoke 能力的稳定包装。
   - `assets.*`：对资源路径/缩略图相关全局 API 的统一引用。
-  - `api.chat`：TauriTavern 独有的扩展 API（聊天摘要/元数据/历史分页/稳定存储/后端定位/纯文本检索），供记忆类扩展一键上手。
+  - `api.chat`：TauriTavern 独有的聊天/记忆类扩展 API（聊天摘要、元数据、历史分页、稳定存储、后端定位、纯文本检索）。
     - 详细签名与示例见：`docs/API/Chat.md`。
+  - `api.dev`：TauriTavern 规范化的开发调试 API。内置 Settings 开发面板与第三方扩展都应消费这一层，而不是直接依赖 Tauri 事件名或 Rust 命令名。
+    - `api.dev.frontendLogs`
+      - `list(options?: { limit?: number }) -> Promise<FrontendLogEntry[]>`
+      - `subscribe(handler) -> Promise<unsubscribe>`
+      - `getConsoleCaptureEnabled() -> Promise<boolean>`
+      - `setConsoleCaptureEnabled(enabled: boolean) -> Promise<void>`
+      - 语义：宿主统一负责“运行时开关 + 持久化设置 + 本地 bootstrap flag”同步；调用方不应再自行读写 `localStorage`。
+    - `api.dev.backendLogs`
+      - `tail(options?: { limit?: number }) -> Promise<BackendLogEntry[]>`
+      - `subscribe(handler) -> Promise<unsubscribe>`
+      - 语义：宿主负责共享后端日志流；多个订阅者并存时通过引用计数管理 `enable/disable stream`，不得彼此踩踏。
+    - `api.dev.llmApiLogs`
+      - `index(options?: { limit?: number }) -> Promise<LlmApiLogIndexEntry[]>`
+      - `getPreview(id: number) -> Promise<LlmApiLogPreview>`
+      - `getRaw(id: number) -> Promise<LlmApiLogRaw>`
+      - `subscribeIndex(handler) -> Promise<unsubscribe>`
+      - `getKeep() -> Promise<number>`
+      - `setKeep(value: number) -> Promise<void>`
+      - 语义：宿主统一负责历史索引、实时索引流与 keep 设置持久化；调用方不应直接操作 `devlog_*` 命令。
+
+`api.dev.*` 的长期契约要求：
+
+- DTO 字段保持 camelCase，新增字段只能做向后兼容扩展。
+- `subscribe()` / `subscribeIndex()` 返回的 `unsubscribe` 必须幂等且可安全延迟调用。
+- Tauri 事件名 `tauritavern-backend-log` / `tauritavern-llm-api-log` 与命令名 `devlog_*` 属于 Internal 实现细节，不是第三方 Public Contract。
+
+- `api.worldInfo`：TauriTavern 规范化的 World Info / Lorebook 激活与导航 API。
+  - `getLastActivation() -> Promise<WorldInfoActivationBatch | null>`
+    - 返回最近一次真实生成流程对应的最终激活结果。
+    - `null` 仅表示当前会话还没有捕获到任何一次最终激活结果。
+  - `subscribeActivations(handler) -> Promise<unsubscribe>`
+    - 只推送最终激活结果，不暴露 `WORLDINFO_SCAN_DONE` 的中间循环状态。
+    - 不复播历史结果；若需要最近一次结果，应先调用 `getLastActivation()`。
+  - `openEntry(ref: { world: string; uid: string | number }) -> Promise<{ opened: boolean }>`
+    - Best-effort 导航入口。
+    - `opened: true` 表示宿主已成功打开目标世界书并尝试定位到目标条目。
+    - `opened: false` 表示目标世界书或条目不存在；其他异常直接抛出，便于调试。
+
+`api.worldInfo` 的 v1 收缩边界：
+
+- 只暴露“最终激活批次”，不直接暴露 `WORLD_INFO_ACTIVATED` / `WORLDINFO_SCAN_DONE` 原始载荷。
+- 激活条目 DTO 仅承诺：`world`、`uid`、`displayName`、`constant`、可选 `position`。
+- 不把扫描循环控制、预算内部状态、可变中间态对象直接升格为 Public Contract。
+- `openEntry()` 必须复用上游 World Info 模块自身的导航能力；宿主 ABI 层不得直接依赖 `#WorldInfo`、`#world_editor_select`、`[uid=\"...\"]` 等 DOM 细节。
 
 > 注意：`window.__TAURITAVERN__` 是“平台 ABI”，应保持**小而稳定**；不要把内部实现对象整个暴露出去。
 
