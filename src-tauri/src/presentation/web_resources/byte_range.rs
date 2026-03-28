@@ -16,7 +16,10 @@ pub enum RangeHeaderError {
     Unsatisfiable,
 }
 
-pub fn parse_single_range_header(value: &str, total_size: u64) -> Result<ByteRange, RangeHeaderError> {
+pub fn parse_single_range_header(
+    value: &str,
+    total_size: u64,
+) -> Result<ByteRange, RangeHeaderError> {
     let value = value.trim();
     let Some(value) = value.strip_prefix("bytes=") else {
         return Err(RangeHeaderError::Invalid);
@@ -122,4 +125,3 @@ mod tests {
         assert_eq!(result, Err(RangeHeaderError::Unsatisfiable));
     }
 }
-

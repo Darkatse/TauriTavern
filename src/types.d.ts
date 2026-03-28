@@ -46,6 +46,7 @@ interface Window {
         dispose: () => void;
         revalidate: () => void;
     };
+    __TAURITAVERN_MOBILE_WINDOW_OPEN_COMPAT__?: boolean;
 
     __TAURITAVERN_EMBEDDED_RUNTIME__?: {
         profile: string;

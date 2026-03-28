@@ -368,8 +368,8 @@ impl BackgroundRepository for FileBackgroundRepository {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use crate::domain::repositories::background_repository::BackgroundRepository;
+    use std::path::PathBuf;
 
     use super::FileBackgroundRepository;
 

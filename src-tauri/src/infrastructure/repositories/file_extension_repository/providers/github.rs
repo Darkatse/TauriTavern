@@ -26,7 +26,6 @@ struct GithubCommit {
     sha: String,
 }
 
-
 pub(super) struct GithubProvider {
     http_clients: Arc<HttpClientPool>,
 }

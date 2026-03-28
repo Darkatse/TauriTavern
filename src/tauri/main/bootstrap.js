@@ -10,6 +10,7 @@ import { showExportSuccessToast } from '../../scripts/download-feedback.js';
 import { installAndroidImeLayoutHost } from './compat/mobile/android-ime-layout-host.js';
 import { installMobileOverlayCompatController } from './compat/mobile/mobile-overlay-compat-controller.js';
 import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compat.js';
+import { installMobileWindowOpenCompat } from './compat/mobile/mobile-window-open-compat.js';
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
 import { extractErrorText, resolveHostErrorResponse } from './kernel/host-error-response.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
@@ -256,9 +257,7 @@ export function bootstrapTauriMain() {
     if (perfEnabled) {
         safePerfMark('tt:tauri:bootstrap:start');
     }
-    if (isMobileUserAgent()) {
-        installTauriMobileCompat();
-    }
+    const isMobile = isMobileUserAgent(); if (isMobile) installTauriMobileCompat();
 
     installFrontendLogCapture();
 
@@ -348,7 +347,7 @@ export function bootstrapTauriMain() {
     interceptors.patchFetch();
     interceptors.patchJQueryAjax();
     downloadBridge.patchWindow();
-    installSameOriginWindowPatches(interceptors, downloadBridge); preinstallPanelRuntime();
+    installSameOriginWindowPatches(interceptors, downloadBridge); if (isMobile) installMobileWindowOpenCompat(); preinstallPanelRuntime();
     const readyPromise = initializeTauriIntegration(
         context,
         interceptors,

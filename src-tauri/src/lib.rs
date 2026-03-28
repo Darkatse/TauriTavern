@@ -4,6 +4,11 @@ mod domain;
 mod infrastructure;
 mod presentation;
 
+// This module is the Tauri host composition root.
+// Keep only shell wiring here: plugin registration, managed state, window policy,
+// and startup sequencing. If code here starts knowing feature/business rules,
+// move it down into app/application/presentation instead of growing lib.rs further.
+
 use app::spawn_initialization;
 use infrastructure::http_client_pool::HttpClientPool;
 use infrastructure::logging::{devtools, llm_api_logs, logger};
@@ -17,6 +22,7 @@ use presentation::web_resources::third_party_endpoint::handle_third_party_asset_
 use presentation::web_resources::thumbnail_endpoint::handle_thumbnail_web_request;
 use presentation::web_resources::user_data_endpoint::handle_user_data_asset_web_request;
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn desktop_window_state_flags() -> tauri_plugin_window_state::StateFlags {
@@ -30,6 +36,9 @@ fn install_window_state_plugin(
     app_handle: &tauri::AppHandle,
     data_root: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Window geometry persistence is a desktop shell concern.
+    // Keep only host-managed state here; product/user settings still belong in the
+    // regular settings model so window policy does not leak into domain logic.
     let flags = desktop_window_state_flags();
     let state_path = data_root.join("_tauritavern").join(".window-state.json");
     std::fs::create_dir_all(
@@ -51,6 +60,9 @@ fn install_window_state_plugin(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub async fn run() {
+    // Register cross-platform host plugins up front.
+    // This is the only place that should know which native capabilities are part of
+    // the app shell; downstream layers consume them through commands/bridges.
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
@@ -69,6 +81,8 @@ pub async fn run() {
             let app_handle = app.handle().clone();
             logger::bind_app_handle(app_handle.clone());
 
+            // Resolve and publish runtime paths before any managed service is created so every
+            // host-facing subsystem reads from the same directory layout.
             let runtime_paths = resolve_runtime_paths(&app_handle)?;
             app.manage(runtime_paths.clone());
 
@@ -88,6 +102,9 @@ pub async fn run() {
             #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
             install_window_state_plugin(&app_handle, &runtime_paths.data_root)?;
 
+            // These stores are shell-level observability sinks. They stay in the host so
+            // frontend tooling and backend commands can share one source of truth for logs
+            // without teaching feature code about window/event plumbing.
             let backend_log_store =
                 std::sync::Arc::new(devtools::BackendLogStore::new(app_handle.clone()));
             app.manage(backend_log_store.clone());
@@ -106,6 +123,9 @@ pub async fn run() {
 
             tracing::debug!("Starting TauriTavern application");
 
+            // Custom web resource handlers below serve files from the runtime data root through
+            // normal browser URLs. The scope extension keeps that policy centralized in the host
+            // instead of leaking Tauri-specific file access into frontend/upstream code.
             if let Err(error) = app_handle
                 .asset_protocol_scope()
                 .allow_directory(&runtime_paths.data_root, true)
@@ -142,6 +162,9 @@ pub async fn run() {
                 )?;
             }
 
+            // Heavy app state initialization is spawned after the shell is ready so window
+            // creation and host plumbing stay responsive. The async initializer emits the
+            // readiness/error events consumed by the frontend bootstrap.
             spawn_initialization(app_handle.clone(), runtime_paths.clone());
             Ok(())
         })
@@ -150,6 +173,15 @@ pub async fn run() {
         .expect("error while running tauri application");
 }
 
+/// Builds the main webview window and attaches host-owned browser/runtime policy.
+///
+/// Keep this function focused on shell concerns:
+/// - resource URL interception for local/runtime-backed assets
+/// - `window.open()` policy and popup/external-link routing
+/// - platform-specific window presentation details
+///
+/// Do not move feature behavior here; frontend and command layers should continue to observe
+/// browser-like contracts without depending on Tauri window APIs.
 fn create_main_window(
     app: &mut tauri::App,
     third_party_dirs: ThirdPartyExtensionDirs,
@@ -168,6 +200,8 @@ fn create_main_window(
     let user_dirs = user_dirs;
 
     let builder = tauri::webview::WebviewWindowBuilder::from_config(app.handle(), window_config)?
+        // Route browser-visible URLs to host-owned file handlers here so the frontend can keep
+        // using stable HTTP-like paths for extensions, thumbnails, and user data assets.
         .on_web_resource_request(move |request, response| {
             handle_third_party_asset_web_request(
                 &local_extensions_dir,
@@ -180,6 +214,51 @@ fn create_main_window(
         });
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    let builder = {
+        let app_handle = app.handle().clone();
+
+        // `window.open()` semantics belong to the host/runtime boundary, not to upstream JS.
+        // We keep OAuth-style popups inside the app to preserve opener/postMessage behavior,
+        // and hand ordinary external links to the operating system.
+        builder.on_new_window(move |url, features| {
+            let is_popup = features.size().is_some() || features.position().is_some();
+
+            if is_popup {
+                // Popups intentionally receive fresh labels and inherit only the opener-related
+                // webview features required by Tauri/Wry. That keeps popup policy centralized
+                // here instead of spreading per-extension window logic through the frontend.
+                let label = format!("popup-{}", uuid::Uuid::new_v4());
+                let title = url.host_str().unwrap_or("Authentication");
+
+                let window = tauri::WebviewWindowBuilder::new(
+                    &app_handle,
+                    label,
+                    tauri::WebviewUrl::External("about:blank".parse().expect("valid URL")),
+                )
+                .window_features(features)
+                .title(title)
+                .build();
+
+                return match window {
+                    Ok(window) => tauri::webview::NewWindowResponse::Create { window },
+                    Err(error) => {
+                        tracing::warn!("Failed to create popup window: {}", error);
+                        tauri::webview::NewWindowResponse::Allow
+                    }
+                };
+            }
+
+            if matches!(url.scheme(), "http" | "https" | "mailto" | "tel") {
+                let _ = app_handle.opener().open_url(url.as_str(), None::<String>);
+                return tauri::webview::NewWindowResponse::Deny;
+            }
+
+            tauri::webview::NewWindowResponse::Allow
+        })
+    };
+
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    // Desktop windows start hidden so restored size/position can be applied before first paint.
     let builder = builder.visible(false);
 
     let window = builder.build()?;
@@ -191,6 +270,7 @@ fn create_main_window(
     {
         use tauri_plugin_window_state::WindowExt;
 
+        // Restore persisted desktop geometry only after the window exists, then reveal/focus it.
         let flags = desktop_window_state_flags();
         window.restore_state(flags)?;
         window.show()?;

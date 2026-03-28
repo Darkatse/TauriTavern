@@ -205,8 +205,13 @@ fn handle_user_data_asset_route_request(
         respond_bytes(response, StatusCode::PARTIAL_CONTENT, bytes, &mime_type);
         response.headers_mut().insert(
             CONTENT_RANGE,
-            HeaderValue::from_str(&format!("bytes {}-{}/{}", range.start, range.end, metadata.len()))
-                .expect("Invalid Content-Range"),
+            HeaderValue::from_str(&format!(
+                "bytes {}-{}/{}",
+                range.start,
+                range.end,
+                metadata.len()
+            ))
+            .expect("Invalid Content-Range"),
         );
         response.headers_mut().insert(
             CONTENT_LENGTH,
@@ -345,7 +350,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(response.body().as_ref(), b"bc");
         assert_eq!(
-            response.headers().get(CONTENT_RANGE).map(|value| value.to_str().unwrap_or("")),
+            response
+                .headers()
+                .get(CONTENT_RANGE)
+                .map(|value| value.to_str().unwrap_or("")),
             Some("bytes 1-2/4")
         );
     }
@@ -369,7 +377,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(response.body().as_ref(), b"d");
         assert_eq!(
-            response.headers().get(CONTENT_RANGE).map(|value| value.to_str().unwrap_or("")),
+            response
+                .headers()
+                .get(CONTENT_RANGE)
+                .map(|value| value.to_str().unwrap_or("")),
             Some("bytes 3-3/4")
         );
     }
@@ -392,7 +403,10 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(
-            response.headers().get(CONTENT_RANGE).map(|value| value.to_str().unwrap_or("")),
+            response
+                .headers()
+                .get(CONTENT_RANGE)
+                .map(|value| value.to_str().unwrap_or("")),
             Some("bytes */4")
         );
     }

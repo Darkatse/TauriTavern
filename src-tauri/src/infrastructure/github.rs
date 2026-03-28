@@ -3,8 +3,7 @@ use serde::Deserialize;
 
 use crate::domain::errors::DomainError;
 
-pub const GITHUB_RATE_LIMIT_MESSAGE: &str =
-    "GitHub has rate-limited your requests. Please try again later, or change your network and try again.";
+pub const GITHUB_RATE_LIMIT_MESSAGE: &str = "GitHub has rate-limited your requests. Please try again later, or change your network and try again.";
 
 const GITHUB_RATE_LIMIT_TOKENS: [&str; 2] = ["rate limit", "abuse detection"];
 
@@ -21,7 +20,10 @@ fn extract_error_message(body: &str) -> String {
 }
 
 pub fn classify_github_rate_limit(status: StatusCode, body: &str) -> Option<DomainError> {
-    if !matches!(status, StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS) {
+    if !matches!(
+        status,
+        StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS
+    ) {
         return None;
     }
 
@@ -58,11 +60,13 @@ mod tests {
 
     #[test]
     fn ignores_non_rate_limit_github_responses() {
-        assert!(classify_github_rate_limit(
-            StatusCode::FORBIDDEN,
-            r#"{"message":"Repository access blocked"}"#,
-        )
-        .is_none());
+        assert!(
+            classify_github_rate_limit(
+                StatusCode::FORBIDDEN,
+                r#"{"message":"Repository access blocked"}"#,
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -81,4 +85,3 @@ mod tests {
         assert!(classify_github_rate_limit(StatusCode::BAD_REQUEST, "rate limit").is_none());
     }
 }
-
