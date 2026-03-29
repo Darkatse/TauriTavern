@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "barcode-scanner:allow-scan",
+    "barcode-scanner:allow-cancel",
     "barcode-scanner:allow-request-permissions",
     "opener:default",
     "notification:allow-is-permission-granted",

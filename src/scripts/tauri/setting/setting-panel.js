@@ -13,6 +13,7 @@ import {
     normalizeChatHistoryModeName,
     setChatHistoryBootstrapModeName,
 } from '../../../tauri/main/services/chat-history/chat-history-mode-state.js';
+import { scanQrCodeWithBackCancellation } from '../../../tauri/main/services/barcode-scanner/barcode-scanner-service.js';
 
 const TAURITAVERN_SETTINGS_BUTTON_ID = 'tauritavern_settings_button';
 const LAN_SYNC_DEVICES_CHANGED_EVENT = 'tauritavern:lan_sync_devices_changed';
@@ -443,20 +444,7 @@ function setLanSyncAdvertiseAddress(value) {
 }
 
 async function scanPairUriFromCamera() {
-    const barcodeScanner = window.__TAURI__.barcodeScanner;
-    const granted = await barcodeScanner.requestPermissions();
-    if (!granted) {
-        throw new Error(translate('Camera permission is required to scan QR codes'));
-    }
-
-    const result = await barcodeScanner.scan({ formats: [barcodeScanner.Format.QRCode] });
-
-    const content = String(result?.content ?? '').trim();
-    if (!content) {
-        throw new Error(translate('Scanned Pair URI is empty'));
-    }
-
-    return content;
+    return scanQrCodeWithBackCancellation();
 }
 
 async function openTauriTavernSettingsPopup() {
@@ -1610,6 +1598,9 @@ function buildLanSyncPopup() {
     } else {
         scanPairingButton.addEventListener('click', () => runOrPopup(async () => {
             const pairUri = await scanPairUriFromCamera();
+            if (pairUri === null) {
+                return;
+            }
             requestPairUriTextArea.value = pairUri;
             await requestPairing(pairUri);
         }));

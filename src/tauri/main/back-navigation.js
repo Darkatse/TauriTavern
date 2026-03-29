@@ -1,3 +1,5 @@
+import { consumeBackNavigationHandlers } from './services/back-navigation/back-handler-stack.js';
+
 const BACK_HANDLER_KEY = '__TAURITAVERN_HANDLE_BACK__';
 
 export function installBackNavigationBridge() {
@@ -5,6 +7,10 @@ export function installBackNavigationBridge() {
 }
 
 function handleBackNavigation() {
+    if (consumeBackNavigationHandlers()) {
+        return true;
+    }
+
     if (closeTopmostDialogPopup()) {
         return true;
     }
