@@ -22,6 +22,7 @@ use presentation::web_resources::third_party_endpoint::handle_third_party_asset_
 use presentation::web_resources::thumbnail_endpoint::handle_thumbnail_web_request;
 use presentation::web_resources::user_data_endpoint::handle_user_data_asset_web_request;
 use tauri::Manager;
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use tauri_plugin_opener::OpenerExt;
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -264,7 +265,7 @@ fn create_main_window(
     let window = builder.build()?;
 
     #[cfg(target_os = "ios")]
-    infrastructure::ios_webview::disable_wkwebview_content_inset_adjustment(&window)?;
+    infrastructure::ios_webview::configure_main_wkwebview(&window)?;
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     {

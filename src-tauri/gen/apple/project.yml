@@ -2,7 +2,7 @@ name: tauritavern
 options:
   bundleIdPrefix: com.tauritavern.client
   deploymentTarget:
-    iOS: 14.0
+    iOS: 16.0
 fileGroups: [../../src]
 configs:
   debug: debug

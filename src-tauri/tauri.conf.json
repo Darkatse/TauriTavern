@@ -8,6 +8,7 @@
     "removeUnusedCommands": true
   },
   "app": {
+    "macOSPrivateApi": true,
     "withGlobalTauri": true,
     "windows": [
       {

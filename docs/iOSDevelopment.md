@@ -39,7 +39,7 @@ WKWebView 内部是 `UIScrollView` 承载 Web 内容；在默认行为下，iOS 
 
 实现位置：
 
-- iOS 配置入口：`src-tauri/src/infrastructure/ios_webview.rs`
+- iOS 配置入口：`src-tauri/src/infrastructure/ios_webview.rs` 的 `configure_main_wkwebview()`
 - 调用时机：`src-tauri/src/lib.rs`（主窗口 build 后立刻调用）
 
 ### 1.5 验收建议
@@ -148,3 +148,25 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 - 下载桥：`src/tauri/main/download-bridge.js`
 - 导出反馈：`src/scripts/download-feedback.js`
 - iOS share 命令：`src-tauri/src/presentation/commands/ios_file_bridge_commands.rs`
+
+## 4. WKWebView Fullscreen API（iOS 16+）
+
+### 4.1 现象
+
+- 角色卡或扩展内的同源 iframe 页面在桌面/Android 可进入全屏，但 iOS 上 `requestFullscreen()` / `webkitRequestFullscreen()` 不生效。
+
+### 4.2 根因
+
+- 问题不在前端按钮或 JS-Slash-Runner 事件语义，而在宿主 WKWebView 默认没有开启 element fullscreen 能力。
+- TauriTavern 的兼容目标仍然是让上游页面继续使用标准浏览器 Fullscreen API，而不是引入额外 JS-native bridge。
+
+### 4.3 已落地方案
+
+- 继续复用 `src-tauri/src/infrastructure/ios_webview.rs` 的主 WebView 配置入口，在 `configure_main_wkwebview()` 内统一完成两类 native 配置：
+  - 关闭 `scrollView` 的 safe-area 自动 inset 调整；
+  - 开启 `WKPreferences.setElementFullscreenEnabled(true)`。
+- 这样角色卡、JS-Slash-Runner、同源 iframe 的 fullscreen 事件、退出语义和上游契约保持一致，宿主只补齐平台能力，不改前端行为。
+
+### 4.4 支持边界
+
+- 该能力依赖 iOS 16 的 app-embedded WKWebView Fullscreen API，因此项目 iOS 支持线提升到 `iOS 16+`。
