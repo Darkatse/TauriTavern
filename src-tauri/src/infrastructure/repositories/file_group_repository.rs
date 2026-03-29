@@ -194,7 +194,12 @@ impl GroupRepository for FileGroupRepository {
         self.initialize_cache_if_needed().await?;
 
         let file_path = self.get_group_file_path(&group.id);
-        write_json_file(&file_path, group).await?;
+        let mut group_to_write = group.clone();
+        group_to_write.date_added = None;
+        group_to_write.create_date = None;
+        group_to_write.chat_size = None;
+        group_to_write.date_last_chat = None;
+        write_json_file(&file_path, &group_to_write).await?;
 
         // Update cache
         let mut cache = self.cache.lock().await;
@@ -228,7 +233,12 @@ impl GroupRepository for FileGroupRepository {
             )));
         }
 
-        write_json_file(&file_path, group).await?;
+        let mut group_to_write = group.clone();
+        group_to_write.date_added = None;
+        group_to_write.create_date = None;
+        group_to_write.chat_size = None;
+        group_to_write.date_last_chat = None;
+        write_json_file(&file_path, &group_to_write).await?;
 
         // Update cache with preserved metadata
         let mut cache = self.cache.lock().await;
@@ -239,14 +249,7 @@ impl GroupRepository for FileGroupRepository {
             updated_group.date_added = cached_group.date_added;
             updated_group.create_date = cached_group.create_date.clone();
             updated_group.chat_size = cached_group.chat_size;
-
-            // Update last chat date to now
-            let now = SystemTime::now();
-            if let Ok(timestamp) = now.duration_since(UNIX_EPOCH) {
-                updated_group.date_last_chat = Some(timestamp.as_millis() as i64);
-            } else {
-                updated_group.date_last_chat = cached_group.date_last_chat;
-            }
+            updated_group.date_last_chat = cached_group.date_last_chat;
         }
 
         cache.insert(group.id.clone(), updated_group.clone());

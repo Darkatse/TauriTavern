@@ -38,8 +38,11 @@ impl GroupService {
         // Generate a unique ID based on timestamp
         let id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis().to_string())
-            .unwrap_or_else(|_| String::from("fallback_id"));
+            .map_err(|error| {
+                DomainError::InternalError(format!("Failed to generate group id: {}", error))
+            })?
+            .as_millis()
+            .to_string();
 
         // Use provided chat_id or generate one
         let chat_id = dto.chat_id.unwrap_or_else(|| id.clone());
@@ -64,12 +67,13 @@ impl GroupService {
             auto_mode_delay: dto.auto_mode_delay.unwrap_or(5),
             generation_mode_join_prefix: dto.generation_mode_join_prefix.unwrap_or_default(),
             generation_mode_join_suffix: dto.generation_mode_join_suffix.unwrap_or_default(),
-            hide_muted_sprites: dto.hide_muted_sprites.unwrap_or(true),
+            hide_muted_sprites: dto.hide_muted_sprites.unwrap_or(false),
             past_metadata: Default::default(),
             date_added: None,
             create_date: None,
             chat_size: None,
             date_last_chat: None,
+            additional: dto.additional,
         };
 
         // Save the group
@@ -80,56 +84,8 @@ impl GroupService {
     pub async fn update_group(&self, dto: UpdateGroupDto) -> Result<Group, DomainError> {
         logger::debug(&format!("GroupService: Updating group {}", dto.id));
 
-        // Get the existing group
-        let existing_group = self
-            .repository
-            .get_group(&dto.id)
-            .await?
-            .ok_or_else(|| DomainError::NotFound(format!("Group not found: {}", dto.id)))?;
-
-        // Update the group with new values
-        let updated_group = Group {
-            id: existing_group.id,
-            name: dto.name.unwrap_or(existing_group.name),
-            members: dto.members.unwrap_or(existing_group.members),
-            avatar_url: dto.avatar_url.or(existing_group.avatar_url),
-            allow_self_responses: dto
-                .allow_self_responses
-                .unwrap_or(existing_group.allow_self_responses),
-            activation_strategy: dto
-                .activation_strategy
-                .unwrap_or(existing_group.activation_strategy),
-            generation_mode: dto
-                .generation_mode
-                .unwrap_or(existing_group.generation_mode),
-            disabled_members: dto
-                .disabled_members
-                .unwrap_or(existing_group.disabled_members),
-            chat_metadata: dto.chat_metadata.unwrap_or(existing_group.chat_metadata),
-            fav: dto.fav.unwrap_or(existing_group.fav),
-            chat_id: dto.chat_id.unwrap_or(existing_group.chat_id),
-            chats: dto.chats.unwrap_or(existing_group.chats),
-            auto_mode_delay: dto
-                .auto_mode_delay
-                .unwrap_or(existing_group.auto_mode_delay),
-            generation_mode_join_prefix: dto
-                .generation_mode_join_prefix
-                .unwrap_or(existing_group.generation_mode_join_prefix),
-            generation_mode_join_suffix: dto
-                .generation_mode_join_suffix
-                .unwrap_or(existing_group.generation_mode_join_suffix),
-            hide_muted_sprites: dto
-                .hide_muted_sprites
-                .unwrap_or(existing_group.hide_muted_sprites),
-            past_metadata: dto.past_metadata.unwrap_or(existing_group.past_metadata),
-            date_added: existing_group.date_added,
-            create_date: existing_group.create_date,
-            chat_size: existing_group.chat_size,
-            date_last_chat: existing_group.date_last_chat,
-        };
-
-        // Save the updated group
-        self.repository.update_group(&updated_group).await
+        let group: Group = dto.into();
+        self.repository.update_group(&group).await
     }
 
     /// Delete a group

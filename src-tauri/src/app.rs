@@ -9,6 +9,7 @@ use crate::application::services::chat_completion_service::ChatCompletionService
 use crate::application::services::chat_service::ChatService;
 use crate::application::services::content_service::ContentService;
 use crate::application::services::extension_service::ExtensionService;
+use crate::application::services::group_chat_service::GroupChatService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::lan_sync_service::LanSyncService;
 use crate::application::services::preset_service::PresetService;
@@ -32,6 +33,7 @@ mod migrations;
 pub struct AppState {
     pub character_service: Arc<CharacterService>,
     pub chat_service: Arc<ChatService>,
+    pub group_chat_service: Arc<GroupChatService>,
     pub user_service: Arc<UserService>,
     pub settings_service: Arc<SettingsService>,
     pub user_directory_service: Arc<UserDirectoryService>,
@@ -76,6 +78,7 @@ impl AppState {
         Ok(Self {
             character_service: services.character_service,
             chat_service: services.chat_service,
+            group_chat_service: services.group_chat_service,
             user_service: services.user_service,
             settings_service: services.settings_service,
             user_directory_service: services.user_directory_service,
@@ -109,6 +112,7 @@ impl AppState {
 
         self.character_service.clear_cache().await?;
         self.chat_service.clear_cache().await?;
+        self.group_chat_service.clear_cache().await?;
         self.group_service.clear_cache().await?;
         self.secret_service.clear_cache().await?;
 

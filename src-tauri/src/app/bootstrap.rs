@@ -11,6 +11,7 @@ use crate::application::services::chat_completion_service::ChatCompletionService
 use crate::application::services::chat_service::ChatService;
 use crate::application::services::content_service::ContentService;
 use crate::application::services::extension_service::ExtensionService;
+use crate::application::services::group_chat_service::GroupChatService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::lan_sync_service::LanSyncService;
 use crate::application::services::preset_service::PresetService;
@@ -33,6 +34,7 @@ use crate::domain::repositories::chat_completion_repository::ChatCompletionRepos
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::content_repository::ContentRepository;
 use crate::domain::repositories::extension_repository::ExtensionRepository;
+use crate::domain::repositories::group_chat_repository::GroupChatRepository;
 use crate::domain::repositories::group_repository::GroupRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::domain::repositories::quick_reply_repository::QuickReplyRepository;
@@ -73,6 +75,7 @@ use crate::infrastructure::repositories::file_world_info_repository::FileWorldIn
 pub(super) struct AppServices {
     pub character_service: Arc<CharacterService>,
     pub chat_service: Arc<ChatService>,
+    pub group_chat_service: Arc<GroupChatService>,
     pub user_service: Arc<UserService>,
     pub settings_service: Arc<SettingsService>,
     pub user_directory_service: Arc<UserDirectoryService>,
@@ -97,6 +100,7 @@ pub(super) struct AppServices {
 struct AppRepositories {
     character_repository: Arc<dyn CharacterRepository>,
     chat_repository: Arc<dyn ChatRepository>,
+    group_chat_repository: Arc<dyn GroupChatRepository>,
     user_repository: Arc<dyn UserRepository>,
     settings_repository: Arc<dyn SettingsRepository>,
     user_directory_repository: Arc<dyn UserDirectoryRepository>,
@@ -167,6 +171,7 @@ pub(super) fn build_services(
         repositories.chat_repository,
         repositories.character_repository.clone(),
     ));
+    let group_chat_service = Arc::new(GroupChatService::new(repositories.group_chat_repository));
     let user_service = Arc::new(UserService::new(repositories.user_repository));
     let settings_service = Arc::new(SettingsService::new(repositories.settings_repository));
     let user_directory_service = Arc::new(UserDirectoryService::new(
@@ -194,6 +199,7 @@ pub(super) fn build_services(
     Ok(AppServices {
         character_service,
         chat_service,
+        group_chat_service,
         user_service,
         settings_service,
         user_directory_service,
@@ -231,12 +237,14 @@ fn build_repositories(
             data_directory.default_avatar().to_path_buf(),
         ));
 
-    let chat_repository: Arc<dyn ChatRepository> = Arc::new(FileChatRepository::new(
+    let file_chat_repository = Arc::new(FileChatRepository::new(
         data_directory.characters().to_path_buf(),
         data_directory.chats().to_path_buf(),
         data_directory.group_chats().to_path_buf(),
         data_directory.backups().to_path_buf(),
     ));
+    let chat_repository: Arc<dyn ChatRepository> = file_chat_repository.clone();
+    let group_chat_repository: Arc<dyn GroupChatRepository> = file_chat_repository;
 
     let user_repository: Arc<dyn UserRepository> = Arc::new(FileUserRepository::new(
         data_directory.user_data().to_path_buf(),
@@ -320,6 +328,7 @@ fn build_repositories(
     Ok(AppRepositories {
         character_repository,
         chat_repository,
+        group_chat_repository,
         user_repository,
         settings_repository,
         user_directory_repository,

@@ -1,5 +1,6 @@
 use crate::domain::models::group::Group;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 
 /// DTO for group responses
@@ -64,7 +65,7 @@ pub struct GroupDto {
     pub generation_mode_join_suffix: String,
 
     /// Whether to hide muted sprites
-    #[serde(default)]
+    #[serde(default, rename = "hideMutedSprites", alias = "hide_muted_sprites")]
     pub hide_muted_sprites: bool,
 
     /// Metadata for past chats
@@ -86,6 +87,10 @@ pub struct GroupDto {
     /// Timestamp of the last chat in milliseconds
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date_last_chat: Option<i64>,
+
+    /// Preserve unknown group JSON fields (payload-first).
+    #[serde(default, flatten)]
+    pub additional: HashMap<String, Value>,
 }
 
 /// DTO for creating a new group
@@ -147,79 +152,19 @@ pub struct CreateGroupDto {
     pub generation_mode_join_suffix: Option<String>,
 
     /// Whether to hide muted sprites
-    #[serde(default)]
-    pub hide_muted_sprites: Option<bool>,
-}
-
-/// DTO for updating a group
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateGroupDto {
-    /// Unique identifier for the group
-    pub id: String,
-
-    /// Name of the group
-    pub name: Option<String>,
-
-    /// List of character avatars (filenames) that are members of this group
-    #[serde(default)]
-    pub members: Option<Vec<String>>,
-
-    /// URL or path to the group's avatar image
-    #[serde(default)]
-    pub avatar_url: Option<String>,
-
-    /// Whether characters can respond to themselves in the group chat
-    #[serde(default)]
-    pub allow_self_responses: Option<bool>,
-
-    /// Strategy for activating characters in the group chat
-    #[serde(default)]
-    pub activation_strategy: Option<i32>,
-
-    /// Mode for generating responses in the group chat
-    #[serde(default)]
-    pub generation_mode: Option<i32>,
-
-    /// List of character avatars (filenames) that are disabled in this group
-    #[serde(default)]
-    pub disabled_members: Option<Vec<String>>,
-
-    /// Metadata for the current chat
-    #[serde(default)]
-    pub chat_metadata: Option<HashMap<String, serde_json::Value>>,
-
-    /// Whether the group is favorited
-    #[serde(default)]
-    pub fav: Option<bool>,
-
-    /// ID of the current chat
-    #[serde(default)]
-    pub chat_id: Option<String>,
-
-    /// List of all chat IDs associated with this group
-    #[serde(default)]
-    pub chats: Option<Vec<String>>,
-
-    /// Delay in seconds for auto mode
-    #[serde(default)]
-    pub auto_mode_delay: Option<i32>,
-
-    /// Prefix for joining messages in APPEND mode
-    #[serde(default)]
-    pub generation_mode_join_prefix: Option<String>,
-
-    /// Suffix for joining messages in APPEND mode
-    #[serde(default)]
-    pub generation_mode_join_suffix: Option<String>,
-
-    /// Whether to hide muted sprites
-    #[serde(default)]
+    #[serde(default, rename = "hideMutedSprites", alias = "hide_muted_sprites")]
     pub hide_muted_sprites: Option<bool>,
 
-    /// Metadata for past chats
-    #[serde(default)]
-    pub past_metadata: Option<HashMap<String, HashMap<String, serde_json::Value>>>,
+    /// Preserve unknown group JSON fields (payload-first).
+    #[serde(default, flatten)]
+    pub additional: HashMap<String, Value>,
 }
+
+/// DTO for updating a group.
+///
+/// Note: SillyTavern `groups/edit` writes the full group payload back to disk. For payload-first
+/// fidelity, we accept the full `GroupDto` as the update DTO.
+pub type UpdateGroupDto = GroupDto;
 
 /// DTO for deleting a group
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -253,6 +198,36 @@ impl From<Group> for GroupDto {
             create_date: group.create_date,
             chat_size: group.chat_size,
             date_last_chat: group.date_last_chat,
+            additional: group.additional,
+        }
+    }
+}
+
+impl From<GroupDto> for Group {
+    fn from(dto: GroupDto) -> Self {
+        Self {
+            id: dto.id,
+            name: dto.name,
+            members: dto.members,
+            avatar_url: dto.avatar_url,
+            allow_self_responses: dto.allow_self_responses,
+            activation_strategy: dto.activation_strategy,
+            generation_mode: dto.generation_mode,
+            disabled_members: dto.disabled_members,
+            chat_metadata: dto.chat_metadata,
+            fav: dto.fav,
+            chat_id: dto.chat_id,
+            chats: dto.chats,
+            auto_mode_delay: dto.auto_mode_delay,
+            generation_mode_join_prefix: dto.generation_mode_join_prefix,
+            generation_mode_join_suffix: dto.generation_mode_join_suffix,
+            hide_muted_sprites: dto.hide_muted_sprites,
+            past_metadata: dto.past_metadata,
+            date_added: dto.date_added,
+            create_date: dto.create_date,
+            chat_size: dto.chat_size,
+            date_last_chat: dto.date_last_chat,
+            additional: dto.additional,
         }
     }
 }

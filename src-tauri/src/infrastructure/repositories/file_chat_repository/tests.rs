@@ -12,6 +12,7 @@ use crate::domain::repositories::chat_repository::{
     ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchQuery, ChatPayloadPatchOp,
     ChatRepository, PinnedCharacterChat, PinnedGroupChat,
 };
+use crate::domain::repositories::group_chat_repository::GroupChatRepository;
 
 use super::FileChatRepository;
 

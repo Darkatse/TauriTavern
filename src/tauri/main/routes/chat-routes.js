@@ -538,6 +538,55 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         }
     });
 
+    router.post('/api/chats/group/info', async ({ body }) => {
+        const id = String(body?.id || '').trim();
+        if (!id) {
+            return jsonResponse(null, 400);
+        }
+
+        const normalizedId = context.stripJsonl(id);
+        const withMetadata = Boolean(body?.metadata);
+
+        try {
+            const summary = await context.safeInvoke('get_group_chat_summary', {
+                chat_id: normalizedId,
+                include_metadata: withMetadata,
+            });
+
+            if (!summary || typeof summary !== 'object') {
+                return jsonResponse(null);
+            }
+
+            const fileName = context.ensureJsonl(summary.file_name || '');
+            const preview = String(summary.preview || '');
+            const messageCount = Number(summary.message_count || 0);
+            const mes = preview || (messageCount > 0 ? '' : '[The chat is empty]');
+
+            const result = {
+                file_id: context.stripJsonl(fileName),
+                file_name: fileName,
+                file_size: context.formatFileSize(summary.file_size),
+                chat_items: messageCount,
+                mes,
+                last_mes: Number(summary.date || 0),
+            };
+
+            if (withMetadata) {
+                result.chat_metadata = summary.chat_metadata || {};
+            }
+
+            return jsonResponse(result);
+        } catch (error) {
+            return jsonResponse(
+                {
+                    error: 'Failed to load group chat info',
+                    details: String(error?.message || error || ''),
+                },
+                500,
+            );
+        }
+    });
+
     router.post('/api/chats/group/save', async ({ body }) => {
         const id = String(body?.id || '').trim();
         if (!id || !Array.isArray(body?.chat)) {

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 
 /// Group model representing a character group in SillyTavern format
@@ -65,7 +66,7 @@ pub struct Group {
     pub generation_mode_join_suffix: String,
 
     /// Whether to hide muted sprites
-    #[serde(default = "default_true")]
+    #[serde(default, rename = "hideMutedSprites", alias = "hide_muted_sprites")]
     pub hide_muted_sprites: bool,
 
     /// Metadata for past chats
@@ -84,12 +85,12 @@ pub struct Group {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date_last_chat: Option<i64>,
+
+    /// Preserve unknown group JSON fields (payload-first).
+    #[serde(default, flatten)]
+    pub additional: HashMap<String, Value>,
 }
 
 fn default_auto_mode_delay() -> i32 {
     5
-}
-
-fn default_true() -> bool {
-    true
 }
