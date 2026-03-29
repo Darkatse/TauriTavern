@@ -12,6 +12,7 @@ use crate::infrastructure::persistence::file_system::{
     delete_file, list_files_with_extension, read_json_file, write_json_file,
 };
 use crate::infrastructure::persistence::png_utils::read_text_chunks_from_png;
+use crate::infrastructure::sillytavern_sorting::sort_strings_sillytavern_name;
 
 pub struct FileWorldInfoRepository {
     worlds_dir: PathBuf,
@@ -222,8 +223,78 @@ impl WorldInfoRepository for FileWorldInfoRepository {
                     .map(|name| name.to_string())
             })
             .collect();
-        names.sort();
+        sort_strings_sillytavern_name(&mut names);
 
         Ok(names)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FileWorldInfoRepository;
+    use crate::domain::repositories::world_info_repository::WorldInfoRepository;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new() -> Self {
+            let suffix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be after unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "tauritavern-world-info-repo-test-{}-{}",
+                std::process::id(),
+                suffix
+            ));
+            std::fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[tokio::test]
+    async fn list_world_names_sorts_like_upstream_locale_compare() {
+        let dir = TestDir::new();
+        let repository = FileWorldInfoRepository::new(dir.path().to_path_buf());
+
+        std::fs::write(dir.path().join("😀Book.json"), "{}").expect("write emoji world");
+        std::fs::write(dir.path().join("Abook.json"), "{}").expect("write latin world");
+        std::fs::write(dir.path().join("#Book.json"), "{}").expect("write symbol world");
+        std::fs::write(dir.path().join("🧠Lore.json"), "{}").expect("write brain world");
+        std::fs::write(dir.path().join("✨Lore.json"), "{}").expect("write sparkles world");
+        std::fs::write(dir.path().join("_Book.json"), "{}").expect("write underscore world");
+        std::fs::write(dir.path().join("-Book.json"), "{}").expect("write dash world");
+
+        let names = repository
+            .list_world_names()
+            .await
+            .expect("list world names");
+
+        assert_eq!(
+            names,
+            vec![
+                "_Book".to_string(),
+                "-Book".to_string(),
+                "#Book".to_string(),
+                "✨Lore".to_string(),
+                "🧠Lore".to_string(),
+                "😀Book".to_string(),
+                "Abook".to_string(),
+            ]
+        );
     }
 }

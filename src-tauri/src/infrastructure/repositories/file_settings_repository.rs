@@ -11,6 +11,9 @@ use crate::infrastructure::persistence::file_system::{
     list_files_with_extension, read_json_file, write_json_file,
 };
 use crate::infrastructure::preset_file_naming::load_named_preset_files;
+use crate::infrastructure::sillytavern_sorting::{
+    sort_paths_by_file_name_js_default, sort_strings_sillytavern_name,
+};
 
 pub struct FileSettingsRepository {
     tauritavern_settings_file: PathBuf,
@@ -73,37 +76,20 @@ impl FileSettingsRepository {
         dir: &Path,
     ) -> Result<Vec<UserSettings>, DomainError> {
         let mut result = Vec::new();
+        let mut paths = list_files_with_extension(dir, "json").await?;
+        sort_paths_by_file_name_js_default(&mut paths)?;
 
-        if !dir.exists() {
-            return Ok(result);
-        }
-
-        let mut entries = fs::read_dir(dir).await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to read directory {}: {}", dir.display(), e))
-        })?;
-
-        let mut entries_vec = Vec::new();
-        while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to read directory entry: {}", e))
-        })? {
-            entries_vec.push(entry);
-        }
-
-        for entry in entries_vec {
-            let path = entry.path();
-
-            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
-                match read_json_file::<UserSettings>(&path).await {
-                    Ok(settings) => {
-                        result.push(settings);
-                    }
-                    Err(e) => {
-                        logger::warn(&format!(
-                            "Failed to read settings file {}: {}",
-                            path.display(),
-                            e
-                        ));
-                    }
+        for path in paths {
+            match read_json_file::<UserSettings>(&path).await {
+                Ok(settings) => {
+                    result.push(settings);
+                }
+                Err(e) => {
+                    logger::warn(&format!(
+                        "Failed to read settings file {}: {}",
+                        path.display(),
+                        e
+                    ));
                 }
             }
         }
@@ -341,7 +327,7 @@ impl SettingsRepository for FileSettingsRepository {
             })
             .collect::<Vec<_>>();
 
-        world_names.sort();
+        sort_strings_sillytavern_name(&mut world_names);
 
         Ok(world_names)
     }
@@ -485,5 +471,101 @@ mod tests {
         assert_eq!(names, vec!["【明月青秋】".to_string()]);
         assert_eq!(settings.len(), 1);
         assert!(settings[0].contains(r#""temperature":0.9"#));
+    }
+
+    #[tokio::test]
+    async fn get_openai_settings_sorts_like_upstream_locale_compare() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+        let openai_dir = dir.path().join("OpenAI Settings");
+        fs::create_dir_all(&openai_dir).expect("create OpenAI Settings dir");
+        fs::write(
+            openai_dir.join("😀Book.json"),
+            r#"{"name":"😀Book","temperature":0.1}"#,
+        )
+        .expect("write emoji preset");
+        fs::write(
+            openai_dir.join("Abook.json"),
+            r#"{"name":"Abook","temperature":0.2}"#,
+        )
+        .expect("write latin preset");
+        fs::write(
+            openai_dir.join("#Book.json"),
+            r##"{"name":"#Book","temperature":0.3}"##,
+        )
+        .expect("write symbol preset");
+
+        let (_settings, names) = repository
+            .get_openai_settings()
+            .await
+            .expect("load openai settings");
+
+        assert_eq!(
+            names,
+            vec![
+                "#Book".to_string(),
+                "😀Book".to_string(),
+                "Abook".to_string(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn get_world_names_sorts_like_upstream_locale_compare() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+        let worlds_dir = dir.path().join("worlds");
+        fs::create_dir_all(&worlds_dir).expect("create worlds dir");
+        fs::write(worlds_dir.join("😀Book.json"), "{}").expect("write emoji world");
+        fs::write(worlds_dir.join("Abook.json"), "{}").expect("write latin world");
+        fs::write(worlds_dir.join("#Book.json"), "{}").expect("write symbol world");
+        fs::write(worlds_dir.join("🧠Lore.json"), "{}").expect("write brain world");
+        fs::write(worlds_dir.join("✨Lore.json"), "{}").expect("write sparkles world");
+        fs::write(worlds_dir.join("_Book.json"), "{}").expect("write underscore world");
+        fs::write(worlds_dir.join("-Book.json"), "{}").expect("write dash world");
+
+        let names = repository
+            .get_world_names()
+            .await
+            .expect("load world names");
+
+        assert_eq!(
+            names,
+            vec![
+                "_Book".to_string(),
+                "-Book".to_string(),
+                "#Book".to_string(),
+                "✨Lore".to_string(),
+                "🧠Lore".to_string(),
+                "😀Book".to_string(),
+                "Abook".to_string(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn get_themes_preserves_upstream_js_default_file_name_order() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+        let themes_dir = dir.path().join("themes");
+        fs::create_dir_all(&themes_dir).expect("create themes dir");
+        fs::write(themes_dir.join("😀Theme.json"), r#"{"id":"emoji"}"#).expect("write emoji theme");
+        fs::write(themes_dir.join("ATheme.json"), r#"{"id":"latin"}"#).expect("write latin theme");
+        fs::write(themes_dir.join("#Theme.json"), r#"{"id":"symbol"}"#)
+            .expect("write symbol theme");
+
+        let themes = repository.get_themes().await.expect("load themes");
+        let ids: Vec<&str> = themes
+            .iter()
+            .map(|theme| {
+                theme
+                    .data
+                    .get("id")
+                    .and_then(|value| value.as_str())
+                    .expect("theme id should be string")
+            })
+            .collect();
+
+        assert_eq!(ids, vec!["symbol", "latin", "emoji"]);
     }
 }

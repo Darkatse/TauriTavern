@@ -47,6 +47,9 @@ uuid = { version = "1.4", default-features = false, features = ["serde", "std", 
 async-trait = "0.1"
 url = "2.4"
 percent-encoding = "2"
+icu_collator = "2.1.1"
+icu_locale_core = "2.1.1"
+sys-locale = "0.3.2"
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 image = { version = "0.24", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
 png = "0.17"

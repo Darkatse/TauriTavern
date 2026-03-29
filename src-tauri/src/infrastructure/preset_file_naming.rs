@@ -6,6 +6,7 @@ use tokio::fs;
 
 use crate::domain::errors::DomainError;
 use crate::infrastructure::persistence::file_system::list_files_with_extension;
+use crate::infrastructure::sillytavern_sorting::sort_paths_by_file_name_sillytavern_name;
 
 const INVALID_FILE_CHARS: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
 const WINDOWS_RESERVED_NAMES: [&str; 22] = [
@@ -140,7 +141,7 @@ pub(crate) async fn load_named_preset_files(
     dir: &Path,
 ) -> Result<Vec<NamedPresetFile>, DomainError> {
     let mut files = list_files_with_extension(dir, "json").await?;
-    files.sort();
+    sort_paths_by_file_name_sillytavern_name(&mut files)?;
 
     let mut entries: Vec<NamedPresetFile> = Vec::new();
     let mut indices = HashMap::<String, usize>::new();
