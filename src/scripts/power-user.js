@@ -88,9 +88,6 @@ const defaultExampleSeparator = '***';
 const defaultChatStart = '***';
 const defaultToastPosition = 'toast-top-center';
 const MOBILE_PORTRAIT_CHAT_WIDTH_VW = 100;
-const MOBILE_INSET_TOP = 'max(var(--tt-inset-top), 0px)';
-const MOBILE_INSET_RIGHT = 'max(var(--tt-inset-right), 0px)';
-const MOBILE_INSET_LEFT = 'max(var(--tt-inset-left), 0px)';
 
 const avatar_styles = {
     ROUND: 0,
@@ -1172,25 +1169,6 @@ function applyThemeColor(type) {
     }
 }
 
-function enforceMobileTopBarSafeArea() {
-    if (!isMobile()) {
-        return;
-    }
-
-    const topSettingsHolder = document.getElementById('top-settings-holder');
-    const topBar = document.getElementById('top-bar');
-
-    for (const element of [topSettingsHolder, topBar]) {
-        if (!(element instanceof HTMLElement)) {
-            continue;
-        }
-
-        element.style.setProperty('top', MOBILE_INSET_TOP, 'important');
-        element.style.setProperty('padding-right', MOBILE_INSET_RIGHT, 'important');
-        element.style.setProperty('padding-left', MOBILE_INSET_LEFT, 'important');
-    }
-}
-
 function applyCustomCSS() {
     $('#customCSS').val(power_user.custom_css);
     var styleId = 'custom-style';
@@ -1202,7 +1180,7 @@ function applyCustomCSS() {
         document.head.appendChild(style);
     }
     style.innerHTML = power_user.custom_css;
-    enforceMobileTopBarSafeArea();
+    window.__TAURITAVERN_MOBILE_TOP_SETTINGS_LAYOUT__?.revalidate?.();
 }
 
 function applyBlurStrength() {

@@ -82,6 +82,10 @@ Android 说明：
 `src/css/mobile-styles.css` 消费上述变量，主要约束点：
 
 - 顶部容器（如 `#top-settings-holder/#top-bar`）使用 `top: max(var(--tt-inset-top), 0px)` 并加入左右 padding。
+- 第一方顶部设置面板（`#top-settings-holder` 下的非侧栏 drawer）由宿主 controller 统一消费同一套 contract：
+  - 实现：`src/tauri/main/compat/mobile/mobile-top-settings-layout-controller.js`
+  - 行为：宿主只写入 `--tt-top-settings-holder-safe-offset` 这类 host-private 变量，不再接管主题的 `--top-distance`；顶部设置容器通过独立的 `margin-top` 消费 safe-area，第一方顶部 drawer 则以 `#top-settings-holder` 的实际 bottom 推导 panel top/max-height
+  - 目的：让主题继续控制皮肤变量与视觉样式，但不再主导移动端 safe-area 几何
 - 主容器 `#sheld` 以 `inset-top + topBarBlockSize` 定位，并用 `--tt-base-viewport-height`/`--doc-height` 计算高度。
 - Android 的键盘抬升不再直接绑定在主题可覆写的 `#form_sheld` 上；宿主层会在 `#form_sheld` 内安装私有 IME lift/spacer 节点，由它们消费 `--tt-ime-bottom` 推导出的偏移并保留底部占位。
 
