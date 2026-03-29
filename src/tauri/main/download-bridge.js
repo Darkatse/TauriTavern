@@ -2,6 +2,7 @@ export function createDownloadBridge({
     isNativeMobileDownloadRuntime,
     downloadBlobWithRuntime,
     notifyDownloadResult,
+    notifyDownloadError,
     fallbackName = 'download.bin',
 }) {
     const patchStateByWindow = new WeakMap();
@@ -25,6 +26,7 @@ export function createDownloadBridge({
             documentListener: null,
             patchedCreateObjectURL: null,
             patchedRevokeObjectURL: null,
+            patchedAnchorClick: null,
         };
         patchStateByWindow.set(targetWindow, nextState);
         return nextState;
@@ -53,13 +55,30 @@ export function createDownloadBridge({
         return anchorElement instanceof targetWindow.HTMLAnchorElement ? anchorElement : null;
     }
 
-    async function readDataUrlAsBlob(targetWindow, href) {
+    async function readHrefAsBlob(targetWindow, href) {
         const response = await targetWindow.fetch(href);
         if (!response?.ok) {
             throw new Error(`Failed to read download payload: ${response?.status || 'unknown error'}`);
         }
 
         return response.blob();
+    }
+
+    function resolveSameOriginDownloadUrl(targetWindow, href) {
+        try {
+            const url = new targetWindow.URL(href, targetWindow.location.href);
+            if (url.origin !== targetWindow.location.origin) {
+                return null;
+            }
+
+            if (url.protocol === 'blob:' || url.protocol === 'data:' || url.protocol === 'javascript:') {
+                return null;
+            }
+
+            return url.href;
+        } catch {
+            return null;
+        }
     }
 
     function createDownloadRequest(targetWindow, anchorElement) {
@@ -76,23 +95,27 @@ export function createDownloadBridge({
 
         if (href.startsWith('blob:')) {
             const blob = trackedBlobUrls.get(href);
-            if (!blob) {
-                return null;
-            }
-
             return {
                 fileName,
-                blobPromise: Promise.resolve(blob),
+                blobPromise: blob ? Promise.resolve(blob) : readHrefAsBlob(targetWindow, href),
             };
         }
 
-        if (!href.startsWith('data:')) {
+        if (href.startsWith('data:')) {
+            return {
+                fileName,
+                blobPromise: readHrefAsBlob(targetWindow, href),
+            };
+        }
+
+        const sameOriginUrl = resolveSameOriginDownloadUrl(targetWindow, href);
+        if (!sameOriginUrl) {
             return null;
         }
 
         return {
             fileName,
-            blobPromise: readDataUrlAsBlob(targetWindow, href),
+            blobPromise: readHrefAsBlob(targetWindow, sameOriginUrl),
         };
     }
 
@@ -110,6 +133,32 @@ export function createDownloadBridge({
         } catch (error) {
             console.warn('Failed to show download feedback:', error);
         }
+    }
+
+    function notifyDownloadFailure(error) {
+        if (typeof notifyDownloadError !== 'function') {
+            return;
+        }
+
+        try {
+            notifyDownloadError(error);
+        } catch (feedbackError) {
+            console.warn('Failed to show download failure feedback:', feedbackError);
+        }
+    }
+
+    function bridgeAnchorDownload(targetWindow, anchorElement, event = null) {
+        const request = createDownloadRequest(targetWindow, anchorElement);
+        if (!request) {
+            return false;
+        }
+
+        event?.preventDefault();
+        void handleDownloadRequest(request).catch((error) => {
+            console.error('Failed to bridge native mobile download:', error);
+            notifyDownloadFailure(error);
+        });
+        return true;
     }
 
     function patchWindow(targetWindow = window) {
@@ -133,6 +182,8 @@ export function createDownloadBridge({
         const state = getPatchState(targetWindow);
         const currentCreateObjectURL = urlApi.createObjectURL;
         const currentRevokeObjectURL = urlApi.revokeObjectURL;
+        const anchorPrototype = targetWindow.HTMLAnchorElement?.prototype;
+        const currentAnchorClick = anchorPrototype?.click;
 
         if (typeof currentCreateObjectURL === 'function' && state.patchedCreateObjectURL !== currentCreateObjectURL) {
             const delegateCreateObjectURL = currentCreateObjectURL.bind(urlApi);
@@ -167,6 +218,26 @@ export function createDownloadBridge({
             }
         }
 
+        if (typeof currentAnchorClick === 'function' && state.patchedAnchorClick !== currentAnchorClick) {
+            const delegateAnchorClick = currentAnchorClick;
+            const patchedAnchorClick = function patchedAnchorClick(...args) {
+                if (this instanceof targetWindow.HTMLAnchorElement && !this.isConnected) {
+                    if (bridgeAnchorDownload(targetWindow, this)) {
+                        return;
+                    }
+                }
+
+                return delegateAnchorClick.apply(this, args);
+            };
+
+            try {
+                anchorPrototype.click = patchedAnchorClick;
+                state.patchedAnchorClick = patchedAnchorClick;
+            } catch {
+                // Ignore non-writable prototype bindings.
+            }
+        }
+
         if (state.currentDocument === targetDocument && typeof state.documentListener === 'function') {
             return;
         }
@@ -185,15 +256,7 @@ export function createDownloadBridge({
                 return;
             }
 
-            const request = createDownloadRequest(targetWindow, anchorElement);
-            if (!request) {
-                return;
-            }
-
-            event.preventDefault();
-            void handleDownloadRequest(request).catch((error) => {
-                console.error('Failed to bridge native mobile download:', error);
-            });
+            bridgeAnchorDownload(targetWindow, anchorElement, event);
         };
 
         targetDocument.addEventListener('click', documentListener, true);

@@ -91,8 +91,8 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 - iOS-only Tauri commands：`src-tauri/src/presentation/commands/ios_file_bridge_commands.rs`
 - iOS UIKit 封装：
   - `src-tauri/src/infrastructure/ios_ui.rs`
-  - `src-tauri/src/infrastructure/ios_document_picker.rs`
-  - `src-tauri/src/infrastructure/ios_share_sheet.rs`
+- `src-tauri/src/infrastructure/ios_document_picker.rs`
+- `src-tauri/src/infrastructure/ios_share_sheet.rs`
 
 ### 2.5 macOS 元数据导致的“布局歧义”问题
 
@@ -104,3 +104,47 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 
 - `src-tauri/src/infrastructure/persistence/data_archive/import/layout.rs`
 - `src-tauri/src/infrastructure/persistence/data_archive/import/extract.rs`
+
+## 3. 通用 iOS 导出桥（聊天 / WorldInfo / 角色卡等）
+
+### 3.1 现象
+
+- 聊天导出、WorldInfo 导出、角色卡导出等“浏览器式下载”在 iOS 上可能无响应，或只写进沙盒内不可达路径。
+- 同源导出端点即使返回了正确的二进制，WKWebView 的默认下载语义也不能保证用户真正拿到文件。
+
+### 3.2 根因（第一性原理）
+
+- iOS 上真正可交付给用户的文件出口是系统 Share Sheet，而不是 WebView 默认下载目录。
+- 上游 SillyTavern 的导出语义是“下载一个文件”，不是“调用某个 iOS 业务 API”；因此平台差异必须集中在导出基础设施层吸收。
+- 用全局 monkey-patch `HTMLAnchorElement.prototype.click()` 虽然能扩大覆盖面，但会把浏览器基本语义变成宿主隐式契约，长期不利于维护、调试与兼容升级。
+
+### 3.3 当前契约（已落地）
+
+1. 前端统一导出主链仍是 `download()` / `downloadBlobWithRuntime()`。
+2. iOS 分支会把 `Blob` staging 到临时目录后调用 `ios_share_file`，再弹出 Share Sheet。
+3. `download-bridge.js` 只负责同源窗口中的浏览器式下载桥接：
+   - 支持 `blob:` / `data:` / 同源 `http(s)` 或相对 URL；
+   - 仅接管带 `download` 属性的 anchor；
+   - 只保留 document capture 监听，不再 monkey-patch `HTMLAnchorElement.prototype.click()`。
+4. Rust 命令 `ios_share_file` 只接受 app `tempDir` / `appCacheDir` 下专用 staging root `tauritavern-export-staging` 内的绝对路径，避免前端获得“任意本地文件分享”能力。
+
+### 3.4 失败与清理语义
+
+- 分享弹窗展示失败、文件不存在、路径越界等错误必须直接失败并向用户可见。
+- 用户主动取消 Share Sheet 不算错误，返回 `completed: false`，不显示成功 toast。
+- staging 清理属于 best-effort：
+  - 如果分享阶段已经结束，cleanup 失败只记录告警，不反向污染分享结果；
+  - 如果 staging 尚未完成就失败，前端会立即尝试回收临时目录，避免残留堆积。
+
+### 3.5 维护约束
+
+- 业务代码如果需要程序化导出，优先走共享 `download()` / `downloadBlobWithRuntime()`，不要重新发明 iOS 特判。
+- 如果未来需要扩大 `ios_share_file` 能力边界，应先重新设计 staging contract，而不是放宽到任意沙盒路径。
+- 如果未来出现大文件同源下载需求，应优先考虑 stream-to-file，而不是继续 `fetch -> blob -> share` 扩容。
+
+实现位置：
+
+- 前端导出基础设施：`src/scripts/file-export.js`
+- 下载桥：`src/tauri/main/download-bridge.js`
+- 导出反馈：`src/scripts/download-feedback.js`
+- iOS share 命令：`src-tauri/src/presentation/commands/ios_file_bridge_commands.rs`

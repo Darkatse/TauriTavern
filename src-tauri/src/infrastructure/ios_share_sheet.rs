@@ -29,7 +29,7 @@ pub async fn share_file(
 ) -> Result<ShareResult, DomainError> {
     if !file_path.is_file() {
         return Err(DomainError::NotFound(format!(
-            "Export archive file not found: {}",
+            "Shared file not found: {}",
             file_path.display()
         )));
     }

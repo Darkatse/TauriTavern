@@ -17,7 +17,7 @@ import { groups, selected_group } from './group-chats.js';
 import { getCurrentLocale, t } from './i18n.js';
 import { importWorldInfo } from './world-info.js';
 import { downloadBlobWithRuntime } from './file-export.js';
-import { showExportSuccessToast } from './download-feedback.js';
+import { showExportFailureToast, showExportSuccessToast } from './download-feedback.js';
 
 export const shiftUpByOne = (e, i, a) => a[i] = e + 1;
 export const shiftDownByOne = (e, i, a) => a[i] = e - 1;
@@ -411,6 +411,8 @@ export async function download(content, fileName, contentType, options = {}) {
         if (options.throwOnFailure) {
             throw error;
         }
+
+        showExportFailureToast(error);
 
         return {
             mode: 'failed',

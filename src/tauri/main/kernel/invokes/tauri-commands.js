@@ -82,6 +82,7 @@ export {};
  *   | 'import_world_info'
  *   | 'install_extension'
  *   | 'ios_import_data_archive_from_picker'
+ *   | 'ios_share_file'
  *   | 'ios_share_export_data_archive'
  *   | 'list_character_chat_store_keys'
  *   | 'list_group_chat_store_keys'

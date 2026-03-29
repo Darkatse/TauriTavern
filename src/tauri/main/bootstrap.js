@@ -6,7 +6,7 @@ import { createRouteRegistry } from './router.js';
 import { installBackNavigationBridge } from './back-navigation.js';
 import { installNativeShareBridge } from './share-target-bridge.js';
 import { downloadBlobWithRuntime, isNativeMobileDownloadRuntime } from '../../scripts/file-export.js';
-import { showExportSuccessToast } from '../../scripts/download-feedback.js';
+import { showExportFailureToast, showExportSuccessToast } from '../../scripts/download-feedback.js';
 import { installAndroidImeLayoutHost } from './compat/mobile/android-ime-layout-host.js';
 import { installMobileOverlayCompatController } from './compat/mobile/mobile-overlay-compat-controller.js';
 import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compat.js';
@@ -342,6 +342,7 @@ export function bootstrapTauriMain() {
         isNativeMobileDownloadRuntime,
         downloadBlobWithRuntime,
         notifyDownloadResult: showExportSuccessToast,
+        notifyDownloadError: showExportFailureToast,
     });
 
     interceptors.patchFetch();

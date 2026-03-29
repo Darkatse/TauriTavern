@@ -2,6 +2,8 @@ const INVALID_FILENAME_CHARS = /[\\/:*?"<>|]+/g;
 const TRAILING_DOTS_OR_SPACES = /[. ]+$/g;
 const DEFAULT_FALLBACK_FILE_NAME = 'download.bin';
 const FS_WRITE_CHUNK_BYTES = 4 * 1024 * 1024;
+const IOS_EXPORT_STAGING_ROOT_NAME = 'tauritavern-export-staging';
+const IOS_EXPORT_STAGING_PREFIX = 'tauritavern-export-';
 const BASE_DIRECTORY_IDS = Object.freeze({
     Document: 6,
     Download: 7,
@@ -18,7 +20,7 @@ function getTauriObject() {
 
 function getPathApi() {
     const pathApi = getTauriObject()?.path;
-    if (!pathApi || typeof pathApi.downloadDir !== 'function' || typeof pathApi.join !== 'function') {
+    if (!pathApi || typeof pathApi.join !== 'function') {
         throw new Error('Tauri path API is unavailable');
     }
 
@@ -147,6 +149,25 @@ function isAndroidRuntime() {
     return /android/i.test(navigator.userAgent);
 }
 
+function isIosRuntime() {
+    if (typeof navigator === 'undefined') {
+        return false;
+    }
+
+    const userAgent = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
+    if (/iphone|ipad|ipod/i.test(userAgent)) {
+        return true;
+    }
+
+    const touchPoints = Number(navigator.maxTouchPoints || 0);
+    if (touchPoints <= 1) {
+        return false;
+    }
+
+    const platform = typeof navigator.platform === 'string' ? navigator.platform : '';
+    return platform === 'MacIntel' || /macintosh/i.test(userAgent);
+}
+
 async function resolveAndroidPublicDownloadDirectory(pathApi) {
     if (!isAndroidRuntime() || typeof pathApi.homeDir !== 'function' || typeof pathApi.join !== 'function') {
         return null;
@@ -252,11 +273,7 @@ function isMobileRuntime() {
     // NOTE: Intentionally self-contained UA check.
     // `file-export` is used from multiple entry points (web + Tauri). Keeping this local avoids
     // cross-module dependencies/cycles for a small, runtime-only decision.
-    if (typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') {
-        return false;
-    }
-
-    return /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+    return isAndroidRuntime() || isIosRuntime();
 }
 
 export function isNativeMobileDownloadRuntime() {
@@ -315,6 +332,119 @@ async function writeBlobToMobileDownloadFolder(blob, fileName, options = {}) {
     throw new Error('Unable to write blob to mobile download directory');
 }
 
+function createIosExportStagingDirectoryName() {
+    return `${IOS_EXPORT_STAGING_PREFIX}${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function resolveIosExportStagingDirectory(pathApi) {
+    const candidates = [
+        typeof pathApi.appCacheDir === 'function' ? () => pathApi.appCacheDir() : null,
+        typeof pathApi.tempDir === 'function' ? () => pathApi.tempDir() : null,
+    ].filter(Boolean);
+
+    let lastError = null;
+    for (const candidate of candidates) {
+        try {
+            const directory = await candidate();
+            if (typeof directory === 'string' && directory.trim()) {
+                return directory;
+            }
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    if (lastError) {
+        throw lastError;
+    }
+
+    throw new Error('No writable iOS export staging directory is available');
+}
+
+async function stageBlobForIosShare(blob, fileName, { fallbackName } = {}) {
+    const pathApi = getPathApi();
+    const invokeApi = getInvokeApi();
+    const stagingBaseRoot = await resolveIosExportStagingDirectory(pathApi);
+    const stagingRoot = await pathApi.join(stagingBaseRoot, IOS_EXPORT_STAGING_ROOT_NAME);
+    const stagingDirectory = await pathApi.join(stagingRoot, createIosExportStagingDirectoryName());
+
+    await invokeApi('plugin:fs|mkdir', {
+        path: stagingDirectory,
+        options: {
+            recursive: true,
+        },
+    });
+
+    const cleanup = async () => {
+        await invokeApi('plugin:fs|remove', {
+            path: stagingDirectory,
+            options: {
+                recursive: true,
+            },
+        });
+    };
+
+    try {
+        const stagedFilePath = await pathApi.join(
+            stagingDirectory,
+            sanitizeDownloadFileName(fileName, fallbackName),
+        );
+
+        await writeBlobToPath(invokeApi, stagedFilePath, blob);
+
+        return {
+            filePath: stagedFilePath,
+            cleanup,
+        };
+    } catch (error) {
+        try {
+            await cleanup();
+        } catch (cleanupError) {
+            console.warn('Failed to cleanup iOS export staging directory after staging error:', cleanupError);
+        }
+
+        throw error;
+    }
+}
+
+async function shareBlobWithIosRuntime(blob, fileName, { fallbackName } = {}) {
+    const invokeApi = getInvokeApi();
+    const staged = await stageBlobForIosShare(blob, fileName, { fallbackName });
+
+    let shareResult;
+    let shareError = null;
+    let cleanupError = null;
+
+    try {
+        shareResult = await invokeApi('ios_share_file', {
+            filePath: staged.filePath,
+        });
+    } catch (error) {
+        shareError = error;
+    }
+
+    try {
+        await staged.cleanup();
+    } catch (error) {
+        cleanupError = error;
+        console.warn('Failed to cleanup iOS export staging directory:', error);
+    }
+
+    if (shareError) {
+        throw shareError;
+    }
+
+    return {
+        mode: 'ios-native-share',
+        savedPath: '',
+        completed: Boolean(shareResult?.completed),
+        activity: typeof shareResult?.activity === 'string' && shareResult.activity.trim()
+            ? shareResult.activity
+            : null,
+        cleanupError: cleanupError ? String(cleanupError?.message || cleanupError) : null,
+    };
+}
+
 function triggerBrowserDownload(blob, fileName, { fallbackName = DEFAULT_FALLBACK_FILE_NAME } = {}) {
     const payload = blob instanceof Blob ? blob : new Blob([blob ?? '']);
     const normalizedName = sanitizeDownloadFileName(fileName, fallbackName);
@@ -339,6 +469,10 @@ export async function downloadBlobWithRuntime(
     } = {},
 ) {
     const payload = blob instanceof Blob ? blob : new Blob([blob ?? '']);
+
+    if (isTauriRuntime() && isIosRuntime()) {
+        return shareBlobWithIosRuntime(payload, fileName, { fallbackName });
+    }
 
     if (isNativeMobileDownloadRuntime()) {
         const savedPath = await writeBlobToMobileDownloadFolder(payload, fileName, { fallbackName });
