@@ -5262,7 +5262,7 @@ dependencies = [
 
 [[package]]
 name = "tauritavern"
-version = "1.5.3"
+version = "1.6.0"
 dependencies = [
  "async-trait",
  "axum",
