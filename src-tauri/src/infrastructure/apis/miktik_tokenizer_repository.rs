@@ -14,6 +14,7 @@ use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
 const CLAUDE_JSON_BYTES: &[u8] = include_bytes!("../../../resources/tokenizers/claude.json");
+const DEEPSEEK_JSON_BYTES: &[u8] = include_bytes!("../../../resources/tokenizers/deepseek.json");
 const GEMMA_MODEL_BYTES: &[u8] = include_bytes!("../../../resources/tokenizers/gemma.model");
 
 #[derive(Clone, Copy)]
@@ -58,6 +59,10 @@ impl MiktikTokenizerRepository {
             "claude" => Some(ModelResourceSpec {
                 file_name: "claude.json",
                 source: ModelSource::Bundled(CLAUDE_JSON_BYTES),
+            }),
+            "deepseek" => Some(ModelResourceSpec {
+                file_name: "deepseek.json",
+                source: ModelSource::Bundled(DEEPSEEK_JSON_BYTES),
             }),
             "gemma" => Some(ModelResourceSpec {
                 file_name: "gemma.model",
@@ -130,13 +135,6 @@ impl MiktikTokenizerRepository {
                 file_name: "nemo.json",
                 source: ModelSource::Remote {
                     url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/nemo.json.gz",
-                    gzip: true,
-                },
-            }),
-            "deepseek" => Some(ModelResourceSpec {
-                file_name: "deepseek.json",
-                source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/deepseek.json.gz",
                     gzip: true,
                 },
             }),
@@ -506,6 +504,10 @@ mod tests {
             MiktikTokenizerRepository::canonical_model("claude-3-7-sonnet"),
             "claude"
         );
+        assert_eq!(
+            MiktikTokenizerRepository::canonical_model("deepseek-chat"),
+            "deepseek"
+        );
     }
 
     #[test]
@@ -559,6 +561,9 @@ mod tests {
         TokenizerRepository::ensure_model_ready(&repository, "claude-3-7-sonnet")
             .await
             .expect("claude bundled tokenizer should prepare");
+        TokenizerRepository::ensure_model_ready(&repository, "deepseek-chat")
+            .await
+            .expect("deepseek bundled tokenizer should prepare");
         TokenizerRepository::ensure_model_ready(&repository, "gemini-2.0-flash")
             .await
             .expect("gemma bundled tokenizer should prepare");
@@ -566,12 +571,15 @@ mod tests {
         let claude =
             TokenizerRepository::count_messages(&repository, "claude-3-7-sonnet", &messages)
                 .expect("claude bundled tokenizer should count");
+        let deepseek = TokenizerRepository::count_messages(&repository, "deepseek-chat", &messages)
+            .expect("deepseek bundled tokenizer should count");
         let gemini =
             TokenizerRepository::count_messages(&repository, "gemini-2.0-flash", &messages)
                 .expect("gemma bundled tokenizer should count");
 
         let _ = std::fs::remove_dir_all(cache_dir);
         assert!(claude > 0);
+        assert!(deepseek > 0);
         assert!(gemini > 0);
     }
 
@@ -581,6 +589,7 @@ mod tests {
         let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
 
         assert!(!repository.is_model_ready("claude").await);
+        assert!(!repository.is_model_ready("deepseek").await);
         assert!(!repository.is_model_ready("gemma").await);
         let _ = std::fs::remove_dir_all(cache_dir);
     }
@@ -594,18 +603,27 @@ mod tests {
         TokenizerRepository::ensure_model_ready(&repository, "claude")
             .await
             .expect("claude bundled tokenizer should prepare");
+        TokenizerRepository::ensure_model_ready(&repository, "deepseek")
+            .await
+            .expect("deepseek bundled tokenizer should prepare");
         TokenizerRepository::ensure_model_ready(&repository, "gemma")
             .await
             .expect("gemma bundled tokenizer should prepare");
 
         TokenizerRepository::count_messages(&repository, "claude", &messages)
             .expect("claude bundled tokenizer should count");
+        TokenizerRepository::count_messages(&repository, "deepseek", &messages)
+            .expect("deepseek bundled tokenizer should count");
         TokenizerRepository::count_messages(&repository, "gemma", &messages)
             .expect("gemma bundled tokenizer should count");
 
         assert!(
             !cache_dir.join("claude.json").exists(),
             "claude bundled tokenizer should not be materialized to cache"
+        );
+        assert!(
+            !cache_dir.join("deepseek.json").exists(),
+            "deepseek bundled tokenizer should not be materialized to cache"
         );
         assert!(
             !cache_dir.join("gemma.model").exists(),
