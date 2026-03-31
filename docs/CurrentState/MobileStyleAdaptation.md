@@ -14,7 +14,7 @@
 1. **Insets 是“宿主提供的布局契约”**：前端布局只消费 `--tt-inset-*`；Android 由 native 监听 `WindowInsets` 并直接注入当前布局应避开的 inset（`--tt-inset-*`），iOS 以 CSS `env(safe-area-inset-*)` 提供 `--tt-inset-*`。
 2. **Android 的 IME 是宿主语义，不再透传为 WebView viewport resize**：native 读取 IME inset 后只以 `--tt-ime-bottom` / `--tt-base-viewport-height` 提供给前端，避免一份键盘语义在 WebView 内再被解释一次。
 3. **沉浸模式是 full-bleed 策略开关**：Android 沉浸（system bars 隐藏）时，`--tt-inset-*` 回落为 `0`，因此第一方顶部 UI 与第三方 fixed 浮层都允许沉入状态栏/刘海区域。
-4. **第三方浮层只做元素级最小修正**：不重写 `<style>` 文本，不做全局 subtree observer；仅在出现“顶边贴近 0 的 fixed 浮层”时 patch `top`。
+4. **第三方浮层通过 surface classifier 进入 CSS contract**：不重写 `<style>` 文本，不做全局 subtree observer；仅对“可能是顶层 fixed surface”的节点打上 `data-tt-mobile-surface`（并在 edge-window 场景写入 `--tt-original-top`），几何修正由 geometry firewall 的 CSS 规则完成。
 5. **iOS 禁用 WKWebView 的自动 content inset 调整**：将 `scrollView.contentInsetAdjustmentBehavior = .never` 并清空 `contentInset/scrollIndicatorInsets`，确保 `window.innerHeight` 真正覆盖到全屏；safe-area 只通过 `env(safe-area-inset-*)` 交给前端消费。
 
 本目录记录“现状快照”，更完整的问题推导与历史路径见：
@@ -82,29 +82,39 @@ Android 说明：
 `src/css/mobile-styles.css` 消费上述变量，主要约束点：
 
 - 顶部容器（如 `#top-settings-holder/#top-bar`）使用 `top: max(var(--tt-inset-top), 0px)` 并加入左右 padding。
-- 第一方顶部设置面板（`#top-settings-holder` 下的非侧栏 drawer）由宿主 controller 统一消费同一套 contract：
-  - 实现：`src/tauri/main/compat/mobile/mobile-top-settings-layout-controller.js`
-  - 行为：宿主只写入 `--tt-top-settings-holder-safe-offset` 这类 host-private 变量，不再接管主题的 `--top-distance`；顶部设置容器通过独立的 `margin-top` 消费 safe-area，第一方顶部 drawer 则以 `#top-settings-holder` 的实际 bottom 推导 panel top/max-height
-  - 目的：让主题继续控制皮肤变量与视觉样式，但不再主导移动端 safe-area 几何
+- 为避免主题 `custom_css` 直接覆盖移动端核心几何，宿主会注入一个 **host-last geometry firewall**（永远位于 `#custom-style` 之后）：
+  - 实现：`src/tauri/main/compat/mobile/mobile-geometry-firewall.js`
+  - 产物：`<style id="tt-mobile-geometry-firewall">`（keep-last，确保始终为 `<head>` 最后一个 element）
+  - 覆盖范围：只收回核心几何属性（`#top-settings-holder/#top-bar/#top-settings-holder > .drawer > .drawer-content:not(.fillLeft):not(.fillRight)/#sheld/#form_sheld`），不干预主题 skin
+- 第一方顶部设置面板（`#top-settings-holder` 下的非侧栏 drawer）不再依赖运行时测量与 inline 回写：
+  - 由 geometry firewall 以 CSS contract 直接约束几何（holder-anchored），避免出现第二/第三套几何系统
 - 主容器 `#sheld` 以 `inset-top + topBarBlockSize` 定位，并用 `--tt-base-viewport-height`/`--doc-height` 计算高度。
 - Android 的键盘抬升不再直接绑定在主题可覆写的 `#form_sheld` 上；宿主层会在 `#form_sheld` 内安装私有 IME lift/spacer 节点，由它们消费 `--tt-ime-bottom` 推导出的偏移并保留底部占位。
 
 这些规则的目标是：在非沉浸模式下避开顶部/底部安全区与键盘，在沉浸模式下保持 full-bleed。
 
-### 3.3 第三方脚本浮层：overlay safe‑area top 兜底（移动端）
+### 3.3 第三方脚本浮层：surface classifier + safe‑area contract（移动端）
 
 实现：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`  
 安装入口：`src/tauri/main/bootstrap.js`（仅 Tauri mobile UA）
 
 当前策略：
 
-- **Admission**：仅观察 `document.body` 的直系子节点新增/移除（`subtree: false`）。
-- **判定**：对 `position: fixed` 且计算后的 `top` 贴近 0（阈值范围内）的元素进行处理。
-- **补丁**：对命中元素设置 `top: max(var(--tt-inset-top), <原top>) !important`。
+- **Admission**：仅观察 `document.body` 的直系子节点新增/移除（`subtree: false`），并对带 `script_id` 的 portal root 进一步扫描其子树（JS-Slash-Runner 常见挂载形态）。
+- **判定**：对符合条件的 `position: fixed` 节点进行 surface 分类（backdrop / fullscreen-window / edge-window）。
+- **输出**：不再直接写入 `top`；改为输出契约属性：
+  - `data-tt-mobile-surface="backdrop|fullscreen-window|edge-window"`
+  - `--tt-original-top=<px>`（仅 edge-window，用于在 safe-area top 之上保持原始 top 偏移）
+- **落地**：几何修正完全由 geometry firewall 的 CSS contract 执行：
+  - `[data-tt-mobile-surface="edge-window"]`：只修正 top
+  - `[data-tt-mobile-surface="fullscreen-window"]`：修正四边并把 width/height 改成 auto（避免 `100vh` 把底部顶出屏幕）
+  - `[data-tt-mobile-surface="backdrop"]`：保持 full-bleed（不做 inset）
+  - 备注：firewall 的 surface selector 会刻意重复 attribute 以获得足够 specificity（覆盖常见框架 scoped CSS + `!important`）
 - **排除**：明确跳过 `body/#sheld/#chat` 等核心容器（避免影响主界面）。
-- **Revalidate**：监听 `html.style` 变化（native 注入会触发）+ `visualViewport`/`resize`/`orientationchange` 以重新校验 active set。
+- **显式 opt-in**：若节点已带 `data-tt-mobile-surface`，该控制器将尊重并不再改写（便于第三方脚本作者自我修复）。
+- **Revalidate**：监听被跟踪 surface 的 `style/class` 变化 + `visualViewport`/`resize`/`orientationchange`，并在 portal 子树新增节点时重新扫描。
 
-该控制器的边界是：只对“第三方顶层浮层贴顶”做最小修正，不承担全局样式重写职责；在沉浸模式下由于 `--tt-inset-top = 0`，该补丁会自然退化为不额外避让顶部安全区。
+该控制器的边界是：只负责发现与分类“可能需要 safe-area 约束的第三方顶层 surface”，并输出最小属性契约，不承担全局样式重写职责；在沉浸模式下由于 `--tt-inset-top = 0`，对应的 geometry contract 会自然退化为 full-bleed。
 
 ### 3.4 旧 WebView JS 能力补齐（移动端）
 

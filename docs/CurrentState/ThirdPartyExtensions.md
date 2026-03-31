@@ -63,7 +63,7 @@
 
 - `src/lib.js` 会把部分上游常用库挂到 `window`
 - `src/tauri/main/compat/mobile/mobile-runtime-compat.js` 负责旧 WebView 缺失 JS API 的 polyfills（仅 Tauri mobile）
-- `src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js` 负责第三方浮层 safe-area top 兜底（仅 Tauri mobile）
+- `src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js` 负责第三方浮层/窗口 surface classifier（输出 `data-tt-mobile-surface` + 可选 `--tt-original-top`，几何由 geometry firewall 的 CSS contract 统一执行；仅 Tauri mobile）
 - `src/scripts/browser-fixes.js` 保持与上游同步（不再承载 Tauri mobile compat）
 
 ### 2.3 后端资源提供

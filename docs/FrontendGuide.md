@@ -24,7 +24,7 @@
    - 安装请求拦截器（`fetch` 与 `jQuery.ajax`）
    - 安装平台 ABI：`window.__TAURITAVERN__`（小而稳定的宿主对外接口）
    - 安装同源窗口下载桥（移动端浏览器式导出 -> 原生落盘）
-   - 安装 Tauri mobile 兼容层（runtime polyfills + overlay safe-area，仅移动端）
+   - 安装 Tauri mobile 兼容层（runtime polyfills + geometry firewall + surface classifier，仅移动端）
    - 为宿主接管的路由响应注入追踪 header：`x-tauritavern-trace-id`
    - 初始化 bridge 与目录信息
 
@@ -152,7 +152,7 @@ src/
 - `src/scripts/extensions.js`：插件激活编排层（发现、排序、依赖/版本检查、触发加载）。
 - `src/scripts/browser-fixes.js`：上游浏览器补丁（保持与 SillyTavern 同步）。
 - `src/tauri/main/compat/mobile/mobile-runtime-compat.js`：Tauri mobile 运行时 polyfills（补齐旧 WebView 缺失 JS API）。
-- `src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`：Tauri mobile overlay safe-area top 兜底（遵循当前顶部 safe-area 布局策略）。
+- `src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`：Tauri mobile 第三方浮层/窗口 surface classifier（输出 `data-tt-mobile-surface` + 可选 `--tt-original-top`，几何由 geometry firewall 的 CSS contract 落地）。
 - `src/scripts/extensions/runtime/resource-paths.js`：扩展资源路径规范化与 third-party 判定。
 - `src/scripts/extensions/runtime/tauri-ready.js`：等待 `__TAURITAVERN_MAIN_READY__`，避免 bridge 未就绪时提前加载。
 - `src/scripts/extensions/runtime/third-party-runtime.js`：第三方扩展样式兼容层（legacy WebView 下为样式 URL 附加 `ttCompat=layer`，触发 Rust 端点做 `@layer` 展平；不再走前端预取/Blob 注入）。
@@ -232,12 +232,12 @@ src/
 
 - 实现位置：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`。
 - 入口：`src/tauri/main/bootstrap.js` 中安装（仅 Tauri mobile）。
-- 触发条件：仅处理第三方浮层节点（`position: fixed` 且顶边贴近 0）。
-- 处理策略：
-  - 观察 `document.body` 直接子节点新增/移除；
-  - 对命中元素设置 `top: max(var(--tt-inset-top), <原top>) !important`；
-  - 明确排除 `body/#sheld/#chat` 等应用核心容器，避免影响主界面布局。
-- Android 变量语义：`--tt-inset-top` 表示当前布局应避开的有效 inset；非沉浸模式下反映顶部 safe area，沉浸模式下回落为 `0`，因此 overlay patch 不再额外避开顶部状态栏/刘海区域。
+- 触发条件：只处理“第三方顶层 surface”候选（通常为 `position: fixed` 且顶边贴近 0 的窗口/遮罩）。
+- 处理策略（两段式）：
+  - JS classifier：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对命中元素分类并输出 `data-tt-mobile-surface="backdrop|fullscreen-window|edge-window"`，edge-window 额外写入 `--tt-original-top`。
+  - CSS contract：由 `mobile-geometry-firewall.js` 提供 `[data-tt-mobile-surface="..."]` 的几何规则，统一执行 safe-area 约束（backdrop 保持 full-bleed）。
+- 显式 opt-in：若节点已带 `data-tt-mobile-surface`，classifier 将尊重并不再改写（便于第三方脚本作者自我修复）。
+- Android 变量语义：`--tt-inset-top` 表示当前布局应避开的有效 inset；非沉浸模式下反映顶部 safe area，沉浸模式下回落为 `0`，因此对应的 contract 会自然退化为 full-bleed。
 
 该策略用于修复 JS-Slash-Runner 等脚本在运行时注入固定定位弹窗样式时，关闭按钮落入状态栏导致不可点击的问题。
 

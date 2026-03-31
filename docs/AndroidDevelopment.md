@@ -245,17 +245,18 @@ https://v2.tauri.app/develop/resources/#android
 
 已落地方案：
 
-- 在 Tauri mobile 安装 overlay safe-area 兼容控制器：
-  - 实现：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
-  - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
-  - 策略：只观察 `document.body` 直接子节点新增/移除；对疑似第三方浮层（`position: fixed` 且顶边贴近 0）按元素级别设置 `top: max(var(--tt-inset-top), <原top>) !important`；并在 `html.style`/`visualViewport` 变化时重新校验。
-  - 依赖：`--tt-inset-top` 表示当前布局策略；因此非沉浸模式下会提供顶部避让，沉浸模式下会自然退化为 no-op。
+- 在 Tauri mobile 安装第三方 surface classifier + CSS contract：
+  - JS classifier：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
+    - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
+    - 策略：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对命中元素分类并输出 `data-tt-mobile-surface="backdrop|fullscreen-window|edge-window"`，edge-window 额外写入 `--tt-original-top`。
+    - 显式 opt-in：若节点已带 `data-tt-mobile-surface`，将尊重并不再改写。
+  - CSS contract：由 `src/tauri/main/compat/mobile/mobile-geometry-firewall.js` 提供 `[data-tt-mobile-surface="..."]` 的几何规则，统一执行 safe-area 约束（backdrop 保持 full-bleed）。
+  - 依赖：`--tt-inset-* / --tt-viewport-bottom-inset` 表示当前布局策略；非沉浸模式下会提供 safe-area 避让，沉浸模式下回落为 `0`，因此 contract 会自然退化为 full-bleed。
 
 设计约束：
 
 - 仅 Tauri mobile 生效；
-- 仅处理 top safe-area 策略，不处理其他边；沉浸模式下不会额外强制避开刘海/状态栏；
-- 仅作用于第三方浮层节点，不改写全局 `<style>` 文本与静态主样式文件；
+- 仅作用于第三方顶层浮层/窗口 surface，不改写全局 `<style>` 文本与静态主样式文件；
 - 明确排除 `body/#sheld/#chat` 等应用核心容器，避免牵连应用本体布局；
 - 不侵入第三方扩展资源加载链路（与 `third-party-runtime.js` 解耦）。
 

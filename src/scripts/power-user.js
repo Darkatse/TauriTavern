@@ -1180,7 +1180,6 @@ function applyCustomCSS() {
         document.head.appendChild(style);
     }
     style.innerHTML = power_user.custom_css;
-    window.__TAURITAVERN_MOBILE_TOP_SETTINGS_LAYOUT__?.revalidate?.();
 }
 
 function applyBlurStrength() {

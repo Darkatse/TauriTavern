@@ -8,8 +8,8 @@ import { installNativeShareBridge } from './share-target-bridge.js';
 import { downloadBlobWithRuntime, isNativeMobileDownloadRuntime } from '../../scripts/file-export.js';
 import { showExportFailureToast, showExportSuccessToast } from '../../scripts/download-feedback.js';
 import { installAndroidImeLayoutHost } from './compat/mobile/android-ime-layout-host.js';
+import { installMobileGeometryFirewall } from './compat/mobile/mobile-geometry-firewall.js';
 import { installMobileOverlayCompatController } from './compat/mobile/mobile-overlay-compat-controller.js';
-import { installMobileTopSettingsLayoutController } from './compat/mobile/mobile-top-settings-layout-controller.js';
 import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compat.js';
 import { installMobileWindowOpenCompat } from './compat/mobile/mobile-window-open-compat.js';
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
@@ -98,17 +98,13 @@ function isMobileUserAgent() {
 }
 
 function installTauriMobileCompat() {
-    for (const [install, label] of [
-        [installMobileRuntimeCompat, 'mobile runtime compat'],
-        [installAndroidImeLayoutHost, 'Android IME layout host'],
-        [installMobileTopSettingsLayoutController, 'mobile top settings layout controller'],
-        [installMobileOverlayCompatController, 'mobile overlay compat controller'],
+    for (const install of [
+        installMobileRuntimeCompat,
+        installMobileGeometryFirewall,
+        installAndroidImeLayoutHost,
+        installMobileOverlayCompatController,
     ]) {
-        try {
-            install();
-        } catch (error) {
-            console.error(`Failed to install ${label}:`, error);
-        }
+        install();
     }
 }
 
