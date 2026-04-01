@@ -11,6 +11,71 @@ const FLUSH_INTERVAL_MS = 250;
 /** @typedef {'debug' | 'info' | 'warn' | 'error'} FrontendLogLevel */
 /** @typedef {{ id: number, timestampMs: number, level: FrontendLogLevel, message: string, target?: string }} FrontendLogEntry */
 
+const DEFAULT_LOG_TARGET = 'main';
+
+/**
+ * @param {string | undefined} stack
+ */
+function stackToLines(stack) {
+    if (typeof stack !== 'string' || !stack) {
+        return [];
+    }
+    return stack.split('\n').map((line) => line.trim());
+}
+
+/**
+ * Best-effort semantic source detection aligned with SillyTavern extension conventions.
+ * @param {string[]} stackLines
+ */
+function detectLogTargetFromStack(stackLines) {
+    const thirdPartyLine = stackLines.find((line) => line.includes('/scripts/extensions/third-party/'));
+    if (thirdPartyLine) {
+        const match = thirdPartyLine.match(/\/scripts\/extensions\/third-party\/([^/]+)\//);
+        return match ? `3p:${match[1]}` : '3p';
+    }
+
+    const extensionLine = stackLines.find((line) => line.includes('/scripts/extensions/'));
+    if (extensionLine) {
+        const match = extensionLine.match(/\/scripts\/extensions\/([^/]+)\//);
+        return match ? `ext:${match[1]}` : 'ext';
+    }
+
+    const scriptsLine = stackLines.find((line) => line.includes('/scripts/'));
+    if (scriptsLine) {
+        const match = scriptsLine.match(/\/(scripts\/[^?#):]+?\.(?:js|mjs|cjs))/);
+        if (match) {
+            return match[1];
+        }
+    }
+
+    const tauriLine = stackLines.find((line) =>
+        line.includes('/tauri/') && !line.includes('/services/dev-logging/'),
+    );
+    if (tauriLine) {
+        const match = tauriLine.match(/\/(tauri\/[^?#):]+?\.(?:js|mjs|cjs))/);
+        if (match) {
+            return match[1];
+        }
+    }
+
+    return DEFAULT_LOG_TARGET;
+}
+
+function detectCurrentLogTarget() {
+    return detectLogTargetFromStack(stackToLines(new Error().stack));
+}
+
+/**
+ * @param {unknown} error
+ */
+function detectLogTargetFromError(error) {
+    const stack = error && typeof error === 'object' ? /** @type {any} */ (error).stack : null;
+    if (typeof stack === 'string' && stack) {
+        return detectLogTargetFromStack(stackToLines(stack));
+    }
+    return DEFAULT_LOG_TARGET;
+}
+
 /** @type {FrontendLogEntry[]} */
 const entries = [];
 /** @type {Set<(entry: FrontendLogEntry) => void>} */
@@ -171,7 +236,7 @@ function captureWindowErrors() {
             : typeof errorMessage === 'string'
                 ? `\n${errorMessage}`
                 : '';
-        push('error', `${message}${details}`);
+        push('error', `${message}${details}`, detectLogTargetFromError(event?.error));
     });
 
     globalThis.addEventListener('unhandledrejection', (event) => {
@@ -179,14 +244,14 @@ function captureWindowErrors() {
         const stack = reason && typeof reason === 'object' ? reason.stack : null;
         const message = reason && typeof reason === 'object' ? reason.message : null;
         if (typeof stack === 'string' && stack) {
-            push('error', `Unhandled rejection: ${stack}`);
+            push('error', `Unhandled rejection: ${stack}`, detectLogTargetFromError(reason));
             return;
         }
         if (typeof message === 'string' && message) {
-            push('error', `Unhandled rejection: ${message}`);
+            push('error', `Unhandled rejection: ${message}`, detectLogTargetFromError(reason));
             return;
         }
-        push('error', `Unhandled rejection: ${String(reason)}`);
+        push('error', `Unhandled rejection: ${String(reason)}`, detectLogTargetFromError(reason));
     });
 }
 
@@ -206,35 +271,35 @@ function patchConsole() {
     if (originalConsole.debug) {
         console.debug = (...args) => {
             originalConsole?.debug?.(...args);
-            push('debug', formatConsoleArgs(args));
+            push('debug', formatConsoleArgs(args), detectCurrentLogTarget());
         };
     }
 
     if (originalConsole.log) {
         console.log = (...args) => {
             originalConsole?.log?.(...args);
-            push('info', formatConsoleArgs(args));
+            push('info', formatConsoleArgs(args), detectCurrentLogTarget());
         };
     }
 
     if (originalConsole.info) {
         console.info = (...args) => {
             originalConsole?.info?.(...args);
-            push('info', formatConsoleArgs(args));
+            push('info', formatConsoleArgs(args), detectCurrentLogTarget());
         };
     }
 
     if (originalConsole.warn) {
         console.warn = (...args) => {
             originalConsole?.warn?.(...args);
-            push('warn', formatConsoleArgs(args));
+            push('warn', formatConsoleArgs(args), detectCurrentLogTarget());
         };
     }
 
     if (originalConsole.error) {
         console.error = (...args) => {
             originalConsole?.error?.(...args);
-            push('error', formatConsoleArgs(args));
+            push('error', formatConsoleArgs(args), detectCurrentLogTarget());
         };
     }
 }

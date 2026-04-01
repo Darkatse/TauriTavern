@@ -90,6 +90,9 @@ where
 {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
         let metadata = event.metadata();
+        if metadata.target() == "frontend" {
+            return;
+        }
 
         let mut visitor = EventFieldVisitor::default();
         event.record(&mut visitor);
