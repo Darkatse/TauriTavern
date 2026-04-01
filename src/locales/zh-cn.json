@@ -3816,6 +3816,8 @@
     "No entries": "暂无记录",
     "Invalid time": "无效时间",
     "Misc": "杂项",
+    "Allow Keys Exposure": "允许显示密钥",
+    "When enabled, API keys can be viewed/copied inside the app. Takes effect after restart.": "启用后，可在应用内查看/复制 API 密钥。重启应用后生效。",
     "Dynamic Theme": "动态主题",
     "Enable Dynamic Theme": "启用动态主题",
     "Day Theme": "日间主题",

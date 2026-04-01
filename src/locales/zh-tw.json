@@ -4331,6 +4331,8 @@
     "No entries": "暫無記錄",
     "Invalid time": "無效時間",
     "Misc": "雜項",
+    "Allow Keys Exposure": "允許顯示金鑰",
+    "When enabled, API keys can be viewed/copied inside the app. Takes effect after restart.": "啟用後，可在應用程式內檢視/複製 API 金鑰。重新啟動後生效。",
     "Dynamic Theme": "動態主題",
     "Enable Dynamic Theme": "啟用動態主題",
     "Day Theme": "日間主題",

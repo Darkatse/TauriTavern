@@ -138,6 +138,8 @@ pub struct TauriTavernSettings {
     #[serde(default)]
     pub request_proxy: RequestProxySettings,
     #[serde(default)]
+    pub allow_keys_exposure: bool,
+    #[serde(default)]
     pub migrations: TauriTavernMigrationState,
     #[serde(default)]
     pub dev: DevLoggingSettings,
@@ -155,6 +157,7 @@ impl Default for TauriTavernSettings {
             chat_history_mode: default_chat_history_mode(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
             request_proxy: RequestProxySettings::default(),
+            allow_keys_exposure: false,
             migrations: TauriTavernMigrationState::default(),
             dev: DevLoggingSettings::default(),
             dynamic_theme: DynamicThemeSettings::default(),

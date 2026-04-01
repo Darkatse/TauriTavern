@@ -284,7 +284,10 @@ async function viewSecrets() {
     });
 
     if (response.status == 403) {
-        await Popup.show.text(t`Forbidden`, t`To view your API keys here, set the value of allowKeysExposure to true in config.yaml file and restart the SillyTavern server.`);
+        const hint = globalThis.__TAURI_RUNNING__ === true
+            ? t`To view your API keys here, enable Allow Keys Exposure in TauriTavern Settings and restart the app.`
+            : t`To view your API keys here, set the value of allowKeysExposure to true in config.yaml file and restart the SillyTavern server.`;
+        await Popup.show.text(t`Forbidden`, hint);
         return;
     }
 
@@ -647,7 +650,10 @@ async function openKeyManagerDialog(key) {
             itemTemplate.find('button[data-action="copy-secret"]').on('click', async function () {
                 const secretValue = await findSecret(key, secret.id);
                 if (secretValue === null) {
-                    toastr.error(t`The key exposure might be disabled by the server config.`, t`Failed to copy secret value`);
+                    const hint = globalThis.__TAURI_RUNNING__ === true
+                        ? t`The key exposure is disabled. Enable Allow Keys Exposure in TauriTavern Settings and restart the app.`
+                        : t`The key exposure might be disabled by the server config.`;
+                    toastr.error(hint, t`Failed to copy secret value`);
                     return;
                 }
                 await copyText(secretValue);

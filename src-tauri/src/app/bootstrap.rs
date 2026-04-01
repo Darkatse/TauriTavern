@@ -128,11 +128,15 @@ pub(super) async fn initialize_data_directory(
     Ok(data_directory)
 }
 
-pub(super) fn build_services(
+pub(super) async fn build_services(
     app_handle: &AppHandle,
     data_directory: &DataDirectory,
 ) -> Result<AppServices, DomainError> {
     let repositories = build_repositories(app_handle, data_directory)?;
+    let tauritavern_settings = repositories
+        .settings_repository
+        .load_tauritavern_settings()
+        .await?;
 
     let content_service = Arc::new(ContentService::new(repositories.content_repository.clone()));
     let extension_service = Arc::new(ExtensionService::new(
@@ -193,8 +197,10 @@ pub(super) fn build_services(
         sync_permit,
     ));
 
-    // Do not expose secrets by default; this can be enabled by configuration later.
-    let secret_service = Arc::new(SecretService::new(repositories.secret_repository, false));
+    let secret_service = Arc::new(SecretService::new(
+        repositories.secret_repository,
+        tauritavern_settings.allow_keys_exposure,
+    ));
 
     Ok(AppServices {
         character_service,

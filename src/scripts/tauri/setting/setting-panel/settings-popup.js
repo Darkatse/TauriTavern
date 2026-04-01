@@ -121,6 +121,11 @@ export async function openTauriTavernSettingsPopup() {
                     #tt-request-proxy-summary-chevron { transition: transform 140ms ease; }
                     #tt-request-proxy-details[open] #tt-request-proxy-summary-chevron { transform: rotate(180deg); }
                     #tt-request-proxy-details > summary:hover { background: rgba(0,0,0,0.18); }
+                    #tt-dynamic-theme-details > summary::-webkit-details-marker { display: none; }
+                    #tt-dynamic-theme-details > summary::marker { content: ""; }
+                    #tt-dynamic-theme-summary-chevron { transition: transform 140ms ease; }
+                    #tt-dynamic-theme-details[open] #tt-dynamic-theme-summary-chevron { transform: rotate(180deg); }
+                    #tt-dynamic-theme-details > summary:hover { background: rgba(0,0,0,0.18); }
                 </style>
 
                 <details id="tt-request-proxy-details">
@@ -161,9 +166,25 @@ export async function openTauriTavernSettingsPopup() {
                     <b data-i18n="Misc">Misc</b>
                 </div>
 
+	                <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+	                    <div class="flex-container alignItemsBaseline" style="gap: 8px; min-width: 220px; flex: 1;">
+	                        <span data-i18n="Allow Keys Exposure">Allow Keys Exposure</span>
+	                        <a id="tt-help-allow-keys-exposure" class="notes-link" href="javascript:void(0);">
+	                            <span
+	                                class="fa-solid fa-circle-question note-link-span"
+	                                title="When enabled, API keys can be viewed/copied inside the app. Takes effect after restart."
+	                                data-i18n="[title]When enabled, API keys can be viewed/copied inside the app. Takes effect after restart."
+                            ></span>
+                        </a>
+                    </div>
+                    <input id="tt-allow-keys-exposure" type="checkbox" style="margin: 0;" />
+                </div>
+
                 <details id="tt-dynamic-theme-details">
-                    <summary class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; cursor: pointer; list-style: none;">
-                        <span data-i18n="Dynamic Theme">Dynamic Theme</span>
+                    <summary class="flex-container alignItemsCenter" style="cursor: pointer; gap: 12px; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; background: rgba(0,0,0,0.10); user-select: none;">
+                        <div class="flex-container alignItemsCenter" style="gap: 8px; flex: 1; min-width: 220px;">
+                            <span data-i18n="Dynamic Theme">Dynamic Theme</span>
+                        </div>
                         <div class="flex-container alignItemsCenter" style="gap: 8px;">
                             <small id="tt-dynamic-theme-summary-hint" style="opacity: 0.75;"></small>
                             <i id="tt-dynamic-theme-summary-chevron" class="fa-solid fa-chevron-down" style="opacity: 0.8;"></i>
@@ -257,6 +278,11 @@ export async function openTauriTavernSettingsPopup() {
     const requestProxyBypassInput = root.querySelector('#tt-request-proxy-bypass');
     if (!(requestProxyBypassInput instanceof HTMLTextAreaElement)) {
         throw new Error('TauriTavern settings: request proxy bypass input not found');
+    }
+
+    const allowKeysExposureToggle = root.querySelector('#tt-allow-keys-exposure');
+    if (!(allowKeysExposureToggle instanceof HTMLInputElement)) {
+        throw new Error('TauriTavern settings: allow keys exposure toggle not found');
     }
 
     const dynamicThemeDetails = root.querySelector('#tt-dynamic-theme-details');
@@ -357,6 +383,9 @@ export async function openTauriTavernSettingsPopup() {
     requestProxyUrlInput.value = currentRequestProxyUrl;
     requestProxyBypassInput.value = currentRequestProxyBypass.join('\n');
 
+    const currentAllowKeysExposure = Boolean(settings.allow_keys_exposure);
+    allowKeysExposureToggle.checked = currentAllowKeysExposure;
+
     const upstreamThemeSelect = document.getElementById('themes');
     if (!(upstreamThemeSelect instanceof HTMLSelectElement)) {
         throw new Error('TauriTavern settings: SillyTavern theme selector not found');
@@ -393,7 +422,7 @@ export async function openTauriTavernSettingsPopup() {
     const currentDynamicThemeDayTheme = String(settings.dynamic_theme.day_theme || '').trim();
     const currentDynamicThemeNightTheme = String(settings.dynamic_theme.night_theme || '').trim();
 
-    dynamicThemeDetails.open = currentDynamicThemeEnabled;
+    dynamicThemeDetails.open = false;
 
     const syncDynamicThemeSummaryHint = () => {
         dynamicThemeSummaryHint.textContent = translate(
@@ -434,14 +463,12 @@ export async function openTauriTavernSettingsPopup() {
         const enabled = dynamicThemeEnabledToggle.checked;
         dynamicThemeDaySelect.disabled = !enabled;
         dynamicThemeNightSelect.disabled = !enabled;
-        if (enabled) {
-            dynamicThemeDetails.open = true;
-        }
     };
 
     dynamicThemeEnabledToggle.addEventListener('change', () => {
         syncDynamicThemeInputs();
         if (dynamicThemeEnabledToggle.checked) {
+            dynamicThemeDetails.open = true;
             dynamicThemeDaySelect.focus();
         }
     });
@@ -558,6 +585,29 @@ export async function openTauriTavernSettingsPopup() {
         });
     }
 
+    const allowKeysExposureHelp = root.querySelector('#tt-help-allow-keys-exposure');
+    if (!(allowKeysExposureHelp instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: allow keys exposure help button not found');
+    }
+    allowKeysExposureHelp.addEventListener('click', (event) => {
+        event.preventDefault();
+        runOrPopup(async () => {
+            const content = document.createElement('div');
+            content.className = 'flex-container flexFlowColumn';
+            content.style.gap = '8px';
+            content.innerHTML = `
+                <b data-i18n="Allow Keys Exposure">Allow Keys Exposure</b>
+                <div data-i18n="When enabled, API keys can be viewed/copied inside the app. Takes effect after restart.">When enabled, API keys can be viewed/copied inside the app. Takes effect after restart.</div>
+            `.trim();
+            await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+                okButton: translate('Close'),
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+            });
+        });
+    });
+
     const dynamicThemeHelp = root.querySelector('#tt-help-dynamic-theme');
     if (!(dynamicThemeHelp instanceof HTMLElement)) {
         throw new Error('TauriTavern settings: dynamic theme help button not found');
@@ -605,6 +655,8 @@ export async function openTauriTavernSettingsPopup() {
     const nextDynamicThemeDayTheme = String(dynamicThemeDaySelect.value || '').trim();
     const nextDynamicThemeNightTheme = String(dynamicThemeNightSelect.value || '').trim();
 
+    const nextAllowKeysExposure = allowKeysExposureToggle.checked;
+
     const normalizeRequestProxyBypass = (value) => {
         return String(value || '')
             .split(/\r?\n/)
@@ -643,11 +695,12 @@ export async function openTauriTavernSettingsPopup() {
     const hasDynamicThemeChange = nextDynamicThemeEnabled !== currentDynamicThemeEnabled
         || nextDynamicThemeDayTheme !== currentDynamicThemeDayTheme
         || nextDynamicThemeNightTheme !== currentDynamicThemeNightTheme;
+    const hasAllowKeysExposureChange = nextAllowKeysExposure !== currentAllowKeysExposure;
     const hasRequestProxyChange = nextRequestProxyEnabled !== currentRequestProxyEnabled
         || nextRequestProxyUrl !== normalizedCurrentRequestProxyUrl
         || !arraysEqual(nextRequestProxyBypass, normalizedCurrentRequestProxyBypass);
 
-    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange && !hasDynamicThemeChange && !hasRequestProxyChange) {
+    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange && !hasDynamicThemeChange && !hasAllowKeysExposureChange && !hasRequestProxyChange) {
         return;
     }
 
@@ -671,6 +724,9 @@ export async function openTauriTavernSettingsPopup() {
             day_theme: nextDynamicThemeDayTheme,
             night_theme: nextDynamicThemeNightTheme,
         };
+    }
+    if (hasAllowKeysExposureChange) {
+        nextSettings.allow_keys_exposure = nextAllowKeysExposure;
     }
     if (hasRequestProxyChange) {
         nextSettings.request_proxy = {

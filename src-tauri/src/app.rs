@@ -71,7 +71,7 @@ impl AppState {
         #[allow(deprecated)]
         migrations::migrate_legacy_character_create_date_once(&data_directory).await?;
 
-        let services = bootstrap::build_services(&app_handle, &data_directory)?;
+        let services = bootstrap::build_services(&app_handle, &data_directory).await?;
 
         tracing::info!("Application initialized successfully");
 

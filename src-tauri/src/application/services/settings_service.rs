@@ -67,6 +67,10 @@ impl SettingsService {
             settings.request_proxy = request_proxy.into();
         }
 
+        if let Some(allow_keys_exposure) = dto.allow_keys_exposure {
+            settings.allow_keys_exposure = allow_keys_exposure;
+        }
+
         if let Some(dev) = dto.dev {
             if let Some(frontend_console_capture) = dev.frontend_console_capture {
                 settings.dev.frontend_console_capture = frontend_console_capture;
