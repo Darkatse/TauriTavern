@@ -1701,7 +1701,14 @@ export async function activateDeferredThirdPartyExtensions({ parallelism = 1 } =
             includeExtension: (name) => isDeferredThirdPartyExtension(name),
             resetErrors: false,
         });
-        return;
+
+        if (connectedToApi) {
+            return;
+        }
+
+        console.error(
+            `Extras API auto-connect failed; proceeding with third-party extension activation without Extras.`,
+        );
     }
 
     await activateExtensions({
