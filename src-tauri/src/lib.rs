@@ -19,7 +19,9 @@ use presentation::commands::registry::invoke_handler;
 #[cfg(any(dev, debug_assertions))]
 use presentation::web_resources::dev_protocol_endpoint::handle_dev_protocol_request;
 use presentation::web_resources::third_party_endpoint::handle_third_party_asset_web_request;
-use presentation::web_resources::thumbnail_endpoint::handle_thumbnail_web_request;
+use presentation::web_resources::thumbnail_endpoint::{
+    handle_thumbnail_web_request, ThumbnailEndpointPolicy,
+};
 use presentation::web_resources::user_data_endpoint::handle_user_data_asset_web_request;
 use tauri::Manager;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -145,9 +147,14 @@ pub async fn run() {
             app.manage(user_dirs.clone());
 
             let tauritavern_settings = load_tauritavern_settings(&runtime_paths.data_root)?;
+            let thumbnail_policy = std::sync::Arc::new(ThumbnailEndpointPolicy::new(
+                tauritavern_settings.avatar_persona_original_images_enabled,
+            ));
+            app.manage(thumbnail_policy.clone());
             http_client_pool.apply_request_proxy_settings(&tauritavern_settings.request_proxy)?;
             llm_api_log_store.apply_settings(tauritavern_settings.dev.effective_llm_api_keep());
-            let _main_window = create_main_window(app, third_party_dirs, user_dirs)?;
+            let _main_window =
+                create_main_window(app, third_party_dirs, user_dirs, thumbnail_policy)?;
 
             #[cfg(target_os = "windows")]
             {
@@ -187,6 +194,7 @@ fn create_main_window(
     app: &mut tauri::App,
     third_party_dirs: ThirdPartyExtensionDirs,
     user_dirs: DefaultUserWebDirs,
+    thumbnail_policy: std::sync::Arc<ThumbnailEndpointPolicy>,
 ) -> Result<tauri::webview::WebviewWindow, Box<dyn std::error::Error>> {
     let window_config = app
         .config()
@@ -199,6 +207,7 @@ fn create_main_window(
     let local_extensions_dir = third_party_dirs.local_dir;
     let global_extensions_dir = third_party_dirs.global_dir;
     let user_dirs = user_dirs;
+    let thumbnail_policy = thumbnail_policy;
 
     let builder = tauri::webview::WebviewWindowBuilder::from_config(app.handle(), window_config)?
         // Route browser-visible URLs to host-owned file handlers here so the frontend can keep
@@ -210,7 +219,7 @@ fn create_main_window(
                 &request,
                 response,
             );
-            handle_thumbnail_web_request(&user_dirs, &request, response);
+            handle_thumbnail_web_request(&user_dirs, &thumbnail_policy, &request, response);
             handle_user_data_asset_web_request(&user_dirs, &request, response);
         });
 
@@ -301,6 +310,7 @@ fn load_tauritavern_settings(
     }
 
     let raw = std::fs::read_to_string(&path)?;
-    let settings = serde_json::from_str(&raw)?;
+    let settings =
+        crate::domain::models::settings::TauriTavernSettings::from_json_str_with_compat(&raw)?;
     Ok(settings)
 }

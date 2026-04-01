@@ -71,6 +71,13 @@ impl SettingsService {
             settings.allow_keys_exposure = allow_keys_exposure;
         }
 
+        if let Some(avatar_persona_original_images_enabled) =
+            dto.avatar_persona_original_images_enabled
+        {
+            settings.avatar_persona_original_images_enabled =
+                avatar_persona_original_images_enabled;
+        }
+
         if let Some(dev) = dto.dev {
             if let Some(frontend_console_capture) = dev.frontend_console_capture {
                 settings.dev.frontend_console_capture = frontend_console_capture;

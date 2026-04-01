@@ -21,6 +21,10 @@ fn default_llm_api_keep() -> u32 {
     5
 }
 
+fn default_avatar_persona_original_images_enabled() -> bool {
+    false
+}
+
 pub const MIN_LLM_API_KEEP: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +143,10 @@ pub struct TauriTavernSettings {
     pub request_proxy: RequestProxySettings,
     #[serde(default)]
     pub allow_keys_exposure: bool,
+    /// When enabled, `/thumbnail?type=avatar|persona` serves original images instead of
+    /// cached/generated thumbnails. Background thumbnails are intentionally unaffected.
+    #[serde(default = "default_avatar_persona_original_images_enabled")]
+    pub avatar_persona_original_images_enabled: bool,
     #[serde(default)]
     pub migrations: TauriTavernMigrationState,
     #[serde(default)]
@@ -158,10 +166,39 @@ impl Default for TauriTavernSettings {
             close_to_tray_on_close: default_close_to_tray_on_close(),
             request_proxy: RequestProxySettings::default(),
             allow_keys_exposure: false,
+            avatar_persona_original_images_enabled:
+                default_avatar_persona_original_images_enabled(),
             migrations: TauriTavernMigrationState::default(),
             dev: DevLoggingSettings::default(),
             dynamic_theme: DynamicThemeSettings::default(),
         }
+    }
+}
+
+impl TauriTavernSettings {
+    /// Deserializes settings while keeping backward compatibility with older
+    /// `tauritavern-settings.json` schemas.
+    pub fn from_json_str_with_compat(raw: &str) -> Result<Self, serde_json::Error> {
+        let mut value: Value = serde_json::from_str(raw)?;
+
+        if let Value::Object(map) = &mut value {
+            // Migration: `avatar_persona_thumbnails_enabled` (legacy, default true) ->
+            // `avatar_persona_original_images_enabled` (current, default false).
+            //
+            // The meaning is inverted: originals_enabled = !thumbnails_enabled.
+            if !map.contains_key("avatar_persona_original_images_enabled") {
+                let legacy_value = map.get("avatar_persona_thumbnails_enabled").cloned();
+                if let Some(legacy_value) = legacy_value {
+                    let thumbnails_enabled: bool = serde_json::from_value(legacy_value)?;
+                    map.insert(
+                        "avatar_persona_original_images_enabled".to_string(),
+                        Value::Bool(!thumbnails_enabled),
+                    );
+                }
+            }
+        }
+
+        serde_json::from_value(value)
     }
 }
 
@@ -198,7 +235,7 @@ impl Default for UserSettings {
 
 #[cfg(test)]
 mod tests {
-    use super::DevLoggingSettings;
+    use super::{DevLoggingSettings, TauriTavernSettings};
 
     #[test]
     fn effective_llm_api_keep_has_minimum_of_one() {
@@ -214,5 +251,15 @@ mod tests {
     fn llm_api_keep_validation_requires_positive_values() {
         assert!(!DevLoggingSettings::is_valid_llm_api_keep(0));
         assert!(DevLoggingSettings::is_valid_llm_api_keep(1));
+    }
+
+    #[test]
+    fn avatar_persona_original_images_enabled_migrates_legacy_thumbnail_setting() {
+        let settings = TauriTavernSettings::from_json_str_with_compat(
+            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}},"avatar_persona_thumbnails_enabled":false}"#,
+        )
+        .expect("parse settings");
+
+        assert!(settings.avatar_persona_original_images_enabled);
     }
 }

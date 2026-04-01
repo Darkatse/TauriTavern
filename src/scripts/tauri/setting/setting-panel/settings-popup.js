@@ -180,6 +180,20 @@ export async function openTauriTavernSettingsPopup() {
                     <input id="tt-allow-keys-exposure" type="checkbox" style="margin: 0;" />
                 </div>
 
+                <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                    <div class="flex-container alignItemsBaseline" style="gap: 8px; min-width: 220px; flex: 1;">
+                        <span data-i18n="Enable Character/User Avatar Original Images">Enable Character/User Avatar Original Images</span>
+                        <a id="tt-help-avatar-persona-original-images" class="notes-link" href="javascript:void(0);">
+                            <span
+                                class="fa-solid fa-circle-question note-link-span"
+                                title="When enabled, character/user avatars load full-size images. Takes effect after reload."
+                                data-i18n="[title]When enabled, character/user avatars load full-size images. Takes effect after reload."
+                            ></span>
+                        </a>
+                    </div>
+                    <input id="tt-avatar-persona-original-images-enabled" type="checkbox" style="margin: 0;" />
+                </div>
+
                 <details id="tt-dynamic-theme-details">
                     <summary class="flex-container alignItemsCenter" style="cursor: pointer; gap: 12px; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; background: rgba(0,0,0,0.10); user-select: none;">
                         <div class="flex-container alignItemsCenter" style="gap: 8px; flex: 1; min-width: 220px;">
@@ -285,6 +299,11 @@ export async function openTauriTavernSettingsPopup() {
         throw new Error('TauriTavern settings: allow keys exposure toggle not found');
     }
 
+    const avatarPersonaOriginalImagesEnabledToggle = root.querySelector('#tt-avatar-persona-original-images-enabled');
+    if (!(avatarPersonaOriginalImagesEnabledToggle instanceof HTMLInputElement)) {
+        throw new Error('TauriTavern settings: avatar/persona original images toggle not found');
+    }
+
     const dynamicThemeDetails = root.querySelector('#tt-dynamic-theme-details');
     if (!(dynamicThemeDetails instanceof HTMLDetailsElement)) {
         throw new Error('TauriTavern settings: dynamic theme details not found');
@@ -385,6 +404,12 @@ export async function openTauriTavernSettingsPopup() {
 
     const currentAllowKeysExposure = Boolean(settings.allow_keys_exposure);
     allowKeysExposureToggle.checked = currentAllowKeysExposure;
+
+    const currentAvatarPersonaOriginalImagesEnabled = settings.avatar_persona_original_images_enabled;
+    if (typeof currentAvatarPersonaOriginalImagesEnabled !== 'boolean') {
+        throw new Error('TauriTavern settings: avatar/persona original images setting missing');
+    }
+    avatarPersonaOriginalImagesEnabledToggle.checked = currentAvatarPersonaOriginalImagesEnabled;
 
     const upstreamThemeSelect = document.getElementById('themes');
     if (!(upstreamThemeSelect instanceof HTMLSelectElement)) {
@@ -608,6 +633,30 @@ export async function openTauriTavernSettingsPopup() {
         });
     });
 
+    const avatarPersonaOriginalImagesHelp = root.querySelector('#tt-help-avatar-persona-original-images');
+    if (!(avatarPersonaOriginalImagesHelp instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: avatar/persona original images help button not found');
+    }
+    avatarPersonaOriginalImagesHelp.addEventListener('click', (event) => {
+        event.preventDefault();
+        runOrPopup(async () => {
+            const content = document.createElement('div');
+            content.className = 'flex-container flexFlowColumn';
+            content.style.gap = '8px';
+            content.innerHTML = `
+                <b data-i18n="Enable Character/User Avatar Original Images">Enable Character/User Avatar Original Images</b>
+                <div data-i18n="Character/User avatar originals help: on">On: the app serves original (full-size) character/user avatars via the same /thumbnail endpoint.</div>
+                <div data-i18n="Character/User avatar originals help: off">Off: the app serves cached/generated thumbnails for character/user avatars.</div>
+            `.trim();
+            await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+                okButton: translate('Close'),
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+            });
+        });
+    });
+
     const dynamicThemeHelp = root.querySelector('#tt-help-dynamic-theme');
     if (!(dynamicThemeHelp instanceof HTMLElement)) {
         throw new Error('TauriTavern settings: dynamic theme help button not found');
@@ -656,6 +705,7 @@ export async function openTauriTavernSettingsPopup() {
     const nextDynamicThemeNightTheme = String(dynamicThemeNightSelect.value || '').trim();
 
     const nextAllowKeysExposure = allowKeysExposureToggle.checked;
+    const nextAvatarPersonaOriginalImagesEnabled = avatarPersonaOriginalImagesEnabledToggle.checked;
 
     const normalizeRequestProxyBypass = (value) => {
         return String(value || '')
@@ -696,11 +746,13 @@ export async function openTauriTavernSettingsPopup() {
         || nextDynamicThemeDayTheme !== currentDynamicThemeDayTheme
         || nextDynamicThemeNightTheme !== currentDynamicThemeNightTheme;
     const hasAllowKeysExposureChange = nextAllowKeysExposure !== currentAllowKeysExposure;
+    const hasAvatarPersonaOriginalImagesEnabledChange =
+        nextAvatarPersonaOriginalImagesEnabled !== currentAvatarPersonaOriginalImagesEnabled;
     const hasRequestProxyChange = nextRequestProxyEnabled !== currentRequestProxyEnabled
         || nextRequestProxyUrl !== normalizedCurrentRequestProxyUrl
         || !arraysEqual(nextRequestProxyBypass, normalizedCurrentRequestProxyBypass);
 
-    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange && !hasDynamicThemeChange && !hasAllowKeysExposureChange && !hasRequestProxyChange) {
+    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange && !hasDynamicThemeChange && !hasAllowKeysExposureChange && !hasAvatarPersonaOriginalImagesEnabledChange && !hasRequestProxyChange) {
         return;
     }
 
@@ -727,6 +779,9 @@ export async function openTauriTavernSettingsPopup() {
     }
     if (hasAllowKeysExposureChange) {
         nextSettings.allow_keys_exposure = nextAllowKeysExposure;
+    }
+    if (hasAvatarPersonaOriginalImagesEnabledChange) {
+        nextSettings.avatar_persona_original_images_enabled = nextAvatarPersonaOriginalImagesEnabled;
     }
     if (hasRequestProxyChange) {
         nextSettings.request_proxy = {
@@ -763,7 +818,7 @@ export async function openTauriTavernSettingsPopup() {
         setChatHistoryBootstrapModeName(nextChatHistoryMode);
     }
 
-    if (hasPanelRuntimeChange || hasEmbeddedRuntimeChange || hasChatHistoryModeChange) {
+    if (hasPanelRuntimeChange || hasEmbeddedRuntimeChange || hasChatHistoryModeChange || hasAvatarPersonaOriginalImagesEnabledChange) {
         window.location.reload();
     }
 }

@@ -12,6 +12,7 @@ use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::logging::llm_api_logs::LlmApiLogStore;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+use crate::presentation::web_resources::thumbnail_endpoint::ThumbnailEndpointPolicy;
 
 #[tauri::command]
 pub async fn get_tauritavern_settings(
@@ -33,6 +34,7 @@ pub async fn update_tauritavern_settings(
     app_state: State<'_, Arc<AppState>>,
     http_clients: State<'_, Arc<HttpClientPool>>,
     llm_api_logs: State<'_, Arc<LlmApiLogStore>>,
+    thumbnail_policy: State<'_, Arc<ThumbnailEndpointPolicy>>,
     tray_state: State<'_, Arc<crate::presentation::windows_tray::WindowsTrayState>>,
 ) -> Result<TauriTavernSettingsDto, CommandError> {
     log_command("update_tauritavern_settings");
@@ -51,6 +53,9 @@ pub async fn update_tauritavern_settings(
         .map_err(map_command_error("Failed to update TauriTavern settings"))?;
 
     tray_state.set_close_to_tray_on_close(settings.close_to_tray_on_close);
+    thumbnail_policy.set_avatar_persona_original_images_enabled(
+        settings.avatar_persona_original_images_enabled,
+    );
 
     if request_proxy_settings.is_some() {
         http_clients
@@ -70,6 +75,7 @@ pub async fn update_tauritavern_settings(
     app_state: State<'_, Arc<AppState>>,
     http_clients: State<'_, Arc<HttpClientPool>>,
     llm_api_logs: State<'_, Arc<LlmApiLogStore>>,
+    thumbnail_policy: State<'_, Arc<ThumbnailEndpointPolicy>>,
 ) -> Result<TauriTavernSettingsDto, CommandError> {
     log_command("update_tauritavern_settings");
 
@@ -85,6 +91,10 @@ pub async fn update_tauritavern_settings(
         .update_tauritavern_settings(dto)
         .await
         .map_err(map_command_error("Failed to update TauriTavern settings"))?;
+
+    thumbnail_policy.set_avatar_persona_original_images_enabled(
+        settings.avatar_persona_original_images_enabled,
+    );
 
     if request_proxy_settings.is_some() {
         http_clients

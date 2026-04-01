@@ -8,7 +8,9 @@ use crate::infrastructure::user_data_dirs::DefaultUserWebDirs;
 use crate::infrastructure::user_data_paths::is_user_data_asset_route;
 use crate::presentation::web_resources::response_helpers::respond_plain_text;
 use crate::presentation::web_resources::third_party_endpoint::handle_third_party_asset_web_request;
-use crate::presentation::web_resources::thumbnail_endpoint::handle_thumbnail_web_request;
+use crate::presentation::web_resources::thumbnail_endpoint::{
+    handle_thumbnail_web_request, ThumbnailEndpointPolicy,
+};
 use crate::presentation::web_resources::user_data_endpoint::handle_user_data_asset_web_request;
 
 pub fn dispatch_dev_web_resource_request<R: tauri::Runtime>(
@@ -27,7 +29,8 @@ pub fn dispatch_dev_web_resource_request<R: tauri::Runtime>(
 
     if path == "/thumbnail" {
         let dirs = app_handle.state::<DefaultUserWebDirs>();
-        handle_thumbnail_web_request(&dirs, request, response);
+        let policy = app_handle.state::<std::sync::Arc<ThumbnailEndpointPolicy>>();
+        handle_thumbnail_web_request(&dirs, policy.inner().as_ref(), request, response);
         return;
     }
 

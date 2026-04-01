@@ -153,7 +153,36 @@ impl SettingsRepository for FileSettingsRepository {
             return Ok(default_settings);
         }
 
-        read_json_file::<TauriTavernSettings>(&self.tauritavern_settings_file).await
+        logger::debug(&format!(
+            "Loading TauriTavern settings from {}",
+            self.tauritavern_settings_file.display()
+        ));
+
+        let contents = fs::read_to_string(&self.tauritavern_settings_file)
+            .await
+            .map_err(|e| {
+                logger::error(&format!(
+                    "Failed to read file {:?}: {}",
+                    self.tauritavern_settings_file, e
+                ));
+
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    DomainError::NotFound(format!(
+                        "File not found: {}",
+                        self.tauritavern_settings_file.display()
+                    ))
+                } else {
+                    DomainError::InternalError(format!("Failed to read file: {}", e))
+                }
+            })?;
+
+        TauriTavernSettings::from_json_str_with_compat(&contents).map_err(|e| {
+            logger::error(&format!(
+                "Failed to parse JSON from file {:?}: {}",
+                self.tauritavern_settings_file, e
+            ));
+            DomainError::InvalidData(format!("Invalid JSON: {}", e))
+        })
     }
 
     async fn save_user_settings(&self, settings: &UserSettings) -> Result<(), DomainError> {

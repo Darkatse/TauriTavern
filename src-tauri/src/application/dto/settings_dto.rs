@@ -16,6 +16,7 @@ pub struct TauriTavernSettingsDto {
     pub close_to_tray_on_close: bool,
     pub request_proxy: RequestProxySettingsDto,
     pub allow_keys_exposure: bool,
+    pub avatar_persona_original_images_enabled: bool,
     pub dev: DevLoggingSettingsDto,
     pub dynamic_theme: DynamicThemeSettingsDto,
 }
@@ -40,6 +41,7 @@ pub struct UpdateTauriTavernSettingsDto {
     pub close_to_tray_on_close: Option<bool>,
     pub request_proxy: Option<RequestProxySettingsDto>,
     pub allow_keys_exposure: Option<bool>,
+    pub avatar_persona_original_images_enabled: Option<bool>,
     pub dev: Option<UpdateDevLoggingSettingsDto>,
     pub dynamic_theme: Option<UpdateDynamicThemeSettingsDto>,
 }
@@ -151,6 +153,7 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             close_to_tray_on_close: settings.close_to_tray_on_close,
             request_proxy: RequestProxySettingsDto::from(settings.request_proxy),
             allow_keys_exposure: settings.allow_keys_exposure,
+            avatar_persona_original_images_enabled: settings.avatar_persona_original_images_enabled,
             dev: DevLoggingSettingsDto::from(settings.dev),
             dynamic_theme: DynamicThemeSettingsDto::from(settings.dynamic_theme),
         }
