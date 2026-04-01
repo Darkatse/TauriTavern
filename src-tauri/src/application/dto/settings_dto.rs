@@ -1,6 +1,7 @@
 use crate::domain::models::settings::{
-    ChatHistoryMode, DevLoggingSettings, RequestProxySettings, SettingsSnapshot,
-    StartupUpdatePopupSettings, TauriTavernSettings, TauriTavernUpdateSettings, UserSettings,
+    ChatHistoryMode, DevLoggingSettings, DynamicThemeSettings, RequestProxySettings,
+    SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings, TauriTavernUpdateSettings,
+    UserSettings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -15,6 +16,7 @@ pub struct TauriTavernSettingsDto {
     pub close_to_tray_on_close: bool,
     pub request_proxy: RequestProxySettingsDto,
     pub dev: DevLoggingSettingsDto,
+    pub dynamic_theme: DynamicThemeSettingsDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +39,7 @@ pub struct UpdateTauriTavernSettingsDto {
     pub close_to_tray_on_close: Option<bool>,
     pub request_proxy: Option<RequestProxySettingsDto>,
     pub dev: Option<UpdateDevLoggingSettingsDto>,
+    pub dynamic_theme: Option<UpdateDynamicThemeSettingsDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +52,20 @@ pub struct DevLoggingSettingsDto {
 pub struct UpdateDevLoggingSettingsDto {
     pub frontend_console_capture: Option<bool>,
     pub llm_api_keep: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DynamicThemeSettingsDto {
+    pub enabled: bool,
+    pub day_theme: String,
+    pub night_theme: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateDynamicThemeSettingsDto {
+    pub enabled: Option<bool>,
+    pub day_theme: Option<String>,
+    pub night_theme: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +149,7 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             close_to_tray_on_close: settings.close_to_tray_on_close,
             request_proxy: RequestProxySettingsDto::from(settings.request_proxy),
             dev: DevLoggingSettingsDto::from(settings.dev),
+            dynamic_theme: DynamicThemeSettingsDto::from(settings.dynamic_theme),
         }
     }
 }
@@ -161,6 +179,16 @@ impl From<RequestProxySettingsDto> for RequestProxySettings {
             enabled: dto.enabled,
             url: dto.url,
             bypass: dto.bypass,
+        }
+    }
+}
+
+impl From<DynamicThemeSettings> for DynamicThemeSettingsDto {
+    fn from(settings: DynamicThemeSettings) -> Self {
+        Self {
+            enabled: settings.enabled,
+            day_theme: settings.day_theme,
+            night_theme: settings.night_theme,
         }
     }
 }

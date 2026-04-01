@@ -23,6 +23,26 @@ fn default_llm_api_keep() -> u32 {
 
 pub const MIN_LLM_API_KEEP: u32 = 1;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DynamicThemeSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub day_theme: String,
+    #[serde(default)]
+    pub night_theme: String,
+}
+
+impl Default for DynamicThemeSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            day_theme: String::new(),
+            night_theme: String::new(),
+        }
+    }
+}
+
 fn default_close_to_tray_on_close() -> bool {
     cfg!(target_os = "windows")
 }
@@ -121,6 +141,8 @@ pub struct TauriTavernSettings {
     pub migrations: TauriTavernMigrationState,
     #[serde(default)]
     pub dev: DevLoggingSettings,
+    #[serde(default)]
+    pub dynamic_theme: DynamicThemeSettings,
 }
 
 impl Default for TauriTavernSettings {
@@ -135,6 +157,7 @@ impl Default for TauriTavernSettings {
             request_proxy: RequestProxySettings::default(),
             migrations: TauriTavernMigrationState::default(),
             dev: DevLoggingSettings::default(),
+            dynamic_theme: DynamicThemeSettings::default(),
         }
     }
 }

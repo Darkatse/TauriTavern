@@ -8,6 +8,7 @@ import {
     resolveEffectiveEmbeddedRuntimeProfileName,
     setEmbeddedRuntimeBootstrapProfileName,
 } from '../../../../tauri/main/services/embedded-runtime/embedded-runtime-profile-state.js';
+import { DYNAMIC_THEME_CHANGED_EVENT } from '../../../../tauri/main/services/dynamic-theme/constants.js';
 import {
     CHAT_HISTORY_MODE_WINDOWED,
     normalizeChatHistoryModeName,
@@ -157,6 +158,46 @@ export async function openTauriTavernSettingsPopup() {
 
             <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
                 <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
+                    <b data-i18n="Misc">Misc</b>
+                </div>
+
+                <details id="tt-dynamic-theme-details">
+                    <summary class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; cursor: pointer; list-style: none;">
+                        <span data-i18n="Dynamic Theme">Dynamic Theme</span>
+                        <div class="flex-container alignItemsCenter" style="gap: 8px;">
+                            <small id="tt-dynamic-theme-summary-hint" style="opacity: 0.75;"></small>
+                            <i id="tt-dynamic-theme-summary-chevron" class="fa-solid fa-chevron-down" style="opacity: 0.8;"></i>
+                        </div>
+                    </summary>
+
+                    <div class="flex-container flexFlowColumn" style="gap: 10px; padding-top: 10px;">
+                        <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                            <div class="flex-container alignItemsBaseline" style="gap: 8px; min-width: 220px; flex: 1;">
+                                <span data-i18n="Enable Dynamic Theme">Enable Dynamic Theme</span>
+                                <a id="tt-help-dynamic-theme" class="notes-link" href="javascript:void(0);">
+                                    <span class="fa-solid fa-circle-question note-link-span" title="Learn more" data-i18n="[title]Learn more"></span>
+                                </a>
+                            </div>
+                            <input id="tt-dynamic-theme-enabled" type="checkbox" style="margin: 0;" />
+                        </div>
+
+                        <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                            <span data-i18n="Day Theme">Day Theme</span>
+                            <select id="tt-dynamic-theme-day-theme" class="text_pole" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;"></select>
+                        </div>
+
+                        <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                            <span data-i18n="Night Theme">Night Theme</span>
+                            <select id="tt-dynamic-theme-night-theme" class="text_pole" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;"></select>
+                        </div>
+
+                        <small style="opacity: 0.85;" data-i18n="Dynamic Theme hint">Automatically switches SillyTavern themes based on your system light/dark mode.</small>
+                    </div>
+                </details>
+            </div>
+
+            <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
+                <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
                     <b data-i18n="Development">Development</b>
                 </div>
 
@@ -216,6 +257,31 @@ export async function openTauriTavernSettingsPopup() {
     const requestProxyBypassInput = root.querySelector('#tt-request-proxy-bypass');
     if (!(requestProxyBypassInput instanceof HTMLTextAreaElement)) {
         throw new Error('TauriTavern settings: request proxy bypass input not found');
+    }
+
+    const dynamicThemeDetails = root.querySelector('#tt-dynamic-theme-details');
+    if (!(dynamicThemeDetails instanceof HTMLDetailsElement)) {
+        throw new Error('TauriTavern settings: dynamic theme details not found');
+    }
+
+    const dynamicThemeSummaryHint = root.querySelector('#tt-dynamic-theme-summary-hint');
+    if (!(dynamicThemeSummaryHint instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: dynamic theme summary hint not found');
+    }
+
+    const dynamicThemeEnabledToggle = root.querySelector('#tt-dynamic-theme-enabled');
+    if (!(dynamicThemeEnabledToggle instanceof HTMLInputElement)) {
+        throw new Error('TauriTavern settings: dynamic theme toggle not found');
+    }
+
+    const dynamicThemeDaySelect = root.querySelector('#tt-dynamic-theme-day-theme');
+    if (!(dynamicThemeDaySelect instanceof HTMLSelectElement)) {
+        throw new Error('TauriTavern settings: dynamic theme day selector not found');
+    }
+
+    const dynamicThemeNightSelect = root.querySelector('#tt-dynamic-theme-night-theme');
+    if (!(dynamicThemeNightSelect instanceof HTMLSelectElement)) {
+        throw new Error('TauriTavern settings: dynamic theme night selector not found');
     }
 
     /** @type {HTMLInputElement | null} */
@@ -291,6 +357,62 @@ export async function openTauriTavernSettingsPopup() {
     requestProxyUrlInput.value = currentRequestProxyUrl;
     requestProxyBypassInput.value = currentRequestProxyBypass.join('\n');
 
+    const upstreamThemeSelect = document.getElementById('themes');
+    if (!(upstreamThemeSelect instanceof HTMLSelectElement)) {
+        throw new Error('TauriTavern settings: SillyTavern theme selector not found');
+    }
+
+    const syncThemeOptions = (targetSelect, storedValue) => {
+        targetSelect.innerHTML = '';
+        for (const option of upstreamThemeSelect.options) {
+            const cloned = document.createElement('option');
+            cloned.value = option.value;
+            cloned.textContent = option.textContent;
+            targetSelect.appendChild(cloned);
+        }
+
+        const normalizedStoredValue = String(storedValue || '').trim();
+        if (!normalizedStoredValue) {
+            return;
+        }
+
+        const hasStoredOption = Array.from(targetSelect.options).some((option) => option.value === normalizedStoredValue);
+        if (!hasStoredOption) {
+            const missing = document.createElement('option');
+            missing.value = normalizedStoredValue;
+            missing.textContent = normalizedStoredValue;
+            targetSelect.appendChild(missing);
+        }
+    };
+
+    if (!settings.dynamic_theme || typeof settings.dynamic_theme !== 'object') {
+        throw new Error('TauriTavern settings: dynamic theme settings missing');
+    }
+
+    const currentDynamicThemeEnabled = Boolean(settings.dynamic_theme.enabled);
+    const currentDynamicThemeDayTheme = String(settings.dynamic_theme.day_theme || '').trim();
+    const currentDynamicThemeNightTheme = String(settings.dynamic_theme.night_theme || '').trim();
+
+    dynamicThemeDetails.open = currentDynamicThemeEnabled;
+
+    const syncDynamicThemeSummaryHint = () => {
+        dynamicThemeSummaryHint.textContent = translate(
+            dynamicThemeDetails.open ? 'Click to collapse' : 'Click to expand',
+        );
+    };
+    dynamicThemeDetails.addEventListener('toggle', syncDynamicThemeSummaryHint);
+    syncDynamicThemeSummaryHint();
+
+    syncThemeOptions(dynamicThemeDaySelect, currentDynamicThemeDayTheme);
+    syncThemeOptions(dynamicThemeNightSelect, currentDynamicThemeNightTheme);
+    dynamicThemeEnabledToggle.checked = currentDynamicThemeEnabled;
+    if (currentDynamicThemeDayTheme) {
+        dynamicThemeDaySelect.value = currentDynamicThemeDayTheme;
+    }
+    if (currentDynamicThemeNightTheme) {
+        dynamicThemeNightSelect.value = currentDynamicThemeNightTheme;
+    }
+
     const syncRequestProxyInputs = () => {
         const enabled = requestProxyEnabledToggle.checked;
         requestProxyUrlInput.disabled = !enabled;
@@ -307,6 +429,23 @@ export async function openTauriTavernSettingsPopup() {
         }
     });
     syncRequestProxyInputs();
+
+    const syncDynamicThemeInputs = () => {
+        const enabled = dynamicThemeEnabledToggle.checked;
+        dynamicThemeDaySelect.disabled = !enabled;
+        dynamicThemeNightSelect.disabled = !enabled;
+        if (enabled) {
+            dynamicThemeDetails.open = true;
+        }
+    };
+
+    dynamicThemeEnabledToggle.addEventListener('change', () => {
+        syncDynamicThemeInputs();
+        if (dynamicThemeEnabledToggle.checked) {
+            dynamicThemeDaySelect.focus();
+        }
+    });
+    syncDynamicThemeInputs();
 
     const openSyncButton = root.querySelector('#tt-open-sync');
     if (!(openSyncButton instanceof HTMLElement)) {
@@ -419,6 +558,30 @@ export async function openTauriTavernSettingsPopup() {
         });
     }
 
+    const dynamicThemeHelp = root.querySelector('#tt-help-dynamic-theme');
+    if (!(dynamicThemeHelp instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: dynamic theme help button not found');
+    }
+    dynamicThemeHelp.addEventListener('click', (event) => {
+        event.preventDefault();
+        runOrPopup(async () => {
+            const content = document.createElement('div');
+            content.className = 'flex-container flexFlowColumn';
+            content.style.gap = '8px';
+            content.innerHTML = `
+                <b data-i18n="Dynamic Theme">Dynamic Theme</b>
+                <div data-i18n="Dynamic Theme help: mapping">Day = system light mode. Night = system dark mode.</div>
+                <div data-i18n="Dynamic Theme help: behavior">The switch is equivalent to manually changing the theme selector.</div>
+            `.trim();
+            await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+                okButton: translate('Close'),
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+            });
+        });
+    });
+
     const result = await callGenericPopup(root, POPUP_TYPE.CONFIRM, '', {
         okButton: translate('Save'),
         cancelButton: translate('Close'),
@@ -437,6 +600,10 @@ export async function openTauriTavernSettingsPopup() {
     const nextCloseToTrayOnClose = closeToTrayToggle
         ? closeToTrayToggle.checked
         : currentCloseToTrayOnClose;
+
+    const nextDynamicThemeEnabled = dynamicThemeEnabledToggle.checked;
+    const nextDynamicThemeDayTheme = String(dynamicThemeDaySelect.value || '').trim();
+    const nextDynamicThemeNightTheme = String(dynamicThemeNightSelect.value || '').trim();
 
     const normalizeRequestProxyBypass = (value) => {
         return String(value || '')
@@ -473,11 +640,14 @@ export async function openTauriTavernSettingsPopup() {
         && (nextEmbeddedRuntimeProfile !== currentEmbeddedRuntimeProfile || requiresEmbeddedRuntimeMigration);
     const hasChatHistoryModeChange = nextChatHistoryMode !== currentChatHistoryMode;
     const hasCloseToTrayOnCloseChange = nextCloseToTrayOnClose !== currentCloseToTrayOnClose;
+    const hasDynamicThemeChange = nextDynamicThemeEnabled !== currentDynamicThemeEnabled
+        || nextDynamicThemeDayTheme !== currentDynamicThemeDayTheme
+        || nextDynamicThemeNightTheme !== currentDynamicThemeNightTheme;
     const hasRequestProxyChange = nextRequestProxyEnabled !== currentRequestProxyEnabled
         || nextRequestProxyUrl !== normalizedCurrentRequestProxyUrl
         || !arraysEqual(nextRequestProxyBypass, normalizedCurrentRequestProxyBypass);
 
-    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange && !hasRequestProxyChange) {
+    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange && !hasDynamicThemeChange && !hasRequestProxyChange) {
         return;
     }
 
@@ -495,6 +665,13 @@ export async function openTauriTavernSettingsPopup() {
     if (hasCloseToTrayOnCloseChange) {
         nextSettings.close_to_tray_on_close = nextCloseToTrayOnClose;
     }
+    if (hasDynamicThemeChange) {
+        nextSettings.dynamic_theme = {
+            enabled: nextDynamicThemeEnabled,
+            day_theme: nextDynamicThemeDayTheme,
+            night_theme: nextDynamicThemeNightTheme,
+        };
+    }
     if (hasRequestProxyChange) {
         nextSettings.request_proxy = {
             enabled: nextRequestProxyEnabled,
@@ -503,7 +680,13 @@ export async function openTauriTavernSettingsPopup() {
         };
     }
 
-    await updateTauriTavernSettings(nextSettings);
+    const updatedSettings = await updateTauriTavernSettings(nextSettings);
+
+    if (hasDynamicThemeChange) {
+        window.dispatchEvent(new CustomEvent(DYNAMIC_THEME_CHANGED_EVENT, {
+            detail: updatedSettings.dynamic_theme,
+        }));
+    }
 
     if (hasPanelRuntimeChange) {
         // Keep in sync with:
@@ -528,4 +711,3 @@ export async function openTauriTavernSettingsPopup() {
         window.location.reload();
     }
 }
-

@@ -82,6 +82,34 @@ impl SettingsService {
             }
         }
 
+        if let Some(dynamic_theme) = dto.dynamic_theme {
+            if let Some(enabled) = dynamic_theme.enabled {
+                settings.dynamic_theme.enabled = enabled;
+            }
+
+            if let Some(day_theme) = dynamic_theme.day_theme {
+                settings.dynamic_theme.day_theme = day_theme;
+            }
+
+            if let Some(night_theme) = dynamic_theme.night_theme {
+                settings.dynamic_theme.night_theme = night_theme;
+            }
+
+            if settings.dynamic_theme.enabled {
+                if settings.dynamic_theme.day_theme.trim().is_empty() {
+                    return Err(ApplicationError::ValidationError(
+                        "Dynamic theme day theme is required".to_string(),
+                    ));
+                }
+
+                if settings.dynamic_theme.night_theme.trim().is_empty() {
+                    return Err(ApplicationError::ValidationError(
+                        "Dynamic theme night theme is required".to_string(),
+                    ));
+                }
+            }
+        }
+
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;
