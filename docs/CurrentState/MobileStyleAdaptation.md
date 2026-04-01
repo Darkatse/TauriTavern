@@ -45,20 +45,20 @@
 负责监听/计算的模块：
 
 - `AndroidInsetsBridge`：监听 system bars + display cutout + IME。
-- `WebViewReadinessPoller`：避免在 `about:blank` 或 `readyState=loading` 时注入导致变量丢失。
+- `WebViewReadinessPoller`：避免在 `about:blank` 时注入导致变量丢失；以 `#sheld` 存在作为“可注入”的最小前置条件（不依赖 `readyState`，避免启动早期 focus 竞态）。
 - `WebViewInsetsStyleApplier`：向 WebView 注入 helper，并把 insets 写入 CSS 变量。
 
 CSS 变量（对前端的稳定契约）：
 
 - `--tt-inset-top/right/left/bottom`：布局消费的有效避让 inset（px）。
-- `--tt-ime-bottom`：输入法可见时的底部 inset（px），注入在 `#sheld`。
+- `--tt-ime-bottom`：输入法可见时的底部 inset（px），注入在 **active imeTarget root**（默认回退 `#sheld`；避免把键盘动画扩散为 `:root` 级全局样式失效）。
 - `--tt-base-viewport-height`：记录“无 IME 时”的基准 viewport 高度（用于稳定高度计算）。
 
 关键语义（沉浸模式 + 刘海）：
 
 - Android 非沉浸模式下，`--tt-inset-*` 反映当前布局应避开的可见/稳定 safe area；
 - Android 沉浸模式下，`--tt-inset-*` 回落为 `0`，应用以 full-bleed 方式覆盖到状态栏/刘海区域。
-- Android IME 不再向 descendant WebView 继续透传为 viewport resize；页面内键盘位移只由 `--tt-ime-bottom` 驱动。
+- Android IME 不再向 descendant WebView 继续透传为 viewport resize；页面内键盘位移只由 active surface 上的 `--tt-ime-bottom` 驱动。
 
 ## 3. 前端消费（CSS / JS）
 
@@ -135,6 +135,27 @@ Android 说明：
 - Tauri Android 在文档进入 `hidden` 时，若 `#send_textarea` 仍持有焦点，会主动 `blur()` 并清空 restoration 状态；因此从系统后台返回时不会因为旧焦点被恢复而自动弹出键盘。
 - 该策略完全留在前端共享模块，不依赖 native/WebView 对 `focus()` 做拦截。
 
+### 3.6 Android IME ownership 路由（surface-local contract）
+
+实现：
+
+- JS focus 路由：`src/tauri/main/compat/mobile/mobile-ime-surface-controller.js`
+- bridge target：`src-tauri/gen/android/app/src/main/java/com/tauritavern/client/WebViewInsetsStyleApplier.kt`
+- fixed-shell 消费：`src/tauri/main/compat/mobile/mobile-geometry-firewall.js`
+
+当前策略（Android）：
+
+- 监听 `focusin/focusout`（capture），解析“当前正在输入的 surface root”，并写入 host-private attributes：
+  - `data-tt-ime-active`
+  - `data-tt-ime-surface="composer|fixed-shell|dialog"`
+- 调用 `window.__TAURITAVERN_INSETS__.setImeTarget(rootOrNull)` 将 `--tt-ime-bottom` 注入到 active root（`#sheld` 使用默认回退，因此传 `null`）。
+- composer（`#sheld/#form_sheld`）继续由 `android-ime-layout-host` 的 lift/spacer 消费键盘偏移（不扩散到其它界面）。
+- fixed-shell（角色编辑、world/editor drawer 等）由 geometry firewall 通过 `height/max-height/bottom + scroll-padding-bottom` 消费 `--tt-ime-bottom`，避免输入被键盘遮挡。
+
+备注：
+
+- iOS 主要依赖 viewport resize；`--tt-ime-bottom` 可能始终为 `0`，但上述策略不应破坏布局。
+
 ## 4. 沉浸模式开关（Android）
 
 前端入口：`src/scripts/mobile-system-ui.js`
@@ -157,6 +178,7 @@ native 侧实现：`src-tauri/gen/android/app/src/main/java/com/tauritavern/clie
 - Android 沉浸模式下以 full-bleed 策略运行，顶部 inset 不再额外避让刘海/状态栏。
 - iOS `viewport-fit=cover` + `env(safe-area-inset-*)` 提供 `--tt-inset-*`。
 - 第三方脚本 fixed 浮层的 inset top 元素级修正（移动端）。
+- Android：IME ownership 路由（composer + fixed-shell），避免把键盘动画扩散为全局 `:root` 变量更新。
 - 聊天导航类场景不再自动聚焦 `#send_textarea`，Tauri Android 从系统后台恢复时也不会恢复聊天输入焦点；移动端键盘只在真正进入输入/编辑意图时弹出。
 
 明确不支持 / 不承诺：
@@ -180,3 +202,5 @@ native 侧实现：`src-tauri/gen/android/app/src/main/java/com/tauritavern/clie
   - 非沉浸模式期望反映当前顶部 safe area
 - `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__` 是否已安装
 - `window.__TAURITAVERN_MOBILE_RUNTIME_COMPAT__ === true`（旧 WebView）
+- `window.__TAURITAVERN_INSETS__` 是否存在（`apply/setImeTarget/reapply`）
+- 当前 active surface 是否正确打标：`[data-tt-ime-active][data-tt-ime-surface]`

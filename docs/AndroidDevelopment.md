@@ -15,7 +15,7 @@
 根因不是 inset 数值计算本身，而是 **注入时机竞态**：
 
 - Android WebView 启动阶段常经历 `about:blank -> tauri.localhost` 的页面切换。
-- 若在 `about:blank` 或 `document.readyState=loading` 时注入 CSS 变量，后续导航会丢失变量。
+- 若在 `about:blank` 或前端根容器（`#sheld`）尚未出现时注入 CSS 变量，后续导航/重置会丢失变量。
 - 表层看是“safe area 失效”，本质是“注入到了错误上下文或过早上下文”。
 
 参考问题：  
@@ -52,9 +52,13 @@ Android 语义说明（以 contract 层为准）：
 注入时序约束：
 
 - 注入前先检查页面就绪：
-  - `document.readyState !== 'loading'`
   - `location.href !== 'about:blank'`
+  - `Boolean(document.getElementById('sheld'))`
   - 未满足时进行有限次短重试。
+
+说明：
+
+- 这里**不以 `readyState` 作为硬门槛**：SillyTavern 启动阶段可能在 `readyState=loading` 时就触发 popup/onboarding 的 focus 流；IME ownership 路由依赖早期 bridge 可用，因此以“`#sheld` 已挂载”作为最小可靠前置条件更稳。
 
 前端消费变量在：
 

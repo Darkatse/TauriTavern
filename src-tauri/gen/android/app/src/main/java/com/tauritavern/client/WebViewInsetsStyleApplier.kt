@@ -49,9 +49,16 @@ class WebViewInsetsStyleApplier(private val resources: Resources) {
       """
       (() => {
         const existingBridge = window.__TAURITAVERN_INSETS__;
-        if (existingBridge && typeof existingBridge.apply === 'function') {
+        if (
+          existingBridge &&
+          typeof existingBridge.apply === 'function' &&
+          typeof existingBridge.setImeTarget === 'function' &&
+          typeof existingBridge.reapply === 'function'
+        ) {
           return;
         }
+
+        const IME_BOTTOM_VAR = '--tt-ime-bottom';
 
         const state = {
           baseViewportHeight: 0,
@@ -60,7 +67,10 @@ class WebViewInsetsStyleApplier(private val resources: Resources) {
           insetRight: '',
           insetLeft: '',
           insetBottom: '',
-          imeBottom: '',
+          desiredImeTarget: null,
+          appliedImeTarget: null,
+          lastImeBottomCss: '0.00px',
+          appliedImeBottomCss: '',
         };
 
         const setVarIfChanged = (target, cssName, stateKey, nextValue) => {
@@ -69,6 +79,64 @@ class WebViewInsetsStyleApplier(private val resources: Resources) {
           }
           state[stateKey] = nextValue;
           target.style.setProperty(cssName, nextValue);
+        };
+
+        const requireDefaultImeTarget = () => {
+          const fallback = document.getElementById('sheld');
+          if (!(fallback instanceof HTMLElement)) {
+            throw new Error('[TauriTavern] #sheld unavailable while applying IME insets.');
+          }
+          return fallback;
+        };
+
+        const resolveImeTarget = () => {
+          const desired = state.desiredImeTarget;
+          if (desired instanceof HTMLElement) {
+            const root = document.documentElement;
+            if (!root) {
+              throw new Error('[TauriTavern] documentElement unavailable while resolving IME target.');
+            }
+            if (root.contains(desired)) {
+              return desired;
+            }
+          }
+          return requireDefaultImeTarget();
+        };
+
+        const applyImeBottom = (cssValue) => {
+          state.lastImeBottomCss = cssValue;
+          const target = resolveImeTarget();
+          if (state.appliedImeTarget !== target) {
+            if (state.appliedImeTarget instanceof HTMLElement) {
+              state.appliedImeTarget.style.removeProperty(IME_BOTTOM_VAR);
+            }
+            state.appliedImeTarget = target;
+            state.appliedImeBottomCss = '';
+          }
+          if (state.appliedImeBottomCss === cssValue) {
+            return;
+          }
+          target.style.setProperty(IME_BOTTOM_VAR, cssValue);
+          state.appliedImeBottomCss = cssValue;
+        };
+
+        const setImeTarget = (elementOrNull) => {
+          if (elementOrNull === null) {
+            state.desiredImeTarget = null;
+          } else if (elementOrNull instanceof HTMLElement) {
+            const root = document.documentElement;
+            if (!root) {
+              throw new Error('[TauriTavern] documentElement unavailable while setting IME target.');
+            }
+            if (!root.contains(elementOrNull)) {
+              throw new Error('[TauriTavern] IME target must be connected to the document.');
+            }
+            state.desiredImeTarget = elementOrNull;
+          } else {
+            throw new Error('[TauriTavern] Invalid IME target (expected HTMLElement or null).');
+          }
+
+          applyImeBottom(state.lastImeBottomCss);
         };
 
         window.__TAURITAVERN_INSETS__ = {
@@ -103,11 +171,11 @@ class WebViewInsetsStyleApplier(private val resources: Resources) {
             setVarIfChanged(root, '--tt-inset-bottom', 'insetBottom', insetBottom.toFixed(2) + 'px');
 
             const imeBottomCss = Math.max(0, imeBottom).toFixed(2) + 'px';
-            const imeTarget = document.getElementById('sheld');
-            if (!imeTarget) {
-              throw new Error('[TauriTavern] #sheld unavailable while applying IME insets.');
-            }
-            setVarIfChanged(imeTarget, '--tt-ime-bottom', 'imeBottom', imeBottomCss);
+            applyImeBottom(imeBottomCss);
+          },
+          setImeTarget,
+          reapply() {
+            applyImeBottom(state.lastImeBottomCss);
           },
         };
       })();

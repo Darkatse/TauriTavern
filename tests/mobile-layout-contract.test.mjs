@@ -263,6 +263,15 @@ test('geometry firewall surface selectors keep high specificity (>= Vue scoped)'
     assert.match(source, /\[data-tt-mobile-surface="edge-window"\]\[data-tt-mobile-surface\]\[data-tt-mobile-surface\]/);
 });
 
+test('geometry firewall implements fixed-shell IME contract (local keyboard offset)', async () => {
+    const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
+    const source = await readFile(firewallPath, 'utf8');
+
+    assert.match(source, /\[data-tt-ime-surface="fixed-shell"\]\[data-tt-ime-active\]/);
+    assert.match(source, /--tt-keyboard-offset/);
+    assert.match(source, /\bscroll-padding-bottom\b/);
+});
+
 test('geometry firewall stays last in <head> (keep-last)', async () => {
     const dom = createDomHarness();
     dom.reset();
@@ -289,6 +298,7 @@ test('bootstrap wires mobile geometry firewall + overlay classifier (no old cont
     const source = await readFile(bootstrapPath, 'utf8');
 
     assert.match(source, /\binstallMobileGeometryFirewall\b/);
+    assert.match(source, /\binstallMobileImeSurfaceController\b/);
     assert.match(source, /\binstallMobileOverlayCompatController\b/);
     assert.doesNotMatch(source, /mobile-top-settings-layout-controller/);
 });

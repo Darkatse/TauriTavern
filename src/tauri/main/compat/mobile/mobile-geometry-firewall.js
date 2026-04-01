@@ -63,6 +63,30 @@ const FIREWALL_CSS = `
     max-width: none !important;
     max-height: none !important;
   }
+
+  body [data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
+    --tt-bottom-inset: max(var(--tt-inset-bottom), 0px);
+    --tt-viewport-bottom-inset-local: max(var(--tt-bottom-inset), var(--tt-ime-bottom));
+    --tt-keyboard-offset: max(calc(var(--tt-viewport-bottom-inset-local) - var(--tt-bottom-inset)), 0px);
+    scroll-padding-bottom: var(--tt-keyboard-offset) !important;
+  }
+
+  body #character_popup[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
+    height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+  }
+
+  body .drawer-content[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
+    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+  }
+
+  body #top-settings-holder > .drawer > .drawer-content[data-tt-ime-surface="fixed-shell"][data-tt-ime-active]:not(.fillLeft):not(.fillRight) {
+    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+  }
+
+  body [data-tt-mobile-surface="fullscreen-window"][data-tt-mobile-surface][data-tt-mobile-surface][data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
+    bottom: max(var(--tt-viewport-bottom-inset-local), 0px) !important;
+  }
 }
 `.trim();
 

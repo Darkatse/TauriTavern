@@ -238,7 +238,6 @@ class AndroidInsetsBridge(
     private val PAGE_READY_SCRIPT =
       """
       (() =>
-        document.readyState !== 'loading' &&
         location.href !== 'about:blank' &&
         Boolean(document.getElementById('sheld'))
       )();
