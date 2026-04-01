@@ -4341,7 +4341,7 @@
     "Enable Dynamic Theme": "啟用動態主題",
     "Day Theme": "日間主題",
     "Night Theme": "夜間主題",
-    "Dynamic Theme hint": "根據系統淺色/深色模式自動切換 SillyTavern 主題。",
+    "Dynamic Theme hint": "根據系統淺色/深色模式自動切換 TauriTavern 主題。",
     "Dynamic Theme help: mapping": "日間 = 系統淺色模式。夜間 = 系統深色模式。",
     "Dynamic Theme help: behavior": "切換效果等同於手動更改主題下拉選單。",
     "Clear": "清除"

@@ -3826,7 +3826,7 @@
     "Enable Dynamic Theme": "启用动态主题",
     "Day Theme": "日间主题",
     "Night Theme": "夜间主题",
-    "Dynamic Theme hint": "根据系统浅色/深色模式自动切换 SillyTavern 主题。",
+    "Dynamic Theme hint": "根据系统浅色/深色模式自动切换 TauriTavern 主题。",
     "Dynamic Theme help: mapping": "日间 = 系统浅色模式。夜间 = 系统深色模式。",
     "Dynamic Theme help: behavior": "切换效果与手动切换主题相同。",
     "Clear": "清除"

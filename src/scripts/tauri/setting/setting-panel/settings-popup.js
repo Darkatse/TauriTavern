@@ -226,7 +226,7 @@ export async function openTauriTavernSettingsPopup() {
                             <select id="tt-dynamic-theme-night-theme" class="text_pole" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;"></select>
                         </div>
 
-                        <small style="opacity: 0.85;" data-i18n="Dynamic Theme hint">Automatically switches SillyTavern themes based on your system light/dark mode.</small>
+                        <small style="opacity: 0.85;" data-i18n="Dynamic Theme hint">Automatically switches TauriTavern themes based on your system light/dark mode.</small>
                     </div>
                 </details>
             </div>
@@ -413,7 +413,7 @@ export async function openTauriTavernSettingsPopup() {
 
     const upstreamThemeSelect = document.getElementById('themes');
     if (!(upstreamThemeSelect instanceof HTMLSelectElement)) {
-        throw new Error('TauriTavern settings: SillyTavern theme selector not found');
+        throw new Error('TauriTavern settings: TauriTavern theme selector not found');
     }
 
     const syncThemeOptions = (targetSelect, storedValue) => {
