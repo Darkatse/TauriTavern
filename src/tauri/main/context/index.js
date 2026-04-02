@@ -9,6 +9,7 @@ import { createCharacterFormService } from '../services/characters/character-for
 import { createUploadService } from '../services/uploads/upload-service.js';
 import { createAndroidArchiveService } from '../services/android/android-archive-service.js';
 import { createHostInvokePolicies } from '../kernel/invokes/invoke-policies.js';
+import { installAssetPathHelpers } from './asset-path-helpers.js';
 import {
     ensureJsonl,
     stripJsonl,
@@ -70,71 +71,11 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         await userDirectoriesService.initialize();
     }
 
-    /**
-     * @param {string} type
-     * @param {string} file
-     * @param {boolean} [useTimestamp]
-     */
-    function buildThumbnailUrl(type, file, useTimestamp = false) {
-            const normalizedType = String(type || '').trim().toLowerCase();
-
-            if (THUMBNAIL_ROUTE_TYPES.has(normalizedType)) {
-                return assetService.buildThumbnailRouteUrl(normalizedType, file, {
-                    cacheBust: useTimestamp ? Date.now() : null,
-                });
-            }
-
-            const filePath = assetService.resolveAssetPath(normalizedType, file);
-
-            if (filePath) {
-                const assetUrl = assetService.toAssetUrl(filePath);
-                if (assetUrl) {
-                    return `${assetUrl}${useTimestamp ? `?t=${Date.now()}` : ''}`;
-                }
-            }
-
-            return assetService.buildThumbnailRouteUrl(normalizedType, file);
-    }
-
-    /** @param {string} file */
-    function buildBackgroundPath(file) {
-            const filePath = assetService.resolveAssetPath('bg', file);
-            const assetUrl = filePath ? assetService.toAssetUrl(filePath) : null;
-            return assetUrl || `backgrounds/${encodeURIComponent(file)}`;
-    }
-
-    /** @param {string} file */
-    function buildAvatarPath(file) {
-            const filePath = assetService.resolveAssetPath('avatar', file);
-            const assetUrl = filePath ? assetService.toAssetUrl(filePath) : null;
-            return assetUrl || null;
-    }
-
-    /** @param {string} file */
-    function buildPersonaPath(file) {
-            const filePath = assetService.resolveAssetPath('persona', file);
-            const assetUrl = filePath ? assetService.toAssetUrl(filePath) : null;
-            return assetUrl || `User Avatars/${file}`;
-    }
-
-    /**
-     * @param {string} type
-     * @param {string} file
-     * @param {import('./types.js').ThumbnailBlobOptions} [options]
-     */
-    function resolveThumbnailBlobUrl(type, file, options = {}) {
-        return thumbnailService.resolveThumbnailBlobUrl(type, file, options);
-    }
-
-    function installAssetPathHelpers() {
-        window.__TAURITAVERN_THUMBNAIL__ = buildThumbnailUrl;
-        window.__TAURITAVERN_BACKGROUND_PATH__ = buildBackgroundPath;
-        window.__TAURITAVERN_AVATAR_PATH__ = buildAvatarPath;
-        window.__TAURITAVERN_PERSONA_PATH__ = buildPersonaPath;
-        window.__TAURITAVERN_THUMBNAIL_BLOB_URL__ = resolveThumbnailBlobUrl;
-    }
-
-    installAssetPathHelpers();
+    installAssetPathHelpers({
+        assetService,
+        thumbnailService,
+        thumbnailRouteTypes: THUMBNAIL_ROUTE_TYPES,
+    });
     invokeService.installFlushOnHide();
 
     return {

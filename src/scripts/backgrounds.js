@@ -219,7 +219,7 @@ export function loadBackgroundSettings(settings) {
     background_settings.sortOrder = backgroundSettings.sortOrder;
     applyThumbnailColumns(background_settings.thumbnailColumns);
 
-    setBackground(backgroundSettings.name, backgroundSettings.url);
+    setBackground(backgroundSettings.name, generateUrlParameter(backgroundSettings.name, false));
     setFittingClass(backgroundSettings.fitting);
     $('#background_fitting').val(backgroundSettings.fitting);
     $('#background_thumbnails_animation').prop('checked', background_settings.animation);
