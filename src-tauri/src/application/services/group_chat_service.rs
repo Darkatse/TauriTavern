@@ -127,6 +127,32 @@ impl GroupChatService {
         Ok(())
     }
 
+    pub async fn update_group_chat_store_json(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), ApplicationError> {
+        self.group_chat_repository
+            .update_group_chat_store_json(chat_id, namespace, key, value)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn rename_group_chat_store_key(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+        new_key: &str,
+    ) -> Result<(), ApplicationError> {
+        self.group_chat_repository
+            .rename_group_chat_store_key(chat_id, namespace, key, new_key)
+            .await?;
+        Ok(())
+    }
+
     pub async fn delete_group_chat_store_json(
         &self,
         chat_id: &str,

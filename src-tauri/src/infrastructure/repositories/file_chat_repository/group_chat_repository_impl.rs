@@ -302,6 +302,28 @@ impl GroupChatRepository for FileChatRepository {
             .await
     }
 
+    async fn update_group_chat_store_json(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), DomainError> {
+        self.update_group_chat_store_json_value(chat_id, namespace, key, value)
+            .await
+    }
+
+    async fn rename_group_chat_store_key(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+        new_key: &str,
+    ) -> Result<(), DomainError> {
+        self.rename_group_chat_store_key_value(chat_id, namespace, key, new_key)
+            .await
+    }
+
     async fn delete_group_chat_store_json(
         &self,
         chat_id: &str,

@@ -129,6 +129,60 @@ pub async fn set_character_chat_store_json(
 }
 
 #[tauri::command]
+pub async fn update_character_chat_store_json(
+    character_name: String,
+    file_name: String,
+    namespace: String,
+    key: String,
+    value: Value,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command(format!(
+        "update_character_chat_store_json {}/{}:{}/{}",
+        character_name, file_name, namespace, key
+    ));
+
+    app_state
+        .chat_service
+        .update_character_chat_store_json(&character_name, &file_name, &namespace, &key, value)
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to update chat store json {}/{}:{}/{}",
+            character_name, file_name, namespace, key
+        )))
+}
+
+#[tauri::command]
+pub async fn rename_character_chat_store_key(
+    character_name: String,
+    file_name: String,
+    namespace: String,
+    key: String,
+    new_key: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command(format!(
+        "rename_character_chat_store_key {}/{}:{}/{} -> {}",
+        character_name, file_name, namespace, key, new_key
+    ));
+
+    app_state
+        .chat_service
+        .rename_character_chat_store_key(
+            &character_name,
+            &file_name,
+            &namespace,
+            &key,
+            &new_key,
+        )
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to rename chat store key {}/{}:{}/{} -> {}",
+            character_name, file_name, namespace, key, new_key
+        )))
+}
+
+#[tauri::command]
 pub async fn delete_character_chat_store_json(
     character_name: String,
     file_name: String,

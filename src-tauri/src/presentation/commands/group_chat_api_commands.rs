@@ -114,6 +114,52 @@ pub async fn set_group_chat_store_json(
 }
 
 #[tauri::command]
+pub async fn update_group_chat_store_json(
+    chat_id: String,
+    namespace: String,
+    key: String,
+    value: Value,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command(format!(
+        "update_group_chat_store_json {}:{}/{}",
+        chat_id, namespace, key
+    ));
+
+    app_state
+        .group_chat_service
+        .update_group_chat_store_json(&chat_id, &namespace, &key, value)
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to update group chat store json {}:{}/{}",
+            chat_id, namespace, key
+        )))
+}
+
+#[tauri::command]
+pub async fn rename_group_chat_store_key(
+    chat_id: String,
+    namespace: String,
+    key: String,
+    new_key: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command(format!(
+        "rename_group_chat_store_key {}:{}/{} -> {}",
+        chat_id, namespace, key, new_key
+    ));
+
+    app_state
+        .group_chat_service
+        .rename_group_chat_store_key(&chat_id, &namespace, &key, &new_key)
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to rename group chat store key {}:{}/{} -> {}",
+            chat_id, namespace, key, new_key
+        )))
+}
+
+#[tauri::command]
 pub async fn delete_group_chat_store_json(
     chat_id: String,
     namespace: String,

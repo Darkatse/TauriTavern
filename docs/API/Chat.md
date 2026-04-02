@@ -117,12 +117,28 @@ await handle.store.setJson({ namespace: 'my-ext', key: 'index', value: largeData
 // 读取
 const data = await handle.store.getJson({ namespace: 'my-ext', key: 'index' });
 
+// 更新（对象会深度合并；非对象会直接替换）
+await handle.store.updateJson({
+  namespace: 'my-ext',
+  key: 'index',
+  value: { lastFloor: 42, updatedAt: Date.now() },
+});
+
+// 重命名 key
+await handle.store.renameKey({
+  namespace: 'my-ext',
+  key: 'index',
+  newKey: 'index-v2',
+});
+
 // 列出所有键
 const keys = await handle.store.listKeys({ namespace: 'my-ext' });
 
 // 删除
 await handle.store.deleteJson({ namespace: 'my-ext', key: 'old-key' });
 ```
+
+兼容：`updateJSON()` 是 `updateJson()` 的别名；`updateKey()` 是 `renameKey()` 的别名。
 
 **适用场景**：表格、索引、数据库快照等大 JSON 数据。数据与消息彻底解耦，不会膨胀聊天文件。
 

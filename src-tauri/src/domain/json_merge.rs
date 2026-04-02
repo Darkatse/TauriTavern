@@ -15,3 +15,4 @@ pub(crate) fn merge_json_value(current: &mut Value, updates: Value) {
         (current_value, updates_value) => *current_value = updates_value,
     }
 }
+

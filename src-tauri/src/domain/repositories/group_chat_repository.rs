@@ -131,6 +131,24 @@ pub trait GroupChatRepository: Send + Sync {
         value: Value,
     ) -> Result<(), DomainError>;
 
+    /// Merge-update a JSON value in the group chat extension store.
+    async fn update_group_chat_store_json(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), DomainError>;
+
+    /// Rename a JSON key in the group chat extension store.
+    async fn rename_group_chat_store_key(
+        &self,
+        chat_id: &str,
+        namespace: &str,
+        key: &str,
+        new_key: &str,
+    ) -> Result<(), DomainError>;
+
     /// Delete a JSON value from the group chat extension store.
     async fn delete_group_chat_store_json(
         &self,

@@ -1381,6 +1381,180 @@ async fn recent_summary_skips_fingerprint_and_search_builds_it_lazily() {
     let _ = fs::remove_dir_all(&root).await;
 }
 
+#[tokio::test]
+async fn character_chat_store_update_json_merges_and_replaces_values() {
+    let (repository, root) = setup_repository().await;
+
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session",
+        &payload_with_integrity("store-merge-a"),
+        false,
+    )
+    .await
+    .expect("save chat payload");
+
+    repository
+        .set_character_chat_store_json(
+            "alice",
+            "session",
+            "my-ext",
+            "index",
+            json!({
+                "a": 1,
+                "nested": { "x": 1 },
+            }),
+        )
+        .await
+        .expect("seed store json");
+
+    repository
+        .update_character_chat_store_json(
+            "alice",
+            "session",
+            "my-ext",
+            "index",
+            json!({
+                "b": 2,
+                "nested": { "y": 2 },
+            }),
+        )
+        .await
+        .expect("merge-update store json");
+
+    let merged = repository
+        .get_character_chat_store_json("alice", "session", "my-ext", "index")
+        .await
+        .expect("read merged store json");
+    assert_eq!(
+        merged,
+        json!({
+            "a": 1,
+            "b": 2,
+            "nested": { "x": 1, "y": 2 },
+        })
+    );
+
+    repository
+        .update_character_chat_store_json("alice", "session", "my-ext", "index", json!(42))
+        .await
+        .expect("replace store json");
+
+    let replaced = repository
+        .get_character_chat_store_json("alice", "session", "my-ext", "index")
+        .await
+        .expect("read replaced store json");
+    assert_eq!(replaced, json!(42));
+
+    repository
+        .update_character_chat_store_json(
+            "alice",
+            "session",
+            "my-ext",
+            "missing",
+            json!({ "created": true }),
+        )
+        .await
+        .expect("upsert store json");
+
+    let created = repository
+        .get_character_chat_store_json("alice", "session", "my-ext", "missing")
+        .await
+        .expect("read created store json");
+    assert_eq!(created, json!({ "created": true }));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn character_chat_store_update_key_renames_entry() {
+    let (repository, root) = setup_repository().await;
+
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session",
+        &payload_with_integrity("store-rename-a"),
+        false,
+    )
+    .await
+    .expect("save chat payload");
+
+    repository
+        .set_character_chat_store_json("alice", "session", "my-ext", "old", json!({ "ok": true }))
+        .await
+        .expect("seed store json");
+
+    repository
+        .rename_character_chat_store_key("alice", "session", "my-ext", "old", "new")
+        .await
+        .expect("rename store key");
+
+    let err = repository
+        .get_character_chat_store_json("alice", "session", "my-ext", "old")
+        .await
+        .expect_err("old key should be gone");
+    assert!(
+        matches!(err, DomainError::NotFound(_)),
+        "expected not found for old key"
+    );
+
+    let value = repository
+        .get_character_chat_store_json("alice", "session", "my-ext", "new")
+        .await
+        .expect("read renamed key");
+    assert_eq!(value, json!({ "ok": true }));
+
+    let keys = repository
+        .list_character_chat_store_keys("alice", "session", "my-ext")
+        .await
+        .expect("list keys");
+    assert_eq!(keys, vec![String::from("new")]);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn group_chat_store_update_json_and_key_work() {
+    let (repository, root) = setup_repository().await;
+
+    save_group_chat_payload_from_values(
+        &repository,
+        &root,
+        "group-session",
+        &payload_with_integrity("store-group-a"),
+        false,
+    )
+    .await
+    .expect("save group chat payload");
+
+    repository
+        .update_group_chat_store_json(
+            "group-session",
+            "my-ext",
+            "index",
+            json!({ "hello": "world" }),
+        )
+        .await
+        .expect("upsert group store json");
+
+    repository
+        .rename_group_chat_store_key("group-session", "my-ext", "index", "index-v2")
+        .await
+        .expect("rename group store key");
+
+    let value = repository
+        .get_group_chat_store_json("group-session", "my-ext", "index-v2")
+        .await
+        .expect("read renamed group key");
+    assert_eq!(value, json!({ "hello": "world" }));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
 async fn save_chat_payload_from_values(
     repository: &FileChatRepository,
     root: &PathBuf,

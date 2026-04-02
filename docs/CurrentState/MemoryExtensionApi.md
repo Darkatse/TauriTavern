@@ -54,6 +54,8 @@ await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
 
 - `handle.store.getJson({ namespace, key })`
 - `handle.store.setJson({ namespace, key, value })`
+- `handle.store.updateJson({ namespace, key, value })`
+- `handle.store.renameKey({ namespace, key, newKey })`
 - `handle.store.deleteJson({ namespace, key })`
 - `handle.store.listKeys({ namespace })`
 
@@ -85,4 +87,3 @@ await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
 - API 参考：`docs/API/Chat.md`
 - 适配指南：`docs/API/Migration.md`
 - windowed payload 现状：`docs/CurrentState/WindowedPayload.md`
-

@@ -195,6 +195,59 @@ function createChatHandle({ safeInvoke, ref }) {
         });
     }
 
+    async function updateStoreJson(options) {
+        const namespace = String(options?.namespace || '').trim();
+        const key = String(options?.key || '').trim();
+        if (!namespace || !key) {
+            throw new Error('namespace and key are required');
+        }
+
+        const value = options?.value;
+
+        if (normalized.kind === 'character') {
+            return safeInvoke('update_character_chat_store_json', {
+                characterName: normalized.characterId,
+                fileName: normalized.fileName,
+                namespace,
+                key,
+                value,
+            });
+        }
+
+        return safeInvoke('update_group_chat_store_json', {
+            chatId: normalized.chatId,
+            namespace,
+            key,
+            value,
+        });
+    }
+
+    async function renameStoreKey(options) {
+        const namespace = String(options?.namespace || '').trim();
+        const key = String(options?.key || '').trim();
+        const newKey = String(options?.newKey || '').trim();
+        if (!namespace || !key || !newKey) {
+            throw new Error('namespace, key, and newKey are required');
+        }
+
+        if (normalized.kind === 'character') {
+            return safeInvoke('rename_character_chat_store_key', {
+                characterName: normalized.characterId,
+                fileName: normalized.fileName,
+                namespace,
+                key,
+                newKey,
+            });
+        }
+
+        return safeInvoke('rename_group_chat_store_key', {
+            chatId: normalized.chatId,
+            namespace,
+            key,
+            newKey,
+        });
+    }
+
     async function deleteStoreJson(options) {
         const namespace = String(options?.namespace || '').trim();
         const key = String(options?.key || '').trim();
@@ -422,6 +475,10 @@ function createChatHandle({ safeInvoke, ref }) {
         store: {
             getJson: getStoreJson,
             setJson: setStoreJson,
+            updateJson: updateStoreJson,
+            updateJSON: updateStoreJson,
+            renameKey: renameStoreKey,
+            updateKey: renameStoreKey,
             deleteJson: deleteStoreJson,
             listKeys: listStoreKeys,
         },

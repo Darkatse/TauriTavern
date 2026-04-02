@@ -244,6 +244,26 @@ pub trait ChatRepository: Send + Sync {
         value: Value,
     ) -> Result<(), DomainError>;
 
+    /// Merge-update a JSON value in the character chat extension store.
+    async fn update_character_chat_store_json(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+        value: Value,
+    ) -> Result<(), DomainError>;
+
+    /// Rename a JSON key in the character chat extension store.
+    async fn rename_character_chat_store_key(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        namespace: &str,
+        key: &str,
+        new_key: &str,
+    ) -> Result<(), DomainError>;
+
     /// Delete a JSON value from the character chat extension store.
     async fn delete_character_chat_store_json(
         &self,

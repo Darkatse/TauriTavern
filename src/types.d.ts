@@ -290,6 +290,9 @@ type TauriTavernChatHandle = {
     store: {
         getJson: (options: { namespace: string; key: string }) => Promise<unknown>;
         setJson: (options: { namespace: string; key: string; value: unknown }) => Promise<void>;
+        updateJson: (options: { namespace: string; key: string; value: unknown }) => Promise<void>;
+        updateJSON: (options: { namespace: string; key: string; value: unknown }) => Promise<void>;
+        renameKey: (options: { namespace: string; key: string; newKey: string }) => Promise<void>;
         deleteJson: (options: { namespace: string; key: string }) => Promise<void>;
         listKeys: (options: { namespace: string }) => Promise<string[]>;
     };
