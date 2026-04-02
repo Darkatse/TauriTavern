@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "createdAt": "2026-03-11",
+  "createdAt": "2026-04-01",
   "maxLinesByPath": {
-    "src/tauri/main/bootstrap.js": 382,
-    "src/tauri/main/context.js": 2,
-    "src/tauri/main/routes/ai-routes.js": 895,
-    "src/tauri/main/routes/chat-routes.js": 616
+    "src/tauri/main/bootstrap.js": 500,
+    "src/tauri/main/context.js": 5,
+    "src/tauri/main/routes/ai-routes.js": 777,
+    "src/tauri/main/routes/chat-routes.js": 500
   },
   "notes": [
     "这些文件是宿主层的关键聚合点：Phase 1 起禁止继续增长。",

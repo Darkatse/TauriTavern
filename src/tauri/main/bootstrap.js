@@ -9,6 +9,7 @@ import { downloadBlobWithRuntime, isNativeMobileDownloadRuntime } from '../../sc
 import { showExportFailureToast, showExportSuccessToast } from '../../scripts/download-feedback.js';
 import { installAndroidImeLayoutHost } from './compat/mobile/android-ime-layout-host.js';
 import { installMobileGeometryFirewall } from './compat/mobile/mobile-geometry-firewall.js';
+import { installMobileIframeViewportContractBridge } from './compat/mobile/mobile-iframe-viewport-contract-bridge.js';
 import { installMobileImeSurfaceController } from './compat/mobile/mobile-ime-surface-controller.js';
 import { installMobileOverlayCompatController } from './compat/mobile/mobile-overlay-compat-controller.js';
 import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compat.js';
@@ -153,15 +154,11 @@ function installHostAbi(context) {
     };
 }
 
-function installSameOriginWindowPatches(interceptors, downloadBridge) {
+function installSameOriginWindowPatches(interceptors, downloadBridge, { iframeContractBridge } = {}) {
     const trackedIframes = new WeakSet();
 
     const patchWindow = (targetWindow) => {
-        if (!targetWindow) {
-            return;
-        }
-
-        if (getWindowOrigin(targetWindow) !== window.location.origin) {
+        if (!targetWindow || getWindowOrigin(targetWindow) !== window.location.origin) {
             return;
         }
 
@@ -183,6 +180,7 @@ function installSameOriginWindowPatches(interceptors, downloadBridge) {
             } catch {
                 // Ignore cross-origin access failures.
             }
+            iframeContractBridge?.watchIframe?.(iframeElement);
         };
 
         iframeElement.addEventListener('load', patchFromIframe);
@@ -348,7 +346,7 @@ export function bootstrapTauriMain() {
     interceptors.patchFetch();
     interceptors.patchJQueryAjax();
     downloadBridge.patchWindow();
-    installSameOriginWindowPatches(interceptors, downloadBridge); if (isMobile) installMobileWindowOpenCompat(); preinstallPanelRuntime();
+    installSameOriginWindowPatches(interceptors, downloadBridge, { iframeContractBridge: isMobile ? installMobileIframeViewportContractBridge() : null }); if (isMobile) installMobileWindowOpenCompat(); preinstallPanelRuntime();
     const readyPromise = initializeTauriIntegration(
         context,
         interceptors,

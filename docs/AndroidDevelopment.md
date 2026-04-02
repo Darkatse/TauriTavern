@@ -250,9 +250,15 @@ https://v2.tauri.app/develop/resources/#android
 已落地方案：
 
 - 在 Tauri mobile 安装第三方 surface classifier + CSS contract：
-  - JS classifier：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
+  - JS classifier（admission-time）：
+    - 分类/契约输出：`src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`
+    - 观察与有界 settle window：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
+    - 同源 iframe bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
     - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
-    - 策略：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对命中元素分类并输出 `data-tt-mobile-surface="backdrop|fullscreen-window|edge-window"`，edge-window 额外写入 `--tt-original-top`。
+    - 策略：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对命中元素分类并输出：
+      - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`
+      - `data-tt-mobile-surface-admitted="1"`（host-private sentinel）
+      - `--tt-original-top=<px>`（仅 edge-window）
     - 显式 opt-in：若节点已带 `data-tt-mobile-surface`，将尊重并不再改写。
   - CSS contract：由 `src/tauri/main/compat/mobile/mobile-geometry-firewall.js` 提供 `[data-tt-mobile-surface="..."]` 的几何规则，统一执行 safe-area 约束（backdrop 保持 full-bleed）。
   - 依赖：`--tt-inset-* / --tt-viewport-bottom-inset` 表示当前布局策略；非沉浸模式下会提供 safe-area 避让，沉浸模式下回落为 `0`，因此 contract 会自然退化为 full-bleed。

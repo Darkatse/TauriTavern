@@ -89,30 +89,42 @@ Android 说明：
 - 第一方顶部设置面板（`#top-settings-holder` 下的非侧栏 drawer）不再依赖运行时测量与 inline 回写：
   - 由 geometry firewall 以 CSS contract 直接约束几何（holder-anchored），避免出现第二/第三套几何系统
 - 主容器 `#sheld` 以 `inset-top + topBarBlockSize` 定位，并用 `--tt-base-viewport-height`/`--doc-height` 计算高度。
-- Android 的键盘抬升不再直接绑定在主题可覆写的 `#form_sheld` 上；宿主层会在 `#form_sheld` 内安装私有 IME lift/spacer 节点，由它们消费 `--tt-ime-bottom` 推导出的偏移并保留底部占位。
+- Android 的键盘抬升不再直接绑定在主题可覆写的 `#form_sheld` 上；宿主使用 host-private DOM + contract 承载：
+  - `src/tauri/main/compat/mobile/android-ime-layout-host.js` 在 `#form_sheld` 内安装 lift/spacer 节点（仅 composer）。
+  - fixed-shell 等非 composer surface 由 geometry firewall 直接消费 `--tt-ime-bottom`（见 §3.6）。
 
 这些规则的目标是：在非沉浸模式下避开顶部/底部安全区与键盘，在沉浸模式下保持 full-bleed。
 
 ### 3.3 第三方脚本浮层：surface classifier + safe‑area contract（移动端）
 
-实现：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`  
+实现：
+
+- 分类/契约输出：`src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`
+- 观察与有界 settle window：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
+- 同源 iframe contract bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
+
 安装入口：`src/tauri/main/bootstrap.js`（仅 Tauri mobile UA）
 
 当前策略：
 
 - **Admission**：仅观察 `document.body` 的直系子节点新增/移除（`subtree: false`），并对带 `script_id` 的 portal root 进一步扫描其子树（JS-Slash-Runner 常见挂载形态）。
-- **判定**：对符合条件的 `position: fixed` 节点进行 surface 分类（backdrop / fullscreen-window / edge-window）。
+- **判定**：对符合条件的 `position: fixed` 节点进行 surface 分类（backdrop / viewport-host / fullscreen-window / free-window / edge-window）。
 - **输出**：不再直接写入 `top`；改为输出契约属性：
-  - `data-tt-mobile-surface="backdrop|fullscreen-window|edge-window"`
+  - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`
+  - `data-tt-mobile-surface-admitted="1"`（host-private sentinel，用于区分 host-admitted 与显式 opt-in；非 ABI）
   - `--tt-original-top=<px>`（仅 edge-window，用于在 safe-area top 之上保持原始 top 偏移）
-- **落地**：几何修正完全由 geometry firewall 的 CSS contract 执行：
+- **落地**：几何修正主要由 geometry firewall 的 CSS contract 执行（`free-window` 例外：仅 admission-time 允许一次性 nudge 初始 top，之后不再接管）：
   - `[data-tt-mobile-surface="edge-window"]`：只修正 top
   - `[data-tt-mobile-surface="fullscreen-window"]`：修正四边并把 width/height 改成 auto（避免 `100vh` 把底部顶出屏幕）
+  - `[data-tt-mobile-surface="viewport-host"]`：outer host 强制 full-bleed（不做 safe-area 收缩；safe-area contract 进入 document boundary 处理）
+  - `[data-tt-mobile-surface="free-window"]`：不接管 `top/left`（仅 admission-time 允许一次性把初始位置从 safe-area 顶部挪开）
   - `[data-tt-mobile-surface="backdrop"]`：保持 full-bleed（不做 inset）
   - 备注：firewall 的 surface selector 会刻意重复 attribute 以获得足够 specificity（覆盖常见框架 scoped CSS + `!important`）
 - **排除**：明确跳过 `body/#sheld/#chat` 等核心容器（避免影响主界面）。
 - **显式 opt-in**：若节点已带 `data-tt-mobile-surface`，该控制器将尊重并不再改写（便于第三方脚本作者自我修复）。
-- **Revalidate**：监听被跟踪 surface 的 `style/class` 变化 + `visualViewport`/`resize`/`orientationchange`，并在 portal 子树新增节点时重新扫描。
+- **Revalidate**：停止自动高频重分类（不再监听 `style/class` 与 `visualViewport`/`resize`/`orientationchange` 噪声）；仅在节点新增/移除时对新增子树做一次 admission。`controller.revalidate()` 保留为手动兜底（debug 用）。
+
+补充：portal host 常见为全屏容器（有时 `pointer-events: none`），实际交互面板通过 portal/render 落到其内部；classifier 会优先准入真实可交互 surface（避免 host 被误当作唯一 surface）。
 
 该控制器的边界是：只负责发现与分类“可能需要 safe-area 约束的第三方顶层 surface”，并输出最小属性契约，不承担全局样式重写职责；在沉浸模式下由于 `--tt-inset-top = 0`，对应的 geometry contract 会自然退化为 full-bleed。
 

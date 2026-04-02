@@ -156,6 +156,14 @@ class HTMLStyleElementMock extends HTMLElementMock {
     }
 }
 
+class HTMLIFrameElementMock extends HTMLElementMock {
+    constructor() {
+        super('iframe');
+        this.contentDocument = null;
+        this.contentWindow = null;
+    }
+}
+
 class MutationObserverMock {
     constructor(callback) {
         this._callback = callback;
@@ -199,6 +207,32 @@ function createDomHarness() {
             }
             return new HTMLElementMock(tagName);
         },
+        createTreeWalker(rootNode, _whatToShow) {
+            const nodes = [];
+            const walk = (node) => {
+                if (!(node instanceof HTMLElementMock)) {
+                    return;
+                }
+                for (const child of node.children) {
+                    nodes.push(child);
+                    walk(child);
+                }
+            };
+            walk(rootNode);
+
+            let index = -1;
+            return {
+                currentNode: rootNode,
+                nextNode() {
+                    index += 1;
+                    if (index >= nodes.length) {
+                        return false;
+                    }
+                    this.currentNode = nodes[index];
+                    return true;
+                },
+            };
+        },
         addEventListener(_type, _handler, _options) {},
     };
 
@@ -225,10 +259,12 @@ function createDomHarness() {
     globalThis.document = documentMock;
     globalThis.MutationObserver = MutationObserverMock;
     globalThis.requestAnimationFrame = windowMock.requestAnimationFrame;
+    globalThis.NodeFilter = { SHOW_ELEMENT: 1 };
 
     globalThis.HTMLElement = HTMLElementMock;
     globalThis.HTMLBodyElement = HTMLBodyElementMock;
     globalThis.HTMLHeadElement = HTMLHeadElementMock;
+    globalThis.HTMLIFrameElement = HTMLIFrameElementMock;
     globalThis.HTMLStyleElement = HTMLStyleElementMock;
 
     globalThis.getComputedStyle = (target) => {
@@ -261,6 +297,10 @@ test('geometry firewall surface selectors keep high specificity (>= Vue scoped)'
         /\[data-tt-mobile-surface="fullscreen-window"\]\[data-tt-mobile-surface\]\[data-tt-mobile-surface\]/,
     );
     assert.match(source, /\[data-tt-mobile-surface="edge-window"\]\[data-tt-mobile-surface\]\[data-tt-mobile-surface\]/);
+    assert.match(
+        source,
+        /\[data-tt-mobile-surface="viewport-host"\]\[data-tt-mobile-surface\]\[data-tt-mobile-surface\]/,
+    );
 });
 
 test('geometry firewall implements fixed-shell IME contract (local keyboard offset)', async () => {
@@ -270,6 +310,26 @@ test('geometry firewall implements fixed-shell IME contract (local keyboard offs
     assert.match(source, /\[data-tt-ime-surface="fixed-shell"\]\[data-tt-ime-active\]/);
     assert.match(source, /--tt-keyboard-offset/);
     assert.match(source, /\bscroll-padding-bottom\b/);
+});
+
+test('geometry firewall enforces viewport root contract (stable size + no root transform)', async () => {
+    const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
+    const source = await readFile(firewallPath, 'utf8');
+
+    assert.match(source, /html,\s*[\r\n]+\s*body\s*\{\s*[\s\S]*height:\s*var\(--tt-base-viewport-height/);
+    assert.match(source, /html\s*\{\s*[\s\S]*-webkit-transform:\s*none/);
+    assert.match(source, /html\s*\{\s*[\s\S]*transform:\s*none/);
+    assert.match(source, /html\s*\{\s*[\s\S]*perspective:\s*none/);
+    assert.match(source, /html\s*\{\s*[\s\S]*backface-visibility:\s*hidden/);
+});
+
+test('geometry firewall defines viewport-host outer geometry contract (explicit size)', async () => {
+    const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
+    const source = await readFile(firewallPath, 'utf8');
+
+    assert.match(source, /\[data-tt-mobile-surface="viewport-host"\][\s\S]*width:\s*100vw/);
+    assert.match(source, /\[data-tt-mobile-surface="viewport-host"\][\s\S]*width:\s*100dvw/);
+    assert.match(source, /\[data-tt-mobile-surface="viewport-host"\][\s\S]*height:\s*var\(--tt-base-viewport-height/);
 });
 
 test('geometry firewall stays last in <head> (keep-last)', async () => {
@@ -300,6 +360,7 @@ test('bootstrap wires mobile geometry firewall + overlay classifier (no old cont
     assert.match(source, /\binstallMobileGeometryFirewall\b/);
     assert.match(source, /\binstallMobileImeSurfaceController\b/);
     assert.match(source, /\binstallMobileOverlayCompatController\b/);
+    assert.match(source, /\binstallMobileIframeViewportContractBridge\b/);
     assert.doesNotMatch(source, /mobile-top-settings-layout-controller/);
 });
 
@@ -531,6 +592,384 @@ test('overlay classifier writes --tt-original-top for edge-window surfaces', asy
     const controller = installMobileOverlayCompatController();
     assert.equal(surface.getAttribute('data-tt-mobile-surface'), 'edge-window');
     assert.equal(surface.style.getPropertyValue('--tt-original-top'), '10px');
+
+    controller.dispose();
+});
+
+test('overlay classifier admits late-styled fixed overlays within bounded settle window', async () => {
+    const dom = createDomHarness();
+    dom.reset();
+
+    dom.setComputedStyle(dom.documentElement, {
+        getPropertyValue(name) {
+            if (name === '--tt-inset-top') return '44px';
+            if (name === '--tt-inset-left') return '0px';
+            if (name === '--tt-inset-right') return '0px';
+            if (name === '--tt-viewport-bottom-inset') return '34px';
+            if (name === '--tt-inset-bottom') return '34px';
+            return '';
+        },
+    });
+
+    let frame = 0;
+    dom.windowMock.requestAnimationFrame = (handler) => {
+        frame += 1;
+        handler();
+        return 0;
+    };
+    globalThis.requestAnimationFrame = dom.windowMock.requestAnimationFrame;
+
+    const surface = new HTMLElementMock('div');
+    surface.setBoundingClientRect({
+        top: 0,
+        left: 0,
+        right: 200,
+        bottom: 200,
+        width: 200,
+        height: 200,
+    });
+    dom.body.appendChild(surface);
+
+    const surfaceStyle = {
+        position: 'fixed',
+        left: '0px',
+        right: 'auto',
+        bottom: 'auto',
+        cursor: 'auto',
+        touchAction: 'auto',
+        pointerEvents: 'auto',
+    };
+    Object.defineProperty(surfaceStyle, 'top', {
+        get() {
+            if (frame === 0) return 'auto';
+            if (frame === 1) return '0px';
+            return '48px';
+        },
+    });
+    dom.setComputedStyle(surface, surfaceStyle);
+
+    const overlayModulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js',
+    );
+    const { installMobileOverlayCompatController } = await import(pathToFileURL(overlayModulePath).href);
+
+    const controller = installMobileOverlayCompatController();
+    assert.equal(surface.getAttribute('data-tt-mobile-surface'), 'edge-window');
+    assert.equal(surface.getAttribute('data-tt-mobile-surface-admitted'), '1');
+    assert.equal(surface.style.getPropertyValue('--tt-original-top'), '48px');
+
+    controller.dispose();
+});
+
+test('overlay classifier admits draggable fixed widgets as free-window (no --tt-original-top + admission nudge)', async () => {
+    const dom = createDomHarness();
+    dom.reset();
+
+    dom.setComputedStyle(dom.documentElement, {
+        getPropertyValue(name) {
+            if (name === '--tt-inset-top') return '44px';
+            if (name === '--tt-inset-left') return '0px';
+            if (name === '--tt-inset-right') return '0px';
+            if (name === '--tt-viewport-bottom-inset') return '0px';
+            if (name === '--tt-inset-bottom') return '0px';
+            return '';
+        },
+    });
+
+    const widget = new HTMLElementMock('div');
+    widget.className = 'fab';
+    widget.setBoundingClientRect({
+        top: 0,
+        left: 0,
+        right: 48,
+        bottom: 48,
+        width: 48,
+        height: 48,
+    });
+    dom.body.appendChild(widget);
+
+    dom.setComputedStyle(widget, {
+        position: 'fixed',
+        top: '0px',
+        left: '0px',
+        right: 'auto',
+        bottom: 'auto',
+        cursor: 'grab',
+        touchAction: 'none',
+    });
+
+    const overlayModulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js',
+    );
+    const { installMobileOverlayCompatController } = await import(pathToFileURL(overlayModulePath).href);
+
+    const controller = installMobileOverlayCompatController();
+    assert.equal(widget.getAttribute('data-tt-mobile-surface'), 'free-window');
+    assert.equal(widget.style.getPropertyValue('--tt-original-top'), '');
+    assert.equal(widget.style.getPropertyValue('top'), '44px');
+
+    controller.dispose();
+});
+
+test('overlay classifier infers free-window via descendant drag affordance', async () => {
+    const dom = createDomHarness();
+    dom.reset();
+
+    dom.setComputedStyle(dom.documentElement, {
+        getPropertyValue(name) {
+            if (name === '--tt-inset-top') return '44px';
+            if (name === '--tt-inset-left') return '0px';
+            if (name === '--tt-inset-right') return '0px';
+            if (name === '--tt-viewport-bottom-inset') return '0px';
+            if (name === '--tt-inset-bottom') return '0px';
+            return '';
+        },
+    });
+
+    const widget = new HTMLElementMock('div');
+    widget.className = 'fab';
+    widget.setBoundingClientRect({
+        top: 0,
+        left: 0,
+        right: 48,
+        bottom: 48,
+        width: 48,
+        height: 48,
+    });
+
+    const handle = new HTMLElementMock('button');
+    widget.appendChild(handle);
+    dom.body.appendChild(widget);
+
+    dom.setComputedStyle(widget, {
+        position: 'fixed',
+        top: '0px',
+        left: '0px',
+        right: 'auto',
+        bottom: 'auto',
+        cursor: 'auto',
+        touchAction: 'auto',
+    });
+
+    dom.setComputedStyle(handle, {
+        cursor: 'grab',
+        touchAction: 'none',
+    });
+
+    const overlayModulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js',
+    );
+    const { installMobileOverlayCompatController } = await import(pathToFileURL(overlayModulePath).href);
+
+    const controller = installMobileOverlayCompatController();
+    assert.equal(widget.getAttribute('data-tt-mobile-surface'), 'free-window');
+    assert.equal(widget.style.getPropertyValue('--tt-original-top'), '');
+    assert.equal(widget.style.getPropertyValue('top'), '44px');
+
+    controller.dispose();
+});
+
+test('overlay classifier admits actual surfaces inside portal hosts (host is not treated as surface)', async () => {
+    const dom = createDomHarness();
+    dom.reset();
+
+    dom.setComputedStyle(dom.documentElement, {
+        getPropertyValue(name) {
+            if (name === '--tt-inset-top') return '44px';
+            if (name === '--tt-inset-left') return '0px';
+            if (name === '--tt-inset-right') return '0px';
+            if (name === '--tt-viewport-bottom-inset') return '34px';
+            if (name === '--tt-inset-bottom') return '34px';
+            return '';
+        },
+    });
+
+    const portalHost = new HTMLElementMock('div');
+    portalHost.setAttribute('script_id', 'portal-host');
+    portalHost.setBoundingClientRect({
+        top: 0,
+        left: 0,
+        right: dom.windowMock.innerWidth,
+        bottom: dom.windowMock.innerHeight,
+        width: dom.windowMock.innerWidth,
+        height: dom.windowMock.innerHeight,
+    });
+
+    const panel = new HTMLElementMock('div');
+    panel.setBoundingClientRect({
+        top: 0,
+        left: 0,
+        right: dom.windowMock.innerWidth,
+        bottom: dom.windowMock.innerHeight,
+        width: dom.windowMock.innerWidth,
+        height: dom.windowMock.innerHeight,
+    });
+    portalHost.appendChild(panel);
+    dom.body.appendChild(portalHost);
+
+    dom.setComputedStyle(portalHost, {
+        position: 'fixed',
+        top: '0px',
+        left: '0px',
+        right: '0px',
+        bottom: '0px',
+        pointerEvents: 'none',
+        cursor: 'auto',
+        touchAction: 'auto',
+    });
+
+    dom.setComputedStyle(panel, {
+        position: 'fixed',
+        top: '0px',
+        left: '0px',
+        right: '0px',
+        bottom: '0px',
+        pointerEvents: 'auto',
+        cursor: 'auto',
+        touchAction: 'auto',
+    });
+
+    const overlayModulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js',
+    );
+    const { installMobileOverlayCompatController } = await import(pathToFileURL(overlayModulePath).href);
+
+    const controller = installMobileOverlayCompatController();
+    assert.equal(portalHost.getAttribute('data-tt-mobile-surface'), null);
+    assert.equal(panel.getAttribute('data-tt-mobile-surface'), 'fullscreen-window');
+    assert.equal(panel.getAttribute('data-tt-mobile-surface-admitted'), '1');
+
+    controller.dispose();
+});
+
+test('overlay classifier admits same-origin iframe hosts as viewport-host (no --tt-original-top)', async () => {
+    const dom = createDomHarness();
+    dom.reset();
+
+    dom.setComputedStyle(dom.documentElement, {
+        getPropertyValue(name) {
+            if (name === '--tt-inset-top') return '44px';
+            if (name === '--tt-inset-left') return '0px';
+            if (name === '--tt-inset-right') return '0px';
+            if (name === '--tt-viewport-bottom-inset') return '34px';
+            if (name === '--tt-inset-bottom') return '34px';
+            return '';
+        },
+    });
+
+    const iframe = new HTMLIFrameElementMock();
+    iframe.setAttribute('script_id', 'test-script');
+    iframe.setBoundingClientRect({
+        top: 0,
+        left: 0,
+        right: dom.windowMock.innerWidth,
+        bottom: dom.windowMock.innerHeight,
+        width: dom.windowMock.innerWidth,
+        height: dom.windowMock.innerHeight,
+    });
+    dom.body.appendChild(iframe);
+
+    dom.setComputedStyle(iframe, {
+        position: 'fixed',
+        top: '0px',
+        left: '0px',
+        right: '0px',
+        bottom: '0px',
+    });
+
+    const overlayModulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js',
+    );
+    const { installMobileOverlayCompatController } = await import(pathToFileURL(overlayModulePath).href);
+
+    const controller = installMobileOverlayCompatController();
+    assert.equal(iframe.getAttribute('data-tt-mobile-surface'), 'viewport-host');
+    assert.equal(iframe.style.getPropertyValue('--tt-original-top'), '');
+
+    controller.revalidate();
+    assert.equal(iframe.getAttribute('data-tt-mobile-surface'), 'viewport-host');
+    assert.equal(iframe.style.getPropertyValue('--tt-original-top'), '');
+
+    controller.dispose();
+});
+
+test('iframe viewport contract bridge syncs inset vars into same-origin iframe documents', async () => {
+    const dom = createDomHarness();
+    dom.reset();
+
+    dom.setComputedStyle(dom.documentElement, {
+        getPropertyValue(name) {
+            if (name === '--tt-inset-top') return '44px';
+            if (name === '--tt-inset-right') return '0px';
+            if (name === '--tt-inset-left') return '0px';
+            if (name === '--tt-inset-bottom') return '34px';
+            if (name === '--tt-viewport-bottom-inset') return '34px';
+            if (name === '--tt-base-viewport-height') return '844px';
+            return '';
+        },
+    });
+
+    const iframe = new HTMLIFrameElementMock();
+    const iframeRoot = new HTMLElementMock('html');
+    iframe.contentDocument = { documentElement: iframeRoot };
+    dom.body.appendChild(iframe);
+
+    const bridgeModulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js',
+    );
+    const { installMobileIframeViewportContractBridge } = await import(pathToFileURL(bridgeModulePath).href);
+
+    const controller = installMobileIframeViewportContractBridge();
+    controller.watchIframe(iframe);
+
+    assert.equal(iframeRoot.style.getPropertyValue('--tt-inset-top'), '44px');
+    assert.equal(iframeRoot.style.getPropertyValue('--tt-inset-right'), '0px');
+    assert.equal(iframeRoot.style.getPropertyValue('--tt-inset-left'), '0px');
+    assert.equal(iframeRoot.style.getPropertyValue('--tt-inset-bottom'), '34px');
+    assert.equal(iframeRoot.style.getPropertyValue('--tt-viewport-bottom-inset'), '34px');
+    assert.equal(iframeRoot.style.getPropertyValue('--tt-base-viewport-height'), '844px');
+
+    controller.dispose();
+});
+
+test('iframe viewport contract bridge ignores cross-origin access failures', async () => {
+    const dom = createDomHarness();
+    dom.reset();
+
+    dom.setComputedStyle(dom.documentElement, {
+        getPropertyValue(name) {
+            if (name === '--tt-inset-top') return '44px';
+            if (name === '--tt-inset-right') return '0px';
+            if (name === '--tt-inset-left') return '0px';
+            if (name === '--tt-inset-bottom') return '34px';
+            if (name === '--tt-viewport-bottom-inset') return '34px';
+            if (name === '--tt-base-viewport-height') return '844px';
+            return '';
+        },
+    });
+
+    const iframe = new HTMLIFrameElementMock();
+    Object.defineProperty(iframe, 'contentDocument', {
+        get() {
+            throw new Error('Cross origin');
+        },
+    });
+    dom.body.appendChild(iframe);
+
+    const bridgeModulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js',
+    );
+    const { installMobileIframeViewportContractBridge } = await import(pathToFileURL(bridgeModulePath).href);
+
+    const controller = installMobileIframeViewportContractBridge();
+    assert.doesNotThrow(() => controller.watchIframe(iframe));
 
     controller.dispose();
 });

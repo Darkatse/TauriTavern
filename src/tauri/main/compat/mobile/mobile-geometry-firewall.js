@@ -6,6 +6,28 @@ const STYLE_ID = 'tt-mobile-geometry-firewall';
 const FIREWALL_CSS = `
 /* [TauriTavern] Mobile geometry firewall (host-last) */
 @media screen and (max-width: 1000px) {
+  /* Viewport root contract (mobile):
+   * - Ensure documentElement has a non-zero, stable layout size.
+   * - Avoid root transforms that would turn <html> into a fixed containing block.
+   *
+   * This is a prerequisite for third-party fixed overlays (fullscreen dialogs,
+   * runtime hosts, etc.) to behave consistently across WebViews.
+   */
+  html,
+  body {
+    height: var(--tt-base-viewport-height, var(--doc-height, 100vh)) !important;
+    min-height: var(--tt-base-viewport-height, var(--doc-height, 100vh)) !important;
+  }
+
+  html {
+    -webkit-transform: none !important;
+    transform: none !important;
+    -webkit-perspective: none !important;
+    perspective: none !important;
+    -webkit-backface-visibility: hidden !important;
+    backface-visibility: hidden !important;
+  }
+
   body #top-settings-holder,
   body #top-bar {
     position: fixed !important;
@@ -60,6 +82,19 @@ const FIREWALL_CSS = `
     bottom: max(var(--tt-viewport-bottom-inset, var(--tt-inset-bottom)), 0px) !important;
     width: auto !important;
     height: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+  }
+
+  body [data-tt-mobile-surface="viewport-host"][data-tt-mobile-surface][data-tt-mobile-surface] {
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    width: 100dvw !important;
+    height: var(--tt-base-viewport-height, var(--doc-height, 100vh)) !important;
+    height: var(--tt-base-viewport-height, var(--doc-height, 100dvh)) !important;
     max-width: none !important;
     max-height: none !important;
   }

@@ -152,7 +152,9 @@ src/
 - `src/scripts/extensions.js`：插件激活编排层（发现、排序、依赖/版本检查、触发加载）。
 - `src/scripts/browser-fixes.js`：上游浏览器补丁（保持与 SillyTavern 同步）。
 - `src/tauri/main/compat/mobile/mobile-runtime-compat.js`：Tauri mobile 运行时 polyfills（补齐旧 WebView 缺失 JS API）。
-- `src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`：Tauri mobile 第三方浮层/窗口 surface classifier（输出 `data-tt-mobile-surface` + 可选 `--tt-original-top`，几何由 geometry firewall 的 CSS contract 落地）。
+- `src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`：Tauri mobile 第三方 fixed overlay admission（分类 + 契约输出）。
+- `src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`：Tauri mobile overlay compat controller（观察 + 有界 settle window，暴露 `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__`）。
+- `src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`：Same-origin iframe 的 viewport/inset contract bridge（`viewport-host` 边界变量同步）。
 - `src/scripts/extensions/runtime/resource-paths.js`：扩展资源路径规范化与 third-party 判定。
 - `src/scripts/extensions/runtime/tauri-ready.js`：等待 `__TAURITAVERN_MAIN_READY__`，避免 bridge 未就绪时提前加载。
 - `src/scripts/extensions/runtime/third-party-runtime.js`：第三方扩展样式兼容层（legacy WebView 下为样式 URL 附加 `ttCompat=layer`，触发 Rust 端点做 `@layer` 展平；不再走前端预取/Blob 注入）。
@@ -230,11 +232,17 @@ src/
 
 #### 7.7.3 浮层 safe-area 修正（移动端）
 
-- 实现位置：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`。
+- 实现位置：
+  - 分类/契约输出：`src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`
+  - 观察与有界 settle window：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
+  - 同源 iframe bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
 - 入口：`src/tauri/main/bootstrap.js` 中安装（仅 Tauri mobile）。
 - 触发条件：只处理“第三方顶层 surface”候选（通常为 `position: fixed` 且顶边贴近 0 的窗口/遮罩）。
 - 处理策略（两段式）：
-  - JS classifier：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对命中元素分类并输出 `data-tt-mobile-surface="backdrop|fullscreen-window|edge-window"`，edge-window 额外写入 `--tt-original-top`。
+  - JS classifier：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对命中元素分类并输出：
+    - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`
+    - `data-tt-mobile-surface-admitted="1"`（host-private sentinel）
+    - `--tt-original-top=<px>`（仅 edge-window）
   - CSS contract：由 `mobile-geometry-firewall.js` 提供 `[data-tt-mobile-surface="..."]` 的几何规则，统一执行 safe-area 约束（backdrop 保持 full-bleed）。
 - 显式 opt-in：若节点已带 `data-tt-mobile-surface`，classifier 将尊重并不再改写（便于第三方脚本作者自我修复）。
 - Android 变量语义：`--tt-inset-top` 表示当前布局应避开的有效 inset；非沉浸模式下反映顶部 safe area，沉浸模式下回落为 `0`，因此对应的 contract 会自然退化为 full-bleed。
