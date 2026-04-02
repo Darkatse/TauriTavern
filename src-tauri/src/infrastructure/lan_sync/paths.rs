@@ -13,6 +13,7 @@ const SYNC_SCOPE_DIRECTORIES: &[&str] = &[
     "default-user/User Avatars",
     "default-user/OpenAI Settings",
     "default-user/extensions",
+    "default-user/backgrounds",
     "extensions/third-party",
     "_tauritavern/extension-sources/local",
     "_tauritavern/extension-sources/global",
