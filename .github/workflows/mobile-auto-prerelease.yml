@@ -147,7 +147,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build frontend assets
-        run: pnpm build
+        run: pnpm run web:build
 
       - name: Setup Android signing
         if: matrix.mobile == 'android'
@@ -176,7 +176,7 @@ jobs:
           echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
 
       - name: Build and upload mobile pre-release
-        uses: tauri-apps/tauri-action@acc588b4e23a3fbc5bfc5d77ba29df93f3e43c64
+        uses: tauri-apps/tauri-action@latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NDK_HOME: ${{ matrix.mobile == 'android' && steps.setup-ndk.outputs.ndk-path || '' }}
