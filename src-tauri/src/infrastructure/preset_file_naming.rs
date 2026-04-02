@@ -229,7 +229,10 @@ mod tests {
     };
     use crate::domain::errors::DomainError;
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(0);
 
     struct TestDir {
         path: PathBuf,
@@ -241,10 +244,12 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .expect("system time should be after unix epoch")
                 .as_nanos();
+            let counter = NEXT_TEST_DIR_ID.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "tauritavern-preset-file-naming-test-{}-{}",
+                "tauritavern-preset-file-naming-test-{}-{}-{}",
                 std::process::id(),
-                suffix
+                suffix,
+                counter
             ));
             std::fs::create_dir_all(&path).expect("create temp dir");
             Self { path }

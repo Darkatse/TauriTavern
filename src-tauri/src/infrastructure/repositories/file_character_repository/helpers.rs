@@ -188,7 +188,7 @@ impl FileCharacterRepository {
                 if character.shallow {
                     return Ok(character);
                 }
-                return Ok(character.to_shallow());
+                return Ok(character.into_shallow());
             }
 
             if !character.shallow {
@@ -203,7 +203,7 @@ impl FileCharacterRepository {
         let path = self.get_character_path(file_name);
         let character = self.read_character_from_file(&path).await?;
         let result = if shallow {
-            character.to_shallow()
+            character.into_shallow()
         } else {
             character
         };

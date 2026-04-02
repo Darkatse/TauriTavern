@@ -526,19 +526,16 @@ async fn find_all_shallow_preserves_runtime_fields_and_omits_character_book() {
     assert!(shallow.fav);
     assert_eq!(shallow.talkativeness, 0.7);
 
-    assert_eq!(shallow.description, "very long description");
-    assert_eq!(shallow.personality, "very long personality");
-    assert_eq!(shallow.scenario, "scenario");
-    assert_eq!(shallow.first_mes, "hello there");
-    assert_eq!(shallow.mes_example, "example");
-    assert_eq!(shallow.data.system_prompt, "system");
-    assert_eq!(shallow.data.post_history_instructions, "post-history");
-    assert_eq!(shallow.data.alternate_greetings, vec!["alt".to_string()]);
-    assert_eq!(shallow.data.extensions.world, "world");
-    assert_eq!(
-        shallow.data.extensions.additional.get("regex_scripts"),
-        Some(&json!(["rule"]))
-    );
+    assert!(shallow.description.is_empty());
+    assert!(shallow.personality.is_empty());
+    assert!(shallow.scenario.is_empty());
+    assert!(shallow.first_mes.is_empty());
+    assert!(shallow.mes_example.is_empty());
+    assert!(shallow.data.system_prompt.is_empty());
+    assert!(shallow.data.post_history_instructions.is_empty());
+    assert!(shallow.data.alternate_greetings.is_empty());
+    assert!(shallow.data.extensions.world.is_empty());
+    assert!(shallow.data.extensions.additional.is_empty());
     assert!(shallow.data.character_book.is_none());
 
     let _ = fs::remove_dir_all(&root).await;
@@ -570,7 +567,7 @@ async fn find_by_name_promotes_cached_shallow_character_to_full() {
         .expect("load shallow character list");
     assert_eq!(shallow.len(), 1);
     assert!(shallow[0].shallow, "list should be shallow");
-    assert_eq!(shallow[0].description, "desc");
+    assert!(shallow[0].description.is_empty());
     assert!(shallow[0].data.character_book.is_none());
 
     let full = repository

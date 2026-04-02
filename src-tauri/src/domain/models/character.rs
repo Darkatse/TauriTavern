@@ -371,7 +371,7 @@ impl Character {
     }
 
     /// Build a shallow projection for character list rendering.
-    pub fn to_shallow(&self) -> Self {
+    pub fn into_shallow(mut self) -> Self {
         fn pick_non_empty(primary: &str, fallback: &str) -> String {
             if primary.trim().is_empty() {
                 fallback.to_string()
@@ -380,51 +380,104 @@ impl Character {
             }
         }
 
-        let mut character = self.clone();
+        // Keep only fields required by upstream-compatible character list rendering.
+        // The full card will be fetched via `/api/characters/get` when needed.
+        self.name = pick_non_empty(&self.name, &self.data.name);
+        self.creator = pick_non_empty(&self.creator, &self.data.creator);
+        self.creator_notes = pick_non_empty(&self.creator_notes, &self.data.creator_notes);
+        self.character_version = pick_non_empty(&self.character_version, &self.data.character_version);
 
-        character.name = pick_non_empty(&self.name, &self.data.name);
-        character.description = pick_non_empty(&self.description, &self.data.description);
-        character.personality = pick_non_empty(&self.personality, &self.data.personality);
-        character.scenario = pick_non_empty(&self.scenario, &self.data.scenario);
-        character.first_mes = pick_non_empty(&self.first_mes, &self.data.first_mes);
-        character.mes_example = pick_non_empty(&self.mes_example, &self.data.mes_example);
-        character.creator = pick_non_empty(&self.creator, &self.data.creator);
-        character.creator_notes = pick_non_empty(&self.creator_notes, &self.data.creator_notes);
-        character.character_version =
-            pick_non_empty(&self.character_version, &self.data.character_version);
-
-        character.data.name = character.name.clone();
-        character.data.description = character.description.clone();
-        character.data.personality = character.personality.clone();
-        character.data.scenario = character.scenario.clone();
-        character.data.first_mes = character.first_mes.clone();
-        character.data.mes_example = character.mes_example.clone();
-        character.data.creator = character.creator.clone();
-        character.data.creator_notes = character.creator_notes.clone();
-        character.data.character_version = character.character_version.clone();
-
-        if character.tags.is_empty() {
-            character.tags = self.data.tags.clone();
-        }
-        if character.data.tags.is_empty() {
-            character.data.tags = character.tags.clone();
+        if self.tags.is_empty() {
+            self.tags = self.data.tags.clone();
         }
 
-        if character.talkativeness == 0.0 {
-            character.talkativeness = self.data.extensions.talkativeness;
+        if self.talkativeness == 0.0 {
+            self.talkativeness = self.data.extensions.talkativeness;
         }
-        character.data.extensions.talkativeness = character.talkativeness;
 
-        character.fav = self.fav || self.data.extensions.fav;
-        character.data.extensions.fav = character.fav;
+        self.fav = self.fav || self.data.extensions.fav;
 
-        // Keep runtime-relevant card fields intact for extension compatibility,
-        // but omit the embedded lorebook payload to keep list responses lightweight.
-        character.data.character_book = None;
-        character.json_data = None;
-        character.shallow = true;
+        // Drop heavy card payload from shallow projection.
+        self.description.clear();
+        self.personality.clear();
+        self.scenario.clear();
+        self.first_mes.clear();
+        self.mes_example.clear();
 
+        self.data.name = self.name.clone();
+        self.data.description.clear();
+        self.data.personality.clear();
+        self.data.scenario.clear();
+        self.data.first_mes.clear();
+        self.data.mes_example.clear();
+        self.data.creator = self.creator.clone();
+        self.data.creator_notes = self.creator_notes.clone();
+        self.data.character_version = self.character_version.clone();
+        self.data.tags = self.tags.clone();
+
+        self.data.system_prompt.clear();
+        self.data.post_history_instructions.clear();
+        self.data.alternate_greetings.clear();
+        self.data.group_only_greetings.clear();
+
+        self.data.extensions.talkativeness = self.talkativeness;
+        self.data.extensions.fav = self.fav;
+        self.data.extensions.world.clear();
+        self.data.extensions.depth_prompt = DepthPrompt::default();
+        self.data.extensions.additional.clear();
+
+        self.data.character_book = None;
+        self.json_data = None;
+        self.shallow = true;
+
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Character;
+
+    #[test]
+    fn into_shallow_drops_heavy_character_payload() {
+        let mut character = Character::new(
+            "Alice".to_string(),
+            "A very long description".to_string(),
+            "A personality".to_string(),
+            "Hello!".to_string(),
+        );
+
+        character.data.system_prompt = "system prompt".to_string();
+        character.data.post_history_instructions = "jailbreak".to_string();
+        character.data.alternate_greetings = vec!["hi".to_string()];
+        character.data.group_only_greetings = vec!["group-hi".to_string()];
+        character.data.character_book = Some(serde_json::json!({ "entries": { "1": {} } }));
         character
+            .data
+            .extensions
+            .additional
+            .insert(
+                "regex_scripts".to_string(),
+                serde_json::json!([{ "replaceString": "x".repeat(1024) }]),
+            );
+        character.json_data = Some("{\"huge\":true}".to_string());
+
+        let shallow = character.into_shallow();
+
+        assert!(shallow.shallow);
+        assert_eq!(shallow.name, "Alice");
+        assert_eq!(shallow.data.name, "Alice");
+
+        assert!(shallow.description.is_empty());
+        assert!(shallow.personality.is_empty());
+        assert!(shallow.first_mes.is_empty());
+        assert!(shallow.data.system_prompt.is_empty());
+        assert!(shallow.data.post_history_instructions.is_empty());
+        assert!(shallow.data.alternate_greetings.is_empty());
+        assert!(shallow.data.group_only_greetings.is_empty());
+        assert!(shallow.data.extensions.additional.is_empty());
+        assert!(shallow.data.character_book.is_none());
+        assert!(shallow.json_data.is_none());
     }
 }
 

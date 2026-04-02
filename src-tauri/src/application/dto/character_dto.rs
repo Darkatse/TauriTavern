@@ -179,33 +179,61 @@ pub struct GetCharacterChatsDto {
 /// Convert from domain model to DTO
 impl From<Character> for CharacterDto {
     fn from(character: Character) -> Self {
+        let Character {
+            shallow,
+            name,
+            description,
+            personality,
+            scenario,
+            first_mes,
+            mes_example,
+            avatar,
+            chat,
+            creator,
+            creator_notes,
+            character_version,
+            tags,
+            create_date,
+            talkativeness,
+            fav,
+            chat_size,
+            date_added,
+            date_last_chat,
+            data,
+            ..
+        } = character;
+
+        let extensions = if shallow {
+            None
+        } else {
+            Some(serde_json::to_value(&data.extensions).unwrap_or(serde_json::Value::Null))
+        };
+
         Self {
-            shallow: character.shallow,
-            name: character.name,
-            description: character.description,
-            personality: character.personality,
-            scenario: character.scenario,
-            first_mes: character.first_mes,
-            mes_example: character.mes_example,
-            avatar: character.avatar,
-            chat: character.chat,
-            creator: character.creator,
-            creator_notes: character.creator_notes,
-            character_version: character.character_version,
-            tags: character.tags,
-            create_date: character.create_date,
-            talkativeness: character.talkativeness,
-            fav: character.fav,
-            chat_size: character.chat_size,
-            date_added: character.date_added,
-            date_last_chat: character.date_last_chat,
-            alternate_greetings: character.data.alternate_greetings.clone(),
-            system_prompt: character.data.system_prompt.clone(),
-            post_history_instructions: character.data.post_history_instructions.clone(),
-            extensions: Some(
-                serde_json::to_value(&character.data.extensions).unwrap_or(serde_json::Value::Null),
-            ),
-            character_book: character.data.character_book.clone(),
+            shallow,
+            name,
+            description,
+            personality,
+            scenario,
+            first_mes,
+            mes_example,
+            avatar,
+            chat,
+            creator,
+            creator_notes,
+            character_version,
+            tags,
+            create_date,
+            talkativeness,
+            fav,
+            chat_size,
+            date_added,
+            date_last_chat,
+            alternate_greetings: data.alternate_greetings,
+            system_prompt: data.system_prompt,
+            post_history_instructions: data.post_history_instructions,
+            extensions,
+            character_book: data.character_book,
             json_data: None,
         }
     }
