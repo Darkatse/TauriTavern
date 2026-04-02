@@ -52,9 +52,9 @@ icu_locale_core = "2.1.1"
 sys-locale = "0.3.2"
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 image = { version = "0.24", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
-png = "0.17"
 mime_guess = "2.0.5"
 flate2 = "1.1.9"
+crc32fast = "1"
 filetime = "0.2"
 miktik = { version = "0.2.0", default-features = false, features = ["openai", "huggingface", "sentencepiece"] }
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "multipart", "tokio"] }
