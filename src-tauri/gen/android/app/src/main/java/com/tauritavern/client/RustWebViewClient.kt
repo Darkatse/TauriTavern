@@ -25,6 +25,10 @@ class RustWebViewClient(context: Context) : WebViewClient() {
   private var lastInterceptedUrl: Uri? = null
   private var pendingUrlRedirect: String? = null
 
+  interface MainFrameNavigationListener {
+    fun onMainFramePageStarted(view: WebView, url: String)
+  }
+
   private val assetLoader =
     WebViewAssetLoader
       .Builder()
@@ -75,6 +79,7 @@ class RustWebViewClient(context: Context) : WebViewClient() {
     favicon: Bitmap?,
   ) {
     currentUrl = url
+    mainFrameNavigationListener?.onMainFramePageStarted(view, url)
     if (interceptedState[url] == false) {
       val webView = view as RustWebView
       for (script in webView.initScripts) {
@@ -110,6 +115,9 @@ class RustWebViewClient(context: Context) : WebViewClient() {
 
   companion object {
     private const val LOG_TAG = "TauriTavern/WebView"
+
+    @Volatile
+    var mainFrameNavigationListener: MainFrameNavigationListener? = null
 
     init {
       System.loadLibrary("tauritavern_lib")

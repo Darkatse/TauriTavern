@@ -50,9 +50,12 @@ class AndroidInsetsBridge(
   }
 
   fun onWebViewAvailable() {
-    lastPushedInsetsSnapshot = null
-    hasReadyPageInsetsInjection = false
-    webViewInsetsStyleApplier.onWebViewContextReset()
+    resetWebViewInjectionState()
+    refreshInjection()
+  }
+
+  fun onMainFrameNavigationStarted() {
+    resetWebViewInjectionState()
     refreshInjection()
   }
 
@@ -73,6 +76,13 @@ class AndroidInsetsBridge(
     attachSystemInsetsListenerIfNeeded()
     requestSystemInsets()
     scheduleInsetsSyncWhenPageReady()
+  }
+
+  private fun resetWebViewInjectionState() {
+    lastPushedInsetsSnapshot = null
+    hasPendingForcedInsetsPush = false
+    hasReadyPageInsetsInjection = false
+    webViewInsetsStyleApplier.onWebViewContextReset()
   }
 
   @Suppress("DEPRECATION")

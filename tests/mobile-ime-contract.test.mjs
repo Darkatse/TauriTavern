@@ -250,6 +250,39 @@ test('Android insets helper exposes routing APIs and clears old IME target resid
     assert.match(source, /document\.getElementById\('sheld'\)/);
 });
 
+test('Android insets injection resets on main-frame navigation', async () => {
+    const clientPath = path.join(
+        REPO_ROOT,
+        'src-tauri/gen/android/app/src/main/java/com/tauritavern/client/RustWebViewClient.kt',
+    );
+    const clientSource = await readFile(clientPath, 'utf8');
+
+    assert.match(clientSource, /\bmainFrameNavigationListener\b/);
+    assert.match(clientSource, /onMainFramePageStarted/);
+    assert.match(clientSource, /mainFrameNavigationListener\?\.\s*onMainFramePageStarted\(/);
+
+    const activityPath = path.join(
+        REPO_ROOT,
+        'src-tauri/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt',
+    );
+    const activitySource = await readFile(activityPath, 'utf8');
+
+    assert.match(activitySource, /installWebViewNavigationHooks/);
+    assert.match(activitySource, /RustWebViewClient\.mainFrameNavigationListener\s*=/);
+    assert.match(activitySource, /insetsBridge\.onMainFrameNavigationStarted\(\)/);
+    assert.match(activitySource, /RustWebViewClient\.mainFrameNavigationListener\s*=\s*null/);
+
+    const bridgePath = path.join(
+        REPO_ROOT,
+        'src-tauri/gen/android/app/src/main/java/com/tauritavern/client/AndroidInsetsBridge.kt',
+    );
+    const bridgeSource = await readFile(bridgePath, 'utf8');
+
+    assert.match(bridgeSource, /fun onMainFrameNavigationStarted\(\)/);
+    assert.match(bridgeSource, /hasReadyPageInsetsInjection\s*=\s*false/);
+    assert.match(bridgeSource, /webViewInsetsStyleApplier\.onWebViewContextReset\(\)/);
+});
+
 test('mobile IME surface controller is focus-driven (no observers) and writes host-private attrs', async () => {
     const controllerPath = path.join(
         REPO_ROOT,

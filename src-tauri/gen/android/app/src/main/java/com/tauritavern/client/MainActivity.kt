@@ -95,6 +95,7 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    installWebViewNavigationHooks()
     backNavigationController.register(onBackPressedDispatcher, this)
     // Keep a foreground service for the whole app session to reduce OEM background kills.
     aiGenerationNotifier.ensureKeepAliveService()
@@ -142,7 +143,21 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
     isActivityDestroyed = true
     mainHandler.removeCallbacksAndMessages(null)
     backgroundExecutor.shutdownNow()
+    RustWebViewClient.mainFrameNavigationListener = null
     super.onDestroy()
+  }
+
+  private fun installWebViewNavigationHooks() {
+    RustWebViewClient.mainFrameNavigationListener =
+      object : RustWebViewClient.MainFrameNavigationListener {
+        override fun onMainFramePageStarted(view: WebView, url: String) {
+          val activeWebView = webView ?: return
+          if (view !== activeWebView) {
+            return
+          }
+          insetsBridge.onMainFrameNavigationStarted()
+        }
+      }
   }
 
   private fun captureShareIntent(intent: Intent?) {
