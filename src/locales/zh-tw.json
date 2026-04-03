@@ -4344,5 +4344,11 @@
     "Dynamic Theme hint": "根據系統淺色/深色模式自動切換 TauriTavern 主題。",
     "Dynamic Theme help: mapping": "日間 = 系統淺色模式。夜間 = 系統深色模式。",
     "Dynamic Theme help: behavior": "切換效果等同於手動更改主題下拉選單。",
+    "Prompt Cache": "Prompt 快取",
+    "Claude Prompt Cache": "Claude Prompt 快取",
+    "5m (Default TTL)": "5m（預設 TTL）",
+    "1h (Extended)": "1h（延長）",
+    "Prompt Cache help: scope": "適用於 Claude 與 OpenRouter（anthropic/claude*）請求。",
+    "Prompt Cache help: breakpoint": "啟用後快取斷點放在系統提示詞/聊天記錄前/prompt 末尾三處位置，並會自動在與上一條請求完全一致的最後一個 block 處追加斷點以提升命中率。",
     "Clear": "清除"
 }

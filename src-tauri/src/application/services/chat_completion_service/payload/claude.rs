@@ -2,10 +2,6 @@ use serde_json::{Map, Number, Value, json};
 
 use crate::application::errors::ApplicationError;
 
-use super::prompt_cache::{
-    PromptCacheConfig, PromptCacheProvider, append_cache_control_to_last,
-    apply_depth_cache_for_claude,
-};
 use super::shared::{insert_if_present, message_content_to_text, parse_data_url};
 use super::tool_calls::{
     OpenAiToolCall, extract_openai_tool_calls, message_tool_call_id, message_tool_result_text,
@@ -25,8 +21,6 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
 fn build_claude_payload(
     payload: &Map<String, Value>,
 ) -> Result<Map<String, Value>, ApplicationError> {
-    let cache_config = PromptCacheConfig::from_payload(payload, PromptCacheProvider::Claude);
-
     let model = payload
         .get("model")
         .and_then(Value::as_str)
@@ -36,7 +30,22 @@ fn build_claude_payload(
             ApplicationError::ValidationError("Claude request is missing model".to_string())
         })?;
 
-    let (mut messages, mut system_prompt) = convert_messages(payload.get("messages"))?;
+    let use_system_prompt = payload
+        .get("use_sysprompt")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let use_tools = payload
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty())
+        || payload
+            .get("json_schema")
+            .and_then(Value::as_object)
+            .and_then(|schema| schema.get("value"))
+            .is_some_and(|value| !value.is_null());
+
+    let (mut messages, system_prompt) =
+        convert_messages(payload.get("messages"), use_system_prompt, use_tools)?;
 
     if let Some(assistant_prefill) = payload
         .get("assistant_prefill")
@@ -57,10 +66,6 @@ fn build_claude_payload(
 
     move_assistant_images_to_next_user_message(&mut messages);
     merge_consecutive_messages(&mut messages);
-
-    if let Some(caching_at_depth) = cache_config.caching_at_depth {
-        apply_depth_cache_for_claude(&mut messages, caching_at_depth, cache_config.ttl);
-    }
 
     if messages.is_empty() {
         messages.push(json!({
@@ -92,18 +97,18 @@ fn build_claude_payload(
         insert_if_present(&mut request, payload, key);
     }
 
+    if request.contains_key("temperature")
+        && request.contains_key("top_p")
+        && !claude_allows_temperature_and_top_p(model)
+    {
+        request.remove("top_p");
+    }
+
     if let Some(stop) = payload.get("stop").filter(|value| value.is_array()) {
         request.insert("stop_sequences".to_string(), stop.clone());
     }
 
-    let use_system_prompt = payload
-        .get("use_sysprompt")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     if use_system_prompt && !system_prompt.is_empty() {
-        if cache_config.enable_system_prompt_cache {
-            append_cache_control_to_last(&mut system_prompt, cache_config.ttl);
-        }
         request.insert("system".to_string(), Value::Array(system_prompt));
     }
 
@@ -144,10 +149,6 @@ fn build_claude_payload(
     }
 
     if !claude_tools.is_empty() {
-        if cache_config.enable_system_prompt_cache {
-            append_cache_control_to_last(&mut claude_tools, cache_config.ttl);
-        }
-
         request.insert("tools".to_string(), Value::Array(claude_tools));
 
         let tool_choice = forced_tool_choice.or_else(|| {
@@ -200,6 +201,8 @@ fn build_claude_payload(
 
 fn convert_messages(
     messages: Option<&Value>,
+    use_system_prompt: bool,
+    use_tools: bool,
 ) -> Result<(Vec<Value>, Vec<Value>), ApplicationError> {
     let mut converted = Vec::new();
     let mut system_parts: Vec<Value> = Vec::new();
@@ -220,7 +223,40 @@ fn convert_messages(
         return Ok((converted, system_parts));
     };
 
-    for entry in entries {
+    let mut start_index = 0_usize;
+    if use_system_prompt {
+        while start_index < entries.len() {
+            let Some(message) = entries
+                .get(start_index)
+                .and_then(Value::as_object)
+            else {
+                start_index += 1;
+                continue;
+            };
+
+            let role = message
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("user")
+                .trim()
+                .to_lowercase();
+            if role != "system" {
+                break;
+            }
+
+            let content_text = message_content_to_text(message.get("content"));
+            if !content_text.is_empty() {
+                system_parts.push(json!({
+                    "type": "text",
+                    "text": content_text,
+                }));
+            }
+
+            start_index += 1;
+        }
+    }
+
+    for entry in entries.iter().skip(start_index) {
         let Some(message) = entry.as_object() else {
             continue;
         };
@@ -239,19 +275,17 @@ fn convert_messages(
             .filter(|value| !value.is_empty());
 
         match role.as_str() {
-            "system" => {
-                let content_text = message_content_to_text(message.get("content"));
-                if !content_text.is_empty() {
-                    system_parts.push(json!({
-                        "type": "text",
-                        "text": content_text,
-                    }));
-                }
-            }
             "assistant" => {
                 let tool_calls = extract_openai_tool_calls(message.get("tool_calls"));
                 let content_blocks = if !tool_calls.is_empty() {
-                    convert_openai_tool_calls_to_claude_blocks(&tool_calls)
+                    if use_tools {
+                        convert_openai_tool_calls_to_claude_blocks(&tool_calls)
+                    } else {
+                        tool_calls
+                            .iter()
+                            .map(|call| normalize_claude_text_block(&call.arguments.to_string()))
+                            .collect()
+                    }
                 } else {
                     convert_message_content_to_claude_blocks(message.get("content"), name)?
                 };
@@ -264,7 +298,13 @@ fn convert_messages(
                 }
             }
             "tool" => {
-                if let Some(tool_use_id) = message_tool_call_id(message) {
+                if !use_tools {
+                    let result_text = message_tool_result_text(message);
+                    converted.push(json!({
+                        "role": "user",
+                        "content": [normalize_claude_text_block(&result_text)],
+                    }));
+                } else if let Some(tool_use_id) = message_tool_call_id(message) {
                     converted.push(json!({
                         "role": "user",
                         "content": [{
@@ -682,6 +722,20 @@ fn supports_claude_thinking(model: &str) -> bool {
     .any(|prefix| model.starts_with(prefix))
 }
 
+fn claude_allows_temperature_and_top_p(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    [
+        "claude-3",
+        "claude-opus-4-0",
+        "claude-opus-4-1",
+        "claude-opus-4-20250514",
+        "claude-sonnet-4-0",
+        "claude-sonnet-4-20250514",
+    ]
+    .iter()
+    .any(|prefix| model.starts_with(prefix))
+}
+
 fn requires_claude_prefill_role_fix(model: &str) -> bool {
     model
         .trim()
@@ -814,18 +868,17 @@ mod tests {
     }
 
     #[test]
-    fn claude_depth_cache_marks_two_turn_boundaries() {
+    fn claude_use_sysprompt_collects_only_leading_system_messages() {
         let payload = json!({
             "model": "claude-3-5-sonnet-latest",
+            "use_sysprompt": true,
             "messages": [
+                {"role": "system", "content": "s1"},
+                {"role": "system", "content": "s2"},
                 {"role": "user", "content": "u1"},
-                {"role": "assistant", "content": "a1"},
-                {"role": "user", "content": "u2"},
-                {"role": "assistant", "content": "a2"},
-                {"role": "user", "content": "u3"}
-            ],
-            "caching_at_depth": 0,
-            "extended_ttl": true
+                {"role": "system", "content": "late system"},
+                {"role": "user", "content": "u2"}
+            ]
         })
         .as_object()
         .cloned()
@@ -833,50 +886,38 @@ mod tests {
 
         let (_, upstream) = build(payload).expect("build should succeed");
         let body = upstream.as_object().expect("body must be object");
+
+        let system = body
+            .get("system")
+            .and_then(Value::as_array)
+            .expect("system must be array");
+        assert_eq!(system.len(), 2);
+        assert_eq!(system[0]["text"].as_str().unwrap_or_default(), "s1");
+        assert_eq!(system[1]["text"].as_str().unwrap_or_default(), "s2");
+
         let messages = body
             .get("messages")
             .and_then(Value::as_array)
             .expect("messages must be array");
-
-        let cached_ttls = [2_usize, 4_usize]
+        let joined = messages
             .iter()
-            .map(|index| {
-                messages
-                    .get(*index)
-                    .and_then(Value::as_object)
-                    .and_then(|message| message.get("content"))
-                    .and_then(Value::as_array)
-                    .and_then(|parts| parts.last())
-                    .and_then(Value::as_object)
-                    .and_then(|part| part.get("cache_control"))
-                    .and_then(Value::as_object)
-                    .and_then(|cache| cache.get("ttl"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-            })
-            .collect::<Vec<&str>>();
-
-        assert_eq!(cached_ttls, vec!["1h", "1h"]);
+            .filter_map(|message| message.get("content").and_then(Value::as_array))
+            .flat_map(|parts| parts.iter())
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("late system"));
     }
 
     #[test]
-    fn claude_system_and_tools_cache_control_are_applied() {
+    fn claude_system_messages_become_user_when_use_sysprompt_false() {
         let payload = json!({
             "model": "claude-3-5-sonnet-latest",
-            "use_sysprompt": true,
-            "enable_system_prompt_cache": true,
+            "use_sysprompt": false,
             "messages": [
-                {"role": "system", "content": "system rules"},
-                {"role": "user", "content": "hello"}
-            ],
-            "tools": [{
-                "type": "function",
-                "function": {
-                    "name": "weather",
-                    "description": "get weather",
-                    "parameters": { "type": "object", "properties": {} }
-                }
-            }]
+                {"role": "system", "content": "s1"},
+                {"role": "user", "content": "u1"}
+            ]
         })
         .as_object()
         .cloned()
@@ -885,23 +926,21 @@ mod tests {
         let (_, upstream) = build(payload).expect("build should succeed");
         let body = upstream.as_object().expect("body must be object");
 
-        let system_has_cache = body
-            .get("system")
-            .and_then(Value::as_array)
-            .and_then(|parts| parts.last())
-            .and_then(Value::as_object)
-            .and_then(|part| part.get("cache_control"))
-            .is_some();
-        assert!(system_has_cache);
+        assert!(body.get("system").is_none());
 
-        let tool_has_cache = body
-            .get("tools")
+        let messages = body
+            .get("messages")
             .and_then(Value::as_array)
-            .and_then(|tools| tools.last())
-            .and_then(Value::as_object)
-            .and_then(|tool| tool.get("cache_control"))
-            .is_some();
-        assert!(tool_has_cache);
+            .expect("messages must be array");
+        let joined = messages
+            .iter()
+            .filter_map(|message| message.get("content").and_then(Value::as_array))
+            .flat_map(|parts| parts.iter())
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("s1"));
+        assert!(joined.contains("u1"));
     }
 
     #[test]
@@ -925,7 +964,15 @@ mod tests {
                     "tool_call_id": "call_weather",
                     "content": "{\"temperature\":20}"
                 }
-            ]
+            ],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "weather",
+                    "description": "get weather",
+                    "parameters": { "type": "object", "properties": {} }
+                }
+            }]
         })
         .as_object()
         .cloned()
@@ -978,6 +1025,63 @@ mod tests {
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
             "call_weather"
+        );
+    }
+
+    #[test]
+    fn claude_tool_calls_are_text_when_tools_disabled() {
+        let payload = json!({
+            "model": "claude-3-5-sonnet-latest",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_weather",
+                        "type": "function",
+                        "function": {
+                            "name": "weather",
+                            "arguments": "{\"city\":\"Paris\"}"
+                        }
+                    }]
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_weather",
+                    "content": "{\"temperature\":20}"
+                }
+            ]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+        let messages = body
+            .get("messages")
+            .and_then(Value::as_array)
+            .expect("messages must be array");
+
+        let assistant_blocks = messages
+            .first()
+            .and_then(Value::as_object)
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_array)
+            .expect("assistant content must be array");
+        assert_eq!(
+            assistant_blocks[0]["type"].as_str().unwrap_or_default(),
+            "text"
+        );
+
+        let tool_blocks = messages
+            .get(1)
+            .and_then(Value::as_object)
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_array)
+            .expect("tool content must be array");
+        assert_eq!(
+            tool_blocks[0]["type"].as_str().unwrap_or_default(),
+            "text"
         );
     }
 
@@ -1074,5 +1178,43 @@ mod tests {
                 .iter()
                 .any(|block| block.get("type").and_then(Value::as_str) == Some("image"))
         );
+    }
+
+    #[test]
+    fn claude_4_5_models_drop_top_p_when_temperature_is_present() {
+        let payload = json!({
+            "model": "claude-sonnet-4-5",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.7,
+            "top_p": 0.9
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert!(body.get("temperature").is_some());
+        assert!(body.get("top_p").is_none());
+    }
+
+    #[test]
+    fn claude_3_models_keep_top_p_with_temperature() {
+        let payload = json!({
+            "model": "claude-3-5-sonnet-latest",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.7,
+            "top_p": 0.9
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert!(body.get("temperature").is_some());
+        assert!(body.get("top_p").is_some());
     }
 }

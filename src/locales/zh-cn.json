@@ -3829,5 +3829,11 @@
     "Dynamic Theme hint": "根据系统浅色/深色模式自动切换 TauriTavern 主题。",
     "Dynamic Theme help: mapping": "日间 = 系统浅色模式。夜间 = 系统深色模式。",
     "Dynamic Theme help: behavior": "切换效果与手动切换主题相同。",
+    "Prompt Cache": "提示词缓存",
+    "Claude Prompt Cache": "Claude 提示词缓存",
+    "5m (Default TTL)": "5m（默认 TTL）",
+    "1h (Extended)": "1h（延长）",
+    "Prompt Cache help: scope": "适用于 Claude 与 OpenRouter（anthropic/claude*）请求。",
+    "Prompt Cache help: breakpoint": "启用后缓存断点落在系统提示词/聊天记录开始前/末尾三处位置，并会自动在与上一条请求完全一致的最后一个文本块处追加断点以提升命中率。",
     "Clear": "清除"
 }

@@ -37,6 +37,7 @@ use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::domain::repositories::group_chat_repository::GroupChatRepository;
 use crate::domain::repositories::group_repository::GroupRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
+use crate::domain::repositories::prompt_cache_repository::PromptCacheRepository;
 use crate::domain::repositories::quick_reply_repository::QuickReplyRepository;
 use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::domain::repositories::settings_repository::SettingsRepository;
@@ -64,6 +65,7 @@ use crate::infrastructure::repositories::file_content_repository::FileContentRep
 use crate::infrastructure::repositories::file_extension_repository::FileExtensionRepository;
 use crate::infrastructure::repositories::file_group_repository::FileGroupRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
+use crate::infrastructure::repositories::file_prompt_cache_repository::FilePromptCacheRepository;
 use crate::infrastructure::repositories::file_quick_reply_repository::FileQuickReplyRepository;
 use crate::infrastructure::repositories::file_secret_repository::FileSecretRepository;
 use crate::infrastructure::repositories::file_settings_repository::FileSettingsRepository;
@@ -103,6 +105,7 @@ struct AppRepositories {
     group_chat_repository: Arc<dyn GroupChatRepository>,
     user_repository: Arc<dyn UserRepository>,
     settings_repository: Arc<dyn SettingsRepository>,
+    prompt_cache_repository: Arc<dyn PromptCacheRepository>,
     user_directory_repository: Arc<dyn UserDirectoryRepository>,
     secret_repository: Arc<dyn SecretRepository>,
     content_repository: Arc<dyn ContentRepository>,
@@ -155,6 +158,8 @@ pub(super) async fn build_services(
     let chat_completion_service = Arc::new(ChatCompletionService::new(
         repositories.chat_completion_repository,
         repositories.secret_repository.clone(),
+        repositories.settings_repository.clone(),
+        repositories.prompt_cache_repository.clone(),
     ));
     let tokenization_service =
         Arc::new(TokenizationService::new(repositories.tokenizer_repository));
@@ -260,6 +265,11 @@ fn build_repositories(
         data_directory.settings().to_path_buf(),
     ));
 
+    let prompt_cache_repository: Arc<dyn PromptCacheRepository> =
+        Arc::new(FilePromptCacheRepository::new(
+            data_root.join("_tauritavern").join("prompt-cache"),
+        ));
+
     let user_directory_repository: Arc<dyn UserDirectoryRepository> =
         Arc::new(FileUserDirectoryRepository::new(data_root.clone()));
 
@@ -337,6 +347,7 @@ fn build_repositories(
         group_chat_repository,
         user_repository,
         settings_repository,
+        prompt_cache_repository,
         user_directory_repository,
         secret_repository,
         content_repository,

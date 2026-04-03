@@ -1,10 +1,6 @@
 use serde_json::{Map, Value, json};
 
 use super::openai;
-use super::prompt_cache::{
-    PromptCacheConfig, PromptCacheProvider, apply_depth_cache_for_openrouter_claude,
-    apply_system_prompt_cache_for_openrouter,
-};
 use super::shared::insert_if_present;
 
 pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
@@ -13,7 +9,6 @@ pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
 
     if let Some(body) = upstream_payload.as_object_mut() {
         apply_openrouter_overrides(body, &source_payload);
-        apply_openrouter_prompt_caching(body, &source_payload);
     }
 
     ("/chat/completions".to_string(), upstream_payload)
@@ -72,48 +67,6 @@ fn apply_openrouter_overrides(body: &mut Map<String, Value>, source_payload: &Ma
             }),
         );
     }
-}
-
-fn apply_openrouter_prompt_caching(
-    body: &mut Map<String, Value>,
-    source_payload: &Map<String, Value>,
-) {
-    let Some(model) = body
-        .get("model")
-        .and_then(Value::as_str)
-        .or_else(|| source_payload.get("model").and_then(Value::as_str))
-    else {
-        return;
-    };
-
-    if !is_openrouter_claude_model(model) {
-        return;
-    }
-
-    let cache_config =
-        PromptCacheConfig::from_payload(source_payload, PromptCacheProvider::OpenRouter);
-    if !cache_config.enable_system_prompt_cache && cache_config.caching_at_depth.is_none() {
-        return;
-    }
-
-    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
-        return;
-    };
-
-    if cache_config.enable_system_prompt_cache {
-        apply_system_prompt_cache_for_openrouter(messages, cache_config.ttl);
-    }
-
-    if let Some(caching_at_depth) = cache_config.caching_at_depth {
-        apply_depth_cache_for_openrouter_claude(messages, caching_at_depth, cache_config.ttl);
-    }
-}
-
-fn is_openrouter_claude_model(model: &str) -> bool {
-    model
-        .trim()
-        .to_ascii_lowercase()
-        .starts_with("anthropic/claude")
 }
 
 fn map_middleout_transforms(value: Option<&Value>) -> Option<Value> {
@@ -269,80 +222,5 @@ mod tests {
             .unwrap_or_default();
 
         assert_eq!(quantizations, vec!["int8", "fp16"]);
-    }
-
-    #[test]
-    fn openrouter_claude_cache_is_applied_for_system_and_depth() {
-        let payload = json!({
-            "chat_completion_source": "openrouter",
-            "model": "anthropic/claude-3.5-sonnet",
-            "messages": [
-                { "role": "system", "content": "System prompt" },
-                { "role": "user", "content": "u1" },
-                { "role": "assistant", "content": "a1" },
-                { "role": "user", "content": "u2" }
-            ],
-            "openrouter_enable_system_prompt_cache": true,
-            "openrouter_caching_at_depth": 0
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload);
-        let messages = upstream
-            .as_object()
-            .and_then(|body| body.get("messages"))
-            .and_then(Value::as_array)
-            .expect("messages should be an array");
-
-        let system_has_cache = messages
-            .first()
-            .and_then(Value::as_object)
-            .and_then(|message| message.get("content"))
-            .and_then(Value::as_array)
-            .and_then(|parts| parts.first())
-            .and_then(|part| part.get("cache_control"))
-            .is_some();
-        assert!(system_has_cache);
-
-        let depth_has_cache = messages
-            .get(3)
-            .and_then(Value::as_object)
-            .and_then(|message| message.get("content"))
-            .and_then(Value::as_array)
-            .and_then(|parts| parts.last())
-            .and_then(|part| part.get("cache_control"))
-            .is_some();
-        assert!(depth_has_cache);
-    }
-
-    #[test]
-    fn openrouter_cache_is_not_applied_for_non_claude_models() {
-        let payload = json!({
-            "chat_completion_source": "openrouter",
-            "model": "openai/gpt-4.1-mini",
-            "messages": [
-                { "role": "system", "content": "System prompt" },
-                { "role": "user", "content": "hello" }
-            ],
-            "openrouter_enable_system_prompt_cache": true,
-            "openrouter_caching_at_depth": 0
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload);
-        let system_has_cache = upstream
-            .as_object()
-            .and_then(|body| body.get("messages"))
-            .and_then(Value::as_array)
-            .and_then(|messages| messages.first())
-            .and_then(Value::as_object)
-            .and_then(|message| message.get("content"))
-            .and_then(Value::as_str)
-            .is_some();
-        assert!(system_has_cache);
     }
 }

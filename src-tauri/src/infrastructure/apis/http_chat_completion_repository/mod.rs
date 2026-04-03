@@ -21,6 +21,13 @@ mod normalizers;
 mod openai;
 mod vertexai;
 
+#[derive(Debug, Clone, Copy)]
+struct PromptCachePerformanceUsage {
+    cache_creation_input_tokens: u64,
+    cache_read_input_tokens: u64,
+    input_tokens: u64,
+}
+
 pub struct HttpChatCompletionRepository {
     http_clients: Arc<HttpClientPool>,
 }
@@ -127,10 +134,23 @@ impl HttpChatCompletionRepository {
 
     async fn stream_sse_response(
         provider_name: &str,
+        response: reqwest::Response,
+        sender: ChatCompletionStreamSender,
+        cancel: ChatCompletionCancelReceiver,
+    ) -> Result<(), DomainError> {
+        Self::stream_sse_response_internal(provider_name, response, sender, cancel, |_| {}).await
+    }
+
+    async fn stream_sse_response_internal<F>(
+        provider_name: &str,
         mut response: reqwest::Response,
         sender: ChatCompletionStreamSender,
         mut cancel: ChatCompletionCancelReceiver,
-    ) -> Result<(), DomainError> {
+        mut hook: F,
+    ) -> Result<(), DomainError>
+    where
+        F: FnMut(&[u8]),
+    {
         let mut buffer = Vec::<u8>::new();
 
         loop {
@@ -165,21 +185,22 @@ impl HttpChatCompletionRepository {
             };
 
             buffer.extend_from_slice(&chunk);
-            Self::forward_sse_lines(&mut buffer, &sender)?;
+            Self::forward_sse_lines(&mut buffer, &sender, &mut hook)?;
         }
 
         if !buffer.is_empty() {
-            Self::forward_sse_lines(&mut buffer, &sender)?;
-            Self::forward_sse_line(buffer.as_slice(), &sender)?;
+            Self::forward_sse_lines(&mut buffer, &sender, &mut hook)?;
+            Self::forward_sse_line(buffer.as_slice(), &sender, &mut hook)?;
             buffer.clear();
         }
 
         Ok(())
     }
 
-    fn forward_sse_lines(
+    fn forward_sse_lines<F: FnMut(&[u8])>(
         buffer: &mut Vec<u8>,
         sender: &ChatCompletionStreamSender,
+        hook: &mut F,
     ) -> Result<(), DomainError> {
         let mut line_start = 0_usize;
         let mut consumed = 0_usize;
@@ -194,7 +215,7 @@ impl HttpChatCompletionRepository {
                 line = &line[..line.len() - 1];
             }
 
-            Self::forward_sse_line(line, sender)?;
+            Self::forward_sse_line(line, sender, hook)?;
             consumed = index + 1;
             line_start = consumed;
         }
@@ -206,9 +227,10 @@ impl HttpChatCompletionRepository {
         Ok(())
     }
 
-    fn forward_sse_line(
+    fn forward_sse_line<F: FnMut(&[u8])>(
         line: &[u8],
         sender: &ChatCompletionStreamSender,
+        hook: &mut F,
     ) -> Result<(), DomainError> {
         const DATA_PREFIX: &[u8] = b"data:";
 
@@ -226,6 +248,8 @@ impl HttpChatCompletionRepository {
             return Ok(());
         }
 
+        hook(payload);
+
         if sender
             .send(String::from_utf8_lossy(payload).to_string())
             .is_err()
@@ -235,6 +259,102 @@ impl HttpChatCompletionRepository {
 
         Ok(())
     }
+}
+
+fn payload_contains_cache_control(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => {
+            object.contains_key("cache_control")
+                || object.values().any(payload_contains_cache_control)
+        }
+        Value::Array(array) => array.iter().any(payload_contains_cache_control),
+        _ => false,
+    }
+}
+
+fn log_prompt_cache_performance_if_present(
+    provider_name: &str,
+    model: Option<&str>,
+    value: &Value,
+) -> bool {
+    let Some(usage) = find_prompt_cache_performance_usage(value) else {
+        return false;
+    };
+
+    let total_input_tokens = usage.cache_creation_input_tokens
+        + usage.cache_read_input_tokens
+        + usage.input_tokens;
+
+    match model.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(model) => {
+            tracing::info!(
+                "{provider_name} prompt cache usage: model={model} cache_read_input_tokens={} cache_creation_input_tokens={} input_tokens={} total_input_tokens={}",
+                usage.cache_read_input_tokens,
+                usage.cache_creation_input_tokens,
+                usage.input_tokens,
+                total_input_tokens,
+            );
+        }
+        None => {
+            tracing::info!(
+                "{provider_name} prompt cache usage: cache_read_input_tokens={} cache_creation_input_tokens={} input_tokens={} total_input_tokens={}",
+                usage.cache_read_input_tokens,
+                usage.cache_creation_input_tokens,
+                usage.input_tokens,
+                total_input_tokens,
+            );
+        }
+    }
+
+    true
+}
+
+fn find_prompt_cache_performance_usage(value: &Value) -> Option<PromptCachePerformanceUsage> {
+    if let Some(usage) = value.get("usage").and_then(Value::as_object) {
+        if let Some(parsed) = parse_prompt_cache_performance_usage(usage) {
+            return Some(parsed);
+        }
+    }
+
+    if let Some(message_usage) = value
+        .get("message")
+        .and_then(Value::as_object)
+        .and_then(|message| message.get("usage"))
+        .and_then(Value::as_object)
+    {
+        if let Some(parsed) = parse_prompt_cache_performance_usage(message_usage) {
+            return Some(parsed);
+        }
+    }
+
+    None
+}
+
+fn parse_prompt_cache_performance_usage(
+    usage: &serde_json::Map<String, Value>,
+) -> Option<PromptCachePerformanceUsage> {
+    let cache_creation_input_tokens =
+        value_to_u64(usage.get("cache_creation_input_tokens"))?;
+    let cache_read_input_tokens =
+        value_to_u64(usage.get("cache_read_input_tokens"))?;
+    let input_tokens = value_to_u64(usage.get("input_tokens"))?;
+
+    Some(PromptCachePerformanceUsage {
+        cache_creation_input_tokens,
+        cache_read_input_tokens,
+        input_tokens,
+    })
+}
+
+fn value_to_u64(value: Option<&Value>) -> Option<u64> {
+    value.and_then(|value| {
+        value.as_u64().or_else(|| {
+            value
+                .as_i64()
+                .filter(|number| *number >= 0)
+                .and_then(|number| u64::try_from(number).ok())
+        })
+    })
 }
 
 #[async_trait]
@@ -534,7 +654,9 @@ mod tests {
         let mut buffer =
             b"event: message\r\ndata: {\"chunk\":1}\n\n: ping\ndata: [DONE]\n".to_vec();
 
-        let result = HttpChatCompletionRepository::forward_sse_lines(&mut buffer, &sender);
+        fn noop(_: &[u8]) {}
+        let mut hook = noop;
+        let result = HttpChatCompletionRepository::forward_sse_lines(&mut buffer, &sender, &mut hook);
         assert!(result.is_ok());
 
         assert_eq!(receiver.try_recv().ok(), Some("{\"chunk\":1}".to_string()));
@@ -548,7 +670,9 @@ mod tests {
         let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
         let mut buffer = b"data: {\"chunk\":1}".to_vec();
 
-        let result = HttpChatCompletionRepository::forward_sse_lines(&mut buffer, &sender);
+        fn noop(_: &[u8]) {}
+        let mut hook = noop;
+        let result = HttpChatCompletionRepository::forward_sse_lines(&mut buffer, &sender, &mut hook);
         assert!(result.is_ok());
         assert_eq!(receiver.try_recv().ok(), None);
         assert_eq!(buffer, b"data: {\"chunk\":1}".to_vec());

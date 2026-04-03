@@ -71,9 +71,16 @@ pub(super) async fn generate(
         .await);
     }
 
-    response.json::<Value>().await.map_err(|error| {
+    let body = response.json::<Value>().await.map_err(|error| {
         DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
-    })
+    })?;
+
+    if super::payload_contains_cache_control(payload) {
+        let model = payload.get("model").and_then(Value::as_str);
+        let _ = super::log_prompt_cache_performance_if_present(provider_name, model, &body);
+    }
+
+    Ok(body)
 }
 
 pub(super) async fn generate_stream(
@@ -110,5 +117,47 @@ pub(super) async fn generate_stream(
         .await);
     }
 
-    HttpChatCompletionRepository::stream_sse_response(provider_name, response, sender, cancel).await
+    if super::payload_contains_cache_control(payload) {
+        let model = payload
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let mut logged = false;
+
+        HttpChatCompletionRepository::stream_sse_response_internal(
+            provider_name,
+            response,
+            sender,
+            cancel,
+            move |payload| {
+                if logged {
+                    return;
+                }
+
+                if !payload.windows(b"cache_read_input_tokens".len()).any(|window| {
+                    window == b"cache_read_input_tokens"
+                }) && !payload
+                    .windows(b"cache_creation_input_tokens".len())
+                    .any(|window| window == b"cache_creation_input_tokens")
+                {
+                    return;
+                }
+
+                let Ok(value) = serde_json::from_slice::<Value>(payload) else {
+                    return;
+                };
+
+                logged = super::log_prompt_cache_performance_if_present(
+                    provider_name,
+                    Some(model.as_str()),
+                    &value,
+                );
+            },
+        )
+        .await
+    } else {
+        HttpChatCompletionRepository::stream_sse_response(provider_name, response, sender, cancel)
+            .await
+    }
 }

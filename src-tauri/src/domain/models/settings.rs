@@ -25,7 +25,55 @@ fn default_avatar_persona_original_images_enabled() -> bool {
     false
 }
 
+fn default_model_settings() -> ModelSettings {
+    ModelSettings::default()
+}
+
 pub const MIN_LLM_API_KEEP: u32 = 1;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PromptCacheTtl {
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "5m")]
+    FiveMinutes,
+    #[serde(rename = "1h")]
+    OneHour,
+}
+
+impl Default for PromptCacheTtl {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeModelSettings {
+    #[serde(default)]
+    pub prompt_cache_ttl: PromptCacheTtl,
+}
+
+impl Default for ClaudeModelSettings {
+    fn default() -> Self {
+        Self {
+            prompt_cache_ttl: PromptCacheTtl::Off,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelSettings {
+    #[serde(default)]
+    pub claude: ClaudeModelSettings,
+}
+
+impl Default for ModelSettings {
+    fn default() -> Self {
+        Self {
+            claude: ClaudeModelSettings::default(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DynamicThemeSettings {
@@ -153,6 +201,8 @@ pub struct TauriTavernSettings {
     pub dev: DevLoggingSettings,
     #[serde(default)]
     pub dynamic_theme: DynamicThemeSettings,
+    #[serde(default = "default_model_settings")]
+    pub models: ModelSettings,
 }
 
 impl Default for TauriTavernSettings {
@@ -171,6 +221,7 @@ impl Default for TauriTavernSettings {
             migrations: TauriTavernMigrationState::default(),
             dev: DevLoggingSettings::default(),
             dynamic_theme: DynamicThemeSettings::default(),
+            models: default_model_settings(),
         }
     }
 }

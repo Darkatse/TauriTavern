@@ -121,6 +121,14 @@ impl SettingsService {
             }
         }
 
+        if let Some(models) = dto.models {
+            if let Some(claude) = models.claude {
+                if let Some(prompt_cache_ttl) = claude.prompt_cache_ttl {
+                    settings.models.claude.prompt_cache_ttl = prompt_cache_ttl;
+                }
+            }
+        }
+
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;

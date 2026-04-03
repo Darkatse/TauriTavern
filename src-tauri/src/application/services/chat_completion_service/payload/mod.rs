@@ -10,7 +10,6 @@ mod makersuite;
 mod moonshot;
 mod openai;
 mod openrouter;
-mod prompt_cache;
 mod prompt_post_processing;
 mod shared;
 mod tool_calls;

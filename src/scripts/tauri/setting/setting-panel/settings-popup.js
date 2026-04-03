@@ -163,6 +163,26 @@ export async function openTauriTavernSettingsPopup() {
 
             <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
                 <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
+                    <b data-i18n="Models">Models</b>
+                </div>
+
+                <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                    <div class="flex-container alignItemsBaseline" style="gap: 8px; min-width: 220px; flex: 1;">
+                        <span data-i18n="Claude Prompt Cache">Claude Prompt Cache</span>
+                        <a id="tt-help-claude-prompt-cache" class="notes-link" href="javascript:void(0);">
+                            <span class="fa-solid fa-circle-question note-link-span" title="Learn more" data-i18n="[title]Learn more"></span>
+                        </a>
+                    </div>
+                    <select id="tt-claude-prompt-cache-ttl" class="text_pole" style="margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;">
+                        <option value="off" data-i18n="Off">Off</option>
+                        <option value="5m" data-i18n="5m (Default TTL)">5m (Default TTL)</option>
+                        <option value="1h" data-i18n="1h (Extended)">1h (Extended)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
+                <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
                     <b data-i18n="Misc">Misc</b>
                 </div>
 
@@ -294,6 +314,11 @@ export async function openTauriTavernSettingsPopup() {
         throw new Error('TauriTavern settings: request proxy bypass input not found');
     }
 
+    const claudePromptCacheHelp = root.querySelector('#tt-help-claude-prompt-cache');
+    if (!(claudePromptCacheHelp instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: Claude prompt cache help button not found');
+    }
+
     const allowKeysExposureToggle = root.querySelector('#tt-allow-keys-exposure');
     if (!(allowKeysExposureToggle instanceof HTMLInputElement)) {
         throw new Error('TauriTavern settings: allow keys exposure toggle not found');
@@ -410,6 +435,18 @@ export async function openTauriTavernSettingsPopup() {
         throw new Error('TauriTavern settings: avatar/persona original images setting missing');
     }
     avatarPersonaOriginalImagesEnabledToggle.checked = currentAvatarPersonaOriginalImagesEnabled;
+
+    const promptCacheTtlSelect = root.querySelector('#tt-claude-prompt-cache-ttl');
+    if (!(promptCacheTtlSelect instanceof HTMLSelectElement)) {
+        throw new Error('TauriTavern settings: Claude prompt cache selector not found');
+    }
+
+    const currentPromptCacheTtl = typeof settings.models?.claude?.prompt_cache_ttl === 'string'
+        ? settings.models.claude.prompt_cache_ttl
+        : 'off';
+    promptCacheTtlSelect.value = ['off', '5m', '1h'].includes(currentPromptCacheTtl)
+        ? currentPromptCacheTtl
+        : 'off';
 
     const upstreamThemeSelect = document.getElementById('themes');
     if (!(upstreamThemeSelect instanceof HTMLSelectElement)) {
@@ -610,6 +647,26 @@ export async function openTauriTavernSettingsPopup() {
         });
     }
 
+    claudePromptCacheHelp.addEventListener('click', (event) => {
+        event.preventDefault();
+        runOrPopup(async () => {
+            const content = document.createElement('div');
+            content.className = 'flex-container flexFlowColumn';
+            content.style.gap = '8px';
+            content.innerHTML = `
+                <b data-i18n="Claude Prompt Cache">Claude Prompt Cache</b>
+                <div data-i18n="Prompt Cache help: scope">Applies to Claude and OpenRouter (anthropic/claude*) requests.</div>
+                <div data-i18n="Prompt Cache help: breakpoint">When enabled, cache breakpoints are placed at the end of the prompt. TauriTavern also automatically adds a smart breakpoint at the last block that is identical to the previous request to improve cache hits.</div>
+            `.trim();
+            await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+                okButton: translate('Close'),
+                allowVerticalScrolling: true,
+                wide: false,
+                large: false,
+            });
+        });
+    });
+
     const allowKeysExposureHelp = root.querySelector('#tt-help-allow-keys-exposure');
     if (!(allowKeysExposureHelp instanceof HTMLElement)) {
         throw new Error('TauriTavern settings: allow keys exposure help button not found');
@@ -706,6 +763,7 @@ export async function openTauriTavernSettingsPopup() {
 
     const nextAllowKeysExposure = allowKeysExposureToggle.checked;
     const nextAvatarPersonaOriginalImagesEnabled = avatarPersonaOriginalImagesEnabledToggle.checked;
+    const nextPromptCacheTtl = String(promptCacheTtlSelect.value || '').trim();
 
     const normalizeRequestProxyBypass = (value) => {
         return String(value || '')
@@ -748,11 +806,13 @@ export async function openTauriTavernSettingsPopup() {
     const hasAllowKeysExposureChange = nextAllowKeysExposure !== currentAllowKeysExposure;
     const hasAvatarPersonaOriginalImagesEnabledChange =
         nextAvatarPersonaOriginalImagesEnabled !== currentAvatarPersonaOriginalImagesEnabled;
+    const hasPromptCacheTtlChange = nextPromptCacheTtl !== currentPromptCacheTtl;
+    const hasModelsChange = hasPromptCacheTtlChange;
     const hasRequestProxyChange = nextRequestProxyEnabled !== currentRequestProxyEnabled
         || nextRequestProxyUrl !== normalizedCurrentRequestProxyUrl
         || !arraysEqual(nextRequestProxyBypass, normalizedCurrentRequestProxyBypass);
 
-    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange && !hasDynamicThemeChange && !hasAllowKeysExposureChange && !hasAvatarPersonaOriginalImagesEnabledChange && !hasRequestProxyChange) {
+    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange && !hasDynamicThemeChange && !hasAllowKeysExposureChange && !hasAvatarPersonaOriginalImagesEnabledChange && !hasModelsChange && !hasRequestProxyChange) {
         return;
     }
 
@@ -782,6 +842,14 @@ export async function openTauriTavernSettingsPopup() {
     }
     if (hasAvatarPersonaOriginalImagesEnabledChange) {
         nextSettings.avatar_persona_original_images_enabled = nextAvatarPersonaOriginalImagesEnabled;
+    }
+    if (hasModelsChange) {
+        /** @type {Record<string, unknown>} */
+        const claude = {};
+        if (hasPromptCacheTtlChange) {
+            claude.prompt_cache_ttl = nextPromptCacheTtl;
+        }
+        nextSettings.models = { claude };
     }
     if (hasRequestProxyChange) {
         nextSettings.request_proxy = {

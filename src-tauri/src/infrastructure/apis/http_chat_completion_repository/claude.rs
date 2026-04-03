@@ -107,6 +107,11 @@ pub(super) async fn generate(
         DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
     })?;
 
+    if super::payload_contains_cache_control(payload) {
+        let model = payload.get("model").and_then(Value::as_str);
+        let _ = super::log_prompt_cache_performance_if_present("Claude", model, &body);
+    }
+
     Ok(normalizers::normalize_claude_response(body))
 }
 
@@ -159,7 +164,48 @@ pub(super) async fn generate_stream(
         .await);
     }
 
-    HttpChatCompletionRepository::stream_sse_response("Claude", response, sender, cancel).await
+    if super::payload_contains_cache_control(payload) {
+        let model = payload
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let mut logged = false;
+
+        HttpChatCompletionRepository::stream_sse_response_internal(
+            "Claude",
+            response,
+            sender,
+            cancel,
+            move |payload| {
+                if logged {
+                    return;
+                }
+
+                if !payload.windows(b"cache_read_input_tokens".len()).any(|window| {
+                    window == b"cache_read_input_tokens"
+                }) && !payload
+                    .windows(b"cache_creation_input_tokens".len())
+                    .any(|window| window == b"cache_creation_input_tokens")
+                {
+                    return;
+                }
+
+                let Ok(value) = serde_json::from_slice::<Value>(payload) else {
+                    return;
+                };
+
+                logged = super::log_prompt_cache_performance_if_present(
+                    "Claude",
+                    Some(model.as_str()),
+                    &value,
+                );
+            },
+        )
+        .await
+    } else {
+        HttpChatCompletionRepository::stream_sse_response("Claude", response, sender, cancel).await
+    }
 }
 
 fn apply_anthropic_beta_header(
@@ -191,7 +237,7 @@ fn build_anthropic_beta_values(
         }
     }
 
-    if payload_contains_cache_control(payload) {
+    if super::payload_contains_cache_control(payload) {
         for value in [
             ANTHROPIC_BETA_PROMPT_CACHING,
             ANTHROPIC_BETA_EXTENDED_CACHE_TTL,
@@ -221,17 +267,6 @@ fn configured_anthropic_beta_values(extra_headers: &HashMap<String, String>) -> 
         .collect()
 }
 
-fn payload_contains_cache_control(value: &Value) -> bool {
-    match value {
-        Value::Object(object) => {
-            object.contains_key("cache_control")
-                || object.values().any(payload_contains_cache_control)
-        }
-        Value::Array(array) => array.iter().any(payload_contains_cache_control),
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -241,7 +276,7 @@ mod tests {
     use super::{
         ANTHROPIC_BETA_CONTEXT_1M, ANTHROPIC_BETA_EXTENDED_CACHE_TTL, ANTHROPIC_BETA_OUTPUT_128K,
         ANTHROPIC_BETA_PROMPT_CACHING, build_anthropic_beta_values,
-        configured_anthropic_beta_values, payload_contains_cache_control,
+        configured_anthropic_beta_values,
     };
 
     #[test]
@@ -255,7 +290,7 @@ mod tests {
             }]
         });
 
-        assert!(payload_contains_cache_control(&payload));
+        assert!(super::super::payload_contains_cache_control(&payload));
     }
 
     #[test]

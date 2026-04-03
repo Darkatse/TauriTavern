@@ -1,7 +1,7 @@
 use crate::domain::models::settings::{
-    ChatHistoryMode, DevLoggingSettings, DynamicThemeSettings, RequestProxySettings,
-    SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings, TauriTavernUpdateSettings,
-    UserSettings,
+    ChatHistoryMode, ClaudeModelSettings, DevLoggingSettings, DynamicThemeSettings, ModelSettings,
+    PromptCacheTtl, RequestProxySettings, SettingsSnapshot, StartupUpdatePopupSettings,
+    TauriTavernSettings, TauriTavernUpdateSettings, UserSettings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -19,6 +19,7 @@ pub struct TauriTavernSettingsDto {
     pub avatar_persona_original_images_enabled: bool,
     pub dev: DevLoggingSettingsDto,
     pub dynamic_theme: DynamicThemeSettingsDto,
+    pub models: ModelSettingsDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +45,7 @@ pub struct UpdateTauriTavernSettingsDto {
     pub avatar_persona_original_images_enabled: Option<bool>,
     pub dev: Option<UpdateDevLoggingSettingsDto>,
     pub dynamic_theme: Option<UpdateDynamicThemeSettingsDto>,
+    pub models: Option<UpdateModelSettingsDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +79,26 @@ pub struct RequestProxySettingsDto {
     pub enabled: bool,
     pub url: String,
     pub bypass: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeModelSettingsDto {
+    pub prompt_cache_ttl: PromptCacheTtl,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelSettingsDto {
+    pub claude: ClaudeModelSettingsDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateClaudeModelSettingsDto {
+    pub prompt_cache_ttl: Option<PromptCacheTtl>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateModelSettingsDto {
+    pub claude: Option<UpdateClaudeModelSettingsDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -156,6 +178,7 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             avatar_persona_original_images_enabled: settings.avatar_persona_original_images_enabled,
             dev: DevLoggingSettingsDto::from(settings.dev),
             dynamic_theme: DynamicThemeSettingsDto::from(settings.dynamic_theme),
+            models: ModelSettingsDto::from(settings.models),
         }
     }
 }
@@ -195,6 +218,22 @@ impl From<DynamicThemeSettings> for DynamicThemeSettingsDto {
             enabled: settings.enabled,
             day_theme: settings.day_theme,
             night_theme: settings.night_theme,
+        }
+    }
+}
+
+impl From<ClaudeModelSettings> for ClaudeModelSettingsDto {
+    fn from(settings: ClaudeModelSettings) -> Self {
+        Self {
+            prompt_cache_ttl: settings.prompt_cache_ttl,
+        }
+    }
+}
+
+impl From<ModelSettings> for ModelSettingsDto {
+    fn from(settings: ModelSettings) -> Self {
+        Self {
+            claude: ClaudeModelSettingsDto::from(settings.claude),
         }
     }
 }
