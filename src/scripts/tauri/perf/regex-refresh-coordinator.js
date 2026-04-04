@@ -1,6 +1,6 @@
 // @ts-check
 
-import { addCopyToCodeBlocks, chat, messageFormatting } from '../../../script.js';
+import { addCopyToCodeBlocks, chat, characters, eventSource, event_types, getCurrentChatId, messageFormatting, this_chid } from '../../../script.js';
 import { replaceMesTextHtmlWithRuntimePolicy } from '../message/mes-text-write.js';
 
 /** @type {ReturnType<typeof createRegexRefreshCoordinator> | null} */
@@ -31,6 +31,7 @@ function createRegexRefreshCoordinator() {
     let scheduled = false;
     let running = false;
     let cycleRequested = false;
+    let pendingChatReloadEvents = false;
 
     function requestFlush({ debounceMs = DEFAULT_DEBOUNCE_MS } = {}) {
         if (debounceTimeoutId) {
@@ -59,6 +60,33 @@ function createRegexRefreshCoordinator() {
     function triggerFlush() {
         cycleRequested = true;
         schedule();
+    }
+
+    function notifyChatReloadEventsIfNeeded() {
+        if (!pendingChatReloadEvents) {
+            return;
+        }
+
+        pendingChatReloadEvents = false;
+        Promise.resolve().then(async () => {
+            const chatId = getCurrentChatId();
+            if (!chatId) {
+                return;
+            }
+
+            await eventSource.emit(event_types.CHAT_CHANGED, chatId);
+
+            if (this_chid === undefined) {
+                return;
+            }
+
+            const character = characters[this_chid];
+            if (!character) {
+                throw new Error(`RegexRefreshCoordinator: missing character for id ${this_chid}`);
+            }
+
+            await eventSource.emit(event_types.CHAT_LOADED, { detail: { id: this_chid, character } });
+        });
     }
 
     function schedule() {
@@ -134,6 +162,7 @@ function createRegexRefreshCoordinator() {
             cycleRequested = false;
             running = true;
             queue = collectQueue();
+            pendingChatReloadEvents ||= queue.length > 0;
             queueIndex = 0;
         }
 
@@ -143,6 +172,7 @@ function createRegexRefreshCoordinator() {
                 schedule();
                 return;
             }
+            notifyChatReloadEventsIfNeeded();
             resolveWaiters();
             return;
         }
@@ -175,6 +205,7 @@ function createRegexRefreshCoordinator() {
             schedule();
             return;
         }
+        notifyChatReloadEventsIfNeeded();
         resolveWaiters();
     }
 
