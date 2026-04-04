@@ -92,6 +92,15 @@ export const listen = (...args) => {
     return fn(...args);
 };
 
+export function createChannel(onmessage) {
+    const Channel = getTauri()?.core?.Channel;
+    if (typeof Channel !== 'function') {
+        throw new Error('Tauri Channel is unavailable');
+    }
+
+    return new Channel(onmessage);
+}
+
 export const convertFileSrc = (path, protocol = 'asset') => {
     const fn = getTauri()?.core?.convertFileSrc;
     if (typeof fn !== 'function') {

@@ -5,7 +5,7 @@ import { translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
 import { createGenerationLifecycleService } from '../services/ai/generation-lifecycle-service.js';
 import { createGenerationStatusBridge } from '../services/ai/generation-status-bridge.js';
 import { createSystemNotificationService } from '../services/notifications/system-notification-service.js';
-import { listen } from '../../../tauri-bridge.js';
+import { createChannel } from '../../../tauri-bridge.js';
 import { stripCommandErrorPrefixes } from '../../../scripts/util/command-error-utils.js';
 
 function asObject(value) {
@@ -41,6 +41,17 @@ function isAbortError(error) {
     }
 
     return error.name === 'AbortError';
+}
+
+function encodeSseDataFrame(data) {
+    const text = typeof data === 'string' ? data : String(data ?? '');
+    if (!text.includes('\n') && !text.includes('\r')) {
+        return `data: ${text}\n\n`;
+    }
+
+    const lines = text.split(/\r\n|\r|\n/g);
+    const framed = lines.map((line) => `data: ${line}\n`).join('');
+    return `${framed}\n`;
 }
 
 const DEFAULT_COMPLETION_MODEL = 'tauritavern-error';
@@ -385,12 +396,11 @@ async function invokeChatCompletionWithAbort(context, payload, signal) {
 
 async function createChatCompletionStreamResponse(context, payload, signal, lifecycle) {
     const streamId = createStreamId();
-    const eventName = `chat-completion-stream:${streamId}`;
     const encoder = new TextEncoder();
 
     let isClosed = false;
     let sawDone = false;
-    let unlisten = null;
+    let channel = null;
     let flushTimer = null;
     let abortHandler = null;
     let controllerRef = null;
@@ -411,7 +421,7 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
             return;
         }
 
-        const framed = pendingFrames.map((data) => `data: ${data}\n\n`).join('');
+        const framed = pendingFrames.map((data) => encodeSseDataFrame(data)).join('');
         pendingFrames.length = 0;
         controllerRef.enqueue(encoder.encode(framed));
     };
@@ -463,18 +473,14 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
             }
         }
 
-        if (typeof unlisten === 'function') {
-            try {
-                unlisten();
-            } catch {
-                // ignore listener teardown failures
-            }
-            unlisten = null;
-        }
-
         if (signal && abortHandler) {
             signal.removeEventListener('abort', abortHandler);
             abortHandler = null;
+        }
+
+        if (channel) {
+            channel.onmessage = () => {};
+            channel = null;
         }
 
         if (cancelUpstream) {
@@ -494,12 +500,12 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
         });
     };
 
-    const onStreamEvent = (event) => {
+    const onStreamEvent = (message) => {
         if (isClosed) {
             return;
         }
 
-        const eventPayload = asObject(event?.payload);
+        const eventPayload = asObject(message);
         const eventType = String(eventPayload.type || '');
 
         if (eventType === 'chunk') {
@@ -545,7 +551,7 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
             controllerRef = controller;
 
             try {
-                unlisten = await listen(eventName, onStreamEvent);
+                channel = createChannel(onStreamEvent);
             } catch (error) {
                 const message = getErrorMessage(error);
                 await closeStream({
@@ -573,6 +579,7 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                 await context.safeInvoke('start_chat_completion_stream', {
                     streamId,
                     dto: payload,
+                    onEvent: channel,
                 });
 
                 // If abort happened while stream registration was in-flight, run cancellation again

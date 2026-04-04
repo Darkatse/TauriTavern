@@ -11,9 +11,7 @@ use crate::domain::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
     ChatCompletionSource, ChatCompletionStreamSender,
 };
-use crate::infrastructure::http_client_pool::{
-    CHAT_COMPLETION_CONNECT_TIMEOUT, HttpClientPool, HttpClientProfile,
-};
+use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
 mod claude;
 mod makersuite;
@@ -30,6 +28,85 @@ struct PromptCachePerformanceUsage {
 
 pub struct HttpChatCompletionRepository {
     http_clients: Arc<HttpClientPool>,
+}
+
+#[derive(Default)]
+struct SseEventAccumulator {
+    data: Vec<u8>,
+}
+
+impl SseEventAccumulator {
+    fn on_line<F: FnMut(&[u8])>(
+        &mut self,
+        line: &[u8],
+        sender: &ChatCompletionStreamSender,
+        hook: &mut F,
+    ) -> Result<(), DomainError> {
+        if line.is_empty() {
+            return self.dispatch(sender, hook);
+        }
+
+        if line.first().is_some_and(|byte| *byte == b':') {
+            return Ok(());
+        }
+
+        let (field, value) = split_sse_field(line);
+        if field == b"data" {
+            if !self.data.is_empty() {
+                self.data.push(b'\n');
+            }
+            self.data.extend_from_slice(value);
+        }
+
+        Ok(())
+    }
+
+    fn finish<F: FnMut(&[u8])>(
+        &mut self,
+        sender: &ChatCompletionStreamSender,
+        hook: &mut F,
+    ) -> Result<(), DomainError> {
+        self.dispatch(sender, hook)
+    }
+
+    fn dispatch<F: FnMut(&[u8])>(
+        &mut self,
+        sender: &ChatCompletionStreamSender,
+        hook: &mut F,
+    ) -> Result<(), DomainError> {
+        if self.data.is_empty() {
+            return Ok(());
+        }
+
+        let payload = std::mem::take(&mut self.data);
+        hook(payload.as_slice());
+
+        let payload = std::str::from_utf8(payload.as_slice()).map_err(|error| {
+            DomainError::InternalError(format!("SSE payload is not valid UTF-8: {error}"))
+        })?;
+
+        if sender.send(payload.to_string()).is_err() {
+            return Ok(());
+        }
+
+        Ok(())
+    }
+}
+
+fn split_sse_field(line: &[u8]) -> (&[u8], &[u8]) {
+    let Some(colon_index) = line.iter().position(|byte| *byte == b':') else {
+        return (line, b"");
+    };
+
+    let field = &line[..colon_index];
+    let mut value = &line[colon_index + 1..];
+    let value_start = value
+        .iter()
+        .position(|byte| *byte != b' ' && *byte != b'\t')
+        .unwrap_or(value.len());
+    value = &value[value_start..];
+
+    (field, value)
 }
 
 impl HttpChatCompletionRepository {
@@ -152,6 +229,7 @@ impl HttpChatCompletionRepository {
         F: FnMut(&[u8]),
     {
         let mut buffer = Vec::<u8>::new();
+        let mut accumulator = SseEventAccumulator::default();
 
         loop {
             if *cancel.borrow() {
@@ -165,18 +243,10 @@ impl HttpChatCompletionRepository {
                     }
                     continue;
                 }
-                chunk = tokio::time::timeout(CHAT_COMPLETION_CONNECT_TIMEOUT, response.chunk()) => {
-                    match chunk {
-                        Ok(chunk) => chunk.map_err(|error| DomainError::InternalError(format!(
-                            "{provider_name} stream read failed: {error}"
-                        )))?,
-                        Err(_) => {
-                            return Err(DomainError::InternalError(format!(
-                                "{provider_name} stream read failed: idle timeout after {}s",
-                                CHAT_COMPLETION_CONNECT_TIMEOUT.as_secs()
-                            )));
-                        }
-                    }
+                chunk = response.chunk() => {
+                    chunk.map_err(|error| DomainError::InternalError(format!(
+                        "{provider_name} stream read failed: {error}"
+                    )))?
                 }
             };
 
@@ -185,20 +255,22 @@ impl HttpChatCompletionRepository {
             };
 
             buffer.extend_from_slice(&chunk);
-            Self::forward_sse_lines(&mut buffer, &sender, &mut hook)?;
+            Self::forward_sse_events(&mut buffer, &mut accumulator, &sender, &mut hook)?;
         }
 
         if !buffer.is_empty() {
-            Self::forward_sse_lines(&mut buffer, &sender, &mut hook)?;
-            Self::forward_sse_line(buffer.as_slice(), &sender, &mut hook)?;
+            Self::forward_sse_events(&mut buffer, &mut accumulator, &sender, &mut hook)?;
+            Self::forward_sse_line(buffer.as_slice(), &mut accumulator, &sender, &mut hook)?;
             buffer.clear();
         }
 
+        accumulator.finish(&sender, &mut hook)?;
         Ok(())
     }
 
-    fn forward_sse_lines<F: FnMut(&[u8])>(
+    fn forward_sse_events<F: FnMut(&[u8])>(
         buffer: &mut Vec<u8>,
+        accumulator: &mut SseEventAccumulator,
         sender: &ChatCompletionStreamSender,
         hook: &mut F,
     ) -> Result<(), DomainError> {
@@ -215,7 +287,7 @@ impl HttpChatCompletionRepository {
                 line = &line[..line.len() - 1];
             }
 
-            Self::forward_sse_line(line, sender, hook)?;
+            accumulator.on_line(line, sender, hook)?;
             consumed = index + 1;
             line_start = consumed;
         }
@@ -229,35 +301,16 @@ impl HttpChatCompletionRepository {
 
     fn forward_sse_line<F: FnMut(&[u8])>(
         line: &[u8],
+        accumulator: &mut SseEventAccumulator,
         sender: &ChatCompletionStreamSender,
         hook: &mut F,
     ) -> Result<(), DomainError> {
-        const DATA_PREFIX: &[u8] = b"data:";
-
-        let Some(data) = line.strip_prefix(DATA_PREFIX) else {
-            return Ok(());
-        };
-
-        let data_start = data
-            .iter()
-            .position(|byte| *byte != b' ' && *byte != b'\t')
-            .unwrap_or(data.len());
-        let payload = &data[data_start..];
-
-        if payload.is_empty() {
-            return Ok(());
+        let mut line = line;
+        if line.last().is_some_and(|byte| *byte == b'\r') {
+            line = &line[..line.len() - 1];
         }
 
-        hook(payload);
-
-        if sender
-            .send(String::from_utf8_lossy(payload).to_string())
-            .is_err()
-        {
-            return Ok(());
-        }
-
-        Ok(())
+        accumulator.on_line(line, sender, hook)
     }
 }
 
@@ -649,14 +702,20 @@ mod tests {
     }
 
     #[test]
-    fn forward_sse_lines_extracts_data_payloads() {
+    fn forward_sse_events_extracts_data_payloads() {
         let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
         let mut buffer =
-            b"event: message\r\ndata: {\"chunk\":1}\n\n: ping\ndata: [DONE]\n".to_vec();
+            b"event: message\r\ndata: {\"chunk\":1}\n\n: ping\ndata: [DONE]\n\n".to_vec();
 
         fn noop(_: &[u8]) {}
         let mut hook = noop;
-        let result = HttpChatCompletionRepository::forward_sse_lines(&mut buffer, &sender, &mut hook);
+        let mut accumulator = super::SseEventAccumulator::default();
+        let result = HttpChatCompletionRepository::forward_sse_events(
+            &mut buffer,
+            &mut accumulator,
+            &sender,
+            &mut hook,
+        );
         assert!(result.is_ok());
 
         assert_eq!(receiver.try_recv().ok(), Some("{\"chunk\":1}".to_string()));
@@ -666,15 +725,70 @@ mod tests {
     }
 
     #[test]
-    fn forward_sse_lines_keeps_partial_line_in_buffer() {
+    fn forward_sse_events_keeps_partial_line_in_buffer() {
         let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
         let mut buffer = b"data: {\"chunk\":1}".to_vec();
 
         fn noop(_: &[u8]) {}
         let mut hook = noop;
-        let result = HttpChatCompletionRepository::forward_sse_lines(&mut buffer, &sender, &mut hook);
+        let mut accumulator = super::SseEventAccumulator::default();
+        let result = HttpChatCompletionRepository::forward_sse_events(
+            &mut buffer,
+            &mut accumulator,
+            &sender,
+            &mut hook,
+        );
         assert!(result.is_ok());
         assert_eq!(receiver.try_recv().ok(), None);
         assert_eq!(buffer, b"data: {\"chunk\":1}".to_vec());
+    }
+
+    #[test]
+    fn forward_sse_events_combines_multiline_data_fields() {
+        let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
+        let mut buffer = b"data: first\ndata: second\n\n".to_vec();
+
+        fn noop(_: &[u8]) {}
+        let mut hook = noop;
+        let mut accumulator = super::SseEventAccumulator::default();
+        HttpChatCompletionRepository::forward_sse_events(
+            &mut buffer,
+            &mut accumulator,
+            &sender,
+            &mut hook,
+        )
+        .unwrap();
+
+        assert_eq!(
+            receiver.try_recv().ok(),
+            Some("first\nsecond".to_string())
+        );
+        assert!(receiver.try_recv().is_err());
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn forward_sse_events_can_flush_pending_event_at_end_of_stream() {
+        let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
+        let mut buffer = b"data: tail\n".to_vec();
+
+        fn noop(_: &[u8]) {}
+        let mut hook = noop;
+        let mut accumulator = super::SseEventAccumulator::default();
+        HttpChatCompletionRepository::forward_sse_events(
+            &mut buffer,
+            &mut accumulator,
+            &sender,
+            &mut hook,
+        )
+        .unwrap();
+
+        // No blank line yet, so no event dispatched.
+        assert!(receiver.try_recv().is_err());
+
+        accumulator.finish(&sender, &mut hook).unwrap();
+
+        assert_eq!(receiver.try_recv().ok(), Some("tail".to_string()));
+        assert!(receiver.try_recv().is_err());
     }
 }

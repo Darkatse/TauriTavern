@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{State, ipc::Channel};
 
 use crate::app::AppState;
 use crate::application::dto::chat_completion_dto::{
@@ -46,7 +46,7 @@ pub async fn generate_chat_completion(
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum ChatCompletionStreamEvent {
+pub(crate) enum ChatCompletionStreamEvent {
     Chunk { data: String },
     Done,
     Error { message: String },
@@ -56,7 +56,7 @@ enum ChatCompletionStreamEvent {
 pub async fn start_chat_completion_stream(
     stream_id: String,
     dto: ChatCompletionGenerateRequestDto,
-    app_handle: AppHandle,
+    on_event: Channel<ChatCompletionStreamEvent>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     validate_stream_id(&stream_id)?;
@@ -66,7 +66,7 @@ pub async fn start_chat_completion_stream(
     let cancel = service.register_stream(&stream_id).await;
 
     tauri::async_runtime::spawn(run_stream_generation(
-        app_handle, service, stream_id, dto, cancel,
+        service, stream_id, dto, cancel, on_event,
     ));
 
     Ok(())
@@ -103,13 +103,12 @@ pub async fn cancel_chat_completion_generation(
 }
 
 async fn run_stream_generation(
-    app_handle: AppHandle,
     service: Arc<ChatCompletionService>,
     stream_id: String,
     dto: ChatCompletionGenerateRequestDto,
     cancel: tokio::sync::watch::Receiver<bool>,
+    on_event: Channel<ChatCompletionStreamEvent>,
 ) {
-    let event_name = stream_event_name(&stream_id);
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
     let generation_task = tauri::async_runtime::spawn({
         let service = service.clone();
@@ -121,10 +120,7 @@ async fn run_stream_generation(
             continue;
         }
 
-        let emit_result = app_handle.emit(
-            &event_name,
-            ChatCompletionStreamEvent::Chunk { data: chunk },
-        );
+        let emit_result = on_event.send(ChatCompletionStreamEvent::Chunk { data: chunk });
 
         if emit_result.is_err() {
             generation_task.abort();
@@ -144,21 +140,14 @@ async fn run_stream_generation(
 
     match generation_result {
         Ok(()) => {
-            let _ = app_handle.emit(&event_name, ChatCompletionStreamEvent::Done);
+            let _ = on_event.send(ChatCompletionStreamEvent::Done);
         }
         Err(error) => {
-            let _ = app_handle.emit(
-                &event_name,
-                ChatCompletionStreamEvent::Error {
-                    message: error.to_string(),
-                },
-            );
+            let _ = on_event.send(ChatCompletionStreamEvent::Error {
+                message: error.to_string(),
+            });
         }
     }
-}
-
-fn stream_event_name(stream_id: &str) -> String {
-    format!("chat-completion-stream:{stream_id}")
 }
 
 fn validate_stream_id(stream_id: &str) -> Result<(), CommandError> {
