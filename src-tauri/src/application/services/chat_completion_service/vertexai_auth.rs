@@ -7,6 +7,8 @@ use yup_oauth2::ServiceAccountAuthenticator;
 use yup_oauth2::ServiceAccountKey;
 use yup_oauth2::authenticator::Authenticator;
 use yup_oauth2::client::DefaultHyperClientBuilder;
+#[cfg(target_os = "android")]
+use yup_oauth2::client::CustomHyperClientBuilder;
 use yup_oauth2::client::HyperClientBuilder;
 
 use crate::application::errors::ApplicationError;
@@ -59,14 +61,14 @@ pub(super) async fn get_service_account_access_token(
                 })?
                 .to_string();
 
-            let authenticator = ServiceAccountAuthenticator::builder(service_account_key)
-                .build()
-                .await
-                .map_err(|error| {
-                    ApplicationError::InternalError(format!(
-                        "Vertex AI service account authenticator build failed: {error}"
-                    ))
-                })?;
+            let authenticator =
+                build_service_account_authenticator(service_account_key)
+                    .await
+                    .map_err(|error| {
+                        ApplicationError::InternalError(format!(
+                            "Vertex AI service account authenticator build failed: {error}"
+                        ))
+                    })?;
 
             let cached = CachedServiceAccount {
                 project_id,
@@ -105,4 +107,50 @@ fn service_account_cache() -> &'static RwLock<HashMap<String, CachedServiceAccou
 fn sha256_hex(input: &str) -> String {
     let digest = Sha256::digest(input.as_bytes());
     format!("{digest:x}")
+}
+
+async fn build_service_account_authenticator(
+    service_account_key: ServiceAccountKey,
+) -> Result<DefaultAuthenticator, std::io::Error> {
+    #[cfg(target_os = "android")]
+    {
+        ServiceAccountAuthenticator::with_client(service_account_key, build_android_hyper_client())
+            .build()
+            .await
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        ServiceAccountAuthenticator::builder(service_account_key)
+            .build()
+            .await
+    }
+}
+
+#[cfg(target_os = "android")]
+fn build_android_hyper_client() -> CustomHyperClientBuilder<
+    yup_oauth2::hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+> {
+    let root_store = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+
+    let mut tls_config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+
+    let connector = yup_oauth2::hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(tls_config)
+        .https_or_http()
+        .enable_http1()
+        .build();
+
+    let client =
+        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+            .pool_max_idle_per_host(0)
+            .build::<_, String>(connector);
+
+    CustomHyperClientBuilder::from(client)
 }

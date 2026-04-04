@@ -70,6 +70,9 @@ ttsync-core = "~1.0.0"
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-window-state = "2.4.1"
 
+[target.'cfg(target_os = "android")'.dependencies]
+hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "tokio"] }
+
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6.4"
 block2 = "0.6.2"

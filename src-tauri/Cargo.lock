@@ -5276,6 +5276,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "hmac",
+ "hyper-util",
  "icu_collator",
  "icu_locale_core",
  "image",
