@@ -6,6 +6,7 @@ pub mod chat_completion_service;
 pub mod chat_service;
 pub mod content_service;
 pub mod extension_service;
+pub mod extension_store_service;
 pub mod group_chat_service;
 pub mod group_service;
 pub mod lan_sync_service;

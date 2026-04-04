@@ -7,6 +7,7 @@ pub mod chat_repository;
 pub mod chat_types;
 pub mod content_repository;
 pub mod extension_repository;
+pub mod extension_store_repository;
 pub mod group_chat_repository;
 pub mod group_repository;
 pub mod preset_repository;

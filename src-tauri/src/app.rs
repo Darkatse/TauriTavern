@@ -9,6 +9,7 @@ use crate::application::services::chat_completion_service::ChatCompletionService
 use crate::application::services::chat_service::ChatService;
 use crate::application::services::content_service::ContentService;
 use crate::application::services::extension_service::ExtensionService;
+use crate::application::services::extension_store_service::ExtensionStoreService;
 use crate::application::services::group_chat_service::GroupChatService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::lan_sync_service::LanSyncService;
@@ -40,6 +41,7 @@ pub struct AppState {
     pub secret_service: Arc<SecretService>,
     pub content_service: Arc<ContentService>,
     pub extension_service: Arc<ExtensionService>,
+    pub extension_store_service: Arc<ExtensionStoreService>,
     pub avatar_service: Arc<AvatarService>,
     pub group_service: Arc<GroupService>,
     pub background_service: Arc<BackgroundService>,
@@ -85,6 +87,7 @@ impl AppState {
             secret_service: services.secret_service,
             content_service: services.content_service,
             extension_service: services.extension_service,
+            extension_store_service: services.extension_store_service,
             avatar_service: services.avatar_service,
             group_service: services.group_service,
             background_service: services.background_service,

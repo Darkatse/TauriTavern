@@ -11,6 +11,7 @@ pub mod content_commands;
 pub mod data_archive_commands;
 pub mod dev_logging_commands;
 pub mod extension_commands;
+pub mod extension_store_commands;
 pub mod file_commands;
 pub mod group_chat_api_commands;
 pub mod group_chat_commands;

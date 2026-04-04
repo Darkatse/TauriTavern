@@ -128,10 +128,37 @@ type TauriTavernWorldInfoApi = {
     openEntry: (ref: TauriTavernWorldInfoEntryRef) => Promise<{ opened: boolean }>;
 };
 
+type TauriTavernExtensionStoreApi = {
+    getJson: (options: { namespace: string; key: string; table?: string }) => Promise<any>;
+    setJson: (options: { namespace: string; key: string; value: any; table?: string }) => Promise<void>;
+    updateJson: (options: { namespace: string; key: string; value: any; table?: string }) => Promise<void>;
+    updateJSON: (options: { namespace: string; key: string; value: any; table?: string }) => Promise<void>;
+    renameKey: (options: { namespace: string; key: string; newKey: string; table?: string }) => Promise<void>;
+    updateKey: (options: { namespace: string; key: string; newKey: string; table?: string }) => Promise<void>;
+    deleteJson: (options: { namespace: string; key: string; table?: string }) => Promise<void>;
+    listKeys: (options: { namespace: string; table?: string }) => Promise<string[]>;
+    listTables: (options: { namespace: string }) => Promise<string[]>;
+    deleteTable: (options: { namespace: string; table: string }) => Promise<void>;
+    getBlob: (options: { namespace: string; key: string; table?: string }) => Promise<Blob>;
+    setBlob: (options: {
+        namespace: string;
+        key: string;
+        table?: string;
+        data: Blob | ArrayBuffer | Uint8Array | string;
+    }) => Promise<void>;
+    deleteBlob: (options: { namespace: string; key: string; table?: string }) => Promise<void>;
+    listBlobKeys: (options: { namespace: string; table?: string }) => Promise<string[]>;
+};
+
+type TauriTavernExtensionApi = {
+    store: TauriTavernExtensionStoreApi;
+};
+
 type TauriTavernHostApi = {
     chat?: TauriTavernChatApi;
     dev?: TauriTavernDevApi;
     worldInfo?: TauriTavernWorldInfoApi;
+    extension?: TauriTavernExtensionApi;
 };
 
 type TauriTavernHostAbi = {

@@ -27,6 +27,28 @@ export function decodeBase64ToBytes(value) {
     return bytes;
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function encodeBytesToBase64(value) {
+    const bytes = normalizeBinaryPayload(value);
+    if (!bytes.length) {
+        return '';
+    }
+
+    const chunkSize = 0x8000;
+    /** @type {string[]} */
+    const parts = [];
+
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        const chunk = bytes.subarray(offset, offset + chunkSize);
+        parts.push(String.fromCharCode(...chunk));
+    }
+
+    return btoa(parts.join(''));
+}
+
 function tryDecodeBase64(value) {
     const normalized = String(value || '').replace(/\s+/g, '');
     if (!normalized) {

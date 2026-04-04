@@ -24,6 +24,9 @@ const api = host?.api;
 - `api.worldInfo`
   - 面向角色卡作者与世界书相关扩展。
   - 提供最近一次激活结果、实时订阅与 best-effort 条目跳转。
+- `api.extension.store`
+  - 面向需要**全局持久化**的扩展（不绑定 chat）。
+  - 提供 Extension KV JSON + Blob 存储，支持多 table。
 
 ## 文档
 
@@ -32,6 +35,7 @@ const api = host?.api;
 | [Chat.md](Chat.md) | `api.chat` 完整参考 |
 | [Dev.md](Dev.md) | `api.dev` 完整参考 |
 | [WorldInfo.md](WorldInfo.md) | `api.worldInfo` 完整参考 |
+| [ExtensionStore.md](Extension.md) | `api.extension.store` 完整参考 |
 | [Migration.md](Migration.md) | 从 SillyTavern 扩展迁移到 TauriTavern 的适配指南 |
 
 ## 契约说明

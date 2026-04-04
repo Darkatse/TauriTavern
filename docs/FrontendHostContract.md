@@ -101,6 +101,8 @@
   - `assets.*`：对资源路径/缩略图相关全局 API 的统一引用。
   - `api.chat`：TauriTavern 独有的聊天/记忆类扩展 API（聊天摘要、元数据、历史分页、稳定存储、后端定位、纯文本检索）。
     - 详细签名与示例见：`docs/API/Chat.md`。
+  - `api.extension.store`：扩展级**全局持久化**（不绑定 chat），提供 KV JSON + Blob，支持多 table。
+    - 详细签名与示例见：`docs/API/Extension.md`。
   - `api.dev`：TauriTavern 规范化的开发调试 API。内置 Settings 开发面板与第三方扩展都应消费这一层，而不是直接依赖 Tauri 事件名或 Rust 命令名。
     - `api.dev.frontendLogs`
       - `list(options?: { limit?: number }) -> Promise<FrontendLogEntry[]>`

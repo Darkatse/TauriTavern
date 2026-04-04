@@ -5,6 +5,7 @@ pub mod file_character_repository;
 pub mod file_chat_repository;
 pub mod file_content_repository;
 pub mod file_extension_repository;
+pub mod file_extension_store_repository;
 pub mod file_group_repository;
 pub mod file_preset_repository;
 pub mod file_prompt_cache_repository;

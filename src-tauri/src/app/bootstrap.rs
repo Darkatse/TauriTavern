@@ -11,6 +11,7 @@ use crate::application::services::chat_completion_service::ChatCompletionService
 use crate::application::services::chat_service::ChatService;
 use crate::application::services::content_service::ContentService;
 use crate::application::services::extension_service::ExtensionService;
+use crate::application::services::extension_store_service::ExtensionStoreService;
 use crate::application::services::group_chat_service::GroupChatService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::lan_sync_service::LanSyncService;
@@ -34,6 +35,7 @@ use crate::domain::repositories::chat_completion_repository::ChatCompletionRepos
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::content_repository::ContentRepository;
 use crate::domain::repositories::extension_repository::ExtensionRepository;
+use crate::domain::repositories::extension_store_repository::ExtensionStoreRepository;
 use crate::domain::repositories::group_chat_repository::GroupChatRepository;
 use crate::domain::repositories::group_repository::GroupRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
@@ -63,6 +65,7 @@ use crate::infrastructure::repositories::file_character_repository::FileCharacte
 use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
 use crate::infrastructure::repositories::file_content_repository::FileContentRepository;
 use crate::infrastructure::repositories::file_extension_repository::FileExtensionRepository;
+use crate::infrastructure::repositories::file_extension_store_repository::FileExtensionStoreRepository;
 use crate::infrastructure::repositories::file_group_repository::FileGroupRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
 use crate::infrastructure::repositories::file_prompt_cache_repository::FilePromptCacheRepository;
@@ -84,6 +87,7 @@ pub(super) struct AppServices {
     pub secret_service: Arc<SecretService>,
     pub content_service: Arc<ContentService>,
     pub extension_service: Arc<ExtensionService>,
+    pub extension_store_service: Arc<ExtensionStoreService>,
     pub avatar_service: Arc<AvatarService>,
     pub group_service: Arc<GroupService>,
     pub background_service: Arc<BackgroundService>,
@@ -110,6 +114,7 @@ struct AppRepositories {
     secret_repository: Arc<dyn SecretRepository>,
     content_repository: Arc<dyn ContentRepository>,
     extension_repository: Arc<dyn ExtensionRepository>,
+    extension_store_repository: Arc<dyn ExtensionStoreRepository>,
     avatar_repository: Arc<dyn AvatarRepository>,
     group_repository: Arc<dyn GroupRepository>,
     background_repository: Arc<dyn BackgroundRepository>,
@@ -144,6 +149,9 @@ pub(super) async fn build_services(
     let content_service = Arc::new(ContentService::new(repositories.content_repository.clone()));
     let extension_service = Arc::new(ExtensionService::new(
         repositories.extension_repository.clone(),
+    ));
+    let extension_store_service = Arc::new(ExtensionStoreService::new(
+        repositories.extension_store_repository.clone(),
     ));
     let avatar_service = Arc::new(AvatarService::new(repositories.avatar_repository.clone()));
     let group_service = Arc::new(GroupService::new(repositories.group_repository.clone()));
@@ -217,6 +225,7 @@ pub(super) async fn build_services(
         secret_service,
         content_service,
         extension_service,
+        extension_store_service,
         avatar_service,
         group_service,
         background_service,
@@ -290,6 +299,11 @@ fn build_repositories(
             http_client_pool.clone(),
         )?);
 
+    let extension_store_repository: Arc<dyn ExtensionStoreRepository> =
+        Arc::new(FileExtensionStoreRepository::new(
+            data_root.join("_tauritavern").join("extension-store"),
+        ));
+
     let avatar_repository: Arc<dyn AvatarRepository> = Arc::new(FileAvatarRepository::new(
         default_user_dir.join("User Avatars"),
     ));
@@ -352,6 +366,7 @@ fn build_repositories(
         secret_repository,
         content_repository,
         extension_repository,
+        extension_store_repository,
         avatar_repository,
         group_repository,
         background_repository,
