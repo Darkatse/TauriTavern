@@ -28,5 +28,6 @@ pub mod third_party_paths;
 pub mod thumbnails;
 pub mod tt_sync;
 pub mod user_data_dirs;
+pub mod trivium_store;
 pub mod user_data_paths;
 pub mod zipkit;
