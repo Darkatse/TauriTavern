@@ -17,6 +17,7 @@ import { installMobileWindowOpenCompat } from './compat/mobile/mobile-window-ope
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
 import { extractErrorText, resolveHostErrorResponse } from './kernel/host-error-response.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
+import { installWorldInfoGlobalSelectorSelect2Enforcer } from './adapters/st/world-info-global-selector-select2-enforcer.js';
 import { installChatApi } from './api/chat.js';
 import { installDevApi } from './api/dev.js';
 import { installWorldInfoApi } from './api/world-info.js';
@@ -265,6 +266,7 @@ export function bootstrapTauriMain() {
     const context = createTauriMainContext({ invoke, convertFileSrc });
     installHostAbi(context); installChatApi(context); installDevApi(context); installWorldInfoApi();
     installMainApiOptionParking();
+    installWorldInfoGlobalSelectorSelect2Enforcer();
     if (perfEnabled) {
         perfReadyPromise = import('./perf/perf-hud.js')
             .then(({ installPerfHud }) => installPerfHud({ context }))
