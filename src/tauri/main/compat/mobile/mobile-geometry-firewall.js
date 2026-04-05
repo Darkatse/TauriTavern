@@ -59,6 +59,12 @@ const FIREWALL_CSS = `
     max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
   }
 
+  body #completion_prompt_manager_popup {
+    top: calc(var(--topBarBlockSize) + max(var(--tt-inset-top), 0px)) !important;
+    height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
+    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
+  }
+
   body #form_sheld {
     position: relative !important;
     left: auto !important;
@@ -68,6 +74,22 @@ const FIREWALL_CSS = `
     padding-right: max(var(--tt-inset-right), 0px) !important;
     padding-left: max(var(--tt-inset-left), 0px) !important;
     padding-bottom: var(--tt-bottom-inset) !important;
+  }
+
+  /* Scroll reachability contract (mobile):
+   * Fixed shells commonly scroll inside panels/drawers. Ensure the last interactive
+   * row can be scrolled above the iOS bottom safe-area instead of being covered
+   * by the home indicator region.
+   */
+  body .drawer-content.openDrawer::after,
+  body #character_popup::after,
+  body #right-nav-panel > .scrollableInner::after,
+  body #completion_prompt_manager_popup::after {
+    content: '' !important;
+    display: block !important;
+    height: max(var(--tt-inset-bottom), 0px) !important;
+    flex: 0 0 auto !important;
+    pointer-events: none !important;
   }
 
   /* NOTE: Repeat attribute selectors to beat typical framework-scoped CSS (e.g. Vue scoped + !important). */

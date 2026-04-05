@@ -323,6 +323,26 @@ test('geometry firewall enforces viewport root contract (stable size + no root t
     assert.match(source, /html\s*\{\s*[\s\S]*backface-visibility:\s*hidden/);
 });
 
+test('geometry firewall enforces safe-area top contract for completion prompt manager popup', async () => {
+    const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
+    const source = await readFile(firewallPath, 'utf8');
+
+    assert.match(source, /body\s+#completion_prompt_manager_popup\s*\{/);
+    assert.match(source, /#completion_prompt_manager_popup[\s\S]*top:\s*calc\(var\(--topBarBlockSize\)\s*\+\s*max\(var\(--tt-inset-top\),\s*0px\)\)/);
+    assert.match(source, /#completion_prompt_manager_popup[\s\S]*height:\s*calc\(var\(--tt-base-viewport-height/);
+});
+
+test('geometry firewall ensures scroll reachability above bottom safe-area', async () => {
+    const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
+    const source = await readFile(firewallPath, 'utf8');
+
+    assert.match(source, /body\s+\.drawer-content\.openDrawer::after/);
+    assert.match(source, /body\s+#character_popup::after/);
+    assert.match(source, /body\s+#right-nav-panel\s*>\s*\.scrollableInner::after/);
+    assert.match(source, /body\s+#completion_prompt_manager_popup::after/);
+    assert.match(source, /height:\s*max\(var\(--tt-inset-bottom\),\s*0px\)/);
+});
+
 test('geometry firewall defines viewport-host outer geometry contract (explicit size)', async () => {
     const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
     const source = await readFile(firewallPath, 'utf8');
