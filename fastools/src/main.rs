@@ -753,6 +753,7 @@ fn show_build_menu() -> Result<()> {
     loop {
         let selections = &[
             "🖥️ 构建桌面端 (Desktop Build)",
+            "🐞 构建桌面端 Debug 版 (Desktop Debug Build)",
             "🤖 构建 Android (Split ABI)",
             "🍎 构建 iOS (iOS Build)",
             "📦 构建便携版 (Portable Build)",
@@ -767,9 +768,10 @@ fn show_build_menu() -> Result<()> {
 
         match selection {
             0 => run_desktop_build()?,
-            1 => run_android_build_split_abi()?,
-            2 => run_ios_build()?,
-            3 => run_portable_build()?,
+            1 => run_desktop_build_debug()?,
+            2 => run_android_build_split_abi()?,
+            3 => run_ios_build()?,
+            4 => run_portable_build()?,
             _ => break,
         }
     }
@@ -795,16 +797,51 @@ fn run_desktop_build() -> Result<()> {
     Ok(())
 }
 
+fn run_desktop_build_debug() -> Result<()> {
+    log_info("正在构建桌面端 Debug 版本...");
+    log_info("注意：此模式必须使用 npm（pnpm 无法正确传参 --debug）");
+
+    let cmd_prog = get_cmd("npm");
+    let status = Command::new(&cmd_prog)
+        .args(&["run", "tauri", "build", "--", "--debug"])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status();
+
+    match status {
+        Ok(status) => {
+            if status.success() {
+                log_success("构建成功！安装包位于 src-tauri/target/debug/bundle/");
+            } else {
+                log_error("构建失败");
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            log_error("未找到 npm 命令，请先安装 Node.js（包含 npm）后重试。");
+        }
+        Err(e) => return Err(e.into()),
+    }
+
+    pause();
+    Ok(())
+}
+
 fn run_android_build_split_abi() -> Result<()> {
     log_info("正在构建 Android 生产版本 (Split ABI)...");
 
     let status = run_sequential_attempts(&[
-        ("pnpm", vec!["run", "android:build", "--", "--split-per-abi"]),
+        (
+            "pnpm",
+            vec!["tauri", "android", "build", "--apk", "--split-per-abi"],
+        ),
         (
             "corepack",
-            vec!["pnpm", "run", "android:build", "--", "--split-per-abi"],
+            vec!["pnpm", "tauri", "android", "build", "--apk", "--split-per-abi"],
         ),
-        ("npm", vec!["run", "android:build", "--", "--split-per-abi"]),
+        (
+            "npm",
+            vec!["run", "tauri", "android", "build", "--apk", "--split-per-abi"],
+        ),
     ])?;
 
     if status.success() {
