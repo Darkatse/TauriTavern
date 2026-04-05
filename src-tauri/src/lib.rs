@@ -102,6 +102,12 @@ pub async fn run() {
             let http_client_pool = std::sync::Arc::new(HttpClientPool::new());
             app.manage(http_client_pool.clone());
 
+            // TriviumDB 实例管理器：为扩展插件提供向量检索 + 图谱存储能力
+            let trivium_store = std::sync::Arc::new(
+                infrastructure::trivium_store::TriviumStoreManager::new(&runtime_paths.data_root),
+            );
+            app.manage(trivium_store);
+
             #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
             install_window_state_plugin(&app_handle, &runtime_paths.data_root)?;
 
