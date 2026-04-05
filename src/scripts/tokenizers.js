@@ -154,7 +154,82 @@ const TOKENIZER_URLS = {
 
 const objectStore = localforage.createInstance({ name: 'SillyTavern_ChatCompletions' });
 
-let tokenCache = {};
+let tokenCacheState = {
+    chatId: 'undefined',
+    cache: {},
+    dirty: false,
+    loadPromise: null,
+};
+
+function getTokenCacheStorageKey(chatId) {
+    return `tokenCache:${chatId}`;
+}
+
+function resolveTokenCacheChatId() {
+    if (selected_group) {
+        const groupChatId = groups.find(x => x.id == selected_group)?.chat_id;
+        if (groupChatId !== undefined && groupChatId !== null) {
+            return String(groupChatId);
+        }
+    }
+
+    if (this_chid !== undefined) {
+        const characterChatId = characters?.[this_chid]?.chat;
+        if (characterChatId !== undefined && characterChatId !== null) {
+            return String(characterChatId);
+        }
+    }
+
+    return 'undefined';
+}
+
+function startTokenCacheLoad(state) {
+    if (state.loadPromise) {
+        return;
+    }
+
+    const storageKey = getTokenCacheStorageKey(state.chatId);
+    state.loadPromise = objectStore.getItem(storageKey).then(bucket => {
+        if (bucket === null || bucket === undefined) {
+            return;
+        }
+
+        if (typeof bucket !== 'object' || Array.isArray(bucket)) {
+            throw new Error(`Invalid token cache bucket: ${storageKey}`);
+        }
+
+        Object.assign(state.cache, bucket);
+    });
+}
+
+async function flushTokenCacheState(state) {
+    if (!state.dirty) {
+        return;
+    }
+
+    startTokenCacheLoad(state);
+    if (state.loadPromise) {
+        await state.loadPromise;
+    }
+
+    await objectStore.setItem(getTokenCacheStorageKey(state.chatId), state.cache);
+    state.dirty = false;
+}
+
+function getTokenCacheState(chatId) {
+    const normalizedChatId = chatId === undefined || chatId === null ? 'undefined' : String(chatId);
+    if (tokenCacheState.chatId !== normalizedChatId) {
+        tokenCacheState = {
+            chatId: normalizedChatId,
+            cache: {},
+            dirty: false,
+            loadPromise: null,
+        };
+    }
+
+    startTokenCacheLoad(tokenCacheState);
+    return tokenCacheState;
+}
 
 /**
  * Guesstimates the token count for a string.
@@ -166,33 +241,30 @@ export function guesstimate(str) {
 }
 
 async function loadTokenCache() {
-    try {
-        console.debug('Chat Completions: loading token cache');
-        tokenCache = await objectStore.getItem('tokenCache') || {};
-    } catch (e) {
-        console.log('Chat Completions: unable to load token cache, using default value', e);
-        tokenCache = {};
-    }
+    console.debug('Chat Completions: initializing token cache');
+    await objectStore.removeItem('tokenCache');
 }
 
 export async function saveTokenCache() {
-    try {
-        console.debug('Chat Completions: saving token cache');
-        await objectStore.setItem('tokenCache', tokenCache);
-    } catch (e) {
-        console.log('Chat Completions: unable to save token cache', e);
-    }
+    console.debug('Chat Completions: saving token cache');
+    const state = getTokenCacheState(resolveTokenCacheChatId());
+    await flushTokenCacheState(state);
 }
 
 async function resetTokenCache() {
-    try {
-        console.debug('Chat Completions: resetting token cache');
-        Object.keys(tokenCache).forEach(key => delete tokenCache[key]);
-        await objectStore.removeItem('tokenCache');
-        toastr.success('Token cache cleared. Please reload the chat to re-tokenize it.');
-    } catch (e) {
-        console.log('Chat Completions: unable to reset token cache', e);
-    }
+    console.debug('Chat Completions: resetting token cache');
+    tokenCacheState = {
+        chatId: 'undefined',
+        cache: {},
+        dirty: false,
+        loadPromise: null,
+    };
+
+    const keys = await objectStore.keys();
+    const tokenCacheKeys = keys.filter(key => key === 'tokenCache' || key.startsWith('tokenCache:'));
+    await Promise.all(tokenCacheKeys.map(key => objectStore.removeItem(key)));
+
+    toastr.success('Token cache cleared. Please reload the chat to re-tokenize it.');
 }
 
 /**
@@ -467,7 +539,11 @@ export async function getTokenCountAsync(str, padding = undefined) {
         padding = 0;
     }
 
-    const cacheObject = getTokenCacheObject();
+    const cacheState = getTokenCacheState(resolveTokenCacheChatId());
+    if (cacheState.loadPromise) {
+        await cacheState.loadPromise;
+    }
+    const cacheObject = cacheState.cache;
     const hash = getStringHash(str);
     const cacheKey = `${tokenizerType}-${hash}${modelHash}+${padding}`;
 
@@ -483,6 +559,7 @@ export async function getTokenCountAsync(str, padding = undefined) {
     }
 
     cacheObject[cacheKey] = result;
+    cacheState.dirty = true;
     return result;
 }
 
@@ -523,7 +600,8 @@ export function getTokenCount(str, padding = undefined) {
         padding = 0;
     }
 
-    const cacheObject = getTokenCacheObject();
+    const cacheState = getTokenCacheState(resolveTokenCacheChatId());
+    const cacheObject = cacheState.cache;
     const hash = getStringHash(str);
     const cacheKey = `${tokenizerType}-${hash}${modelHash}+${padding}`;
 
@@ -539,6 +617,7 @@ export function getTokenCount(str, padding = undefined) {
     }
 
     cacheObject[cacheKey] = result;
+    cacheState.dirty = true;
     return result;
 }
 
@@ -824,7 +903,8 @@ export function countTokensOpenAI(messages, full = false) {
     const model = getTokenizerModel();
     const tokenizerEndpoint = `/api/tokenizers/openai/count-batch?model=${model}`;
     const legacyTokenizerEndpoint = `/api/tokenizers/openai/count?model=${model}`;
-    const cacheObject = getTokenCacheObject();
+    const cacheState = getTokenCacheState(resolveTokenCacheChatId());
+    const cacheObject = cacheState.cache;
 
     if (!Array.isArray(messages)) {
         messages = [messages];
@@ -906,6 +986,7 @@ export function countTokensOpenAI(messages, full = false) {
             token_count += count;
             if (shouldCache) {
                 cacheObject[cacheMissKeys[i]] = count;
+                cacheState.dirty = true;
             }
         }
     }
@@ -925,7 +1006,11 @@ export async function countTokensOpenAIAsync(messages, full = false) {
     const model = getTokenizerModel();
     const tokenizerEndpoint = `/api/tokenizers/openai/count-batch?model=${model}`;
     const legacyTokenizerEndpoint = `/api/tokenizers/openai/count?model=${model}`;
-    const cacheObject = getTokenCacheObject();
+    const cacheState = getTokenCacheState(resolveTokenCacheChatId());
+    if (cacheState.loadPromise) {
+        await cacheState.loadPromise;
+    }
+    const cacheObject = cacheState.cache;
 
     if (!Array.isArray(messages)) {
         messages = [messages];
@@ -1008,6 +1093,7 @@ export async function countTokensOpenAIAsync(messages, full = false) {
             token_count += count;
             if (shouldCache) {
                 cacheObject[cacheMissKeys[i]] = count;
+                cacheState.dirty = true;
             }
         }
     }
@@ -1015,31 +1101,6 @@ export async function countTokensOpenAIAsync(messages, full = false) {
     if (!full) token_count -= 2;
 
     return token_count;
-}
-
-/**
- * Gets the token cache object for the current chat.
- * @returns {Object} Token cache object for the current chat.
- */
-function getTokenCacheObject() {
-    let chatId = 'undefined';
-
-    try {
-        if (selected_group) {
-            chatId = groups.find(x => x.id == selected_group)?.chat_id;
-        }
-        else if (this_chid !== undefined) {
-            chatId = characters[this_chid].chat;
-        }
-    } catch {
-        console.log('No character / group selected. Using default cache item');
-    }
-
-    if (typeof tokenCache[chatId] !== 'object') {
-        tokenCache[chatId] = {};
-    }
-
-    return tokenCache[String(chatId)];
 }
 
 /**
@@ -1359,6 +1420,14 @@ export async function initTokenizers() {
         }
     });
     await loadTokenCache();
+    eventSource.on(event_types.CHAT_CHANGED, chatId => {
+        getTokenCacheState(chatId);
+    });
+    eventSource.on(event_types.CHAT_DELETED, chatId => {
+        void objectStore.removeItem(getTokenCacheStorageKey(chatId === undefined || chatId === null ? 'undefined' : String(chatId)));
+    });
+    eventSource.on(event_types.GROUP_CHAT_DELETED, chatId => {
+        void objectStore.removeItem(getTokenCacheStorageKey(chatId === undefined || chatId === null ? 'undefined' : String(chatId)));
+    });
     registerDebugFunction('resetTokenCache', 'Reset token cache', 'Purges the calculated token counts. Use this if you want to force a full re-tokenization of all chats or suspect the token counts are wrong.', resetTokenCache);
 }
-

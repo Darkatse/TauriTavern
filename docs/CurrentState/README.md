@@ -41,3 +41,6 @@
 
 6. `docs/CurrentState/MemoryExtensionApi.md`
    - 记忆类扩展 API（`window.__TAURITAVERN__.api.chat`）的当前落地状态：楼层语义、按需历史、后端定位、纯文本检索与持久化
+
+7. `docs/CurrentState/BootstrapOptimization.md`
+   - bootstrap / 启动链路中与冷启动内存基线相关的优化现状（如 tokenCache 避免 whole-load）
