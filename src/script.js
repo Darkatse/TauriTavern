@@ -326,6 +326,7 @@ import { initAccessibility } from './scripts/a11y.js';
 import { applyStreamFadeIn } from './scripts/util/stream-fadein.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
+import { createGenerationIdleGate } from './scripts/util/generation-idle-gate.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 import { MacroEnvBuilder } from './scripts/macros/engine/MacroEnvBuilder.js';
 import { MacroEngine } from './scripts/macros/engine/MacroEngine.js';
@@ -4514,6 +4515,31 @@ function removeLastMessage() {
  * @property {JsonSchema} [jsonSchema] JSON schema to use for the structured generation. Usually requires a special instruction.
  */
 
+const generationIdleGate = createGenerationIdleGate();
+let generationInFlightCount = 0;
+
+export function waitForGenerationIdle() {
+    return generationIdleGate.wait();
+}
+
+function enterGeneration() {
+    if (generationInFlightCount === 0) {
+        generationIdleGate.markBusy();
+    }
+    generationInFlightCount += 1;
+}
+
+function exitGeneration() {
+    if (generationInFlightCount <= 0) {
+        throw new Error('Generation in-flight counter underflow');
+    }
+
+    generationInFlightCount -= 1;
+    if (generationInFlightCount === 0) {
+        generationIdleGate.markIdle();
+    }
+}
+
 /**
  * MARK:Generate()
  * Runs a generation using the current chat context.
@@ -4522,7 +4548,16 @@ function removeLastMessage() {
  * @param {boolean} dryRun Whether to actually generate a message or just assemble the prompt
  * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
  */
-export async function Generate(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0 } = {}, dryRun = false) {
+export async function Generate(type, options = {}, dryRun = false) {
+    enterGeneration();
+    try {
+        return await GenerateInternal(type, options, dryRun);
+    } finally {
+        exitGeneration();
+    }
+}
+
+async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0 } = {}, dryRun = false) {
     console.log('Generate entered');
     setGenerationProgress(0);
     generation_started = new Date();

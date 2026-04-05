@@ -67,6 +67,7 @@ import {
     scrollOnMediaLoad,
     getOneCharacter,
     getCharacterSource,
+    waitForGenerationIdle,
 } from '../script.js';
 import {
     extension_settings,
@@ -104,6 +105,12 @@ import { ConnectionManagerRequestService } from './extensions/shared.js';
 import { updateReasoningUI, parseReasoningFromString, getReasoningTemplateByName } from './reasoning.js';
 import { IGNORE_SYMBOL } from './constants.js';
 import { macros } from './macros/macro-system.js';
+import { createSafeGenerate } from './util/safe-generate.js';
+
+const generateSafely = createSafeGenerate({
+    waitForIdle: waitForGenerationIdle,
+    generate: Generate,
+});
 
 export function getContext() {
     return {
@@ -133,7 +140,7 @@ export function getContext() {
         addOneMessage,
         deleteLastMessage,
         deleteMessage,
-        generate: Generate,
+        generate: generateSafely,
         sendStreamingRequest,
         sendGenerationRequest,
         stopGeneration,
