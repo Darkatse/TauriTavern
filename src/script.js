@@ -319,7 +319,7 @@ import { extractReasoningFromData, extractReasoningSignatureFromData, initReason
 import { accountStorage } from './scripts/util/AccountStorage.js';
 import { initWelcomeScreen, openPermanentAssistantChat, openPermanentAssistantCard, getPermanentAssistantAvatar } from './scripts/welcome-screen.js';
 import { initDataMaid } from './scripts/data-maid.js';
-import { clearItemizedPrompts, deleteItemizedPromptForMessage, deleteItemizedPrompts, findItemizedPromptSet, initItemizedPrompts, itemizedParams, itemizedPrompts, loadItemizedPrompts, promptItemize, replaceItemizedPromptText, saveItemizedPrompts, swapItemizedPrompts } from './scripts/itemized-prompts.js';
+import { clearItemizedPrompts, deleteItemizedPromptForMessage, deleteItemizedPrompts, findItemizedPromptSet, hasItemizedPromptForMessage, initItemizedPrompts, itemizedParams, itemizedPrompts, loadItemizedPrompts, promptItemize, replaceItemizedPromptText, saveItemizedPrompts, swapItemizedPrompts, unloadItemizedPrompts, upsertItemizedPromptRecord } from './scripts/itemized-prompts.js';
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
 import { event_types, eventSource } from './scripts/events.js';
 import { initAccessibility } from './scripts/a11y.js';
@@ -1901,7 +1901,7 @@ export async function clearChat({ clearData = false } = {}) {
     } else { console.debug('saw no avatars'); }
 
     await saveItemizedPrompts(getCurrentChatId());
-    itemizedPrompts.length = 0;
+    unloadItemizedPrompts();
 
     if (clearData) chat.length = 0;
 }
@@ -2803,12 +2803,8 @@ export function addCopyToCodeBlocks(messageElement) {
  * @return {void}
  */
 function updateMessageItemizedPromptButton(message, { messageId = chat.indexOf(message), messageElement = chatElement.find(`.mes[mesid="${messageId}"]`) }) {
-    //if we have itemized messages, and the array isn't null..
-    if (!message.is_user && Array.isArray(itemizedPrompts) && itemizedPrompts.length > 0) {
-        const itemizedPrompt = itemizedPrompts.find(x => Number(x.mesId) === Number(messageId));
-        if (itemizedPrompt) {
-            messageElement.find('.mes_prompt').show();
-        }
+    if (!message.is_user && hasItemizedPromptForMessage(messageId)) {
+        messageElement.find('.mes_prompt').show();
     }
 }
 
@@ -5687,17 +5683,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             examplesCount: main_api !== 'openai' ? (pinExmString ? mesExamplesArray.length : count_exm_add) : oaiMessageExamples.length,
         };
 
-        //console.log(additionalPromptStuff);
-        const itemizedIndex = itemizedPrompts.findIndex((item) => item.mesId === additionalPromptStuff.mesId);
-
-        if (itemizedIndex !== -1) {
-            itemizedPrompts[itemizedIndex] = additionalPromptStuff;
-        }
-        else {
-            itemizedPrompts.push(additionalPromptStuff);
-        }
-
-        console.debug(`pushed prompt bits to itemizedPrompts array. Length is now: ${itemizedPrompts.length}`);
+        upsertItemizedPromptRecord(additionalPromptStuff);
 
         if (isStreamingEnabled() && type !== 'quiet') {
             continue_mag = promptReasoning.removePrefix(continue_mag);
