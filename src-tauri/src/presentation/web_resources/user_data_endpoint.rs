@@ -16,23 +16,51 @@ use crate::presentation::web_resources::response_helpers::{
 
 const USER_DATA_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
 
+#[derive(Clone, Copy)]
+struct UserDataAssetRequestPolicy {
+    android_webview_reapplies_range_semantics: bool,
+}
+
+impl UserDataAssetRequestPolicy {
+    const fn for_current_platform() -> Self {
+        Self {
+            android_webview_reapplies_range_semantics: cfg!(target_os = "android"),
+        }
+    }
+}
+
 pub fn handle_user_data_asset_web_request(
     user_dirs: &DefaultUserWebDirs,
     request: &tauri::http::Request<Vec<u8>>,
     response: &mut tauri::http::Response<Cow<'static, [u8]>>,
+) {
+    handle_user_data_asset_web_request_with_policy(
+        user_dirs,
+        request,
+        response,
+        UserDataAssetRequestPolicy::for_current_platform(),
+    );
+}
+
+fn handle_user_data_asset_web_request_with_policy(
+    user_dirs: &DefaultUserWebDirs,
+    request: &tauri::http::Request<Vec<u8>>,
+    response: &mut tauri::http::Response<Cow<'static, [u8]>>,
+    policy: UserDataAssetRequestPolicy,
 ) {
     let request_path = request.uri().path();
     if !is_user_data_asset_route(request_path) {
         return;
     }
 
-    handle_user_data_asset_route_request(user_dirs, request, response);
+    handle_user_data_asset_route_request_with_policy(user_dirs, request, response, policy);
 }
 
-fn handle_user_data_asset_route_request(
+fn handle_user_data_asset_route_request_with_policy(
     user_dirs: &DefaultUserWebDirs,
     request: &tauri::http::Request<Vec<u8>>,
     response: &mut tauri::http::Response<Cow<'static, [u8]>>,
+    policy: UserDataAssetRequestPolicy,
 ) {
     use tauri::http::Method;
 
@@ -111,6 +139,18 @@ fn handle_user_data_asset_route_request(
         return;
     }
 
+    // Android WebView re-applies request range semantics to intercepted responses.
+    // If we serve already-sliced bytes, non-zero ranges can become unsatisfiable and yield 416.
+    //
+    // However, the media pipeline still expects a 206 + Content-Range when it requests a range.
+    // Workaround: return correct range headers but provide the full file bytes so WebView can
+    // apply the range itself (skip `range.start` bytes in the returned stream).
+    //
+    // See docs/CurrentState/MediaAssetContract.md.
+    let is_android_background_video = policy.android_webview_reapplies_range_semantics
+        && parsed.kind == UserDataAssetKind::Background
+        && mime_type.starts_with("video/");
+
     if let Some(range_header) = request.headers().get(RANGE) {
         let header_value = match range_header.to_str() {
             Ok(value) => value,
@@ -159,71 +199,110 @@ fn handle_user_data_asset_route_request(
             }
         };
 
-        let range_len = match usize::try_from(range.len()) {
-            Ok(value) => value,
-            Err(_) => {
+        if is_android_background_video && range.start != 0 {
+            match std::fs::read(&asset_path) {
+                Ok(bytes) => {
+                    respond_bytes(response, StatusCode::PARTIAL_CONTENT, bytes, &mime_type);
+                    response.headers_mut().insert(
+                        CONTENT_RANGE,
+                        HeaderValue::from_str(&format!(
+                            "bytes {}-{}/{}",
+                            range.start,
+                            range.end,
+                            metadata.len()
+                        ))
+                        .expect("Invalid Content-Range"),
+                    );
+                    response.headers_mut().insert(
+                        CONTENT_LENGTH,
+                        HeaderValue::from_str(&range.len().to_string())
+                            .expect("Invalid Content-Length"),
+                    );
+                    tracing::debug!(
+                        "User data asset Android video range workaround hit: {}",
+                        parsed.relative_path_display
+                    );
+                }
+                Err(error) => {
+                    let status = match error.kind() {
+                        std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+                        _ => StatusCode::INTERNAL_SERVER_ERROR,
+                    };
+                    respond_plain_text(
+                        response,
+                        status,
+                        &format!("Failed to read user data asset: {}", error),
+                    );
+                }
+            }
+            return;
+        } else {
+            let range_len = match usize::try_from(range.len()) {
+                Ok(value) => value,
+                Err(_) => {
+                    respond_plain_text(
+                        response,
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Range is too large to serve",
+                    );
+                    return;
+                }
+            };
+
+            let mut file = match std::fs::File::open(&asset_path) {
+                Ok(value) => value,
+                Err(error) => {
+                    respond_plain_text(
+                        response,
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        &format!("Failed to open user data asset: {}", error),
+                    );
+                    return;
+                }
+            };
+
+            if let Err(error) = file.seek(std::io::SeekFrom::Start(range.start)) {
                 respond_plain_text(
                     response,
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "Range is too large to serve",
+                    &format!("Failed to seek user data asset: {}", error),
                 );
                 return;
             }
-        };
 
-        let mut file = match std::fs::File::open(&asset_path) {
-            Ok(value) => value,
-            Err(error) => {
+            let mut bytes = vec![0u8; range_len];
+            if let Err(error) = file.read_exact(&mut bytes) {
                 respond_plain_text(
                     response,
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    &format!("Failed to open user data asset: {}", error),
+                    &format!("Failed to read user data asset range: {}", error),
                 );
                 return;
             }
-        };
 
-        if let Err(error) = file.seek(std::io::SeekFrom::Start(range.start)) {
-            respond_plain_text(
-                response,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Failed to seek user data asset: {}", error),
+            respond_bytes(response, StatusCode::PARTIAL_CONTENT, bytes, &mime_type);
+            response.headers_mut().insert(
+                CONTENT_RANGE,
+                HeaderValue::from_str(&format!(
+                    "bytes {}-{}/{}",
+                    range.start,
+                    range.end,
+                    metadata.len()
+                ))
+                .expect("Invalid Content-Range"),
+            );
+            response.headers_mut().insert(
+                CONTENT_LENGTH,
+                HeaderValue::from_str(&range.len().to_string()).expect("Invalid Content-Length"),
+            );
+
+            tracing::debug!(
+                "User data asset range hit: {:?}/{}",
+                parsed.kind,
+                parsed.relative_path_display
             );
             return;
         }
-
-        let mut bytes = vec![0u8; range_len];
-        if let Err(error) = file.read_exact(&mut bytes) {
-            respond_plain_text(
-                response,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Failed to read user data asset range: {}", error),
-            );
-            return;
-        }
-
-        respond_bytes(response, StatusCode::PARTIAL_CONTENT, bytes, &mime_type);
-        response.headers_mut().insert(
-            CONTENT_RANGE,
-            HeaderValue::from_str(&format!(
-                "bytes {}-{}/{}",
-                range.start,
-                range.end,
-                metadata.len()
-            ))
-            .expect("Invalid Content-Range"),
-        );
-        response.headers_mut().insert(
-            CONTENT_LENGTH,
-            HeaderValue::from_str(&range.len().to_string()).expect("Invalid Content-Length"),
-        );
-
-        tracing::debug!(
-            "User data asset range hit: {:?}/{}",
-            parsed.kind,
-            parsed.relative_path_display
-        );
-        return;
     }
 
     match std::fs::read(&asset_path) {
@@ -257,7 +336,7 @@ fn handle_user_data_asset_route_request(
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use tauri::http::header::CONTENT_RANGE;
+    use tauri::http::header::{CONTENT_LENGTH, CONTENT_RANGE};
 
     fn dirs(root: &PathBuf) -> DefaultUserWebDirs {
         DefaultUserWebDirs {
@@ -408,6 +487,88 @@ mod tests {
                 .get(CONTENT_RANGE)
                 .map(|value| value.to_str().unwrap_or("")),
             Some("bytes */4")
+        );
+    }
+
+    #[test]
+    fn serves_background_video_assets_with_single_range_on_non_android() {
+        let temp = TempDirGuard::new("user-data-endpoint-background-video-range-non-android");
+        std::fs::create_dir_all(temp.path.join("backgrounds")).expect("create backgrounds dir");
+        std::fs::write(temp.path.join("backgrounds").join("a.mp4"), b"abcd").expect("write asset");
+
+        let request = tauri::http::Request::builder()
+            .method("GET")
+            .uri("/backgrounds/a.mp4")
+            .header("range", "bytes=1-2")
+            .body(Vec::new())
+            .expect("request");
+        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+
+        handle_user_data_asset_web_request_with_policy(
+            &dirs(&temp.path),
+            &request,
+            &mut response,
+            UserDataAssetRequestPolicy {
+                android_webview_reapplies_range_semantics: false,
+            },
+        );
+
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.body().as_ref(), b"bc");
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_RANGE)
+                .map(|value| value.to_str().unwrap_or("")),
+            Some("bytes 1-2/4")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_LENGTH)
+                .map(|value| value.to_str().unwrap_or("")),
+            Some("2")
+        );
+    }
+
+    #[test]
+    fn serves_background_video_assets_with_android_range_workaround() {
+        let temp = TempDirGuard::new("user-data-endpoint-background-video-range-android");
+        std::fs::create_dir_all(temp.path.join("backgrounds")).expect("create backgrounds dir");
+        std::fs::write(temp.path.join("backgrounds").join("a.mp4"), b"abcd").expect("write asset");
+
+        let request = tauri::http::Request::builder()
+            .method("GET")
+            .uri("/backgrounds/a.mp4")
+            .header("range", "bytes=1-2")
+            .body(Vec::new())
+            .expect("request");
+        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+
+        handle_user_data_asset_web_request_with_policy(
+            &dirs(&temp.path),
+            &request,
+            &mut response,
+            UserDataAssetRequestPolicy {
+                android_webview_reapplies_range_semantics: true,
+            },
+        );
+
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.body().as_ref(), b"abcd");
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_RANGE)
+                .map(|value| value.to_str().unwrap_or("")),
+            Some("bytes 1-2/4")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_LENGTH)
+                .map(|value| value.to_str().unwrap_or("")),
+            Some("2")
         );
     }
 }

@@ -84,6 +84,7 @@
 2. 通过 `src-tauri/src/infrastructure/third_party_paths.rs` 解析并校验路径
 3. 通过 `src-tauri/src/infrastructure/third_party_assets.rs` 定位文件并推断 MIME
 4. 返回真实 bytes、正确 `Content-Type`、`Cache-Control: no-store`
+   - 对用户静态资源端点（如 `/backgrounds/*`）若请求携带 `Range`，支持单范围并返回 `206 + Content-Range`（见 `docs/CurrentState/MediaAssetContract.md`）
 5. 未命中时返回真正 `404`，不回退到 `index.html`
 
 开发态本地 Web 入口：

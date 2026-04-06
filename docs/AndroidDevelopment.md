@@ -349,3 +349,28 @@ https://v2.tauri.app/develop/resources/#android
 - fullscreen 业务逻辑必须继续留在自维护文件（`MainActivity.kt` / `AndroidWebFullscreenController.kt`），不要把状态机堆回 generated 文件；
 - 不做前端 fullscreen polyfill 或静默降级，失败直接暴露，便于定位真实链路问题；
 - 未来升级 Tauri / Wry 时，只需要对比 upstream 的 `RustWebChromeClient.kt` 与本地替代版本的差异。
+
+---
+
+## 9. Android WebView 视频背景 Range 语义差异（SillyTavern-VideoBackgrounds）
+
+现象：
+
+- Android 端 `<video src="/backgrounds/*.mp4">` 无法进入播放，页面表现为“只有一个大播放按钮”。
+- DevTools 常见表现为：
+  - 早期出现 `416 Range Not Satisfiable` 或某个 `Range: bytes=...-` 请求被快速 canceled；
+  - `<video>` 长时间停留在 `readyState=HAVE_NOTHING`，无法触发 `loadedmetadata`。
+
+根因（运行时语义差异）：
+
+- Android WebView 在 `shouldInterceptRequest` 的资源拦截链路中，会对“拦截返回的响应流”再次应用请求 Range 语义。
+- 若宿主已经按 Range 做了 seek/slice（返回已经截取过的 bytes），WebView 的二次 Range 会把非 0 起点范围再次应用到截取后的流上，导致不可满足（历史上表现为 `416` / canceled）。
+
+当前已落地 workaround（仅背景视频）：
+
+- 实现：`src-tauri/src/presentation/web_resources/user_data_endpoint.rs`
+- 策略：对 Android + `/backgrounds/*` + `video/*` + `Range start != 0`：
+  - 返回 `206` + 正确 `Content-Range/Content-Length`
+  - body 提供完整文件 bytes，让 WebView 自己在流上执行 Range（skip）
+
+更多细节与全平台媒体契约见：`docs/CurrentState/MediaAssetContract.md`。

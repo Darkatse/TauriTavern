@@ -44,3 +44,6 @@
 
 7. `docs/CurrentState/BootstrapOptimization.md`
    - bootstrap / 启动链路中与冷启动内存基线相关的优化现状（如 tokenCache 避免 whole-load）
+
+8. `docs/CurrentState/MediaAssetContract.md`
+   - `<video>/<audio>` 依赖的全平台媒体资源契约现状（`Range`/`Content-Range`/Android WebView workaround）
