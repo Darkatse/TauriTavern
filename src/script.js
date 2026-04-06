@@ -29,6 +29,8 @@ import {
     clearWindowedChatState,
     DEFAULT_CHAT_WINDOW_LINES,
     getWindowedChatState,
+    getWindowedChatKey,
+    mergeWindowedChatCursorOffset,
     setWindowedChatState,
     shiftWindowedMessageSaveState,
 } from './scripts/tauri/chat/windowed-state.js';
@@ -1631,6 +1633,9 @@ export async function replaceCurrentChat() {
     }
 }
 
+/** @type {{ state: any, promise: Promise<void> } | null} */
+let windowedShowMoreMessagesPending = null;
+
 export async function showMoreMessages(messagesToLoad = null) {
     const windowState = getWindowedChatState();
     if (windowState && isTauriChatPayloadTransportEnabled()) {
@@ -1638,78 +1643,100 @@ export async function showMoreMessages(messagesToLoad = null) {
             throw new Error('Windowed chat cursor is missing');
         }
 
+        const existingPending = windowedShowMoreMessagesPending;
+        if (existingPending?.state === windowState) {
+            return existingPending.promise;
+        }
+
         const count = Number(messagesToLoad || DEFAULT_CHAT_WINDOW_LINES);
         const prevHeight = chatElement.prop('scrollHeight');
         const showMoreButton = $('#show_more_messages');
         const isButtonInView = showMoreButton[0] && isElementInViewport(showMoreButton[0]);
 
-        const result = windowState.kind === 'group'
-            ? await loadGroupChatPayloadBefore({
-                id: windowState.id,
-                cursor: windowState.cursor,
-                maxLines: count,
-            })
-            : await loadCharacterChatPayloadBefore({
-                characterName: windowState.characterName,
-                avatarUrl: windowState.avatarUrl,
-                fileName: windowState.fileName,
-                cursor: windowState.cursor,
-                maxLines: count,
-            });
+        const run = (async () => {
+            const result = windowState.kind === 'group'
+                ? await loadGroupChatPayloadBefore({
+                    id: windowState.id,
+                    cursor: windowState.cursor,
+                    maxLines: count,
+                })
+                : await loadCharacterChatPayloadBefore({
+                    characterName: windowState.characterName,
+                    avatarUrl: windowState.avatarUrl,
+                    fileName: windowState.fileName,
+                    cursor: windowState.cursor,
+                    maxLines: count,
+                });
 
-        const messages = result?.messages;
-        if (!Array.isArray(messages) || messages.length === 0) {
-            showMoreButton.remove();
+            if (getWindowedChatState() !== windowState) {
+                return;
+            }
+
+            const messages = result?.messages;
+            if (!Array.isArray(messages) || messages.length === 0) {
+                showMoreButton.remove();
+                setWindowedChatState({
+                    ...windowState,
+                    cursor: result?.cursor ?? windowState.cursor,
+                    hasMoreBefore: false,
+                });
+                await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
+                return;
+            }
+
+            messages.forEach(ensureMessageMediaIsArray);
+            chat.splice(0, 0, ...messages);
+            if (this_edit_mes_id >= 0) {
+                this_edit_mes_id = Number(this_edit_mes_id) + messages.length;
+            }
+
+            const fragment = document.createDocumentFragment();
+            for (let id = 0; id < messages.length; id += 1) {
+                const messageElement = updateMessageElement(chat[id], { messageId: id });
+                fragment.appendChild(messageElement[0]);
+            }
+
+            if (showMoreButton[0]) {
+                showMoreButton[0].after(fragment);
+            } else {
+                chatElement[0].prepend(fragment);
+            }
+
+            updateViewMessageIds(0);
+            refreshSwipeButtons();
+
+            const hasMoreBefore = Boolean(result?.hasMoreBefore);
+            const shiftedState = shiftWindowedMessageSaveState(windowState, messages.length, 'chat');
             setWindowedChatState({
-                ...windowState,
-                cursor: result?.cursor ?? windowState.cursor,
-                hasMoreBefore: false,
+                ...shiftedState,
+                cursor: result.cursor,
+                hasMoreBefore,
             });
+
+            if (!hasMoreBefore) {
+                showMoreButton.remove();
+            }
+
+            if (isButtonInView) {
+                const newHeight = chatElement.prop('scrollHeight');
+                chatElement.scrollTop(newHeight - prevHeight);
+            }
+
+            applyStylePins();
+            applyCharacterTagsToMessageDivs();
             await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
-            return;
+        })();
+
+        windowedShowMoreMessagesPending = { state: windowState, promise: run };
+
+        try {
+            await run;
+        } finally {
+            if (windowedShowMoreMessagesPending?.promise === run) {
+                windowedShowMoreMessagesPending = null;
+            }
         }
 
-        messages.forEach(ensureMessageMediaIsArray);
-        chat.splice(0, 0, ...messages);
-        if (this_edit_mes_id >= 0) {
-            this_edit_mes_id = Number(this_edit_mes_id) + messages.length;
-        }
-
-        const fragment = document.createDocumentFragment();
-        for (let id = 0; id < messages.length; id += 1) {
-            const messageElement = updateMessageElement(chat[id], { messageId: id });
-            fragment.appendChild(messageElement[0]);
-        }
-
-        if (showMoreButton[0]) {
-            showMoreButton[0].after(fragment);
-        } else {
-            chatElement[0].prepend(fragment);
-        }
-
-        updateViewMessageIds(0);
-        refreshSwipeButtons();
-
-        const hasMoreBefore = Boolean(result?.hasMoreBefore);
-        const shiftedState = shiftWindowedMessageSaveState(windowState, messages.length, 'chat');
-        setWindowedChatState({
-            ...shiftedState,
-            cursor: result.cursor,
-            hasMoreBefore,
-        });
-
-        if (!hasMoreBefore) {
-            showMoreButton.remove();
-        }
-
-        if (isButtonInView) {
-            const newHeight = chatElement.prop('scrollHeight');
-            chatElement.scrollTop(newHeight - prevHeight);
-        }
-
-        applyStylePins();
-        applyCharacterTagsToMessageDivs();
-        await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
         return;
     }
 
@@ -1887,6 +1914,9 @@ export function cancelDebouncedChatSave() {
 export async function clearChat({ clearData = false } = {}) {
     cancelDebouncedChatSave();
     cancelDebouncedMetadataSave();
+    if (clearData) {
+        clearWindowedChatState();
+    }
     closeMessageEditor();
     getCodeHighlightCoordinator().reset();
     extension_prompts = {};
@@ -7719,15 +7749,17 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
         String(error?.code || '').toLowerCase() === 'integrity'
         || /integrity/i.test(String(error?.message || ''));
 
-    try {
-        if (isTauriChatPayloadTransportEnabled()) {
-            const windowState = getWindowedChatState();
-            if (windowState?.kind === 'character' && windowState.cursor && windowState.fileName === fileName) {
-                const {
-                    patch,
-                    savedMessageCount: nextSavedMessageCount,
-                    dirtyFromIndex: nextDirtyFromIndex,
-                } = buildWindowedPayloadPatch(trimmedChat, windowState, 'chat');
+	    try {
+	        if (isTauriChatPayloadTransportEnabled()) {
+	            const windowState = getWindowedChatState();
+	            if (windowState?.kind === 'character' && windowState.cursor && windowState.fileName === fileName) {
+	                const expectedWindowKey = getWindowedChatKey(windowState);
+	                const expectedCursorOffset = windowState.cursor.offset;
+	                const {
+	                    patch,
+	                    savedMessageCount: nextSavedMessageCount,
+	                    dirtyFromIndex: nextDirtyFromIndex,
+	                } = buildWindowedPayloadPatch(trimmedChat, windowState, 'chat');
 
                 const cursor = await patchCharacterChatPayloadWindowed({
                     characterName: characters[this_chid].name,
@@ -7735,21 +7767,30 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
                     fileName: fileName,
                     cursor: windowState.cursor,
                     header: JSON.stringify(chatHeader),
-                    patch,
-                    force: Boolean(force),
-                });
+	                    patch,
+	                    force: Boolean(force),
+	                });
 
-                setWindowedChatState({
-                    ...windowState,
-                    cursor,
-                    savedMessageCount: nextSavedMessageCount,
-                    dirtyFromIndex: nextDirtyFromIndex,
-                });
-            } else {
-                await saveCharacterChatPayload({
-                    characterName: characters[this_chid].name,
-                    avatarUrl: characters[this_chid].avatar,
-                    fileName: fileName,
+	                const activeWindowState = getWindowedChatState();
+	                if (getWindowedChatKey(activeWindowState) === expectedWindowKey) {
+	                    const mergedCursor = mergeWindowedChatCursorOffset(activeWindowState?.cursor, cursor);
+	                    const nextWindowState = {
+	                        ...activeWindowState,
+	                        cursor: mergedCursor,
+	                    };
+
+	                    if (activeWindowState?.cursor?.offset === expectedCursorOffset) {
+	                        nextWindowState.savedMessageCount = nextSavedMessageCount;
+	                        nextWindowState.dirtyFromIndex = nextDirtyFromIndex;
+	                    }
+
+	                    setWindowedChatState(nextWindowState);
+	                }
+	            } else {
+	                await saveCharacterChatPayload({
+	                    characterName: characters[this_chid].name,
+	                    avatarUrl: characters[this_chid].avatar,
+	                    fileName: fileName,
                     payload,
                     force: Boolean(force),
                 });
@@ -7975,8 +8016,13 @@ export async function unshallowCharacter(characterId) {
 }
 
 export async function getChat() {
+    const startedChid = this_chid;
+    const startedSelectedGroup = selected_group;
+    const startedCharacter = startedChid !== undefined ? characters[startedChid] : null;
+    const startedChatFile = startedCharacter?.chat;
+
     try {
-        await unshallowCharacter(this_chid);
+        await unshallowCharacter(startedChid);
         const usePayloadTransport = isTauriChatPayloadTransportEnabled();
         let data;
         let windowedCursor = null;
@@ -7984,9 +8030,9 @@ export async function getChat() {
 
         if (usePayloadTransport) {
             const window = await loadCharacterChatPayloadTail({
-                characterName: characters[this_chid].name,
-                avatarUrl: characters[this_chid].avatar,
-                fileName: characters[this_chid].chat,
+                characterName: startedCharacter?.name,
+                avatarUrl: startedCharacter?.avatar,
+                fileName: startedChatFile,
                 maxLines: DEFAULT_CHAT_WINDOW_LINES,
                 allowNotFound: true,
             });
@@ -8001,9 +8047,9 @@ export async function getChat() {
                 headers: getRequestHeaders(),
                 cache: 'no-cache',
                 body: JSON.stringify({
-                    ch_name: characters[this_chid].name,
-                    file_name: characters[this_chid].chat,
-                    avatar_url: characters[this_chid].avatar,
+                    ch_name: startedCharacter?.name,
+                    file_name: startedChatFile,
+                    avatar_url: startedCharacter?.avatar,
                 }),
             });
 
@@ -8012,6 +8058,14 @@ export async function getChat() {
             }
 
             data = await response.json();
+        }
+
+        const currentCharacter = startedChid !== undefined ? characters[startedChid] : null;
+        const stillActive = startedSelectedGroup === selected_group
+            && startedChid === this_chid
+            && currentCharacter?.chat === startedChatFile;
+        if (!stillActive) {
+            return;
         }
 
         if (Array.isArray(data) && data.length > 0) {
@@ -8029,9 +8083,9 @@ export async function getChat() {
         if (usePayloadTransport && windowedCursor) {
             setWindowedChatState({
                 kind: 'character',
-                characterName: characters[this_chid].name,
-                avatarUrl: characters[this_chid].avatar,
-                fileName: characters[this_chid].chat,
+                characterName: currentCharacter.name,
+                avatarUrl: currentCharacter.avatar,
+                fileName: currentCharacter.chat,
                 cursor: windowedCursor,
                 hasMoreBefore: windowedHasMoreBefore,
                 savedMessageCount: chat.length,

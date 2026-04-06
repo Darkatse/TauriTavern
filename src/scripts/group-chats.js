@@ -97,6 +97,8 @@ import {
     clearWindowedChatState,
     DEFAULT_CHAT_WINDOW_LINES,
     getWindowedChatState,
+    getWindowedChatKey,
+    mergeWindowedChatCursorOffset,
     setWindowedChatState,
 } from './tauri/chat/windowed-state.js';
 
@@ -206,7 +208,7 @@ async function regenerateGroup() {
  * @param {string} chatId Chat ID
  * @returns {Promise<ChatFile>} Array of chat messages
  */
-async function loadGroupChat(chatId) {
+async function loadGroupChat(chatId, { updateWindowState = false } = {}) {
     const normalizedChatId = String(chatId || '').trim();
     if (!normalizedChatId) {
         return [];
@@ -219,18 +221,20 @@ async function loadGroupChat(chatId) {
             allowNotFound: true,
         });
 
-        if (window.cursor) {
-            const messageCount = Array.isArray(window.payload) ? Math.max(0, window.payload.length - 1) : 0;
-            setWindowedChatState({
-                kind: 'group',
-                id: normalizedChatId,
-                cursor: window.cursor,
-                hasMoreBefore: window.hasMoreBefore,
-                savedMessageCount: messageCount,
-                dirtyFromIndex: messageCount,
-            });
-        } else {
-            clearWindowedChatState();
+        if (updateWindowState && String(getCurrentChatId() || '').trim() === normalizedChatId) {
+            if (window.cursor) {
+                const messageCount = Array.isArray(window.payload) ? Math.max(0, window.payload.length - 1) : 0;
+                setWindowedChatState({
+                    kind: 'group',
+                    id: normalizedChatId,
+                    cursor: window.cursor,
+                    hasMoreBefore: window.hasMoreBefore,
+                    savedMessageCount: messageCount,
+                    dirtyFromIndex: messageCount,
+                });
+            } else {
+                clearWindowedChatState();
+            }
         }
 
         return window.payload;
@@ -303,12 +307,25 @@ export async function getGroupChat(groupId, reload = false) {
         return;
     }
 
+    const startedGroupId = groupId;
+    const startedChatId = group.chat_id;
+    const isStillActive = () => selected_group === startedGroupId && getCurrentChatId() === startedChatId;
+
     // Run validation before any loading
     await validateGroup(group);
+    if (!isStillActive()) {
+        return;
+    }
     await unshallowGroupMembers(groupId);
+    if (!isStillActive()) {
+        return;
+    }
 
     const chat_id = group.chat_id;
-    const data = await loadGroupChat(chat_id);
+    const data = await loadGroupChat(chat_id, { updateWindowState: true });
+    if (!isStillActive()) {
+        return;
+    }
     const metadata = data?.[0]?.chat_metadata ?? {};
     const freshChat = !metadata.tainted && (!Array.isArray(data) || !data.length);
 
@@ -323,17 +340,26 @@ export async function getGroupChat(groupId, reload = false) {
     }
 
     await loadItemizedPrompts(getCurrentChatId());
+    if (!isStillActive()) {
+        return;
+    }
 
     if (group && Array.isArray(group.members) && freshChat) {
         chat.splice(0, chat.length);
         chatElement.find('.mes').remove();
         for (let member of group.members) {
+            if (!isStillActive()) {
+                return;
+            }
             const character = characters.find(x => x.avatar === member || x.name === member);
             if (!character) {
                 continue;
             }
 
             const mes = await getFirstCharacterMessage(character);
+            if (!isStillActive()) {
+                return;
+            }
 
             // No first message
             if (!(mes?.mes)) {
@@ -347,10 +373,16 @@ export async function getGroupChat(groupId, reload = false) {
         }
         await saveGroupChat(groupId, false);
     } else if (Array.isArray(data) && data.length) {
+        if (!isStillActive()) {
+            return;
+        }
         chat.splice(0, chat.length, ...data);
         chat.forEach(ensureMessageMediaIsArray);
         chatElement.find('.mes').remove();
         await printMessages();
+        if (!isStillActive()) {
+            return;
+        }
 
         const windowState = getWindowedChatState();
         if (windowState?.kind === 'group' && windowState.cursor && windowState.id === chat_id) {
@@ -363,6 +395,9 @@ export async function getGroupChat(groupId, reload = false) {
     }
 
     updateChatMetadata(metadata, true);
+    if (!isStillActive()) {
+        return;
+    }
 
     if (reload) {
         select_group_chats(groupId, true);
@@ -695,35 +730,46 @@ async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
         String(error?.code || '').toLowerCase() === 'integrity'
         || /integrity/i.test(String(error?.message || ''));
 
-    try {
-        if (isTauriChatPayloadTransportEnabled()) {
-            const windowState = getWindowedChatState();
-            if (windowState?.kind === 'group' && windowState.cursor && windowState.id === chatId) {
-                const {
-                    patch,
-                    savedMessageCount: nextSavedMessageCount,
-                    dirtyFromIndex: nextDirtyFromIndex,
-                } = buildWindowedPayloadPatch(chat, windowState, 'group chat');
+	    try {
+	        if (isTauriChatPayloadTransportEnabled()) {
+	            const windowState = getWindowedChatState();
+	            if (windowState?.kind === 'group' && windowState.cursor && windowState.id === chatId) {
+	                const expectedWindowKey = getWindowedChatKey(windowState);
+	                const expectedCursorOffset = windowState.cursor.offset;
+	                const {
+	                    patch,
+	                    savedMessageCount: nextSavedMessageCount,
+	                    dirtyFromIndex: nextDirtyFromIndex,
+	                } = buildWindowedPayloadPatch(chat, windowState, 'group chat');
 
                 const cursor = await patchGroupChatPayloadWindowed({
                     id: chatId,
                     cursor: windowState.cursor,
                     header: JSON.stringify(chatHeader),
-                    patch,
-                    force: Boolean(force),
-                });
+	                    patch,
+	                    force: Boolean(force),
+	                });
 
-                setWindowedChatState({
-                    ...windowState,
-                    cursor,
-                    savedMessageCount: nextSavedMessageCount,
-                    dirtyFromIndex: nextDirtyFromIndex,
-                });
-            } else {
-                await saveGroupChatPayload({
-                    id: chatId,
-                    payload,
-                    force: Boolean(force),
+	                const activeWindowState = getWindowedChatState();
+	                if (getWindowedChatKey(activeWindowState) === expectedWindowKey) {
+	                    const mergedCursor = mergeWindowedChatCursorOffset(activeWindowState?.cursor, cursor);
+	                    const nextWindowState = {
+	                        ...activeWindowState,
+	                        cursor: mergedCursor,
+	                    };
+
+	                    if (activeWindowState?.cursor?.offset === expectedCursorOffset) {
+	                        nextWindowState.savedMessageCount = nextSavedMessageCount;
+	                        nextWindowState.dirtyFromIndex = nextDirtyFromIndex;
+	                    }
+
+	                    setWindowedChatState(nextWindowState);
+	                }
+	            } else {
+	                await saveGroupChatPayload({
+	                    id: chatId,
+	                    payload,
+	                    force: Boolean(force),
                 });
             }
         } else {

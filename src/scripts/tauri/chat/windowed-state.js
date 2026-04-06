@@ -26,6 +26,33 @@ export function clearWindowedChatState() {
     currentWindow = null;
 }
 
+export function getWindowedChatKey(windowState) {
+    if (!windowState) {
+        return '';
+    }
+
+    if (windowState.kind === 'group') {
+        return `group:${String(windowState.id || '').trim()}`;
+    }
+
+    return `character:${String(windowState.characterName || '').trim()}|${String(windowState.avatarUrl || '').trim()}|${String(windowState.fileName || '').trim()}`;
+}
+
+export function mergeWindowedChatCursorOffset(activeCursor, nextCursor) {
+    if (!nextCursor) {
+        return activeCursor ?? null;
+    }
+
+    if (!activeCursor) {
+        return nextCursor;
+    }
+
+    return {
+        ...nextCursor,
+        offset: activeCursor.offset,
+    };
+}
+
 function requireWindowedCounter(value, label) {
     const normalized = Number(value);
     if (!Number.isFinite(normalized) || normalized < 0) {
