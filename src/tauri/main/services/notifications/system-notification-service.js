@@ -6,8 +6,8 @@
  */
 
 const NOTIFICATION_PERMISSION_STATES = new Set(['granted', 'denied', 'prompt']);
-
-let suppressPermissionRationaleInSession = false;
+const NOTIFICATION_PERMISSION_REJECTION_COUNT_STORAGE_KEY = 'tt:notification-permission-rejection-count';
+const NOTIFICATION_PERMISSION_REJECTION_LIMIT = 3;
 
 /**
  * @param {unknown} value
@@ -23,16 +23,54 @@ function normalizePermissionState(value) {
 }
 
 /**
+ * @param {Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>} storage
+ * @returns {number}
+ */
+function getPermissionRejectionCount(storage) {
+    const raw = storage.getItem(NOTIFICATION_PERMISSION_REJECTION_COUNT_STORAGE_KEY);
+    const count = Number.parseInt(String(raw ?? ''), 10);
+    return Number.isSafeInteger(count) && count > 0 ? count : 0;
+}
+
+/**
+ * @param {Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>} storage
+ * @param {number} count
+ */
+function setPermissionRejectionCount(storage, count) {
+    if (count <= 0) {
+        storage.removeItem(NOTIFICATION_PERMISSION_REJECTION_COUNT_STORAGE_KEY);
+        return;
+    }
+
+    storage.setItem(NOTIFICATION_PERMISSION_REJECTION_COUNT_STORAGE_KEY, String(count));
+}
+
+/**
  * @param {{
  *   safeInvoke: SafeInvokeFn;
  *   confirmPermissionRationale: () => Promise<boolean>;
+ *   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
  * }} deps
  */
-export function createSystemNotificationService({ safeInvoke, confirmPermissionRationale }) {
+export function createSystemNotificationService({
+    safeInvoke,
+    confirmPermissionRationale,
+    storage = globalThis.localStorage,
+}) {
     /** @type {Promise<NotificationPermissionState> | null} */
     let permissionRequestPromise = null;
     /** @type {Promise<boolean> | null} */
     let permissionRationalePromise = null;
+
+    function resetPermissionRejectionCount() {
+        setPermissionRejectionCount(storage, 0);
+    }
+
+    function incrementPermissionRejectionCount() {
+        const nextCount = getPermissionRejectionCount(storage) + 1;
+        setPermissionRejectionCount(storage, nextCount);
+        return nextCount;
+    }
 
     async function getPermissionState() {
         return normalizePermissionState(await safeInvoke('get_notification_permission_state'));
@@ -42,6 +80,15 @@ export function createSystemNotificationService({ safeInvoke, confirmPermissionR
         if (!permissionRequestPromise) {
             permissionRequestPromise = safeInvoke('request_notification_permission')
                 .then(normalizePermissionState)
+                .then((state) => {
+                    if (state === 'granted') {
+                        resetPermissionRejectionCount();
+                        return state;
+                    }
+
+                    incrementPermissionRejectionCount();
+                    return state;
+                })
                 .finally(() => {
                     permissionRequestPromise = null;
                 });
@@ -51,26 +98,34 @@ export function createSystemNotificationService({ safeInvoke, confirmPermissionR
     }
 
     async function confirmPermissionRationaleOnce() {
-        if (suppressPermissionRationaleInSession) {
+        if (getPermissionRejectionCount(storage) >= NOTIFICATION_PERMISSION_REJECTION_LIMIT) {
             return false;
         }
 
         if (!permissionRationalePromise) {
-            permissionRationalePromise = confirmPermissionRationale().finally(() => {
-                permissionRationalePromise = null;
-            });
+            permissionRationalePromise = confirmPermissionRationale()
+                .then((accepted) => {
+                    if (!accepted) {
+                        incrementPermissionRejectionCount();
+                    }
+
+                    return accepted;
+                })
+                .finally(() => {
+                    permissionRationalePromise = null;
+                });
         }
 
-        const accepted = await permissionRationalePromise;
-        if (!accepted) {
-            suppressPermissionRationaleInSession = true;
-        }
-
-        return accepted;
+        return permissionRationalePromise;
     }
 
     async function preparePermission() {
         const currentState = await getPermissionState();
+        if (currentState === 'granted') {
+            resetPermissionRejectionCount();
+            return currentState;
+        }
+
         if (currentState !== 'prompt') {
             return currentState;
         }
