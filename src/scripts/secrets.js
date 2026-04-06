@@ -12,6 +12,7 @@ import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommandScope } from './slash-commands/SlashCommandScope.js';
 import { renderTemplateAsync } from './templates.js';
 import { textgen_types } from './textgen-settings.js';
+import { isAndroidRuntime } from './util/mobile-runtime.js';
 import { copyText, isTrueBoolean } from './utils.js';
 
 export const SECRET_KEYS = {
@@ -544,6 +545,18 @@ async function checkOpenRouterAuth() {
  * Updates the input data lists for secret keys for autocomplete functionality.
  */
 function updateInputDataLists() {
+    if (globalThis.__TAURI_RUNNING__ === true && isAndroidRuntime()) {
+        for (const [key, inputSelector] of Object.entries(INPUT_MAP)) {
+            const inputElements = document.querySelectorAll(inputSelector);
+            if (inputElements.length === 0) {
+                console.warn(`No input elements found for key: ${key}`);
+                continue;
+            }
+            inputElements.forEach(element => element.removeAttribute('list'));
+        }
+        return;
+    }
+
     let container = document.getElementById('secrets_datalists');
     if (!container) {
         container = document.createElement('div');
