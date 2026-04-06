@@ -80,7 +80,7 @@ function createRegexRefreshCoordinator() {
                 return;
             }
 
-            const character = characters[this_chid];
+            const character = characters[Number(this_chid)];
             if (!character) {
                 throw new Error(`RegexRefreshCoordinator: missing character for id ${this_chid}`);
             }

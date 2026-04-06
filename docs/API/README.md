@@ -18,6 +18,9 @@ const api = host?.api;
 - `api.chat`
   - 面向记忆类 / 数据库 / 检索类扩展。
   - 提供跨窗口聊天访问、全文检索、per-chat store、metadata、历史分页等能力。
+- `api.layout`
+  - 面向移动端 UI/面板/悬浮窗/iframe 等需要对齐 safe-area/viewport/IME 的扩展。
+  - 提供布局契约快照与订阅，并配合 `data-tt-mobile-surface` taxonomy 实现少量 opt-in 即稳定适配。
 - `api.dev`
   - 面向调试、诊断与开发工具。
   - 提供前端日志、后端日志、LLM API 日志的统一宿主入口。
@@ -33,6 +36,7 @@ const api = host?.api;
 | 文档 | 内容 |
 | --- | --- |
 | [Chat.md](Chat.md) | `api.chat` 完整参考 |
+| [Layout.md](Layout.md) | `api.layout` 完整参考（safe-area/viewport/IME） |
 | [Dev.md](Dev.md) | `api.dev` 完整参考 |
 | [WorldInfo.md](WorldInfo.md) | `api.worldInfo` 完整参考 |
 | [ExtensionStore.md](Extension.md) | `api.extension.store` 完整参考 |

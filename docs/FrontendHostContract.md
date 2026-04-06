@@ -99,6 +99,8 @@
   - `ready: Promise<void> | null`：与 `__TAURITAVERN_MAIN_READY__` 语义一致。
   - `invoke.safeInvoke(...)` / `invoke.flushAll()`：对 `context` invoke 能力的稳定包装。
   - `assets.*`：对资源路径/缩略图相关全局 API 的统一引用。
+  - `api.layout`：布局契约 API（safe-area / viewport / Android IME），并配合 `data-tt-mobile-surface` taxonomy 让扩展以几行 opt-in 完成移动端适配。
+    - 详细签名与示例见：`docs/API/Layout.md`。
   - `api.chat`：TauriTavern 独有的聊天/记忆类扩展 API（聊天摘要、元数据、历史分页、稳定存储、后端定位、纯文本检索）。
     - 详细签名与示例见：`docs/API/Chat.md`。
   - `api.extension.store`：扩展级**全局持久化**（不绑定 chat），提供 KV JSON + Blob，支持多 table。
@@ -199,6 +201,7 @@
 这些路径必须能被浏览器**原生子资源加载**（`<img src>` / `<link href>` / `<script src>` / `CSS url()`），且 dev/prod 语义一致：
 
 - `/scripts/extensions/third-party/*`
+- `/scripts/tauritavern/layout-kit.js`（ESM；扩展可选 DX 糖衣）
 - `/thumbnail?type={bg|avatar|persona}&file=...`
 - `/characters/*`、`/User Avatars/*`
 - `/backgrounds/*`、`/assets/*`

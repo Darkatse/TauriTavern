@@ -154,8 +154,51 @@ type TauriTavernExtensionApi = {
     store: TauriTavernExtensionStoreApi;
 };
 
+type TauriTavernLayoutInsets = {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+};
+
+type TauriTavernLayoutFrame = {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    right: number;
+    bottom: number;
+};
+
+type TauriTavernLayoutImeKind = 'composer' | 'fixed-shell' | 'dialog';
+
+type TauriTavernLayoutImeSnapshot = {
+    activeSurface: Element | null;
+    kind: TauriTavernLayoutImeKind;
+    bottom: number;
+    viewportBottomInset: number;
+    keyboardOffset: number;
+};
+
+type TauriTavernLayoutSnapshot = {
+    version: number;
+    timestampMs: number;
+    viewport: TauriTavernLayoutFrame;
+    safeInsets: TauriTavernLayoutInsets;
+    safeFrame: TauriTavernLayoutFrame;
+    ime: TauriTavernLayoutImeSnapshot;
+};
+
+type TauriTavernLayoutApi = {
+    snapshot: () => TauriTavernLayoutSnapshot;
+    subscribe: (
+        handler: (snapshot: TauriTavernLayoutSnapshot) => void,
+    ) => Promise<TauriTavernHostUnsubscribe>;
+};
+
 type TauriTavernHostApi = {
     chat?: TauriTavernChatApi;
+    layout?: TauriTavernLayoutApi;
     dev?: TauriTavernDevApi;
     worldInfo?: TauriTavernWorldInfoApi;
     extension?: TauriTavernExtensionApi;

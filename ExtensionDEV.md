@@ -168,3 +168,53 @@ TauriTavern 同时运行在桌面和移动端（Android/iOS），以下建议让
 - 检索和定位交给后端 API（`findLastMessage` / `searchMessages`），避免在 JS 侧做 O(N) 扫描
 - 大状态用 `store.setJson()` 持久化，不要塞进消息体，小状态优先 `metadata.*`
 - 使用 `scanLimit` 控制扫描上限，保护低端设备性能
+
+---
+
+## 5. 移动端布局适配（Safe‑Area / Viewport / IME）
+
+如果你的扩展包含悬浮球、全屏面板、弹窗、同源 iframe 小应用等 UI，推荐接入 TauriTavern 的 Layout ABI：
+
+- ✅ **推荐（DX）**：直接使用 `/scripts/tauritavern/layout-kit.js`（减少样板代码、避免字符串 typo）
+- ✅ **硬 ABI（长期稳定）**：`data-tt-mobile-surface` + `--tt-inset-* / --tt-base-viewport-height / --tt-ime-bottom`
+- ✅ **稳定 API**：`window.__TAURITAVERN__.api.layout`（读取/订阅 safe-area、viewport、IME 快照；layout-kit 内部也会用它）
+
+### 5.1 几行接入：把你的 UI 归类为 surface
+
+全屏面板：
+
+```js
+import { waitForHostReady, SURFACE, applySurface } from '/scripts/tauritavern/layout-kit.js';
+
+await waitForHostReady();
+applySurface(panelEl, SURFACE.FullscreenWindow);
+applySurface(backdropEl, SURFACE.Backdrop);
+```
+
+悬浮球/小窗：
+
+```js
+applySurface(bubbleEl, SURFACE.FreeWindow);
+```
+
+同源 iframe（只承诺 same-origin）：
+
+```js
+applySurface(iframe, SURFACE.ViewportHost);
+iframe.src = '/scripts/extensions/third-party/my-ext/ui/index.html';
+```
+
+> 提示：宿主的 overlay classifier 会保持克制（避免全局 subtree observer）。框架型扩展请优先显式写入 `data-tt-mobile-surface`，不要依赖宿主“猜中”你的结构。
+
+### 5.2 订阅布局快照（用于 clamp / 自定义动画等）
+
+```js
+import { subscribeLayout } from '/scripts/tauritavern/layout-kit.js';
+
+const unsubscribe = await subscribeLayout((snap) => {
+  // snap.safeInsets / snap.safeFrame / snap.ime.keyboardOffset
+});
+```
+
+完整参考：
+- 📖 **[Layout API](docs/API/Layout.md)** — `api.layout` + mobile surface contract 说明
