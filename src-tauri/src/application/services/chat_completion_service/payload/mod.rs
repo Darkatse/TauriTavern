@@ -4,6 +4,8 @@ use crate::application::errors::ApplicationError;
 use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
 
 mod claude;
+mod chutes;
+mod cohere;
 mod custom;
 mod deepseek;
 mod makersuite;
@@ -28,12 +30,14 @@ pub(super) fn build_payload(
     }
 
     match source {
-        ChatCompletionSource::OpenAi | ChatCompletionSource::SiliconFlow => {
-            Ok(openai::build(payload))
-        }
+        ChatCompletionSource::OpenAi
+        | ChatCompletionSource::Groq
+        | ChatCompletionSource::SiliconFlow => Ok(openai::build(payload)),
         ChatCompletionSource::DeepSeek => Ok(deepseek::build(payload)),
+        ChatCompletionSource::Cohere => Ok(cohere::build(payload)?),
         ChatCompletionSource::Moonshot => Ok(moonshot::build(payload)),
         ChatCompletionSource::NanoGpt => nanogpt::build(payload),
+        ChatCompletionSource::Chutes => chutes::build(payload),
         ChatCompletionSource::OpenRouter => Ok(openrouter::build(payload)),
         ChatCompletionSource::Zai => Ok(zai::build(payload)),
         ChatCompletionSource::Custom => custom::build(payload),

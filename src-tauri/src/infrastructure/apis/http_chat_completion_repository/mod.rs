@@ -14,6 +14,7 @@ use crate::domain::repositories::chat_completion_repository::{
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
 mod claude;
+mod cohere;
 mod makersuite;
 mod normalizers;
 mod openai;
@@ -426,6 +427,8 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 openai::list_models(self, config, "Custom OpenAI").await
             }
             ChatCompletionSource::DeepSeek => openai::list_models(self, config, "DeepSeek").await,
+            ChatCompletionSource::Cohere => cohere::list_models(self, config).await,
+            ChatCompletionSource::Groq => openai::list_models(self, config, "Groq").await,
             ChatCompletionSource::Moonshot => {
                 openai::list_models(self, config, "Moonshot AI").await
             }
@@ -438,6 +441,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 )
                 .await
             }
+            ChatCompletionSource::Chutes => openai::list_models(self, config, "Chutes").await,
             ChatCompletionSource::SiliconFlow => {
                 openai::list_models(self, config, "SiliconFlow").await
             }
@@ -468,11 +472,18 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             ChatCompletionSource::DeepSeek => {
                 openai::generate(self, config, endpoint_path, payload, "DeepSeek").await
             }
+            ChatCompletionSource::Cohere => cohere::generate(self, config, endpoint_path, payload).await,
+            ChatCompletionSource::Groq => {
+                openai::generate(self, config, endpoint_path, payload, "Groq").await
+            }
             ChatCompletionSource::Moonshot => {
                 openai::generate(self, config, endpoint_path, payload, "Moonshot AI").await
             }
             ChatCompletionSource::NanoGpt => {
                 openai::generate(self, config, endpoint_path, payload, "NanoGPT").await
+            }
+            ChatCompletionSource::Chutes => {
+                openai::generate(self, config, endpoint_path, payload, "Chutes").await
             }
             ChatCompletionSource::SiliconFlow => {
                 openai::generate(self, config, endpoint_path, payload, "SiliconFlow").await
@@ -550,6 +561,21 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 )
                 .await
             }
+            ChatCompletionSource::Cohere => {
+                cohere::generate_stream(self, config, endpoint_path, payload, sender, cancel).await
+            }
+            ChatCompletionSource::Groq => {
+                openai::generate_stream(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "Groq",
+                    sender,
+                    cancel,
+                )
+                .await
+            }
             ChatCompletionSource::Moonshot => {
                 openai::generate_stream(
                     self,
@@ -569,6 +595,18 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                     endpoint_path,
                     payload,
                     "NanoGPT",
+                    sender,
+                    cancel,
+                )
+                .await
+            }
+            ChatCompletionSource::Chutes => {
+                openai::generate_stream(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "Chutes",
                     sender,
                     cancel,
                 )

@@ -570,8 +570,11 @@ impl ToString for ChatCompletionSource {
             ChatCompletionSource::Makersuite => "makersuite",
             ChatCompletionSource::VertexAi => "vertexai",
             ChatCompletionSource::DeepSeek => "deepseek",
+            ChatCompletionSource::Cohere => "cohere",
+            ChatCompletionSource::Groq => "groq",
             ChatCompletionSource::Moonshot => "moonshot",
             ChatCompletionSource::NanoGpt => "nanogpt",
+            ChatCompletionSource::Chutes => "chutes",
             ChatCompletionSource::SiliconFlow => "siliconflow",
             ChatCompletionSource::Zai => "zai",
         }
@@ -600,6 +603,7 @@ impl StreamReadableCollector {
 
         match self.source {
             ChatCompletionSource::Claude => self.push_claude(trimmed),
+            ChatCompletionSource::Cohere => self.push_cohere(trimmed),
             ChatCompletionSource::Makersuite | ChatCompletionSource::VertexAi => {
                 self.push_gemini_like(trimmed)
             }
@@ -626,6 +630,35 @@ impl StreamReadableCollector {
             if let Some(text) = delta.get("content").and_then(Value::as_str) {
                 self.buffer.push_str(text);
             }
+        }
+    }
+
+    fn push_cohere(&mut self, trimmed: &str) {
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            return;
+        };
+
+        let message = value
+            .get("delta")
+            .and_then(Value::as_object)
+            .and_then(|delta| delta.get("message"))
+            .and_then(Value::as_object);
+        let Some(message) = message else {
+            return;
+        };
+
+        if let Some(text) = message
+            .get("content")
+            .and_then(Value::as_object)
+            .and_then(|content| content.get("text"))
+            .and_then(Value::as_str)
+        {
+            self.buffer.push_str(text);
+            return;
+        }
+
+        if let Some(tool_plan) = message.get("tool_plan").and_then(Value::as_str) {
+            self.buffer.push_str(tool_plan);
         }
     }
 

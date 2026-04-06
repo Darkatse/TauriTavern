@@ -14,8 +14,11 @@ pub enum ChatCompletionSource {
     Makersuite,
     VertexAi,
     DeepSeek,
+    Cohere,
+    Groq,
     Moonshot,
     NanoGpt,
+    Chutes,
     SiliconFlow,
     Zai,
 }
@@ -30,8 +33,11 @@ impl ChatCompletionSource {
             "makersuite" | "gemini" | "google" => Some(Self::Makersuite),
             "vertexai" | "vertex-ai" | "vertex ai" => Some(Self::VertexAi),
             "deepseek" => Some(Self::DeepSeek),
+            "cohere" => Some(Self::Cohere),
+            "groq" => Some(Self::Groq),
             "moonshot" | "moonshot ai" => Some(Self::Moonshot),
             "nanogpt" | "nano-gpt" | "nano gpt" => Some(Self::NanoGpt),
+            "chutes" => Some(Self::Chutes),
             "siliconflow" | "silicon flow" => Some(Self::SiliconFlow),
             "zai" | "z.ai" | "glm" => Some(Self::Zai),
             _ => None,
@@ -88,6 +94,14 @@ mod tests {
             Some(ChatCompletionSource::DeepSeek)
         );
         assert_eq!(
+            ChatCompletionSource::parse("cohere"),
+            Some(ChatCompletionSource::Cohere)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("groq"),
+            Some(ChatCompletionSource::Groq)
+        );
+        assert_eq!(
             ChatCompletionSource::parse("openrouter"),
             Some(ChatCompletionSource::OpenRouter)
         );
@@ -98,6 +112,10 @@ mod tests {
         assert_eq!(
             ChatCompletionSource::parse("nanogpt"),
             Some(ChatCompletionSource::NanoGpt)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("chutes"),
+            Some(ChatCompletionSource::Chutes)
         );
         assert_eq!(
             ChatCompletionSource::parse("siliconflow"),

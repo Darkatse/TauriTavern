@@ -23,8 +23,12 @@ const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com";
 const VERTEXAI_GLOBAL_BASE: &str = "https://aiplatform.googleapis.com";
 const DEEPSEEK_API_BASE: &str = "https://api.deepseek.com/beta";
 const DEEPSEEK_STATUS_API_BASE: &str = "https://api.deepseek.com";
+const COHERE_STATUS_API_BASE: &str = "https://api.cohere.ai/v1";
+const COHERE_API_BASE: &str = "https://api.cohere.ai/v2";
+const GROQ_API_BASE: &str = "https://api.groq.com/openai/v1";
 const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
 const NANOGPT_API_BASE: &str = "https://nano-gpt.com/api/v1";
+const CHUTES_API_BASE: &str = "https://llm.chutes.ai/v1";
 const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
 const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
 const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
@@ -260,8 +264,14 @@ fn default_base_url(
             ApiConfigPurpose::Status => DEEPSEEK_STATUS_API_BASE.to_string(),
             ApiConfigPurpose::Generate => DEEPSEEK_API_BASE.to_string(),
         },
+        ChatCompletionSource::Cohere => match purpose {
+            ApiConfigPurpose::Status => COHERE_STATUS_API_BASE.to_string(),
+            ApiConfigPurpose::Generate => COHERE_API_BASE.to_string(),
+        },
+        ChatCompletionSource::Groq => GROQ_API_BASE.to_string(),
         ChatCompletionSource::Moonshot => MOONSHOT_API_BASE.to_string(),
         ChatCompletionSource::NanoGpt => NANOGPT_API_BASE.to_string(),
+        ChatCompletionSource::Chutes => CHUTES_API_BASE.to_string(),
         ChatCompletionSource::SiliconFlow => SILICONFLOW_API_BASE.to_string(),
         ChatCompletionSource::Zai => {
             if is_zai_coding_endpoint(zai_endpoint) {
@@ -282,8 +292,11 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
         ChatCompletionSource::Makersuite => Some(SecretKeys::MAKERSUITE),
         ChatCompletionSource::VertexAi => Some(SecretKeys::VERTEXAI),
         ChatCompletionSource::DeepSeek => Some(SecretKeys::DEEPSEEK),
+        ChatCompletionSource::Cohere => Some(SecretKeys::COHERE),
+        ChatCompletionSource::Groq => Some(SecretKeys::GROQ),
         ChatCompletionSource::Moonshot => Some(SecretKeys::MOONSHOT),
         ChatCompletionSource::NanoGpt => Some(SecretKeys::NANOGPT),
+        ChatCompletionSource::Chutes => Some(SecretKeys::CHUTES),
         ChatCompletionSource::SiliconFlow => Some(SecretKeys::SILICONFLOW),
         ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
         ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
@@ -298,8 +311,11 @@ fn source_display_name(source: ChatCompletionSource) -> &'static str {
         ChatCompletionSource::Makersuite => "Google Gemini",
         ChatCompletionSource::VertexAi => "Google Vertex AI",
         ChatCompletionSource::DeepSeek => "DeepSeek",
+        ChatCompletionSource::Cohere => "Cohere",
+        ChatCompletionSource::Groq => "Groq",
         ChatCompletionSource::Moonshot => "Moonshot AI",
         ChatCompletionSource::NanoGpt => "NanoGPT",
+        ChatCompletionSource::Chutes => "Chutes",
         ChatCompletionSource::SiliconFlow => "SiliconFlow",
         ChatCompletionSource::Zai => "Z.AI (GLM)",
         ChatCompletionSource::Custom => "Custom OpenAI",
