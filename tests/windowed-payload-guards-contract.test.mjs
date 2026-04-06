@@ -14,6 +14,21 @@ test('windowed payload: showMoreMessages implements single-flight + CAS commit',
     assert.match(source, /getWindowedChatState\(\)\s*!==\s*windowState/);
 });
 
+test('windowed payload: showMoreMessages reindexes DOM and shifts windowed save counters after prepend', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+
+    const showMoreStart = source.indexOf('export async function showMoreMessages');
+    assert.ok(showMoreStart >= 0);
+    const slice = source.slice(showMoreStart, showMoreStart + 3000);
+
+    assert.match(slice, /updateViewMessageIds\(\s*0\s*\)\s*;/);
+    assert.match(
+        slice,
+        /const\s+shiftedState\s*=\s*shiftWindowedMessageSaveState\(\s*windowState\s*,\s*messages\.length\s*,\s*['"]chat['"]\s*\)\s*;/,
+    );
+    assert.match(slice, /\.\.\.\s*shiftedState\s*,/);
+});
+
 test('windowed payload: clearChat(clearData:true) invalidates windowed state immediately', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
 
@@ -43,12 +58,31 @@ test('windowed payload: group tail-load does not mutate window state for backgro
     assert.match(source, /if\s*\(\s*updateWindowState[\s\S]*?setWindowedChatState\s*\(/s);
 });
 
-test('windowed payload: windowed patch commit is guarded and preserves active cursor offset', async () => {
+test('windowed payload: windowed patch commit is guarded and merges cursor offsets', async () => {
     const script = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
     const groupChats = await readFile(path.join(REPO_ROOT, 'src/scripts/group-chats.js'), 'utf8');
 
-    assert.match(script, /\bgetWindowedChatKey\b/);
-    assert.match(script, /\bmergeWindowedChatCursorOffset\b/);
-    assert.match(groupChats, /\bgetWindowedChatKey\b/);
-    assert.match(groupChats, /\bmergeWindowedChatCursorOffset\b/);
+    const saveChatStart = script.indexOf('export async function saveChat');
+    assert.ok(saveChatStart >= 0);
+    const saveChatSlice = script.slice(saveChatStart, saveChatStart + 3200);
+
+    assert.match(saveChatSlice, /\bgetWindowedChatKey\b/);
+    assert.match(saveChatSlice, /const\s+expectedCursorOffset\s*=\s*windowState\.cursor\.offset\s*;/);
+    assert.match(
+        saveChatSlice,
+        /mergeWindowedChatCursorOffset\(\s*activeWindowState\?\.\s*cursor\s*,\s*cursor\s*,\s*expectedCursorOffset\s*\)/,
+    );
+    assert.match(saveChatSlice, /activeWindowState\?\.\s*cursor\?\.\s*offset\s*===\s*expectedCursorOffset/);
+
+    const saveGroupStart = groupChats.indexOf('async function saveGroupChat');
+    assert.ok(saveGroupStart >= 0);
+    const saveGroupSlice = groupChats.slice(saveGroupStart, saveGroupStart + 2400);
+
+    assert.match(saveGroupSlice, /\bgetWindowedChatKey\b/);
+    assert.match(saveGroupSlice, /const\s+expectedCursorOffset\s*=\s*windowState\.cursor\.offset\s*;/);
+    assert.match(
+        saveGroupSlice,
+        /mergeWindowedChatCursorOffset\(\s*activeWindowState\?\.\s*cursor\s*,\s*cursor\s*,\s*expectedCursorOffset\s*\)/,
+    );
+    assert.match(saveGroupSlice, /activeWindowState\?\.\s*cursor\?\.\s*offset\s*===\s*expectedCursorOffset/);
 });

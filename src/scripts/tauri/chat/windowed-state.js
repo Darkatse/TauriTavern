@@ -38,7 +38,7 @@ export function getWindowedChatKey(windowState) {
     return `character:${String(windowState.characterName || '').trim()}|${String(windowState.avatarUrl || '').trim()}|${String(windowState.fileName || '').trim()}`;
 }
 
-export function mergeWindowedChatCursorOffset(activeCursor, nextCursor) {
+export function mergeWindowedChatCursorOffset(activeCursor, nextCursor, expectedBaseOffset) {
     if (!nextCursor) {
         return activeCursor ?? null;
     }
@@ -47,9 +47,16 @@ export function mergeWindowedChatCursorOffset(activeCursor, nextCursor) {
         return nextCursor;
     }
 
+    const baseOffset = Number(expectedBaseOffset);
+    if (!Number.isFinite(baseOffset) || baseOffset < 0) {
+        throw new Error('Windowed chat cursor base offset is missing');
+    }
+
+    const delta = Number(nextCursor.offset) - baseOffset;
+
     return {
         ...nextCursor,
-        offset: activeCursor.offset,
+        offset: Number(activeCursor.offset) + delta,
     };
 }
 

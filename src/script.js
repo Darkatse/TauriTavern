@@ -7773,7 +7773,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
 
 	                const activeWindowState = getWindowedChatState();
 	                if (getWindowedChatKey(activeWindowState) === expectedWindowKey) {
-	                    const mergedCursor = mergeWindowedChatCursorOffset(activeWindowState?.cursor, cursor);
+	                    const mergedCursor = mergeWindowedChatCursorOffset(activeWindowState?.cursor, cursor, expectedCursorOffset);
 	                    const nextWindowState = {
 	                        ...activeWindowState,
 	                        cursor: mergedCursor,

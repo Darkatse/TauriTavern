@@ -44,27 +44,77 @@ test('windowed-state: getWindowedChatKey trims and separates kinds', async () =>
     }), 'character:Alice|/User%20Avatars/a.png|chat-1');
 });
 
-test('windowed-state: mergeWindowedChatCursorOffset preserves active offset', async () => {
+test('windowed-state: mergeWindowedChatCursorOffset applies header delta to active offset', async () => {
     const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/windowed-state.js'));
     const { mergeWindowedChatCursorOffset } = mod;
 
-    assert.equal(mergeWindowedChatCursorOffset(null, null), null);
+    assert.equal(mergeWindowedChatCursorOffset(null, null, 0), null);
     assert.deepEqual(
-        mergeWindowedChatCursorOffset(null, { offset: 10, size: 1, modifiedMillis: 2 }),
+        mergeWindowedChatCursorOffset(null, { offset: 10, size: 1, modifiedMillis: 2 }, 10),
         { offset: 10, size: 1, modifiedMillis: 2 },
     );
 
     assert.deepEqual(
-        mergeWindowedChatCursorOffset({ offset: 10, size: 1, modifiedMillis: 2 }, null),
+        mergeWindowedChatCursorOffset({ offset: 10, size: 1, modifiedMillis: 2 }, null, 10),
         { offset: 10, size: 1, modifiedMillis: 2 },
     );
 
     assert.deepEqual(
         mergeWindowedChatCursorOffset(
-            { offset: 10, size: 1, modifiedMillis: 2 },
-            { offset: 999, size: 2, modifiedMillis: 3 },
+            { offset: 20, size: 1, modifiedMillis: 2 },
+            { offset: 10, size: 2, modifiedMillis: 3 },
+            10,
         ),
-        { offset: 10, size: 2, modifiedMillis: 3 },
+        { offset: 20, size: 2, modifiedMillis: 3 },
+    );
+
+    assert.deepEqual(
+        mergeWindowedChatCursorOffset(
+            { offset: 20, size: 1, modifiedMillis: 2 },
+            { offset: 12, size: 2, modifiedMillis: 3 },
+            10,
+        ),
+        { offset: 22, size: 2, modifiedMillis: 3 },
+    );
+
+    assert.deepEqual(
+        mergeWindowedChatCursorOffset(
+            { offset: 20, size: 1, modifiedMillis: 2 },
+            { offset: 8, size: 2, modifiedMillis: 3 },
+            10,
+        ),
+        { offset: 18, size: 2, modifiedMillis: 3 },
+    );
+});
+
+test('windowed-state: mergeWindowedChatCursorOffset throws on missing or invalid base offset', async () => {
+    const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/windowed-state.js'));
+    const { mergeWindowedChatCursorOffset } = mod;
+
+    assert.throws(
+        () => mergeWindowedChatCursorOffset(
+            { offset: 10, size: 1, modifiedMillis: 2 },
+            { offset: 12, size: 2, modifiedMillis: 3 },
+        ),
+        /base offset/i,
+    );
+
+    assert.throws(
+        () => mergeWindowedChatCursorOffset(
+            { offset: 10, size: 1, modifiedMillis: 2 },
+            { offset: 12, size: 2, modifiedMillis: 3 },
+            NaN,
+        ),
+        /base offset/i,
+    );
+
+    assert.throws(
+        () => mergeWindowedChatCursorOffset(
+            { offset: 10, size: 1, modifiedMillis: 2 },
+            { offset: 12, size: 2, modifiedMillis: 3 },
+            -1,
+        ),
+        /base offset/i,
     );
 });
 
