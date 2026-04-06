@@ -24,6 +24,7 @@ const VERTEXAI_GLOBAL_BASE: &str = "https://aiplatform.googleapis.com";
 const DEEPSEEK_API_BASE: &str = "https://api.deepseek.com/beta";
 const DEEPSEEK_STATUS_API_BASE: &str = "https://api.deepseek.com";
 const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
+const NANOGPT_API_BASE: &str = "https://nano-gpt.com/api/v1";
 const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
 const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
 const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
@@ -260,6 +261,7 @@ fn default_base_url(
             ApiConfigPurpose::Generate => DEEPSEEK_API_BASE.to_string(),
         },
         ChatCompletionSource::Moonshot => MOONSHOT_API_BASE.to_string(),
+        ChatCompletionSource::NanoGpt => NANOGPT_API_BASE.to_string(),
         ChatCompletionSource::SiliconFlow => SILICONFLOW_API_BASE.to_string(),
         ChatCompletionSource::Zai => {
             if is_zai_coding_endpoint(zai_endpoint) {
@@ -281,6 +283,7 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
         ChatCompletionSource::VertexAi => Some(SecretKeys::VERTEXAI),
         ChatCompletionSource::DeepSeek => Some(SecretKeys::DEEPSEEK),
         ChatCompletionSource::Moonshot => Some(SecretKeys::MOONSHOT),
+        ChatCompletionSource::NanoGpt => Some(SecretKeys::NANOGPT),
         ChatCompletionSource::SiliconFlow => Some(SecretKeys::SILICONFLOW),
         ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
         ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
@@ -296,6 +299,7 @@ fn source_display_name(source: ChatCompletionSource) -> &'static str {
         ChatCompletionSource::VertexAi => "Google Vertex AI",
         ChatCompletionSource::DeepSeek => "DeepSeek",
         ChatCompletionSource::Moonshot => "Moonshot AI",
+        ChatCompletionSource::NanoGpt => "NanoGPT",
         ChatCompletionSource::SiliconFlow => "SiliconFlow",
         ChatCompletionSource::Zai => "Z.AI (GLM)",
         ChatCompletionSource::Custom => "Custom OpenAI",

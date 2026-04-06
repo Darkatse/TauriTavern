@@ -15,6 +15,7 @@ pub enum ChatCompletionSource {
     VertexAi,
     DeepSeek,
     Moonshot,
+    NanoGpt,
     SiliconFlow,
     Zai,
 }
@@ -30,6 +31,7 @@ impl ChatCompletionSource {
             "vertexai" | "vertex-ai" | "vertex ai" => Some(Self::VertexAi),
             "deepseek" => Some(Self::DeepSeek),
             "moonshot" | "moonshot ai" => Some(Self::Moonshot),
+            "nanogpt" | "nano-gpt" | "nano gpt" => Some(Self::NanoGpt),
             "siliconflow" | "silicon flow" => Some(Self::SiliconFlow),
             "zai" | "z.ai" | "glm" => Some(Self::Zai),
             _ => None,
@@ -92,6 +94,10 @@ mod tests {
         assert_eq!(
             ChatCompletionSource::parse("moonshot"),
             Some(ChatCompletionSource::Moonshot)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("nanogpt"),
+            Some(ChatCompletionSource::NanoGpt)
         );
         assert_eq!(
             ChatCompletionSource::parse("siliconflow"),

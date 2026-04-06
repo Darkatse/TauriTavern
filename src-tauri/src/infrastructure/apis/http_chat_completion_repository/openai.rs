@@ -13,7 +13,16 @@ pub(super) async fn list_models(
     config: &ChatCompletionApiConfig,
     provider_name: &str,
 ) -> Result<Value, DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, "/models");
+    list_models_with_path(repository, config, provider_name, "/models").await
+}
+
+pub(super) async fn list_models_with_path(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    provider_name: &str,
+    path: &str,
+) -> Result<Value, DomainError> {
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, path);
 
     let client = repository.client()?;
     let request = client.get(url).header(ACCEPT, "application/json");

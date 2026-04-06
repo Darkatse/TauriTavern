@@ -571,6 +571,7 @@ impl ToString for ChatCompletionSource {
             ChatCompletionSource::VertexAi => "vertexai",
             ChatCompletionSource::DeepSeek => "deepseek",
             ChatCompletionSource::Moonshot => "moonshot",
+            ChatCompletionSource::NanoGpt => "nanogpt",
             ChatCompletionSource::SiliconFlow => "siliconflow",
             ChatCompletionSource::Zai => "zai",
         }

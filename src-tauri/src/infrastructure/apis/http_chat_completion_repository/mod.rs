@@ -429,6 +429,15 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             ChatCompletionSource::Moonshot => {
                 openai::list_models(self, config, "Moonshot AI").await
             }
+            ChatCompletionSource::NanoGpt => {
+                openai::list_models_with_path(
+                    self,
+                    config,
+                    "NanoGPT",
+                    "/models?detailed=true",
+                )
+                .await
+            }
             ChatCompletionSource::SiliconFlow => {
                 openai::list_models(self, config, "SiliconFlow").await
             }
@@ -461,6 +470,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             }
             ChatCompletionSource::Moonshot => {
                 openai::generate(self, config, endpoint_path, payload, "Moonshot AI").await
+            }
+            ChatCompletionSource::NanoGpt => {
+                openai::generate(self, config, endpoint_path, payload, "NanoGPT").await
             }
             ChatCompletionSource::SiliconFlow => {
                 openai::generate(self, config, endpoint_path, payload, "SiliconFlow").await
@@ -545,6 +557,18 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                     endpoint_path,
                     payload,
                     "Moonshot AI",
+                    sender,
+                    cancel,
+                )
+                .await
+            }
+            ChatCompletionSource::NanoGpt => {
+                openai::generate_stream(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "NanoGPT",
                     sender,
                     cancel,
                 )

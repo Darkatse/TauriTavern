@@ -267,10 +267,92 @@ impl ChatCompletionService {
                     .await
                     .map_err(ApplicationError::from)?;
             }
+            ChatCompletionSource::NanoGpt => {
+                apply_nanogpt_claude_cache_control(upstream_payload, ttl);
+            }
             _ => {}
         }
 
         Ok(())
+    }
+}
+
+fn is_nanogpt_claude_model(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    model.starts_with("claude-")
+        || model.starts_with("claude_")
+        || model.contains("/claude-")
+        || model.contains("/claude_")
+}
+
+fn apply_nanogpt_claude_cache_control(payload: &mut Value, ttl: &str) -> bool {
+    let is_claude = payload
+        .as_object()
+        .and_then(|object| object.get("model"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(is_nanogpt_claude_model);
+    if !is_claude {
+        return false;
+    }
+
+    let Some(object) = payload.as_object_mut() else {
+        return false;
+    };
+
+    object.insert(
+        "cache_control".to_string(),
+        json!({
+            "enabled": true,
+            "ttl": ttl,
+        }),
+    );
+
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::apply_nanogpt_claude_cache_control;
+
+    #[test]
+    fn nanogpt_claude_cache_control_is_inserted_for_claude_models() {
+        let mut payload = json!({
+            "model": "anthropic/claude-3-5-sonnet-latest",
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        assert!(apply_nanogpt_claude_cache_control(&mut payload, "5m"));
+
+        assert_eq!(
+            payload
+                .get("cache_control")
+                .and_then(Value::as_object)
+                .and_then(|cache_control| cache_control.get("enabled"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .get("cache_control")
+                .and_then(Value::as_object)
+                .and_then(|cache_control| cache_control.get("ttl"))
+                .and_then(Value::as_str),
+            Some("5m")
+        );
+    }
+
+    #[test]
+    fn nanogpt_claude_cache_control_is_skipped_for_non_claude_models() {
+        let mut payload = json!({
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        assert!(!apply_nanogpt_claude_cache_control(&mut payload, "5m"));
+        assert!(payload.get("cache_control").is_none());
     }
 }
 

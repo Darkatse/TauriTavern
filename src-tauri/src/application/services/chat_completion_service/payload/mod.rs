@@ -8,6 +8,7 @@ mod custom;
 mod deepseek;
 mod makersuite;
 mod moonshot;
+mod nanogpt;
 mod openai;
 mod openrouter;
 mod prompt_post_processing;
@@ -32,6 +33,7 @@ pub(super) fn build_payload(
         }
         ChatCompletionSource::DeepSeek => Ok(deepseek::build(payload)),
         ChatCompletionSource::Moonshot => Ok(moonshot::build(payload)),
+        ChatCompletionSource::NanoGpt => nanogpt::build(payload),
         ChatCompletionSource::OpenRouter => Ok(openrouter::build(payload)),
         ChatCompletionSource::Zai => Ok(zai::build(payload)),
         ChatCompletionSource::Custom => custom::build(payload),
