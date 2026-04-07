@@ -293,10 +293,6 @@ impl FileCharacterRepository {
 
         character.chat = Self::normalize_chat_file_stem(&character.chat, &character.name);
 
-        if character.create_date.trim().is_empty() {
-            character.create_date = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
-        }
-
         Ok(())
     }
 

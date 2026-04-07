@@ -1,6 +1,7 @@
 use crate::domain::json_merge::merge_json_value;
 use crate::domain::models::character::{Character, CharacterExtensions};
 use crate::domain::repositories::character_repository::{CharacterChat, ImageCrop};
+use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -32,6 +33,12 @@ pub struct CharacterDto {
     pub extensions: Option<serde_json::Value>,
     pub character_book: Option<serde_json::Value>,
     pub json_data: Option<String>,
+}
+
+fn format_timestamp_millis(timestamp_millis: i64) -> Option<String> {
+    Utc.timestamp_millis_opt(timestamp_millis)
+        .single()
+        .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Millis, true))
 }
 
 /// Character creation DTO
@@ -203,6 +210,12 @@ impl From<Character> for CharacterDto {
             ..
         } = character;
 
+        let create_date = if create_date.trim().is_empty() && date_added > 0 {
+            format_timestamp_millis(date_added).unwrap_or(create_date)
+        } else {
+            create_date
+        };
+
         let extensions = if shallow {
             None
         } else {
@@ -331,8 +344,9 @@ impl From<ImageCropDto> for ImageCrop {
 
 #[cfg(test)]
 mod tests {
-    use super::{CreateCharacterDto, merge_character_extensions};
+    use super::{CharacterDto, CreateCharacterDto, merge_character_extensions};
     use crate::domain::models::character::Character;
+    use chrono::{SecondsFormat, TimeZone, Utc};
     use serde_json::json;
 
     #[test]
@@ -441,5 +455,43 @@ mod tests {
         assert_eq!(character.data.extensions.depth_prompt.prompt, "new");
         assert_eq!(character.data.extensions.depth_prompt.depth, 7);
         assert_eq!(character.data.extensions.depth_prompt.role, "assistant");
+    }
+
+    #[test]
+    fn character_dto_falls_back_to_date_added_when_create_date_missing() {
+        let mut character = Character::new(
+            "Fallback".to_string(),
+            "desc".to_string(),
+            "persona".to_string(),
+            "hi".to_string(),
+        );
+
+        character.create_date = "".to_string();
+        character.date_added = 1_700_000_000_123;
+
+        let dto = CharacterDto::from(character);
+        let expected = Utc
+            .timestamp_millis_opt(1_700_000_000_123)
+            .single()
+            .expect("valid timestamp")
+            .to_rfc3339_opts(SecondsFormat::Millis, true);
+
+        assert_eq!(dto.create_date, expected);
+    }
+
+    #[test]
+    fn character_dto_preserves_existing_create_date() {
+        let mut character = Character::new(
+            "Preserve".to_string(),
+            "desc".to_string(),
+            "persona".to_string(),
+            "hi".to_string(),
+        );
+
+        character.create_date = "2026-03-18T12:34:56.789Z".to_string();
+        character.date_added = 1_700_000_000_123;
+
+        let dto = CharacterDto::from(character);
+        assert_eq!(dto.create_date, "2026-03-18T12:34:56.789Z");
     }
 }

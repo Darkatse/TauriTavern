@@ -12,6 +12,33 @@ use crate::infrastructure::persistence::png_utils::read_character_data_from_png;
 
 use super::FileCharacterRepository;
 
+fn file_ctime_millis(metadata: &std::fs::Metadata) -> Option<i64> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return Some(metadata.ctime() * 1000 + metadata.ctime_nsec() / 1_000_000);
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const WINDOWS_TICKS_TO_UNIX_EPOCH: u64 = 116444736000000000;
+        let unix_ticks = metadata
+            .creation_time()
+            .checked_sub(WINDOWS_TICKS_TO_UNIX_EPOCH)?;
+        return Some((unix_ticks / 10_000) as i64);
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis() as i64)
+    }
+}
+
 impl FileCharacterRepository {
     pub(crate) fn normalize_character_file_stem(name: &str) -> Result<String, DomainError> {
         let normalized = sanitize_filename(name)
@@ -160,10 +187,8 @@ impl FileCharacterRepository {
             DomainError::InternalError(format!("Failed to read file metadata: {}", e))
         })?;
 
-        if let Ok(created) = metadata.created() {
-            if let Ok(created_time) = created.duration_since(std::time::UNIX_EPOCH) {
-                character.date_added = created_time.as_millis() as i64;
-            }
+        if let Some(timestamp_millis) = file_ctime_millis(&metadata) {
+            character.date_added = timestamp_millis;
         }
 
         let (chat_size, date_last_chat) = self.calculate_chat_stats(&file_name).await?;
