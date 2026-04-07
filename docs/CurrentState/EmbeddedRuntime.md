@@ -48,6 +48,7 @@
 - slot 实现：`src/tauri/main/adapters/embedded-runtime/managed-iframe-slot.js`
   - budget park：替换为 `.tt-runtime-placeholder`（可点击恢复）
   - visibility park：替换为 `.tt-runtime-ghost`（占位但不可交互）
+  - cold start：当软停车池无可复用 iframe 时，交还给上游渲染管线重建（避免复用已失效的 `blob:` URL）
 - 软停车池：`src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js`
   - 目标：尽量复用 browsing context，避免 iframe 重载/白屏
 
@@ -72,7 +73,7 @@
 - 核心：`src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js`
   - **事件驱动**：只扫描受影响 message（`*_MESSAGE_RENDERED / MESSAGE_UPDATED / MESSAGE_SWIPED / MORE_MESSAGES_LOADED / CHAT_*`）
   - **局部兜底**：保留一个轻量 `MutationObserver` 处理增量插入/移除
-  - **点击恢复**：用户点击 `.tt-runtime-placeholder` 会触发 `manager.touch(slotId)`
+  - **点击恢复**：用户点击 `.tt-runtime-placeholder` 会触发 `manager.invalidate(slotId)`（强制下一轮 reconcile 重新 hydrate）
 
 ---
 

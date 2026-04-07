@@ -2,6 +2,7 @@
 
 import { fnv1a32 } from '../../kernel/hash-utils.js';
 import { EmbeddedRuntimeKind } from '../../services/embedded-runtime/runtime-kinds.js';
+import { eventSource, event_types } from '../../../../scripts/events.js';
 import { installDomEmbeddedRuntimeAdapter } from './dom-runtime-adapter.js';
 import { createManagedIframeSlot } from './managed-iframe-slot.js';
 
@@ -120,6 +121,9 @@ function registerWrapper(manager, wrapper) {
         id: slotId,
         kind: EmbeddedRuntimeKind.LittleWhiteBoxHtmlRender,
         host: wrapper,
+        requestColdRebuild: () => {
+            void eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
+        },
         priority: 0,
         weight: 10,
         maxSoftParkedIframes,

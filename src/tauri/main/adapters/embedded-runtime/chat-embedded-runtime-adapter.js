@@ -12,6 +12,7 @@ import { parkManagedIframe } from './managed-iframe-parking-lot.js';
  */
 
 const PLACEHOLDER_SELECTOR = '.tt-runtime-placeholder';
+const GHOST_SELECTOR = '.tt-runtime-ghost';
 const SLOT_ID_SELECTOR = '[data-tt-runtime-slot-id]';
 const TH_RENDER_SELECTOR = '.TH-render';
 const HIDDEN_CLASS = 'hidden!';
@@ -151,7 +152,7 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
             return;
         }
 
-        manager.touch(id);
+        manager.invalidate(id);
     };
 
     const observer = new MutationObserver((records) => {
@@ -234,6 +235,10 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
                 }
 
                 if (addedNode instanceof HTMLIFrameElement || addedNode.tagName === 'IFRAME') {
+                    const slotHost = addedNode.closest(SLOT_ID_SELECTOR);
+                    if (slotHost instanceof HTMLElement) {
+                        slotHost.querySelectorAll(`${PLACEHOLDER_SELECTOR}, ${GHOST_SELECTOR}`).forEach((el) => el.remove());
+                    }
                     for (const adapter of adapters) {
                         const host = addedNode.closest(adapter.hostSelector);
                         if (host instanceof HTMLElement) {

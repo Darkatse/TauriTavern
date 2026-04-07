@@ -62,11 +62,21 @@ function findHostGhostPlaceholder(host) {
  * @param {HTMLElement} options.host
  * @param {number} options.maxSoftParkedIframes
  * @param {number} options.softParkTtlMs
+ * @param {(() => void) | undefined} [options.requestColdRebuild]
  * @param {number} [options.priority]
  * @param {number} [options.weight]
  * @returns {EmbeddedRuntimeSlot}
  */
-export function createManagedIframeSlot({ id, kind, host, maxSoftParkedIframes, softParkTtlMs, priority = 0, weight = 10 }) {
+export function createManagedIframeSlot({
+    id,
+    kind,
+    host,
+    maxSoftParkedIframes,
+    softParkTtlMs,
+    requestColdRebuild,
+    priority = 0,
+    weight = 10,
+}) {
     if (!(host instanceof HTMLElement)) {
         throw new Error(`createManagedIframeSlot(${id}): host must be an HTMLElement`);
     }
@@ -238,6 +248,14 @@ export function createManagedIframeSlot({ id, kind, host, maxSoftParkedIframes, 
         if (iframe) {
             ensureTemplate();
             removePlaceholdersNow();
+            return;
+        }
+
+        // Cold start: no live iframe and no parked browsing context. For runtimes
+        // that render via transient `blob:` URLs, cloning a stale template can
+        // resurrect a revoked URL. Hand this back to the upstream renderer.
+        if (requestColdRebuild) {
+            requestColdRebuild();
             return;
         }
 
