@@ -1,6 +1,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use reqwest::Client;
+use serde::Deserialize;
 use url::Url;
 
 use ttsync_contract::canonical::CanonicalRequest;
@@ -17,6 +18,7 @@ use ttsync_contract::sync::SyncMode;
 
 use crate::domain::errors::DomainError;
 use crate::infrastructure::http_client::apply_default_user_agent;
+use crate::infrastructure::tt_sync::bundle::BUNDLE_CONTENT_TYPE;
 use crate::infrastructure::tt_sync::crypto::{random_base64url, sha256_base64url};
 use crate::infrastructure::tt_sync::identity::sign_ed25519_b64url;
 use crate::infrastructure::tt_sync::tls_pin::build_spki_pinned_tls_config;
@@ -69,6 +71,31 @@ impl TtSyncV2Api {
             .json::<PairCompleteResponse>()
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))
+    }
+
+    pub async fn status_features(&self) -> Result<Vec<String>, DomainError> {
+        let url = status_url(&self.base_url)?;
+
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+
+        let response = ensure_success(response, "TT-Sync status failed").await?;
+        let status = response
+            .json::<StatusResponse>()
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+
+        if !status.ok {
+            return Err(DomainError::InternalError(
+                "TT-Sync status returned ok=false".to_string(),
+            ));
+        }
+
+        Ok(status.features)
     }
 
     pub async fn open_session(
@@ -203,6 +230,32 @@ impl TtSyncV2Api {
         ensure_success(response, "TT-Sync file download failed").await
     }
 
+    pub async fn download_bundle(
+        &self,
+        session_token: &SessionToken,
+        plan_id: &PlanId,
+        accept_zstd: bool,
+    ) -> Result<reqwest::Response, DomainError> {
+        let url = bundle_url(&self.base_url, plan_id)?;
+
+        let mut request = self
+            .http
+            .get(url)
+            .header(reqwest::header::AUTHORIZATION, bearer(session_token))
+            .header(reqwest::header::ACCEPT, BUNDLE_CONTENT_TYPE);
+
+        if accept_zstd {
+            request = request.header(reqwest::header::ACCEPT_ENCODING, "zstd");
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+
+        ensure_success(response, "TT-Sync bundle download failed").await
+    }
+
     pub async fn upload_file(
         &self,
         session_token: &SessionToken,
@@ -224,6 +277,40 @@ impl TtSyncV2Api {
             .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
         let response = ensure_success(response, "TT-Sync file upload failed").await?;
+        response
+            .bytes()
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn upload_bundle(
+        &self,
+        session_token: &SessionToken,
+        plan_id: &PlanId,
+        body: reqwest::Body,
+        content_encoding_zstd: bool,
+    ) -> Result<(), DomainError> {
+        let url = bundle_url(&self.base_url, plan_id)?;
+
+        let mut request = self
+            .http
+            .put(url)
+            .header(reqwest::header::AUTHORIZATION, bearer(session_token))
+            .header(reqwest::header::CONTENT_TYPE, BUNDLE_CONTENT_TYPE);
+
+        if content_encoding_zstd {
+            request = request.header(reqwest::header::CONTENT_ENCODING, "zstd");
+        }
+
+        let response = request
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+
+        let response = ensure_success(response, "TT-Sync bundle upload failed").await?;
         response
             .bytes()
             .await
@@ -255,6 +342,13 @@ impl TtSyncV2Api {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct StatusResponse {
+    ok: bool,
+    #[serde(default)]
+    features: Vec<String>,
+}
+
 fn pair_complete_url(base_url: &str, token: &str) -> Result<Url, DomainError> {
     let mut url =
         Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
@@ -268,6 +362,14 @@ fn session_open_url(base_url: &str) -> Result<Url, DomainError> {
     let mut url =
         Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
     url.set_path("/v2/session/open");
+    url.set_query(None);
+    Ok(url)
+}
+
+fn status_url(base_url: &str) -> Result<Url, DomainError> {
+    let mut url =
+        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    url.set_path("/v2/status");
     url.set_query(None);
     Ok(url)
 }
@@ -292,6 +394,14 @@ fn file_download_url(base_url: &str, plan_id: &PlanId, path_b64: &str) -> Result
     let mut url =
         Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
     url.set_path(&format!("/v2/plans/{}/files/{}", plan_id.0, path_b64));
+    url.set_query(None);
+    Ok(url)
+}
+
+fn bundle_url(base_url: &str, plan_id: &PlanId) -> Result<Url, DomainError> {
+    let mut url =
+        Url::parse(base_url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    url.set_path(&format!("/v2/plans/{}/bundle", plan_id.0));
     url.set_query(None);
     Ok(url)
 }

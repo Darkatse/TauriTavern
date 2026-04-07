@@ -47,3 +47,7 @@
 
 8. `docs/CurrentState/MediaAssetContract.md`
    - `<video>/<audio>` 依赖的全平台媒体资源契约现状（`Range`/`Content-Range`/Android WebView workaround）
+
+9. `docs/CurrentState/Sync.md`
+   - 同步（LAN Sync v1 / TT-Sync v2）当前实现快照：链路、状态目录、协议与事件语义约束
+   - 包含 TT-Sync bundle/zstd、断线重试语义与最易误改的契约清单

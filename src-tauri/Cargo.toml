@@ -37,6 +37,7 @@ tokio-util = { version = "0.7", default-features = false, features = ["io"] }
 futures-util = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["http2", "json", "query", "rustls", "socks", "stream"] }
 bytes = "1"
+async-compression = { version = "0.4", features = ["tokio", "zstd"] }
 base64 = "0.22"
 sha2 = "0.10"
 hmac = "0.12"

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use tokio::io::{AsyncRead, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 use crate::domain::errors::DomainError;
 
@@ -24,9 +24,7 @@ pub(crate) async fn write_file_atomic(
         .await
         .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
-    tokio::io::copy(data, &mut file)
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    copy_to_file(data, &mut file).await?;
 
     file.flush()
         .await
@@ -37,6 +35,25 @@ pub(crate) async fn write_file_atomic(
     set_file_modified_ms(path, modified_ms)?;
 
     Ok(())
+}
+
+async fn copy_to_file(
+    data: &mut (dyn AsyncRead + Send + Unpin),
+    file: &mut tokio::fs::File,
+) -> Result<(), DomainError> {
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = data
+            .read(&mut buffer)
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        if read == 0 {
+            return Ok(());
+        }
+        file.write_all(&buffer[..read])
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    }
 }
 
 fn download_tmp_path(path: &Path) -> PathBuf {
