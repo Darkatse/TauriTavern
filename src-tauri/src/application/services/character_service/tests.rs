@@ -1127,6 +1127,70 @@ async fn merge_character_card_data_succeeds_after_normal_bound_world_edit() {
 }
 
 #[tokio::test]
+async fn merge_character_card_data_succeeds_when_bound_world_is_missing() {
+    let (service, character_repository, _world_info_repository, root) = setup_service().await;
+
+    let card_payload = json!({
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "name": "Missing World Merge",
+        "description": "Before",
+        "first_mes": "Hello",
+        "data": {
+            "name": "Missing World Merge",
+            "description": "Before",
+            "first_mes": "Hello",
+            "extensions": {
+                "talkativeness": 0.5,
+                "fav": false,
+                "world": "missing-book",
+                "depth_prompt": {
+                    "prompt": "",
+                    "depth": 4,
+                    "role": "system"
+                }
+            }
+        }
+    });
+
+    write_character_png(&root, "Missing World Merge", &card_payload).await;
+
+    service
+        .merge_character_card_data(
+            "Missing World Merge",
+            MergeCharacterCardDataDto {
+                update: json!({
+                    "description": "After Merge",
+                }),
+            },
+        )
+        .await
+        .expect("merge should succeed even when bound world is missing");
+
+    let stored_json = character_repository
+        .read_character_card_json("Missing World Merge")
+        .await
+        .expect("read merged character");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse merged character");
+
+    assert_eq!(
+        stored_value
+            .get("description")
+            .and_then(serde_json::Value::as_str),
+        Some("After Merge")
+    );
+    assert_eq!(
+        stored_value
+            .pointer("/data/extensions/world")
+            .and_then(serde_json::Value::as_str),
+        Some("missing-book")
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn export_character_content_png_preserves_unknown_card_fields() {
     let (service, _character_repository, _world_info_repository, root) = setup_service().await;
 

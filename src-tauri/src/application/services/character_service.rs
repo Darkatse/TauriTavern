@@ -34,6 +34,12 @@ enum CharacterCardValidationMode {
     Strict,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CharacterCardLorebookMaterializationMode {
+    MaterializePrimary,
+    Skip,
+}
+
 impl CharacterService {
     /// Create a new CharacterService
     pub fn new(
@@ -263,6 +269,7 @@ impl CharacterService {
                 None,
                 None,
                 CharacterCardValidationMode::ReadableOnly,
+                CharacterCardLorebookMaterializationMode::MaterializePrimary,
             )
             .await?;
 
@@ -286,6 +293,7 @@ impl CharacterService {
                 avatar_path,
                 crop,
                 CharacterCardValidationMode::ReadableOnly,
+                CharacterCardLorebookMaterializationMode::MaterializePrimary,
             )
             .await?;
 
@@ -310,6 +318,7 @@ impl CharacterService {
                 None,
                 None,
                 CharacterCardValidationMode::Strict,
+                CharacterCardLorebookMaterializationMode::Skip,
             )
             .await?;
 
@@ -480,9 +489,10 @@ impl CharacterService {
         avatar_path: Option<&Path>,
         crop: Option<ImageCrop>,
         validation_mode: CharacterCardValidationMode,
+        lorebook_mode: CharacterCardLorebookMaterializationMode,
     ) -> Result<Character, ApplicationError> {
         let card_json = self
-            .prepare_character_card_json_for_write(&mut card_value, validation_mode)
+            .prepare_character_card_json_for_write(&mut card_value, validation_mode, lorebook_mode)
             .await?;
 
         self.repository
@@ -495,9 +505,12 @@ impl CharacterService {
         &self,
         card_value: &mut Value,
         validation_mode: CharacterCardValidationMode,
+        lorebook_mode: CharacterCardLorebookMaterializationMode,
     ) -> Result<String, ApplicationError> {
         card_contract::strip_character_card_json_data(card_value);
-        self.materialize_primary_lorebook_value(card_value).await?;
+        if lorebook_mode == CharacterCardLorebookMaterializationMode::MaterializePrimary {
+            self.materialize_primary_lorebook_value(card_value).await?;
+        }
         card_contract::normalize_v2_character_book_extensions(card_value)?;
         self.validate_character_card_for_write(card_value, validation_mode)?;
 
