@@ -1,4 +1,4 @@
-import { chat, chat_metadata, eventSource, event_types, getRequestHeaders, this_chid, characters } from '../../../script.js';
+import { chat, chat_metadata, eventSource, event_types, getCurrentChatId, getRequestHeaders, this_chid, characters } from '../../../script.js';
 import { extension_settings } from '../../extensions.js';
 import { QuickReplyApi } from './api/QuickReplyApi.js';
 import { AutoExecuteHandler } from './src/AutoExecuteHandler.js';
@@ -278,6 +278,7 @@ const onChatChanged = async (chatIdx) => {
 eventSource.on(event_types.CHAT_CHANGED, (...args)=>executeIfReadyElseQueue(onChatChanged, args));
 eventSource.on(event_types.CHARACTER_DELETED, purgeCharacterQuickReplySets);
 eventSource.on(event_types.CHARACTER_RENAMED, updateCharacterQuickReplySets);
+executeIfReadyElseQueue(onChatChanged, [getCurrentChatId()]);
 
 const onUserMessage = async () => {
     await autoExec.handleUser();
