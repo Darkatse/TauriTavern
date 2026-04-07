@@ -39,11 +39,7 @@ fn build_signature_verifier() -> Result<Arc<rustls::client::WebPkiServerVerifier
 }
 
 fn default_alpn_protocols() -> Vec<Vec<u8>> {
-    if cfg!(target_os = "android") {
-        vec![b"http/1.1".to_vec()]
-    } else {
-        vec![b"h2".to_vec(), b"http/1.1".to_vec()]
-    }
+    vec![b"h2".to_vec(), b"http/1.1".to_vec()]
 }
 
 #[derive(Debug)]
