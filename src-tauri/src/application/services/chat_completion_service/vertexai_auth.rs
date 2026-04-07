@@ -135,16 +135,15 @@ fn build_android_hyper_client() -> CustomHyperClientBuilder<
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
 
-    let mut tls_config = rustls::ClientConfig::builder()
+    let tls_config = rustls::ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_no_client_auth();
-
-    tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
 
     let connector = yup_oauth2::hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(tls_config)
         .https_or_http()
         .enable_http1()
+        .enable_http2()
         .build();
 
     let client =
