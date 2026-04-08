@@ -3,6 +3,16 @@ const STYLE_ID = 'tt-mobile-geometry-firewall';
 // NOTE: This layer intentionally contains only "core geometry" rules.
 // Themes keep skinning freedom (colors, borders, shadows), but must not own
 // mobile safe-area/viewport geometry for first-party shells.
+//
+// Why this file (and why it lives in the host layer):
+// - iOS (WKWebView) runs edge-to-edge with `viewport-fit=cover`, so safe-area must be
+//   explicitly consumed by first-party shells.
+// - SillyTavern's upstream CSS uses a width breakpoint for "mobile styles". On iPad
+//   landscape (and Stage Manager wide windows), that breakpoint is commonly not met,
+//   so the app falls back to desktop layout while still being a mobile runtime.
+// - We keep the desktop layout on iPad, but still apply the safe-area top offset via
+//   the existing `--tt-inset-*` contract. This keeps behavior predictable, minimal,
+//   and easy to maintain when syncing upstream CSS.
 const FIREWALL_CSS = `
 /* [TauriTavern] Mobile geometry firewall (host-last) */
 @media screen and (max-width: 1000px) {
@@ -143,6 +153,76 @@ const FIREWALL_CSS = `
 
   body [data-tt-mobile-surface="fullscreen-window"][data-tt-mobile-surface][data-tt-mobile-surface][data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
     bottom: max(var(--tt-viewport-bottom-inset-local), 0px) !important;
+  }
+}
+
+/* iPad wide screens (desktop layout + safe-area contract).
+ *
+ * When the viewport width exceeds 1000px, upstream "mobile" CSS does not apply.
+ * On iOS we still run edge-to-edge, so first-party fixed/absolute shells must
+ * consume --tt-inset-top to avoid falling under the status bar.
+ *
+ * This block intentionally keeps the desktop layout (centered --sheldWidth, no
+ * 100vw mobile takeover). Only the safe-area top offset + corresponding height
+ * adjustments are enforced.
+ */
+@media screen and (min-width: 1001px) {
+  /* Keep a single source of truth for the top safe-area offset in this mode.
+   * This is host-private plumbing, not public ABI.
+   */
+  body {
+    --tt-safe-top: max(var(--tt-inset-top), 0px);
+  }
+
+  html,
+  body {
+    height: var(--tt-base-viewport-height, var(--doc-height, 100vh)) !important;
+    min-height: var(--tt-base-viewport-height, var(--doc-height, 100vh)) !important;
+  }
+
+  html {
+    -webkit-transform: none !important;
+    transform: none !important;
+    -webkit-perspective: none !important;
+    perspective: none !important;
+    -webkit-backface-visibility: hidden !important;
+    backface-visibility: hidden !important;
+  }
+
+  body #top-bar {
+    top: var(--tt-safe-top) !important;
+  }
+
+  body #top-settings-holder {
+    margin-top: var(--tt-safe-top) !important;
+  }
+
+  body #sheld {
+    top: calc(var(--topBarBlockSize) + var(--tt-safe-top)) !important;
+    height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top) - 1px) !important;
+    max-height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top) - 1px) !important;
+  }
+
+  body #character_popup {
+    top: calc(var(--topBarBlockSize) + var(--tt-safe-top)) !important;
+    height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
+    min-height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
+    max-height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
+  }
+
+  body #completion_prompt_manager_popup {
+    top: calc(var(--topBarBlockSize) + var(--tt-safe-top)) !important;
+    height: calc(100% - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
+  }
+
+  body #top-settings-holder > .drawer > .drawer-content:not(.fillLeft):not(.fillRight) {
+    max-height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--bottomFormBlockSize) - var(--tt-safe-top)) !important;
+  }
+
+  body .fillLeft,
+  body .fillRight {
+    top: var(--tt-safe-top) !important;
+    max-height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
   }
 }
 `.trim();
