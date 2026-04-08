@@ -257,6 +257,10 @@ export async function openTauriTavernSettingsPopup() {
                 </div>
 
                 <div class="flex-container flexFlowRow" style="gap: 10px; flex-wrap: wrap;">
+                    <div id="tt-reload-frontend" class="menu_button" title="Reload Frontend" data-i18n="[title]Reload Frontend">
+                        <i class="fa-solid fa-arrows-rotate" style="margin-right: 6px;" aria-hidden="true"></i>
+                        <span data-i18n="Reload Frontend">Reload Frontend</span>
+                    </div>
                     <div id="tt-open-frontend-logs" class="menu_button" data-i18n="Frontend Logs">Frontend Logs</div>
                     <div id="tt-open-backend-logs" class="menu_button" data-i18n="Backend Logs">Backend Logs</div>
                     <div id="tt-open-llm-api-logs" class="menu_button" data-i18n="LLM API Logs">LLM API Logs</div>
@@ -362,6 +366,14 @@ export async function openTauriTavernSettingsPopup() {
             throw new Error('TauriTavern settings: close to tray toggle not found');
         }
     }
+
+    const reloadFrontendButton = root.querySelector('#tt-reload-frontend');
+    if (!(reloadFrontendButton instanceof HTMLElement)) {
+        throw new Error('TauriTavern settings: reload frontend button not found');
+    }
+    reloadFrontendButton.addEventListener('click', () => runOrPopup(async () => {
+        window.location.reload();
+    }));
 
     const openFrontendLogsButton = root.querySelector('#tt-open-frontend-logs');
     if (!(openFrontendLogsButton instanceof HTMLElement)) {

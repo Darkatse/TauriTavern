@@ -3790,6 +3790,7 @@
     "Pinned chat": "已置顶聊天",
     "Pin chat": "置顶聊天",
     "Development": "开发",
+    "Reload Frontend": "刷新前端",
     "Frontend Logs": "前端日志",
     "Backend Logs": "后端日志",
     "LLM API Logs": "LLM API 日志",

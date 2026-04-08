@@ -4305,6 +4305,7 @@
     "Prune": "精簡",
     "Remove unused tags": "刪除未使用的標籤",
     "Development": "開發",
+    "Reload Frontend": "刷新前端",
     "Frontend Logs": "前端日誌",
     "Backend Logs": "後端日誌",
     "LLM API Logs": "LLM API 日誌",
