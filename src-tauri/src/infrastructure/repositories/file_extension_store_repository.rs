@@ -7,7 +7,9 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::json_merge::merge_json_value;
 use crate::domain::repositories::extension_store_repository::ExtensionStoreRepository;
-use crate::infrastructure::persistence::file_system::{replace_file_with_fallback, unique_temp_path};
+use crate::infrastructure::persistence::file_system::{
+    replace_file_with_fallback, unique_temp_path,
+};
 
 pub struct FileExtensionStoreRepository {
     base_dir: PathBuf,
@@ -30,10 +32,7 @@ impl FileExtensionStoreRepository {
 
     fn blob_table_dir(&self, namespace: &str, table: &str) -> Result<PathBuf, DomainError> {
         let table = validate_component(table, "table")?;
-        Ok(self
-            .namespace_root(namespace)?
-            .join("blobs")
-            .join(table))
+        Ok(self.namespace_root(namespace)?.join("blobs").join(table))
     }
 
     fn json_entry_path(
@@ -43,7 +42,9 @@ impl FileExtensionStoreRepository {
         key: &str,
     ) -> Result<PathBuf, DomainError> {
         let key = validate_component(key, "key")?;
-        Ok(self.kv_table_dir(namespace, table)?.join(format!("{}.json", key)))
+        Ok(self
+            .kv_table_dir(namespace, table)?
+            .join(format!("{}.json", key)))
     }
 
     fn blob_entry_path(
@@ -270,7 +271,10 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
         }
 
         let bytes = serde_json::to_vec_pretty(&value).map_err(|error| {
-            DomainError::InvalidData(format!("Failed to serialize extension store JSON: {}", error))
+            DomainError::InvalidData(format!(
+                "Failed to serialize extension store JSON: {}",
+                error
+            ))
         })?;
 
         let temp = unique_temp_path(&path, "extension-store.json");
@@ -325,7 +329,10 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
         merge_json_value(&mut current, value);
 
         let bytes = serde_json::to_vec_pretty(&current).map_err(|error| {
-            DomainError::InvalidData(format!("Failed to serialize extension store JSON: {}", error))
+            DomainError::InvalidData(format!(
+                "Failed to serialize extension store JSON: {}",
+                error
+            ))
         })?;
 
         let temp = unique_temp_path(&path, "extension-store.json");
@@ -428,11 +435,7 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
         Ok(merged)
     }
 
-    async fn delete_table(
-        &self,
-        namespace: &str,
-        table: &str,
-    ) -> Result<(), DomainError> {
+    async fn delete_table(&self, namespace: &str, table: &str) -> Result<(), DomainError> {
         let kv_dir = self.kv_table_dir(namespace, table)?;
         let blob_dir = self.blob_table_dir(namespace, table)?;
 
@@ -579,12 +582,22 @@ mod tests {
         let dir = create_temp_dir();
         let repo = FileExtensionStoreRepository::new(dir);
 
-        repo.set_json("my-ext", "main", "index", json!({"a": 1, "nested": {"x": 1}}))
-            .await
-            .unwrap();
-        repo.update_json("my-ext", "main", "index", json!({"b": 2, "nested": {"y": 2}}))
-            .await
-            .unwrap();
+        repo.set_json(
+            "my-ext",
+            "main",
+            "index",
+            json!({"a": 1, "nested": {"x": 1}}),
+        )
+        .await
+        .unwrap();
+        repo.update_json(
+            "my-ext",
+            "main",
+            "index",
+            json!({"b": 2, "nested": {"y": 2}}),
+        )
+        .await
+        .unwrap();
 
         let value = repo.get_json("my-ext", "main", "index").await.unwrap();
         assert_eq!(value, json!({"a": 1, "b": 2, "nested": {"x": 1, "y": 2}}));
@@ -655,4 +668,3 @@ mod tests {
         assert!(keys.is_empty());
     }
 }
-

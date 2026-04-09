@@ -8,8 +8,8 @@ use crate::application::dto::character_dto::{
     UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto, merge_character_extensions,
 };
 use crate::application::errors::ApplicationError;
-use crate::domain::json_merge::merge_json_value;
 use crate::domain::errors::DomainError;
+use crate::domain::json_merge::merge_json_value;
 use crate::domain::models::character::Character;
 use crate::domain::models::world_info::sanitize_world_info_name;
 use crate::domain::repositories::character_repository::{CharacterRepository, ImageCrop};

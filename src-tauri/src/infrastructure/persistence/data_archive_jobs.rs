@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::errors::DomainError;
-use crate::infrastructure::paths::resolve_runtime_paths;
+use crate::infrastructure::paths::RuntimePaths;
 
 use super::data_archive::{
     DataArchiveExportResult, DataArchiveImportResult, default_export_file_name, is_cancelled_error,
@@ -229,9 +229,7 @@ pub fn start_import_data_archive_job(
         )));
     }
 
-    let runtime_paths = resolve_runtime_paths(app_handle).map_err(|error| {
-        DomainError::InternalError(format!("Failed to resolve runtime paths: {}", error))
-    })?;
+    let runtime_paths = app_handle.state::<RuntimePaths>();
     let imports_root = runtime_paths.archive_imports_root.clone();
     let data_root = runtime_paths.data_root.clone();
     let app_handle = app_handle.clone();
@@ -314,9 +312,7 @@ pub fn start_import_data_archive_job(
 }
 
 pub fn start_export_data_archive_job(app_handle: &AppHandle) -> Result<String, DomainError> {
-    let runtime_paths = resolve_runtime_paths(app_handle).map_err(|error| {
-        DomainError::InternalError(format!("Failed to resolve runtime paths: {}", error))
-    })?;
+    let runtime_paths = app_handle.state::<RuntimePaths>();
     let data_root = runtime_paths.data_root.clone();
     let export_root = runtime_paths.archive_exports_root.clone();
     fs::create_dir_all(&export_root).map_err(|error| {

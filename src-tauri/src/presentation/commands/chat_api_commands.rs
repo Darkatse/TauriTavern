@@ -168,13 +168,7 @@ pub async fn rename_character_chat_store_key(
 
     app_state
         .chat_service
-        .rename_character_chat_store_key(
-            &character_name,
-            &file_name,
-            &namespace,
-            &key,
-            &new_key,
-        )
+        .rename_character_chat_store_key(&character_name, &file_name, &namespace, &key, &new_key)
         .await
         .map_err(map_command_error(format!(
             "Failed to rename chat store key {}/{}:{}/{} -> {}",

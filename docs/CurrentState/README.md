@@ -51,3 +51,7 @@
 9. `docs/CurrentState/Sync.md`
    - 同步（LAN Sync v1 / TT-Sync v2）当前实现快照：链路、状态目录、协议与事件语义约束
    - 包含 TT-Sync bundle/zstd、断线重试语义与最易误改的契约清单
+
+10. `docs/CurrentState/DataDirectorySelection.md`
+   - 桌面端数据目录选择 / 启动期迁移的当前实现快照
+   - 包含运行时引导配置、迁移恢复语义、effectively-empty 目录契约与持续开发约束

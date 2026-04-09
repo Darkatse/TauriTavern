@@ -182,11 +182,12 @@ pub(super) async fn generate_stream(
                     return;
                 }
 
-                if !payload.windows(b"cache_read_input_tokens".len()).any(|window| {
-                    window == b"cache_read_input_tokens"
-                }) && !payload
-                    .windows(b"cache_creation_input_tokens".len())
-                    .any(|window| window == b"cache_creation_input_tokens")
+                if !payload
+                    .windows(b"cache_read_input_tokens".len())
+                    .any(|window| window == b"cache_read_input_tokens")
+                    && !payload
+                        .windows(b"cache_creation_input_tokens".len())
+                        .any(|window| window == b"cache_creation_input_tokens")
                 {
                     return;
                 }

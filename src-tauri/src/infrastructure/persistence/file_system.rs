@@ -278,6 +278,52 @@ pub async fn replace_file_with_fallback(
     }
 }
 
+/// Synchronous variant of `replace_file_with_fallback` for startup/runtime code paths
+/// that cannot rely on Tokio being available yet.
+pub fn replace_file_with_fallback_sync(
+    temp_path: &Path,
+    target_path: &Path,
+) -> Result<(), DomainError> {
+    match std::fs::rename(temp_path, target_path) {
+        Ok(()) => Ok(()),
+        Err(rename_error) => {
+            logger::warn(&format!(
+                "Rename failed while replacing file {:?} -> {:?}: {}. Falling back to copy/remove.",
+                temp_path, target_path, rename_error
+            ));
+
+            if let Some(parent) = target_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to create target parent directory {:?}: {}",
+                        parent, error
+                    ))
+                })?;
+            }
+
+            std::fs::copy(temp_path, target_path).map_err(|copy_error| {
+                DomainError::InternalError(format!(
+                    "Failed to replace file {:?} -> {:?}. Rename error: {}. Copy fallback error: {}",
+                    temp_path, target_path, rename_error, copy_error
+                ))
+            })?;
+
+            match std::fs::remove_file(temp_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    logger::warn(&format!(
+                        "Copied file {:?} -> {:?}, but failed to remove temp file: {}",
+                        temp_path, target_path, error
+                    ));
+                }
+            }
+
+            Ok(())
+        }
+    }
+}
+
 /// Write a JSON file
 ///
 /// This is an async function that serializes data to JSON and writes it to a file.
@@ -418,7 +464,9 @@ mod tests {
     async fn replace_file_with_fallback_overwrites_existing_file() {
         let root = unique_temp_root();
         let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root).await.expect("create temp root");
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create temp root");
 
         let target = root.join("target.txt");
         tokio_fs::write(&target, b"old")
@@ -441,6 +489,27 @@ mod tests {
         tokio_fs::remove_dir_all(&root)
             .await
             .expect("remove temp root");
+    }
+
+    #[test]
+    fn replace_file_with_fallback_sync_overwrites_existing_file() {
+        let root = unique_temp_root();
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+
+        let target = root.join("target.txt");
+        std::fs::write(&target, b"old").expect("write existing target");
+
+        let temp = root.join("temp.txt");
+        std::fs::write(&temp, b"new").expect("write temp file");
+
+        replace_file_with_fallback_sync(&temp, &target).expect("replace file");
+
+        let bytes = std::fs::read(&target).expect("read target");
+        assert_eq!(&bytes, b"new");
+        assert!(!temp.exists(), "temp file should be moved/removed");
+
+        std::fs::remove_dir_all(&root).expect("remove temp root");
     }
 
     #[tokio::test]
@@ -476,7 +545,9 @@ mod tests {
     async fn write_json_file_replaces_target_entry_so_open_handles_keep_old_bytes() {
         let root = unique_temp_root();
         let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root).await.expect("create temp root");
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create temp root");
 
         let path = root.join("settings.json");
         write_json_file(&path, &json!({ "version": 1u32, "payload": "old" }))
@@ -526,7 +597,9 @@ mod tests {
 
         let root = unique_temp_root();
         let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root).await.expect("create temp root");
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create temp root");
 
         let path = root.join("settings.json");
         write_json_file(&path, &json!({ "ok": true }))
@@ -556,7 +629,9 @@ mod tests {
     async fn read_json_file_returns_invalid_data_for_malformed_json() {
         let root = unique_temp_root();
         let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root).await.expect("create temp root");
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create temp root");
 
         let path = root.join("bad.json");
         tokio_fs::write(&path, b"{")
@@ -581,7 +656,9 @@ mod tests {
     async fn list_files_with_extension_filters_non_matching_entries() {
         let root = unique_temp_root();
         let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root).await.expect("create temp root");
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create temp root");
 
         tokio_fs::write(root.join("a.json"), b"{}")
             .await
@@ -618,12 +695,12 @@ mod tests {
     async fn delete_file_is_idempotent() {
         let root = unique_temp_root();
         let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root).await.expect("create temp root");
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create temp root");
 
         let path = root.join("to-delete.txt");
-        tokio_fs::write(&path, b"hello")
-            .await
-            .expect("write file");
+        tokio_fs::write(&path, b"hello").await.expect("write file");
 
         delete_file(&path).await.expect("delete file");
         assert!(!path.exists());

@@ -274,10 +274,9 @@ fn build_repositories(
         data_directory.settings().to_path_buf(),
     ));
 
-    let prompt_cache_repository: Arc<dyn PromptCacheRepository> =
-        Arc::new(FilePromptCacheRepository::new(
-            data_root.join("_tauritavern").join("prompt-cache"),
-        ));
+    let prompt_cache_repository: Arc<dyn PromptCacheRepository> = Arc::new(
+        FilePromptCacheRepository::new(data_root.join("_tauritavern").join("prompt-cache")),
+    );
 
     let user_directory_repository: Arc<dyn UserDirectoryRepository> =
         Arc::new(FileUserDirectoryRepository::new(data_root.clone()));
@@ -299,10 +298,9 @@ fn build_repositories(
             http_client_pool.clone(),
         )?);
 
-    let extension_store_repository: Arc<dyn ExtensionStoreRepository> =
-        Arc::new(FileExtensionStoreRepository::new(
-            data_root.join("_tauritavern").join("extension-store"),
-        ));
+    let extension_store_repository: Arc<dyn ExtensionStoreRepository> = Arc::new(
+        FileExtensionStoreRepository::new(data_root.join("_tauritavern").join("extension-store")),
+    );
 
     let avatar_repository: Arc<dyn AvatarRepository> = Arc::new(FileAvatarRepository::new(
         default_user_dir.join("User Avatars"),

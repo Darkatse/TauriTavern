@@ -48,10 +48,7 @@ async fn read_optional_json_file<T: for<'de> serde::Deserialize<'de>>(
     };
 
     let parsed = serde_json::from_str::<T>(&contents).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Invalid JSON in file {:?}: {}",
-            path, error
-        ))
+        DomainError::InvalidData(format!("Invalid JSON in file {:?}: {}", path, error))
     })?;
 
     Ok(Some(parsed))
@@ -101,4 +98,3 @@ impl PromptCacheRepository for FilePromptCacheRepository {
         Ok(())
     }
 }
-

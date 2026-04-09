@@ -7,9 +7,7 @@ use super::shared::insert_if_present;
 
 const ONLINE_SUFFIX: &str = ":online";
 
-pub(super) fn build(
-    payload: Map<String, Value>,
-) -> Result<(String, Value), ApplicationError> {
+pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let source_payload = payload.clone();
     let (endpoint, mut upstream_payload) = openai::build(payload);
 
@@ -172,4 +170,3 @@ mod tests {
         assert!(upstream.get("reasoning").is_none());
     }
 }
-

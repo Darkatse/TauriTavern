@@ -99,11 +99,7 @@ impl ExtensionStoreService {
         Ok(self.repository.list_tables(namespace).await?)
     }
 
-    pub async fn delete_table(
-        &self,
-        namespace: &str,
-        table: &str,
-    ) -> Result<(), ApplicationError> {
+    pub async fn delete_table(&self, namespace: &str, table: &str) -> Result<(), ApplicationError> {
         self.repository.delete_table(namespace, table).await?;
         Ok(())
     }
@@ -126,7 +122,9 @@ impl ExtensionStoreService {
         bytes: Vec<u8>,
     ) -> Result<(), ApplicationError> {
         let table = self.resolve_table(table);
-        self.repository.set_blob(namespace, table, key, bytes).await?;
+        self.repository
+            .set_blob(namespace, table, key, bytes)
+            .await?;
         Ok(())
     }
 
@@ -150,4 +148,3 @@ impl ExtensionStoreService {
         Ok(self.repository.list_blob_keys(namespace, table).await?)
     }
 }
-

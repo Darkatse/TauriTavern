@@ -6,9 +6,9 @@ use tokio::sync::RwLock;
 use yup_oauth2::ServiceAccountAuthenticator;
 use yup_oauth2::ServiceAccountKey;
 use yup_oauth2::authenticator::Authenticator;
-use yup_oauth2::client::DefaultHyperClientBuilder;
 #[cfg(target_os = "android")]
 use yup_oauth2::client::CustomHyperClientBuilder;
+use yup_oauth2::client::DefaultHyperClientBuilder;
 use yup_oauth2::client::HyperClientBuilder;
 
 use crate::application::errors::ApplicationError;
@@ -61,14 +61,13 @@ pub(super) async fn get_service_account_access_token(
                 })?
                 .to_string();
 
-            let authenticator =
-                build_service_account_authenticator(service_account_key)
-                    .await
-                    .map_err(|error| {
-                        ApplicationError::InternalError(format!(
-                            "Vertex AI service account authenticator build failed: {error}"
-                        ))
-                    })?;
+            let authenticator = build_service_account_authenticator(service_account_key)
+                .await
+                .map_err(|error| {
+                    ApplicationError::InternalError(format!(
+                        "Vertex AI service account authenticator build failed: {error}"
+                    ))
+                })?;
 
             let cached = CachedServiceAccount {
                 project_id,
@@ -146,10 +145,9 @@ fn build_android_hyper_client() -> CustomHyperClientBuilder<
         .enable_http2()
         .build();
 
-    let client =
-        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-            .pool_max_idle_per_host(0)
-            .build::<_, String>(connector);
+    let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+        .pool_max_idle_per_host(0)
+        .build::<_, String>(connector);
 
     CustomHyperClientBuilder::from(client)
 }

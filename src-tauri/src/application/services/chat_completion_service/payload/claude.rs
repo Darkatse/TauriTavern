@@ -226,10 +226,7 @@ fn convert_messages(
     let mut start_index = 0_usize;
     if use_system_prompt {
         while start_index < entries.len() {
-            let Some(message) = entries
-                .get(start_index)
-                .and_then(Value::as_object)
-            else {
+            let Some(message) = entries.get(start_index).and_then(Value::as_object) else {
                 start_index += 1;
                 continue;
             };
@@ -1079,10 +1076,7 @@ mod tests {
             .and_then(|message| message.get("content"))
             .and_then(Value::as_array)
             .expect("tool content must be array");
-        assert_eq!(
-            tool_blocks[0]["type"].as_str().unwrap_or_default(),
-            "text"
-        );
+        assert_eq!(tool_blocks[0]["type"].as_str().unwrap_or_default(), "text");
     }
 
     #[test]

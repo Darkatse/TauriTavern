@@ -3,8 +3,8 @@ use serde_json::{Map, Value};
 use crate::application::errors::ApplicationError;
 use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
 
-mod claude;
 mod chutes;
+mod claude;
 mod cohere;
 mod custom;
 mod deepseek;

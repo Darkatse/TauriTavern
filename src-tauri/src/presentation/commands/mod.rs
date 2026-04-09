@@ -24,6 +24,8 @@ pub mod lan_sync_commands;
 pub mod preset_commands;
 pub mod quick_reply_commands;
 pub mod registry;
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+pub mod runtime_paths_commands;
 pub mod secret_commands;
 pub mod settings_commands;
 pub mod stable_diffusion_commands;

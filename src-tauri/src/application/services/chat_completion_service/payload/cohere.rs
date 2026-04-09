@@ -58,10 +58,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
     }
 
     if model.ends_with("08-2024") {
-        request.insert(
-            "safety_mode".to_string(),
-            Value::String("OFF".to_string()),
-        );
+        request.insert("safety_mode".to_string(), Value::String("OFF".to_string()));
     }
 
     if let Some(schema_value) = payload
@@ -145,8 +142,7 @@ fn apply_tool_call_primer(messages: &mut Vec<Value>) {
                     .cloned()
                     .unwrap_or(Value::String(String::new()));
 
-                if let Some(message_object) =
-                    messages.get_mut(index).and_then(Value::as_object_mut)
+                if let Some(message_object) = messages.get_mut(index).and_then(Value::as_object_mut)
                 {
                     message_object.insert("content".to_string(), previous_content);
                 }
@@ -461,7 +457,10 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert_eq!(messages.len(), 1);
-        let content = messages[0].get("content").and_then(Value::as_str).unwrap_or("");
+        let content = messages[0]
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         assert!(content.contains("call a tool"));
         assert!(content.contains("weather"));
     }

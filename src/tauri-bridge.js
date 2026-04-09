@@ -189,6 +189,32 @@ export async function updateTauriTavernSettings(dto) {
     return invokeFn('update_tauritavern_settings', { dto });
 }
 
+export async function getRuntimePaths() {
+    const invokeFn = getInvokeFn();
+    if (!invokeFn) {
+        throw new Error('Tauri invoke is unavailable');
+    }
+
+    return invokeFn('get_runtime_paths');
+}
+
+export async function setDataRoot(dataRoot) {
+    return invokeWithHostNormalization('set_data_root', { data_root: dataRoot });
+}
+
+export async function openDialog(options = {}) {
+    const invokeFn = getInvokeFn();
+    if (!invokeFn) {
+        throw new Error('Tauri invoke is unavailable');
+    }
+
+    if (options && typeof options === 'object') {
+        Object.freeze(options);
+    }
+
+    return invokeWithHostNormalization('plugin:dialog|open', { options });
+}
+
 function normalizeExternalUrl(url) {
     const value = String(url instanceof URL ? url.href : url ?? '').trim();
     if (!value) {

@@ -5,7 +5,9 @@ use mime_guess::from_path;
 use tauri::http::StatusCode;
 
 use crate::domain::errors::DomainError;
-use crate::infrastructure::persistence::thumbnail_cache::{read_thumbnail_or_original_sync, ThumbnailAsset};
+use crate::infrastructure::persistence::thumbnail_cache::{
+    ThumbnailAsset, read_thumbnail_or_original_sync,
+};
 use crate::infrastructure::thumbnails::{avatar_thumbnail_config, background_thumbnail_config};
 use crate::infrastructure::user_data_dirs::DefaultUserWebDirs;
 use crate::presentation::web_resources::response_helpers::{
@@ -449,8 +451,11 @@ mod tests {
             .expect("create thumbnail dir");
         std::fs::write(temp.path.join("backgrounds").join("a.png"), b"original")
             .expect("write original");
-        std::fs::write(temp.path.join("thumbnails").join("bg").join("a.png"), b"thumb")
-            .expect("write thumbnail");
+        std::fs::write(
+            temp.path.join("thumbnails").join("bg").join("a.png"),
+            b"thumb",
+        )
+        .expect("write thumbnail");
 
         let request = tauri::http::Request::builder()
             .method("GET")

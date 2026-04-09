@@ -1,7 +1,13 @@
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
 import { isMobile } from '../../../RossAscends-mods.js';
 import { t, translate } from '../../../i18n.js';
-import { getTauriTavernSettings, updateTauriTavernSettings } from '../../../../tauri-bridge.js';
+import {
+    getRuntimePaths,
+    getTauriTavernSettings,
+    openDialog,
+    setDataRoot,
+    updateTauriTavernSettings,
+} from '../../../../tauri-bridge.js';
 import {
     clearLegacyEmbeddedRuntimeProfileName,
     normalizeEmbeddedRuntimeProfileName,
@@ -24,6 +30,13 @@ function isWindowsPlatform() {
 export async function openTauriTavernSettingsPopup() {
     const settings = await getTauriTavernSettings();
     const supportsCloseToTrayOnClose = isWindowsPlatform() && !isMobile();
+    const supportsDataRootSelection = !isMobile();
+
+    const runtimePaths = supportsDataRootSelection ? await getRuntimePaths() : null;
+    const currentDataRoot = String(runtimePaths?.data_root || '').trim();
+    const configuredDataRoot = String(runtimePaths?.configured_data_root || '').trim();
+    const migrationPending = Boolean(runtimePaths?.migration_pending);
+    const migrationError = String(runtimePaths?.migration_error || '').trim();
 
     const closeToTrayRow = supportsCloseToTrayOnClose
         ? `
@@ -36,6 +49,37 @@ export async function openTauriTavernSettingsPopup() {
                 </div>
                 <input id="tt-close-to-tray-on-close" type="checkbox" style="margin: 0;" />
             </div>
+        `.trim()
+        : '';
+
+    const dataDirectorySystemDetails = supportsDataRootSelection
+        ? `
+            <details id="tt-data-root-details">
+                <summary id="tt-data-root-summary" class="flex-container alignItemsCenter" style="cursor: pointer; gap: 12px; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; background: rgba(0,0,0,0.10); user-select: none;">
+                    <div class="flex-container alignItemsCenter" style="gap: 8px; flex: 1; min-width: 220px;">
+                        <span data-i18n="Data Directory">Data Directory</span>
+                    </div>
+                    <div class="flex-container alignItemsCenter" style="gap: 8px;">
+                        <small id="tt-data-root-summary-hint" style="opacity: 0.75; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></small>
+                        <i id="tt-data-root-summary-chevron" class="fa-solid fa-chevron-down" style="opacity: 0.8;"></i>
+                    </div>
+                </summary>
+
+                <div class="flex-container flexFlowColumn" style="gap: 10px; padding-top: 10px;">
+                    <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                        <div class="flex-container alignItemsBaseline" style="gap: 8px; min-width: 220px; flex: 1;">
+                            <span data-i18n="Data Directory">Data Directory</span>
+                        </div>
+                        <div class="flex-container alignItemsCenter" style="gap: 10px; margin: 0; width: auto; min-width: 260px; max-width: 100%; flex: 1;">
+                            <input id="tt-data-root-path" class="text_pole" type="text" readonly style="margin: 0; flex: 1; min-width: 0;" />
+                            <div id="tt-data-root-change" class="menu_button" data-i18n="Choose...">Choose...</div>
+                        </div>
+                    </div>
+
+                    <small id="tt-data-root-status" style="opacity: 0.85; white-space: pre-wrap;"></small>
+                    <small style="opacity: 0.85;" data-i18n="Data Directory hint">Applies after restart. Existing data will be migrated on next startup.</small>
+                </div>
+            </details>
         `.trim()
         : '';
 
@@ -121,12 +165,19 @@ export async function openTauriTavernSettingsPopup() {
                     #tt-request-proxy-summary-chevron { transition: transform 140ms ease; }
                     #tt-request-proxy-details[open] #tt-request-proxy-summary-chevron { transform: rotate(180deg); }
                     #tt-request-proxy-details > summary:hover { background: rgba(0,0,0,0.18); }
+                    #tt-data-root-details > summary::-webkit-details-marker { display: none; }
+                    #tt-data-root-details > summary::marker { content: ""; }
+                    #tt-data-root-summary-chevron { transition: transform 140ms ease; }
+                    #tt-data-root-details[open] #tt-data-root-summary-chevron { transform: rotate(180deg); }
+                    #tt-data-root-details > summary:hover { background: rgba(0,0,0,0.18); }
                     #tt-dynamic-theme-details > summary::-webkit-details-marker { display: none; }
                     #tt-dynamic-theme-details > summary::marker { content: ""; }
                     #tt-dynamic-theme-summary-chevron { transition: transform 140ms ease; }
                     #tt-dynamic-theme-details[open] #tt-dynamic-theme-summary-chevron { transform: rotate(180deg); }
                     #tt-dynamic-theme-details > summary:hover { background: rgba(0,0,0,0.18); }
                 </style>
+
+                ${dataDirectorySystemDetails}
 
                 <details id="tt-request-proxy-details">
                     <summary id="tt-request-proxy-summary" class="flex-container alignItemsCenter" style="cursor: pointer; gap: 12px; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; background: rgba(0,0,0,0.10); user-select: none;">
@@ -277,6 +328,112 @@ export async function openTauriTavernSettingsPopup() {
             </div>
         </div>
     `.trim();
+
+    /** @type {HTMLInputElement | null} */
+    let dataRootPathInput = null;
+    /** @type {HTMLElement | null} */
+    let dataRootChangeButton = null;
+    /** @type {HTMLElement | null} */
+    let dataRootStatus = null;
+    /** @type {HTMLElement | null} */
+    let dataRootSummaryHint = null;
+
+    if (supportsDataRootSelection) {
+        dataRootSummaryHint = root.querySelector('#tt-data-root-summary-hint');
+        if (!(dataRootSummaryHint instanceof HTMLElement)) {
+            throw new Error('TauriTavern settings: data root summary hint not found');
+        }
+
+        dataRootPathInput = root.querySelector('#tt-data-root-path');
+        if (!(dataRootPathInput instanceof HTMLInputElement)) {
+            throw new Error('TauriTavern settings: data root input not found');
+        }
+
+        dataRootChangeButton = root.querySelector('#tt-data-root-change');
+        if (!(dataRootChangeButton instanceof HTMLElement)) {
+            throw new Error('TauriTavern settings: data root change button not found');
+        }
+
+        dataRootStatus = root.querySelector('#tt-data-root-status');
+        if (!(dataRootStatus instanceof HTMLElement)) {
+            throw new Error('TauriTavern settings: data root status not found');
+        }
+
+        dataRootPathInput.value = currentDataRoot;
+        if (migrationError) {
+            dataRootSummaryHint.textContent = translate('Data directory migration failed:');
+        } else if (migrationPending) {
+            dataRootSummaryHint.textContent = translate('Data directory migration is pending.');
+        } else {
+            dataRootSummaryHint.textContent = currentDataRoot;
+        }
+
+        if (migrationError) {
+            dataRootStatus.textContent = `${translate('Data directory migration failed:')} ${migrationError}`;
+        } else if (migrationPending) {
+            const configuredLine = configuredDataRoot
+                ? `${translate('Configured data directory:')} ${configuredDataRoot}`
+                : '';
+            const pendingLine = translate('Data directory migration is pending.');
+            dataRootStatus.textContent = configuredLine ? `${configuredLine}\n${pendingLine}` : pendingLine;
+        } else if (configuredDataRoot && configuredDataRoot !== currentDataRoot) {
+            dataRootStatus.textContent = `${translate('Configured data directory:')} ${configuredDataRoot}`;
+        } else {
+            dataRootStatus.textContent = '';
+        }
+
+        dataRootChangeButton.addEventListener('click', (event) => {
+            event.preventDefault();
+            runOrPopup(async () => {
+                const picked = await openDialog({
+                    directory: true,
+                    multiple: false,
+                    title: translate('Select Data Directory'),
+                });
+
+                const selected = Array.isArray(picked) ? picked[0] : picked;
+                const normalized = String(selected || '').trim();
+                if (!normalized) {
+                    return;
+                }
+
+                const confirm = document.createElement('div');
+                confirm.className = 'flex-container flexFlowColumn';
+                confirm.style.gap = '10px';
+                const title = document.createElement('b');
+                title.textContent = translate('Change Data Directory');
+                const hint = document.createElement('div');
+                hint.textContent = translate('The app will migrate data on next startup. Restart is required.');
+                const pathPreview = document.createElement('pre');
+                pathPreview.style.margin = '0';
+                pathPreview.style.whiteSpace = 'pre-wrap';
+                pathPreview.textContent = normalized;
+                confirm.append(title, hint, pathPreview);
+
+                const confirmation = await callGenericPopup(confirm, POPUP_TYPE.CONFIRM, '', {
+                    okButton: translate('Confirm'),
+                    cancelButton: translate('Cancel'),
+                    allowVerticalScrolling: true,
+                    wide: false,
+                    large: false,
+                });
+                if (confirmation !== POPUP_RESULT.AFFIRMATIVE) {
+                    return;
+                }
+
+                await setDataRoot(normalized);
+
+                dataRootStatus.textContent = `${translate('Configured data directory:')} ${normalized}\n${translate('Data directory migration is pending.')}`;
+
+                await callGenericPopup(translate('Data directory saved. Restart to apply.'), POPUP_TYPE.TEXT, '', {
+                    okButton: translate('OK'),
+                    allowVerticalScrolling: true,
+                    wide: false,
+                    large: false,
+                });
+            });
+        });
+    }
 
     const profileSelect = root.querySelector('#tt-panel-runtime-profile');
     if (!(profileSelect instanceof HTMLSelectElement)) {

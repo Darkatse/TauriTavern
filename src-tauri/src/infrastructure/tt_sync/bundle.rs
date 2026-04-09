@@ -133,7 +133,10 @@ mod tests {
 
         let mut exact = ExactSizeReader::new(&mut reader, 4);
         let mut buffer = Vec::new();
-        let error = exact.read_to_end(&mut buffer).await.expect_err("must error");
+        let error = exact
+            .read_to_end(&mut buffer)
+            .await
+            .expect_err("must error");
         assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 

@@ -32,7 +32,8 @@ struct PngChunkRef<'a> {
 }
 
 fn ensure_png_signature(image_data: &[u8]) -> Result<(), DomainError> {
-    if image_data.len() < PNG_SIGNATURE.len() || image_data[..PNG_SIGNATURE.len()] != PNG_SIGNATURE {
+    if image_data.len() < PNG_SIGNATURE.len() || image_data[..PNG_SIGNATURE.len()] != PNG_SIGNATURE
+    {
         return Err(DomainError::InvalidData(
             "Failed to read PNG header: invalid PNG signature".to_string(),
         ));
@@ -62,9 +63,9 @@ fn read_next_png_chunk<'a>(
 
     *offset += 8;
 
-    let data_end = offset
-        .checked_add(length)
-        .ok_or_else(|| DomainError::InvalidData("Failed to parse PNG metadata: chunk too large".to_string()))?;
+    let data_end = offset.checked_add(length).ok_or_else(|| {
+        DomainError::InvalidData("Failed to parse PNG metadata: chunk too large".to_string())
+    })?;
     let crc_end = data_end.checked_add(4).ok_or_else(|| {
         DomainError::InvalidData("Failed to parse PNG metadata: chunk too large".to_string())
     })?;
@@ -90,7 +91,10 @@ fn decode_latin1(bytes: &[u8]) -> String {
     bytes.iter().copied().map(char::from).collect()
 }
 
-fn split_keyword<'a>(data: &'a [u8], chunk_name: &str) -> Result<(&'a [u8], &'a [u8]), DomainError> {
+fn split_keyword<'a>(
+    data: &'a [u8],
+    chunk_name: &str,
+) -> Result<(&'a [u8], &'a [u8]), DomainError> {
     let Some(nul) = data.iter().position(|&byte| byte == 0) else {
         return Err(DomainError::InvalidData(format!(
             "Failed to parse PNG metadata: invalid {} chunk",

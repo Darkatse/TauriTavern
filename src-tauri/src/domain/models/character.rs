@@ -385,7 +385,8 @@ impl Character {
         self.name = pick_non_empty(&self.name, &self.data.name);
         self.creator = pick_non_empty(&self.creator, &self.data.creator);
         self.creator_notes = pick_non_empty(&self.creator_notes, &self.data.creator_notes);
-        self.character_version = pick_non_empty(&self.character_version, &self.data.character_version);
+        self.character_version =
+            pick_non_empty(&self.character_version, &self.data.character_version);
 
         if self.tags.is_empty() {
             self.tags = self.data.tags.clone();
@@ -452,14 +453,10 @@ mod tests {
         character.data.alternate_greetings = vec!["hi".to_string()];
         character.data.group_only_greetings = vec!["group-hi".to_string()];
         character.data.character_book = Some(serde_json::json!({ "entries": { "1": {} } }));
-        character
-            .data
-            .extensions
-            .additional
-            .insert(
-                "regex_scripts".to_string(),
-                serde_json::json!([{ "replaceString": "x".repeat(1024) }]),
-            );
+        character.data.extensions.additional.insert(
+            "regex_scripts".to_string(),
+            serde_json::json!([{ "replaceString": "x".repeat(1024) }]),
+        );
         character.json_data = Some("{\"huge\":true}".to_string());
 
         let shallow = character.into_shallow();

@@ -4351,5 +4351,16 @@
     "1h (Extended)": "1h（延長）",
     "Prompt Cache help: scope": "適用於 Claude 與 OpenRouter（anthropic/claude*）請求。",
     "Prompt Cache help: breakpoint": "啟用後快取斷點放在系統提示詞/聊天記錄前/prompt 末尾三處位置，並會自動在與上一條請求完全一致的最後一個 block 處追加斷點以提升命中率。",
+    "Storage": "儲存",
+    "Data Directory": "資料目錄",
+    "Choose...": "選擇…",
+    "Data Directory hint": "重新啟動後生效。既有資料將在下次啟動時遷移。",
+    "Select Data Directory": "選擇資料目錄",
+    "Change Data Directory": "變更資料目錄",
+    "The app will migrate data on next startup. Restart is required.": "應用程式將在下次啟動時遷移資料。需要重新啟動。",
+    "Configured data directory:": "已設定的資料目錄：",
+    "Data directory migration is pending.": "資料目錄遷移待執行。",
+    "Data directory migration failed:": "資料目錄遷移失敗：",
+    "Data directory saved. Restart to apply.": "資料目錄已儲存。請重新啟動以套用。",
     "Clear": "清除"
 }

@@ -185,7 +185,10 @@ pub async fn delete_extension_store_table(
     table: String,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
-    log_command(format!("delete_extension_store_table {}:{}", namespace, table));
+    log_command(format!(
+        "delete_extension_store_table {}:{}",
+        namespace, table
+    ));
 
     app_state
         .extension_store_service
@@ -312,4 +315,3 @@ pub async fn list_extension_store_blob_keys(
             namespace
         )))
 }
-

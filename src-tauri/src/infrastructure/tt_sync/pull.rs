@@ -85,9 +85,16 @@ pub async fn pull_from_server(
     let plan_files_total = plan.files_total;
     let plan_bytes_total = plan.bytes_total;
 
-    let files_deleted =
-        apply_pull_plan(&runtime, api, &session.session_token, plan, mode, prefer_bundle, accept_zstd)
-            .await?;
+    let files_deleted = apply_pull_plan(
+        &runtime,
+        api,
+        &session.session_token,
+        plan,
+        mode,
+        prefer_bundle,
+        accept_zstd,
+    )
+    .await?;
 
     let mut updated = server;
     updated.last_sync_ms = Some(transfer::now_ms());

@@ -13,9 +13,7 @@ use crate::domain::repositories::chat_completion_repository::{
     ChatCompletionCancelReceiver, ChatCompletionRepository, ChatCompletionSource,
     ChatCompletionStreamSender,
 };
-use crate::domain::repositories::prompt_cache_repository::{
-    PromptCacheKey, PromptCacheRepository,
-};
+use crate::domain::repositories::prompt_cache_repository::{PromptCacheKey, PromptCacheRepository};
 use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::domain::repositories::settings_repository::SettingsRepository;
 
@@ -95,9 +93,9 @@ impl ChatCompletionService {
             config::resolve_generate_api_config(source, &dto, &self.secret_repository).await?;
         let payload = dto.payload;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
-        if let Err(error) =
-            self.apply_tauritavern_prompt_caching(source, &settings, &mut upstream_payload)
-                .await
+        if let Err(error) = self
+            .apply_tauritavern_prompt_caching(source, &settings, &mut upstream_payload)
+            .await
         {
             tracing::warn!("Prompt caching failed: {}", error);
         }
@@ -147,9 +145,9 @@ impl ChatCompletionService {
             config::resolve_generate_api_config(source, &dto, &self.secret_repository).await?;
         let payload = dto.payload;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
-        if let Err(error) =
-            self.apply_tauritavern_prompt_caching(source, &settings, &mut upstream_payload)
-                .await
+        if let Err(error) = self
+            .apply_tauritavern_prompt_caching(source, &settings, &mut upstream_payload)
+            .await
         {
             tracing::warn!("Prompt caching failed: {}", error);
         }
@@ -247,7 +245,9 @@ impl ChatCompletionService {
                     .and_then(|object| object.get("model"))
                     .and_then(Value::as_str)
                     .map(str::trim)
-                    .is_some_and(|model| model.to_ascii_lowercase().starts_with("anthropic/claude"));
+                    .is_some_and(|model| {
+                        model.to_ascii_lowercase().starts_with("anthropic/claude")
+                    });
                 if !is_claude {
                     return Ok(());
                 }

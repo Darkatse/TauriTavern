@@ -216,8 +216,8 @@ impl Default for TauriTavernSettings {
             close_to_tray_on_close: default_close_to_tray_on_close(),
             request_proxy: RequestProxySettings::default(),
             allow_keys_exposure: false,
-            avatar_persona_original_images_enabled:
-                default_avatar_persona_original_images_enabled(),
+            avatar_persona_original_images_enabled: default_avatar_persona_original_images_enabled(
+            ),
             migrations: TauriTavernMigrationState::default(),
             dev: DevLoggingSettings::default(),
             dynamic_theme: DynamicThemeSettings::default(),

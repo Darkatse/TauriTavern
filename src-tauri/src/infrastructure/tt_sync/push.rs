@@ -14,7 +14,9 @@ use ttsync_contract::sync::{SyncMode, SyncPhase};
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::tt_sync::{TtSyncCompletedEvent, TtSyncDirection, TtSyncProgressEvent};
-use crate::infrastructure::tt_sync::bundle::{FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, copy_exact, write_u32_be};
+use crate::infrastructure::tt_sync::bundle::{
+    FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1, copy_exact, write_u32_be,
+};
 use crate::infrastructure::tt_sync::fs::scan_manifest;
 use crate::infrastructure::tt_sync::runtime::TtSyncRuntime;
 use crate::infrastructure::tt_sync::transfer;
@@ -228,7 +230,9 @@ async fn apply_push_plan(
             let joined = join_set
                 .join_next()
                 .await
-                .ok_or_else(|| DomainError::InternalError("Upload join set ended early".to_string()))?
+                .ok_or_else(|| {
+                    DomainError::InternalError("Upload join set ended early".to_string())
+                })?
                 .map_err(|error| DomainError::InternalError(error.to_string()))??;
 
             in_flight -= 1;
@@ -310,8 +314,9 @@ async fn write_bundle_upload(
 ) -> Result<(), DomainError> {
     for entry in transfer {
         let path_bytes = entry.path.as_str().as_bytes();
-        let path_len = u32::try_from(path_bytes.len())
-            .map_err(|_| DomainError::InvalidData("Bundle path is too long to encode".to_string()))?;
+        let path_len = u32::try_from(path_bytes.len()).map_err(|_| {
+            DomainError::InvalidData("Bundle path is too long to encode".to_string())
+        })?;
 
         write_u32_be(&mut out, path_len).await?;
         out.write_all(path_bytes)

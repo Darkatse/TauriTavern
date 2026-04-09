@@ -9,7 +9,7 @@ use crate::infrastructure::user_data_paths::is_user_data_asset_route;
 use crate::presentation::web_resources::response_helpers::respond_plain_text;
 use crate::presentation::web_resources::third_party_endpoint::handle_third_party_asset_web_request;
 use crate::presentation::web_resources::thumbnail_endpoint::{
-    handle_thumbnail_web_request, ThumbnailEndpointPolicy,
+    ThumbnailEndpointPolicy, handle_thumbnail_web_request,
 };
 use crate::presentation::web_resources::user_data_endpoint::handle_user_data_asset_web_request;
 

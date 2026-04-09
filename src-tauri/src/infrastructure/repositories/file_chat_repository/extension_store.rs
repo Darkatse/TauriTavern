@@ -62,11 +62,7 @@ async fn read_chat_integrity_slug(path: &Path) -> Result<String, DomainError> {
     extract_integrity_slug_from_header_value(&header_value)
 }
 
-async fn update_store_json_entry(
-    dir: &Path,
-    key: &str,
-    value: Value,
-) -> Result<(), DomainError> {
+async fn update_store_json_entry(dir: &Path, key: &str, value: Value) -> Result<(), DomainError> {
     fs::create_dir_all(dir).await.map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to create chat store directory {}: {}",
@@ -113,11 +109,7 @@ async fn update_store_json_entry(
     Ok(())
 }
 
-async fn rename_store_json_entry(
-    dir: &Path,
-    key: &str,
-    new_key: &str,
-) -> Result<(), DomainError> {
+async fn rename_store_json_entry(dir: &Path, key: &str, new_key: &str) -> Result<(), DomainError> {
     let from = dir.join(format!("{}.json", key));
     if !from.exists() {
         return Err(DomainError::NotFound(format!(
@@ -349,7 +341,9 @@ impl FileChatRepository {
         value: Value,
     ) -> Result<(), DomainError> {
         let key = validate_store_component(key, "key")?;
-        let dir = self.resolve_group_chat_store_dir(chat_id, namespace).await?;
+        let dir = self
+            .resolve_group_chat_store_dir(chat_id, namespace)
+            .await?;
         update_store_json_entry(&dir, &key, value).await
     }
 
@@ -441,7 +435,9 @@ impl FileChatRepository {
             return Ok(());
         }
 
-        let dir = self.resolve_group_chat_store_dir(chat_id, namespace).await?;
+        let dir = self
+            .resolve_group_chat_store_dir(chat_id, namespace)
+            .await?;
         rename_store_json_entry(&dir, &key, &new_key).await
     }
 

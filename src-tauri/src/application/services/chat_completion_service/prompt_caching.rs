@@ -7,15 +7,27 @@ const PROMPT_CACHE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClaudeDigestLocation {
-    Tool { index: usize },
-    System { index: usize },
-    Message { message_index: usize, block_index: usize },
+    Tool {
+        index: usize,
+    },
+    System {
+        index: usize,
+    },
+    Message {
+        message_index: usize,
+        block_index: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OpenRouterDigestLocation {
-    Tool { index: usize },
-    Message { message_index: usize, part_index: usize },
+    Tool {
+        index: usize,
+    },
+    Message {
+        message_index: usize,
+        part_index: usize,
+    },
 }
 
 pub(super) fn apply_claude_prompt_caching(
@@ -52,8 +64,7 @@ pub(super) fn apply_claude_prompt_caching(
         }
     }
 
-    if let Some(previous) = previous.filter(|snapshot| snapshot.version == PROMPT_CACHE_VERSION)
-    {
+    if let Some(previous) = previous.filter(|snapshot| snapshot.version == PROMPT_CACHE_VERSION) {
         let lcp_len = common_prefix_len(&previous.digests, &snapshot.digests);
         if lcp_len > 0 {
             let candidate = locations.get(lcp_len - 1).copied();
@@ -63,9 +74,7 @@ pub(super) fn apply_claude_prompt_caching(
                     || Some(candidate) == pre_history_location
                     || is_auto_last;
 
-                if !is_duplicate
-                    && matches!(candidate, ClaudeDigestLocation::Message { .. })
-                {
+                if !is_duplicate && matches!(candidate, ClaudeDigestLocation::Message { .. }) {
                     insert_cache_control_claude(payload, candidate, ttl);
                 }
             }
@@ -111,8 +120,7 @@ pub(super) fn apply_openrouter_claude_prompt_caching(
         }
     }
 
-    if let Some(previous) = previous.filter(|snapshot| snapshot.version == PROMPT_CACHE_VERSION)
-    {
+    if let Some(previous) = previous.filter(|snapshot| snapshot.version == PROMPT_CACHE_VERSION) {
         let lcp_len = common_prefix_len(&previous.digests, &snapshot.digests);
         if lcp_len > 0 {
             let candidate = locations.get(lcp_len - 1).copied();
@@ -121,9 +129,7 @@ pub(super) fn apply_openrouter_claude_prompt_caching(
                     || Some(candidate) == pre_history_location
                     || Some(candidate) == last_location;
 
-                if !is_duplicate
-                    && matches!(candidate, OpenRouterDigestLocation::Message { .. })
-                {
+                if !is_duplicate && matches!(candidate, OpenRouterDigestLocation::Message { .. }) {
                     insert_cache_control_openrouter(messages, candidate, ttl);
                 }
             }
@@ -331,9 +337,7 @@ fn last_claude_message_location(
     })
 }
 
-fn find_openrouter_system_break_location(
-    messages: &[Value],
-) -> Option<OpenRouterDigestLocation> {
+fn find_openrouter_system_break_location(messages: &[Value]) -> Option<OpenRouterDigestLocation> {
     let mut last_system_message: Option<usize> = None;
 
     for (index, message) in messages.iter().enumerate() {
@@ -355,9 +359,7 @@ fn find_openrouter_system_break_location(
     }
 
     let message_index = last_system_message?;
-    let message_object = messages
-        .get(message_index)
-        .and_then(Value::as_object)?;
+    let message_object = messages.get(message_index).and_then(Value::as_object)?;
     let content = message_object.get("content").and_then(Value::as_array)?;
 
     for (part_index, part) in content.iter().enumerate().rev() {
@@ -412,9 +414,7 @@ fn find_openrouter_pre_history_break_location(
     None
 }
 
-fn last_openrouter_message_location(
-    messages: &[Value],
-) -> Option<OpenRouterDigestLocation> {
+fn last_openrouter_message_location(messages: &[Value]) -> Option<OpenRouterDigestLocation> {
     for (message_index, message) in messages.iter().enumerate().rev() {
         let Some(message_object) = message.as_object() else {
             continue;
@@ -437,11 +437,7 @@ fn last_openrouter_message_location(
     None
 }
 
-fn insert_cache_control_claude(
-    payload: &mut Value,
-    location: ClaudeDigestLocation,
-    ttl: &str,
-) {
+fn insert_cache_control_claude(payload: &mut Value, location: ClaudeDigestLocation, ttl: &str) {
     match location {
         ClaudeDigestLocation::Tool { .. } => {}
         ClaudeDigestLocation::System { index } => {
@@ -567,7 +563,10 @@ fn is_cache_control_eligible_block(block: &Value) -> bool {
     }
 
     if block_type == "text" {
-        let text = object.get("text").and_then(Value::as_str).unwrap_or_default();
+        let text = object
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         if text.is_empty() {
             return false;
         }
@@ -653,7 +652,9 @@ mod tests {
             .get("system")
             .and_then(Value::as_array)
             .expect("system must be array");
-        assert!(has_cache_control(system.last().expect("system must not be empty")));
+        assert!(has_cache_control(
+            system.last().expect("system must not be empty")
+        ));
 
         let messages = root
             .get("messages")
@@ -802,7 +803,8 @@ mod tests {
             ]
         });
 
-        let _snapshot2 = apply_openrouter_claude_prompt_caching(&mut payload2, Some(&snapshot), "5m");
+        let _snapshot2 =
+            apply_openrouter_claude_prompt_caching(&mut payload2, Some(&snapshot), "5m");
 
         let messages = payload2
             .as_object()

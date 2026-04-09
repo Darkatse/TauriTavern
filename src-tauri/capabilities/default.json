@@ -10,6 +10,7 @@
     "barcode-scanner:allow-scan",
     "barcode-scanner:allow-cancel",
     "barcode-scanner:allow-request-permissions",
+    "dialog:allow-open",
     "opener:default",
     "notification:allow-is-permission-granted",
     "fs:allow-open",

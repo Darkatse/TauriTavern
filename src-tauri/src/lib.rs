@@ -20,7 +20,7 @@ use presentation::commands::registry::invoke_handler;
 use presentation::web_resources::dev_protocol_endpoint::handle_dev_protocol_request;
 use presentation::web_resources::third_party_endpoint::handle_third_party_asset_web_request;
 use presentation::web_resources::thumbnail_endpoint::{
-    handle_thumbnail_web_request, ThumbnailEndpointPolicy,
+    ThumbnailEndpointPolicy, handle_thumbnail_web_request,
 };
 use presentation::web_resources::user_data_endpoint::handle_user_data_asset_web_request;
 use tauri::Manager;
@@ -70,6 +70,9 @@ pub async fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
+
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_dialog::init());
 
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());

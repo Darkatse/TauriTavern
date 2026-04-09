@@ -335,9 +335,8 @@ fn log_prompt_cache_performance_if_present(
         return false;
     };
 
-    let total_input_tokens = usage.cache_creation_input_tokens
-        + usage.cache_read_input_tokens
-        + usage.input_tokens;
+    let total_input_tokens =
+        usage.cache_creation_input_tokens + usage.cache_read_input_tokens + usage.input_tokens;
 
     match model.map(str::trim).filter(|value| !value.is_empty()) {
         Some(model) => {
@@ -387,10 +386,8 @@ fn find_prompt_cache_performance_usage(value: &Value) -> Option<PromptCachePerfo
 fn parse_prompt_cache_performance_usage(
     usage: &serde_json::Map<String, Value>,
 ) -> Option<PromptCachePerformanceUsage> {
-    let cache_creation_input_tokens =
-        value_to_u64(usage.get("cache_creation_input_tokens"))?;
-    let cache_read_input_tokens =
-        value_to_u64(usage.get("cache_read_input_tokens"))?;
+    let cache_creation_input_tokens = value_to_u64(usage.get("cache_creation_input_tokens"))?;
+    let cache_read_input_tokens = value_to_u64(usage.get("cache_read_input_tokens"))?;
     let input_tokens = value_to_u64(usage.get("input_tokens"))?;
 
     Some(PromptCachePerformanceUsage {
@@ -433,13 +430,8 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 openai::list_models(self, config, "Moonshot AI").await
             }
             ChatCompletionSource::NanoGpt => {
-                openai::list_models_with_path(
-                    self,
-                    config,
-                    "NanoGPT",
-                    "/models?detailed=true",
-                )
-                .await
+                openai::list_models_with_path(self, config, "NanoGPT", "/models?detailed=true")
+                    .await
             }
             ChatCompletionSource::Chutes => openai::list_models(self, config, "Chutes").await,
             ChatCompletionSource::SiliconFlow => {
@@ -472,7 +464,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             ChatCompletionSource::DeepSeek => {
                 openai::generate(self, config, endpoint_path, payload, "DeepSeek").await
             }
-            ChatCompletionSource::Cohere => cohere::generate(self, config, endpoint_path, payload).await,
+            ChatCompletionSource::Cohere => {
+                cohere::generate(self, config, endpoint_path, payload).await
+            }
             ChatCompletionSource::Groq => {
                 openai::generate(self, config, endpoint_path, payload, "Groq").await
             }
@@ -821,10 +815,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            receiver.try_recv().ok(),
-            Some("first\nsecond".to_string())
-        );
+        assert_eq!(receiver.try_recv().ok(), Some("first\nsecond".to_string()));
         assert!(receiver.try_recv().is_err());
         assert!(buffer.is_empty());
     }

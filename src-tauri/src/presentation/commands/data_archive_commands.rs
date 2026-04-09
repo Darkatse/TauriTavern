@@ -1,6 +1,6 @@
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
-use crate::infrastructure::paths::resolve_runtime_paths;
+use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::persistence::data_archive_jobs::{
     DataArchiveJobStatus, cancel_data_archive_job as cancel_data_archive_job_impl,
     cleanup_export_data_archive as cleanup_export_data_archive_impl,
@@ -43,10 +43,7 @@ pub fn start_export_data_archive(app: AppHandle) -> Result<String, CommandError>
 pub fn get_data_archive_imports_root(app: AppHandle) -> Result<String, CommandError> {
     log_command("get_data_archive_imports_root");
 
-    let runtime_paths = resolve_runtime_paths(&app).map_err(|error| {
-        CommandError::InternalServerError(format!("Failed to resolve runtime paths: {}", error))
-    })?;
-
+    let runtime_paths = app.state::<RuntimePaths>();
     Ok(runtime_paths
         .archive_imports_root
         .to_string_lossy()
