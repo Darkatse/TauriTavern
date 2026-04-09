@@ -1,8 +1,14 @@
 import { callGenericPopup, POPUP_TYPE } from '../../popup.js';
 import { t, translate } from '../../i18n.js';
 import { openFullscreenTextViewer } from './text-viewer-popup.js';
+import { trimFrontendLogEntriesInPlace } from '../../../tauri/main/services/dev-logging/frontend-log-retention.js';
 
 const MONOSPACE_FONT_FAMILY = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+
+const LIVE_LOG_PANEL_BUFFER_LIMIT = 800;
+const LIVE_LOG_PANEL_DEFAULT_WINDOW_SIZE = 300;
+const LIVE_LOG_PANEL_WINDOW_GROW_STEP = 200;
+const LIVE_LOG_PANEL_MAX_WINDOW_SIZE = 500;
 
 function getDevApi() {
     const api = window.__TAURITAVERN__?.api?.dev;
@@ -200,9 +206,11 @@ async function openLiveLogPanel({
     subscribe,
     extraControls = [],
     getTarget = () => null,
+    trimEntriesInPlace = null,
 }) {
     let filter = 'ALL';
     let paused = false;
+    let windowSize = LIVE_LOG_PANEL_DEFAULT_WINDOW_SIZE;
 
     const root = document.createElement('div');
     root.className = 'flex-container flexFlowColumn';
@@ -232,6 +240,16 @@ async function openLiveLogPanel({
     pauseLabel.appendChild(pauseToggle);
     pauseLabel.appendChild(pauseText);
     header.appendChild(pauseLabel);
+
+    const tailButton = document.createElement('div');
+    tailButton.className = 'menu_button';
+    tailButton.textContent = translate('Jump to tail');
+    header.appendChild(tailButton);
+
+    const moreButton = document.createElement('div');
+    moreButton.className = 'menu_button';
+    moreButton.textContent = translate('More');
+    header.appendChild(moreButton);
 
     const copyButton = document.createElement('div');
     copyButton.className = 'menu_button';
@@ -275,7 +293,7 @@ async function openLiveLogPanel({
         chip.style.color = levelColor(option);
         chip.addEventListener('click', () => {
             setFilter(option);
-            renderAll();
+            renderTail();
         });
         chipMap.set(option, chip);
         filterRow.appendChild(chip);
@@ -296,45 +314,105 @@ async function openLiveLogPanel({
 
     /** @type {any[]} */
     let entries = initialEntries.slice();
+    /** @type {any[]} */
+    let renderedEntries = [];
+    let wasNearBottom = true;
 
-    const renderAll = () => {
+    const trimEntries = () => {
+        if (trimEntriesInPlace) {
+            trimEntriesInPlace(entries);
+            return;
+        }
+        if (entries.length > LIVE_LOG_PANEL_BUFFER_LIMIT) {
+            entries.splice(0, entries.length - LIVE_LOG_PANEL_BUFFER_LIMIT);
+        }
+    };
+
+    const updateWindowControls = () => {
+        const canGrow = windowSize < LIVE_LOG_PANEL_MAX_WINDOW_SIZE;
+        moreButton.style.opacity = canGrow ? '1' : '0.55';
+        moreButton.style.pointerEvents = canGrow ? 'auto' : 'none';
+    };
+
+    const renderTail = () => {
+        trimEntries();
+        windowSize = Math.min(windowSize, LIVE_LOG_PANEL_MAX_WINDOW_SIZE);
+
+        const nextRendered = entries
+            .filter((entry) => entryMatchesLevel(entry, filter))
+            .slice(-windowSize);
+
+        renderedEntries = nextRendered;
+
         logContainer.textContent = '';
         const fragment = document.createDocumentFragment();
-        for (const entry of entries) {
-            if (!entryMatchesLevel(entry, filter)) {
-                continue;
-            }
+        for (const entry of nextRendered) {
             fragment.appendChild(buildLogRow(entry, getTarget));
         }
         logContainer.appendChild(fragment);
+        wasNearBottom = true;
         logContainer.scrollTop = logContainer.scrollHeight;
     };
 
-    renderAll();
+    updateWindowControls();
+    renderTail();
 
     const unsubscribe = await subscribe((entry) => {
         entries.push(entry);
-        if (paused || !entryMatchesLevel(entry, filter)) {
+        trimEntries();
+
+        if (paused) {
             return;
         }
 
-        const shouldStick = isNearBottom(logContainer);
-        logContainer.appendChild(buildLogRow(entry, getTarget));
-        if (shouldStick) {
-            logContainer.scrollTop = logContainer.scrollHeight;
+        const shouldFollow = isNearBottom(logContainer);
+        wasNearBottom = shouldFollow;
+        if (!shouldFollow) {
+            return;
         }
+
+        if (!entryMatchesLevel(entry, filter)) {
+            return;
+        }
+
+        renderedEntries.push(entry);
+        logContainer.appendChild(buildLogRow(entry, getTarget));
+
+        while (renderedEntries.length > windowSize) {
+            renderedEntries.shift();
+            logContainer.firstChild?.remove();
+        }
+
+        logContainer.scrollTop = logContainer.scrollHeight;
     });
 
     pauseToggle.addEventListener('change', () => {
         paused = pauseToggle.checked;
         if (!paused) {
-            renderAll();
+            renderTail();
         }
     });
 
+    logContainer.addEventListener('scroll', () => {
+        const nearBottom = isNearBottom(logContainer);
+        if (!paused && nearBottom && !wasNearBottom) {
+            renderTail();
+            return;
+        }
+
+        wasNearBottom = nearBottom;
+    });
+
+    tailButton.addEventListener('click', () => renderTail());
+
+    moreButton.addEventListener('click', () => {
+        windowSize = Math.min(windowSize + LIVE_LOG_PANEL_WINDOW_GROW_STEP, LIVE_LOG_PANEL_MAX_WINDOW_SIZE);
+        updateWindowControls();
+        renderTail();
+    });
+
     copyButton.addEventListener('click', async () => {
-        const text = entries
-            .filter((entry) => entryMatchesLevel(entry, filter))
+        const text = renderedEntries
             .map((entry) => formatEntryLine(entry, getTarget))
             .join('\n');
         await navigator.clipboard.writeText(text);
@@ -342,6 +420,7 @@ async function openLiveLogPanel({
 
     clearButton.addEventListener('click', () => {
         entries = [];
+        renderedEntries = [];
         logContainer.textContent = '';
     });
 
@@ -389,6 +468,7 @@ export async function openFrontendLogsPanel() {
         subscribe: (handler) => devApi.frontendLogs.subscribe(handler),
         extraControls: [captureLabel],
         getTarget: (entry) => entry.target,
+        trimEntriesInPlace: trimFrontendLogEntriesInPlace,
     });
 }
 

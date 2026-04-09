@@ -99,6 +99,11 @@ function createDevApi({ safeInvoke }) {
     return {
         frontendLogs,
         backendLogs,
+        async exportBundle() {
+            return safeInvoke('devlog_export_bundle', {
+                frontend_entries: getFrontendLogEntries(),
+            });
+        },
         llmApiLogs: {
             ...llmApiLogsBridge,
             async getKeep() {

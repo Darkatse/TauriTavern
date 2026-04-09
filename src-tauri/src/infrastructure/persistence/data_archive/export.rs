@@ -6,6 +6,7 @@ use zip::write::SimpleFileOptions as FileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use crate::domain::errors::DomainError;
+use crate::infrastructure::zipkit::export_file_options;
 
 use super::DataArchiveExportResult;
 use super::shared::{
@@ -13,11 +14,6 @@ use super::shared::{
     ensure_not_cancelled, internal_error, normalize_zip_path, progress_percent,
     read_directory_sorted,
 };
-
-const DEFLATE_TEXT_COMPRESSION_LEVEL: i64 = 1;
-const DEFLATE_TEXT_EXTENSIONS: &[&str] = &[
-    "json", "jsonl", "txt", "md", "csv", "html", "css", "js", "yaml", "yml",
-];
 
 #[derive(Debug, Clone)]
 struct ExportProgress {
@@ -207,25 +203,6 @@ fn write_export_entries(
     }
 
     Ok(())
-}
-
-fn export_file_options(path: &Path) -> FileOptions {
-    let ext = path.extension().and_then(|ext| ext.to_str());
-    if let Some(ext) = ext {
-        if DEFLATE_TEXT_EXTENSIONS
-            .iter()
-            .any(|candidate| ext.eq_ignore_ascii_case(candidate))
-        {
-            return FileOptions::default()
-                .compression_method(CompressionMethod::Deflated)
-                .compression_level(Some(DEFLATE_TEXT_COMPRESSION_LEVEL))
-                .unix_permissions(0o644);
-        }
-    }
-
-    FileOptions::default()
-        .compression_method(CompressionMethod::Stored)
-        .unix_permissions(0o644)
 }
 
 fn report_export_progress(

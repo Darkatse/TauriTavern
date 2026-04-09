@@ -18,6 +18,7 @@
 12. [TauriTavern-Creator-Extension 实现计划](./TauriTavernCreatorExtensionPlan.md) - 面向样板扩展的整体架构、分层、阶段路线与 ROI 分析
 13. [宿主扩展 API 规范化计划](./TauriTavernHostExtensionApiPlan.md) - TauriTavern 本体应新增/整理的正式 ABI 设计与落地顺序
 14. [Workshop 回调认证重构计划](./WorkshopAuthRefactorPlan.md) - 桌面端 100% 兼容 window.open 弹窗回调，移动端优先覆盖 token/轮询类
+15. [Dev Logging 性能重构计划书](./DevLoggingPerformanceRefactorPlan.md) - 日志捕获/存储/展示链路的有界化与性能治理路线图
 
 ## 项目概述
 

@@ -129,8 +129,6 @@ pub struct LlmApiLogStore {
     stream_enabled: AtomicBool,
     keep: AtomicU64,
     index: Mutex<VecDeque<LlmApiLogIndexEntry>>,
-    recent_meta: Mutex<VecDeque<LlmApiLogMeta>>,
-    recent_raw: Mutex<VecDeque<LlmApiLogEntryRaw>>,
 }
 
 impl LlmApiLogStore {
@@ -154,8 +152,6 @@ impl LlmApiLogStore {
             stream_enabled: AtomicBool::new(false),
             keep: AtomicU64::new(DEFAULT_KEEP as u64),
             index: Mutex::new(index),
-            recent_meta: Mutex::new(VecDeque::new()),
-            recent_raw: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -192,32 +188,10 @@ impl LlmApiLogStore {
     }
 
     pub async fn get_preview(&self, id: u64) -> Result<LlmApiLogEntryPreview, std::io::Error> {
-        if let Some(meta) = self
-            .recent_meta
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|entry| entry.id == id)
-            .cloned()
-        {
-            return Ok(meta.into());
-        }
-
         Ok(load_meta(meta_path(&self.log_root, id)).await?.into())
     }
 
     pub async fn get_raw(&self, id: u64) -> Result<LlmApiLogEntryRaw, std::io::Error> {
-        if let Some(entry) = self
-            .recent_raw
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|entry| entry.id == id)
-            .cloned()
-        {
-            return Ok(entry);
-        }
-
         let meta = load_meta(meta_path(&self.log_root, id)).await?;
         let request_raw = tokio::fs::read_to_string(request_raw_path(&self.log_root, id)).await?;
 
@@ -239,23 +213,24 @@ impl LlmApiLogStore {
         })
     }
 
-    fn record_entry(
+    async fn record_entry(
         &self,
         meta: LlmApiLogMeta,
         request_raw_inline: Option<String>,
         response_raw_inline: Option<String>,
     ) {
+        if let Err(error) = persist_meta_file(&self.log_root, &meta).await {
+            tracing::error!(
+                "Failed to persist LLM API meta entry {}: {}",
+                meta.id,
+                error
+            );
+            return;
+        }
+
         let index_entry = LlmApiLogIndexEntry::from(&meta);
         let keep = self.keep.load(Ordering::Relaxed) as usize;
         let should_stream = self.stream_enabled.load(Ordering::Relaxed);
-        let recent_raw_entry = request_raw_inline
-            .as_ref()
-            .map(|request_raw| LlmApiLogEntryRaw {
-                id: meta.id,
-                request_raw: request_raw.clone(),
-                response_raw: response_raw_inline.clone().unwrap_or_default(),
-                response_raw_kind: meta.response_raw_kind,
-            });
 
         let (removed_ids, index_snapshot) = {
             let mut index = self.index.lock().unwrap();
@@ -269,37 +244,21 @@ impl LlmApiLogStore {
             (removed, index.iter().cloned().collect::<Vec<_>>())
         };
 
-        {
-            let mut recent_meta = self.recent_meta.lock().unwrap();
-            recent_meta.push_back(meta.clone());
-            while recent_meta.len() > keep {
-                recent_meta.pop_front();
-            }
-        }
-
-        if let Some(recent_raw_entry) = recent_raw_entry {
-            let mut recent_raw = self.recent_raw.lock().unwrap();
-            recent_raw.push_back(recent_raw_entry);
-            while recent_raw.len() > keep {
-                recent_raw.pop_front();
-            }
-        }
-
         if should_stream {
             let _ = self.app_handle.emit(LLM_API_LOG_EVENT, index_entry);
         }
 
         let log_root = self.log_root.clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(error) = persist_entry_files(
+            if let Err(error) = persist_raw_files(
                 &log_root,
-                &meta,
+                meta.id,
                 request_raw_inline.as_deref(),
+                meta.response_raw_kind,
                 response_raw_inline.as_deref(),
             )
-            .await
-            {
-                tracing::error!("Failed to persist LLM API log entry {}: {}", meta.id, error);
+            .await {
+                tracing::error!("Failed to persist LLM API log raw entry {}: {}", meta.id, error);
             }
 
             for removed_id in removed_ids {
@@ -330,20 +289,6 @@ impl LlmApiLogStore {
             }
             removed
         };
-
-        {
-            let mut recent_meta = self.recent_meta.lock().unwrap();
-            while recent_meta.len() > keep {
-                recent_meta.pop_front();
-            }
-        }
-
-        {
-            let mut recent_raw = self.recent_raw.lock().unwrap();
-            while recent_raw.len() > keep {
-                recent_raw.pop_front();
-            }
-        }
 
         if removed_ids.is_empty() {
             return;
@@ -434,7 +379,8 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
         };
 
         self.store
-            .record_entry(meta, Some(request_raw), response_raw_inline);
+            .record_entry(meta, Some(request_raw), response_raw_inline)
+            .await;
         result
     }
 
@@ -555,7 +501,7 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
             response_raw_kind,
         };
 
-        self.store.record_entry(meta, None, None);
+        self.store.record_entry(meta, None, None).await;
         result
     }
 }
@@ -589,10 +535,7 @@ struct StreamReadableCollector {
 
 impl StreamReadableCollector {
     fn new(source: ChatCompletionSource) -> Self {
-        Self {
-            source,
-            buffer: String::new(),
-        }
+        Self { source, buffer: String::new() }
     }
 
     fn push(&mut self, chunk: &str) {
@@ -759,7 +702,10 @@ fn pretty_json(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
 }
 
-fn format_request_readable(source: ChatCompletionSource, payload: &Value) -> String {
+fn format_request_readable(
+    source: ChatCompletionSource,
+    payload: &Value,
+) -> String {
     match source {
         ChatCompletionSource::Makersuite | ChatCompletionSource::VertexAi => {
             format_gemini_contents(payload)
@@ -771,7 +717,7 @@ fn format_request_readable(source: ChatCompletionSource, payload: &Value) -> Str
 
 fn format_openai_messages(payload: &Value) -> String {
     let Some(messages) = payload.get("messages").and_then(Value::as_array) else {
-        return pretty_json(payload);
+        return "<messages unavailable>".to_string();
     };
 
     let mut out = String::new();
@@ -780,16 +726,19 @@ fn format_openai_messages(payload: &Value) -> String {
             .get("role")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        out.push_str(&format!("[{role}]\n"));
-        out.push_str(&extract_message_content(message));
+        out.push('[');
+        out.push_str(role);
+        out.push_str("]\n");
+        append_openai_message_content(&mut out, message);
         out.push_str("\n\n");
     }
-    out.trim().to_string()
+    out.truncate(out.trim_end().len());
+    out
 }
 
 fn format_claude_messages(payload: &Value) -> String {
     let Some(messages) = payload.get("messages").and_then(Value::as_array) else {
-        return pretty_json(payload);
+        return "<messages unavailable>".to_string();
     };
 
     let mut out = String::new();
@@ -798,40 +747,42 @@ fn format_claude_messages(payload: &Value) -> String {
             .get("role")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        out.push_str(&format!("[{role}]\n"));
+        out.push('[');
+        out.push_str(role);
+        out.push_str("]\n");
 
         let content = message.get("content");
-        out.push_str(&extract_claude_content(content));
+        append_claude_content(&mut out, content);
         out.push_str("\n\n");
     }
-    out.trim().to_string()
+    out.truncate(out.trim_end().len());
+    out
 }
 
-fn extract_claude_content(content: Option<&Value>) -> String {
+fn append_claude_content(out: &mut String, content: Option<&Value>) {
     let Some(content) = content else {
-        return String::new();
+        return;
     };
 
     if let Some(text) = content.as_str() {
-        return text.to_string();
+        out.push_str(text);
+        return;
     }
 
     let Some(blocks) = content.as_array() else {
-        return pretty_json(content);
+        return;
     };
 
-    let mut out = String::new();
     for block in blocks {
         if let Some(text) = block.get("text").and_then(Value::as_str) {
             out.push_str(text);
         }
     }
-    out
 }
 
 fn format_gemini_contents(payload: &Value) -> String {
     let Some(contents) = payload.get("contents").and_then(Value::as_array) else {
-        return pretty_json(payload);
+        return "<contents unavailable>".to_string();
     };
 
     let mut out = String::new();
@@ -840,9 +791,10 @@ fn format_gemini_contents(payload: &Value) -> String {
             .get("role")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        out.push_str(&format!("[{role}]\n"));
+        out.push('[');
+        out.push_str(role);
+        out.push_str("]\n");
         let Some(parts) = content.get("parts").and_then(Value::as_array) else {
-            out.push_str(&pretty_json(content));
             out.push_str("\n\n");
             continue;
         };
@@ -853,23 +805,27 @@ fn format_gemini_contents(payload: &Value) -> String {
         }
         out.push_str("\n\n");
     }
-    out.trim().to_string()
+    out.truncate(out.trim_end().len());
+    out
 }
 
-fn extract_message_content(message: &Value) -> String {
+fn append_openai_message_content(
+    out: &mut String,
+    message: &Value,
+) {
     let Some(content) = message.get("content") else {
-        return String::new();
+        return;
     };
 
     if let Some(text) = content.as_str() {
-        return text.to_string();
+        out.push_str(text);
+        return;
     }
 
     let Some(items) = content.as_array() else {
-        return pretty_json(content);
+        return;
     };
 
-    let mut out = String::new();
     for item in items {
         let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
         if item_type == "text" {
@@ -879,25 +835,26 @@ fn extract_message_content(message: &Value) -> String {
             continue;
         }
 
-        out.push_str(&format!("[{item_type}]"));
+        out.push('[');
+        out.push_str(item_type);
+        out.push(']');
     }
-    out
 }
 
 fn format_response_readable(response: &Value) -> String {
     let Some(choices) = response.get("choices").and_then(Value::as_array) else {
-        return pretty_json(response);
+        return "<response unavailable>".to_string();
     };
     let Some(first) = choices.first() else {
-        return pretty_json(response);
+        return "<response unavailable>".to_string();
     };
     let Some(message) = first.get("message").and_then(Value::as_object) else {
-        return pretty_json(response);
+        return "<response unavailable>".to_string();
     };
     if let Some(content) = message.get("content").and_then(Value::as_str) {
         return content.to_string();
     }
-    pretty_json(response)
+    "<non-text response>".to_string()
 }
 
 fn index_path(log_root: &Path) -> PathBuf {
@@ -926,35 +883,40 @@ async fn load_meta(path: PathBuf) -> Result<LlmApiLogMeta, std::io::Error> {
         .map_err(|error| std::io::Error::other(format!("Failed to parse meta JSON: {error}")))
 }
 
-async fn persist_entry_files(
+async fn persist_meta_file(log_root: &Path, meta: &LlmApiLogMeta) -> Result<(), std::io::Error> {
+    tokio::fs::create_dir_all(log_root).await?;
+    let meta_json = serde_json::to_string_pretty(meta).map_err(|error| {
+        std::io::Error::other(format!("Failed to serialize LLM API meta: {error}"))
+    })?;
+    tokio::fs::write(meta_path(log_root, meta.id), meta_json).await?;
+    Ok(())
+}
+
+async fn persist_raw_files(
     log_root: &Path,
-    meta: &LlmApiLogMeta,
+    id: u64,
     request_raw_inline: Option<&str>,
+    response_raw_kind: Option<LlmApiRawKind>,
     response_raw_inline: Option<&str>,
 ) -> Result<(), std::io::Error> {
     tokio::fs::create_dir_all(log_root).await?;
 
     if let Some(content) = request_raw_inline {
-        tokio::fs::write(request_raw_path(log_root, meta.id), content).await?;
+        tokio::fs::write(request_raw_path(log_root, id), content).await?;
     }
 
-    if let Some(kind) = meta.response_raw_kind {
+    if let Some(kind) = response_raw_kind {
         if let Some(content) = response_raw_inline {
             match kind {
                 LlmApiRawKind::Json => {
-                    tokio::fs::write(response_raw_json_path(log_root, meta.id), content).await?;
+                    tokio::fs::write(response_raw_json_path(log_root, id), content).await?;
                 }
                 LlmApiRawKind::Sse => {
-                    tokio::fs::write(response_raw_sse_path(log_root, meta.id), content).await?;
+                    tokio::fs::write(response_raw_sse_path(log_root, id), content).await?;
                 }
             }
         }
     }
-
-    let meta_json = serde_json::to_string_pretty(meta).map_err(|error| {
-        std::io::Error::other(format!("Failed to serialize LLM API meta: {error}"))
-    })?;
-    tokio::fs::write(meta_path(log_root, meta.id), meta_json).await?;
 
     Ok(())
 }

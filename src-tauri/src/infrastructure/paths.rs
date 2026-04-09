@@ -15,6 +15,7 @@ const RUNTIME_CONFIG_FILE: &str = "tauritavern-runtime.json";
 const DATA_ARCHIVE_ROOT_DIR: &str = ".data-archive";
 const DATA_ARCHIVE_IMPORTS_DIR: &str = "imports";
 const DATA_ARCHIVE_EXPORTS_DIR: &str = "exports";
+pub const IOS_EXPORT_STAGING_ROOT_NAME: &str = "tauritavern-export-staging";
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 const DEFAULT_USER_DIR_NAME: &str = "default-user";
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

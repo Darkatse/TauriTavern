@@ -2,11 +2,12 @@
 
 import { invoke } from '../../../../tauri-bridge.js';
 import { createSameOriginIframeLogCapture } from './same-origin-iframe-log-capture.js';
+import { trimFrontendLogEntriesInPlace } from './frontend-log-retention.js';
 
 const CONSOLE_CAPTURE_STORAGE_KEY = 'tt:devConsoleCapture';
 
-const BUFFER_LIMIT = 2000;
 const FLUSH_INTERVAL_MS = 250;
+const MAX_MESSAGE_CHARS = 3072;
 
 /** @typedef {'debug' | 'info' | 'warn' | 'error'} FrontendLogLevel */
 /** @typedef {{ id: number, timestampMs: number, level: FrontendLogLevel, message: string, target?: string }} FrontendLogEntry */
@@ -62,7 +63,7 @@ function detectLogTargetFromStack(stackLines) {
 }
 
 function detectCurrentLogTarget() {
-    return detectLogTargetFromStack(stackToLines(new Error().stack));
+    return DEFAULT_LOG_TARGET;
 }
 
 /**
@@ -83,9 +84,8 @@ const subscribers = new Set();
 
 let nextId = 1;
 let backendForwardingEnabled = false;
-/** @type {FrontendLogEntry[]} */
-let pendingFlush = [];
 let flushTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+let lastForwardedId = 0;
 
 /** @type {Partial<Record<keyof Console, (...args: any[]) => void>> | null} */
 let originalConsole = null;
@@ -94,7 +94,8 @@ let consoleCaptureEnabled = readConsoleCaptureBootstrapFlag();
 function readConsoleCaptureBootstrapFlag() {
     try {
         return globalThis.localStorage?.getItem(CONSOLE_CAPTURE_STORAGE_KEY) === '1';
-    } catch {
+    } catch (error) {
+        console.warn('TauriTavern: Failed to read dev console capture flag:', error);
         return false;
     }
 }
@@ -103,8 +104,9 @@ function readConsoleCaptureBootstrapFlag() {
 function writeConsoleCaptureBootstrapFlag(enabled) {
     try {
         globalThis.localStorage?.setItem(CONSOLE_CAPTURE_STORAGE_KEY, enabled ? '1' : '0');
-    } catch {
-        // Ignore storage write failures.
+    } catch (error) {
+        const warnFn = originalConsole?.warn ?? console.warn;
+        warnFn('TauriTavern: Failed to persist dev console capture flag:', error);
     }
 }
 
@@ -113,10 +115,147 @@ function notify(entry) {
     for (const handler of subscribers) {
         try {
             handler(entry);
-        } catch {
-            // Ignore subscriber failures.
+        } catch (error) {
+            // Keep capture running, but make the failure visible.
+            const errorFn = originalConsole?.error ?? console.error;
+            errorFn('TauriTavern: frontend log subscriber failed:', error);
         }
     }
+}
+
+/**
+ * @param {string} value
+ * @param {number} maxChars
+ */
+function truncateString(value, maxChars) {
+    const text = String(value ?? '');
+    if (text.length <= maxChars) {
+        return text;
+    }
+    if (maxChars <= 1) {
+        return '…';
+    }
+    return `${text.slice(0, maxChars - 1)}…`;
+}
+
+/**
+ * @param {unknown} value
+ * @param {number} budget
+ */
+function formatConsoleArgPreview(value, budget) {
+    try {
+        if (budget <= 0) {
+            return '';
+        }
+
+        if (value === null) {
+            return 'null';
+        }
+        if (value === undefined) {
+            return 'undefined';
+        }
+
+        const valueType = typeof value;
+        if (valueType === 'string') {
+            return truncateString(/** @type {string} */ (value), budget);
+        }
+        if (valueType === 'number' || valueType === 'boolean' || valueType === 'bigint') {
+            return truncateString(String(value), budget);
+        }
+        if (valueType === 'symbol') {
+            return truncateString(value.toString(), budget);
+        }
+        if (valueType === 'function') {
+            const fn = /** @type {Function} */ (value);
+            const name = String(fn.name || '').trim();
+            return truncateString(name ? `[Function ${name}]` : '[Function]', budget);
+        }
+
+        if (valueType !== 'object') {
+            return truncateString(String(value), budget);
+        }
+
+        const obj = /** @type {any} */ (value);
+
+        const stack = obj?.stack;
+        if (typeof stack === 'string' && stack) {
+            return truncateString(stack, budget);
+        }
+
+        const message = obj?.message;
+        if (typeof message === 'string' && message) {
+            return truncateString(message, budget);
+        }
+
+        if (Array.isArray(obj)) {
+            return truncateString(`Array(${obj.length})`, budget);
+        }
+
+        if (obj instanceof Map) {
+            return truncateString(`Map(${obj.size})`, budget);
+        }
+
+        if (obj instanceof Set) {
+            return truncateString(`Set(${obj.size})`, budget);
+        }
+
+        if (ArrayBuffer.isView(obj)) {
+            const view = /** @type {ArrayBufferView} */ (obj);
+            const name = view.constructor?.name || 'ArrayBufferView';
+            const maybeLength = /** @type {any} */ (view).length;
+            const length = typeof maybeLength === 'number' ? maybeLength : 0;
+            return truncateString(`${name}(${length})`, budget);
+        }
+
+        let displayed = 0;
+        const keys = [];
+        for (const key in obj) {
+            if (!Object.prototype.hasOwnProperty.call(obj, key)) {
+                continue;
+            }
+            keys.push(key);
+            displayed += 1;
+            if (displayed >= 6) {
+                break;
+            }
+        }
+
+        const ctorName = String(obj?.constructor?.name || 'Object').trim() || 'Object';
+        if (keys.length === 0) {
+            return truncateString(ctorName, budget);
+        }
+        return truncateString(`${ctorName}{${keys.join(',')}}`, budget);
+    } catch (error) {
+        const errorFn = originalConsole?.error ?? console.error;
+        errorFn('TauriTavern: Failed to format console log args:', error);
+        return '[LogFormatError]';
+    }
+}
+
+/** @param {any[]} args */
+function formatConsoleArgs(args) {
+    let out = '';
+
+    for (const arg of args) {
+        if (out.length >= MAX_MESSAGE_CHARS) {
+            break;
+        }
+
+        const separator = out ? ' ' : '';
+        const budget = MAX_MESSAGE_CHARS - out.length - separator.length;
+        if (budget <= 0) {
+            break;
+        }
+
+        const part = formatConsoleArgPreview(arg, budget);
+        if (!part) {
+            continue;
+        }
+
+        out = `${out}${separator}${part}`;
+    }
+
+    return truncateString(out, MAX_MESSAGE_CHARS);
 }
 
 /**
@@ -129,31 +268,38 @@ function push(level, message, target) {
         id: nextId++,
         timestampMs: Date.now(),
         level,
-        message,
+        message: truncateString(String(message ?? ''), MAX_MESSAGE_CHARS),
         ...(target ? { target } : {}),
     };
 
     entries.push(entry);
-    if (entries.length > BUFFER_LIMIT) {
-        entries.splice(0, entries.length - BUFFER_LIMIT);
-    }
+    trimFrontendLogEntriesInPlace(entries);
 
     notify(entry);
-
-    pendingFlush.push(entry);
-    if (backendForwardingEnabled) {
-        scheduleFlush();
-    }
+    scheduleFlush();
 }
 
 function scheduleFlush() {
+    if (!backendForwardingEnabled) {
+        return;
+    }
+
     if (flushTimer) {
         return;
     }
 
     flushTimer = setTimeout(() => {
-        flushTimer = null;
-        void flushPending();
+        void (async () => {
+            try {
+                await flushPending();
+            } finally {
+                flushTimer = null;
+                const lastEntry = entries.length > 0 ? entries[entries.length - 1] : null;
+                if (backendForwardingEnabled && lastEntry && lastEntry.id > lastForwardedId) {
+                    scheduleFlush();
+                }
+            }
+        })();
     }, FLUSH_INTERVAL_MS);
 }
 
@@ -169,13 +315,14 @@ function reportFlushError(error) {
 }
 
 async function flushPending() {
-    if (!backendForwardingEnabled || pendingFlush.length === 0) {
-        pendingFlush = [];
+    if (!backendForwardingEnabled) {
         return;
     }
 
-    const batch = pendingFlush;
-    pendingFlush = [];
+    const batch = entries.filter((entry) => entry.id > lastForwardedId);
+    if (batch.length === 0) {
+        return;
+    }
 
     try {
         await invoke('devlog_append_frontend_logs', {
@@ -185,39 +332,11 @@ async function flushPending() {
                 ...(entry.target ? { target: entry.target } : {}),
             })),
         });
+        const last = /** @type {FrontendLogEntry} */ (batch[batch.length - 1]);
+        lastForwardedId = last.id;
     } catch (error) {
         reportFlushError(error);
     }
-}
-
-/** @param {any[]} args */
-function formatConsoleArgs(args) {
-    const parts = [];
-    for (const arg of args) {
-        if (typeof arg === 'string') {
-            parts.push(arg);
-            continue;
-        }
-
-        const stack = arg && typeof arg === 'object' ? arg.stack : null;
-        const message = arg && typeof arg === 'object' ? arg.message : null;
-        if (typeof stack === 'string' && stack) {
-            parts.push(stack);
-            continue;
-        }
-        if (typeof message === 'string' && message) {
-            parts.push(message);
-            continue;
-        }
-
-        try {
-            parts.push(JSON.stringify(arg));
-        } catch {
-            parts.push(String(arg));
-        }
-    }
-
-    return parts.join(' ');
 }
 
 const iframeLogCapture = createSameOriginIframeLogCapture({
@@ -330,9 +449,7 @@ export function installFrontendLogCapture() {
 /** @param {boolean} enabled */
 export function setFrontendLogBackendForwardingEnabled(enabled) {
     backendForwardingEnabled = Boolean(enabled);
-    if (backendForwardingEnabled && pendingFlush.length > 0) {
-        scheduleFlush();
-    }
+    scheduleFlush();
 }
 
 export function isFrontendConsoleCaptureEnabled() {

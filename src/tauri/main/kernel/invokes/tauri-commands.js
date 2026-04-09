@@ -22,6 +22,7 @@ export {};
  *   | 'create_settings_snapshot'
  *   | 'decode_openai_tokens'
  *   | 'devlog_append_frontend_logs'
+ *   | 'devlog_export_bundle'
  *   | 'devlog_get_backend_log_tail'
  *   | 'devlog_get_llm_api_log_index'
  *   | 'devlog_get_llm_api_log_preview'

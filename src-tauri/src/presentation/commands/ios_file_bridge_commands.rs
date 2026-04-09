@@ -11,7 +11,7 @@ use crate::infrastructure::ios_document_picker::{
     PickZipResult, copy_picked_url_to_path, pick_zip_archive,
 };
 use crate::infrastructure::ios_share_sheet::share_file;
-use crate::infrastructure::paths::resolve_runtime_paths;
+use crate::infrastructure::paths::{IOS_EXPORT_STAGING_ROOT_NAME, resolve_runtime_paths};
 use crate::infrastructure::persistence::data_archive_jobs::{
     cleanup_export_data_archive as cleanup_export_data_archive_impl,
     get_data_archive_job_status as get_data_archive_job_status_impl,
@@ -19,8 +19,6 @@ use crate::infrastructure::persistence::data_archive_jobs::{
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
-
-const IOS_EXPORT_STAGING_ROOT_NAME: &str = "tauritavern-export-staging";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IosImportArchiveResponse {

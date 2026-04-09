@@ -47,6 +47,8 @@ type FrontendLogEntry = {
 - 前端日志 capture 开关由宿主统一管理。
 - 调用方不应再自行读写相关 `localStorage` key。
 - `unsubscribe` 可安全重复调用。
+- 为避免 DEBUG/INFO 噪声挤掉关键告警，宿主按级别独立保留：`debug` 400 条、`info` 300 条、`warn`+`error` 共 100 条。
+- `message` 是用于 UI 展示的 **preview**：可能被截断；对象参数会被摘要化。需要完整请求/响应体请使用 `llmApiLogs.getRaw()` 或导出日志。
 
 ## 2. `backendLogs`
 
@@ -81,6 +83,7 @@ type BackendLogEntry = {
 
 - 宿主负责共享后端日志流。
 - 多个订阅者并存时，底层流的启停由宿主统一引用计数，不应互相踩踏。
+- `message` 可能被截断以保证性能；完整排查请以文件日志/导出 bundle 为准。
 
 ## 3. `llmApiLogs`
 
@@ -148,7 +151,29 @@ type LlmApiLogRaw = {
 };
 ```
 
-## 4. 边界与稳定性
+### 语义
+
+- `getPreview()` / `getRaw()` 会从磁盘读取对应的 log 文件（按需加载，不常驻内存）。
+- `requestReadable/responseReadable` 为开发者调试默认不截断（内容过大时可能影响 UI 打开速度）；完整内容也可用 `getRaw()` 或导出 bundle 获取。
+
+## 4. `exportBundle()`
+
+```js
+const zipPath = await dev.exportBundle();
+```
+
+### 方法
+
+| 方法 | 返回值 | 说明 |
+| --- | --- | --- |
+| `exportBundle()` | `Promise<string>` | 导出 debug bundle（zip）并返回保存路径 |
+
+### 语义
+
+- 导出内容包含后端文件日志、前端日志 snapshot、LLM API Logs（含 raw）与设置/版本信息。
+- 导出文件可能包含 prompt/响应体等敏感信息；分享前请自行检查。
+
+## 5. 边界与稳定性
 
 - `tauritavern-backend-log`
 - `tauritavern-llm-api-log`

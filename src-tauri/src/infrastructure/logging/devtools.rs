@@ -13,7 +13,26 @@ use tracing_subscriber::registry::LookupSpan;
 
 pub const BACKEND_LOG_EVENT: &str = "tauritavern-backend-log";
 
-const BACKEND_LOG_BUFFER_LIMIT: usize = 2000;
+const BACKEND_LOG_BUFFER_LIMIT: usize = 800;
+const BACKEND_LOG_MAX_MESSAGE_BYTES: usize = 3072;
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+    if max_bytes <= 1 {
+        return "…".to_string();
+    }
+
+    let mut end = max_bytes.saturating_sub(1);
+    while end > 0 && !value.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+
+    let mut out = value[..end].to_string();
+    out.push('…');
+    out
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +81,10 @@ impl BackendLogStore {
     fn push(&self, mut entry: BackendLogEntry) {
         if entry.id == 0 {
             entry.id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        }
+
+        if entry.message.len() > BACKEND_LOG_MAX_MESSAGE_BYTES {
+            entry.message = truncate_utf8(&entry.message, BACKEND_LOG_MAX_MESSAGE_BYTES);
         }
 
         let should_stream = self.stream_enabled.load(Ordering::Relaxed);

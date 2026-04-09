@@ -4,6 +4,7 @@ import {
     checkForUpdate,
     getClientVersion as getBridgeClientVersion,
     getTauriTavernSettings,
+    invoke,
     openExternalUrl,
     updateTauriTavernSettings,
 } from '../../../tauri-bridge.js';
@@ -13,6 +14,7 @@ import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 import { stripCommandErrorPrefixes } from '../../util/command-error-utils.js';
 import { isGitHubRateLimitMessage } from '../../util/github-rate-limit.js';
 import { githubRateLimitStopper } from '../../util/github-rate-limit-stopper.js';
+import { isIosRuntime } from '../../util/mobile-runtime.js';
 import { extractErrorText, toUserFacingErrorText } from '../../util/user-facing-error.js';
 
 const MODULE_NAME = 'tauritavern-version';
@@ -66,29 +68,6 @@ function getFallbackVersion() {
     return normalized || UNKNOWN_VALUE;
 }
 
-function getAndroidSystemInfo() {
-    const userAgent = String(globalThis?.navigator?.userAgent || '');
-    if (!/\bAndroid\b/i.test(userAgent)) {
-        return null;
-    }
-
-    const androidVersionMatch = userAgent.match(/\bAndroid\s+([0-9.]+)/i);
-    const androidVersion = androidVersionMatch?.[1] || UNKNOWN_VALUE;
-
-    const modelFromBuild = userAgent.match(/\bAndroid\s+[0-9.]+;\s*([^;]+?)\s+Build\//i);
-    const modelFallback = userAgent.match(/\bAndroid\s+[0-9.]+;\s*([^;]+)/i);
-    const model = (modelFromBuild?.[1] || modelFallback?.[1] || UNKNOWN_VALUE).trim();
-
-    const webViewVersionMatch = userAgent.match(/\bChrome\/([0-9.]+)/i);
-    const webViewVersion = webViewVersionMatch?.[1] || UNKNOWN_VALUE;
-
-    return {
-        androidVersion,
-        model,
-        webViewVersion,
-    };
-}
-
 function buildVersionInfo(payload = null) {
     const agent = typeof payload?.agent === 'string' && payload.agent.trim()
         ? payload.agent.trim()
@@ -108,24 +87,11 @@ function buildVersionInfo(payload = null) {
 
     const compatVersion = extractCompatVersion(agent);
     const compatBaseline = `SillyTavern ${compatVersion}`;
-    const summaryParts = [
-        `TauriTavern ${packageVersion}`,
-        localizeTemplate('ttv_version.summary_compat', 'Compat ${0}', compatBaseline),
-        localizeTemplate('ttv_version.summary_git', 'Git ${0}', gitInfo),
-    ];
-
-    const androidInfo = getAndroidSystemInfo();
-    if (androidInfo) {
-        summaryParts.push(localizeTemplate('ttv_version.summary_android', 'Android ${0}', androidInfo.androidVersion));
-        summaryParts.push(localizeTemplate('ttv_version.summary_model', 'Model ${0}', androidInfo.model));
-        summaryParts.push(localizeTemplate('ttv_version.summary_webview', 'WebView ${0}', androidInfo.webViewVersion));
-    }
 
     return {
         packageVersion,
         compatBaseline,
         gitInfo,
-        summary: summaryParts.join(' | '),
     };
 }
 
@@ -143,26 +109,53 @@ function renderVersionInfo(info) {
     $('#tauritavern_version_number').text(info.packageVersion);
     $('#tauritavern_compat_version').text(info.compatBaseline);
     $('#tauritavern_git_info').text(info.gitInfo);
-    $('#tauritavern_version_copy').data('summary', info.summary);
 }
 
-async function onCopyVersionClick() {
-    const summary = String($('#tauritavern_version_copy').data('summary') || '').trim();
-    if (!summary) {
-        return;
-    }
+async function onExportDebugBundleClick() {
+    const $btn = $('#tauritavern_export_debug_bundle');
+    const $icon = $btn.find('i');
+    const $text = $btn.find('span');
+    const defaultText = String($text.data('defaultLabel') || $text.text()).trim();
 
-    const clipboard = globalThis?.navigator?.clipboard;
-    if (!clipboard || typeof clipboard.writeText !== 'function') {
-        globalThis.toastr?.warning?.(localize('ttv_version.copy_failure', 'Failed to copy. Please copy the version info manually.'));
-        return;
-    }
+    $text.data('defaultLabel', defaultText);
+    $icon.addClass('fa-spin');
+    $text.text(localize('ttv_version.exporting_bundle', 'Exporting...'));
+    $btn.prop('disabled', true);
 
     try {
-        await clipboard.writeText(summary);
-        globalThis.toastr?.success?.(localize('ttv_version.copy_success', 'Version info copied to clipboard.'));
-    } catch {
-        globalThis.toastr?.error?.(localize('ttv_version.copy_failure', 'Failed to copy. Please copy the version info manually.'));
+        const devApi = window.__TAURITAVERN__?.api?.dev;
+        if (!devApi || typeof devApi.exportBundle !== 'function') {
+            throw new Error('TauriTavern host dev API exportBundle is unavailable');
+        }
+
+        const savedPath = await devApi.exportBundle();
+
+        if (isIosRuntime()) {
+            await invoke('ios_share_file', { filePath: savedPath });
+            globalThis.toastr?.success?.(localize('ttv_version.export_success', 'Export completed.'));
+            return;
+        }
+
+        globalThis.toastr?.success?.(localize('ttv_version.export_success', 'Export completed.'));
+        await new Popup(savedPath, POPUP_TYPE.TEXT, localize('ttv_version.export_debug_bundle', 'Export Debug Bundle'), {
+            okButton: localize('ttv_version.ok', 'OK'),
+            allowVerticalScrolling: true,
+            wide: true,
+            large: false,
+        }).show();
+    } catch (error) {
+        console.error('TauriTavern debug bundle export failed:', error);
+        globalThis.toastr?.error?.(
+            localizeTemplate(
+                'ttv_version.export_failed',
+                'Failed to export debug bundle: ${0}',
+                toUserFacingErrorText(error) || extractErrorText(error),
+            ),
+        );
+    } finally {
+        $icon.removeClass('fa-spin');
+        $text.text(defaultText);
+        $btn.prop('disabled', false);
     }
 }
 
@@ -453,7 +446,7 @@ jQuery(async () => {
 
     const html = await renderExtensionTemplateAsync(MODULE_NAME, 'settings', LINKS);
     container.append(html);
-    $('#tauritavern_version_copy').on('click', onCopyVersionClick);
+    $('#tauritavern_export_debug_bundle').on('click', () => void onExportDebugBundleClick());
     $('#tauritavern_check_update').on('click', onCheckUpdateClick);
     $('#tauritavern_update_dismiss').on('click', hideUpdateResult);
     container.on('click', 'a[target="_blank"]', onExternalLinkClick);
