@@ -280,6 +280,7 @@ pub async fn replace_file_with_fallback(
 
 /// Synchronous variant of `replace_file_with_fallback` for startup/runtime code paths
 /// that cannot rely on Tokio being available yet.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn replace_file_with_fallback_sync(
     temp_path: &Path,
     target_path: &Path,
@@ -491,6 +492,7 @@ mod tests {
             .expect("remove temp root");
     }
 
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     #[test]
     fn replace_file_with_fallback_sync_overwrites_existing_file() {
         let root = unique_temp_root();

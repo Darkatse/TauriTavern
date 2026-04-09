@@ -2,6 +2,7 @@ use std::error::Error;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
@@ -14,7 +15,9 @@ const RUNTIME_CONFIG_FILE: &str = "tauritavern-runtime.json";
 const DATA_ARCHIVE_ROOT_DIR: &str = ".data-archive";
 const DATA_ARCHIVE_IMPORTS_DIR: &str = "imports";
 const DATA_ARCHIVE_EXPORTS_DIR: &str = "exports";
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const DEFAULT_USER_DIR_NAME: &str = "default-user";
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const EFFECTIVELY_EMPTY_DIRECTORY_ENTRIES: &[&str] = &[
     ".ds_store",
     ".localized",
@@ -33,6 +36,7 @@ pub enum RuntimeMode {
 #[derive(Debug, Clone)]
 pub struct RuntimePaths {
     pub mode: RuntimeMode,
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub app_root: PathBuf,
     pub data_root: PathBuf,
     pub log_root: PathBuf,
@@ -50,6 +54,7 @@ impl RuntimePaths {
 
         Self {
             mode,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             app_root,
             data_root,
             log_root,
@@ -379,6 +384,7 @@ fn normalize_android_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/").to_lowercase()
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn is_ignorable_effectively_empty_entry(entry: &std::fs::DirEntry) -> Result<bool, io::Error> {
     if !entry.file_type()?.is_file() {
         return Ok(false);
@@ -392,6 +398,7 @@ fn is_ignorable_effectively_empty_entry(entry: &std::fs::DirEntry) -> Result<boo
     Ok(EFFECTIVELY_EMPTY_DIRECTORY_ENTRIES.contains(&normalized.as_str()))
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn collect_ignorable_effectively_empty_entries(
     path: &Path,
 ) -> Result<Option<Vec<PathBuf>>, io::Error> {
@@ -410,10 +417,12 @@ fn collect_ignorable_effectively_empty_entries(
     Ok(Some(ignorable_entries))
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) fn is_effectively_empty_directory(path: &Path) -> Result<bool, io::Error> {
     Ok(collect_ignorable_effectively_empty_entries(path)?.is_some())
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn non_empty_directory_error(path: &Path) -> io::Error {
     io::Error::new(
         io::ErrorKind::AlreadyExists,
@@ -424,6 +433,7 @@ fn non_empty_directory_error(path: &Path) -> io::Error {
     )
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn prepare_effectively_empty_directory(path: &Path) -> Result<(), Box<dyn Error>> {
     std::fs::create_dir_all(path)?;
     if !path.is_dir() {
@@ -444,6 +454,7 @@ fn prepare_effectively_empty_directory(path: &Path) -> Result<(), Box<dyn Error>
     Ok(())
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn is_initialized_data_root(path: &Path) -> bool {
     path.join(DEFAULT_USER_DIR_NAME).is_dir()
 }

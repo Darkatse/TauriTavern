@@ -97,7 +97,7 @@
     "@mozilla/readability": "^0.6.0",
     "@popperjs/core": "^2.11.8",
     "@tauri-apps/api": "^2.10.1",
-    "@tauri-apps/plugin-fs": "~2.4.5",
+    "@tauri-apps/plugin-fs": "^2.5.0",
     "@tauri-apps/plugin-opener": "~2.5.3",
     "@zeldafan0225/ai_horde": "^5.2.0",
     "archiver": "^7.0.1",

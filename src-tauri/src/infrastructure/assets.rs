@@ -194,6 +194,7 @@ fn normalize_resource_relative_path(relative_path: &str) -> Result<String, Domai
     Ok(normalized)
 }
 
+#[cfg(not(target_os = "android"))]
 fn map_resource_error(relative_path: &str, error: std::io::Error) -> DomainError {
     if error.kind() == std::io::ErrorKind::NotFound {
         DomainError::NotFound(format!("Resource not found: {}", relative_path))
