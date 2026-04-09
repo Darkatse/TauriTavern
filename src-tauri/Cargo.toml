@@ -52,6 +52,7 @@ icu_collator = "2.1.1"
 icu_locale_core = "2.1.1"
 sys-locale = "0.3.2"
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+typed-path = "0.12"
 image = { version = "0.24", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
 mime_guess = "2.0.5"
 flate2 = "1.1.9"

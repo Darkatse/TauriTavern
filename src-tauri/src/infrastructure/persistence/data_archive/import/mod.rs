@@ -69,7 +69,9 @@ mod tests {
 
     use base64::Engine;
     use std::fs;
+    use std::io::Cursor;
     use std::io::Write;
+    use zip::CompressionMethod;
     use zip::ZipWriter;
     use zip::write::SimpleFileOptions as FileOptions;
 
@@ -91,6 +93,54 @@ mod tests {
             writer.write_all(bytes).expect("write bytes");
         }
         writer.finish().expect("finish zip");
+    }
+
+    fn write_zip_bytes(entries: &[(&str, &[u8])], options: FileOptions) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::<u8>::new());
+        let mut writer = ZipWriter::new(cursor);
+
+        for (name, bytes) in entries {
+            writer.start_file(*name, options).expect("start file");
+            writer.write_all(bytes).expect("write bytes");
+        }
+
+        writer.finish().expect("finish zip").into_inner()
+    }
+
+    fn clear_zip_utf8_flag(bytes: &mut [u8]) -> usize {
+        const UTF8_FLAG: u16 = 1u16 << 11;
+        let mut patched = 0usize;
+
+        let mut index = 0usize;
+        while index + 4 <= bytes.len() {
+            if bytes[index..].starts_with(b"PK\x03\x04") {
+                if index + 8 <= bytes.len() {
+                    let offset = index + 6;
+                    let flags = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+                    let flags = flags & !UTF8_FLAG;
+                    bytes[offset..offset + 2].copy_from_slice(&flags.to_le_bytes());
+                    patched += 1;
+                }
+                index += 4;
+                continue;
+            }
+
+            if bytes[index..].starts_with(b"PK\x01\x02") {
+                if index + 10 <= bytes.len() {
+                    let offset = index + 8;
+                    let flags = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+                    let flags = flags & !UTF8_FLAG;
+                    bytes[offset..offset + 2].copy_from_slice(&flags.to_le_bytes());
+                    patched += 1;
+                }
+                index += 4;
+                continue;
+            }
+
+            index += 1;
+        }
+
+        patched
     }
 
     #[test]
@@ -341,6 +391,79 @@ mod tests {
                 .join("settings.json")
                 .is_file(),
             "settings.json should map into default-user"
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn import_preserves_unicode_filenames_when_utf8_flag_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-non-utf8-flag-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.zip");
+
+        fs::create_dir_all(&root).expect("create temp root");
+        fs::create_dir_all(&workspace_root).expect("create temp workspace");
+
+        let file_name = "data/default-user/worlds/夏瑾 Pro - Beta 天狼星.json";
+        let mut bytes = write_zip_bytes(&[(file_name, br#"{ "ok": true }"#)], FileOptions::default());
+        let patched = clear_zip_utf8_flag(&mut bytes);
+        assert!(patched > 0, "should patch zip headers");
+        fs::write(&archive_path, bytes).expect("write fixture zip");
+
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        let is_cancelled = || false;
+
+        run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &is_cancelled,
+        )
+        .expect("import archive");
+
+        let imported = data_root
+            .join("default-user")
+            .join("worlds")
+            .join("夏瑾 Pro - Beta 天狼星.json");
+        assert!(imported.is_file(), "imported file should exist");
+
+        let text = fs::read_to_string(&imported).expect("read imported file");
+        assert!(text.contains("\"ok\": true"), "imported content should match");
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn layout_validation_errors_use_utf8_entry_names() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-layout-error-name-{}",
+            rand::random::<u64>()
+        ));
+        let archive_path = root.join("fixture.zip");
+
+        fs::create_dir_all(&root).expect("create temp root");
+
+        let entry_name = "data/default-user/chats/夏瑾 Pro - Beta 天狼星.json";
+        let large_payload = vec![0u8; 2 * 1024 * 1024];
+        let options = FileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .compression_level(Some(9));
+        let mut bytes = write_zip_bytes(&[(entry_name, &large_payload)], options);
+        let patched = clear_zip_utf8_flag(&mut bytes);
+        assert!(patched > 0, "should patch zip headers");
+        fs::write(&archive_path, bytes).expect("write fixture zip");
+
+        let error = layout::scan_archive_layout(&archive_path).expect_err("scan should fail");
+        assert!(
+            error.to_string().contains(entry_name),
+            "error should reference utf-8 entry name, got: {}",
+            error
         );
 
         cleanup_directory_sync(&root);

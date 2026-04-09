@@ -73,13 +73,13 @@ pub fn scan_archive_layout(archive_path: &Path) -> Result<LayoutMeta, DomainErro
         let entry = archive
             .by_index(index)
             .map_err(|error| internal_error("Failed to read archive entry", error))?;
-        let sanitized_path = zipkit::enclosed_zip_entry_path(&entry)?;
+        let (sanitized_path, entry_name) = zipkit::enclosed_zip_entry_path_with_name(&entry)?;
         if sanitized_path.as_os_str().is_empty() {
             continue;
         }
 
         validate_zip_entry_limits(
-            entry.name(),
+            entry_name,
             entry.size(),
             entry.compressed_size(),
             &mut total_uncompressed_bytes,

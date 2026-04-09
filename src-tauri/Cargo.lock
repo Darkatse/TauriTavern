@@ -5390,6 +5390,7 @@ dependencies = [
  "tracing-subscriber",
  "ttsync-contract",
  "ttsync-core",
+ "typed-path",
  "url",
  "uuid",
  "webpki-roots",
