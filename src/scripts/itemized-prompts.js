@@ -37,6 +37,93 @@ let recordIdByMesId = new Map();
 // Serialize index writes to keep localforage updates ordered when multiple upserts happen rapidly.
 let indexWriteChain = Promise.resolve();
 
+/** @type {Map<string, any>} */
+const pendingRecordWrites = new Map();
+
+/** @type {{ chatId: string, entriesSnapshot: ItemizedPromptIndexEntry[] } | null} */
+let pendingIndexWrite = null;
+
+let flushScheduled = false;
+let flushRunning = false;
+
+function scheduleFlush() {
+    if (flushScheduled) {
+        return;
+    }
+
+    flushScheduled = true;
+
+    if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(flushPendingWrites, { timeout: 1000 });
+        return;
+    }
+
+    setTimeout(() => flushPendingWrites(null), 0);
+}
+
+/**
+ * @param {IdleDeadline | null} deadline
+ */
+function flushPendingWrites(deadline) {
+    if (flushRunning) {
+        scheduleFlush();
+        return;
+    }
+
+    flushScheduled = false;
+    flushRunning = true;
+
+    void flushPendingWritesImpl(deadline).finally(() => {
+        flushRunning = false;
+        if (pendingRecordWrites.size > 0 || pendingIndexWrite) {
+            scheduleFlush();
+        }
+    }).catch((err) => {
+        queueMicrotask(() => {
+            throw err;
+        });
+    });
+}
+
+/**
+ * @param {IdleDeadline | null} deadline
+ */
+async function flushPendingWritesImpl(deadline) {
+    const start = performance.now();
+    const budgetMs = 8;
+
+    while (pendingRecordWrites.size > 0) {
+        const [recordKey, record] = pendingRecordWrites.entries().next().value;
+        pendingRecordWrites.delete(recordKey);
+        await promptStorage.setItem(recordKey, record);
+
+        if (deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() < 1) {
+            break;
+        }
+
+        if (performance.now() - start > budgetMs) {
+            break;
+        }
+    }
+
+    if (pendingIndexWrite) {
+        const next = pendingIndexWrite;
+        pendingIndexWrite = null;
+        await enqueueIndexWrite(next.chatId, next.entriesSnapshot);
+    }
+}
+
+function requestIndexWrite(chatId, entries) {
+    const snapshot = entries.map((entry) => ({ mesId: entry.mesId, recordId: entry.recordId }));
+    pendingIndexWrite = { chatId, entriesSnapshot: snapshot };
+    scheduleFlush();
+}
+
+function requestRecordWrite(recordKey, record) {
+    pendingRecordWrites.set(recordKey, record);
+    scheduleFlush();
+}
+
 function getIndexKey(chatId) {
     return `${TT_PROMPTS_INDEX_PREFIX}${chatId}`;
 }
@@ -71,7 +158,9 @@ function enqueueIndexWrite(chatId, entriesSnapshot) {
     const key = getIndexKey(chatId);
     const write = indexWriteChain.then(() => promptStorage.setItem(key, snapshot));
     indexWriteChain = write.catch((error) => {
-        console.error('Error saving itemized prompts index', { chatId }, error);
+        queueMicrotask(() => {
+            throw new Error(`Error saving itemized prompts index for chatId: ${chatId}`, { cause: error });
+        });
     });
     return write;
 }
@@ -138,7 +227,10 @@ async function clonePromptStore(sourceChatId, targetChatId) {
     const entriesSnapshot = itemizedPrompts.map((entry) => ({ mesId: entry.mesId, recordId: entry.recordId }));
 
     for (const entry of entriesSnapshot) {
-        const record = await promptStorage.getItem(getRecordKey(sourceChatId, entry.recordId));
+        const sourceKey = getRecordKey(sourceChatId, entry.recordId);
+        const record = pendingRecordWrites.has(sourceKey)
+            ? pendingRecordWrites.get(sourceKey)
+            : await promptStorage.getItem(sourceKey);
         if (record) {
             await promptStorage.setItem(getRecordKey(targetChatId, entry.recordId), record);
         }
@@ -152,24 +244,28 @@ async function clonePromptStore(sourceChatId, targetChatId) {
  * @param {string} chatId Chat ID to load
  */
 export async function loadItemizedPrompts(chatId) {
-    try {
-        if (!chatId) {
-            clearActiveIndex();
-            return;
-        }
+    if (!chatId) {
+        clearActiveIndex();
+        return;
+    }
 
+    try {
         const index = await loadPromptIndex(chatId);
         if (index) {
             setActiveIndex(chatId, index);
             return;
         }
-
-        const migrated = await migrateLegacyPrompts(chatId);
-        setActiveIndex(chatId, migrated);
     } catch (error) {
-        console.error('Error loading itemized prompts for chat', { chatId }, error);
         clearActiveIndex();
+        queueMicrotask(() => {
+            throw error;
+        });
+        return;
     }
+
+    // Prompt Inspector is a low priority feature. We avoid per-chat legacy migration on chat open
+    // to keep IndexedDB work off the hot path. Existing legacy data can be dropped.
+    setActiveIndex(chatId, []);
 }
 
 /**
@@ -187,13 +283,15 @@ export async function saveItemizedPrompts(chatId) {
         }
 
         if (chatId === activeChatId) {
-            await enqueueIndexWrite(activeChatId, itemizedPrompts);
+            requestIndexWrite(activeChatId, itemizedPrompts);
             return;
         }
 
         await clonePromptStore(activeChatId, chatId);
     } catch (error) {
-        console.error('Error saving itemized prompts for chat', { chatId }, error);
+        queueMicrotask(() => {
+            throw error;
+        });
     }
 }
 
@@ -213,13 +311,16 @@ export async function replaceItemizedPromptText(mesId, promptText) {
         return;
     }
 
-    const record = await promptStorage.getItem(getRecordKey(activeChatId, recordId));
+    const recordKey = getRecordKey(activeChatId, recordId);
+    const record = pendingRecordWrites.has(recordKey)
+        ? pendingRecordWrites.get(recordKey)
+        : await promptStorage.getItem(recordKey);
     if (!record) {
         return;
     }
 
     record.rawPrompt = promptText;
-    await promptStorage.setItem(getRecordKey(activeChatId, recordId), record);
+    requestRecordWrite(recordKey, record);
 }
 
 /**
@@ -232,6 +333,10 @@ export async function deleteItemizedPrompts(chatId) {
             return;
         }
 
+        if (pendingIndexWrite?.chatId === chatId) {
+            pendingIndexWrite = null;
+        }
+
         const recordPrefix = getRecordKeyPrefix(chatId);
         const keys = await promptStorage.keys();
         await Promise.all(
@@ -240,11 +345,19 @@ export async function deleteItemizedPrompts(chatId) {
                 .map((key) => promptStorage.removeItem(key)),
         );
 
+        for (const pendingKey of pendingRecordWrites.keys()) {
+            if (pendingKey.startsWith(recordPrefix)) {
+                pendingRecordWrites.delete(pendingKey);
+            }
+        }
+
         if (activeChatId === chatId) {
             clearActiveIndex();
         }
     } catch (error) {
-        console.error('Error deleting itemized prompts for chat', { chatId }, error);
+        queueMicrotask(() => {
+            throw error;
+        });
     }
 }
 
@@ -254,9 +367,13 @@ export async function deleteItemizedPrompts(chatId) {
 export async function clearItemizedPrompts() {
     try {
         await promptStorage.clear();
+        pendingRecordWrites.clear();
+        pendingIndexWrite = null;
         clearActiveIndex();
     } catch (error) {
-        console.error('Error clearing itemized prompts', error);
+        queueMicrotask(() => {
+            throw error;
+        });
     }
 }
 
@@ -289,11 +406,8 @@ export function upsertItemizedPromptRecord(record) {
         rebuildRecordIdMap(itemizedPrompts);
     }
 
-    void promptStorage.setItem(getRecordKey(chatId, recordId), record).catch((error) => {
-        console.error('Error saving itemized prompt record', { chatId, mesId, recordId }, error);
-    });
-
-    void enqueueIndexWrite(chatId, itemizedPrompts);
+    requestRecordWrite(getRecordKey(chatId, recordId), record);
+    requestIndexWrite(chatId, itemizedPrompts);
 }
 
 export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMesId) {
@@ -546,7 +660,10 @@ export async function promptItemize(itemizedPromptsOrRecords, requestedMesId) {
         return null;
     }
 
-    const record = await promptStorage.getItem(getRecordKey(activeChatId, recordId));
+    const recordKey = getRecordKey(activeChatId, recordId);
+    const record = pendingRecordWrites.has(recordKey)
+        ? pendingRecordWrites.get(recordKey)
+        : await promptStorage.getItem(recordKey);
     if (!record) {
         return null;
     }
@@ -555,7 +672,10 @@ export async function promptItemize(itemizedPromptsOrRecords, requestedMesId) {
     for (let i = itemizedPrompts.length - 1; i >= 0; i -= 1) {
         const entry = itemizedPrompts[i];
         if (entry.mesId < incomingMesId) {
-            priorRecord = await promptStorage.getItem(getRecordKey(activeChatId, entry.recordId));
+            const priorKey = getRecordKey(activeChatId, entry.recordId);
+            priorRecord = pendingRecordWrites.has(priorKey)
+                ? pendingRecordWrites.get(priorKey)
+                : await promptStorage.getItem(priorKey);
             break;
         }
     }
@@ -609,7 +729,7 @@ export function swapItemizedPrompts(sourceMessageId, targetMessageId) {
     targetEntry && (targetEntry.mesId = sourceMessageId);
     itemizedPrompts.sort((a, b) => a.mesId - b.mesId);
     rebuildRecordIdMap(itemizedPrompts);
-    void enqueueIndexWrite(chatId, itemizedPrompts);
+    requestIndexWrite(chatId, itemizedPrompts);
 }
 
 /**
@@ -635,11 +755,11 @@ export function deleteItemizedPromptForMessage(messageId) {
 
     itemizedPrompts.sort((a, b) => a.mesId - b.mesId);
     rebuildRecordIdMap(itemizedPrompts);
-    void enqueueIndexWrite(chatId, itemizedPrompts);
+    requestIndexWrite(chatId, itemizedPrompts);
 
     if (deletedRecordId) {
-        void promptStorage.removeItem(getRecordKey(chatId, deletedRecordId)).catch((error) => {
-            console.error('Error deleting itemized prompt record', { chatId, mesId, recordId: deletedRecordId }, error);
-        });
+        const recordKey = getRecordKey(chatId, deletedRecordId);
+        pendingRecordWrites.delete(recordKey);
+        void promptStorage.removeItem(recordKey);
     }
 }

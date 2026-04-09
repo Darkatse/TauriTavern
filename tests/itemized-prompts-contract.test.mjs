@@ -14,7 +14,7 @@ function extractBetween(source, startMarker, endMarker) {
     return source.slice(start, end);
 }
 
-test('Itemized prompts use index+record schema and avoid chat-open whole-load', async () => {
+test('Itemized prompts use index+record schema and avoid chat-open migration work', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/itemized-prompts.js'), 'utf8');
 
     assert.match(source, /tt_prompts_index:/);
@@ -27,10 +27,9 @@ test('Itemized prompts use index+record schema and avoid chat-open whole-load', 
     );
 
     assert.match(loadFn, /await loadPromptIndex\(chatId\);/);
-    assert.match(loadFn, /await migrateLegacyPrompts\(chatId\);/);
+    assert.match(loadFn, /setActiveIndex\(chatId, \[\]\);/);
+    assert.doesNotMatch(loadFn, /migrateLegacyPrompts\(chatId\)/);
     assert.doesNotMatch(loadFn, /promptStorage\.getItem\(chatId\)/);
-
-    assert.match(source, /async function migrateLegacyPrompts\(chatId\) \{[\s\S]*promptStorage\.getItem\(chatId\)/);
 });
 
 test('Chat rendering and generation rely on index presence, not whole records', async () => {
@@ -41,4 +40,3 @@ test('Chat rendering and generation rely on index presence, not whole records', 
 
     assert.doesNotMatch(source, /itemizedPrompts\.push\(additionalPromptStuff\)/);
 });
-

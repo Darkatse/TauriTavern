@@ -240,9 +240,23 @@ export function guesstimate(str) {
     return Math.ceil(str.length / CHARACTERS_PER_TOKEN_RATIO);
 }
 
-async function loadTokenCache() {
-    console.debug('Chat Completions: initializing token cache');
-    await objectStore.removeItem('tokenCache');
+function scheduleLegacyTokenCacheCleanup() {
+    const run = () => objectStore.removeItem('tokenCache');
+
+    const runAsync = () => {
+        void run().catch((err) => {
+            queueMicrotask(() => {
+                throw err;
+            });
+        });
+    };
+
+    if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(runAsync, { timeout: 2000 });
+        return;
+    }
+
+    setTimeout(runAsync, 0);
 }
 
 export async function saveTokenCache() {
@@ -1419,7 +1433,7 @@ export async function initTokenizers() {
             sessionStorage.removeItem(TOKENIZER_WARNING_KEY);
         }
     });
-    await loadTokenCache();
+    scheduleLegacyTokenCacheCleanup();
     eventSource.on(event_types.CHAT_CHANGED, chatId => {
         getTokenCacheState(chatId);
     });
