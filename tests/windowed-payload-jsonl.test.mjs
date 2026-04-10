@@ -67,6 +67,20 @@ test('jsonl: payloadToJsonlByteChunks round-trips and respects maxChunkBytes', a
     assert.equal(combined.toString('utf8'), payloadToJsonl(payload));
 });
 
+test('jsonl: round-trips large payloads (header + >= 100 messages)', async () => {
+    const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/jsonl.js'));
+    const { payloadToJsonl, jsonlToPayload } = mod;
+
+    const header = { chat_metadata: { integrity: 'test' } };
+    const messages = Array.from({ length: 120 }, (_, index) => ({ id: index, mes: `m-${index}` }));
+    const payload = [header, ...messages];
+
+    const text = payloadToJsonl(payload);
+    const parsed = jsonlToPayload(text);
+
+    assert.deepEqual(parsed, payload);
+});
+
 test('jsonl: jsonlStreamToPayload parses chunked stream input', async () => {
     const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/jsonl.js'));
     const { jsonlStreamToPayload } = mod;

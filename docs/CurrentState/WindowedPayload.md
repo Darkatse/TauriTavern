@@ -148,6 +148,17 @@ character chat 保存：
   - 否则回退到全量保存：`saveCharacterChatPayload({ payload })`（临时文件 + `save_chat_payload_from_file`）
   - integrity 错误会弹窗要求用户输入 `OVERWRITE` 决定是否强制覆盖；其它错误直接 toast/console（不静默）
 
+保存串行化（重要）：
+
+- **所有聊天保存入口必须串行化**（包括核心逻辑与第三方扩展直接调用的保存）。
+- 当前实现通过 `src/script.js:enqueueChatSave()` 维护一个全局 promise 队列，把以下写入行为线性化：
+  - `saveChat()`（character）
+  - `saveGroupChat()`（group）
+  - `saveChatConditional()` 的“写入后处理”（token cache / itemized prompts）
+- 目的：避免同一聊天文件在短时间内被并发写入，导致 windowed cursor 的 `(size, modified_millis)` 签名过期，从而出现
+  `Cursor signature mismatch` 这类错误（这不是“可忽略的小错误”，而是 CAS 保护机制在工作）。
+- 因此在契约上，`Cursor signature mismatch` 应主要代表“文件确实被外部修改/多进程写入”，而不应再被应用内并发保存轻易触发。
+
 group chat 保存：
 
 - `src/scripts/group-chats.js:saveGroupChat()`
@@ -310,6 +321,7 @@ group chat 保存：
 3) cursor 校验失败不是“可忽略的小错误”，它意味着窗口与文件不一致；当前策略是**提示并继续生成（仅 Prompt-backfill）**，但写入链路不应静默吞掉。  
 4) `DEFAULT_CHAT_WINDOW_LINES_*` 是 windowed payload 的性能杠杆，修改必须通过 `windowed-defaults.js` 统一，避免 UI/Prompt-backfill 脱节。  
 5) cache key 必须使用 transport 标准化后的稳定 id（避免 avatarUrl 表现差异导致命中率下降）。
+6) 所有“保存聊天文件”的入口必须保持串行化：不要绕过 `enqueueChatSave()`、不要重新引入会丢保存的超时等待；否则很容易把 cursor mismatch 变成内部竞态，而不是正确的外部一致性告警。
 
 ---
 

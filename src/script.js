@@ -511,6 +511,42 @@ export let swipeState = SWIPE_STATE.NONE;
 let chatSaveTimeout;
 let importFlashTimeout;
 export let isChatSaving = false;
+let chatSaveQueue = Promise.resolve();
+let pendingChatSaveTasks = 0;
+
+function updateChatSaveBusyFlag() {
+    isChatSaving = pendingChatSaveTasks > 0;
+}
+
+/**
+ * Serialize all chat save operations (core + extensions) to prevent concurrent
+ * writes and windowed cursor races.
+ *
+ * Errors are propagated to the caller. The internal queue continues even if a
+ * task fails (callers should handle/observe the rejection).
+ *
+ * @template T
+ * @param {() => Promise<T>} task
+ * @returns {Promise<T>}
+ */
+export function enqueueChatSave(task) {
+    pendingChatSaveTasks += 1;
+    updateChatSaveBusyFlag();
+
+    const run = chatSaveQueue
+        .catch(() => {})
+        .then(async () => {
+            try {
+                return await task();
+            } finally {
+                pendingChatSaveTasks -= 1;
+                updateChatSaveBusyFlag();
+            }
+        });
+
+    chatSaveQueue = run.catch(() => {});
+    return run;
+}
 let firstRun = false;
 export let settingsReady = false;
 let currentVersion = '0.0.0';
@@ -7707,12 +7743,16 @@ function markWindowedChatDirtyFromIndex(messageId) {
  *
  * @returns {Promise<void>}
  */
-export async function saveChat({ chatName, withMetadata, mesId, force = false } = {}) {
+export async function saveChat(...args) {
     if (selected_group) {
         toastr.error(t`Operation was aborted to prevent data corruption.`, t`saveChat called for a group chat`);
         throw new Error('saveChat called for a group chat');
     }
 
+    return enqueueChatSave(() => saveChatUnsafe(...args));
+}
+
+async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false } = {}) {
     if (arguments.length > 0 && typeof arguments[0] !== 'object') {
         console.trace('saveChat called with positional arguments. Please use an object instead.');
         [chatName, withMetadata, mesId, force] = arguments;
@@ -7773,13 +7813,14 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
 
 	                const activeWindowState = getWindowedChatState();
 	                if (getWindowedChatKey(activeWindowState) === expectedWindowKey) {
+	                    const shouldUpdateCounters = activeWindowState?.cursor?.offset === expectedCursorOffset;
 	                    const mergedCursor = mergeWindowedChatCursorOffset(activeWindowState?.cursor, cursor, expectedCursorOffset);
 	                    const nextWindowState = {
 	                        ...activeWindowState,
 	                        cursor: mergedCursor,
 	                    };
 
-	                    if (activeWindowState?.cursor?.offset === expectedCursorOffset) {
+	                    if (shouldUpdateCounters) {
 	                        nextWindowState.savedMessageCount = nextSavedMessageCount;
 	                        nextWindowState.dirtyFromIndex = nextDirtyFromIndex;
 	                    }
@@ -7847,7 +7888,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
             return;
         }
 
-        await saveChat({ chatName, withMetadata, mesId, force: true });
+        await saveChatUnsafe({ chatName, withMetadata, mesId, force: true });
     }
 }
 
@@ -9886,31 +9927,24 @@ export async function saveMetadata() {
 
 export async function saveChatConditional() {
     try {
-        await waitUntilCondition(() => !isChatSaving, DEFAULT_SAVE_EDIT_TIMEOUT, 100);
-    } catch {
-        console.warn('Timeout waiting for chat to save');
-        return;
-    }
-
-    try {
         cancelDebouncedChatSave();
 
-        isChatSaving = true;
+        const savePromise = selected_group
+            ? saveGroupChat(selected_group, true)
+            : saveChat();
 
-        if (selected_group) {
-            await saveGroupChat(selected_group, true);
-        }
-        else {
-            await saveChat();
-        }
+        // Keep prompt/token persistence serialized with chat writes to avoid
+        // chat switches corrupting per-chat IndexedDB state.
+        const postSavePromise = enqueueChatSave(() => {
+            saveTokenCache();
+            saveItemizedPrompts(getCurrentChatId());
+            return Promise.resolve();
+        });
 
-        // Save token and prompts cache to IndexedDB storage
-        saveTokenCache();
-        saveItemizedPrompts(getCurrentChatId());
+        await savePromise;
+        await postSavePromise;
     } catch (error) {
         console.error('Error saving chat', error);
-    } finally {
-        isChatSaving = false;
     }
 }
 

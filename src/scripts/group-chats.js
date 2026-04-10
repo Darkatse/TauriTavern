@@ -60,6 +60,7 @@ import {
     sendMessageAsUser,
     getBiasStrings,
     saveChatConditional,
+    enqueueChatSave,
     deactivateSendButtons,
     activateSendButtons,
     eventSource,
@@ -710,6 +711,10 @@ function resetSelectedGroup() {
  * @returns {Promise<void>} A promise that resolves when the group chat has been saved.
  */
 async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
+    return enqueueChatSave(() => saveGroupChatUnsafe(groupId, shouldSaveGroup, force));
+}
+
+async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false) {
     const group = groups.find(x => x.id == groupId);
     if (!group) {
         console.warn('Group not found', groupId);
@@ -819,7 +824,7 @@ async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
             return;
         }
 
-        await saveGroupChat(groupId, shouldSaveGroup, true);
+        await saveGroupChatUnsafe(groupId, shouldSaveGroup, true);
     }
 
     if (shouldSaveGroup) {
