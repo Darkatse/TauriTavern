@@ -2855,6 +2855,9 @@
                             <optgroup>
                                 <option value="openai">OpenAI</option>
                                 <option value="custom" data-i18n="Custom (OpenAI-compatible)">Custom (OpenAI-compatible)</option>
+                                <option value="custom_openai_responses" data-i18n="Custom (OpenAI Responses)">Custom (OpenAI Responses)</option>
+                                <option value="custom_claude_messages" data-i18n="Custom (Claude Messages)">Custom (Claude Messages)</option>
+                                <option value="custom_gemini_interactions" data-i18n="Custom (Gemini Interactions)">Custom (Gemini Interactions)</option>
                             </optgroup>
                             <optgroup>
                                 <option value="ai21">AI21</option>
@@ -3748,8 +3751,10 @@
                             </div>
                             <div>
                                 <small>
+                                    <span data-i18n="Custom endpoint preview">Custom endpoint preview</span><span>:</span> <code id="custom_endpoint_preview"></code>
+                                    <br>
                                     <span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span>
-                                    <b data-i18n="completions note prefix"></b><code>/chat/completions</code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
+                                    <span data-i18n="completions note prefix"></span><code id="custom_endpoint_preview_suffix"></code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
                                 </small>
                             </div>
                             <h4>

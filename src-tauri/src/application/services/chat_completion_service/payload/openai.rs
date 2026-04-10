@@ -78,6 +78,7 @@ pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
         "chat_completion_source",
         "reverse_proxy",
         "proxy_password",
+        "custom_api_format",
         "custom_prompt_post_processing",
         "custom_include_body",
         "custom_exclude_body",

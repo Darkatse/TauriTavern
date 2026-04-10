@@ -196,6 +196,19 @@ export const chat_completion_sources = {
     SILICONFLOW: 'siliconflow',
 };
 
+const custom_api_formats = {
+    OPENAI_COMPAT: 'openai_compat',
+    OPENAI_RESPONSES: 'openai_responses',
+    CLAUDE_MESSAGES: 'claude_messages',
+    GEMINI_INTERACTIONS: 'gemini_interactions',
+};
+
+const custom_source_variants = {
+    OPENAI_RESPONSES: 'custom_openai_responses',
+    CLAUDE_MESSAGES: 'custom_claude_messages',
+    GEMINI_INTERACTIONS: 'custom_gemini_interactions',
+};
+
 const character_names_behavior = {
     NONE: -1,
     DEFAULT: 0,
@@ -269,6 +282,7 @@ const sensitiveFields = [
  */
 export const settingsToUpdate = {
     chat_completion_source: ['#chat_completion_source', 'chat_completion_source', false, true],
+    custom_api_format: ['', 'custom_api_format', false, true],
     temperature: ['#temp_openai', 'temp_openai', false, false],
     frequency_penalty: ['#freq_pen_openai', 'freq_pen_openai', false, false],
     presence_penalty: ['#pres_pen_openai', 'pres_pen_openai', false, false],
@@ -424,6 +438,7 @@ const default_settings = {
     azure_openai_model: '',
     custom_model: '',
     custom_url: '',
+    custom_api_format: custom_api_formats.OPENAI_COMPAT,
     custom_include_body: '',
     custom_exclude_body: '',
     custom_include_headers: '',
@@ -526,6 +541,8 @@ function setOpenAIMessages(chat) {
     // Get current API and model for thought signature validation
     const currentApi = oai_settings.chat_completion_source;
     const currentModel = getChatCompletionModel();
+    const includeNative = currentApi === chat_completion_sources.CUSTOM
+        && oai_settings.custom_api_format === custom_api_formats.GEMINI_INTERACTIONS;
 
     for (let i = chat.length - 1; i >= 0; i--) {
         let role = chat[j].is_user ? 'user' : 'assistant';
@@ -577,6 +594,7 @@ function setOpenAIMessages(chat) {
         const originModel = chat[j]?.extra?.model;
         const isSameModel = originApi === currentApi && originModel === currentModel;
         const signature = isSameModel ? chat[j]?.extra?.reasoning_signature : null;
+        const native = includeNative && isSameModel ? chat[j]?.extra?.native : null;
 
         // Remove signatures from invocations if the API/model don't match
         if (Array.isArray(invocations) && invocations.length > 0) {
@@ -589,7 +607,7 @@ function setOpenAIMessages(chat) {
             });
         }
 
-        messages[i] = { 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations, 'signature': signature };
+        messages[i] = { 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations, 'signature': signature, 'native': native };
         j++;
     }
 
@@ -885,6 +903,8 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     const audioInlining = isAudioInliningSupported();
     const canUseTools = ToolManager.isToolCallingSupported();
     const includeSignature = isReasoningSignatureSupported();
+    const includeNative = oai_settings.chat_completion_source === chat_completion_sources.CUSTOM
+        && oai_settings.custom_api_format === custom_api_formats.GEMINI_INTERACTIONS;
 
     // Insert chat messages as long as there is budget available
     const chatPool = [...messages].reverse();
@@ -942,6 +962,9 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             const toolCallMessage = await Message.createAsync(chatMessage.role, undefined, 'toolCall-' + chatMessage.identifier);
             const toolResultMessages = await Promise.all(invocations.slice().reverse().map((invocation) => Message.createAsync('tool', invocation.result || '[No content]', invocation.id)));
             await toolCallMessage.setToolCalls(invocations, includeSignature);
+            if (includeNative && chatPrompt.native) {
+                toolCallMessage.native = chatPrompt.native;
+            }
             if (chatCompletion.canAffordAll([toolCallMessage, ...toolResultMessages])) {
                 for (const resultMessage of toolResultMessages) {
                     chatCompletion.insertAtStart(resultMessage, 'chatHistory');
@@ -1025,6 +1048,9 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
 
             if (includeSignature && promptSource.signature) {
                 chatMessage.signature = promptSource.signature;
+            }
+            if (includeNative && promptSource.native) {
+                chatMessage.native = promptSource.native;
             }
 
             if (chatCompletion.canAfford(chatMessage)) {
@@ -2727,6 +2753,7 @@ export async function createGenerationParameters(settings, model, type, messages
 
     if (settings.chat_completion_source === chat_completion_sources.CUSTOM) {
         generate_data.custom_url = settings.custom_url;
+        generate_data.custom_api_format = settings.custom_api_format;
         generate_data.custom_include_body = settings.custom_include_body;
         generate_data.custom_exclude_body = settings.custom_exclude_body;
         generate_data.custom_include_headers = settings.custom_include_headers;
@@ -2920,7 +2947,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
             let text = '';
             const swipes = [];
             const toolCalls = [];
-            const state = { reasoning: '', images: [], signature: '', toolSignatures: {} };
+            const state = { reasoning: '', images: [], signature: '', toolSignatures: {}, native: null };
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) return;
@@ -2928,6 +2955,11 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
                 if (rawData === '[DONE]') return;
                 tryParseStreamingError(response, rawData);
                 const parsed = JSON.parse(rawData);
+
+                const nativeDelta = parsed?.choices?.[0]?.delta?.native;
+                if (nativeDelta) {
+                    state.native = nativeDelta;
+                }
 
                 if (canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
                     const swipeIndex = parsed.choices[0].index - 1;
@@ -2979,7 +3011,10 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
     const chat_completion_source = chatCompletionSource ?? oai_settings.chat_completion_source;
     const show_thoughts = overrideShowThoughts ?? oai_settings.show_thoughts;
 
-    if (chat_completion_source === chat_completion_sources.CLAUDE) {
+    const isCustomClaudeMessages = chat_completion_source === chat_completion_sources.CUSTOM
+        && oai_settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES;
+
+    if (chat_completion_source === chat_completion_sources.CLAUDE || isCustomClaudeMessages) {
         if (show_thoughts) {
             state.reasoning += data?.delta?.thinking || '';
         }
@@ -3271,6 +3306,8 @@ class Message {
     tool_call = null;
     /** @type {string?} */
     signature = null;
+    /** @type {any?} */
+    native = null;
 
     /**
      * @constructor
@@ -3576,6 +3613,7 @@ class MessageCollection {
                     ...(message.tool_calls && { tool_calls: message.tool_calls }),
                     ...(message.role === 'tool' && { tool_call_id: message.identifier }),
                     ...(message.signature && { signature: message.signature }),
+                    ...(message.native && { native: message.native }),
                 });
             }
             return acc;
@@ -3868,6 +3906,7 @@ export class ChatCompletion {
                     ...(item.tool_calls ? { tool_calls: item.tool_calls } : {}),
                     ...(item.role === 'tool' ? { tool_call_id: item.identifier } : {}),
                     ...(item.signature ? { signature: item.signature } : {}),
+                    ...(item.native ? { native: item.native } : {}),
                 };
                 chat.push(message);
             } else {
@@ -4038,6 +4077,84 @@ function migrateChatCompletionSettings(settings) {
     }
 }
 
+function resolveChatCompletionSourceSelectValue(settings) {
+    if (settings.chat_completion_source !== chat_completion_sources.CUSTOM) {
+        return settings.chat_completion_source;
+    }
+
+    switch (settings.custom_api_format) {
+        case custom_api_formats.OPENAI_RESPONSES:
+            return custom_source_variants.OPENAI_RESPONSES;
+        case custom_api_formats.CLAUDE_MESSAGES:
+            return custom_source_variants.CLAUDE_MESSAGES;
+        case custom_api_formats.GEMINI_INTERACTIONS:
+            return custom_source_variants.GEMINI_INTERACTIONS;
+        case custom_api_formats.OPENAI_COMPAT:
+        default:
+            return chat_completion_sources.CUSTOM;
+    }
+}
+
+function syncChatCompletionSourceSelector() {
+    const value = resolveChatCompletionSourceSelectValue(oai_settings);
+    $('#chat_completion_source').val(value);
+    $('#chat_completion_source').find(`option[value="${CSS.escape(value)}"]`).prop('selected', true);
+}
+
+function normalizeCustomEndpointBaseUrl(value) {
+    const url = String(value || '').trim();
+    return url ? url.replace(/\/+$/, '') : '';
+}
+
+function updateCustomEndpointPreview() {
+    const baseUrl = normalizeCustomEndpointBaseUrl($('#custom_api_url_text').val());
+    const base = baseUrl || '<Base URL>';
+
+    let suffix = '/chat/completions';
+    switch (oai_settings.custom_api_format) {
+        case custom_api_formats.OPENAI_RESPONSES:
+            suffix = '/responses';
+            break;
+        case custom_api_formats.CLAUDE_MESSAGES:
+            suffix = '/messages';
+            break;
+        case custom_api_formats.GEMINI_INTERACTIONS:
+            suffix = '/interactions';
+            break;
+        case custom_api_formats.OPENAI_COMPAT:
+        default:
+            suffix = '/chat/completions';
+    }
+
+    $('#custom_endpoint_preview_suffix').text(suffix);
+    $('#custom_endpoint_preview').text(`${base}${suffix}`);
+}
+
+function applyChatCompletionSourceSelection(selection) {
+    const rawSelection = String(selection || '').trim();
+
+    switch (rawSelection) {
+        case custom_source_variants.OPENAI_RESPONSES:
+            oai_settings.chat_completion_source = chat_completion_sources.CUSTOM;
+            oai_settings.custom_api_format = custom_api_formats.OPENAI_RESPONSES;
+            return;
+        case custom_source_variants.CLAUDE_MESSAGES:
+            oai_settings.chat_completion_source = chat_completion_sources.CUSTOM;
+            oai_settings.custom_api_format = custom_api_formats.CLAUDE_MESSAGES;
+            return;
+        case custom_source_variants.GEMINI_INTERACTIONS:
+            oai_settings.chat_completion_source = chat_completion_sources.CUSTOM;
+            oai_settings.custom_api_format = custom_api_formats.GEMINI_INTERACTIONS;
+            return;
+        case chat_completion_sources.CUSTOM:
+            oai_settings.chat_completion_source = chat_completion_sources.CUSTOM;
+            oai_settings.custom_api_format = custom_api_formats.OPENAI_COMPAT;
+            return;
+        default:
+            oai_settings.chat_completion_source = rawSelection;
+    }
+}
+
 /**
  * Load OpenAI settings from backend data
  * @param {any} data Settings data from backend
@@ -4125,7 +4242,9 @@ function loadOpenAISettings(data, settings) {
 
     $('#openrouter_providers_chat').trigger('change');
     $('#openrouter_quantizations_chat').trigger('change');
+    syncChatCompletionSourceSelector();
     $('#chat_completion_source').trigger('change');
+    updateCustomEndpointPreview();
 }
 
 function setNamesBehaviorControls() {
@@ -4751,6 +4870,7 @@ function onSettingsPresetChange() {
 
         // These cannot be changed via preset if unbound to connection
         if (oai_settings.bind_preset_to_connection) {
+            syncChatCompletionSourceSelector();
             $('#chat_completion_source').trigger('change');
             $('#openrouter_providers_chat').trigger('change');
             $('#openrouter_quantizations_chat').trigger('change');
@@ -6570,8 +6690,9 @@ export function initOpenAI() {
     $('#chat_completion_source').on('change', function () {
         cancelStatusCheck('Chat Completion source changed');
         model_list = [];
-        oai_settings.chat_completion_source = String($(this).find(':selected').val());
+        applyChatCompletionSourceSelection(String($(this).find(':selected').val()));
         toggleChatCompletionForms();
+        updateCustomEndpointPreview();
         saveSettingsDebounced();
         reconnectOpenAi();
         forceCharacterEditorTokenize();
@@ -6687,6 +6808,7 @@ export function initOpenAI() {
 
     $('#custom_api_url_text').on('input', function () {
         oai_settings.custom_url = String($(this).val());
+        updateCustomEndpointPreview();
         saveSettingsDebounced();
     });
 

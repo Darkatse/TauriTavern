@@ -165,6 +165,22 @@ function setupConnectAPIMap() {
             button: '#api_button_openai',
             source: chat_completion_sources.OPENAI,
         },
+        // Custom OpenAI provider variants (all use chat_completion_source="custom" with different custom_api_format)
+        'custom_openai_responses': {
+            selected: 'openai',
+            button: '#api_button_openai',
+            source: chat_completion_sources.CUSTOM,
+        },
+        'custom_claude_messages': {
+            selected: 'openai',
+            button: '#api_button_openai',
+            source: chat_completion_sources.CUSTOM,
+        },
+        'custom_gemini_interactions': {
+            selected: 'openai',
+            button: '#api_button_openai',
+            source: chat_completion_sources.CUSTOM,
+        },
         // OpenAI alias
         'oai': {
             selected: 'openai',
@@ -236,6 +252,12 @@ export function initDefaultSlashCommands() {
         name: 'api',
         callback: async function (args, text) {
             if (!text?.toString()?.trim()) {
+                // Keep custom APIs stable for Connection Profiles:
+                // custom_api_format is recorded separately via /custom-api-format.
+                if (main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.CUSTOM) {
+                    return chat_completion_sources.CUSTOM;
+                }
+
                 for (const [key, config] of Object.entries(CONNECT_API_MAP)) {
                     if (config.selected !== main_api) continue;
 
@@ -269,6 +291,7 @@ export function initDefaultSlashCommands() {
             }
 
             let connectionRequired = false;
+            const requestedKey = text?.toString()?.toLowerCase()?.trim() ?? '';
 
             if (main_api !== apiConfig.selected) {
                 $(`#main_api option[value='${apiConfig.selected || text}']`).prop('selected', true);
@@ -276,10 +299,17 @@ export function initDefaultSlashCommands() {
                 connectionRequired = true;
             }
 
-            if (apiConfig.source && oai_settings.chat_completion_source !== apiConfig.source) {
-                $(`#chat_completion_source option[value='${apiConfig.source}']`).prop('selected', true);
-                $('#chat_completion_source').trigger('change');
-                connectionRequired = true;
+            if (apiConfig.source) {
+                const desiredSourceSelectValue = requestedKey.startsWith('custom_')
+                    ? requestedKey
+                    : apiConfig.source;
+                const currentSourceSelectValue = String($('#chat_completion_source').val() || '').trim();
+
+                if (currentSourceSelectValue !== desiredSourceSelectValue) {
+                    $(`#chat_completion_source option[value='${desiredSourceSelectValue}']`).prop('selected', true);
+                    $('#chat_completion_source').trigger('change');
+                    connectionRequired = true;
+                }
             }
 
             if (apiConfig.type && textgenerationwebui_settings.type !== apiConfig.type) {
@@ -333,6 +363,66 @@ export function initDefaultSlashCommands() {
             <div>
                 <strong>${t`Available APIs:`}</strong>
                 <pre><code>${Object.keys(CONNECT_API_MAP).sort((a, b) => a.localeCompare(b)).join(', ')}</code></pre>
+            </div>
+        `,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'custom-api-format',
+        callback: async function (_args, format) {
+            const rawFormat = String(format || '').trim();
+            if (!rawFormat) {
+                if (main_api !== 'openai' || oai_settings.chat_completion_source !== chat_completion_sources.CUSTOM) {
+                    return '';
+                }
+                return String(oai_settings.custom_api_format || 'openai_compat');
+            }
+
+            const normalized = rawFormat.toLowerCase();
+            const allowed = ['openai_compat', 'openai_responses', 'claude_messages', 'gemini_interactions'];
+            if (!allowed.includes(normalized)) {
+                toastr.error(t`Error: ${rawFormat} is not a valid custom API format`);
+                return '';
+            }
+
+            if (main_api !== 'openai') {
+                $(`#main_api option[value='openai']`).prop('selected', true);
+                $('#main_api').trigger('change');
+            }
+
+            let sourceSelectValue = chat_completion_sources.CUSTOM;
+            switch (normalized) {
+                case 'openai_responses':
+                    sourceSelectValue = 'custom_openai_responses';
+                    break;
+                case 'claude_messages':
+                    sourceSelectValue = 'custom_claude_messages';
+                    break;
+                case 'gemini_interactions':
+                    sourceSelectValue = 'custom_gemini_interactions';
+                    break;
+            }
+
+            $(`#chat_completion_source option[value='${sourceSelectValue}']`).prop('selected', true);
+            $('#chat_completion_source').trigger('change');
+
+            return normalized;
+        },
+        returns: t`the current custom API format`,
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: t`Custom API format to set`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumList: [
+                    new SlashCommandEnumValue('openai_compat'),
+                    new SlashCommandEnumValue('openai_responses'),
+                    new SlashCommandEnumValue('claude_messages'),
+                    new SlashCommandEnumValue('gemini_interactions'),
+                ],
+            }),
+        ],
+        helpString: `
+            <div>
+                ${t`Get or set the custom API format (OpenAI-compatible / OpenAI Responses / Claude Messages / Gemini Interactions).`}
             </div>
         `,
     }));

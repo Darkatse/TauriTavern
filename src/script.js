@@ -3921,6 +3921,8 @@ class StreamingProcessor {
         this.images = [];
         /** @type {string?} */
         this.reasoningSignature = null;
+        /** @type {any?} */
+        this.native = null;
     }
 
     /**
@@ -4120,6 +4122,10 @@ class StreamingProcessor {
             message.extra = message.extra || {};
             message.extra.reasoning_signature = this.reasoningSignature;
         }
+        if (this.native) {
+            message.extra = message.extra || {};
+            message.extra.native = this.native;
+        }
 
         this.markUIGenStopped();
 
@@ -4216,6 +4222,7 @@ class StreamingProcessor {
                 this.reasoningHandler.updateReasoning(this.messageId, state?.reasoning);
                 this.images = state?.images ?? [];
                 this.reasoningSignature = state?.signature ?? null;
+                this.native = state?.native ?? null;
                 await eventSource.emit(event_types.STREAM_TOKEN_RECEIVED, text);
                 await sw.tick(async () => await this.onProgressStreaming(this.messageId, this.continueMessage + text));
             }
@@ -5782,6 +5789,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 const shouldDeleteMessage = type !== 'swipe' && ['', '...'].includes(lastMessage?.mes) && !lastMessage?.extra?.reasoning && ['', '...'].includes(streamingProcessor?.result);
                 hasToolCalls && shouldDeleteMessage && await deleteLastMessage();
                 const invocationResult = await ToolManager.invokeFunctionTools(streamingProcessor.toolCalls);
+                const native = streamingProcessor?.native ?? null;
                 const shouldStopGeneration = (!invocationResult.invocations.length && shouldDeleteMessage) || invocationResult.stealthCalls.length;
                 if (hasToolCalls) {
                     if (shouldStopGeneration) {
@@ -5795,7 +5803,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
                     streamingProcessor = null;
                     depth = depth + 1;
-                    await ToolManager.saveFunctionToolInvocations(invocationResult.invocations);
+                    await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, native);
                     return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
                 }
             }
@@ -5852,6 +5860,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         let reasoning = extractReasoningFromData(data);
         let imageUrls = extractImagesFromData(data);
         const reasoningSignature = extractReasoningSignatureFromData(data);
+        const native = data?.choices?.[0]?.message?.native ?? null;
         kobold_horde_model = title;
 
         const swipes = extractMultiSwipes(data, type);
@@ -5895,10 +5904,10 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         else {
             // Without streaming we'll be having a full message on continuation. Treat it as a last chunk.
             if (originalType !== 'continue') {
-                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature }));
+                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native }));
             }
             else {
-                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature }));
+                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native }));
             }
 
             // This relies on `saveReply` having been called to add the message to the chat, so it must be last.
@@ -5921,7 +5930,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 }
 
                 depth = depth + 1;
-                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations);
+                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, native);
                 return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
             }
         }
@@ -6949,16 +6958,17 @@ async function processImageAttachment(message, { imageUrls }) {
  * @property {string} [reasoning] Message reasoning
  * @property {string[]} [imageUrls] Links to images
  * @property {string?} [reasoningSignature] Encrypted signature of the reasoning text
+ * @property {any?} [native] Provider-native metadata that must be preserved across turns
  *
  * @typedef {object} SaveReplyResult
  * @property {string} type Type of generation
  * @property {string} getMessage Generated message
  */
-export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], reasoningSignature = null }) {
+export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], reasoningSignature = null, native = null }) {
     // Backward compatibility
     if (arguments.length > 1 && typeof arguments[0] !== 'object') {
         console.trace('saveReply called with positional arguments. Please use an object instead.');
-        [type, getMessage, fromStreaming, title, swipes, reasoning, imageUrls, reasoningSignature] = arguments;
+        [type, getMessage, fromStreaming, title, swipes, reasoning, imageUrls, reasoningSignature, native] = arguments;
     }
 
     const lastMessage = chat[chat.length - 1];
@@ -6997,6 +7007,9 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             lastMessage.extra.reasoning = reasoning;
             lastMessage.extra.reasoning_duration = null;
             lastMessage.extra.reasoning_signature = reasoningSignature;
+            if (native !== null && native !== undefined) {
+                lastMessage.extra.native = native;
+            }
             await processImageAttachment(lastMessage, { imageUrls });
             if (power_user.message_token_count_enabled) {
                 const tokenCountText = (reasoning || '') + lastMessage.mes;
@@ -7022,6 +7035,9 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         lastMessage.extra.reasoning = reasoning;
         lastMessage.extra.reasoning_duration = null;
         lastMessage.extra.reasoning_signature = reasoningSignature;
+        if (native !== null && native !== undefined) {
+            lastMessage.extra.native = native;
+        }
         await processImageAttachment(lastMessage, { imageUrls });
         if (power_user.message_token_count_enabled) {
             const tokenCountText = (reasoning || '') + lastMessage.mes;
@@ -7043,6 +7059,9 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         lastMessage.extra.model = getGeneratingModel();
         lastMessage.extra.reasoning += reasoning;
         lastMessage.extra.reasoning_signature = reasoningSignature;
+        if (native !== null && native !== undefined) {
+            lastMessage.extra.native = native;
+        }
         await processImageAttachment(lastMessage, { imageUrls });
         // We don't know if the reasoning duration extended, so we don't update it here on purpose.
         if (power_user.message_token_count_enabled) {
@@ -7067,6 +7086,9 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         newMessage.extra.reasoning = reasoning;
         newMessage.extra.reasoning_duration = null;
         newMessage.extra.reasoning_signature = reasoningSignature;
+        if (native !== null && native !== undefined) {
+            newMessage.extra.native = native;
+        }
         if (power_user.trim_spaces) {
             getMessage = getMessage.trim();
         }

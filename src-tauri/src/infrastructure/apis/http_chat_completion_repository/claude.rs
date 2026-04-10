@@ -30,11 +30,7 @@ pub(super) async fn list_models(
         .header(ACCEPT, "application/json")
         .header("anthropic-version", ANTHROPIC_VERSION);
 
-    let request = HttpChatCompletionRepository::apply_header_if_present(
-        request,
-        "x-api-key",
-        &config.api_key,
-    );
+    let request = apply_claude_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 
     let response = request
@@ -61,6 +57,8 @@ pub(super) async fn generate(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
+    provider_name: &str,
+    auto_anthropic_beta_header: bool,
 ) -> Result<Value, DomainError> {
     let endpoint_path = if endpoint_path.trim().is_empty() {
         "/messages"
@@ -78,17 +76,17 @@ pub(super) async fn generate(
         .header("anthropic-version", ANTHROPIC_VERSION)
         .json(payload);
 
-    let request = HttpChatCompletionRepository::apply_header_if_present(
-        request,
-        "x-api-key",
-        &config.api_key,
-    );
-    let request = apply_anthropic_beta_header(request, config, payload);
-    let request = HttpChatCompletionRepository::apply_extra_headers_with_filter(
-        request,
-        &config.extra_headers,
-        |key, _| key.eq_ignore_ascii_case("anthropic-beta"),
-    );
+    let request = apply_claude_auth(request, config);
+    let request = if auto_anthropic_beta_header {
+        let request = apply_anthropic_beta_header(request, config, payload);
+        HttpChatCompletionRepository::apply_extra_headers_with_filter(
+            request,
+            &config.extra_headers,
+            |key, _| key.eq_ignore_ascii_case("anthropic-beta"),
+        )
+    } else {
+        HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers)
+    };
 
     let response = request.send().await.map_err(|error| {
         DomainError::InternalError(format!("Generation request failed: {error}"))
@@ -96,7 +94,7 @@ pub(super) async fn generate(
 
     if !response.status().is_success() {
         return Err(HttpChatCompletionRepository::map_error_response(
-            "Claude",
+            provider_name,
             response,
             "Generation request failed",
         )
@@ -109,7 +107,8 @@ pub(super) async fn generate(
 
     if super::payload_contains_cache_control(payload) {
         let model = payload.get("model").and_then(Value::as_str);
-        let _ = super::log_prompt_cache_performance_if_present("Claude", model, &body);
+        let _ =
+            super::log_prompt_cache_performance_if_present(provider_name, model, &body);
     }
 
     Ok(normalizers::normalize_claude_response(body))
@@ -120,8 +119,10 @@ pub(super) async fn generate_stream(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
+    provider_name: &str,
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
+    auto_anthropic_beta_header: bool,
 ) -> Result<(), DomainError> {
     let endpoint_path = if endpoint_path.trim().is_empty() {
         "/messages"
@@ -139,17 +140,17 @@ pub(super) async fn generate_stream(
         .header("anthropic-version", ANTHROPIC_VERSION)
         .json(payload);
 
-    let request = HttpChatCompletionRepository::apply_header_if_present(
-        request,
-        "x-api-key",
-        &config.api_key,
-    );
-    let request = apply_anthropic_beta_header(request, config, payload);
-    let request = HttpChatCompletionRepository::apply_extra_headers_with_filter(
-        request,
-        &config.extra_headers,
-        |key, _| key.eq_ignore_ascii_case("anthropic-beta"),
-    );
+    let request = apply_claude_auth(request, config);
+    let request = if auto_anthropic_beta_header {
+        let request = apply_anthropic_beta_header(request, config, payload);
+        HttpChatCompletionRepository::apply_extra_headers_with_filter(
+            request,
+            &config.extra_headers,
+            |key, _| key.eq_ignore_ascii_case("anthropic-beta"),
+        )
+    } else {
+        HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers)
+    };
 
     let response = request.send().await.map_err(|error| {
         DomainError::InternalError(format!("Generation request failed: {error}"))
@@ -157,7 +158,7 @@ pub(super) async fn generate_stream(
 
     if !response.status().is_success() {
         return Err(HttpChatCompletionRepository::map_error_response(
-            "Claude",
+            provider_name,
             response,
             "Generation request failed",
         )
@@ -173,7 +174,7 @@ pub(super) async fn generate_stream(
         let mut logged = false;
 
         HttpChatCompletionRepository::stream_sse_response_internal(
-            "Claude",
+            provider_name,
             response,
             sender,
             cancel,
@@ -197,7 +198,7 @@ pub(super) async fn generate_stream(
                 };
 
                 logged = super::log_prompt_cache_performance_if_present(
-                    "Claude",
+                    provider_name,
                     Some(model.as_str()),
                     &value,
                 );
@@ -205,8 +206,29 @@ pub(super) async fn generate_stream(
         )
         .await
     } else {
-        HttpChatCompletionRepository::stream_sse_response("Claude", response, sender, cancel).await
+        HttpChatCompletionRepository::stream_sse_response(
+            provider_name,
+            response,
+            sender,
+            cancel,
+        )
+        .await
     }
+}
+
+fn apply_claude_auth(
+    request: RequestBuilder,
+    config: &ChatCompletionApiConfig,
+) -> RequestBuilder {
+    if let Some(authorization_header) = config.authorization_header.as_deref() {
+        return HttpChatCompletionRepository::apply_header_if_present(
+            request,
+            "Authorization",
+            authorization_header,
+        );
+    }
+
+    HttpChatCompletionRepository::apply_header_if_present(request, "x-api-key", &config.api_key)
 }
 
 fn apply_anthropic_beta_header(

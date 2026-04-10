@@ -55,3 +55,7 @@
 10. `docs/CurrentState/DataDirectorySelection.md`
    - 桌面端数据目录选择 / 启动期迁移的当前实现快照
    - 包含运行时引导配置、迁移恢复语义、effectively-empty 目录契约与持续开发约束
+
+11. `docs/CurrentState/NativeApiFormats.md`
+   - Custom 原生 API 格式兼容现状（OpenAI Responses / Claude Messages / Gemini Interactions）
+   - 包含端到端链路、支持/不支持边界与持续开发约束（尤其回滚 ST 与 thought-signatures）

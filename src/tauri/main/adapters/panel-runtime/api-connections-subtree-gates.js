@@ -169,6 +169,17 @@ function currentSelectValue(id) {
 }
 
 /**
+ * @param {string} source
+ */
+function normalizeChatCompletionSourceForGate(source) {
+    const value = String(source || '').trim();
+    if (value.startsWith('custom_')) {
+        return 'custom';
+    }
+    return value;
+}
+
+/**
  * Hydrates the selected provider subtree and parks all others, then applies any
  * nested gates (OpenAI source / Textgen type) for the active provider.
  *
@@ -189,7 +200,8 @@ function handleMainApiChange(mainApi) {
     manager.reconcile();
 
     if (next === 'openai' && openaiSourceGate) {
-        openaiSourceGate.apply(currentSelectValue('chat_completion_source') || 'openai');
+        const selection = currentSelectValue('chat_completion_source') || 'openai';
+        openaiSourceGate.apply(normalizeChatCompletionSourceForGate(selection) || 'openai');
     }
     if (next === 'textgenerationwebui' && textgenTypeGate) {
         textgenTypeGate.apply(currentSelectValue('textgen_type') || '');
@@ -209,7 +221,7 @@ function handleChatCompletionSourceChange(source) {
         return;
     }
 
-    openaiSourceGate.apply(source || 'openai');
+    openaiSourceGate.apply(normalizeChatCompletionSourceForGate(source) || 'openai');
 }
 
 /**

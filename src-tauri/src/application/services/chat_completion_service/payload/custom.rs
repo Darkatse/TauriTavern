@@ -2,10 +2,33 @@ use serde_json::{Map, Value};
 
 use crate::application::errors::ApplicationError;
 
-use super::super::custom_parameters;
+use super::claude_messages;
+use super::gemini_interactions;
 use super::openai;
+use super::openai_responses;
+use super::shared::apply_custom_body_overrides;
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
+    let format = payload
+        .get("custom_api_format")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("openai_compat")
+        .to_string();
+
+    match format.as_str() {
+        "openai_responses" => return openai_responses::build(payload),
+        "gemini_interactions" => return gemini_interactions::build(payload),
+        "openai_compat" => {}
+        "claude_messages" => return claude_messages::build(payload),
+        other => {
+            return Err(ApplicationError::ValidationError(format!(
+                "Unsupported custom_api_format: {other}"
+            )));
+        }
+    }
+
     let include_raw = payload
         .get("custom_include_body")
         .and_then(Value::as_str)
@@ -21,31 +44,6 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
     apply_custom_body_overrides(&mut upstream_payload, &include_raw, &exclude_raw)?;
 
     Ok((endpoint, upstream_payload))
-}
-
-fn apply_custom_body_overrides(
-    upstream_payload: &mut Value,
-    include_raw: &str,
-    exclude_raw: &str,
-) -> Result<(), ApplicationError> {
-    let Some(body) = upstream_payload.as_object_mut() else {
-        return Err(ApplicationError::InternalError(
-            "Custom upstream payload must be an object".to_string(),
-        ));
-    };
-
-    if !include_raw.trim().is_empty() {
-        let include_map = custom_parameters::parse_object(include_raw)?;
-        for (key, value) in include_map {
-            body.insert(key, value);
-        }
-    }
-
-    for key in custom_parameters::parse_key_list(exclude_raw)? {
-        body.remove(&key);
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -163,5 +161,34 @@ mod tests {
                 .unwrap_or_default(),
             "auto"
         );
+    }
+
+    #[test]
+    fn custom_payload_supports_claude_messages_format_with_overrides() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "claude_messages",
+            "model": "claude-3-5-sonnet-latest",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.1,
+            "custom_include_body": "{\"max_tokens\":77}",
+            "custom_exclude_body": "[\"temperature\"]",
+            "custom_url": "https://api.anthropic.com/v1"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (endpoint, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(endpoint, "/messages");
+
+        let body = upstream.as_object().expect("upstream body should be object");
+        assert_eq!(
+            body.get("max_tokens")
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
+            77
+        );
+        assert!(body.get("temperature").is_none());
     }
 }

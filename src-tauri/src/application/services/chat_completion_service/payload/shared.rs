@@ -1,5 +1,9 @@
 use serde_json::{Map, Value};
 
+use crate::application::errors::ApplicationError;
+
+use super::super::custom_parameters;
+
 pub(super) fn insert_if_present(dst: &mut Map<String, Value>, src: &Map<String, Value>, key: &str) {
     if let Some(value) = src.get(key).filter(|value| !value.is_null()) {
         dst.insert(key.to_string(), value.clone());
@@ -47,4 +51,29 @@ pub(super) fn parse_data_url(value: &str) -> Option<(String, String)> {
     }
 
     Some((mime_type.trim().to_string(), data.trim().to_string()))
+}
+
+pub(super) fn apply_custom_body_overrides(
+    upstream_payload: &mut Value,
+    include_raw: &str,
+    exclude_raw: &str,
+) -> Result<(), ApplicationError> {
+    let Some(body) = upstream_payload.as_object_mut() else {
+        return Err(ApplicationError::InternalError(
+            "Custom upstream payload must be an object".to_string(),
+        ));
+    };
+
+    if !include_raw.trim().is_empty() {
+        let include_map = custom_parameters::parse_object(include_raw)?;
+        for (key, value) in include_map {
+            body.insert(key, value);
+        }
+    }
+
+    for key in custom_parameters::parse_key_list(exclude_raw)? {
+        body.remove(&key);
+    }
+
+    Ok(())
 }

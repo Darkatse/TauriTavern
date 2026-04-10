@@ -5,13 +5,16 @@ use crate::domain::repositories::chat_completion_repository::ChatCompletionSourc
 
 mod chutes;
 mod claude;
+mod claude_messages;
 mod cohere;
 mod custom;
 mod deepseek;
+mod gemini_interactions;
 mod makersuite;
 mod moonshot;
 mod nanogpt;
 mod openai;
+mod openai_responses;
 mod openrouter;
 mod prompt_post_processing;
 mod shared;

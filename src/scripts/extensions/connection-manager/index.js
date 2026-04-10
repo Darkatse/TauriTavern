@@ -35,6 +35,7 @@ const CC_COMMANDS = [
     'preset',
     // Do not fix; CC needs to set the API twice because it could be overridden by the preset
     'api',
+    'custom-api-format',
     'api-url',
     'model',
     'proxy',
@@ -67,6 +68,7 @@ const TC_COMMANDS = [
 const FANCY_NAMES = {
     'api': 'API',
     'api-url': 'Server URL',
+    'custom-api-format': 'Custom API Format',
     'preset': 'Settings Preset',
     'model': 'Model',
     'proxy': 'Proxy Preset',
@@ -168,6 +170,7 @@ const profilesProvider = () => [
  * @property {string} [start-reply-with] Start Reply With
  * @property {string} [reasoning-template] Reasoning Template
  * @property {string} [prompt-post-processing] Prompt Post-Processing
+ * @property {string} [custom-api-format] Custom API Format
  * @property {string} [sysprompt] System Prompt Name
  * @property {string} [sysprompt-state] Use System Prompt
  * @property {string} [api-url] Server URL

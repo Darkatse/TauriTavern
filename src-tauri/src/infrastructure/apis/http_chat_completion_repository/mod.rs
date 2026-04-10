@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use reqwest::header::AUTHORIZATION;
@@ -15,9 +15,11 @@ use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile}
 
 mod claude;
 mod cohere;
+mod gemini_interactions;
 mod makersuite;
 mod normalizers;
 mod openai;
+mod openai_responses;
 mod vertexai;
 
 #[derive(Debug, Clone, Copy)]
@@ -29,6 +31,7 @@ struct PromptCachePerformanceUsage {
 
 pub struct HttpChatCompletionRepository {
     http_clients: Arc<HttpClientPool>,
+    openai_responses_previous_response_id_by_call_id: Mutex<HashMap<String, String>>,
 }
 
 #[derive(Default)]
@@ -112,7 +115,10 @@ fn split_sse_field(line: &[u8]) -> (&[u8], &[u8]) {
 
 impl HttpChatCompletionRepository {
     pub fn new(http_clients: Arc<HttpClientPool>) -> Self {
-        Self { http_clients }
+        Self {
+            http_clients,
+            openai_responses_previous_response_id_by_call_id: Mutex::new(HashMap::new()),
+        }
     }
 
     fn client(&self) -> Result<Client, DomainError> {
@@ -459,7 +465,37 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 openai::generate(self, config, endpoint_path, payload, "OpenRouter").await
             }
             ChatCompletionSource::Custom => {
-                openai::generate(self, config, endpoint_path, payload, "Custom OpenAI").await
+                if endpoint_path == "/responses" {
+                    openai_responses::generate(
+                        self,
+                        config,
+                        endpoint_path,
+                        payload,
+                        "Custom OpenAI Responses",
+                    )
+                    .await
+                } else if endpoint_path == "/interactions" {
+                    gemini_interactions::generate(
+                        self,
+                        config,
+                        endpoint_path,
+                        payload,
+                        "Custom Gemini Interactions",
+                    )
+                    .await
+                } else if endpoint_path == "/messages" {
+                    claude::generate(
+                        self,
+                        config,
+                        endpoint_path,
+                        payload,
+                        "Custom Claude Messages",
+                        false,
+                    )
+                    .await
+                } else {
+                    openai::generate(self, config, endpoint_path, payload, "Custom OpenAI").await
+                }
             }
             ChatCompletionSource::DeepSeek => {
                 openai::generate(self, config, endpoint_path, payload, "DeepSeek").await
@@ -486,7 +522,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 openai::generate(self, config, endpoint_path, payload, "Z.AI (GLM)").await
             }
             ChatCompletionSource::Claude => {
-                claude::generate(self, config, endpoint_path, payload).await
+                claude::generate(self, config, endpoint_path, payload, "Claude", true).await
             }
             ChatCompletionSource::Makersuite => {
                 makersuite::generate(self, config, endpoint_path, payload).await
@@ -532,16 +568,52 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 .await
             }
             ChatCompletionSource::Custom => {
-                openai::generate_stream(
-                    self,
-                    config,
-                    endpoint_path,
-                    payload,
-                    "Custom OpenAI",
-                    sender,
-                    cancel,
-                )
-                .await
+                if endpoint_path == "/responses" {
+                    openai_responses::generate_stream(
+                        self,
+                        config,
+                        endpoint_path,
+                        payload,
+                        "Custom OpenAI Responses",
+                        sender,
+                        cancel,
+                    )
+                    .await
+                } else if endpoint_path == "/interactions" {
+                    gemini_interactions::generate_stream(
+                        self,
+                        config,
+                        endpoint_path,
+                        payload,
+                        "Custom Gemini Interactions",
+                        sender,
+                        cancel,
+                    )
+                    .await
+                } else if endpoint_path == "/messages" {
+                    claude::generate_stream(
+                        self,
+                        config,
+                        endpoint_path,
+                        payload,
+                        "Custom Claude Messages",
+                        sender,
+                        cancel,
+                        false,
+                    )
+                    .await
+                } else {
+                    openai::generate_stream(
+                        self,
+                        config,
+                        endpoint_path,
+                        payload,
+                        "Custom OpenAI",
+                        sender,
+                        cancel,
+                    )
+                    .await
+                }
             }
             ChatCompletionSource::DeepSeek => {
                 openai::generate_stream(
@@ -631,7 +703,17 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 .await
             }
             ChatCompletionSource::Claude => {
-                claude::generate_stream(self, config, endpoint_path, payload, sender, cancel).await
+                claude::generate_stream(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "Claude",
+                    sender,
+                    cancel,
+                    true,
+                )
+                .await
             }
             ChatCompletionSource::Makersuite => {
                 makersuite::generate_stream(self, config, endpoint_path, payload, sender, cancel)
