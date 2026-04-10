@@ -434,10 +434,11 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
         };
         let response_raw_kind = response_writer.as_ref().map(|_| LlmApiRawKind::Sse);
 
+        let readable_source = stream_readable_source(source, endpoint_path);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let forward_task = tauri::async_runtime::spawn(async move {
             let mut writer = response_writer;
-            let mut readable = StreamReadableCollector::new(source);
+            let mut readable = StreamReadableCollector::new(readable_source);
 
             while let Some(chunk) = rx.recv().await {
                 let _ = sender.send(chunk.clone());
@@ -504,6 +505,14 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
         self.store.record_entry(meta, None, None).await;
         result
     }
+}
+
+fn stream_readable_source(source: ChatCompletionSource, endpoint_path: &str) -> ChatCompletionSource {
+    if matches!(source, ChatCompletionSource::Custom) && endpoint_path.trim() == "/messages" {
+        return ChatCompletionSource::Claude;
+    }
+
+    source
 }
 
 impl ToString for ChatCompletionSource {
@@ -711,8 +720,175 @@ fn format_request_readable(
             format_gemini_contents(payload)
         }
         ChatCompletionSource::Claude => format_claude_messages(payload),
-        _ => format_openai_messages(payload),
+        _ => format_openai_like_request(payload),
     }
+}
+
+fn format_openai_like_request(payload: &Value) -> String {
+    if payload.get("messages").and_then(Value::as_array).is_some() {
+        return format_openai_messages(payload);
+    }
+
+    if payload.get("input").is_some() {
+        return format_input_items(payload);
+    }
+
+    format_openai_messages(payload)
+}
+
+fn format_input_items(payload: &Value) -> String {
+    let Some(input) = payload.get("input") else {
+        return "<input unavailable>".to_string();
+    };
+
+    let mut out = String::new();
+
+    if let Some(system_instruction) = payload
+        .get("system_instruction")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        out.push_str("[system]\n");
+        out.push_str(system_instruction);
+        out.push_str("\n\n");
+    }
+
+    match input {
+        Value::String(text) => {
+            out.push_str("[user]\n");
+            out.push_str(text);
+        }
+        Value::Array(items) => {
+            for item in items {
+                let Some(object) = item.as_object() else {
+                    continue;
+                };
+
+                if let Some(role) = object.get("role").and_then(Value::as_str) {
+                    out.push('[');
+                    out.push_str(role);
+                    out.push_str("]\n");
+                    append_input_content(&mut out, object.get("content"));
+                    out.push_str("\n\n");
+                    continue;
+                }
+
+                if let Some(ty) = object.get("type").and_then(Value::as_str) {
+                    if ty == "function_call_output" {
+                        out.push_str("[tool");
+                        if let Some(call_id) = object
+                            .get("call_id")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                        {
+                            out.push_str(" call_id=");
+                            out.push_str(call_id);
+                        }
+                        out.push_str("]\n");
+                        if let Some(output) = object.get("output") {
+                            append_input_content(&mut out, Some(output));
+                        }
+                        out.push_str("\n\n");
+                        continue;
+                    }
+
+                    out.push('[');
+                    out.push_str(ty);
+                    out.push_str("]\n");
+                    append_input_content(&mut out, Some(item));
+                    out.push_str("\n\n");
+                }
+            }
+        }
+        _ => return "<input unavailable>".to_string(),
+    }
+
+    out.truncate(out.trim_end().len());
+    out
+}
+
+fn append_input_content(out: &mut String, content: Option<&Value>) {
+    let Some(content) = content else {
+        return;
+    };
+
+    if let Some(text) = content.as_str() {
+        out.push_str(text);
+        return;
+    }
+
+    if let Some(items) = content.as_array() {
+        for item in items {
+            if let Some(text) = item.as_str() {
+                out.push_str(text);
+                continue;
+            }
+
+            let Some(object) = item.as_object() else {
+                continue;
+            };
+
+            let item_type = object
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+
+            if item_type == "text" {
+                if let Some(text) = object.get("text").and_then(Value::as_str) {
+                    out.push_str(text);
+                }
+                continue;
+            }
+
+            if item_type == "function_call" {
+                let name = object.get("name").and_then(Value::as_str).unwrap_or("tool");
+                out.push_str("\n[function_call ");
+                out.push_str(name);
+                out.push(']');
+                if let Some(arguments) = object.get("arguments") {
+                    if let Some(text) = arguments.as_str() {
+                        if !text.trim().is_empty() {
+                            out.push('\n');
+                            out.push_str(text);
+                        }
+                    } else if !arguments.is_null() {
+                        out.push('\n');
+                        out.push_str(&arguments.to_string());
+                    }
+                }
+                continue;
+            }
+
+            if item_type == "function_result" {
+                let name = object.get("name").and_then(Value::as_str).unwrap_or("tool");
+                out.push_str("\n[function_result ");
+                out.push_str(name);
+                out.push(']');
+                if let Some(result) = object.get("result") {
+                    if let Some(text) = result.as_str() {
+                        if !text.trim().is_empty() {
+                            out.push('\n');
+                            out.push_str(text);
+                        }
+                    } else if !result.is_null() {
+                        out.push('\n');
+                        out.push_str(&result.to_string());
+                    }
+                }
+                continue;
+            }
+
+            out.push('\n');
+            out.push('[');
+            out.push_str(item_type);
+            out.push(']');
+        }
+        return;
+    }
+
+    out.push_str(&content.to_string());
 }
 
 fn format_openai_messages(payload: &Value) -> String {
@@ -949,7 +1125,12 @@ async fn persist_index_file(
 
 #[cfg(test)]
 mod tests {
-    use super::format_endpoint;
+    use serde_json::json;
+
+    use super::{
+        ChatCompletionSource, StreamReadableCollector, format_endpoint, format_request_readable,
+        stream_readable_source,
+    };
 
     #[test]
     fn format_endpoint_keeps_base_path() {
@@ -965,5 +1146,74 @@ mod tests {
             format_endpoint("https://user:pass@example.com/v1", "/messages"),
             "https://example.com/v1/messages"
         );
+    }
+
+    #[test]
+    fn format_request_readable_supports_openai_responses_input_items() {
+        let payload = json!({
+            "model": "gpt-5",
+            "input": [
+                { "role": "developer", "content": "sys" },
+                { "role": "user", "content": "hi" },
+                { "type": "function_call_output", "call_id": "call_123", "output": "ok" }
+            ],
+            "store": false
+        });
+
+        let readable = format_request_readable(ChatCompletionSource::Custom, &payload);
+
+        assert_eq!(
+            readable,
+            "[developer]\nsys\n\n[user]\nhi\n\n[tool call_id=call_123]\nok"
+        );
+    }
+
+    #[test]
+    fn format_request_readable_supports_gemini_interactions_input_outputs() {
+        let payload = json!({
+            "model": "gemini-3",
+            "system_instruction": "sys",
+            "input": [
+                { "role": "user", "content": "hi" },
+                { "role": "model", "content": [
+                    { "type": "text", "text": "hello" },
+                    { "type": "function_call", "id": "call_1", "name": "get_weather", "arguments": { "location": "Paris" } }
+                ]},
+                { "role": "user", "content": [
+                    { "type": "function_result", "name": "get_weather", "call_id": "call_1", "result": { "temp": 20 } }
+                ]}
+            ],
+            "stream": true
+        });
+
+        let readable = format_request_readable(ChatCompletionSource::Custom, &payload);
+
+        assert_eq!(
+            readable,
+            "[system]\nsys\n\n[user]\nhi\n\n[model]\nhello\n[function_call get_weather]\n{\"location\":\"Paris\"}\n\n[user]\n\n[function_result get_weather]\n{\"temp\":20}"
+        );
+    }
+
+    #[test]
+    fn stream_readable_source_maps_custom_messages_to_claude() {
+        assert!(matches!(
+            stream_readable_source(ChatCompletionSource::Custom, "/messages"),
+            ChatCompletionSource::Claude
+        ));
+    }
+
+    #[test]
+    fn stream_readable_collector_collects_custom_claude_text_deltas() {
+        let readable_source = stream_readable_source(ChatCompletionSource::Custom, "/messages");
+        let mut collector = StreamReadableCollector::new(readable_source);
+
+        collector.push(
+            r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}"#,
+        );
+        collector.push(
+            r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}"#,
+        );
+
+        assert_eq!(collector.into_string(), "Hello world");
     }
 }
