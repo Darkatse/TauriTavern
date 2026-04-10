@@ -8,7 +8,7 @@ const MONOSPACE_FONT_FAMILY = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Cons
 const LIVE_LOG_PANEL_BUFFER_LIMIT = 800;
 const LIVE_LOG_PANEL_DEFAULT_WINDOW_SIZE = 300;
 const LIVE_LOG_PANEL_WINDOW_GROW_STEP = 200;
-const LIVE_LOG_PANEL_MAX_WINDOW_SIZE = 500;
+const LIVE_LOG_PANEL_MAX_WINDOW_SIZE = 800;
 
 function getDevApi() {
     const api = window.__TAURITAVERN__?.api?.dev;
