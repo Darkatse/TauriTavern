@@ -302,9 +302,7 @@ pub(super) fn normalize_openai_responses_response(response: Value) -> Value {
                 let name = as_non_empty_str(item_object.get("name")).unwrap_or("tool");
                 let call_id = as_non_empty_str(item_object.get("call_id"))
                     .map(str::to_string)
-                    .or_else(|| {
-                        as_non_empty_str(item_object.get("id")).map(str::to_string)
-                    })
+                    .or_else(|| as_non_empty_str(item_object.get("id")).map(str::to_string))
                     .unwrap_or_else(|| format!("tool_call_{index}"));
                 let arguments = to_openai_arguments(
                     item_object
@@ -445,7 +443,8 @@ pub(super) fn normalize_gemini_interactions_response(response: Value) -> Value {
                         .cloned()
                         .unwrap_or_else(|| Value::Object(Map::new())),
                 );
-                let signature = as_non_empty_str(output_object.get("signature")).map(str::to_string);
+                let signature =
+                    as_non_empty_str(output_object.get("signature")).map(str::to_string);
 
                 tool_calls.push(build_openai_tool_call(
                     &id,
@@ -492,10 +491,7 @@ pub(super) fn normalize_gemini_interactions_response(response: Value) -> Value {
         Value::Number(serde_json::Number::from(0)),
     );
     choice.insert("message".to_string(), Value::Object(message));
-    choice.insert(
-        "finish_reason".to_string(),
-        Value::String(finish_reason),
-    );
+    choice.insert("finish_reason".to_string(), Value::String(finish_reason));
 
     let mut normalized = Map::new();
     normalized.insert(
@@ -708,8 +704,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        normalize_claude_response, normalize_gemini_response, normalize_openai_responses_response,
-        normalize_gemini_interactions_response,
+        normalize_claude_response, normalize_gemini_interactions_response,
+        normalize_gemini_response, normalize_openai_responses_response,
     };
 
     #[test]
@@ -922,8 +918,10 @@ mod tests {
             .and_then(Value::as_array)
             .expect("native outputs should exist");
 
-        assert!(native_outputs
-            .iter()
-            .any(|output| output.get("type").and_then(Value::as_str) == Some("url_context_call")));
+        assert!(
+            native_outputs.iter().any(
+                |output| output.get("type").and_then(Value::as_str) == Some("url_context_call")
+            )
+        );
     }
 }

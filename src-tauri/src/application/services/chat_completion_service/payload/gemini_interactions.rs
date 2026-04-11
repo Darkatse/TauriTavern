@@ -41,7 +41,9 @@ fn build_gemini_interactions_payload(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            ApplicationError::ValidationError("Gemini Interactions request is missing model".to_string())
+            ApplicationError::ValidationError(
+                "Gemini Interactions request is missing model".to_string(),
+            )
         })?;
 
     let stream = payload
@@ -137,10 +139,7 @@ fn map_openai_tools_to_interactions(tools: &[Value]) -> Vec<Value> {
         .iter()
         .filter_map(|tool| tool.as_object())
         .map(|tool| {
-            let tool_type = tool
-                .get("type")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let tool_type = tool.get("type").and_then(Value::as_str).unwrap_or_default();
 
             if tool_type != "function" {
                 return Value::Object(tool.clone());
@@ -340,7 +339,11 @@ fn build_synthetic_model_outputs(
         outputs.extend(tool_calls.iter().map(build_function_call_output));
     }
 
-    if let Some(signature) = signature.and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(signature) = signature
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         outputs.push(json!({
             "type": "thought",
             "signature": signature,
@@ -535,7 +538,10 @@ mod tests {
         assert_eq!(endpoint, "/interactions");
 
         let upstream = upstream.as_object().expect("upstream must be object");
-        assert_eq!(upstream.get("model").and_then(|v| v.as_str()), Some("gemini-3-flash-preview"));
+        assert_eq!(
+            upstream.get("model").and_then(|v| v.as_str()),
+            Some("gemini-3-flash-preview")
+        );
         assert!(upstream.get("tools").is_some());
 
         let input = upstream
@@ -545,17 +551,20 @@ mod tests {
         assert_eq!(input.len(), 3);
 
         assert_eq!(input[0].get("role").and_then(|v| v.as_str()), Some("user"));
-        assert_eq!(
-            input[1].get("role").and_then(|v| v.as_str()),
-            Some("model")
-        );
+        assert_eq!(input[1].get("role").and_then(|v| v.as_str()), Some("model"));
 
         let model_outputs = input[1]
             .get("content")
             .and_then(|v| v.as_array())
             .expect("model content must be array");
-        assert_eq!(model_outputs[0].get("type").and_then(|v| v.as_str()), Some("function_call"));
-        assert_eq!(model_outputs[0].get("id").and_then(|v| v.as_str()), Some("call_1"));
+        assert_eq!(
+            model_outputs[0].get("type").and_then(|v| v.as_str()),
+            Some("function_call")
+        );
+        assert_eq!(
+            model_outputs[0].get("id").and_then(|v| v.as_str()),
+            Some("call_1")
+        );
 
         let tool_turn = input[2]
             .get("content")

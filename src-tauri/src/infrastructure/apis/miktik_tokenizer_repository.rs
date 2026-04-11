@@ -13,14 +13,29 @@ use crate::domain::errors::DomainError;
 use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
-const CLAUDE_JSON_BYTES: &[u8] = include_bytes!("../../../resources/tokenizers/claude.json");
-const DEEPSEEK_JSON_BYTES: &[u8] = include_bytes!("../../../resources/tokenizers/deepseek.json");
-const GEMMA_MODEL_BYTES: &[u8] = include_bytes!("../../../resources/tokenizers/gemma.model");
+const CLAUDE_JSON_GZIP_BYTES: &[u8] =
+    include_bytes!("../../../resources/tokenizers/claude.json.gz");
+const DEEPSEEK_JSON_GZIP_BYTES: &[u8] =
+    include_bytes!("../../../resources/tokenizers/deepseek.json.gz");
+const GEMMA_MODEL_GZIP_BYTES: &[u8] =
+    include_bytes!("../../../resources/tokenizers/gemma.model.gz");
+
+#[derive(Clone, Copy)]
+enum ResourceCompression {
+    None,
+    Gzip,
+}
 
 #[derive(Clone, Copy)]
 enum ModelSource {
-    Bundled(&'static [u8]),
-    Remote { url: &'static str, gzip: bool },
+    Bundled {
+        bytes: &'static [u8],
+        compression: ResourceCompression,
+    },
+    Remote {
+        url: &'static str,
+        compression: ResourceCompression,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -58,84 +73,93 @@ impl MiktikTokenizerRepository {
         match canonical {
             "claude" => Some(ModelResourceSpec {
                 file_name: "claude.json",
-                source: ModelSource::Bundled(CLAUDE_JSON_BYTES),
+                source: ModelSource::Bundled {
+                    bytes: CLAUDE_JSON_GZIP_BYTES,
+                    compression: ResourceCompression::Gzip,
+                },
             }),
             "deepseek" => Some(ModelResourceSpec {
                 file_name: "deepseek.json",
-                source: ModelSource::Bundled(DEEPSEEK_JSON_BYTES),
+                source: ModelSource::Bundled {
+                    bytes: DEEPSEEK_JSON_GZIP_BYTES,
+                    compression: ResourceCompression::Gzip,
+                },
             }),
             "gemma" => Some(ModelResourceSpec {
                 file_name: "gemma.model",
-                source: ModelSource::Bundled(GEMMA_MODEL_BYTES),
+                source: ModelSource::Bundled {
+                    bytes: GEMMA_MODEL_GZIP_BYTES,
+                    compression: ResourceCompression::Gzip,
+                },
             }),
             "llama3" => Some(ModelResourceSpec {
                 file_name: "llama3.json",
                 source: ModelSource::Remote {
                     url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/llama3.json",
-                    gzip: false,
+                    compression: ResourceCompression::None,
                 },
             }),
             "llama" => Some(ModelResourceSpec {
                 file_name: "llama.model",
                 source: ModelSource::Remote {
                     url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/llama.model",
-                    gzip: false,
+                    compression: ResourceCompression::None,
                 },
             }),
             "mistral" => Some(ModelResourceSpec {
                 file_name: "mistral.model",
                 source: ModelSource::Remote {
                     url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/mistral.model",
-                    gzip: false,
+                    compression: ResourceCompression::None,
                 },
             }),
             "yi" => Some(ModelResourceSpec {
                 file_name: "yi.model",
                 source: ModelSource::Remote {
                     url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/yi.model",
-                    gzip: false,
+                    compression: ResourceCompression::None,
                 },
             }),
             "jamba" => Some(ModelResourceSpec {
                 file_name: "jamba.model",
                 source: ModelSource::Remote {
                     url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/jamba.model",
-                    gzip: false,
+                    compression: ResourceCompression::None,
                 },
             }),
             "nerdstash" => Some(ModelResourceSpec {
                 file_name: "nerdstash.model",
                 source: ModelSource::Remote {
                     url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/nerdstash.model",
-                    gzip: false,
+                    compression: ResourceCompression::None,
                 },
             }),
             "command-r" => Some(ModelResourceSpec {
                 file_name: "command-r.json",
                 source: ModelSource::Remote {
                     url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/command-r.json.gz",
-                    gzip: true,
+                    compression: ResourceCompression::Gzip,
                 },
             }),
             "command-a" => Some(ModelResourceSpec {
                 file_name: "command-a.json",
                 source: ModelSource::Remote {
                     url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/command-a.json.gz",
-                    gzip: true,
+                    compression: ResourceCompression::Gzip,
                 },
             }),
             "qwen2" => Some(ModelResourceSpec {
                 file_name: "qwen2.json",
                 source: ModelSource::Remote {
                     url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/qwen2.json.gz",
-                    gzip: true,
+                    compression: ResourceCompression::Gzip,
                 },
             }),
             "nemo" => Some(ModelResourceSpec {
                 file_name: "nemo.json",
                 source: ModelSource::Remote {
                     url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/nemo.json.gz",
-                    gzip: true,
+                    compression: ResourceCompression::Gzip,
                 },
             }),
             _ => None,
@@ -153,30 +177,12 @@ impl MiktikTokenizerRepository {
             return Ok(());
         }
 
-        let spec = Self::model_resource_spec(canonical).ok_or_else(|| {
-            DomainError::NotFound(format!(
-                "Tokenizer resource spec is missing for model '{}'",
-                canonical
-            ))
-        })?;
-
-        match spec.source {
-            // Bundled resources are registered from bytes directly to avoid filesystem I/O.
-            ModelSource::Bundled(bytes) => self
-                .registry
-                .register_model_bytes(canonical, bytes.to_vec())
-                .map_err(|error| {
-                    Self::map_tokenizer_error("register bundled model bytes", canonical, error)
-                })?,
-            ModelSource::Remote { .. } => {
-                let model_path = self.ensure_model_file(canonical).await?;
-                self.registry
-                    .register_model_file(canonical, &model_path)
-                    .map_err(|error| {
-                        Self::map_tokenizer_error("register model resource", canonical, error)
-                    })?;
-            }
-        }
+        let model_path = self.ensure_model_file(canonical).await?;
+        self.registry
+            .register_model_file(canonical, &model_path)
+            .map_err(|error| {
+                Self::map_tokenizer_error("register model resource", canonical, error)
+            })?;
 
         self.warm_model(canonical).await?;
         self.mark_model_ready(canonical).await;
@@ -211,16 +217,24 @@ impl MiktikTokenizerRepository {
             return Ok(path);
         }
 
-        let bytes = match spec.source {
-            ModelSource::Bundled(bytes) => bytes.to_vec(),
-            ModelSource::Remote { url, gzip } => self.download_model_bytes(url, gzip).await?,
-        };
-
+        let bytes = self.load_model_bytes(spec).await?;
         self.write_bytes(&path, &bytes).await?;
         Ok(path)
     }
 
-    async fn download_model_bytes(&self, url: &str, gzip: bool) -> Result<Vec<u8>, DomainError> {
+    async fn load_model_bytes(&self, spec: ModelResourceSpec) -> Result<Vec<u8>, DomainError> {
+        match spec.source {
+            ModelSource::Bundled { bytes, compression } => {
+                Self::decode_model_payload(bytes, compression, spec.file_name)
+            }
+            ModelSource::Remote { url, compression } => {
+                let payload = self.download_model_payload(url).await?;
+                Self::decode_model_payload(&payload, compression, url)
+            }
+        }
+    }
+
+    async fn download_model_payload(&self, url: &str) -> Result<Vec<u8>, DomainError> {
         let http_client = self.http_clients.client(HttpClientProfile::Tokenizer)?;
         let response = http_client
             .get(url)
@@ -247,21 +261,28 @@ impl MiktikTokenizerRepository {
             ))
         })?;
 
-        let payload = payload.to_vec();
-        if !gzip {
-            return Ok(payload);
+        Ok(payload.to_vec())
+    }
+
+    fn decode_model_payload(
+        payload: &[u8],
+        compression: ResourceCompression,
+        source_name: &str,
+    ) -> Result<Vec<u8>, DomainError> {
+        match compression {
+            ResourceCompression::None => Ok(payload.to_vec()),
+            ResourceCompression::Gzip => {
+                let mut decoder = GzDecoder::new(Cursor::new(payload));
+                let mut decompressed = Vec::new();
+                decoder.read_to_end(&mut decompressed).map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to decompress tokenizer payload '{}': {}",
+                        source_name, error
+                    ))
+                })?;
+                Ok(decompressed)
+            }
         }
-
-        let mut decoder = GzDecoder::new(Cursor::new(payload));
-        let mut decompressed = Vec::new();
-        decoder.read_to_end(&mut decompressed).map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to decompress tokenizer payload '{}': {}",
-                url, error
-            ))
-        })?;
-
-        Ok(decompressed)
     }
 
     async fn write_bytes(&self, path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
@@ -485,7 +506,7 @@ mod tests {
 
     use serde_json::json;
 
-    use super::MiktikTokenizerRepository;
+    use super::{MiktikTokenizerRepository, ModelSource, ResourceCompression};
     use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
     use crate::infrastructure::http_client_pool::HttpClientPool;
 
@@ -535,6 +556,31 @@ mod tests {
         assert!(prompt.contains("\n\nHuman: sys"));
         assert!(prompt.contains("\n\nFirst message: hello"));
         assert!(prompt.contains("\n\nAssistant: world"));
+    }
+
+    #[test]
+    fn bundled_model_payloads_are_gzip_compressed() {
+        for canonical in ["claude", "deepseek", "gemma"] {
+            let spec = MiktikTokenizerRepository::model_resource_spec(canonical)
+                .expect("spec should exist");
+
+            match spec.source {
+                ModelSource::Bundled {
+                    bytes,
+                    compression: ResourceCompression::Gzip,
+                } => {
+                    let decoded = MiktikTokenizerRepository::decode_model_payload(
+                        bytes,
+                        ResourceCompression::Gzip,
+                        spec.file_name,
+                    )
+                    .expect("bundled payload should decompress");
+                    assert!(!decoded.is_empty());
+                    assert!(decoded.len() > bytes.len());
+                }
+                _ => panic!("expected bundled gzip payload for '{canonical}'"),
+            }
+        }
     }
 
     fn unique_temp_cache_dir() -> PathBuf {
@@ -595,7 +641,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bundled_models_do_not_write_cache_files_on_first_use() {
+    async fn bundled_models_materialize_cache_files_on_first_use() {
         let cache_dir = unique_temp_cache_dir();
         let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
         let messages = vec![json!({"role": "user", "content": "hello world"})];
@@ -618,18 +664,55 @@ mod tests {
             .expect("gemma bundled tokenizer should count");
 
         assert!(
-            !cache_dir.join("claude.json").exists(),
-            "claude bundled tokenizer should not be materialized to cache"
+            cache_dir.join("claude.json").exists(),
+            "claude bundled tokenizer should be materialized to cache"
         );
         assert!(
-            !cache_dir.join("deepseek.json").exists(),
-            "deepseek bundled tokenizer should not be materialized to cache"
+            cache_dir.join("deepseek.json").exists(),
+            "deepseek bundled tokenizer should be materialized to cache"
         );
         assert!(
-            !cache_dir.join("gemma.model").exists(),
-            "gemma bundled tokenizer should not be materialized to cache"
+            cache_dir.join("gemma.model").exists(),
+            "gemma bundled tokenizer should be materialized to cache"
         );
         let _ = std::fs::remove_dir_all(cache_dir);
+    }
+
+    #[tokio::test]
+    async fn bundled_models_write_decompressed_cache_files() {
+        for canonical in ["claude", "deepseek", "gemma"] {
+            let cache_dir = unique_temp_cache_dir();
+            let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+
+            TokenizerRepository::ensure_model_ready(&repository, canonical)
+                .await
+                .expect("bundled tokenizer should prepare");
+
+            let spec = MiktikTokenizerRepository::model_resource_spec(canonical)
+                .expect("spec should exist");
+            let expected = match spec.source {
+                ModelSource::Bundled { bytes, compression } => {
+                    MiktikTokenizerRepository::decode_model_payload(
+                        bytes,
+                        compression,
+                        spec.file_name,
+                    )
+                    .expect("bundled payload should decompress")
+                }
+                _ => panic!("expected bundled tokenizer source for '{canonical}'"),
+            };
+
+            let cache_path = cache_dir.join(spec.file_name);
+            assert!(
+                cache_path.exists(),
+                "materialized cache file should exist for '{canonical}'"
+            );
+            let cached =
+                std::fs::read(&cache_path).expect("materialized cache file should be readable");
+            assert_eq!(cached, expected);
+
+            let _ = std::fs::remove_dir_all(cache_dir);
+        }
     }
 }
 

@@ -244,10 +244,7 @@ pub async fn devlog_export_bundle(
     })
     .await
     .map_err(|error| {
-        CommandError::InternalServerError(format!(
-            "Export bundle task join error: {}",
-            error
-        ))
+        CommandError::InternalServerError(format!("Export bundle task join error: {}", error))
     })??;
 
     Ok(output_path.to_string_lossy().to_string())

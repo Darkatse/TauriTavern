@@ -410,7 +410,8 @@ mod tests {
         fs::create_dir_all(&workspace_root).expect("create temp workspace");
 
         let file_name = "data/default-user/worlds/夏瑾 Pro - Beta 天狼星.json";
-        let mut bytes = write_zip_bytes(&[(file_name, br#"{ "ok": true }"#)], FileOptions::default());
+        let mut bytes =
+            write_zip_bytes(&[(file_name, br#"{ "ok": true }"#)], FileOptions::default());
         let patched = clear_zip_utf8_flag(&mut bytes);
         assert!(patched > 0, "should patch zip headers");
         fs::write(&archive_path, bytes).expect("write fixture zip");
@@ -434,7 +435,10 @@ mod tests {
         assert!(imported.is_file(), "imported file should exist");
 
         let text = fs::read_to_string(&imported).expect("read imported file");
-        assert!(text.contains("\"ok\": true"), "imported content should match");
+        assert!(
+            text.contains("\"ok\": true"),
+            "imported content should match"
+        );
 
         cleanup_directory_sync(&root);
     }

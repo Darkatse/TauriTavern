@@ -22,4 +22,3 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
 
     Ok((endpoint, upstream_payload))
 }
-

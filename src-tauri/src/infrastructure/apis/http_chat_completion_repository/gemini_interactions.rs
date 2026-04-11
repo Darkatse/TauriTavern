@@ -113,7 +113,10 @@ impl InteractionsStreamState {
             return;
         };
 
-        let delta_type = delta.get("type").and_then(Value::as_str).unwrap_or_default();
+        let delta_type = delta
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
 
         let output_entry = self
             .outputs_by_index
@@ -148,10 +151,7 @@ impl InteractionsStreamState {
                     return;
                 }
 
-                output.insert(
-                    "type".to_string(),
-                    Value::String("thought".to_string()),
-                );
+                output.insert("type".to_string(), Value::String("thought".to_string()));
                 append_string_field(output, "summary", summary);
                 self.send_delta(sender, json!({ "reasoning_content": summary }), None);
             }
@@ -165,10 +165,7 @@ impl InteractionsStreamState {
                     return;
                 }
 
-                output.insert(
-                    "type".to_string(),
-                    Value::String("thought".to_string()),
-                );
+                output.insert("type".to_string(), Value::String("thought".to_string()));
                 output.insert(
                     "signature".to_string(),
                     Value::String(signature.to_string()),
@@ -214,7 +211,8 @@ impl InteractionsStreamState {
                     );
                 }
 
-                let arguments = serde_json::to_string(&arguments).unwrap_or_else(|_| "{}".to_string());
+                let arguments =
+                    serde_json::to_string(&arguments).unwrap_or_else(|_| "{}".to_string());
 
                 let mut tool_call = json!({
                     "index": index,
@@ -288,7 +286,11 @@ impl InteractionsStreamState {
         self.done_sent = true;
     }
 
-    fn apply_error(&mut self, event: &serde_json::Map<String, Value>, sender: &ChatCompletionStreamSender) {
+    fn apply_error(
+        &mut self,
+        event: &serde_json::Map<String, Value>,
+        sender: &ChatCompletionStreamSender,
+    ) {
         let message = event
             .get("error")
             .and_then(|error| error.get("message"))
@@ -525,4 +527,3 @@ fn current_unix_timestamp() -> u64 {
         .map(|duration| duration.as_secs())
         .unwrap_or_default()
 }
-

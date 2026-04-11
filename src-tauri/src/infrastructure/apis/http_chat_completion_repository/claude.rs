@@ -107,8 +107,7 @@ pub(super) async fn generate(
 
     if super::payload_contains_cache_control(payload) {
         let model = payload.get("model").and_then(Value::as_str);
-        let _ =
-            super::log_prompt_cache_performance_if_present(provider_name, model, &body);
+        let _ = super::log_prompt_cache_performance_if_present(provider_name, model, &body);
     }
 
     Ok(normalizers::normalize_claude_response(body))
@@ -206,20 +205,12 @@ pub(super) async fn generate_stream(
         )
         .await
     } else {
-        HttpChatCompletionRepository::stream_sse_response(
-            provider_name,
-            response,
-            sender,
-            cancel,
-        )
-        .await
+        HttpChatCompletionRepository::stream_sse_response(provider_name, response, sender, cancel)
+            .await
     }
 }
 
-fn apply_claude_auth(
-    request: RequestBuilder,
-    config: &ChatCompletionApiConfig,
-) -> RequestBuilder {
+fn apply_claude_auth(request: RequestBuilder, config: &ChatCompletionApiConfig) -> RequestBuilder {
     if let Some(authorization_header) = config.authorization_header.as_deref() {
         return HttpChatCompletionRepository::apply_header_if_present(
             request,

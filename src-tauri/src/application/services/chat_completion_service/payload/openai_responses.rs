@@ -36,7 +36,9 @@ fn build_openai_responses_payload(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            ApplicationError::ValidationError("OpenAI Responses request is missing model".to_string())
+            ApplicationError::ValidationError(
+                "OpenAI Responses request is missing model".to_string(),
+            )
         })?;
 
     let input = build_input_items(payload.get("messages"))?;
@@ -85,7 +87,10 @@ fn build_openai_responses_payload(
         .map(str::trim)
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("auto"))
     {
-        request.insert("verbosity".to_string(), Value::String(verbosity.to_string()));
+        request.insert(
+            "verbosity".to_string(),
+            Value::String(verbosity.to_string()),
+        );
     }
 
     if let Some(tools) = payload.get("tools").and_then(Value::as_array) {
@@ -134,7 +139,9 @@ fn build_input_items(messages: Option<&Value>) -> Result<Vec<Value>, Application
                 .and_then(|object| object.get("role"))
                 .and_then(Value::as_str)
                 .map(str::trim)
-                .map(|role| role.eq_ignore_ascii_case("tool") || role.eq_ignore_ascii_case("function"))
+                .map(|role| {
+                    role.eq_ignore_ascii_case("tool") || role.eq_ignore_ascii_case("function")
+                })
                 .unwrap_or(false)
         })
         .count();
@@ -196,10 +203,7 @@ fn map_openai_tools_to_responses(tools: &[Value]) -> Vec<Value> {
         .iter()
         .filter_map(|tool| tool.as_object())
         .map(|tool| {
-            let tool_type = tool
-                .get("type")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let tool_type = tool.get("type").and_then(Value::as_str).unwrap_or_default();
 
             if tool_type != "function" {
                 return Value::Object(tool.clone());
@@ -208,7 +212,12 @@ fn map_openai_tools_to_responses(tools: &[Value]) -> Vec<Value> {
             let strict = tool
                 .get("strict")
                 .and_then(Value::as_bool)
-                .or_else(|| tool.get("function").and_then(Value::as_object).and_then(|f| f.get("strict")).and_then(Value::as_bool))
+                .or_else(|| {
+                    tool.get("function")
+                        .and_then(Value::as_object)
+                        .and_then(|f| f.get("strict"))
+                        .and_then(Value::as_bool)
+                })
                 .unwrap_or(false);
 
             if let Some(function) = tool.get("function").and_then(Value::as_object) {
@@ -236,7 +245,10 @@ fn map_openai_tools_to_responses(tools: &[Value]) -> Vec<Value> {
                 mapped.insert("name".to_string(), Value::String(name.to_string()));
             }
             if let Some(description) = tool.get("description").and_then(Value::as_str) {
-                mapped.insert("description".to_string(), Value::String(description.to_string()));
+                mapped.insert(
+                    "description".to_string(),
+                    Value::String(description.to_string()),
+                );
             }
             if let Some(parameters) = tool.get("parameters") {
                 mapped.insert("parameters".to_string(), parameters.clone());

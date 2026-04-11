@@ -60,7 +60,9 @@ pub fn export_dev_log_bundle(
 
     writer
         .add_directory(format!("{}/", BUNDLE_ROOT_DIR), dir_options)
-        .map_err(|error| DomainError::InternalError(format!("Failed to add bundle root: {error}")))?;
+        .map_err(|error| {
+            DomainError::InternalError(format!("Failed to add bundle root: {error}"))
+        })?;
 
     add_text_file(
         &mut writer,
@@ -133,11 +135,13 @@ pub fn export_dev_log_bundle(
 
     writer
         .add_directory(format!("{}/llm-api/", BUNDLE_ROOT_DIR), dir_options)
-        .map_err(|error| DomainError::InternalError(format!("Failed to add llm-api directory: {error}")))?;
+        .map_err(|error| {
+            DomainError::InternalError(format!("Failed to add llm-api directory: {error}"))
+        })?;
 
-    for source_path in list_log_root_files(&runtime_paths.log_root, |name| {
-        name.starts_with("llm-api-")
-    })? {
+    for source_path in
+        list_log_root_files(&runtime_paths.log_root, |name| name.starts_with("llm-api-"))?
+    {
         let file_name = source_path
             .file_name()
             .and_then(|value| value.to_str())
@@ -152,9 +156,9 @@ pub fn export_dev_log_bundle(
         add_file_from_disk(&mut writer, &source_path, &zip_path, &mut copy_buffer)?;
     }
 
-    let mut buffered_output = writer
-        .finish()
-        .map_err(|error| DomainError::InternalError(format!("Failed to finalize bundle: {error}")))?;
+    let mut buffered_output = writer.finish().map_err(|error| {
+        DomainError::InternalError(format!("Failed to finalize bundle: {error}"))
+    })?;
     buffered_output.flush().map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to flush export bundle {}: {}",
@@ -194,7 +198,9 @@ fn add_text_file(
 ) -> Result<(), DomainError> {
     writer
         .start_file(zip_path, export_file_options(zip_path))
-        .map_err(|error| DomainError::InternalError(format!("Failed to add {zip_path}: {error}")))?;
+        .map_err(|error| {
+            DomainError::InternalError(format!("Failed to add {zip_path}: {error}"))
+        })?;
 
     writer.write_all(content.as_bytes()).map_err(|error| {
         DomainError::InternalError(format!("Failed to write archive entry {zip_path}: {error}"))
@@ -235,11 +241,13 @@ fn add_file_from_disk(
             break;
         }
 
-        writer.write_all(&copy_buffer[..bytes_read]).map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to write archive entry {zip_path}: {error}"
-            ))
-        })?;
+        writer
+            .write_all(&copy_buffer[..bytes_read])
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to write archive entry {zip_path}: {error}"
+                ))
+            })?;
     }
 
     Ok(())

@@ -182,7 +182,9 @@ mod tests {
         let (endpoint, upstream) = build(payload).expect("build should succeed");
         assert_eq!(endpoint, "/messages");
 
-        let body = upstream.as_object().expect("upstream body should be object");
+        let body = upstream
+            .as_object()
+            .expect("upstream body should be object");
         assert_eq!(
             body.get("max_tokens")
                 .and_then(Value::as_i64)

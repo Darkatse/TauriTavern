@@ -2,9 +2,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use typed_path::{Utf8WindowsComponent, Utf8WindowsPath};
+use zip::CompressionMethod;
 use zip::read::ZipFile;
 use zip::write::SimpleFileOptions as FileOptions;
-use zip::CompressionMethod;
 
 use crate::domain::errors::DomainError;
 
@@ -43,9 +43,8 @@ pub fn enclosed_zip_entry_path_with_name<'a, 'b, R: Read + ?Sized>(
     entry: &'b ZipFile<'a, R>,
 ) -> Result<(PathBuf, &'b str), DomainError> {
     let name = zip_entry_display_name(entry)?;
-    let path = enclosed_name_from_str(name).ok_or_else(|| {
-        DomainError::InvalidData(format!("Invalid archive entry path: {}", name))
-    })?;
+    let path = enclosed_name_from_str(name)
+        .ok_or_else(|| DomainError::InvalidData(format!("Invalid archive entry path: {}", name)))?;
     Ok((path, name))
 }
 

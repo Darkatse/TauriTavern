@@ -257,8 +257,13 @@ impl LlmApiLogStore {
                 meta.response_raw_kind,
                 response_raw_inline.as_deref(),
             )
-            .await {
-                tracing::error!("Failed to persist LLM API log raw entry {}: {}", meta.id, error);
+            .await
+            {
+                tracing::error!(
+                    "Failed to persist LLM API log raw entry {}: {}",
+                    meta.id,
+                    error
+                );
             }
 
             for removed_id in removed_ids {
@@ -507,7 +512,10 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
     }
 }
 
-fn stream_readable_source(source: ChatCompletionSource, endpoint_path: &str) -> ChatCompletionSource {
+fn stream_readable_source(
+    source: ChatCompletionSource,
+    endpoint_path: &str,
+) -> ChatCompletionSource {
     if matches!(source, ChatCompletionSource::Custom) && endpoint_path.trim() == "/messages" {
         return ChatCompletionSource::Claude;
     }
@@ -544,7 +552,10 @@ struct StreamReadableCollector {
 
 impl StreamReadableCollector {
     fn new(source: ChatCompletionSource) -> Self {
-        Self { source, buffer: String::new() }
+        Self {
+            source,
+            buffer: String::new(),
+        }
     }
 
     fn push(&mut self, chunk: &str) {
@@ -711,10 +722,7 @@ fn pretty_json(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
 }
 
-fn format_request_readable(
-    source: ChatCompletionSource,
-    payload: &Value,
-) -> String {
+fn format_request_readable(source: ChatCompletionSource, payload: &Value) -> String {
     match source {
         ChatCompletionSource::Makersuite | ChatCompletionSource::VertexAi => {
             format_gemini_contents(payload)
@@ -985,10 +993,7 @@ fn format_gemini_contents(payload: &Value) -> String {
     out
 }
 
-fn append_openai_message_content(
-    out: &mut String,
-    message: &Value,
-) {
+fn append_openai_message_content(out: &mut String, message: &Value) {
     let Some(content) = message.get("content") else {
         return;
     };
@@ -1207,9 +1212,8 @@ mod tests {
         let readable_source = stream_readable_source(ChatCompletionSource::Custom, "/messages");
         let mut collector = StreamReadableCollector::new(readable_source);
 
-        collector.push(
-            r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}"#,
-        );
+        collector
+            .push(r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}"#);
         collector.push(
             r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}"#,
         );

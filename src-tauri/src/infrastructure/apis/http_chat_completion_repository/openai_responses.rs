@@ -203,7 +203,8 @@ impl ResponsesStreamState {
                         .and_then(|id| self.tool_call_by_item_id.get(id))
                         .map(|descriptor| descriptor.call_id.as_str())
                         .or_else(|| {
-                            event.get("call_id")
+                            event
+                                .get("call_id")
                                 .and_then(Value::as_str)
                                 .map(str::trim)
                                 .filter(|value| !value.is_empty())
@@ -288,7 +289,12 @@ impl ResponsesStreamState {
         }
     }
 
-    fn send_delta(&mut self, sender: &ChatCompletionStreamSender, delta: Value, finish_reason: Option<&str>) {
+    fn send_delta(
+        &mut self,
+        sender: &ChatCompletionStreamSender,
+        delta: Value,
+        finish_reason: Option<&str>,
+    ) {
         if !self.sent_role {
             self.sent_role = true;
             let role_chunk = self.build_chunk(json!({ "role": "assistant" }), None);
@@ -472,7 +478,9 @@ fn apply_tool_followup_payload(
         .openai_responses_previous_response_id_by_call_id
         .lock()
         .map_err(|_| {
-            DomainError::InternalError("OpenAI Responses previous_response_id cache lock poisoned".to_string())
+            DomainError::InternalError(
+                "OpenAI Responses previous_response_id cache lock poisoned".to_string(),
+            )
         })?;
 
     let mut previous_response_id = None::<String>;
