@@ -1,6 +1,7 @@
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
 import { isMobile } from '../../../RossAscends-mods.js';
 import { t, translate } from '../../../i18n.js';
+import { isAndroidRuntime, isIosRuntime } from '../../../util/mobile-runtime.js';
 import {
     getRuntimePaths,
     getTauriTavernSettings,
@@ -30,7 +31,9 @@ function isWindowsPlatform() {
 export async function openTauriTavernSettingsPopup() {
     const settings = await getTauriTavernSettings();
     const supportsCloseToTrayOnClose = isWindowsPlatform() && !isMobile();
-    const supportsDataRootSelection = !isMobile();
+    // Data directory selection is a desktop-only feature. Do not gate this on Bowser's `isMobile()`,
+    // because iPadOS may present a desktop-like user agent (e.g. platform "MacIntel").
+    const supportsDataRootSelection = !isAndroidRuntime() && !isIosRuntime();
 
     const runtimePaths = supportsDataRootSelection ? await getRuntimePaths() : null;
     const currentDataRoot = String(runtimePaths?.data_root || '').trim();
