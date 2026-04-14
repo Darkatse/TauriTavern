@@ -97,7 +97,7 @@ pnpm run ios:dev       # iOS 开发模式
 
 便携版构建补充说明：
 
-- `pnpm run tauri:build:portable` 默认输出到 `release/portable/`
+- `pnpm run tauri:build:portable` 默认输出到 `release/`
 - 可通过 `TAURITAVERN_RUNTIME_MODE=portable` 或 `portable.flag` 显式启用便携运行策略
 - Windows 便携版需用户自行确保 WebView2 运行时可用
 

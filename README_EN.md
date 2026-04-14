@@ -95,7 +95,7 @@ pnpm run ios:dev       # iOS dev mode
 
 Portable build notes:
 
-- `pnpm run tauri:build:portable` outputs to `release/portable/` by default
+- `pnpm run tauri:build:portable` outputs to `release/` by default
 - You can force portable runtime mode via `TAURITAVERN_RUNTIME_MODE=portable` or `portable.flag`
 - On Windows, portable users must ensure WebView2 runtime is available
 

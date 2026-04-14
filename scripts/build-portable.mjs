@@ -13,7 +13,7 @@ function printHelp() {
 
 Options:
   --target <triple>       Rust target triple, e.g. x86_64-pc-windows-msvc
-  --output-dir <path>     Portable output directory (default: release/portable)
+  --output-dir <path>     Portable output directory (default: release)
   --skip-web-build        Skip frontend webpack build
   --help                  Show this help message
 `);
@@ -43,7 +43,7 @@ function run(command, args, cwd) {
 function parseArgs(argv) {
     const options = {
         target: null,
-        outputDir: "release/portable",
+        outputDir: "release",
         skipWebBuild: false,
         extraTauriArgs: [],
     };

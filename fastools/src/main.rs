@@ -14,6 +14,7 @@ use std::time::Duration;
 use sysinfo::System;
 use which::which;
 
+mod artifacts;
 mod upsync;
 
 const TAOBAO_REGISTRY: &str = "https://registry.npmmirror.com";
@@ -788,7 +789,7 @@ fn run_desktop_build() -> Result<()> {
     ])?;
 
     if status.success() {
-        log_success("构建成功！安装包位于 src-tauri/target/release/bundle/");
+        report_collected_artifacts(artifacts::BuildArtifactsKind::DesktopRelease)?;
         pause();
     } else {
         log_error("构建失败");
@@ -811,7 +812,7 @@ fn run_desktop_build_debug() -> Result<()> {
     match status {
         Ok(status) => {
             if status.success() {
-                log_success("构建成功！安装包位于 src-tauri/target/debug/bundle/");
+                report_collected_artifacts(artifacts::BuildArtifactsKind::DesktopDebug)?;
             } else {
                 log_error("构建失败");
             }
@@ -836,16 +837,30 @@ fn run_android_build_split_abi() -> Result<()> {
         ),
         (
             "corepack",
-            vec!["pnpm", "tauri", "android", "build", "--apk", "--split-per-abi"],
+            vec![
+                "pnpm",
+                "tauri",
+                "android",
+                "build",
+                "--apk",
+                "--split-per-abi",
+            ],
         ),
         (
             "npm",
-            vec!["run", "tauri", "android", "build", "--apk", "--split-per-abi"],
+            vec![
+                "run",
+                "tauri",
+                "android",
+                "build",
+                "--apk",
+                "--split-per-abi",
+            ],
         ),
     ])?;
 
     if status.success() {
-        log_success("构建成功！产物通常位于 src-tauri/gen/android/app/build/outputs/");
+        report_collected_artifacts(artifacts::BuildArtifactsKind::AndroidSplitApk)?;
         pause();
     } else {
         log_error("构建失败");
@@ -864,7 +879,7 @@ fn run_ios_build() -> Result<()> {
     ])?;
 
     if status.success() {
-        log_success("构建成功！产物通常位于 src-tauri/gen/apple/build/");
+        report_collected_artifacts(artifacts::BuildArtifactsKind::IosRelease)?;
         pause();
     } else {
         log_error("构建失败");
@@ -883,11 +898,20 @@ fn run_portable_build() -> Result<()> {
     ])?;
 
     if status.success() {
-        log_success("构建成功！便携版默认输出到 release/portable/");
+        log_success("构建成功！便携版已输出到 release/");
         pause();
     } else {
         log_error("构建失败");
         pause();
+    }
+    Ok(())
+}
+
+fn report_collected_artifacts(kind: artifacts::BuildArtifactsKind) -> Result<()> {
+    let artifacts = artifacts::collect(Path::new("."), kind)?;
+    log_success("构建成功！发行产物已归集到 release/");
+    for artifact in artifacts {
+        println!("  - {}", artifact.destination().display());
     }
     Ok(())
 }
