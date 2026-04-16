@@ -11,10 +11,10 @@ use crate::application::errors::ApplicationError;
 use crate::domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use crate::domain::models::settings::{PromptCacheTtl, TauriTavernSettings};
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionCancelReceiver, ChatCompletionRepository, ChatCompletionSource,
-    ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
+    ChatCompletionSource, ChatCompletionStreamSender,
 };
-use crate::domain::repositories::prompt_cache_repository::{PromptCacheKey, PromptCacheRepository};
+use crate::domain::repositories::prompt_cache_repository::PromptCacheRepository;
 use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::domain::repositories::settings_repository::SettingsRepository;
 
@@ -22,6 +22,7 @@ mod config;
 mod custom_parameters;
 mod payload;
 mod prompt_caching;
+mod prompt_caching_plan;
 mod vertexai_auth;
 
 const OPENAI_SOURCE: &str = ChatCompletionSource::OpenAi.key();
@@ -308,17 +309,22 @@ impl ChatCompletionService {
         self.ensure_chat_completion_features_allowed(&dto.payload)?;
 
         let settings = self.load_tauritavern_settings().await?;
+        let prompt_caching_hints =
+            prompt_caching_plan::PromptCachingRequestHints::from_payload(&dto.payload)?;
 
-        let config =
+        let mut config =
             config::resolve_generate_api_config(source, &dto, &self.secret_repository).await?;
         let payload = dto.payload;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
-        if let Err(error) = self
-            .apply_tauritavern_prompt_caching(source, &settings, &mut upstream_payload)
-            .await
-        {
-            tracing::warn!("Prompt caching failed: {}", error);
-        }
+        self.apply_tauritavern_prompt_caching(
+            source,
+            &endpoint_path,
+            &mut config,
+            &settings,
+            &mut upstream_payload,
+            prompt_caching_hints,
+        )
+        .await?;
 
         self.chat_completion_repository
             .generate(source, &config, &endpoint_path, &upstream_payload)
@@ -363,17 +369,22 @@ impl ChatCompletionService {
         self.ensure_chat_completion_features_allowed(&dto.payload)?;
 
         let settings = self.load_tauritavern_settings().await?;
+        let prompt_caching_hints =
+            prompt_caching_plan::PromptCachingRequestHints::from_payload(&dto.payload)?;
 
-        let config =
+        let mut config =
             config::resolve_generate_api_config(source, &dto, &self.secret_repository).await?;
         let payload = dto.payload;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
-        if let Err(error) = self
-            .apply_tauritavern_prompt_caching(source, &settings, &mut upstream_payload)
-            .await
-        {
-            tracing::warn!("Prompt caching failed: {}", error);
-        }
+        self.apply_tauritavern_prompt_caching(
+            source,
+            &endpoint_path,
+            &mut config,
+            &settings,
+            &mut upstream_payload,
+            prompt_caching_hints,
+        )
+        .await?;
 
         self.chat_completion_repository
             .generate_stream(
@@ -431,8 +442,11 @@ impl ChatCompletionService {
     async fn apply_tauritavern_prompt_caching(
         &self,
         source: ChatCompletionSource,
+        endpoint_path: &str,
+        config: &mut ChatCompletionApiConfig,
         settings: &TauriTavernSettings,
         upstream_payload: &mut Value,
+        hints: prompt_caching_plan::PromptCachingRequestHints,
     ) -> Result<(), ApplicationError> {
         let cache_ttl = settings.models.claude.prompt_cache_ttl;
         if cache_ttl == PromptCacheTtl::Off {
@@ -445,11 +459,32 @@ impl ChatCompletionService {
             PromptCacheTtl::OneHour => "1h",
         };
 
-        match source {
-            ChatCompletionSource::Claude => {
+        let plan = prompt_caching_plan::resolve_prompt_caching_plan(
+            source,
+            endpoint_path,
+            config,
+            upstream_payload,
+            hints,
+        )?;
+        let Some(plan) = plan else {
+            return Ok(());
+        };
+
+        if prompt_caching::contains_cache_control(upstream_payload) {
+            return Err(ApplicationError::ValidationError(
+                "Claude prompt caching cannot be combined with manually supplied cache_control fields"
+                    .to_string(),
+            ));
+        }
+
+        match plan {
+            prompt_caching_plan::PromptCachingPlan::Claude {
+                key,
+                anthropic_beta_header_mode,
+            } => {
                 let previous = self
                     .prompt_cache_repository
-                    .load_prompt_digests(PromptCacheKey::Claude)
+                    .load_prompt_digests(key.clone())
                     .await
                     .map_err(ApplicationError::from)?;
                 let snapshot = prompt_caching::apply_claude_prompt_caching(
@@ -458,26 +493,15 @@ impl ChatCompletionService {
                     ttl,
                 );
                 self.prompt_cache_repository
-                    .save_prompt_digests(PromptCacheKey::Claude, snapshot)
+                    .save_prompt_digests(key, snapshot)
                     .await
                     .map_err(ApplicationError::from)?;
+                config.anthropic_beta_header_mode = anthropic_beta_header_mode;
             }
-            ChatCompletionSource::OpenRouter => {
-                let is_claude = upstream_payload
-                    .as_object()
-                    .and_then(|object| object.get("model"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .is_some_and(|model| {
-                        model.to_ascii_lowercase().starts_with("anthropic/claude")
-                    });
-                if !is_claude {
-                    return Ok(());
-                }
-
+            prompt_caching_plan::PromptCachingPlan::OpenRouterClaude { key } => {
                 let previous = self
                     .prompt_cache_repository
-                    .load_prompt_digests(PromptCacheKey::OpenRouterClaude)
+                    .load_prompt_digests(key.clone())
                     .await
                     .map_err(ApplicationError::from)?;
                 let snapshot = prompt_caching::apply_openrouter_claude_prompt_caching(
@@ -486,26 +510,17 @@ impl ChatCompletionService {
                     ttl,
                 );
                 self.prompt_cache_repository
-                    .save_prompt_digests(PromptCacheKey::OpenRouterClaude, snapshot)
+                    .save_prompt_digests(key, snapshot)
                     .await
                     .map_err(ApplicationError::from)?;
             }
-            ChatCompletionSource::NanoGpt => {
+            prompt_caching_plan::PromptCachingPlan::NanoGptClaude => {
                 apply_nanogpt_claude_cache_control(upstream_payload, ttl);
             }
-            _ => {}
         }
 
         Ok(())
     }
-}
-
-fn is_nanogpt_claude_model(model: &str) -> bool {
-    let model = model.trim().to_ascii_lowercase();
-    model.starts_with("claude-")
-        || model.starts_with("claude_")
-        || model.contains("/claude-")
-        || model.contains("/claude_")
 }
 
 fn apply_nanogpt_claude_cache_control(payload: &mut Value, ttl: &str) -> bool {
@@ -514,7 +529,7 @@ fn apply_nanogpt_claude_cache_control(payload: &mut Value, ttl: &str) -> bool {
         .and_then(|object| object.get("model"))
         .and_then(Value::as_str)
         .map(str::trim)
-        .is_some_and(is_nanogpt_claude_model);
+        .is_some_and(prompt_caching_plan::is_nanogpt_claude_model_name);
     if !is_claude {
         return false;
     }

@@ -491,7 +491,6 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                         endpoint_path,
                         payload,
                         "Custom Claude Messages",
-                        false,
                     )
                     .await
                 } else {
@@ -502,7 +501,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 cohere::generate(self, config, endpoint_path, payload).await
             }
             ChatCompletionSource::Claude => {
-                claude::generate(self, config, endpoint_path, payload, source_name, true).await
+                claude::generate(self, config, endpoint_path, payload, source_name).await
             }
             ChatCompletionSource::Makersuite => {
                 makersuite::generate(self, config, endpoint_path, payload).await
@@ -577,7 +576,6 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                         "Custom Claude Messages",
                         sender,
                         cancel,
-                        false,
                     )
                     .await
                 } else {
@@ -605,7 +603,6 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                     source_name,
                     sender,
                     cancel,
-                    true,
                 )
                 .await
             }
@@ -717,6 +714,8 @@ mod tests {
             api_key: "saved-secret".to_string(),
             authorization_header: Some("Bearer override".to_string()),
             extra_headers: HashMap::new(),
+            anthropic_beta_header_mode:
+                crate::domain::repositories::chat_completion_repository::AnthropicBetaHeaderMode::None,
         };
 
         let request = Client::new().get("https://example.com");

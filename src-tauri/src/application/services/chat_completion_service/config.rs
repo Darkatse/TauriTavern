@@ -9,7 +9,7 @@ use crate::application::dto::chat_completion_dto::{
 use crate::application::errors::ApplicationError;
 use crate::domain::models::secret::SecretKeys;
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionSource,
+    AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
 };
 use crate::domain::repositories::secret_repository::SecretRepository;
 
@@ -135,6 +135,7 @@ async fn resolve_api_config(
                 api_key,
                 authorization_header,
                 extra_headers,
+                anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
             })
         }
         _ => {
@@ -161,8 +162,16 @@ async fn resolve_api_config(
                 api_key,
                 authorization_header: None,
                 extra_headers: source_extra_headers(source),
+                anthropic_beta_header_mode: source_anthropic_beta_header_mode(source),
             })
         }
+    }
+}
+
+fn source_anthropic_beta_header_mode(source: ChatCompletionSource) -> AnthropicBetaHeaderMode {
+    match source {
+        ChatCompletionSource::Claude => AnthropicBetaHeaderMode::ClaudeDefaults,
+        _ => AnthropicBetaHeaderMode::None,
     }
 }
 
@@ -329,6 +338,7 @@ async fn resolve_vertexai_generate_api_config(
             api_key: String::new(),
             authorization_header: Some(format!("Bearer {}", proxy_password)),
             extra_headers,
+            anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
         });
     }
 
@@ -370,6 +380,7 @@ async fn resolve_vertexai_generate_api_config(
                 api_key,
                 authorization_header: None,
                 extra_headers,
+                anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
             })
         }
         "full" => {
@@ -392,6 +403,7 @@ async fn resolve_vertexai_generate_api_config(
                 api_key: String::new(),
                 authorization_header: Some(format!("Bearer {}", access_token)),
                 extra_headers,
+                anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
             })
         }
         other => Err(ApplicationError::ValidationError(format!(

@@ -548,6 +548,16 @@ fn common_prefix_len(previous: &[String], current: &[String]) -> usize {
     max_len
 }
 
+pub(super) fn contains_cache_control(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => {
+            object.contains_key("cache_control") || object.values().any(contains_cache_control)
+        }
+        Value::Array(array) => array.iter().any(contains_cache_control),
+        _ => false,
+    }
+}
+
 fn is_cache_control_eligible_block(block: &Value) -> bool {
     let Some(object) = block.as_object() else {
         return false;

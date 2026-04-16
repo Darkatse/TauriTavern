@@ -14,7 +14,7 @@
 在保持前端尽量沿用 SillyTavern 语义（`chat.completion` / tool loop / 事件流）前提下，为 `Custom` 入口新增三种“原生协议”变体：
 
 - **OpenAI Responses**：`/v1/responses`（支持 stream + tool calling）
-- **Claude Messages**：`/v1/messages`（Custom 变体默认不注入 `anthropic-beta`，适配第三方兼容端）
+- **Claude Messages**：`/v1/messages`（Custom 变体默认不注入 `anthropic-beta`；仅在用户显式启用 Claude prompt caching 时自动补充 caching 所需 header）
 - **Gemini Interactions**：`/v1beta/interactions`（支持 stream + tool calling + thought signature/native blocks 回放）
 
 核心原则：
@@ -131,7 +131,10 @@ signature / native blocks（关键契约）：
 
 header 策略（关键契约）：
 - **Custom Claude Messages 默认不自动添加 `anthropic-beta`**，避免第三方兼容端报错。
-- 用户可通过“附加参数/附加标头”自行传入 `anthropic-beta`（如确实需要）。
+- 当前新增显式 opt-in：只有当用户为 `custom_api_format=claude_messages` 勾选“Apply Claude Prompt Caching Strategy”且 TT 的 Claude Prompt Cache 未关闭时，后端才会：
+  - 复用 Claude prompt caching 断点策略
+  - 为请求自动补充 prompt caching 所需的 `anthropic-beta` caching header
+- 未勾选时，仍保持“仅透传用户自定义 headers”的兼容策略。
 
 streaming 语义：
 - 后端沿用 Claude 的 SSE `data:` JSON 事件透传（不做 chunk 归一化）
@@ -144,4 +147,4 @@ streaming 语义：
 1. **回滚兼容**：Custom 变体落盘必须保持 `chat_completion_source="custom"`，不要把 UI 选择值（如 `custom_openai_responses`）写入设置文件。
 2. **tool_call_id 透明性**：tool loop 不应假设 tool_call_id 是 OpenAI UUID；必须把它当作不透明字符串传递与存储。
 3. **native metadata 保真**（Gemini）：`message.extra.native` 必须端到端保存/回放，且不得“清洗未知字段”（否则签名链会断）。
-4. **Custom Claude 不注入 anthropic-beta**：该行为是为了兼容第三方；如需默认开启，应以显式配置而不是硬编码回退。
+4. **Custom Claude 不注入 anthropic-beta**：该行为是为了兼容第三方；现在只有显式 opt-in 的 prompt caching 会自动补 caching header，其他场景仍不得硬编码回退。

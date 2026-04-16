@@ -83,12 +83,21 @@ impl ChatCompletionSource {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnthropicBetaHeaderMode {
+    #[default]
+    None,
+    PromptCachingOnly,
+    ClaudeDefaults,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChatCompletionApiConfig {
     pub base_url: String,
     pub api_key: String,
     pub authorization_header: Option<String>,
     pub extra_headers: HashMap<String, String>,
+    pub anthropic_beta_header_mode: AnthropicBetaHeaderMode,
 }
 
 pub type ChatCompletionStreamSender = UnboundedSender<String>;

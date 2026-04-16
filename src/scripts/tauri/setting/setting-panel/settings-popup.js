@@ -849,7 +849,7 @@ export async function openTauriTavernSettingsPopup() {
             content.style.gap = '8px';
             content.innerHTML = `
                 <b data-i18n="Claude Prompt Cache">Claude Prompt Cache</b>
-                <div data-i18n="Prompt Cache help: scope">Applies to Claude and OpenRouter (anthropic/claude*) requests.</div>
+                <div data-i18n="Prompt Cache help: scope">Applies to Claude, OpenRouter (anthropic/claude*), and opted-in Custom Claude Messages requests.</div>
                 <div data-i18n="Prompt Cache help: breakpoint">When enabled, cache breakpoints are placed at the end of the prompt. TauriTavern also automatically adds a smart breakpoint at the last block that is identical to the previous request to improve cache hits.</div>
             `.trim();
             await callGenericPopup(content, POPUP_TYPE.TEXT, '', {

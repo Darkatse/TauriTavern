@@ -271,6 +271,7 @@ const sensitiveFields = [
     'custom_include_body',
     'custom_exclude_body',
     'custom_include_headers',
+    'custom_claude_prompt_caching',
     'vertexai_region',
     'vertexai_express_project_id',
     'azure_base_url',
@@ -327,6 +328,7 @@ export const settingsToUpdate = {
     custom_include_body: ['#custom_include_body', 'custom_include_body', false, true],
     custom_exclude_body: ['#custom_exclude_body', 'custom_exclude_body', false, true],
     custom_include_headers: ['#custom_include_headers', 'custom_include_headers', false, true],
+    custom_claude_prompt_caching: ['#custom_claude_prompt_caching', 'custom_claude_prompt_caching', true, true],
     custom_prompt_post_processing: ['#custom_prompt_post_processing', 'custom_prompt_post_processing', false, true],
     google_model: ['#model_google_select', 'google_model', false, true],
     vertexai_model: ['#model_vertexai_select', 'vertexai_model', false, true],
@@ -443,6 +445,7 @@ const default_settings = {
     custom_include_body: '',
     custom_exclude_body: '',
     custom_include_headers: '',
+    custom_claude_prompt_caching: false,
     openrouter_model: openrouter_website_model,
     openrouter_use_fallback: false,
     openrouter_group_models: false,
@@ -2758,6 +2761,9 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.custom_include_body = settings.custom_include_body;
         generate_data.custom_exclude_body = settings.custom_exclude_body;
         generate_data.custom_include_headers = settings.custom_include_headers;
+        generate_data.custom_claude_prompt_caching =
+            settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES
+            && Boolean(settings.custom_claude_prompt_caching);
     }
 
     if (settings.chat_completion_source === chat_completion_sources.COHERE) {
@@ -4183,6 +4189,14 @@ function updateCustomEndpointPreview() {
 
     $('#custom_endpoint_preview_suffix').text(suffix);
     $('#custom_endpoint_preview').text(`${base}${suffix}`);
+}
+
+function updateCustomClaudePromptCachingVisibility() {
+    const isVisible =
+        oai_settings.chat_completion_source === chat_completion_sources.CUSTOM
+        && oai_settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES;
+
+    $('#custom_claude_prompt_caching_section').toggle(isVisible);
 }
 
 function applyChatCompletionSourceSelection(selection) {
@@ -6750,6 +6764,7 @@ export function initOpenAI() {
         applyChatCompletionSourceSelection(String($(this).find(':selected').val()));
         toggleChatCompletionForms();
         updateCustomEndpointPreview();
+        updateCustomClaudePromptCachingVisibility();
         saveSettingsDebounced();
         reconnectOpenAi();
         forceCharacterEditorTokenize();
@@ -6866,6 +6881,11 @@ export function initOpenAI() {
     $('#custom_api_url_text').on('input', function () {
         oai_settings.custom_url = String($(this).val());
         updateCustomEndpointPreview();
+        saveSettingsDebounced();
+    });
+
+    $('#custom_claude_prompt_caching').on('input', function () {
+        oai_settings.custom_claude_prompt_caching = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
 

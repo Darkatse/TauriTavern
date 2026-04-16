@@ -3757,6 +3757,15 @@
                                     <span data-i18n="completions note prefix"></span><code id="custom_endpoint_preview_suffix"></code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
                                 </small>
                             </div>
+                            <div id="custom_claude_prompt_caching_section" style="display: none;">
+                                <label class="checkbox_label marginTopBot5" for="custom_claude_prompt_caching">
+                                    <input id="custom_claude_prompt_caching" type="checkbox" />
+                                    <span data-i18n="Apply Claude Prompt Caching Strategy">Apply Claude Prompt Caching Strategy</span>
+                                </label>
+                                <div class="toggle-description justifyLeft wide100p">
+                                    <span data-i18n="Apply Claude Prompt Caching Strategy Description">Opt in only if this endpoint supports Anthropic Claude prompt caching. TauriTavern will add Claude cache breakpoints and the required caching headers for Custom Claude Messages requests.</span>
+                                </div>
+                            </div>
                             <h4>
                                 <span data-i18n="Custom API Key">Custom API Key</span>
                                 <small data-i18n="(Optional)">(Optional)</small>

@@ -6,7 +6,8 @@ use serde_json::Value;
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
+    AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
@@ -58,7 +59,6 @@ pub(super) async fn generate(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-    auto_anthropic_beta_header: bool,
 ) -> Result<Value, DomainError> {
     let endpoint_path = if endpoint_path.trim().is_empty() {
         "/messages"
@@ -77,16 +77,7 @@ pub(super) async fn generate(
         .json(payload);
 
     let request = apply_claude_auth(request, config);
-    let request = if auto_anthropic_beta_header {
-        let request = apply_anthropic_beta_header(request, config, payload);
-        HttpChatCompletionRepository::apply_extra_headers_with_filter(
-            request,
-            &config.extra_headers,
-            |key, _| key.eq_ignore_ascii_case("anthropic-beta"),
-        )
-    } else {
-        HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers)
-    };
+    let request = apply_configured_anthropic_beta_headers(request, config, payload);
 
     let response = request.send().await.map_err(|error| {
         DomainError::InternalError(format!("Generation request failed: {error}"))
@@ -121,7 +112,6 @@ pub(super) async fn generate_stream(
     provider_name: &str,
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
-    auto_anthropic_beta_header: bool,
 ) -> Result<(), DomainError> {
     let endpoint_path = if endpoint_path.trim().is_empty() {
         "/messages"
@@ -140,16 +130,7 @@ pub(super) async fn generate_stream(
         .json(payload);
 
     let request = apply_claude_auth(request, config);
-    let request = if auto_anthropic_beta_header {
-        let request = apply_anthropic_beta_header(request, config, payload);
-        HttpChatCompletionRepository::apply_extra_headers_with_filter(
-            request,
-            &config.extra_headers,
-            |key, _| key.eq_ignore_ascii_case("anthropic-beta"),
-        )
-    } else {
-        HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers)
-    };
+    let request = apply_configured_anthropic_beta_headers(request, config, payload);
 
     let response = request.send().await.map_err(|error| {
         DomainError::InternalError(format!("Generation request failed: {error}"))
@@ -222,28 +203,42 @@ fn apply_claude_auth(request: RequestBuilder, config: &ChatCompletionApiConfig) 
     HttpChatCompletionRepository::apply_header_if_present(request, "x-api-key", &config.api_key)
 }
 
-fn apply_anthropic_beta_header(
+fn apply_configured_anthropic_beta_headers(
     request: RequestBuilder,
     config: &ChatCompletionApiConfig,
     payload: &Value,
 ) -> RequestBuilder {
-    let beta_values = build_anthropic_beta_values(&config.extra_headers, payload);
+    let beta_values = build_anthropic_beta_values(
+        &config.extra_headers,
+        payload,
+        config.anthropic_beta_header_mode,
+    );
 
     if beta_values.is_empty() {
-        return request;
+        return HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     }
 
-    request.header("anthropic-beta", beta_values.join(","))
+    let request = request.header("anthropic-beta", beta_values.join(","));
+    HttpChatCompletionRepository::apply_extra_headers_with_filter(
+        request,
+        &config.extra_headers,
+        |key, _| key.eq_ignore_ascii_case("anthropic-beta"),
+    )
 }
 
 fn build_anthropic_beta_values(
     extra_headers: &HashMap<String, String>,
     payload: &Value,
+    mode: AnthropicBetaHeaderMode,
 ) -> Vec<String> {
-    let mut beta_values = vec![
-        ANTHROPIC_BETA_OUTPUT_128K.to_string(),
-        ANTHROPIC_BETA_CONTEXT_1M.to_string(),
-    ];
+    let mut beta_values = match mode {
+        AnthropicBetaHeaderMode::None => Vec::new(),
+        AnthropicBetaHeaderMode::PromptCachingOnly => Vec::new(),
+        AnthropicBetaHeaderMode::ClaudeDefaults => vec![
+            ANTHROPIC_BETA_OUTPUT_128K.to_string(),
+            ANTHROPIC_BETA_CONTEXT_1M.to_string(),
+        ],
+    };
 
     for value in configured_anthropic_beta_values(extra_headers) {
         if !beta_values.iter().any(|existing| existing == &value) {
@@ -292,6 +287,7 @@ mod tests {
         ANTHROPIC_BETA_PROMPT_CACHING, build_anthropic_beta_values,
         configured_anthropic_beta_values,
     };
+    use crate::domain::repositories::chat_completion_repository::AnthropicBetaHeaderMode;
 
     #[test]
     fn detects_cache_control_recursively() {
@@ -333,7 +329,11 @@ mod tests {
         let headers = HashMap::new();
         let payload = json!({ "messages": [{"role": "user", "content": "hello"}] });
 
-        let beta_values = build_anthropic_beta_values(&headers, &payload);
+        let beta_values = build_anthropic_beta_values(
+            &headers,
+            &payload,
+            AnthropicBetaHeaderMode::ClaudeDefaults,
+        );
         assert!(beta_values.contains(&ANTHROPIC_BETA_OUTPUT_128K.to_string()));
         assert!(beta_values.contains(&ANTHROPIC_BETA_CONTEXT_1M.to_string()));
     }
@@ -350,7 +350,34 @@ mod tests {
             }]
         });
 
-        let beta_values = build_anthropic_beta_values(&headers, &payload);
+        let beta_values = build_anthropic_beta_values(
+            &headers,
+            &payload,
+            AnthropicBetaHeaderMode::ClaudeDefaults,
+        );
+        assert!(beta_values.contains(&ANTHROPIC_BETA_PROMPT_CACHING.to_string()));
+        assert!(beta_values.contains(&ANTHROPIC_BETA_EXTENDED_CACHE_TTL.to_string()));
+    }
+
+    #[test]
+    fn prompt_caching_only_mode_omits_non_caching_beta_values() {
+        let headers = HashMap::new();
+        let payload = json!({
+            "messages": [{
+                "content": [{
+                    "type": "text",
+                    "cache_control": { "type": "ephemeral", "ttl": "5m" }
+                }]
+            }]
+        });
+
+        let beta_values = build_anthropic_beta_values(
+            &headers,
+            &payload,
+            AnthropicBetaHeaderMode::PromptCachingOnly,
+        );
+        assert!(!beta_values.contains(&ANTHROPIC_BETA_OUTPUT_128K.to_string()));
+        assert!(!beta_values.contains(&ANTHROPIC_BETA_CONTEXT_1M.to_string()));
         assert!(beta_values.contains(&ANTHROPIC_BETA_PROMPT_CACHING.to_string()));
         assert!(beta_values.contains(&ANTHROPIC_BETA_EXTENDED_CACHE_TTL.to_string()));
     }
