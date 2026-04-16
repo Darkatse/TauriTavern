@@ -734,10 +734,10 @@ fn claude_allows_temperature_and_top_p(model: &str) -> bool {
 }
 
 fn requires_claude_prefill_role_fix(model: &str) -> bool {
-    model
-        .trim()
-        .to_ascii_lowercase()
-        .starts_with("claude-opus-4-6")
+    let model = model.trim().to_ascii_lowercase();
+    ["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6"]
+        .iter()
+        .any(|prefix| model.starts_with(prefix))
 }
 
 fn calculate_claude_budget_tokens(
@@ -835,33 +835,35 @@ mod tests {
     }
 
     #[test]
-    fn claude_opus_4_6_prefill_is_converted_to_user_without_thinking() {
-        let payload = json!({
-            "model": "claude-opus-4-6",
-            "messages": [{"role": "user", "content": "hello"}],
-            "assistant_prefill": "prefill",
-            "max_tokens": 1000,
-            "reasoning_effort": "auto",
-            "stream": false
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
+    fn claude_models_without_prefill_support_convert_prefill_to_user_without_thinking() {
+        for model in ["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6"] {
+            let payload = json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "assistant_prefill": "prefill",
+                "max_tokens": 1000,
+                "reasoning_effort": "auto",
+                "stream": false
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
 
-        let (_, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
+            let (_, upstream) = build(payload).expect("build should succeed");
+            let body = upstream.as_object().expect("body must be object");
 
-        assert!(body.get("thinking").is_none());
+            assert!(body.get("thinking").is_none(), "{model} should not enable thinking");
 
-        let last_role = body
-            .get("messages")
-            .and_then(Value::as_array)
-            .and_then(|messages| messages.last())
-            .and_then(Value::as_object)
-            .and_then(|message| message.get("role"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        assert_eq!(last_role, "user");
+            let last_role = body
+                .get("messages")
+                .and_then(Value::as_array)
+                .and_then(|messages| messages.last())
+                .and_then(Value::as_object)
+                .and_then(|message| message.get("role"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            assert_eq!(last_role, "user", "{model} should convert prefill to user");
+        }
     }
 
     #[test]
