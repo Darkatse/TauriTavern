@@ -421,29 +421,23 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         source: ChatCompletionSource,
         config: &ChatCompletionApiConfig,
     ) -> Result<Value, DomainError> {
+        let source_name = source.display_name();
+
         match source {
-            ChatCompletionSource::OpenAi => openai::list_models(self, config, "OpenAI").await,
-            ChatCompletionSource::OpenRouter => {
-                openai::list_models(self, config, "OpenRouter").await
-            }
-            ChatCompletionSource::Custom => {
-                openai::list_models(self, config, "Custom OpenAI").await
-            }
-            ChatCompletionSource::DeepSeek => openai::list_models(self, config, "DeepSeek").await,
+            ChatCompletionSource::OpenAi
+            | ChatCompletionSource::OpenRouter
+            | ChatCompletionSource::Custom
+            | ChatCompletionSource::DeepSeek
+            | ChatCompletionSource::Groq
+            | ChatCompletionSource::Moonshot
+            | ChatCompletionSource::Chutes
+            | ChatCompletionSource::SiliconFlow
+            | ChatCompletionSource::Zai => openai::list_models(self, config, source_name).await,
             ChatCompletionSource::Cohere => cohere::list_models(self, config).await,
-            ChatCompletionSource::Groq => openai::list_models(self, config, "Groq").await,
-            ChatCompletionSource::Moonshot => {
-                openai::list_models(self, config, "Moonshot AI").await
-            }
             ChatCompletionSource::NanoGpt => {
-                openai::list_models_with_path(self, config, "NanoGPT", "/models?detailed=true")
+                openai::list_models_with_path(self, config, source_name, "/models?detailed=true")
                     .await
             }
-            ChatCompletionSource::Chutes => openai::list_models(self, config, "Chutes").await,
-            ChatCompletionSource::SiliconFlow => {
-                openai::list_models(self, config, "SiliconFlow").await
-            }
-            ChatCompletionSource::Zai => openai::list_models(self, config, "Z.AI (GLM)").await,
             ChatCompletionSource::Claude => claude::list_models(self, config).await,
             ChatCompletionSource::Makersuite => makersuite::list_models(self, config).await,
             ChatCompletionSource::VertexAi => vertexai::list_models(self, config).await,
@@ -457,12 +451,19 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         endpoint_path: &str,
         payload: &Value,
     ) -> Result<Value, DomainError> {
+        let source_name = source.display_name();
+
         match source {
-            ChatCompletionSource::OpenAi => {
-                openai::generate(self, config, endpoint_path, payload, "OpenAI").await
-            }
-            ChatCompletionSource::OpenRouter => {
-                openai::generate(self, config, endpoint_path, payload, "OpenRouter").await
+            ChatCompletionSource::OpenAi
+            | ChatCompletionSource::OpenRouter
+            | ChatCompletionSource::DeepSeek
+            | ChatCompletionSource::Groq
+            | ChatCompletionSource::Moonshot
+            | ChatCompletionSource::NanoGpt
+            | ChatCompletionSource::Chutes
+            | ChatCompletionSource::SiliconFlow
+            | ChatCompletionSource::Zai => {
+                openai::generate(self, config, endpoint_path, payload, source_name).await
             }
             ChatCompletionSource::Custom => {
                 if endpoint_path == "/responses" {
@@ -494,35 +495,14 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                     )
                     .await
                 } else {
-                    openai::generate(self, config, endpoint_path, payload, "Custom OpenAI").await
+                    openai::generate(self, config, endpoint_path, payload, source_name).await
                 }
-            }
-            ChatCompletionSource::DeepSeek => {
-                openai::generate(self, config, endpoint_path, payload, "DeepSeek").await
             }
             ChatCompletionSource::Cohere => {
                 cohere::generate(self, config, endpoint_path, payload).await
             }
-            ChatCompletionSource::Groq => {
-                openai::generate(self, config, endpoint_path, payload, "Groq").await
-            }
-            ChatCompletionSource::Moonshot => {
-                openai::generate(self, config, endpoint_path, payload, "Moonshot AI").await
-            }
-            ChatCompletionSource::NanoGpt => {
-                openai::generate(self, config, endpoint_path, payload, "NanoGPT").await
-            }
-            ChatCompletionSource::Chutes => {
-                openai::generate(self, config, endpoint_path, payload, "Chutes").await
-            }
-            ChatCompletionSource::SiliconFlow => {
-                openai::generate(self, config, endpoint_path, payload, "SiliconFlow").await
-            }
-            ChatCompletionSource::Zai => {
-                openai::generate(self, config, endpoint_path, payload, "Z.AI (GLM)").await
-            }
             ChatCompletionSource::Claude => {
-                claude::generate(self, config, endpoint_path, payload, "Claude", true).await
+                claude::generate(self, config, endpoint_path, payload, source_name, true).await
             }
             ChatCompletionSource::Makersuite => {
                 makersuite::generate(self, config, endpoint_path, payload).await
@@ -542,26 +522,24 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         sender: ChatCompletionStreamSender,
         cancel: ChatCompletionCancelReceiver,
     ) -> Result<(), DomainError> {
+        let source_name = source.display_name();
+
         match source {
-            ChatCompletionSource::OpenAi => {
+            ChatCompletionSource::OpenAi
+            | ChatCompletionSource::OpenRouter
+            | ChatCompletionSource::DeepSeek
+            | ChatCompletionSource::Groq
+            | ChatCompletionSource::Moonshot
+            | ChatCompletionSource::NanoGpt
+            | ChatCompletionSource::Chutes
+            | ChatCompletionSource::SiliconFlow
+            | ChatCompletionSource::Zai => {
                 openai::generate_stream(
                     self,
                     config,
                     endpoint_path,
                     payload,
-                    "OpenAI",
-                    sender,
-                    cancel,
-                )
-                .await
-            }
-            ChatCompletionSource::OpenRouter => {
-                openai::generate_stream(
-                    self,
-                    config,
-                    endpoint_path,
-                    payload,
-                    "OpenRouter",
+                    source_name,
                     sender,
                     cancel,
                 )
@@ -608,99 +586,15 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                         config,
                         endpoint_path,
                         payload,
-                        "Custom OpenAI",
+                        source_name,
                         sender,
                         cancel,
                     )
                     .await
                 }
             }
-            ChatCompletionSource::DeepSeek => {
-                openai::generate_stream(
-                    self,
-                    config,
-                    endpoint_path,
-                    payload,
-                    "DeepSeek",
-                    sender,
-                    cancel,
-                )
-                .await
-            }
             ChatCompletionSource::Cohere => {
                 cohere::generate_stream(self, config, endpoint_path, payload, sender, cancel).await
-            }
-            ChatCompletionSource::Groq => {
-                openai::generate_stream(
-                    self,
-                    config,
-                    endpoint_path,
-                    payload,
-                    "Groq",
-                    sender,
-                    cancel,
-                )
-                .await
-            }
-            ChatCompletionSource::Moonshot => {
-                openai::generate_stream(
-                    self,
-                    config,
-                    endpoint_path,
-                    payload,
-                    "Moonshot AI",
-                    sender,
-                    cancel,
-                )
-                .await
-            }
-            ChatCompletionSource::NanoGpt => {
-                openai::generate_stream(
-                    self,
-                    config,
-                    endpoint_path,
-                    payload,
-                    "NanoGPT",
-                    sender,
-                    cancel,
-                )
-                .await
-            }
-            ChatCompletionSource::Chutes => {
-                openai::generate_stream(
-                    self,
-                    config,
-                    endpoint_path,
-                    payload,
-                    "Chutes",
-                    sender,
-                    cancel,
-                )
-                .await
-            }
-            ChatCompletionSource::SiliconFlow => {
-                openai::generate_stream(
-                    self,
-                    config,
-                    endpoint_path,
-                    payload,
-                    "SiliconFlow",
-                    sender,
-                    cancel,
-                )
-                .await
-            }
-            ChatCompletionSource::Zai => {
-                openai::generate_stream(
-                    self,
-                    config,
-                    endpoint_path,
-                    payload,
-                    "Z.AI (GLM)",
-                    sender,
-                    cancel,
-                )
-                .await
             }
             ChatCompletionSource::Claude => {
                 claude::generate_stream(
@@ -708,7 +602,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                     config,
                     endpoint_path,
                     payload,
-                    "Claude",
+                    source_name,
                     sender,
                     cancel,
                     true,

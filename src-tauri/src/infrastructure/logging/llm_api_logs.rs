@@ -371,7 +371,7 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
             timestamp_ms: started_at_ms,
             level,
             ok,
-            source: source.to_string(),
+            source: source.key().to_string(),
             model,
             endpoint,
             duration_ms,
@@ -495,7 +495,7 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
             timestamp_ms: started_at_ms,
             level,
             ok,
-            source: source.to_string(),
+            source: source.key().to_string(),
             model,
             endpoint,
             duration_ms,
@@ -521,28 +521,6 @@ fn stream_readable_source(
     }
 
     source
-}
-
-impl ToString for ChatCompletionSource {
-    fn to_string(&self) -> String {
-        match self {
-            ChatCompletionSource::OpenAi => "openai",
-            ChatCompletionSource::OpenRouter => "openrouter",
-            ChatCompletionSource::Custom => "custom",
-            ChatCompletionSource::Claude => "claude",
-            ChatCompletionSource::Makersuite => "makersuite",
-            ChatCompletionSource::VertexAi => "vertexai",
-            ChatCompletionSource::DeepSeek => "deepseek",
-            ChatCompletionSource::Cohere => "cohere",
-            ChatCompletionSource::Groq => "groq",
-            ChatCompletionSource::Moonshot => "moonshot",
-            ChatCompletionSource::NanoGpt => "nanogpt",
-            ChatCompletionSource::Chutes => "chutes",
-            ChatCompletionSource::SiliconFlow => "siliconflow",
-            ChatCompletionSource::Zai => "zai",
-        }
-        .to_string()
-    }
 }
 
 struct StreamReadableCollector {

@@ -81,14 +81,9 @@ export function registerContentRoutes(router, context, { jsonResponse }) {
             return jsonResponse({ error: 'Import URL is not whitelisted' }, 403);
         }
 
-        let downloadResult;
-        try {
-            downloadResult = await context.safeInvoke('download_external_import_url', {
-                url: targetUrl.toString(),
-            });
-        } catch {
-            return jsonResponse({ error: 'Unable to download external content' }, 502);
-        }
+        const downloadResult = await context.safeInvoke('download_external_import_url', {
+            url: targetUrl.toString(),
+        });
 
         const contentType = String(downloadResult?.mimeType || '');
         if (!isPngResponse(targetUrl, contentType)) {

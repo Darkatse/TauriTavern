@@ -32,6 +32,15 @@ let startupUpdatePopupShown = false;
 let tauriTavernSettingsCache = null;
 let tauriTavernSettingsPromise = null;
 
+function resolveIosUpdateCapabilities() {
+    const report = window.__TAURITAVERN__?.iosPolicy;
+    if (!report || report.scope !== 'ios') {
+        return null;
+    }
+
+    return report.capabilities?.updates ?? null;
+}
+
 function localize(key, fallback) {
     return translate(fallback, key);
 }
@@ -244,6 +253,17 @@ async function onCheckUpdateClick() {
         return;
     }
 
+    const updateCaps = resolveIosUpdateCapabilities();
+    if (updateCaps && updateCaps.manual_check === false) {
+        globalThis.toastr?.error?.(
+            localize(
+                'ttv_version.check_update_disabled',
+                'Manual update checking is disabled by your iOS policy.',
+            ),
+        );
+        return;
+    }
+
     const $btn = $('#tauritavern_check_update');
     const $icon = $btn.find('i');
     const $text = $btn.find('span');
@@ -435,6 +455,12 @@ async function runStartupUpdateCheck() {
 }
 
 eventSource.once(event_types.APP_READY, () => {
+    const updateCaps = resolveIosUpdateCapabilities();
+    if (updateCaps && updateCaps.startup_check === false) {
+        console.debug('Startup update check skipped: disabled by iOS policy');
+        return;
+    }
+
     void runStartupUpdateCheck();
 });
 
@@ -447,7 +473,24 @@ jQuery(async () => {
     const html = await renderExtensionTemplateAsync(MODULE_NAME, 'settings', LINKS);
     container.append(html);
     $('#tauritavern_export_debug_bundle').on('click', () => void onExportDebugBundleClick());
-    $('#tauritavern_check_update').on('click', onCheckUpdateClick);
+    const updateCaps = resolveIosUpdateCapabilities();
+    if (updateCaps && updateCaps.manual_check === false) {
+        $('#tauritavern_check_update').remove();
+
+        const compatRow = document.getElementById('ttv-compat-row');
+        if (!(compatRow instanceof HTMLElement)) {
+            throw new Error('[TauriTavern][iOSPolicy] ttv-compat-row not found');
+        }
+        compatRow.hidden = true;
+
+        const discordLink = document.getElementById('ttv-discord-link');
+        if (!(discordLink instanceof HTMLElement)) {
+            throw new Error('[TauriTavern][iOSPolicy] ttv-discord-link not found');
+        }
+        discordLink.hidden = true;
+    } else {
+        $('#tauritavern_check_update').on('click', onCheckUpdateClick);
+    }
     $('#tauritavern_update_dismiss').on('click', hideUpdateResult);
     container.on('click', 'a[target="_blank"]', onExternalLinkClick);
 

@@ -2791,6 +2791,7 @@
     "When enabled, previews in the newest message automatically replace the current last message view.": "啟用後，最新訊息中的預覽會自動取代目前最後一則訊息的顯示。",
     "Data Migration": "資料遷移",
     "Import a SillyTavern data zip archive and migrate it to TauriTavern.": "匯入 SillyTavern 的 data 壓縮檔並遷移至 TauriTavern。",
+    "Import a TauriTavern data zip archive from another device and migrate it to this TauriTavern.": "從其他裝置匯入 TauriTavern 的 data 壓縮檔並遷移至此 TauriTavern。",
     "Imported user handles are normalized to default-user.": "匯入的使用者代號會統一正規化為 default-user。",
     "Import Data Zip": "匯入資料壓縮檔",
     "Export Current Data": "匯出目前資料",

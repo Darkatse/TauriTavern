@@ -5,14 +5,25 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::domain::models::lan_sync::{LanSyncPairedDevice, LanSyncStatus, LanSyncSyncMode};
-use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::commands::helpers::{
+    ensure_ios_policy_allows, log_command, map_command_error,
+};
 use crate::presentation::errors::CommandError;
+
+fn ensure_lan_sync_allowed(app_state: &AppState) -> Result<(), CommandError> {
+    ensure_ios_policy_allows(
+        &app_state.ios_policy,
+        app_state.ios_policy.capabilities.sync.lan,
+        "sync.lan",
+    )
+}
 
 #[tauri::command]
 pub async fn lan_sync_get_status(
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<LanSyncStatus, CommandError> {
     log_command("lan_sync_get_status");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
@@ -26,6 +37,7 @@ pub async fn lan_sync_start_server(
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<LanSyncStatus, CommandError> {
     log_command("lan_sync_start_server");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
@@ -37,6 +49,7 @@ pub async fn lan_sync_start_server(
 #[tauri::command]
 pub async fn lan_sync_stop_server(app_state: State<'_, Arc<AppState>>) -> Result<(), CommandError> {
     log_command("lan_sync_stop_server");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
@@ -59,6 +72,7 @@ pub async fn lan_sync_enable_pairing(
     address: Option<String>,
 ) -> Result<LanSyncPairingInfoDto, CommandError> {
     log_command("lan_sync_enable_pairing");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
@@ -79,6 +93,7 @@ pub async fn lan_sync_get_pairing_info(
     address: String,
 ) -> Result<LanSyncPairingInfoDto, CommandError> {
     log_command("lan_sync_get_pairing_info");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
@@ -120,6 +135,7 @@ pub async fn lan_sync_request_pairing(
     pair_uri: String,
 ) -> Result<LanSyncPairedDeviceDto, CommandError> {
     log_command("lan_sync_request_pairing");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
@@ -136,6 +152,7 @@ pub async fn lan_sync_confirm_pairing(
     accept: bool,
 ) -> Result<(), CommandError> {
     log_command("lan_sync_confirm_pairing");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
@@ -149,6 +166,7 @@ pub async fn lan_sync_list_devices(
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<LanSyncPairedDeviceDto>, CommandError> {
     log_command("lan_sync_list_devices");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
@@ -169,6 +187,7 @@ pub async fn lan_sync_remove_device(
     device_id: String,
 ) -> Result<(), CommandError> {
     log_command("lan_sync_remove_device");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
@@ -183,6 +202,7 @@ pub async fn lan_sync_sync_from_device(
     device_id: String,
 ) -> Result<(), CommandError> {
     log_command("lan_sync_sync_from_device");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
@@ -197,6 +217,7 @@ pub async fn lan_sync_push_to_device(
     device_id: String,
 ) -> Result<(), CommandError> {
     log_command("lan_sync_push_to_device");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
@@ -212,6 +233,7 @@ pub async fn lan_sync_set_sync_mode(
     persist: bool,
 ) -> Result<(), CommandError> {
     log_command("lan_sync_set_sync_mode");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state
         .lan_sync_service
@@ -225,6 +247,7 @@ pub async fn lan_sync_clear_sync_mode_override(
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     log_command("lan_sync_clear_sync_mode_override");
+    ensure_lan_sync_allowed(&app_state)?;
 
     app_state.lan_sync_service.clear_sync_mode_override().await;
     Ok(())

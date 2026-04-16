@@ -26,6 +26,8 @@
     "android:build": "tauri android build",
     "ios:dev": "tauri ios dev",
     "ios:build": "tauri ios build",
+    "ios:dev:policy": "node scripts/ios-policy.mjs dev",
+    "ios:build:policy": "node scripts/ios-policy.mjs build",
     "fastools:build": "cargo build --release --manifest-path fastools/Cargo.toml",
     "fastools:run": "cargo run --manifest-path fastools/Cargo.toml"
   },

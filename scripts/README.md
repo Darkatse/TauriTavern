@@ -53,6 +53,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\export-sillytavern-migration.
   用 `rg` 快速审计若干运行时依赖锚点，属于开发期排查辅助脚本。
 - `tauri-ios-xcode-script.sh`
   包装 `tauri ios xcode-script`，补齐 Xcode GUI 构建环境中的 PATH / Node / pnpm，并在构建后处理 iOS 图标。
+- `ios-policy.mjs`
+  iOS Dev/Build 包装脚本：为构建过程注入 `TAURITAVERN_IOS_POLICY_PROFILE`，并在 `ios_internal_full` / `ios_external_beta` 构建时自动使用 `--export-method app-store-connect`。
 - `ios-opaque-app-icons.swift`
   将 iOS App Icon PNG 展平为不透明背景，供 `tauri-ios-xcode-script.sh` 调用。
 - `ci/setup-macos-signing.sh`

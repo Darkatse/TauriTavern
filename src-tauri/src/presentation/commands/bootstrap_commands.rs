@@ -74,6 +74,7 @@ pub async fn get_bootstrap_snapshot(
     )?;
 
     Ok(BootstrapSnapshotDto {
+        ios_policy: app_state.ios_policy.clone(),
         settings,
         characters,
         groups,

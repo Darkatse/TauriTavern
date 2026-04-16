@@ -5,7 +5,9 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::stable_diffusion_dto::SdRouteResponseDto;
-use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::commands::helpers::{
+    ensure_ios_policy_allows, log_command, map_command_error,
+};
 use crate::presentation::errors::CommandError;
 
 #[tauri::command]
@@ -18,6 +20,12 @@ pub async fn sd_handle(
     let request_id = request_id.trim().to_string();
     validate_request_id(&request_id)?;
     log_command(format!("sd_handle {} {}", request_id, path));
+
+    ensure_ios_policy_allows(
+        &app_state.ios_policy,
+        app_state.ios_policy.capabilities.ai.image_generation,
+        "ai.image_generation",
+    )?;
 
     app_state
         .stable_diffusion_service

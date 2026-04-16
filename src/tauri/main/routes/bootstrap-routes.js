@@ -4,6 +4,7 @@ export function registerBootstrapRoutes(router, context, { jsonResponse }) {
         const normalizedCharacters = snapshot.characters.map((character) => context.normalizeCharacter(character));
 
         return jsonResponse({
+            ios_policy: snapshot.ios_policy,
             settings: snapshot.settings,
             characters: normalizedCharacters,
             groups: snapshot.groups,

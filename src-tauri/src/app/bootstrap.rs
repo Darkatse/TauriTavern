@@ -101,6 +101,7 @@ pub(super) struct AppServices {
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
     pub update_service: Arc<UpdateService>,
+    pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
 }
 
 struct AppRepositories {
@@ -145,6 +146,10 @@ pub(super) async fn build_services(
         .settings_repository
         .load_tauritavern_settings()
         .await?;
+    let ios_policy = crate::domain::ios_policy::resolve_ios_policy_activation_report(
+        crate::domain::ios_policy::IosPolicyScope::for_current_platform(),
+        tauritavern_settings.ios_policy.as_ref(),
+    )?;
 
     let content_service = Arc::new(ContentService::new(repositories.content_repository.clone()));
     let extension_service = Arc::new(ExtensionService::new(
@@ -168,6 +173,7 @@ pub(super) async fn build_services(
         repositories.secret_repository.clone(),
         repositories.settings_repository.clone(),
         repositories.prompt_cache_repository.clone(),
+        ios_policy.clone(),
     ));
     let tokenization_service =
         Arc::new(TokenizationService::new(repositories.tokenizer_repository));
@@ -239,6 +245,7 @@ pub(super) async fn build_services(
         lan_sync_service,
         tt_sync_service,
         update_service,
+        ios_policy,
     })
 }
 

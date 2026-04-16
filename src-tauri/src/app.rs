@@ -26,6 +26,7 @@ use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
+use crate::infrastructure::logging::logger;
 use crate::infrastructure::paths::RuntimePaths;
 
 mod bootstrap;
@@ -55,6 +56,7 @@ pub struct AppState {
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
     pub update_service: Arc<UpdateService>,
+    pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
 }
 
 impl AppState {
@@ -101,6 +103,7 @@ impl AppState {
             lan_sync_service: services.lan_sync_service,
             tt_sync_service: services.tt_sync_service,
             update_service: services.update_service,
+            ios_policy: services.ios_policy,
         })
     }
 
@@ -144,7 +147,10 @@ pub fn spawn_initialization(app_handle: AppHandle, runtime_paths: RuntimePaths) 
                 }
             }
             Err(error) => {
-                tracing::error!("Failed to initialize application state: {}", error);
+                logger::error(&format!(
+                    "Failed to initialize application state: {}",
+                    error
+                ));
 
                 match app_handle.emit("app-error", error.to_string()) {
                     Ok(_) => {}

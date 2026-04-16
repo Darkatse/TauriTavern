@@ -3,6 +3,7 @@
 import { getActiveChatSnapshot } from '../adapters/st/active-chat-ref.js';
 import { getChatHistoryBootstrapModeName } from '../services/chat-history/chat-history-mode-state.js';
 import { createChatSearchMessages } from './chat-search-messages.js';
+import { mustArray, mustNumber, normalizeChatRef, parseJsonLines } from './chat-utils.js';
 
 /**
  * @typedef {{ kind: 'character'; characterId: string; fileName: string }} CharacterChatRef
@@ -17,75 +18,6 @@ import { createChatSearchMessages } from './chat-search-messages.js';
  *   hasMoreBefore: boolean;
  * }} ChatHistoryPage
  */
-
-/**
- * @param {any[]} lines
- * @returns {any[]}
- */
-function parseJsonLines(lines) {
-    return lines.map((line) => JSON.parse(String(line)));
-}
-
-/**
- * @template T
- * @param {unknown} value
- * @param {string} label
- * @returns {T[]}
- */
-function mustArray(value, label) {
-    if (!Array.isArray(value)) {
-        throw new Error(`${label} must be an array`);
-    }
-    return /** @type {T[]} */ (value);
-}
-
-/**
- * @param {unknown} value
- * @param {string} label
- * @returns {number}
- */
-function mustNumber(value, label) {
-    const num = typeof value === 'number' ? value : Number(value);
-    if (!Number.isFinite(num)) {
-        throw new Error(`${label} must be a finite number`);
-    }
-    return num;
-}
-
-/** @param {unknown} value */
-function stripJsonl(value) {
-    return String(value || '').trim().replace(/\.jsonl$/i, '');
-}
-
-/**
- * @param {any} ref
- * @returns {ChatRef}
- */
-function normalizeChatRef(ref) {
-    if (!ref || typeof ref !== 'object') {
-        throw new Error('ChatRef must be an object');
-    }
-
-    const kind = String(ref.kind || '').trim();
-    if (kind === 'character') {
-        const characterId = String(ref.characterId || '').trim();
-        const fileName = stripJsonl(ref.fileName);
-        if (!characterId || !fileName) {
-            throw new Error('Character ChatRef requires characterId and fileName');
-        }
-        return { kind: 'character', characterId, fileName };
-    }
-
-    if (kind === 'group') {
-        const chatId = stripJsonl(ref.chatId);
-        if (!chatId) {
-            throw new Error('Group ChatRef requires chatId');
-        }
-        return { kind: 'group', chatId };
-    }
-
-    throw new Error(`Unsupported ChatRef kind: ${kind}`);
-}
 
 /**
  * @param {{ safeInvoke: (command: any, args?: any) => Promise<any>; ref: ChatRef }} deps

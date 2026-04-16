@@ -153,8 +153,7 @@ async fn resolve_api_config(
                     )
                 })?;
 
-                read_required_secret(secret_repository, secret_key, source_display_name(source))
-                    .await?
+                read_required_secret(secret_repository, secret_key, source.display_name()).await?
             };
 
             Ok(ChatCompletionApiConfig {
@@ -300,25 +299,6 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
         ChatCompletionSource::SiliconFlow => Some(SecretKeys::SILICONFLOW),
         ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
         ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
-    }
-}
-
-fn source_display_name(source: ChatCompletionSource) -> &'static str {
-    match source {
-        ChatCompletionSource::OpenAi => "OpenAI",
-        ChatCompletionSource::OpenRouter => "OpenRouter",
-        ChatCompletionSource::Claude => "Claude",
-        ChatCompletionSource::Makersuite => "Google Gemini",
-        ChatCompletionSource::VertexAi => "Google Vertex AI",
-        ChatCompletionSource::DeepSeek => "DeepSeek",
-        ChatCompletionSource::Cohere => "Cohere",
-        ChatCompletionSource::Groq => "Groq",
-        ChatCompletionSource::Moonshot => "Moonshot AI",
-        ChatCompletionSource::NanoGpt => "NanoGPT",
-        ChatCompletionSource::Chutes => "Chutes",
-        ChatCompletionSource::SiliconFlow => "SiliconFlow",
-        ChatCompletionSource::Zai => "Z.AI (GLM)",
-        ChatCompletionSource::Custom => "Custom OpenAI",
     }
 }
 

@@ -13,8 +13,10 @@ fn main() {
     println!("cargo:rerun-if-changed=../.git/refs");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
     println!("cargo:rerun-if-env-changed=GITHUB_SHA");
+    println!("cargo:rerun-if-env-changed=TAURITAVERN_IOS_POLICY_PROFILE");
 
     emit_git_build_metadata();
+    emit_ios_policy_build_profile();
 
     if let Err(error) = generate_resource_artifacts() {
         panic!("Failed to generate resource artifacts: {}", error);
@@ -45,6 +47,28 @@ fn emit_git_build_metadata() {
         "cargo:rustc-env=TAURITAVERN_GIT_REVISION={}",
         git_revision.unwrap_or_default()
     );
+}
+
+fn emit_ios_policy_build_profile() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    let is_ios_target = target.contains("-apple-ios");
+
+    let raw_profile = std::env::var("TAURITAVERN_IOS_POLICY_PROFILE").unwrap_or_default();
+    let normalized = raw_profile.trim();
+    let profile = if is_ios_target { normalized } else { "" };
+
+    if is_ios_target && !profile.is_empty() {
+        match profile {
+            "full" | "ios_internal_full" | "ios_external_beta" => {}
+            value => {
+                panic!(
+                    "TAURITAVERN_IOS_POLICY_PROFILE has unsupported value {value:?}. Expected one of: full, ios_internal_full, ios_external_beta."
+                );
+            }
+        }
+    }
+
+    println!("cargo:rustc-env=TAURITAVERN_IOS_POLICY_PROFILE={}", profile);
 }
 
 fn run_git_command(args: &[&str]) -> Option<String> {

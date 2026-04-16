@@ -150,10 +150,24 @@ pub async fn run() {
             app.manage(user_dirs.clone());
 
             let tauritavern_settings = load_tauritavern_settings(&runtime_paths.data_root)?;
+            let ios_policy = crate::domain::ios_policy::resolve_ios_policy_activation_report(
+                crate::domain::ios_policy::IosPolicyScope::for_current_platform(),
+                tauritavern_settings.ios_policy.as_ref(),
+            )?;
             let thumbnail_policy = std::sync::Arc::new(ThumbnailEndpointPolicy::new(
                 tauritavern_settings.avatar_persona_original_images_enabled,
             ));
             app.manage(thumbnail_policy.clone());
+
+            if ios_policy.scope == crate::domain::ios_policy::IosPolicyScope::Ios
+                && tauritavern_settings.request_proxy.enabled
+                && !ios_policy.capabilities.network.request_proxy
+            {
+                return Err(Box::new(crate::domain::errors::DomainError::InvalidData(
+                    "iOS policy disabled capability: network.request_proxy".to_string(),
+                )));
+            }
+
             http_client_pool.apply_request_proxy_settings(&tauritavern_settings.request_proxy)?;
             llm_api_log_store.apply_settings(tauritavern_settings.dev.effective_llm_api_keep());
             let _main_window =

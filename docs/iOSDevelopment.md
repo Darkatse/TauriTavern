@@ -2,6 +2,8 @@
 
 本文档记录当前 iOS 端开发中已经踩过的关键问题、根因分析、已落地方案，以及对应的架构改动。目标是避免重复踩坑，并确保移动端样式契约（`--tt-inset-*`）在 iOS 上可预测、可维护。
 
+补充：iOS/iPadOS 的 **分发 Policy（profile + capabilities snapshot）** 属于“合规裁剪/能力分级”问题域，其当前实现快照与维护约束已收敛到 `docs/CurrentState/iOSPolicy.md`，本文件仍聚焦 WKWebView 行为差异与 iOS-only 桥接。
+
 ## 1. WKWebView safe-area 自动 inset 导致底部死区
 
 ### 1.1 现象
@@ -170,3 +172,9 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 ### 4.4 支持边界
 
 - 该能力依赖 iOS 16 的 app-embedded WKWebView Fullscreen API，因此项目 iOS 支持线提升到 `iOS 16+`。
+
+## 5. iOS 分发 Policy（当前状态）
+
+iOS 外测/内测分发裁剪与能力分级已落地为 iOS-only 的 `ios_policy` 运行时系统（可被导入 `tauritavern-settings.json` 覆盖 profile/能力边界，且 iOS 上 fail-fast、桌面端忽略）。
+
+- 当前实现快照：`docs/CurrentState/iOSPolicy.md`

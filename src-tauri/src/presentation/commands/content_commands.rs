@@ -6,7 +6,9 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
-use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::commands::helpers::{
+    ensure_ios_policy_allows, log_command, map_command_error,
+};
 use crate::presentation::errors::CommandError;
 
 #[tauri::command]
@@ -48,9 +50,16 @@ pub struct ExternalImportDownloadResult {
 #[tauri::command]
 pub async fn download_external_import_url(
     url: String,
+    app_state: State<'_, Arc<AppState>>,
     http_clients: State<'_, Arc<HttpClientPool>>,
 ) -> Result<ExternalImportDownloadResult, CommandError> {
     log_command("download_external_import_url");
+
+    ensure_ios_policy_allows(
+        &app_state.ios_policy,
+        app_state.ios_policy.capabilities.content.external_import,
+        "content.external_import",
+    )?;
 
     let parsed_url = reqwest::Url::parse(url.trim())
         .map_err(|_| CommandError::BadRequest("Invalid import URL".to_string()))?;

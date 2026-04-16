@@ -45,6 +45,8 @@ import {
     focusChatInput,
     installChatInputFocusKeeper,
 } from './scripts/chat-input-focus.js';
+import { getActiveIosPolicyCapabilities } from './scripts/tauritavern/ios-policy.js';
+import { applyIosPolicyUiProjection } from './scripts/tauritavern/ios-policy-ui.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -907,6 +909,15 @@ async function firstLoadInit() {
         const clientVersionPromise = getClientVersion();
         await initSecrets();
         const bootstrapSnapshot = await bootstrapPromise;
+        if (bootstrapSnapshot?.ios_policy?.scope === 'ios') {
+            if (!window.__TAURITAVERN__ || typeof window.__TAURITAVERN__ !== 'object') {
+                throw new Error('[TauriTavern][iOSPolicy] Host ABI is unavailable (window.__TAURITAVERN__).');
+            }
+            window.__TAURITAVERN__.iosPolicy = bootstrapSnapshot.ios_policy;
+        } else if (window.__TAURITAVERN__ && typeof window.__TAURITAVERN__ === 'object') {
+            window.__TAURITAVERN__.iosPolicy = bootstrapSnapshot.ios_policy;
+        }
+        applyIosPolicyUiProjection();
         const extensionsEnabled = Boolean(bootstrapSnapshot.settings?.enable_extensions)
             && bootstrapSnapshot.settings?.result != 'file not find'
             && Boolean(bootstrapSnapshot.settings?.settings);
@@ -8475,6 +8486,12 @@ async function applySettingsSnapshot(data) {
             settings.main_api = 'openai';
         }
 
+        const iosCaps = getActiveIosPolicyCapabilities();
+        if (iosCaps && iosCaps.llm?.text_completions?.enabled === false && settings.main_api === 'textgenerationwebui') {
+            settings.main_api = 'openai';
+            globalThis.toastr?.warning?.('Text Completion is disabled by your iOS policy. Switched to Chat Completion.');
+        }
+
         main_api = settings.main_api;
         $('#main_api').val(main_api);
         $(`#main_api option[value=${main_api}]`).attr('selected', 'true');
@@ -13130,6 +13147,12 @@ jQuery(async function () {
     });
 
     $(document).on('click', '.external_import_button, #external_import_button', async () => {
+        const iosCaps = getActiveIosPolicyCapabilities();
+        if (iosCaps && iosCaps.content?.external_import === false) {
+            globalThis.toastr?.error?.('External import is disabled by your iOS policy.');
+            return;
+        }
+
         const html = await renderTemplateAsync('importCharacters');
         const input = await callGenericPopup(html, POPUP_TYPE.INPUT, '', { allowVerticalScrolling: true, wider: true, okButton: $('#popup_template').attr('popup-button-import'), rows: 4 });
 
