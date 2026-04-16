@@ -6,6 +6,8 @@ pub struct ChatCompletionStatusRequestDto {
     #[serde(default)]
     pub chat_completion_source: String,
     #[serde(default)]
+    pub custom_api_format: String,
+    #[serde(default)]
     pub reverse_proxy: String,
     #[serde(default)]
     pub proxy_password: String,

@@ -4413,6 +4413,7 @@ async function getStatusOpen() {
 
     if (oai_settings.chat_completion_source === chat_completion_sources.CUSTOM) {
         $('.model_custom_select').empty();
+        data.custom_api_format = oai_settings.custom_api_format;
         data.custom_url = oai_settings.custom_url;
         data.custom_include_headers = oai_settings.custom_include_headers;
     }

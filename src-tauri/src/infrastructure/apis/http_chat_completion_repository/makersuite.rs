@@ -19,16 +19,7 @@ pub(super) async fn list_models(
 
     let client = repository.client()?;
     let request = client.get(url).header(ACCEPT, "application/json");
-    let request = HttpChatCompletionRepository::apply_header_if_present(
-        request,
-        "x-goog-api-key",
-        &config.api_key,
-    );
-    let request = if config.api_key.trim().is_empty() {
-        request
-    } else {
-        request.query(&[("key", config.api_key.as_str())])
-    };
+    let request = apply_gemini_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 
     let response = request
@@ -113,16 +104,7 @@ pub(super) async fn generate(
         .header(ACCEPT, "application/json")
         .json(&Value::Object(body));
 
-    let request = HttpChatCompletionRepository::apply_header_if_present(
-        request,
-        "x-goog-api-key",
-        &config.api_key,
-    );
-    let request = if config.api_key.trim().is_empty() {
-        request
-    } else {
-        request.query(&[("key", config.api_key.as_str())])
-    };
+    let request = apply_gemini_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 
     let response = request.send().await.map_err(|error| {
@@ -178,17 +160,7 @@ pub(super) async fn generate_stream(
         .header(ACCEPT, "text/event-stream")
         .json(&Value::Object(body));
 
-    let request = HttpChatCompletionRepository::apply_header_if_present(
-        request,
-        "x-goog-api-key",
-        &config.api_key,
-    );
-
-    let request = if config.api_key.trim().is_empty() {
-        request.query(&[("alt", "sse")])
-    } else {
-        request.query(&[("key", config.api_key.as_str()), ("alt", "sse")])
-    };
+    let request = apply_gemini_stream_auth(request, config);
 
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 
@@ -218,6 +190,57 @@ fn normalize_gemini_model(model: &str) -> String {
     }
 }
 
+fn apply_gemini_auth(
+    request: reqwest::RequestBuilder,
+    config: &ChatCompletionApiConfig,
+) -> reqwest::RequestBuilder {
+    if let Some(authorization_header) = config.authorization_header.as_deref() {
+        return HttpChatCompletionRepository::apply_header_if_present(
+            request,
+            "Authorization",
+            authorization_header,
+        );
+    }
+
+    let request = HttpChatCompletionRepository::apply_header_if_present(
+        request,
+        "x-goog-api-key",
+        &config.api_key,
+    );
+
+    if config.api_key.trim().is_empty() {
+        request
+    } else {
+        request.query(&[("key", config.api_key.as_str())])
+    }
+}
+
+fn apply_gemini_stream_auth(
+    request: reqwest::RequestBuilder,
+    config: &ChatCompletionApiConfig,
+) -> reqwest::RequestBuilder {
+    if let Some(authorization_header) = config.authorization_header.as_deref() {
+        let request = HttpChatCompletionRepository::apply_header_if_present(
+            request,
+            "Authorization",
+            authorization_header,
+        );
+        return request.query(&[("alt", "sse")]);
+    }
+
+    let request = HttpChatCompletionRepository::apply_header_if_present(
+        request,
+        "x-goog-api-key",
+        &config.api_key,
+    );
+
+    if config.api_key.trim().is_empty() {
+        request.query(&[("alt", "sse")])
+    } else {
+        request.query(&[("key", config.api_key.as_str()), ("alt", "sse")])
+    }
+}
+
 fn build_gemini_url(base_url: &str, suffix: &str) -> String {
     let trimmed = base_url.trim_end_matches('/');
     let suffix = suffix.trim_start_matches('/');
@@ -244,5 +267,49 @@ fn resolve_generation_method(endpoint_path: &str, stream: bool) -> &'static str 
         "streamGenerateContent"
     } else {
         "generateContent"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use reqwest::Client;
+    use reqwest::header::{AUTHORIZATION, HeaderName};
+
+    use super::apply_gemini_auth;
+    use crate::domain::repositories::chat_completion_repository::{
+        AnthropicBetaHeaderMode, ChatCompletionApiConfig,
+    };
+
+    #[test]
+    fn gemini_auth_prefers_explicit_authorization_header() {
+        let config = ChatCompletionApiConfig {
+            base_url: "https://example.com".to_string(),
+            api_key: "saved-secret".to_string(),
+            authorization_header: Some("Bearer override".to_string()),
+            extra_headers: HashMap::new(),
+            anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+        };
+
+        let request = Client::new().get("https://example.com");
+        let request = apply_gemini_auth(request, &config)
+            .build()
+            .expect("request should build");
+
+        assert_eq!(
+            request
+                .headers()
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer override")
+        );
+        assert!(
+            request
+                .headers()
+                .get(HeaderName::from_static("x-goog-api-key"))
+                .is_none()
+        );
+        assert_eq!(request.url().query(), None);
     }
 }

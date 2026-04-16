@@ -19,6 +19,7 @@ use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::domain::repositories::settings_repository::SettingsRepository;
 
 mod config;
+mod custom_api_format;
 mod custom_parameters;
 mod payload;
 mod prompt_caching;
@@ -280,6 +281,7 @@ impl ChatCompletionService {
         let source = self.resolve_source(&dto.chat_completion_source)?;
         self.ensure_chat_completion_source_allowed(source)?;
         self.ensure_endpoint_overrides_allowed_for_status(source, &dto)?;
+        let model_list_source = resolve_status_model_list_source(source, &dto.custom_api_format)?;
 
         if source == ChatCompletionSource::VertexAi {
             return Ok(json!({
@@ -291,7 +293,7 @@ impl ChatCompletionService {
             config::resolve_status_api_config(source, &dto, &self.secret_repository).await?;
 
         self.chat_completion_repository
-            .list_models(source, &config)
+            .list_models(model_list_source, &config)
             .await
             .map_err(ApplicationError::from)
     }
@@ -523,6 +525,17 @@ impl ChatCompletionService {
     }
 }
 
+fn resolve_status_model_list_source(
+    source: ChatCompletionSource,
+    custom_api_format: &str,
+) -> Result<ChatCompletionSource, ApplicationError> {
+    if source != ChatCompletionSource::Custom {
+        return Ok(source);
+    }
+
+    Ok(custom_api_format::CustomApiFormat::parse(custom_api_format)?.model_list_source())
+}
+
 fn apply_nanogpt_claude_cache_control(payload: &mut Value, ttl: &str) -> bool {
     let is_claude = payload
         .as_object()
@@ -554,6 +567,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::apply_nanogpt_claude_cache_control;
+    use super::resolve_status_model_list_source;
+    use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
 
     #[test]
     fn nanogpt_claude_cache_control_is_inserted_for_claude_models() {
@@ -591,6 +606,22 @@ mod tests {
 
         assert!(!apply_nanogpt_claude_cache_control(&mut payload, "5m"));
         assert!(payload.get("cache_control").is_none());
+    }
+
+    #[test]
+    fn custom_claude_messages_status_uses_claude_transport() {
+        let source =
+            resolve_status_model_list_source(ChatCompletionSource::Custom, "claude_messages")
+                .expect("status transport should resolve");
+        assert_eq!(source, ChatCompletionSource::Claude);
+    }
+
+    #[test]
+    fn custom_gemini_interactions_status_uses_makersuite_transport() {
+        let source =
+            resolve_status_model_list_source(ChatCompletionSource::Custom, "gemini_interactions")
+                .expect("status transport should resolve");
+        assert_eq!(source, ChatCompletionSource::Makersuite);
     }
 }
 

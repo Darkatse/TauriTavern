@@ -714,6 +714,7 @@ fn supports_claude_thinking(model: &str) -> bool {
         "claude-haiku-4-5",
         "claude-opus-4-5",
         "claude-opus-4-6",
+        "claude-opus-4-7",
     ]
     .iter()
     .any(|prefix| model.starts_with(prefix))
@@ -852,7 +853,10 @@ mod tests {
             let (_, upstream) = build(payload).expect("build should succeed");
             let body = upstream.as_object().expect("body must be object");
 
-            assert!(body.get("thinking").is_none(), "{model} should not enable thinking");
+            assert!(
+                body.get("thinking").is_none(),
+                "{model} should not enable thinking"
+            );
 
             let last_role = body
                 .get("messages")

@@ -83,7 +83,7 @@ Connection Profiles（Connection Manager 扩展）：
 ### 3.2 明确的当前限制
 
 - **Custom OpenAI Responses：`previous_response_id` 映射为内存缓存**（call_id → response_id）。应用重启后无法继续依赖旧 call_id 做 follow-up（需要重新生成 tool call）。
-- **Custom 的 model list / status check** 仍以 OpenAI-compatible 的方式为主，Responses/Interactions 没有单独的 list_models 路由（后续如需可做 Phase 4 增强）。
+- **Custom 的 model list / status check** 已按 `custom_api_format` 对齐传输协议：OpenAI-compatible / Responses 继续使用兼容 `/models`，Claude Messages 使用 Claude `/models`，Gemini Interactions 使用 Gemini `/models`。
 - **Claude streaming 不做 chunk 归一化**：前端需走 Anthropic events 分支解析（现状就是如此，优先复用既有 Claude 语义）。
 
 ---

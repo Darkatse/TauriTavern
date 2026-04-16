@@ -2,6 +2,7 @@ use serde_json::{Map, Value};
 
 use crate::application::errors::ApplicationError;
 
+use super::super::custom_api_format::CustomApiFormat;
 use super::claude_messages;
 use super::gemini_interactions;
 use super::openai;
@@ -9,24 +10,18 @@ use super::openai_responses;
 use super::shared::apply_custom_body_overrides;
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
-    let format = payload
-        .get("custom_api_format")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("openai_compat")
-        .to_string();
+    let format = CustomApiFormat::parse(
+        payload
+            .get("custom_api_format")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )?;
 
-    match format.as_str() {
-        "openai_responses" => return openai_responses::build(payload),
-        "gemini_interactions" => return gemini_interactions::build(payload),
-        "openai_compat" => {}
-        "claude_messages" => return claude_messages::build(payload),
-        other => {
-            return Err(ApplicationError::ValidationError(format!(
-                "Unsupported custom_api_format: {other}"
-            )));
-        }
+    match format {
+        CustomApiFormat::OpenAiResponses => return openai_responses::build(payload),
+        CustomApiFormat::GeminiInteractions => return gemini_interactions::build(payload),
+        CustomApiFormat::OpenAiCompat => {}
+        CustomApiFormat::ClaudeMessages => return claude_messages::build(payload),
     }
 
     let include_raw = payload

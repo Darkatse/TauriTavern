@@ -632,6 +632,7 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
         const payload = asObject(body);
         const dto = {
             chat_completion_source: String(payload.chat_completion_source || ''),
+            custom_api_format: String(payload.custom_api_format || ''),
             reverse_proxy: String(payload.reverse_proxy || ''),
             proxy_password: String(payload.proxy_password || ''),
             custom_url: String(payload.custom_url || ''),

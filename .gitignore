@@ -27,8 +27,8 @@ dist-ssr
 # FasTools
 FasTools.exe
 
-# Portable build artifacts
-release/portable/
+# Build artifacts
+release
 
 # Local upstream checkout (junction/symlink)
 sillytavern-*
