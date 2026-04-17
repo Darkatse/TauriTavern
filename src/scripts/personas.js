@@ -34,6 +34,7 @@ import { openWorldInfoEditor, world_names } from './world-info.js';
 import { renderTemplateAsync } from './templates.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { accountStorage } from './util/AccountStorage.js';
+import { restorePersonasFromBackup, UNNAMED_PERSONA } from './persona-restore.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { SlashCommandNamedArgument, ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
 import { commonEnumProviders } from './slash-commands/SlashCommandCommonEnumsProvider.js';
@@ -117,7 +118,7 @@ function ensurePersonaDescriptor(avatarId, defaults = {}) {
 }
 
 function getPersonaDisplayName(avatarId) {
-    return power_user.personas[avatarId] || '[Unnamed Persona]';
+    return power_user.personas[avatarId] || UNNAMED_PERSONA;
 }
 
 /**
@@ -279,7 +280,7 @@ function addMissingPersonas(avatarsList) {
 
     for (const avatarId of avatarsList) {
         if (!power_user.personas[avatarId]) {
-            power_user.personas[avatarId] = '[Unnamed Persona]';
+            power_user.personas[avatarId] = UNNAMED_PERSONA;
             changed = true;
         }
 
@@ -923,7 +924,7 @@ async function selectCurrentPersona({ toastPersonaNameChange = true } = {}) {
     power_user.persona_description_lorebook = descriptor.lorebook ?? '';
 
     setPersonaDescription({
-        displayName: personaName ? personaName : '[Unnamed Persona]',
+        displayName: personaName ? personaName : UNNAMED_PERSONA,
     });
 
     // Update the locked persona if setting is enabled
@@ -1705,45 +1706,32 @@ async function onPersonasRestoreInput(e) {
     }
 
     const avatarsList = await getUserAvatars(false);
-    const warnings = [];
-
-    // Merge personas with existing ones
-    for (const [key, value] of Object.entries(data.personas)) {
-        if (key in power_user.personas) {
-            warnings.push(`Persona "${key}" (${value}) already exists, skipping`);
-            continue;
-        }
-
-        power_user.personas[key] = value;
-
-        // If the avatar is missing, upload it
-        if (!avatarsList.includes(key)) {
-            warnings.push(`Persona image "${key}" (${value}) is missing, uploading default avatar`);
-            await uploadUserAvatar(default_user_avatar, key);
-        }
+    if (!Array.isArray(avatarsList)) {
+        throw new Error('Failed to load avatars list');
     }
+    const avatarSet = new Set(avatarsList);
+    const descriptorDefaults = {
+        defaultPosition: persona_description_positions.IN_PROMPT,
+        defaultDepth: DEFAULT_DEPTH,
+        defaultRole: DEFAULT_ROLE,
+    };
 
-    // Merge persona descriptions with existing ones
-    for (const [key, value] of Object.entries(data.persona_descriptions)) {
-        if (key in power_user.persona_descriptions) {
-            warnings.push(`Persona description for "${key}" (${power_user.personas[key]}) already exists, skipping`);
+    const restoreResult = restorePersonasFromBackup(power_user, data, descriptorDefaults);
+    const warnings = restoreResult.warnings;
+    const restoredPersonas = restoreResult.restoredPersonas;
+
+    for (const avatarId of restoredPersonas) {
+        if (avatarSet.has(avatarId)) {
             continue;
         }
 
-        if (!power_user.personas[key]) {
-            warnings.push(`Persona for "${key}" does not exist, skipping`);
-            continue;
-        }
+        const personaName = typeof data.personas?.[avatarId] === 'string'
+            ? data.personas[avatarId]
+            : power_user.personas[avatarId];
 
-        power_user.persona_descriptions[key] = value;
-    }
-
-    if (data.default_persona) {
-        if (data.default_persona in power_user.personas) {
-            power_user.default_persona = data.default_persona;
-        } else {
-            warnings.push(`Default persona "${data.default_persona}" does not exist, skipping`);
-        }
+        warnings.push(`Persona image "${avatarId}" (${personaName}) is missing, uploading default avatar`);
+        await uploadUserAvatar(default_user_avatar, avatarId);
+        avatarSet.add(avatarId);
     }
 
     if (warnings.length) {
