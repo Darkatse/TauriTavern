@@ -10,12 +10,205 @@ use super::tool_calls::{
 const CLAUDE_THINKING_MIN_TOKENS: i64 = 1024;
 const CLAUDE_THINKING_NON_STREAM_CAP: i64 = 21_333;
 const CLAUDE_EMPTY_TEXT_PLACEHOLDER: &str = "\u{200b}";
+const CLAUDE_DEFAULT_TEMPERATURE: f64 = 1.0;
+const CLAUDE_DEFAULT_TOP_P: f64 = 1.0;
+const CLAUDE_DEFAULT_TOP_K: f64 = 0.0;
+const CLAUDE_FULL_SAMPLING_EXACT_MODELS: &[&str] = &["claude-opus-4", "claude-sonnet-4"];
+const CLAUDE_FULL_SAMPLING_MODEL_PREFIXES: &[&str] = &[
+    "claude-3-7",
+    "claude-3-5",
+    "claude-3-opus",
+    "claude-3-sonnet",
+    "claude-3-haiku",
+    "claude-2",
+    "claude-instant",
+];
+const CLAUDE_LIMITED_SAMPLING_MODEL_PREFIXES: &[&str] = &[
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-opus-4-5",
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+];
+const CLAUDE_MANUAL_ONLY_THINKING_EXACT_MODELS: &[&str] = &["claude-opus-4", "claude-sonnet-4"];
+const CLAUDE_MANUAL_ONLY_THINKING_MODEL_PREFIXES: &[&str] = &[
+    "claude-3-7",
+    "claude-opus-4-5",
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+];
+const CLAUDE_MANUAL_OR_ADAPTIVE_THINKING_MODEL_PREFIXES: &[&str] =
+    &["claude-opus-4-6", "claude-sonnet-4-6"];
+const CLAUDE_ADAPTIVE_ONLY_THINKING_MODEL_PREFIXES: &[&str] = &["claude-opus-4-7"];
+const CLAUDE_OUTPUT_EFFORT_MODEL_PREFIXES: &[&str] = &[
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-opus-4-5",
+];
+const CLAUDE_ASSISTANT_PREFILL_EXACT_MODELS: &[&str] = &["claude-opus-4", "claude-sonnet-4"];
+const CLAUDE_ASSISTANT_PREFILL_MODEL_PREFIXES: &[&str] = &[
+    "claude-3-7",
+    "claude-opus-4-5",
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+    "claude-3-5",
+    "claude-3-opus",
+    "claude-3-sonnet",
+    "claude-3-haiku",
+    "claude-2",
+    "claude-instant",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaudeSamplingMode {
+    Full,
+    TemperatureOrTopP,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaudeThinkingMode {
+    Unsupported,
+    ManualOnly,
+    ManualOrAdaptive,
+    AdaptiveOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaudeRequestThinkingMode {
+    Enabled,
+    Adaptive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaudeReasoningEffort {
+    Min,
+    Low,
+    Medium,
+    High,
+    Max,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ClaudeModelContract {
+    sampling: ClaudeSamplingMode,
+    thinking: ClaudeThinkingMode,
+    supports_output_effort: bool,
+    supports_assistant_prefill: bool,
+}
+
+impl ClaudeModelContract {
+    fn resolve(model: &str) -> Self {
+        let model = model.trim().to_ascii_lowercase();
+
+        Self {
+            sampling: resolve_claude_sampling_mode(&model),
+            thinking: resolve_claude_thinking_mode(&model),
+            supports_output_effort: matches_claude_model(
+                &model,
+                &[],
+                CLAUDE_OUTPUT_EFFORT_MODEL_PREFIXES,
+            ),
+            supports_assistant_prefill: matches_claude_model(
+                &model,
+                CLAUDE_ASSISTANT_PREFILL_EXACT_MODELS,
+                CLAUDE_ASSISTANT_PREFILL_MODEL_PREFIXES,
+            ),
+        }
+    }
+}
+
+fn resolve_claude_sampling_mode(model: &str) -> ClaudeSamplingMode {
+    if matches_claude_model(model, &[], CLAUDE_LIMITED_SAMPLING_MODEL_PREFIXES) {
+        ClaudeSamplingMode::TemperatureOrTopP
+    } else if matches_claude_model(
+        model,
+        CLAUDE_FULL_SAMPLING_EXACT_MODELS,
+        CLAUDE_FULL_SAMPLING_MODEL_PREFIXES,
+    ) {
+        ClaudeSamplingMode::Full
+    } else {
+        ClaudeSamplingMode::None
+    }
+}
+
+fn resolve_claude_thinking_mode(model: &str) -> ClaudeThinkingMode {
+    if matches_claude_model(model, &[], CLAUDE_ADAPTIVE_ONLY_THINKING_MODEL_PREFIXES) {
+        ClaudeThinkingMode::AdaptiveOnly
+    } else if matches_claude_model(
+        model,
+        &[],
+        CLAUDE_MANUAL_OR_ADAPTIVE_THINKING_MODEL_PREFIXES,
+    ) {
+        ClaudeThinkingMode::ManualOrAdaptive
+    } else if matches_claude_model(
+        model,
+        CLAUDE_MANUAL_ONLY_THINKING_EXACT_MODELS,
+        CLAUDE_MANUAL_ONLY_THINKING_MODEL_PREFIXES,
+    ) {
+        ClaudeThinkingMode::ManualOnly
+    } else {
+        ClaudeThinkingMode::Unsupported
+    }
+}
+
+impl ClaudeReasoningEffort {
+    fn parse(value: Option<&Value>) -> Result<Option<Self>, ApplicationError> {
+        let Some(value) = value.and_then(Value::as_str) else {
+            return Ok(None);
+        };
+
+        let value = value.trim();
+        if value.is_empty() || value.eq_ignore_ascii_case("auto") {
+            return Ok(None);
+        }
+
+        match value.to_ascii_lowercase().as_str() {
+            "min" => Ok(Some(Self::Min)),
+            "low" => Ok(Some(Self::Low)),
+            "medium" => Ok(Some(Self::Medium)),
+            "high" => Ok(Some(Self::High)),
+            "max" => Ok(Some(Self::Max)),
+            other => Err(ApplicationError::ValidationError(format!(
+                "Unsupported Claude reasoning_effort: {other}"
+            ))),
+        }
+    }
+
+    fn calculate_budget_tokens(self, max_tokens: i64, stream: bool) -> i64 {
+        let max_tokens = max_tokens.max(0);
+        let mut budget_tokens = match self {
+            Self::Min => CLAUDE_THINKING_MIN_TOKENS,
+            Self::Low => max_tokens.saturating_mul(10) / 100,
+            Self::Medium => max_tokens.saturating_mul(25) / 100,
+            Self::High => max_tokens.saturating_mul(50) / 100,
+            Self::Max => max_tokens.saturating_mul(95) / 100,
+        };
+
+        budget_tokens = budget_tokens.max(CLAUDE_THINKING_MIN_TOKENS);
+        if !stream {
+            budget_tokens = budget_tokens.min(CLAUDE_THINKING_NON_STREAM_CAP);
+        }
+
+        budget_tokens
+    }
+
+    fn as_adaptive_effort(self) -> &'static str {
+        match self {
+            Self::Min | Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Max => "max",
+        }
+    }
+}
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
-    Ok((
-        "/messages".to_string(),
-        Value::Object(build_claude_payload(&payload)?),
-    ))
+    let request = Value::Object(build_claude_payload(&payload)?);
+    validate_request(&request)?;
+
+    Ok(("/messages".to_string(), request))
 }
 
 fn build_claude_payload(
@@ -29,6 +222,8 @@ fn build_claude_payload(
         .ok_or_else(|| {
             ApplicationError::ValidationError("Claude request is missing model".to_string())
         })?;
+    let contract = ClaudeModelContract::resolve(model);
+    let reasoning_effort = ClaudeReasoningEffort::parse(payload.get("reasoning_effort"))?;
 
     let use_system_prompt = payload
         .get("use_sysprompt")
@@ -47,12 +242,22 @@ fn build_claude_payload(
     let (mut messages, system_prompt) =
         convert_messages(payload.get("messages"), use_system_prompt, use_tools)?;
 
-    if let Some(assistant_prefill) = payload
+    let assistant_prefill = payload
         .get("assistant_prefill")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+        .filter(|value| !value.is_empty());
+    if assistant_prefill.is_some() && reasoning_effort.is_some() {
+        return Err(ApplicationError::ValidationError(format!(
+            "Claude model `{model}` does not support assistant_prefill with reasoning_effort"
+        )));
+    }
+    if assistant_prefill.is_some() && !contract.supports_assistant_prefill {
+        return Err(ApplicationError::ValidationError(format!(
+            "Claude model `{model}` does not support assistant_prefill"
+        )));
+    }
+    if let Some(assistant_prefill) = assistant_prefill {
         messages.push(json!({
             "role": "assistant",
             "content": [
@@ -92,17 +297,8 @@ fn build_claude_payload(
 
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
-
-    for key in ["temperature", "top_p", "top_k", "stream"] {
-        insert_if_present(&mut request, payload, key);
-    }
-
-    if request.contains_key("temperature")
-        && request.contains_key("top_p")
-        && !claude_allows_temperature_and_top_p(model)
-    {
-        request.remove("top_p");
-    }
+    insert_if_present(&mut request, payload, "stream");
+    insert_claude_sampling_params(&mut request, payload, contract.sampling, model)?;
 
     if let Some(stop) = payload.get("stop").filter(|value| value.is_array()) {
         request.insert("stop_sequences".to_string(), stop.clone());
@@ -161,33 +357,49 @@ fn build_claude_payload(
         }
     }
 
-    let mut should_convert_prefill_to_user = requires_claude_prefill_role_fix(model);
-    if supports_claude_thinking(model) {
-        let reasoning_effort = payload.get("reasoning_effort").and_then(Value::as_str);
-        if let Some(budget_tokens) =
-            calculate_claude_budget_tokens(max_tokens, reasoning_effort, stream)
-        {
-            if max_tokens <= CLAUDE_THINKING_MIN_TOKENS {
-                max_tokens += CLAUDE_THINKING_MIN_TOKENS;
+    match contract.thinking {
+        ClaudeThinkingMode::Unsupported => {
+            if reasoning_effort.is_some() {
+                return Err(ApplicationError::ValidationError(format!(
+                    "Claude model `{model}` does not support reasoning_effort"
+                )));
             }
-
-            request.insert(
-                "thinking".to_string(),
-                json!({
-                    "type": "enabled",
-                    "budget_tokens": budget_tokens,
-                }),
-            );
-            request.remove("temperature");
-            request.remove("top_p");
-            request.remove("top_k");
-            should_convert_prefill_to_user = true;
         }
-    }
+        ClaudeThinkingMode::ManualOnly => {
+            if let Some(reasoning_effort) = reasoning_effort {
+                let budget_tokens = reasoning_effort.calculate_budget_tokens(max_tokens, stream);
+                if max_tokens <= CLAUDE_THINKING_MIN_TOKENS {
+                    max_tokens += CLAUDE_THINKING_MIN_TOKENS;
+                }
 
-    if should_convert_prefill_to_user {
-        convert_thinking_prefill_to_user(&mut messages);
-        merge_consecutive_messages(&mut messages);
+                request.insert(
+                    "thinking".to_string(),
+                    json!({
+                        "type": "enabled",
+                        "budget_tokens": budget_tokens,
+                    }),
+                );
+                request.remove("temperature");
+                request.remove("top_p");
+                request.remove("top_k");
+            }
+        }
+        ClaudeThinkingMode::ManualOrAdaptive | ClaudeThinkingMode::AdaptiveOnly => {
+            if let Some(reasoning_effort) = reasoning_effort {
+                request.insert(
+                    "thinking".to_string(),
+                    build_claude_adaptive_thinking(payload),
+                );
+                if contract.supports_output_effort {
+                    request.insert(
+                        "output_config".to_string(),
+                        json!({
+                            "effort": reasoning_effort.as_adaptive_effort(),
+                        }),
+                    );
+                }
+            }
+        }
     }
 
     request.insert("messages".to_string(), Value::Array(messages));
@@ -705,79 +917,309 @@ fn value_to_i64(value: &Value) -> Option<i64> {
         .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
 }
 
-fn supports_claude_thinking(model: &str) -> bool {
-    let model = model.trim().to_ascii_lowercase();
-    [
-        "claude-3-7",
-        "claude-opus-4",
-        "claude-sonnet-4",
-        "claude-haiku-4-5",
-        "claude-opus-4-5",
-        "claude-opus-4-6",
-        "claude-opus-4-7",
-    ]
-    .iter()
-    .any(|prefix| model.starts_with(prefix))
+fn value_to_f64(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_i64().map(|number| number as f64))
+        .or_else(|| value.as_u64().map(|number| number as f64))
 }
 
-fn claude_allows_temperature_and_top_p(model: &str) -> bool {
-    let model = model.trim().to_ascii_lowercase();
-    [
-        "claude-3",
-        "claude-opus-4-0",
-        "claude-opus-4-1",
-        "claude-opus-4-20250514",
-        "claude-sonnet-4-0",
-        "claude-sonnet-4-20250514",
-    ]
-    .iter()
-    .any(|prefix| model.starts_with(prefix))
-}
-
-fn requires_claude_prefill_role_fix(model: &str) -> bool {
-    let model = model.trim().to_ascii_lowercase();
-    ["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6"]
-        .iter()
-        .any(|prefix| model.starts_with(prefix))
-}
-
-fn calculate_claude_budget_tokens(
-    max_tokens: i64,
-    reasoning_effort: Option<&str>,
-    stream: bool,
-) -> Option<i64> {
-    let max_tokens = max_tokens.max(0);
-    let effort = reasoning_effort
+pub(super) fn validate_request(payload: &Value) -> Result<(), ApplicationError> {
+    let request = payload.as_object().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "Claude request payload must be a JSON object".to_string(),
+        )
+    })?;
+    let model = request
+        .get("model")
+        .and_then(Value::as_str)
         .map(str::trim)
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_else(|| "auto".to_string());
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError("Claude request is missing model".to_string())
+        })?;
+    let contract = ClaudeModelContract::resolve(model);
+    let thinking_mode = validate_claude_thinking_request(request, contract, model)?;
+    validate_claude_output_config(request, contract, model)?;
+    validate_claude_sampling_request(request, contract.sampling, thinking_mode, model)?;
 
-    let mut budget_tokens = match effort.as_str() {
-        "auto" => return None,
-        "min" => CLAUDE_THINKING_MIN_TOKENS,
-        "low" => max_tokens.saturating_mul(10) / 100,
-        "medium" => max_tokens.saturating_mul(25) / 100,
-        "high" => max_tokens.saturating_mul(50) / 100,
-        "max" => max_tokens.saturating_mul(95) / 100,
-        _ => return None,
-    };
-
-    budget_tokens = budget_tokens.max(CLAUDE_THINKING_MIN_TOKENS);
-    if !stream {
-        budget_tokens = budget_tokens.min(CLAUDE_THINKING_NON_STREAM_CAP);
-    }
-
-    Some(budget_tokens)
+    Ok(())
 }
 
-fn convert_thinking_prefill_to_user(messages: &mut [Value]) {
-    let Some(last_message) = messages.last_mut().and_then(Value::as_object_mut) else {
-        return;
+fn matches_claude_model(model: &str, exact_models: &[&str], prefixes: &[&str]) -> bool {
+    exact_models.contains(&model) || prefixes.iter().any(|prefix| model.starts_with(prefix))
+}
+
+fn insert_claude_sampling_params(
+    request: &mut Map<String, Value>,
+    payload: &Map<String, Value>,
+    sampling: ClaudeSamplingMode,
+    model: &str,
+) -> Result<(), ApplicationError> {
+    let has_non_default_temperature = has_non_default_temperature(payload);
+    let has_non_default_top_p = has_non_default_top_p(payload);
+    let has_non_default_top_k = has_non_default_top_k(payload);
+
+    match sampling {
+        ClaudeSamplingMode::Full => {
+            if has_non_default_temperature {
+                insert_if_present(request, payload, "temperature");
+            }
+            if has_non_default_top_p {
+                insert_if_present(request, payload, "top_p");
+            }
+            if has_non_default_top_k {
+                insert_if_present(request, payload, "top_k");
+            }
+        }
+        ClaudeSamplingMode::TemperatureOrTopP => {
+            if has_non_default_temperature && has_non_default_top_p {
+                return Err(ApplicationError::ValidationError(format!(
+                    "Claude model `{model}` accepts either temperature or top_p, not both"
+                )));
+            }
+
+            if has_non_default_temperature {
+                insert_if_present(request, payload, "temperature");
+            }
+            if has_non_default_top_p {
+                insert_if_present(request, payload, "top_p");
+            }
+            if has_non_default_top_k {
+                insert_if_present(request, payload, "top_k");
+            }
+        }
+        ClaudeSamplingMode::None => {
+            let disallowed = collect_non_default_sampling_params(payload);
+            if !disallowed.is_empty() {
+                return Err(ApplicationError::ValidationError(format!(
+                    "Claude model `{model}` does not support non-default sampling parameters: {}",
+                    disallowed.join(", ")
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn build_claude_adaptive_thinking(payload: &Map<String, Value>) -> Value {
+    let display = if payload
+        .get("include_reasoning")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        "summarized"
+    } else {
+        "omitted"
     };
 
-    if last_message.get("role").and_then(Value::as_str) == Some("assistant") {
-        last_message.insert("role".to_string(), Value::String("user".to_string()));
+    json!({
+        "type": "adaptive",
+        "display": display,
+    })
+}
+
+fn validate_claude_thinking_request(
+    request: &Map<String, Value>,
+    contract: ClaudeModelContract,
+    model: &str,
+) -> Result<Option<ClaudeRequestThinkingMode>, ApplicationError> {
+    let Some(thinking) = request.get("thinking") else {
+        return Ok(None);
+    };
+
+    let thinking = thinking.as_object().ok_or_else(|| {
+        ApplicationError::ValidationError(format!(
+            "Claude model `{model}` expects `thinking` to be an object"
+        ))
+    })?;
+    let thinking_type = thinking
+        .get("type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "Claude model `{model}` requires `thinking.type`"
+            ))
+        })?;
+
+    let thinking_mode = match thinking_type {
+        "enabled" => {
+            if thinking
+                .get("budget_tokens")
+                .and_then(value_to_i64)
+                .is_none()
+            {
+                return Err(ApplicationError::ValidationError(format!(
+                    "Claude model `{model}` requires `thinking.budget_tokens` for legacy thinking"
+                )));
+            }
+            ClaudeRequestThinkingMode::Enabled
+        }
+        "adaptive" => {
+            if thinking.get("budget_tokens").is_some() {
+                return Err(ApplicationError::ValidationError(format!(
+                    "Claude model `{model}` does not allow `thinking.budget_tokens` with adaptive thinking"
+                )));
+            }
+
+            if let Some(display) = thinking
+                .get("display")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                if !matches!(display, "summarized" | "omitted") {
+                    return Err(ApplicationError::ValidationError(format!(
+                        "Unsupported Claude adaptive thinking display: {display}"
+                    )));
+                }
+            }
+
+            ClaudeRequestThinkingMode::Adaptive
+        }
+        other => {
+            return Err(ApplicationError::ValidationError(format!(
+                "Unsupported Claude thinking.type: {other}"
+            )));
+        }
+    };
+
+    match (contract.thinking, thinking_mode) {
+        (ClaudeThinkingMode::Unsupported, _) => Err(ApplicationError::ValidationError(format!(
+            "Claude model `{model}` does not support thinking"
+        ))),
+        (ClaudeThinkingMode::ManualOnly, ClaudeRequestThinkingMode::Adaptive) => {
+            Err(ApplicationError::ValidationError(format!(
+                "Claude model `{model}` requires legacy thinking with budget_tokens"
+            )))
+        }
+        (ClaudeThinkingMode::AdaptiveOnly, ClaudeRequestThinkingMode::Enabled) => {
+            Err(ApplicationError::ValidationError(format!(
+                "Claude model `{model}` requires adaptive thinking"
+            )))
+        }
+        _ => Ok(Some(thinking_mode)),
     }
+}
+
+fn validate_claude_output_config(
+    request: &Map<String, Value>,
+    contract: ClaudeModelContract,
+    model: &str,
+) -> Result<(), ApplicationError> {
+    let Some(output_config) = request.get("output_config") else {
+        return Ok(());
+    };
+
+    let output_config = output_config.as_object().ok_or_else(|| {
+        ApplicationError::ValidationError(format!(
+            "Claude model `{model}` expects `output_config` to be an object"
+        ))
+    })?;
+    let Some(effort) = output_config.get("effort") else {
+        return Ok(());
+    };
+
+    if !contract.supports_output_effort {
+        return Err(ApplicationError::ValidationError(format!(
+            "Claude model `{model}` does not support `output_config.effort`"
+        )));
+    }
+
+    let effort = effort
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "Claude model `{model}` expects `output_config.effort` to be a non-empty string"
+            ))
+        })?;
+
+    if !matches!(effort, "low" | "medium" | "high" | "max" | "xhigh") {
+        return Err(ApplicationError::ValidationError(format!(
+            "Unsupported Claude adaptive effort: {effort}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_claude_sampling_request(
+    request: &Map<String, Value>,
+    sampling: ClaudeSamplingMode,
+    thinking_mode: Option<ClaudeRequestThinkingMode>,
+    model: &str,
+) -> Result<(), ApplicationError> {
+    let disallowed = collect_non_default_sampling_params(request);
+    if thinking_mode == Some(ClaudeRequestThinkingMode::Enabled) && !disallowed.is_empty() {
+        return Err(ApplicationError::ValidationError(format!(
+            "Claude model `{model}` does not allow non-default sampling parameters with legacy thinking: {}",
+            disallowed.join(", ")
+        )));
+    }
+
+    match sampling {
+        ClaudeSamplingMode::Full => Ok(()),
+        ClaudeSamplingMode::TemperatureOrTopP => {
+            if has_non_default_temperature(request) && has_non_default_top_p(request) {
+                return Err(ApplicationError::ValidationError(format!(
+                    "Claude model `{model}` accepts either temperature or top_p, not both"
+                )));
+            }
+            Ok(())
+        }
+        ClaudeSamplingMode::None => {
+            if disallowed.is_empty() {
+                Ok(())
+            } else {
+                Err(ApplicationError::ValidationError(format!(
+                    "Claude model `{model}` does not support non-default sampling parameters: {}",
+                    disallowed.join(", ")
+                )))
+            }
+        }
+    }
+}
+
+fn collect_non_default_sampling_params(payload: &Map<String, Value>) -> Vec<&'static str> {
+    let mut params = Vec::new();
+    if has_non_default_temperature(payload) {
+        params.push("temperature");
+    }
+    if has_non_default_top_p(payload) {
+        params.push("top_p");
+    }
+    if has_non_default_top_k(payload) {
+        params.push("top_k");
+    }
+    params
+}
+
+fn has_non_default_temperature(payload: &Map<String, Value>) -> bool {
+    numeric_field_differs_from_default(payload, "temperature", CLAUDE_DEFAULT_TEMPERATURE)
+}
+
+fn has_non_default_top_p(payload: &Map<String, Value>) -> bool {
+    numeric_field_differs_from_default(payload, "top_p", CLAUDE_DEFAULT_TOP_P)
+}
+
+fn has_non_default_top_k(payload: &Map<String, Value>) -> bool {
+    numeric_field_differs_from_default(payload, "top_k", CLAUDE_DEFAULT_TOP_K)
+}
+
+fn numeric_field_differs_from_default(
+    payload: &Map<String, Value>,
+    key: &str,
+    default: f64,
+) -> bool {
+    payload
+        .get(key)
+        .and_then(value_to_f64)
+        .is_some_and(|value| (value - default).abs() > f64::EPSILON)
 }
 
 #[cfg(test)]
@@ -786,22 +1228,24 @@ mod tests {
 
     use super::build;
 
-    #[test]
-    fn claude_thinking_budget_updates_request_shape() {
-        let payload = json!({
-            "model": "claude-sonnet-4-5",
+    fn claude_payload(model: &str) -> serde_json::Map<String, Value> {
+        json!({
+            "model": model,
             "messages": [{"role": "user", "content": "hello"}],
-            "assistant_prefill": "prefill",
-            "max_tokens": 1000,
-            "reasoning_effort": "medium",
-            "temperature": 0.7,
-            "top_p": 0.9,
-            "top_k": 40,
-            "stream": false,
         })
         .as_object()
         .cloned()
-        .expect("payload must be object");
+        .expect("payload must be object")
+    }
+
+    #[test]
+    fn claude_manual_reasoning_uses_legacy_thinking_and_clears_sampling() {
+        let mut payload = claude_payload("claude-sonnet-4-5");
+        payload.insert("max_tokens".to_string(), json!(1000));
+        payload.insert("reasoning_effort".to_string(), json!("medium"));
+        payload.insert("temperature".to_string(), json!(0.7));
+        payload.insert("top_k".to_string(), json!(40));
+        payload.insert("stream".to_string(), json!(false));
 
         let (_, upstream) = build(payload).expect("build should succeed");
         let body = upstream.as_object().expect("body must be object");
@@ -820,54 +1264,47 @@ mod tests {
                 .unwrap_or_default(),
             1024
         );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("type"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "enabled"
+        );
         assert!(body.get("temperature").is_none());
         assert!(body.get("top_p").is_none());
         assert!(body.get("top_k").is_none());
-
-        let last_role = body
-            .get("messages")
-            .and_then(Value::as_array)
-            .and_then(|messages| messages.last())
-            .and_then(Value::as_object)
-            .and_then(|message| message.get("role"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        assert_eq!(last_role, "user");
     }
 
     #[test]
-    fn claude_models_without_prefill_support_convert_prefill_to_user_without_thinking() {
+    fn claude_rejects_assistant_prefill_for_models_that_removed_it() {
         for model in ["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6"] {
-            let payload = json!({
-                "model": model,
-                "messages": [{"role": "user", "content": "hello"}],
-                "assistant_prefill": "prefill",
-                "max_tokens": 1000,
-                "reasoning_effort": "auto",
-                "stream": false
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
+            let mut payload = claude_payload(model);
+            payload.insert("assistant_prefill".to_string(), json!("prefill"));
 
-            let (_, upstream) = build(payload).expect("build should succeed");
-            let body = upstream.as_object().expect("body must be object");
+            let error = build(payload).expect_err("build should fail");
+            let message = error.to_string();
 
             assert!(
-                body.get("thinking").is_none(),
-                "{model} should not enable thinking"
+                message.contains("does not support assistant_prefill"),
+                "{model} should reject assistant_prefill, got: {message}"
             );
-
-            let last_role = body
-                .get("messages")
-                .and_then(Value::as_array)
-                .and_then(|messages| messages.last())
-                .and_then(Value::as_object)
-                .and_then(|message| message.get("role"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            assert_eq!(last_role, "user", "{model} should convert prefill to user");
         }
+    }
+
+    #[test]
+    fn claude_rejects_assistant_prefill_with_reasoning_effort() {
+        let mut payload = claude_payload("claude-sonnet-4-5");
+        payload.insert("assistant_prefill".to_string(), json!("prefill"));
+        payload.insert("reasoning_effort".to_string(), json!("medium"));
+
+        let error = build(payload).expect_err("build should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("does not support assistant_prefill with reasoning_effort")
+        );
     }
 
     #[test]
@@ -1181,40 +1618,151 @@ mod tests {
     }
 
     #[test]
-    fn claude_4_5_models_drop_top_p_when_temperature_is_present() {
-        let payload = json!({
-            "model": "claude-sonnet-4-5",
-            "messages": [{"role": "user", "content": "hello"}],
-            "temperature": 0.7,
-            "top_p": 0.9
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
+    fn claude_limited_sampling_models_reject_temperature_and_top_p_together() {
+        let mut payload = claude_payload("claude-sonnet-4-5");
+        payload.insert("temperature".to_string(), json!(0.7));
+        payload.insert("top_p".to_string(), json!(0.9));
 
-        let (_, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
-
-        assert!(body.get("temperature").is_some());
-        assert!(body.get("top_p").is_none());
+        let error = build(payload).expect_err("build should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("accepts either temperature or top_p, not both")
+        );
     }
 
     #[test]
-    fn claude_3_models_keep_top_p_with_temperature() {
-        let payload = json!({
-            "model": "claude-3-5-sonnet-latest",
-            "messages": [{"role": "user", "content": "hello"}],
-            "temperature": 0.7,
-            "top_p": 0.9
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
+    fn claude_full_sampling_models_keep_temperature_top_p_and_top_k() {
+        let mut payload = claude_payload("claude-3-5-sonnet-latest");
+        payload.insert("temperature".to_string(), json!(0.7));
+        payload.insert("top_p".to_string(), json!(0.9));
+        payload.insert("top_k".to_string(), json!(40));
 
         let (_, upstream) = build(payload).expect("build should succeed");
         let body = upstream.as_object().expect("body must be object");
 
         assert!(body.get("temperature").is_some());
         assert!(body.get("top_p").is_some());
+        assert!(body.get("top_k").is_some());
+    }
+
+    #[test]
+    fn claude_sampling_free_models_reject_non_default_sampling_params() {
+        let mut payload = claude_payload("claude-opus-4-7");
+        payload.insert("temperature".to_string(), json!(0.7));
+
+        let error = build(payload).expect_err("build should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("does not support non-default sampling parameters: temperature")
+        );
+    }
+
+    #[test]
+    fn claude_sampling_free_models_ignore_default_sampling_params() {
+        let mut payload = claude_payload("claude-opus-4-7");
+        payload.insert("temperature".to_string(), json!(1.0));
+        payload.insert("top_p".to_string(), json!(1.0));
+        payload.insert("top_k".to_string(), json!(0));
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("top_p").is_none());
+        assert!(body.get("top_k").is_none());
+    }
+
+    #[test]
+    fn claude_future_models_do_not_inherit_sampling_or_prefill_support() {
+        let mut sampling_payload = claude_payload("claude-opus-4-8");
+        sampling_payload.insert("temperature".to_string(), json!(0.7));
+
+        let sampling_error = build(sampling_payload).expect_err("build should fail");
+        assert!(
+            sampling_error
+                .to_string()
+                .contains("does not support non-default sampling parameters: temperature")
+        );
+
+        let mut prefill_payload = claude_payload("claude-opus-4-8");
+        prefill_payload.insert("assistant_prefill".to_string(), json!("prefill"));
+
+        let prefill_error = build(prefill_payload).expect_err("build should fail");
+        assert!(
+            prefill_error
+                .to_string()
+                .contains("does not support assistant_prefill")
+        );
+    }
+
+    #[test]
+    fn claude_future_models_do_not_inherit_legacy_or_adaptive_reasoning_support() {
+        let mut payload = claude_payload("claude-opus-4-8");
+        payload.insert("reasoning_effort".to_string(), json!("medium"));
+
+        let error = build(payload).expect_err("build should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("does not support reasoning_effort")
+        );
+    }
+
+    #[test]
+    fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
+        let mut payload = claude_payload("claude-opus-4-7");
+        payload.insert("reasoning_effort".to_string(), json!("high"));
+        payload.insert("include_reasoning".to_string(), json!(true));
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert_eq!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("type"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "adaptive"
+        );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("display"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "summarized"
+        );
+        assert_eq!(
+            body.get("output_config")
+                .and_then(Value::as_object)
+                .and_then(|config| config.get("effort"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "high"
+        );
+        assert!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("budget_tokens"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn claude_manual_or_adaptive_models_accept_legacy_thinking_overrides() {
+        let request = json!({
+            "model": "claude-opus-4-6",
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+            "thinking": {
+                "type": "enabled",
+                "budget_tokens": 2048
+            },
+            "max_tokens": 4096
+        });
+
+        super::validate_request(&request).expect("request should be valid");
     }
 }
