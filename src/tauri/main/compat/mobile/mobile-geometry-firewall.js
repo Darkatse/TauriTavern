@@ -97,7 +97,7 @@ const FIREWALL_CSS = `
   body #completion_prompt_manager_popup::after {
     content: '' !important;
     display: block !important;
-    height: max(var(--tt-inset-bottom), 0px) !important;
+    height: max(var(--tt-viewport-bottom-inset, var(--tt-inset-bottom)), 0px) !important;
     flex: 0 0 auto !important;
     pointer-events: none !important;
   }
@@ -143,12 +143,36 @@ const FIREWALL_CSS = `
     max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
   }
 
+  body #completion_prompt_manager_popup[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
+    height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+  }
+
   body .drawer-content[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
     max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
   }
 
   body #top-settings-holder > .drawer > .drawer-content[data-tt-ime-surface="fixed-shell"][data-tt-ime-active]:not(.fillLeft):not(.fillRight) {
     max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+  }
+
+  body [data-tt-ime-surface="dialog"][data-tt-ime-active] {
+    --tt-bottom-inset: max(var(--tt-inset-bottom), 0px);
+    --tt-viewport-bottom-inset-local: max(var(--tt-bottom-inset), var(--tt-ime-bottom));
+    --tt-keyboard-offset: max(calc(var(--tt-viewport-bottom-inset-local) - var(--tt-bottom-inset)), 0px);
+    scroll-padding-bottom: var(--tt-keyboard-offset) !important;
+  }
+
+  body dialog.popup[data-tt-ime-surface="dialog"][data-tt-ime-active] {
+    top: calc(max(var(--tt-inset-top), 0px) + 1em) !important;
+    bottom: auto !important;
+    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - max(var(--tt-inset-top), 0px) - var(--tt-viewport-bottom-inset-local) - 2em) !important;
+  }
+
+  body #dialogue_popup[data-tt-ime-surface="dialog"][data-tt-ime-active] {
+    top: calc(max(var(--tt-inset-top), 0px) + 1em) !important;
+    transform: none !important;
+    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - max(var(--tt-inset-top), 0px) - var(--tt-viewport-bottom-inset-local) - 2em) !important;
   }
 
   body [data-tt-mobile-surface="fullscreen-window"][data-tt-mobile-surface][data-tt-mobile-surface][data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {

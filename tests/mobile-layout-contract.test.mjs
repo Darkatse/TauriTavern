@@ -340,7 +340,7 @@ test('geometry firewall ensures scroll reachability above bottom safe-area', asy
     assert.match(source, /body\s+#character_popup::after/);
     assert.match(source, /body\s+#right-nav-panel\s*>\s*\.scrollableInner::after/);
     assert.match(source, /body\s+#completion_prompt_manager_popup::after/);
-    assert.match(source, /height:\s*max\(var\(--tt-inset-bottom\),\s*0px\)/);
+    assert.match(source, /height:\s*max\(var\(--tt-viewport-bottom-inset,\s*var\(--tt-inset-bottom\)\),\s*0px\)/);
 });
 
 test('geometry firewall defines viewport-host outer geometry contract (explicit size)', async () => {

@@ -68,6 +68,7 @@ CSS 变量（对前端的稳定契约）：
 
 - `--tt-inset-* = env(safe-area-inset-*, 0px)`（iOS）
 - `--tt-viewport-bottom-inset = max(var(--tt-inset-bottom), var(--tt-ime-bottom))`
+- 注：Android 下 `--tt-ime-bottom` 为 surface-local（见 §3.6），因此 `--tt-viewport-bottom-inset` 只在 active surface subtree 才会随键盘变化（避免 1 万+ DOM 的全局样式失效与大范围重排）。
 
 补充兜底：
 
@@ -162,7 +163,9 @@ Android 说明：
   - `data-tt-ime-surface="composer|fixed-shell|dialog"`
 - 调用 `window.__TAURITAVERN_INSETS__.setImeTarget(rootOrNull)` 将 `--tt-ime-bottom` 注入到 active root（`#sheld` 使用默认回退，因此传 `null`）。
 - composer（`#sheld/#form_sheld`）继续由 `android-ime-layout-host` 的 lift/spacer 消费键盘偏移（不扩散到其它界面）。
-- fixed-shell（角色编辑、world/editor drawer 等）由 geometry firewall 通过 `height/max-height/bottom + scroll-padding-bottom` 消费 `--tt-ime-bottom`，避免输入被键盘遮挡。
+- fixed-shell（角色编辑、world/editor drawer、Prompt Manager 等）由 geometry firewall 通过 `height/max-height/bottom + scroll-padding-bottom` 消费 `--tt-ime-bottom`，避免输入被键盘遮挡。
+- 为避免 `height: 100%` + `flex: 1` 全高表单出现“减高但不增滚动”的体感，firewall 还会对常见 scroll container 注入 `::after` spacer，其高度使用 `--tt-viewport-bottom-inset`（safe-area + IME）提供 reachability slack。
+- dialog（`dialog.popup[open]` / `#dialogue_popup`）走 `dialog` 分支：firewall 调整 `top/max-height` 并设置 `scroll-padding-bottom`，避免输入被键盘遮挡。
 
 备注：
 
