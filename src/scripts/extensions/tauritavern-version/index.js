@@ -16,6 +16,7 @@ import { isGitHubRateLimitMessage } from '../../util/github-rate-limit.js';
 import { githubRateLimitStopper } from '../../util/github-rate-limit-stopper.js';
 import { isIosRuntime } from '../../util/mobile-runtime.js';
 import { extractErrorText, toUserFacingErrorText } from '../../util/user-facing-error.js';
+import { getActiveIosPolicyCapabilities } from '../../tauritavern/ios-policy.js';
 
 const MODULE_NAME = 'tauritavern-version';
 const LINKS = Object.freeze({
@@ -33,12 +34,11 @@ let tauriTavernSettingsCache = null;
 let tauriTavernSettingsPromise = null;
 
 function resolveIosUpdateCapabilities() {
-    const report = window.__TAURITAVERN__?.iosPolicy;
-    if (!report || report.scope !== 'ios') {
-        return null;
-    }
+    return getActiveIosPolicyCapabilities()?.updates ?? null;
+}
 
-    return report.capabilities?.updates ?? null;
+function resolveIosAboutCapabilities() {
+    return getActiveIosPolicyCapabilities()?.about ?? null;
 }
 
 function localize(key, fallback) {
@@ -473,6 +473,16 @@ jQuery(async () => {
     const html = await renderExtensionTemplateAsync(MODULE_NAME, 'settings', LINKS);
     container.append(html);
     $('#tauritavern_export_debug_bundle').on('click', () => void onExportDebugBundleClick());
+
+    const aboutCaps = resolveIosAboutCapabilities();
+    if (aboutCaps && aboutCaps.git_info === false) {
+        const gitRow = document.getElementById('ttv-git-row');
+        if (!(gitRow instanceof HTMLElement)) {
+            throw new Error('[TauriTavern][iOSPolicy] ttv-git-row not found');
+        }
+        gitRow.hidden = true;
+    }
+
     const updateCaps = resolveIosUpdateCapabilities();
     if (updateCaps && updateCaps.manual_check === false) {
         $('#tauritavern_check_update').remove();

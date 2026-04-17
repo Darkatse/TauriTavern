@@ -6,6 +6,22 @@ use crate::domain::repositories::chat_completion_repository::ChatCompletionSourc
 
 pub const IOS_POLICY_VERSION: u32 = 1;
 
+fn ios_build_default_profile() -> Option<IosPolicyProfile> {
+    if !cfg!(target_os = "ios") {
+        return None;
+    }
+
+    match env!("TAURITAVERN_IOS_POLICY_PROFILE").trim() {
+        "" => None,
+        "full" => Some(IosPolicyProfile::Full),
+        "ios_internal_full" => Some(IosPolicyProfile::IosInternalFull),
+        "ios_external_beta" => Some(IosPolicyProfile::IosExternalBeta),
+        value => panic!(
+            "TAURITAVERN_IOS_POLICY_PROFILE embedded value {value:?} is unsupported. Expected one of: full, ios_internal_full, ios_external_beta."
+        ),
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum IosPolicyScope {
@@ -65,6 +81,7 @@ pub struct IosPolicyCapabilities {
     pub scripting: IosPolicyScriptingCapabilities,
     pub ai: IosPolicyImageGenerationCapabilities,
     pub sync: IosPolicySyncCapabilities,
+    pub about: IosPolicyAboutCapabilities,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -159,6 +176,12 @@ pub struct IosPolicySyncCapabilities {
     pub lan: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct IosPolicyAboutCapabilities {
+    pub git_info: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct IosPolicyActivationReport {
@@ -206,6 +229,8 @@ struct IosPolicyCapabilitiesOverride {
     pub ai: IosPolicyImageGenerationCapabilitiesOverride,
     #[serde(default)]
     pub sync: IosPolicySyncCapabilitiesOverride,
+    #[serde(default)]
+    pub about: IosPolicyAboutCapabilitiesOverride,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -292,6 +317,12 @@ struct IosPolicySyncCapabilitiesOverride {
     pub lan: Option<bool>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+struct IosPolicyAboutCapabilitiesOverride {
+    pub git_info: Option<bool>,
+}
+
 impl IosPolicyCapabilities {
     pub fn baseline(profile: IosPolicyProfile) -> Self {
         match profile {
@@ -334,6 +365,7 @@ impl IosPolicyCapabilities {
                     image_generation: true,
                 },
                 sync: IosPolicySyncCapabilities { lan: true },
+                about: IosPolicyAboutCapabilities { git_info: true },
             },
             IosPolicyProfile::IosInternalFull => Self {
                 updates: IosPolicyUpdateCapabilities {
@@ -391,6 +423,7 @@ impl IosPolicyCapabilities {
                     image_generation: false,
                 },
                 sync: IosPolicySyncCapabilities { lan: false },
+                about: IosPolicyAboutCapabilities { git_info: false },
             },
         }
     }
@@ -511,6 +544,12 @@ impl IosPolicyCapabilitiesOverride {
             overridden.push("sync.lan".to_string());
         }
 
+        let about = self.about;
+        if let Some(value) = about.git_info {
+            capabilities.about.git_info = value;
+            overridden.push("about.git_info".to_string());
+        }
+
         overridden
     }
 }
@@ -531,11 +570,12 @@ pub fn resolve_ios_policy_activation_report(
     }
 
     let Some(raw_policy) = raw_policy else {
-        let capabilities = IosPolicyCapabilities::baseline(IosPolicyProfile::Full);
+        let profile = ios_build_default_profile().unwrap_or(IosPolicyProfile::Full);
+        let capabilities = IosPolicyCapabilities::baseline(profile);
         return Ok(IosPolicyActivationReport {
             version: IOS_POLICY_VERSION,
             scope,
-            profile: IosPolicyProfile::Full,
+            profile,
             capabilities,
             overridden_capabilities: Vec::new(),
         });
