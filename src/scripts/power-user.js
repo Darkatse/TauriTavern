@@ -50,6 +50,7 @@ import { BIAS_CACHE } from './logit-bias.js';
 import { renderTemplateAsync } from './templates.js';
 
 import { countOccurrences, debounce, delay, download, getFileText, getSanitizedFilename, getStringHash, isOdd, isTrueBoolean, onlyUnique, resetScrollHeight, shuffle, sortMoments, stringToRange, timestampToMoment } from './utils.js';
+import { compareCreateDateKeysAscending } from './util/compare-create-date.js';
 import { FILTER_TYPES } from './filters.js';
 import { PARSER_FLAG, SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
@@ -2348,12 +2349,99 @@ function validateStoryString(storyString, params) {
 
 
 const sortFunc = (a, b) => power_user.sort_order == 'asc' ? compareFunc(a, b) : compareFunc(b, a);
+let didWarnInvalidCharacterCreateDate = false;
+
+/** @param {any} value */
+function toFiniteTimestampMillis(value) {
+    const timestamp = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(timestamp) || Number.isNaN(timestamp) || timestamp <= 0) {
+        return null;
+    }
+
+    return timestamp;
+}
+
+/** @param {any} value */
+function toMomentTimestampMillis(value) {
+    const momentDate = timestampToMoment(value);
+    if (!momentDate?.isValid?.() || !momentDate.isValid()) {
+        return null;
+    }
+
+    return momentDate.valueOf();
+}
+
+/**
+ * Warn once when we encounter characters with an invalid `create_date`.
+ * Sorting still produces a deterministic order (fallback to `date_added` + filename), but the data issue should be visible.
+ *
+ * @param {any[]} entities
+ */
+function warnInvalidCharacterCreateDatesOnce(entities) {
+    if (didWarnInvalidCharacterCreateDate) {
+        return;
+    }
+
+    const invalid = [];
+    for (const entity of entities) {
+        if (entity?.type !== 'character') {
+            continue;
+        }
+
+        const value = entity?.item?.create_date;
+        if (typeof value !== 'string' || value.trim().length === 0) {
+            continue;
+        }
+
+        const momentDate = timestampToMoment(value);
+        if (!momentDate?.isValid?.() || !momentDate.isValid()) {
+            invalid.push({
+                avatar: entity?.item?.avatar,
+                name: entity?.item?.name,
+                create_date: value,
+            });
+        }
+    }
+
+    if (invalid.length === 0) {
+        return;
+    }
+
+    didWarnInvalidCharacterCreateDate = true;
+
+    console.error('[TauriTavern] Invalid character create_date detected; sorting falls back to date_added/filename.', {
+        count: invalid.length,
+        examples: invalid.slice(0, 5),
+    });
+    toastr.error(
+        `Detected ${invalid.length} character card(s) with invalid create_date. Sorting falls back to file timestamps; please report this issue.`,
+        'Character sort',
+        { timeOut: 8000 },
+    );
+}
+
 const compareFunc = (first, second) => {
     const a = first[power_user.sort_field];
     const b = second[power_user.sort_field];
 
     if (power_user.sort_field === 'create_date') {
-        return sortMoments(timestampToMoment(b), timestampToMoment(a));
+        const aPrimaryMs = toMomentTimestampMillis(a);
+        const bPrimaryMs = toMomentTimestampMillis(b);
+
+        return compareCreateDateKeysAscending(
+            {
+                primaryMs: aPrimaryMs,
+                fallbackMs: toFiniteTimestampMillis(first?.date_added),
+                avatar: first?.avatar,
+                name: first?.name,
+            },
+            {
+                primaryMs: bPrimaryMs,
+                fallbackMs: toFiniteTimestampMillis(second?.date_added),
+                avatar: second?.avatar,
+                name: second?.name,
+            },
+        );
     }
 
     switch (power_user.sort_rule) {
@@ -2388,6 +2476,10 @@ export function sortEntitiesList(entities, forceSearch, filterHelper = null) {
     if (!isSearch && power_user.sort_order === 'random') {
         shuffle(entities);
         return;
+    }
+
+    if (!isSearch && power_user.sort_field === 'create_date') {
+        warnInvalidCharacterCreateDatesOnce(entities);
     }
 
     entities.sort((a, b) => {
