@@ -49,8 +49,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\export-sillytavern-migration.
   构建 Tauri portable 二进制，并将产物复制到指定输出目录。对应 `pnpm run tauri:build:portable`。
 - `check-frontend-guardrails.mjs`
   校验前端宿主层文件规模和依赖边界，避免 Host Kernel 持续膨胀。对应 `pnpm run check:frontend`。
-- `audit-panel-runtime-deps.mjs`
-  用 `rg` 快速审计若干运行时依赖锚点，属于开发期排查辅助脚本。
 - `tauri-ios-xcode-script.sh`
   包装 `tauri ios xcode-script`，补齐 Xcode GUI 构建环境中的 PATH / Node / pnpm，并在构建后处理 iOS 图标。
 - `ios-opaque-app-icons.swift`
@@ -58,7 +56,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\export-sillytavern-migration.
 - `ci/setup-macos-signing.sh`
   GitHub Actions / CI 中的 macOS 签名初始化脚本，用于导入证书、创建 keychain 与写入 Apple API Key 路径。
 - `guardrails/frontend-lines-baseline.json`
-  `check-frontend-guardrails.mjs` 使用的基线数据文件，不是独立执行脚本。
+  `check-frontend-guardrails.mjs` 使用的基线数据文件，文件行数硬性限制指标。
 
 ## 维护约定
 
