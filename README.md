@@ -2,6 +2,8 @@
 
 TauriTavern 将 SillyTavern 移植为基于 Tauri v2 + Rust 后端的原生应用，同时保留上游前端体验。前端已同步至 SillyTavern 1.16.0，并通过模块化的 Tauri 注入层进行集成。
 
+![TauriTavern hero](docs/images/tauritavern-readme-hero.png)
+
 [English](README_EN.md)
 
 ## 特性亮点
