@@ -140,8 +140,10 @@ async function onExportDebugBundleClick() {
         const savedPath = await devApi.exportBundle();
 
         if (isIosRuntime()) {
-            await invoke('ios_share_file', { filePath: savedPath });
-            globalThis.toastr?.success?.(localize('ttv_version.export_success', 'Export completed.'));
+            const shareResult = await invoke('ios_share_file', { filePath: savedPath });
+            if (shareResult?.completed === true) {
+                globalThis.toastr?.success?.(localize('ttv_version.export_success', 'Export completed.'));
+            }
             return;
         }
 
