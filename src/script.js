@@ -151,6 +151,7 @@ import {
     initOpenAI,
 } from './scripts/openai.js';
 import { stripCommandErrorPrefixes } from './scripts/util/command-error-utils.js';
+import { getThumbnailCacheBust } from './scripts/util/thumbnail-cache-bust.js';
 
 import {
     generateNovelWithStreaming,
@@ -7995,15 +7996,32 @@ async function read_avatar_load(input) {
  * @returns {string} The URL for the thumbnail
  */
 export function getThumbnailUrl(type, file, t = false) {
+    /** @type {string | null} */
+    let url = null;
+
     if (typeof window.__TAURITAVERN_THUMBNAIL__ === 'function') {
         try {
-            return window.__TAURITAVERN_THUMBNAIL__(type, file, t);
+            url = window.__TAURITAVERN_THUMBNAIL__(type, file, t);
         } catch (error) {
             console.warn('Tauri thumbnail helper failed:', error);
         }
     }
 
-    return `/thumbnail?type=${type}&file=${encodeURIComponent(file)}${t ? `&t=${Date.now()}` : ''}`;
+    if (!url) {
+        url = `/thumbnail?type=${type}&file=${encodeURIComponent(file)}${t ? `&t=${Date.now()}` : ''}`;
+    }
+
+    if (t) {
+        return url;
+    }
+
+    const cacheBust = getThumbnailCacheBust(type, file);
+    if (!cacheBust) {
+        return url;
+    }
+
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}t=${encodeURIComponent(cacheBust)}`;
 }
 
 export function buildAvatarList(block, entities, { templateId = 'inline_avatar_template', empty = true, interactable = false, highlightFavs = true } = {}) {

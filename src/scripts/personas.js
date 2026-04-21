@@ -34,6 +34,7 @@ import { openWorldInfoEditor, world_names } from './world-info.js';
 import { renderTemplateAsync } from './templates.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { accountStorage } from './util/AccountStorage.js';
+import { bumpThumbnailCacheBust } from './util/thumbnail-cache-bust.js';
 import { restorePersonasFromBackup, UNNAMED_PERSONA } from './persona-restore.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { SlashCommandNamedArgument, ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
@@ -420,7 +421,11 @@ async function uploadUserAvatar(url, name) {
 
     // Get the actual path from the response
     const data = await response.json();
-    await getUserAvatars(true, data?.path || name);
+    const avatarId = data?.path || name;
+    if (avatarId) {
+        bumpThumbnailCacheBust('persona', String(avatarId));
+    }
+    await getUserAvatars(true, avatarId || '');
 }
 
 async function changeUserAvatar(e) {
@@ -474,11 +479,12 @@ async function changeUserAvatar(e) {
         const overwriteName = formData.get('overwrite_name');
         const dataPath = data?.path;
 
-        // If the user uploaded a new avatar, we want to make sure it's not cached
+        // If the user overwrote an existing persona avatar, bust cached thumbnails for this file.
         if (overwriteName && dataPath) {
-            await fetch(getUserAvatar(String(dataPath), { forFetch: true }), { cache: 'reload' });
-            await fetch(getThumbnailUrl('persona', String(dataPath), true), { cache: 'reload' });
-            reloadUserAvatar(true);
+            bumpThumbnailCacheBust('persona', String(dataPath));
+            if (String(user_avatar) === String(dataPath)) {
+                reloadUserAvatar(true);
+            }
         }
 
         if (!overwriteName && dataPath) {
