@@ -1,0 +1,93 @@
+name: Auto Pre-Release Scheduler
+
+on:
+  schedule:
+    - cron: "20 */12 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: auto-prerelease-scheduler
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    strategy:
+      fail-fast: false
+      matrix:
+        channel:
+          - desktop
+          - mobile
+        branch:
+          - main
+          - next/2.0.0
+
+    runs-on: ubuntu-latest
+    name: dispatch-${{ matrix.channel }}-${{ matrix.branch }}
+
+    steps:
+      - name: Dispatch branch build when new commits are available
+        uses: actions/github-script@v7
+        env:
+          BRANCH_NAME: ${{ matrix.branch }}
+          CHANNEL: ${{ matrix.channel }}
+        with:
+          script: |
+            const workflows = {
+              desktop: "desktop-auto-prerelease.yml",
+              mobile: "mobile-auto-prerelease.yml",
+            };
+
+            const channel = process.env.CHANNEL;
+            const branch = process.env.BRANCH_NAME;
+            const workflowId = workflows[channel];
+            if (!workflowId) {
+              throw new Error(`Unsupported prerelease channel: ${channel}`);
+            }
+
+            const { owner, repo } = context.repo;
+
+            const { data: branchData } = await github.rest.repos.getBranch({
+              owner,
+              repo,
+              branch,
+            });
+            const headSha = branchData.commit.sha;
+
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner,
+              repo,
+              workflow_id: workflowId,
+              branch,
+              event: "workflow_dispatch",
+              status: "completed",
+              per_page: 100,
+            });
+
+            const previousSuccessfulRun = runs.find((run) => run.conclusion === "success");
+            if (previousSuccessfulRun?.head_sha === headSha) {
+              core.info(
+                `Skipping ${channel}/${branch}: latest successful pre-release already built for ${headSha}.`
+              );
+              return;
+            }
+
+            if (previousSuccessfulRun) {
+              core.notice(
+                `${channel}/${branch} advanced to ${headSha}; last successful pre-release was ${previousSuccessfulRun.head_sha}.`
+              );
+            } else {
+              core.notice(
+                `No successful pre-release exists yet for ${channel}/${branch}; dispatching ${headSha}.`
+              );
+            }
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner,
+              repo,
+              workflow_id: workflowId,
+              ref: branch,
+            });

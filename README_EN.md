@@ -1,6 +1,10 @@
 # TauriTavern
 
+[One-stop download link](https://tauritavern.github.io/downloads/)
+
 TauriTavern ports SillyTavern into a native desktop app with Tauri v2 + Rust backend while keeping the upstream frontend experience. The frontend is now synced to SillyTavern 1.16.0 and integrated through a modular Tauri injection layer.
+
+![TauriTavern hero](docs/images/tauritavern-readme-hero.png)
 
 ## Highlights
 
