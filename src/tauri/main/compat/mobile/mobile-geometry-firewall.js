@@ -16,6 +16,13 @@ const STYLE_ID = 'tt-mobile-geometry-firewall';
 const FIREWALL_CSS = `
 /* [TauriTavern] Mobile geometry firewall (host-last) */
 @media screen and (max-width: 1000px) {
+  /* Host-private plumbing. Keep IME rules width-agnostic, but some desktop-layout
+   * panels reserve bottom space for the composer in wide mode.
+   */
+  body {
+    --tt-firewall-drawer-bottom-reserve: 0px;
+  }
+
   /* Viewport root contract (mobile):
    * - Ensure documentElement has a non-zero, stable layout size.
    * - Avoid root transforms that would turn <html> into a fixed containing block.
@@ -130,54 +137,6 @@ const FIREWALL_CSS = `
     max-width: none !important;
     max-height: none !important;
   }
-
-  body [data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
-    --tt-bottom-inset: max(var(--tt-inset-bottom), 0px);
-    --tt-viewport-bottom-inset-local: max(var(--tt-bottom-inset), var(--tt-ime-bottom));
-    --tt-keyboard-offset: max(calc(var(--tt-viewport-bottom-inset-local) - var(--tt-bottom-inset)), 0px);
-    scroll-padding-bottom: var(--tt-keyboard-offset) !important;
-  }
-
-  body #character_popup[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
-    height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
-    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
-  }
-
-  body #completion_prompt_manager_popup[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
-    height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
-    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
-  }
-
-  body .drawer-content[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
-    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
-  }
-
-  body #top-settings-holder > .drawer > .drawer-content[data-tt-ime-surface="fixed-shell"][data-tt-ime-active]:not(.fillLeft):not(.fillRight) {
-    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
-  }
-
-  body [data-tt-ime-surface="dialog"][data-tt-ime-active] {
-    --tt-bottom-inset: max(var(--tt-inset-bottom), 0px);
-    --tt-viewport-bottom-inset-local: max(var(--tt-bottom-inset), var(--tt-ime-bottom));
-    --tt-keyboard-offset: max(calc(var(--tt-viewport-bottom-inset-local) - var(--tt-bottom-inset)), 0px);
-    scroll-padding-bottom: var(--tt-keyboard-offset) !important;
-  }
-
-  body dialog.popup[data-tt-ime-surface="dialog"][data-tt-ime-active] {
-    top: calc(max(var(--tt-inset-top), 0px) + 1em) !important;
-    bottom: auto !important;
-    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - max(var(--tt-inset-top), 0px) - var(--tt-viewport-bottom-inset-local) - 2em) !important;
-  }
-
-  body #dialogue_popup[data-tt-ime-surface="dialog"][data-tt-ime-active] {
-    top: calc(max(var(--tt-inset-top), 0px) + 1em) !important;
-    transform: none !important;
-    max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - max(var(--tt-inset-top), 0px) - var(--tt-viewport-bottom-inset-local) - 2em) !important;
-  }
-
-  body [data-tt-mobile-surface="fullscreen-window"][data-tt-mobile-surface][data-tt-mobile-surface][data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
-    bottom: max(var(--tt-viewport-bottom-inset-local), 0px) !important;
-  }
 }
 
 /* iPad wide screens (desktop layout + safe-area contract).
@@ -196,6 +155,7 @@ const FIREWALL_CSS = `
    */
   body {
     --tt-safe-top: max(var(--tt-inset-top), 0px);
+    --tt-firewall-drawer-bottom-reserve: var(--bottomFormBlockSize);
   }
 
   html,
@@ -248,6 +208,83 @@ const FIREWALL_CSS = `
     top: var(--tt-safe-top) !important;
     max-height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
   }
+}
+
+/* Android IME contract (width-agnostic).
+ *
+ * Android tablets commonly run in the >1000px "desktop layout" while still being
+ * a mobile runtime. IME (keyboard) avoidance must therefore not be gated behind
+ * SillyTavern's width breakpoint.
+ *
+ * This block stays geometry-only:
+ * - Host-private lift/spacer nodes (composer).
+ * - Active surface max-height/scroll-padding (fixed-shell / dialog).
+ */
+
+body #sheld {
+  --tt-bottom-inset: max(var(--tt-inset-bottom), 0px);
+  --tt-viewport-bottom-inset-local: max(var(--tt-bottom-inset), var(--tt-ime-bottom));
+  --tt-keyboard-offset: max(calc(var(--tt-viewport-bottom-inset-local) - var(--tt-bottom-inset)), 0px);
+}
+
+/* Host-private IME nodes keep Android keyboard lift off the theme-controlled shell. */
+body #form_sheld[data-tt-android-ime-host] > [data-tt-android-ime-lift] {
+  transform: translate3d(0, calc(-1 * var(--tt-keyboard-offset)), 0) !important;
+  will-change: transform;
+}
+
+body #form_sheld[data-tt-android-ime-host] > [data-tt-android-ime-spacer] {
+  display: block !important;
+  height: var(--tt-keyboard-offset) !important;
+  pointer-events: none !important;
+}
+
+body [data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
+  --tt-bottom-inset: max(var(--tt-inset-bottom), 0px);
+  --tt-viewport-bottom-inset-local: max(var(--tt-bottom-inset), var(--tt-ime-bottom));
+  --tt-keyboard-offset: max(calc(var(--tt-viewport-bottom-inset-local) - var(--tt-bottom-inset)), 0px);
+  scroll-padding-bottom: var(--tt-keyboard-offset) !important;
+}
+
+body #character_popup[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
+  height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+  max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+}
+
+body #completion_prompt_manager_popup[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
+  height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+  max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+}
+
+body .drawer-content[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
+  max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+}
+
+body #top-settings-holder > .drawer > .drawer-content[data-tt-ime-surface="fixed-shell"][data-tt-ime-active]:not(.fillLeft):not(.fillRight) {
+  max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-firewall-drawer-bottom-reserve) - var(--tt-keyboard-offset)) !important;
+}
+
+body [data-tt-ime-surface="dialog"][data-tt-ime-active] {
+  --tt-bottom-inset: max(var(--tt-inset-bottom), 0px);
+  --tt-viewport-bottom-inset-local: max(var(--tt-bottom-inset), var(--tt-ime-bottom));
+  --tt-keyboard-offset: max(calc(var(--tt-viewport-bottom-inset-local) - var(--tt-bottom-inset)), 0px);
+  scroll-padding-bottom: var(--tt-keyboard-offset) !important;
+}
+
+body dialog.popup[data-tt-ime-surface="dialog"][data-tt-ime-active] {
+  top: calc(max(var(--tt-inset-top), 0px) + 1em) !important;
+  bottom: auto !important;
+  max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - max(var(--tt-inset-top), 0px) - var(--tt-viewport-bottom-inset-local) - 2em) !important;
+}
+
+body #dialogue_popup[data-tt-ime-surface="dialog"][data-tt-ime-active] {
+  top: calc(max(var(--tt-inset-top), 0px) + 1em) !important;
+  transform: none !important;
+  max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - max(var(--tt-inset-top), 0px) - var(--tt-viewport-bottom-inset-local) - 2em) !important;
+}
+
+body [data-tt-mobile-surface="fullscreen-window"][data-tt-mobile-surface][data-tt-mobile-surface][data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
+  bottom: max(var(--tt-viewport-bottom-inset-local), 0px) !important;
 }
 `.trim();
 

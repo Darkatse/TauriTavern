@@ -255,10 +255,6 @@
     }
 
     #sheld {
-        --tt-ime-bottom: 0px;
-        --tt-bottom-inset: max(var(--tt-inset-bottom), 0px);
-        --tt-viewport-bottom-inset-local: max(var(--tt-bottom-inset), var(--tt-ime-bottom));
-        --tt-keyboard-offset: max(calc(var(--tt-viewport-bottom-inset-local) - var(--tt-bottom-inset)), 0px);
         height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px));
         height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px));
         max-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px));
@@ -302,19 +298,7 @@
         z-index: 31;
         padding-right: max(var(--tt-inset-right), 0px) !important;
         padding-left: max(var(--tt-inset-left), 0px) !important;
-        padding-bottom: var(--tt-bottom-inset) !important;
-    }
-
-    /* Host-private IME nodes keep Android keyboard lift off the theme-controlled shell. */
-    #form_sheld[data-tt-android-ime-host]>[data-tt-android-ime-lift] {
-        transform: translate3d(0, calc(-1 * var(--tt-keyboard-offset)), 0) !important;
-        will-change: transform;
-    }
-
-    #form_sheld[data-tt-android-ime-host]>[data-tt-android-ime-spacer] {
-        display: block !important;
-        height: var(--tt-keyboard-offset) !important;
-        pointer-events: none !important;
+        padding-bottom: max(var(--tt-inset-bottom), 0px) !important;
     }
 
     #chat {
