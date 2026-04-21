@@ -28,6 +28,7 @@ import {
     getMediaIndex,
     getMediaDisplay,
     chatElement,
+    markWindowedChatDirtyFromIndex,
 } from '../script.js';
 import { selected_group } from './group-chats.js';
 import { power_user } from './power-user.js';
@@ -148,12 +149,18 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
     if (isNaN(start)) return;
     if (!end) end = start;
     const hide = !unhide;
+    let minChangedMessageId = null;
 
     for (let messageId = start; messageId <= end; messageId++) {
         const message = chat[messageId];
         if (!message) continue;
         if (nameFitler && message.name !== nameFitler) continue;
 
+        if (Boolean(message.is_system) !== hide) {
+            minChangedMessageId = minChangedMessageId === null
+                ? messageId
+                : Math.min(minChangedMessageId, messageId);
+        }
         message.is_system = hide;
 
         // Also toggle "hidden" state for all visible messages
@@ -164,6 +171,10 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
 
     // Reload swipes. Useful when a last message is hidden.
     refreshSwipeButtons();
+
+    if (minChangedMessageId !== null) {
+        markWindowedChatDirtyFromIndex(minChangedMessageId);
+    }
 
     await saveChatConditional();
 }

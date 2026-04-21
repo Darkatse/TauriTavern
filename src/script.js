@@ -7750,7 +7750,7 @@ export function saveChatDebounced() {
     }, DEFAULT_SAVE_EDIT_TIMEOUT);
 }
 
-function markWindowedChatDirtyFromIndex(messageId) {
+export function markWindowedChatDirtyFromIndex(messageId) {
     const windowState = getWindowedChatState();
     if (!windowState) {
         return;
