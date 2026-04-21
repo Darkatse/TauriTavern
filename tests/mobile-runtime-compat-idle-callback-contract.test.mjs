@@ -12,12 +12,12 @@ test('Mobile runtime compat polyfills requestIdleCallback', async () => {
         'utf8',
     );
 
-    assert.match(source, /defineMissingMethod\(window,\s*['"]requestIdleCallback['"]/);
-    assert.match(source, /defineMissingMethod\(window,\s*['"]cancelIdleCallback['"]/);
+    assert.match(source, /export function installMobileRuntimeCompat\(targetWindow = window\)/);
+    assert.match(source, /defineMissingGlobalMethod\(\s*targetWindow,\s*['"]requestIdleCallback['"]/);
+    assert.match(source, /defineMissingGlobalMethod\(\s*targetWindow,\s*['"]cancelIdleCallback['"]/);
 
-    assert.match(source, /\bfunction requestIdleCallbackPolyfill\b/);
+    assert.match(source, /\bfunction createRequestIdleCallbackPolyfill\b/);
     assert.match(source, /didTimeout:/);
     assert.match(source, /timeRemaining:/);
     assert.match(source, /requestIdleCallback: callback must be a function/);
 });
-

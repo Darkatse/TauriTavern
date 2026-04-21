@@ -12,38 +12,71 @@ function defineMissingMethod(target, key, implementation) {
     });
 }
 
-function now() {
-    if (typeof performance !== 'undefined' && performance && typeof performance.now === 'function') {
-        return performance.now();
+function now(targetWindow) {
+    try {
+        if (targetWindow?.performance && typeof targetWindow.performance.now === 'function') {
+            return targetWindow.performance.now();
+        }
+    } catch {
+        // Ignore cross-origin access failures.
     }
 
     return Date.now();
 }
 
-function requestIdleCallbackPolyfill(callback, options) {
-    if (typeof callback !== 'function') {
-        throw new TypeError('requestIdleCallback: callback must be a function');
-    }
+function createRequestIdleCallbackPolyfill(targetWindow) {
+    return function requestIdleCallbackPolyfill(callback, options) {
+        if (typeof callback !== 'function') {
+            throw new TypeError('requestIdleCallback: callback must be a function');
+        }
 
-    const start = now();
-    const rawTimeout = options && typeof options === 'object' ? Number(options.timeout) : NaN;
-    const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : null;
-    const budgetMs = 50;
+        const start = now(targetWindow);
+        const rawTimeout = options && typeof options === 'object' ? Number(options.timeout) : NaN;
+        const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : null;
+        const budgetMs = 50;
 
-    return setTimeout(function idleCallbackTimer() {
-        const deadline = {
-            didTimeout: timeoutMs !== null && (now() - start) >= timeoutMs,
-            timeRemaining: function timeRemaining() {
-                return Math.max(0, budgetMs - (now() - start));
-            },
-        };
+        const setTimeoutFn = (() => {
+            if (typeof targetWindow?.setTimeout === 'function') {
+                return targetWindow.setTimeout.bind(targetWindow);
+            }
+            return setTimeout;
+        })();
 
-        callback(deadline);
-    }, 1);
+        return setTimeoutFn(() => {
+            const deadline = {
+                didTimeout: timeoutMs !== null && (now(targetWindow) - start) >= timeoutMs,
+                timeRemaining: function timeRemaining() {
+                    return Math.max(0, budgetMs - (now(targetWindow) - start));
+                },
+            };
+
+            callback.call(targetWindow, deadline);
+        }, 1);
+    };
 }
 
-function cancelIdleCallbackPolyfill(handle) {
-    clearTimeout(handle);
+function createCancelIdleCallbackPolyfill(targetWindow) {
+    return function cancelIdleCallbackPolyfill(handle) {
+        if (typeof targetWindow?.clearTimeout === 'function') {
+            targetWindow.clearTimeout(handle);
+            return;
+        }
+
+        clearTimeout(handle);
+    };
+}
+
+function defineMissingGlobalMethod(targetWindow, key, implementation) {
+    if (!targetWindow || typeof targetWindow[key] === 'function') {
+        return false;
+    }
+
+    try {
+        targetWindow[key] = implementation;
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function toIntegerOrInfinity(value) {
@@ -128,25 +161,41 @@ function hasOwnPolyfill(target, property) {
     return Object.prototype.hasOwnProperty.call(Object(target), property);
 }
 
-export function installMobileRuntimeCompat() {
-    if (window[COMPAT_KEY]) {
+export function installMobileRuntimeCompat(targetWindow = window) {
+    if (!targetWindow) {
         return;
     }
-    window[COMPAT_KEY] = true;
 
-    const needsRequestIdleCallback = typeof window.requestIdleCallback !== 'function';
-    const needsCancelIdleCallback = typeof window.cancelIdleCallback !== 'function';
-    defineMissingMethod(window, 'requestIdleCallback', requestIdleCallbackPolyfill);
-    defineMissingMethod(window, 'cancelIdleCallback', cancelIdleCallbackPolyfill);
-    if (needsRequestIdleCallback || needsCancelIdleCallback) {
+    try {
+        if (targetWindow[COMPAT_KEY]) {
+            return;
+        }
+        targetWindow[COMPAT_KEY] = true;
+    } catch {
+        return;
+    }
+
+    const needsRequestIdleCallback = typeof targetWindow.requestIdleCallback !== 'function';
+    const needsCancelIdleCallback = typeof targetWindow.cancelIdleCallback !== 'function';
+    const installedIdle = defineMissingGlobalMethod(
+        targetWindow,
+        'requestIdleCallback',
+        createRequestIdleCallbackPolyfill(targetWindow),
+    );
+    const installedCancel = defineMissingGlobalMethod(
+        targetWindow,
+        'cancelIdleCallback',
+        createCancelIdleCallbackPolyfill(targetWindow),
+    );
+    if ((needsRequestIdleCallback && installedIdle) || (needsCancelIdleCallback && installedCancel)) {
         console.warn('[TauriTavern] Mobile runtime compat installed a requestIdleCallback polyfill.');
     }
 
-    defineMissingMethod(Array.prototype, 'at', atPolyfill);
-    defineMissingMethod(String.prototype, 'at', atPolyfill);
-    defineMissingMethod(Array.prototype, 'findLast', findLastPolyfill);
-    defineMissingMethod(Array.prototype, 'findLastIndex', findLastIndexPolyfill);
-    defineMissingMethod(Array.prototype, 'toSorted', toSortedPolyfill);
-    defineMissingMethod(Array.prototype, 'toReversed', toReversedPolyfill);
-    defineMissingMethod(Object, 'hasOwn', hasOwnPolyfill);
+    defineMissingMethod(targetWindow.Array?.prototype, 'at', atPolyfill);
+    defineMissingMethod(targetWindow.String?.prototype, 'at', atPolyfill);
+    defineMissingMethod(targetWindow.Array?.prototype, 'findLast', findLastPolyfill);
+    defineMissingMethod(targetWindow.Array?.prototype, 'findLastIndex', findLastIndexPolyfill);
+    defineMissingMethod(targetWindow.Array?.prototype, 'toSorted', toSortedPolyfill);
+    defineMissingMethod(targetWindow.Array?.prototype, 'toReversed', toReversedPolyfill);
+    defineMissingMethod(targetWindow.Object, 'hasOwn', hasOwnPolyfill);
 }

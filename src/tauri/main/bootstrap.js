@@ -157,13 +157,15 @@ function installHostAbi(context) {
     };
 }
 
-function installSameOriginWindowPatches(interceptors, downloadBridge, { iframeContractBridge } = {}) {
+function installSameOriginWindowPatches(interceptors, downloadBridge, { iframeContractBridge, runtimeCompat } = {}) {
     const trackedIframes = new WeakSet();
 
     const patchWindow = (targetWindow) => {
         if (!targetWindow || getWindowOrigin(targetWindow) !== window.location.origin) {
             return;
         }
+
+        runtimeCompat?.(targetWindow);
 
         interceptors.patchFetch(targetWindow);
         interceptors.patchJQueryAjax(targetWindow);
@@ -350,7 +352,11 @@ export function bootstrapTauriMain() {
     interceptors.patchFetch();
     interceptors.patchJQueryAjax();
     downloadBridge.patchWindow();
-    installSameOriginWindowPatches(interceptors, downloadBridge, { iframeContractBridge: isMobile ? installMobileIframeViewportContractBridge() : null }); if (isMobile) installMobileWindowOpenCompat(); preinstallPanelRuntime();
+    installSameOriginWindowPatches(interceptors, downloadBridge, {
+        iframeContractBridge: isMobile ? installMobileIframeViewportContractBridge() : null,
+        runtimeCompat: isMobile ? installMobileRuntimeCompat : null,
+    });
+    if (isMobile) installMobileWindowOpenCompat(); preinstallPanelRuntime();
     const readyPromise = initializeTauriIntegration(
         context,
         interceptors,
