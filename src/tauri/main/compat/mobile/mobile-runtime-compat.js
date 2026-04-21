@@ -12,6 +12,40 @@ function defineMissingMethod(target, key, implementation) {
     });
 }
 
+function now() {
+    if (typeof performance !== 'undefined' && performance && typeof performance.now === 'function') {
+        return performance.now();
+    }
+
+    return Date.now();
+}
+
+function requestIdleCallbackPolyfill(callback, options) {
+    if (typeof callback !== 'function') {
+        throw new TypeError('requestIdleCallback: callback must be a function');
+    }
+
+    const start = now();
+    const rawTimeout = options && typeof options === 'object' ? Number(options.timeout) : NaN;
+    const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : null;
+    const budgetMs = 50;
+
+    return setTimeout(function idleCallbackTimer() {
+        const deadline = {
+            didTimeout: timeoutMs !== null && (now() - start) >= timeoutMs,
+            timeRemaining: function timeRemaining() {
+                return Math.max(0, budgetMs - (now() - start));
+            },
+        };
+
+        callback(deadline);
+    }, 1);
+}
+
+function cancelIdleCallbackPolyfill(handle) {
+    clearTimeout(handle);
+}
+
 function toIntegerOrInfinity(value) {
     const number = Number(value);
     if (Number.isNaN(number) || number === 0) {
@@ -100,6 +134,14 @@ export function installMobileRuntimeCompat() {
     }
     window[COMPAT_KEY] = true;
 
+    const needsRequestIdleCallback = typeof window.requestIdleCallback !== 'function';
+    const needsCancelIdleCallback = typeof window.cancelIdleCallback !== 'function';
+    defineMissingMethod(window, 'requestIdleCallback', requestIdleCallbackPolyfill);
+    defineMissingMethod(window, 'cancelIdleCallback', cancelIdleCallbackPolyfill);
+    if (needsRequestIdleCallback || needsCancelIdleCallback) {
+        console.warn('[TauriTavern] Mobile runtime compat installed a requestIdleCallback polyfill.');
+    }
+
     defineMissingMethod(Array.prototype, 'at', atPolyfill);
     defineMissingMethod(String.prototype, 'at', atPolyfill);
     defineMissingMethod(Array.prototype, 'findLast', findLastPolyfill);
@@ -108,4 +150,3 @@ export function installMobileRuntimeCompat() {
     defineMissingMethod(Array.prototype, 'toReversed', toReversedPolyfill);
     defineMissingMethod(Object, 'hasOwn', hasOwnPolyfill);
 }
-
