@@ -349,7 +349,14 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
 
         let (ok, level, error_message, response_value) = match &result {
             Ok(value) => (true, "INFO".to_string(), None, Some(value)),
-            Err(error) => (false, "ERROR".to_string(), Some(error.to_string()), None),
+            Err(error) => {
+                let level = if matches!(error, DomainError::Cancelled(_)) {
+                    "WARN"
+                } else {
+                    "ERROR"
+                };
+                (false, level.to_string(), Some(error.to_string()), None)
+            }
         };
 
         let endpoint = format_endpoint(&config.base_url, endpoint_path);
@@ -481,13 +488,16 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
 
         let duration_ms = started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
         let ok = result.is_ok();
-        let (level, error_message) = if ok {
-            ("INFO".to_string(), None)
-        } else {
-            (
-                "ERROR".to_string(),
-                result.as_ref().err().map(ToString::to_string),
-            )
+        let (level, error_message) = match &result {
+            Ok(()) => ("INFO".to_string(), None),
+            Err(error) => {
+                let level = if matches!(error, DomainError::Cancelled(_)) {
+                    "WARN"
+                } else {
+                    "ERROR"
+                };
+                (level.to_string(), Some(error.to_string()))
+            }
         };
 
         let meta = LlmApiLogMeta {

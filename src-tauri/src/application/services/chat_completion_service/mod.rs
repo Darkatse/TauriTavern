@@ -8,6 +8,7 @@ use crate::application::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::domain::errors::DomainError;
 use crate::domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use crate::domain::models::settings::{PromptCacheTtl, TauriTavernSettings};
 use crate::domain::repositories::chat_completion_repository::{
@@ -346,9 +347,7 @@ impl ChatCompletionService {
             result = &mut generation => result,
             _ = cancel.changed() => {
                 if *cancel.borrow() {
-                    return Err(ApplicationError::InternalError(
-                        "Generation cancelled by user".to_string(),
-                    ));
+                    return Err(DomainError::generation_cancelled_by_user().into());
                 }
 
                 generation.await
