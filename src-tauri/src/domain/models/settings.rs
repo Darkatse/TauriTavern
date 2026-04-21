@@ -155,14 +155,6 @@ impl Default for RequestProxySettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TauriTavernMigrationState {
-    /// One-time migration for legacy character cards whose `create_date` was stored as
-    /// `YYYY-MM-DD HH:MM:SS UTC` (TauriTavern bug) instead of ISO 8601.
-    #[serde(default)]
-    pub character_create_date_iso_v1: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevLoggingSettings {
     #[serde(default)]
@@ -212,8 +204,6 @@ pub struct TauriTavernSettings {
     #[serde(default = "default_avatar_persona_original_images_enabled")]
     pub avatar_persona_original_images_enabled: bool,
     #[serde(default)]
-    pub migrations: TauriTavernMigrationState,
-    #[serde(default)]
     pub dev: DevLoggingSettings,
     #[serde(default)]
     pub dynamic_theme: DynamicThemeSettings,
@@ -242,7 +232,6 @@ impl Default for TauriTavernSettings {
             allow_keys_exposure: false,
             avatar_persona_original_images_enabled: default_avatar_persona_original_images_enabled(
             ),
-            migrations: TauriTavernMigrationState::default(),
             dev: DevLoggingSettings::default(),
             dynamic_theme: DynamicThemeSettings::default(),
             models: default_model_settings(),
