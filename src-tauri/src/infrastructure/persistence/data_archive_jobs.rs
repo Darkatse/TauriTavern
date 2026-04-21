@@ -13,6 +13,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::paths::RuntimePaths;
+use crate::infrastructure::persistence::file_system::DataDirectory;
 
 use super::data_archive::{
     DataArchiveExportResult, DataArchiveImportResult, default_export_file_name, is_cancelled_error,
@@ -278,6 +279,17 @@ pub fn start_import_data_archive_job(
 
         match blocking_result {
             Ok(Ok(result)) => {
+                let initialize_result =
+                    DataDirectory::new(data_root.clone()).initialize().await;
+                if let Err(error) = initialize_result {
+                    let _ = job.mark_failed(&format!(
+                        "Import completed but failed to initialize data directory: {}",
+                        error
+                    ));
+                    cleanup_directory(&job_root);
+                    return;
+                }
+
                 let refresh_result = app_handle
                     .state::<Arc<AppState>>()
                     .refresh_after_external_data_change("import")

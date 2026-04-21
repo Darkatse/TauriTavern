@@ -178,4 +178,4 @@ wire framing（见 `src-tauri/src/infrastructure/tt_sync/bundle.rs`）：
 2. **不要改变 Mirror delete 的时序**：删除只能在 Mirror 且 commit/删除阶段发生，避免数据不一致。
 3. **不要破坏 mtime 语义**：增量 diff 依赖 `(size_bytes, modified_ms)`，写入必须保留 `modified_ms`。
 4. **不要改动事件语义**：阶段划分与完成/错误时序对前端是契约。
-
+5. **不要把 iOS policy 本地缓存纳入 scope**：`_tauritavern/.ios-policy.json` 属于 iOS-only 宿主本地状态，用于避免同步覆盖 `tauritavern-settings.json` 时丢失已解锁的 policy。

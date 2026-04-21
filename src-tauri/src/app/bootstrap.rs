@@ -146,10 +146,23 @@ pub(super) async fn build_services(
         .settings_repository
         .load_tauritavern_settings()
         .await?;
-    let ios_policy = crate::domain::ios_policy::resolve_ios_policy_activation_report(
-        crate::domain::ios_policy::IosPolicyScope::for_current_platform(),
-        tauritavern_settings.ios_policy.as_ref(),
-    )?;
+    let ios_policy_scope = crate::domain::ios_policy::IosPolicyScope::for_current_platform();
+    let ios_policy = if ios_policy_scope == crate::domain::ios_policy::IosPolicyScope::Ios {
+        let raw_policy = crate::infrastructure::ios_policy_cache::resolve_effective_raw_policy(
+            data_directory.root(),
+            tauritavern_settings.ios_policy.as_ref(),
+        )
+        .await?;
+        crate::domain::ios_policy::resolve_ios_policy_activation_report(
+            ios_policy_scope,
+            raw_policy.as_ref(),
+        )?
+    } else {
+        crate::domain::ios_policy::resolve_ios_policy_activation_report(
+            ios_policy_scope,
+            tauritavern_settings.ios_policy.as_ref(),
+        )?
+    };
 
     let content_service = Arc::new(ContentService::new(repositories.content_repository.clone()));
     let extension_service = Arc::new(ExtensionService::new(

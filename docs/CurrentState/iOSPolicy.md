@@ -18,6 +18,9 @@
 - 数据目录：`<data_root>/default-user/`
 - 文件：`<data_root>/default-user/tauritavern-settings.json`
 - Policy 字段：`ios_policy`（存储为 raw JSON：`serde_json::Value`）
+- iOS-only 本地缓存：`<data_root>/_tauritavern/.ios-policy.json`
+  - 当 `tauritavern-settings.json` 因同步等外部写入丢失 `ios_policy` 字段时，用作 iOS 端启动期的 fallback 来源（仍然严格校验并 fail-fast）。
+  - 该文件属于宿主本地状态，不进入同步 scope；如需重置，删除该文件即可回到 settings/build default 解析路径。
 
 实现位置：
 
