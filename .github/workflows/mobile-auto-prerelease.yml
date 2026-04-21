@@ -18,6 +18,29 @@ jobs:
       tag_name: ${{ steps.metadata.outputs.tag_name }}
       release_id: ${{ steps.release.outputs.release_id }}
     steps:
+      - name: Resolve app version from package.json
+        id: version
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const { data } = await github.rest.repos.getContent({
+              owner,
+              repo,
+              path: "package.json",
+              ref: context.ref,
+            });
+            let packageJson;
+            try {
+              packageJson = JSON.parse(Buffer.from(data.content, "base64").toString("utf8"));
+            } catch (error) {
+              throw new Error(`Invalid package.json content: ${error.message}`);
+            }
+            if (!packageJson.version) {
+              throw new Error("Missing version field in package.json");
+            }
+            core.setOutput("app_version", String(packageJson.version));
+
       - name: Compute branch-aware release metadata
         id: metadata
         shell: bash
@@ -25,24 +48,26 @@ jobs:
           BRANCH_NAME: ${{ github.ref_name }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           SOURCE_SHA: ${{ github.sha }}
+          APP_VERSION: ${{ steps.version.outputs.app_version }}
         run: |
           : "${BRANCH_NAME:?Missing github.ref_name}"
           : "${DEFAULT_BRANCH:?Missing github.event.repository.default_branch}"
           : "${SOURCE_SHA:?Missing github.sha}"
+          : "${APP_VERSION:?Missing package.json version}"
 
           branch_slug=${BRANCH_NAME//\//-}
           if [[ "$BRANCH_NAME" == "$DEFAULT_BRANCH" ]]; then
-            tag_name='mobile-auto-v__VERSION__'
+            tag_name="mobile-auto-v$APP_VERSION"
             release_suffix=''
           else
-            tag_name="mobile-auto-v__VERSION__-$branch_slug"
+            tag_name="mobile-auto-v$APP_VERSION-$branch_slug"
             release_suffix=" [$BRANCH_NAME]"
           fi
 
           {
             echo "tag_name=$tag_name"
             echo "release_name<<EOF"
-            echo "TauriTavern 移动端自动构建 v__VERSION__$release_suffix / TauriTavern Mobile Auto Build v__VERSION__$release_suffix"
+            echo "TauriTavern 移动端自动构建 v$APP_VERSION$release_suffix / TauriTavern Mobile Auto Build v$APP_VERSION$release_suffix"
             echo "EOF"
             echo "release_body<<EOF"
             echo "## 移动端自动构建（预发布）"
