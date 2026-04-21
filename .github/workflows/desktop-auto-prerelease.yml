@@ -30,7 +30,12 @@ jobs:
               path: "package.json",
               ref: context.ref,
             });
-            const packageJson = JSON.parse(Buffer.from(data.content, "base64").toString("utf8"));
+            let packageJson;
+            try {
+              packageJson = JSON.parse(Buffer.from(data.content, "base64").toString("utf8"));
+            } catch (error) {
+              throw new Error(`Invalid package.json content: ${error.message}`);
+            }
             if (!packageJson.version) {
               throw new Error("Missing version field in package.json");
             }
