@@ -279,8 +279,7 @@ pub fn start_import_data_archive_job(
 
         match blocking_result {
             Ok(Ok(result)) => {
-                let initialize_result =
-                    DataDirectory::new(data_root.clone()).initialize().await;
+                let initialize_result = DataDirectory::new(data_root.clone()).initialize().await;
                 if let Err(error) = initialize_result {
                     let _ = job.mark_failed(&format!(
                         "Import completed but failed to initialize data directory: {}",

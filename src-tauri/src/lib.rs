@@ -150,13 +150,14 @@ pub fn run() {
             app.manage(user_dirs.clone());
 
             let tauritavern_settings = load_tauritavern_settings(&runtime_paths.data_root)?;
-            let ios_policy_scope = crate::domain::ios_policy::IosPolicyScope::for_current_platform();
-            let ios_policy = if ios_policy_scope == crate::domain::ios_policy::IosPolicyScope::Ios
-            {
-                let raw_policy = crate::infrastructure::ios_policy_cache::resolve_effective_raw_policy_sync(
-                    &runtime_paths.data_root,
-                    tauritavern_settings.ios_policy.as_ref(),
-                )?;
+            let ios_policy_scope =
+                crate::domain::ios_policy::IosPolicyScope::for_current_platform();
+            let ios_policy = if ios_policy_scope == crate::domain::ios_policy::IosPolicyScope::Ios {
+                let raw_policy =
+                    crate::infrastructure::ios_policy_cache::resolve_effective_raw_policy_sync(
+                        &runtime_paths.data_root,
+                        tauritavern_settings.ios_policy.as_ref(),
+                    )?;
                 crate::domain::ios_policy::resolve_ios_policy_activation_report(
                     ios_policy_scope,
                     raw_policy.as_ref(),
@@ -305,6 +306,9 @@ fn create_main_window(
 
     #[cfg(target_os = "ios")]
     infrastructure::ios_webview::configure_main_wkwebview(&window)?;
+
+    #[cfg(target_os = "macos")]
+    infrastructure::macos_webview::configure_main_wkwebview(&window)?;
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     {

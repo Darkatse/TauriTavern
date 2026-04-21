@@ -1,6 +1,9 @@
 use std::error::Error;
+#[cfg(not(target_os = "ios"))]
 use std::io;
-use std::path::{Path, PathBuf};
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use std::path::Path;
+use std::path::PathBuf;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use serde::{Deserialize, Serialize};

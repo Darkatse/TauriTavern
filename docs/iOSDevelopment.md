@@ -64,7 +64,7 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 
 - WebView 无法向用户暴露可操作的沙盒路径（即使文件写入成功，用户也无法访问）。
 - `<input type="file">` 在 WKWebView 上对 zip 的行为差异较大，不适合作为 data-migration 的唯一入口。
-- `window.confirm()` 在 iOS WebView 上存在不可靠性（可能不弹出/阻塞），会导致“看起来无反应”。
+- 若宿主未安装 `WKUIDelegate` 的 JS dialog bridge，`window.alert/confirm/prompt` 可能不弹出或阻塞；当前已在 Host policy 层补齐（见 `docs/WkWebViewJsDialogBridgePlan.md`）。
 
 ### 2.3 已落地方案（当前状态：已稳定可用）
 
@@ -83,7 +83,7 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
    - iPad 走 popoverPresentationController 绑定 sourceView/sourceRect，避免崩溃。
 
 4) **确认弹窗**
-   - iOS 导入确认使用 `Popup.show.confirm`（避免 `window.confirm` 在 iOS 上不可靠）。
+   - iOS 导入确认使用 `Popup.show.confirm`（保持与 SillyTavern 交互契约一致；不依赖同步阻塞式 dialog）。
    - 其他平台保持原语义不变。
 
 ### 2.4 重要实现位置（便于维护与回归）

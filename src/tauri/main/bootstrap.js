@@ -14,6 +14,7 @@ import { installMobileImeSurfaceController } from './compat/mobile/mobile-ime-su
 import { installMobileOverlayCompatController } from './compat/mobile/mobile-overlay-compat-controller.js';
 import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compat.js';
 import { installMobileWindowOpenCompat } from './compat/mobile/mobile-window-open-compat.js';
+import { installDialogPolyfillCoverage } from './compat/dialog/dialog-polyfill-coverage.js';
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
 import { extractErrorText, resolveHostErrorResponse } from './kernel/host-error-response.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
@@ -263,6 +264,7 @@ export function bootstrapTauriMain() {
     const isMobile = isMobileUserAgent(); if (isMobile) installTauriMobileCompat();
 
     installFrontendLogCapture();
+    installDialogPolyfillCoverage();
 
     installBackNavigationBridge();
     installNativeShareBridge();
@@ -352,9 +354,15 @@ export function bootstrapTauriMain() {
     interceptors.patchFetch();
     interceptors.patchJQueryAjax();
     downloadBridge.patchWindow();
+    const runtimeCompat = (targetWindow) => {
+        installDialogPolyfillCoverage(targetWindow);
+        if (isMobile) {
+            installMobileRuntimeCompat(targetWindow);
+        }
+    };
     installSameOriginWindowPatches(interceptors, downloadBridge, {
         iframeContractBridge: isMobile ? installMobileIframeViewportContractBridge() : null,
-        runtimeCompat: isMobile ? installMobileRuntimeCompat : null,
+        runtimeCompat,
     });
     if (isMobile) installMobileWindowOpenCompat(); preinstallPanelRuntime();
     const readyPromise = initializeTauriIntegration(

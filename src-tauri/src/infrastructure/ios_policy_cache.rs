@@ -184,8 +184,9 @@ mod tests {
             "overrides": { "capabilities": { "updates": { "manual_check": true } } }
         });
 
-        let resolved =
-            resolve_effective_raw_policy(&temp.root, Some(&policy)).await.expect("resolve policy");
+        let resolved = resolve_effective_raw_policy(&temp.root, Some(&policy))
+            .await
+            .expect("resolve policy");
         assert_eq!(resolved, Some(policy.clone()));
 
         let cached = resolve_effective_raw_policy(&temp.root, None)
@@ -202,8 +203,11 @@ mod tests {
         let cache_path = cache_path(&temp.root);
         std::fs::create_dir_all(cache_path.parent().expect("cache path has parent"))
             .expect("create cache parent");
-        std::fs::write(&cache_path, serde_json::to_string_pretty(&policy).expect("serialize"))
-            .expect("write cache file");
+        std::fs::write(
+            &cache_path,
+            serde_json::to_string_pretty(&policy).expect("serialize"),
+        )
+        .expect("write cache file");
 
         let resolved = resolve_effective_raw_policy(&temp.root, None)
             .await
@@ -223,7 +227,9 @@ mod tests {
             .await
             .expect("write invalid cache");
 
-        let error = resolve_effective_raw_policy(&temp.root, None).await.unwrap_err();
+        let error = resolve_effective_raw_policy(&temp.root, None)
+            .await
+            .unwrap_err();
         assert!(
             error.to_string().contains("contains invalid JSON"),
             "unexpected error: {}",
@@ -245,7 +251,9 @@ mod tests {
             .await
             .expect("create directory at cache path");
 
-        let error = resolve_effective_raw_policy(&temp.root, None).await.unwrap_err();
+        let error = resolve_effective_raw_policy(&temp.root, None)
+            .await
+            .unwrap_err();
         assert!(
             error.to_string().contains("cache path is not a file"),
             "unexpected error: {}",

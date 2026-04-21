@@ -22,7 +22,10 @@ pub fn log_command(command: impl AsRef<str>) {
 }
 
 fn should_log_as_warning(error: &CommandError) -> bool {
-    matches!(error, CommandError::TooManyRequests(_) | CommandError::Cancelled(_))
+    matches!(
+        error,
+        CommandError::TooManyRequests(_) | CommandError::Cancelled(_)
+    )
 }
 
 pub fn map_command_error<E>(context: impl AsRef<str>) -> impl FnOnce(E) -> CommandError
