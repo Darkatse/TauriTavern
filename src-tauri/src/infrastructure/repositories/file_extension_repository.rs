@@ -51,6 +51,7 @@ const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "stable-diffusion",
     "vectors",
     "tauritavern-version",
+    "translate",
     "tts",
 ];
 const SOURCE_METADATA_FILE: &str = ".tauritavern-source.json";
