@@ -209,7 +209,11 @@
         "apiUrl": "http://localhost:5100",
         "apiKey": "",
         "autoConnect": false,
-        "disabledExtensions": [],
+        "disabledExtensions": [
+            "stable-diffusion",
+            "vectors",
+            "tts"
+        ],
         "expressionOverrides": [],
         "memory": {
             "minLongMemory": 16,
