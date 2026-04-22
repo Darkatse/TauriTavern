@@ -1,3 +1,5 @@
+import { createAbortError } from './kernel/abort-error.js';
+
 export function createInterceptors({
     isTauri,
     originalFetch,
@@ -10,6 +12,46 @@ export function createInterceptors({
     const fetchPatchState = new WeakMap();
     const ajaxPatchState = new WeakMap();
     const OPAQUE_BASE_PROTOCOLS = new Set(['about:', 'blob:', 'data:', 'javascript:']);
+
+    function getAbortSignal(input, init) {
+        if (init && typeof init === 'object' && init.signal) {
+            return init.signal;
+        }
+
+        if (input && typeof input === 'object' && 'signal' in input) {
+            return input.signal;
+        }
+
+        return null;
+    }
+
+    function createAbortRace(signal) {
+        if (!signal || typeof signal.addEventListener !== 'function') {
+            return null;
+        }
+
+        if (signal.aborted) {
+            return {
+                promise: Promise.reject(createAbortError()),
+                cleanup: () => {},
+            };
+        }
+
+        let abortHandler = null;
+        const abortPromise = new Promise((_, reject) => {
+            abortHandler = () => reject(createAbortError());
+            signal.addEventListener('abort', abortHandler, { once: true });
+        });
+
+        return {
+            promise: abortPromise,
+            cleanup: () => {
+                if (abortHandler) {
+                    signal.removeEventListener('abort', abortHandler);
+                }
+            },
+        };
+    }
 
     function resolveWindowBaseUrl(targetWindow) {
         try {
@@ -80,6 +122,11 @@ export function createInterceptors({
         }
 
         const patchedFetch = async function patchedFetch(input, init = {}) {
+            const signal = getAbortSignal(input, init);
+            if (signal?.aborted) {
+                throw createAbortError();
+            }
+
             if (!isTauri) {
                 return delegateFetch(input, init);
             }
@@ -89,8 +136,15 @@ export function createInterceptors({
                 return delegateFetch(input, init);
             }
 
-            const response = await routeRequest(requestUrl, input, init, targetWindow);
-            return response || jsonResponse({ error: `Unsupported endpoint: ${requestUrl.pathname}` }, 404);
+            const abortRace = createAbortRace(signal);
+            try {
+                const response = abortRace
+                    ? await Promise.race([routeRequest(requestUrl, input, init, targetWindow), abortRace.promise])
+                    : await routeRequest(requestUrl, input, init, targetWindow);
+                return response || jsonResponse({ error: `Unsupported endpoint: ${requestUrl.pathname}` }, 404);
+            } finally {
+                abortRace?.cleanup();
+            }
         };
 
         try {

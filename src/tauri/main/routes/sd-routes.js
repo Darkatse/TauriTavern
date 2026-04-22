@@ -1,13 +1,4 @@
-function createAbortError() {
-    const message = 'The operation was aborted.';
-    if (typeof DOMException === 'function') {
-        return new DOMException(message, 'AbortError');
-    }
-
-    const error = new Error(message);
-    error.name = 'AbortError';
-    return error;
-}
+import { createAbortError } from '../kernel/abort-error.js';
 
 function createRequestId() {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -97,4 +88,3 @@ export function registerSdRoutes(router, context, { jsonResponse, textResponse }
         }
     });
 }
-

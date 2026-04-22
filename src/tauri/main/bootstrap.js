@@ -17,6 +17,7 @@ import { installMobileWindowOpenCompat } from './compat/mobile/mobile-window-ope
 import { installDialogPolyfillCoverage } from './compat/dialog/dialog-polyfill-coverage.js';
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
 import { extractErrorText, resolveHostErrorResponse } from './kernel/host-error-response.js';
+import { isAbortError } from './kernel/abort-error.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
 import { installWorldInfoGlobalSelectorSelect2Enforcer } from './adapters/st/world-info-global-selector-select2-enforcer.js';
 import { installChatApi } from './api/chat.js';
@@ -318,6 +319,10 @@ export function bootstrapTauriMain() {
             const durationMs = (globalThis.performance?.now?.() ?? Date.now()) - startedAt;
             return finalResponse;
         } catch (error) {
+            if (isAbortError(error)) {
+                throw error;
+            }
+
             const message = extractErrorText(error);
             const resolved = resolveHostErrorResponse(message);
             const finalResponse = textResponse(resolved.body, resolved.status);

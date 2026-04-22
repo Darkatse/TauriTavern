@@ -8,6 +8,7 @@ import { createSystemNotificationService } from '../services/notifications/syste
 import { registerOpenAiTokenizerRoutes } from './openai-tokenizer-routes.js';
 import { createChannel } from '../../../tauri-bridge.js';
 import { stripCommandErrorPrefixes } from '../../../scripts/util/command-error-utils.js';
+import { createAbortError, isAbortError } from '../kernel/abort-error.js';
 
 function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -23,25 +24,6 @@ function getErrorMessage(error) {
     }
 
     return error.message || error.toString?.() || 'Unknown error';
-}
-
-function createAbortError() {
-    const message = 'The operation was aborted.';
-    if (typeof DOMException === 'function') {
-        return new DOMException(message, 'AbortError');
-    }
-
-    const error = new Error(message);
-    error.name = 'AbortError';
-    return error;
-}
-
-function isAbortError(error) {
-    if (!error || typeof error !== 'object') {
-        return false;
-    }
-
-    return error.name === 'AbortError';
 }
 
 function encodeSseDataFrame(data) {
