@@ -12,6 +12,7 @@ import { registerStatsRoutes } from './stats-routes.js';
 import { registerWorldInfoRoutes } from './worldinfo-routes.js';
 import { registerContentRoutes } from './content-routes.js';
 import { registerSdRoutes } from './sd-routes.js';
+import { registerTranslateRoutes } from './translate-routes.js';
 
 export function registerRoutes(router, context, responses) {
     registerSystemRoutes(router, context, responses);
@@ -27,5 +28,6 @@ export function registerRoutes(router, context, responses) {
     registerWorldInfoRoutes(router, context, responses);
     registerAiRoutes(router, context, responses);
     registerSdRoutes(router, context, responses);
+    registerTranslateRoutes(router, context, responses);
     registerStatsRoutes(router, context, responses);
 }

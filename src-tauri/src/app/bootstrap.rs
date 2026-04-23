@@ -23,6 +23,7 @@ use crate::application::services::stable_diffusion_service::StableDiffusionServi
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::tt_sync_service::TtSyncService;
+use crate::application::services::translate_service::TranslateService;
 use crate::application::services::update_service::UpdateService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
@@ -46,6 +47,7 @@ use crate::domain::repositories::settings_repository::SettingsRepository;
 use crate::domain::repositories::stable_diffusion_repository::StableDiffusionRepository;
 use crate::domain::repositories::theme_repository::ThemeRepository;
 use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
+use crate::domain::repositories::translate_repository::TranslateRepository;
 use crate::domain::repositories::update_repository::UpdateRepository;
 use crate::domain::repositories::user_directory_repository::UserDirectoryRepository;
 use crate::domain::repositories::user_repository::UserRepository;
@@ -53,6 +55,7 @@ use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
 use crate::infrastructure::apis::http_chat_completion_repository::HttpChatCompletionRepository;
 use crate::infrastructure::apis::http_stable_diffusion_repository::HttpStableDiffusionRepository;
+use crate::infrastructure::apis::http_translate_repository::HttpTranslateRepository;
 use crate::infrastructure::apis::miktik_tokenizer_repository::MiktikTokenizerRepository;
 use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::logging::llm_api_logs::{
@@ -97,6 +100,7 @@ pub(super) struct AppServices {
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
     pub stable_diffusion_service: Arc<StableDiffusionService>,
+    pub translate_service: Arc<TranslateService>,
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
@@ -125,6 +129,7 @@ struct AppRepositories {
     chat_completion_repository: Arc<dyn ChatCompletionRepository>,
     tokenizer_repository: Arc<dyn TokenizerRepository>,
     stable_diffusion_repository: Arc<dyn StableDiffusionRepository>,
+    translate_repository: Arc<dyn TranslateRepository>,
     world_info_repository: Arc<dyn WorldInfoRepository>,
     update_repository: Arc<dyn UpdateRepository>,
 }
@@ -193,6 +198,10 @@ pub(super) async fn build_services(
     let stable_diffusion_service = Arc::new(StableDiffusionService::new(
         repositories.stable_diffusion_repository,
     ));
+    let translate_service = Arc::new(TranslateService::new(
+        repositories.translate_repository,
+        repositories.secret_repository.clone(),
+    ));
     let world_info_service = Arc::new(WorldInfoService::new(
         repositories.world_info_repository.clone(),
     ));
@@ -254,6 +263,7 @@ pub(super) async fn build_services(
         chat_completion_service,
         tokenization_service,
         stable_diffusion_service,
+        translate_service,
         world_info_service,
         lan_sync_service,
         tt_sync_service,
@@ -366,6 +376,9 @@ fn build_repositories(
             default_user_dir.join("user").join("workflows"),
         ));
 
+    let translate_repository: Arc<dyn TranslateRepository> =
+        Arc::new(HttpTranslateRepository::new(http_client_pool.clone()));
+
     let world_info_repository: Arc<dyn WorldInfoRepository> = Arc::new(
         FileWorldInfoRepository::new(data_directory.default_user().join("worlds")),
     );
@@ -394,6 +407,7 @@ fn build_repositories(
         chat_completion_repository,
         tokenizer_repository,
         stable_diffusion_repository,
+        translate_repository,
         world_info_repository,
         update_repository,
     })
