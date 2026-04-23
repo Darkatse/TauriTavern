@@ -151,7 +151,6 @@ import {
     initOpenAI,
 } from './scripts/openai.js';
 import { stripCommandErrorPrefixes } from './scripts/util/command-error-utils.js';
-import { getThumbnailCacheBust } from './scripts/util/thumbnail-cache-bust.js';
 
 import {
     generateNovelWithStreaming,
@@ -7996,32 +7995,15 @@ async function read_avatar_load(input) {
  * @returns {string} The URL for the thumbnail
  */
 export function getThumbnailUrl(type, file, t = false) {
-    /** @type {string | null} */
-    let url = null;
-
     if (typeof window.__TAURITAVERN_THUMBNAIL__ === 'function') {
         try {
-            url = window.__TAURITAVERN_THUMBNAIL__(type, file, t);
+            return window.__TAURITAVERN_THUMBNAIL__(type, file, t);
         } catch (error) {
             console.warn('Tauri thumbnail helper failed:', error);
         }
     }
 
-    if (!url) {
-        url = `/thumbnail?type=${type}&file=${encodeURIComponent(file)}${t ? `&t=${Date.now()}` : ''}`;
-    }
-
-    if (t) {
-        return url;
-    }
-
-    const cacheBust = getThumbnailCacheBust(type, file);
-    if (!cacheBust) {
-        return url;
-    }
-
-    const separator = url.includes('?') ? '&' : '?';
-    return `${url}${separator}t=${encodeURIComponent(cacheBust)}`;
+    return `/thumbnail?type=${type}&file=${encodeURIComponent(file)}${t ? `&t=${Date.now()}` : ''}`;
 }
 
 export function buildAvatarList(block, entities, { templateId = 'inline_avatar_template', empty = true, interactable = false, highlightFavs = true } = {}) {
@@ -8573,7 +8555,7 @@ export async function saveSettings(loopCounter = 0) {
     if (!settingsReady) {
         console.warn('Settings not ready, scheduling another save');
         saveSettingsDebounced();
-        return;
+        return false;
     }
 
     const MAX_RETRIES = 3;
@@ -8581,7 +8563,7 @@ export async function saveSettings(loopCounter = 0) {
         if (loopCounter < MAX_RETRIES) {
             console.warn('Response length is currently being overridden, scheduling another save');
             saveSettingsDebounced(++loopCounter);
-            return;
+            return false;
         }
         console.error('Response length is currently being overridden, but the save loop has reached the maximum number of retries');
         TempResponseLength.restore(null);
@@ -8628,9 +8610,11 @@ export async function saveSettings(loopCounter = 0) {
 
         settings = payload;
         await eventSource.emit(event_types.SETTINGS_UPDATED);
+        return true;
     } catch (error) {
         console.error('Error saving settings:', error);
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Settings could not be saved`);
+        return false;
     }
 }
 

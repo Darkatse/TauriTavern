@@ -1,6 +1,10 @@
 export const UNNAMED_PERSONA = '[Unnamed Persona]';
 
 export function isPersonaDescriptorMeaningful(descriptor, { defaultPosition, defaultDepth, defaultRole }) {
+    if (typeof descriptor === 'string') {
+        return descriptor.trim().length > 0;
+    }
+
     if (!descriptor || typeof descriptor !== 'object') {
         return false;
     }
@@ -27,6 +31,21 @@ export function isPersonaDescriptorMeaningful(descriptor, { defaultPosition, def
 export function isPlaceholderPersona({ name, descriptor }, defaults) {
     return name === UNNAMED_PERSONA
         && !isPersonaDescriptorMeaningful(descriptor, defaults);
+}
+
+function normalizePersonaDescriptor(descriptor, defaults) {
+    if (typeof descriptor === 'string') {
+        return {
+            description: descriptor,
+            position: defaults.defaultPosition,
+            depth: defaults.defaultDepth,
+            role: defaults.defaultRole,
+            lorebook: '',
+            title: '',
+        };
+    }
+
+    return descriptor;
 }
 
 export function restorePersonasFromBackup(target, backup, defaults) {
@@ -59,11 +78,17 @@ export function restorePersonasFromBackup(target, backup, defaults) {
 
     // Merge persona descriptions with existing ones
     for (const [key, value] of Object.entries(backup.persona_descriptions)) {
+        const normalizedDescriptor = normalizePersonaDescriptor(value, defaults);
         if (key in target.persona_descriptions) {
-            if (restoredPersonas.has(key)
-                && !isPersonaDescriptorMeaningful(target.persona_descriptions[key], defaults)
+            const existingDescriptor = normalizePersonaDescriptor(target.persona_descriptions[key], defaults);
+            if (existingDescriptor !== target.persona_descriptions[key]) {
+                target.persona_descriptions[key] = existingDescriptor;
+            }
+
+            if (!isPersonaDescriptorMeaningful(existingDescriptor, defaults)
+                && isPersonaDescriptorMeaningful(normalizedDescriptor, defaults)
             ) {
-                target.persona_descriptions[key] = value;
+                target.persona_descriptions[key] = normalizedDescriptor;
                 continue;
             }
 
@@ -76,7 +101,7 @@ export function restorePersonasFromBackup(target, backup, defaults) {
             continue;
         }
 
-        target.persona_descriptions[key] = value;
+        target.persona_descriptions[key] = normalizedDescriptor;
     }
 
     if (backup.default_persona) {

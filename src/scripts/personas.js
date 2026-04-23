@@ -18,13 +18,14 @@ import {
     reloadCurrentChat,
     saveChatConditional,
     saveMetadata,
+    saveSettings,
     saveSettingsDebounced,
     setUserName,
     this_chid,
 } from '../script.js';
 import { persona_description_positions, power_user } from './power-user.js';
 import { getTokenCountAsync } from './tokenizers.js';
-import { PAGINATION_TEMPLATE, clearInfoBlock, debounce, delay, download, ensureImageFormatSupported, flashHighlight, getBase64Async, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, parseJsonFile, setInfoBlock, localizePagination, renderPaginationDropdown, paginationDropdownChangeHandler } from './utils.js';
+import { PAGINATION_TEMPLATE, cancelDebounce, clearInfoBlock, debounce, delay, download, ensureImageFormatSupported, flashHighlight, getBase64Async, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, parseJsonFile, setInfoBlock, localizePagination, renderPaginationDropdown, paginationDropdownChangeHandler } from './utils.js';
 import { debounce_timeout } from './constants.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
 import { groups, selected_group } from './group-chats.js';
@@ -34,7 +35,6 @@ import { openWorldInfoEditor, world_names } from './world-info.js';
 import { renderTemplateAsync } from './templates.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { accountStorage } from './util/AccountStorage.js';
-import { bumpThumbnailCacheBust } from './util/thumbnail-cache-bust.js';
 import { restorePersonasFromBackup, UNNAMED_PERSONA } from './persona-restore.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { SlashCommandNamedArgument, ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
@@ -84,6 +84,27 @@ let personaLastLoadedChatId = null;
 
 /** @type {function(string): void} */
 let navigateToAvatar = () => { };
+
+async function reloadFrontendAfterPersonaMutation() {
+    const hostAbi = window.__TAURITAVERN__;
+    if (!hostAbi || typeof hostAbi !== 'object') {
+        return;
+    }
+
+    const flushAll = hostAbi?.invoke?.flushAll;
+    if (typeof flushAll !== 'function') {
+        throw new Error('TauriTavern Host ABI is unavailable (invoke.flushAll)');
+    }
+
+    cancelDebounce(saveSettingsDebounced);
+    const saved = await saveSettings();
+    if (!saved) {
+        throw new Error('Settings could not be saved before reload');
+    }
+
+    await flushAll();
+    window.location.reload();
+}
 
 function createPersonaDescriptor({
     description = '',
@@ -421,11 +442,7 @@ async function uploadUserAvatar(url, name) {
 
     // Get the actual path from the response
     const data = await response.json();
-    const avatarId = data?.path || name;
-    if (avatarId) {
-        bumpThumbnailCacheBust('persona', String(avatarId));
-    }
-    await getUserAvatars(true, avatarId || '');
+    await getUserAvatars(true, data?.path || name);
 }
 
 async function changeUserAvatar(e) {
@@ -479,12 +496,11 @@ async function changeUserAvatar(e) {
         const overwriteName = formData.get('overwrite_name');
         const dataPath = data?.path;
 
-        // If the user overwrote an existing persona avatar, bust cached thumbnails for this file.
+        // If the user uploaded a new avatar, we want to make sure it's not cached
         if (overwriteName && dataPath) {
-            bumpThumbnailCacheBust('persona', String(dataPath));
-            if (String(user_avatar) === String(dataPath)) {
-                reloadUserAvatar(true);
-            }
+            await fetch(getUserAvatar(String(dataPath), { forFetch: true }), { cache: 'reload' });
+            await fetch(getThumbnailUrl('persona', String(dataPath), true), { cache: 'reload' });
+            reloadUserAvatar(true);
         }
 
         if (!overwriteName && dataPath) {
@@ -494,6 +510,12 @@ async function changeUserAvatar(e) {
         }
 
         await getUserAvatars(true, dataPath || overwriteName);
+        try {
+            await reloadFrontendAfterPersonaMutation();
+        } catch (error) {
+            console.error('Failed to reload after persona mutation:', error);
+            toastr.error(t`Failed to reload the app after updating personas. See console for details.`, t`Persona Management`);
+        }
     }
 
     // Will allow to select the same file twice in a row
@@ -1167,6 +1189,16 @@ async function deleteUserAvatar() {
             await saveMetadata();
         }
 
+        if (window.__TAURITAVERN__ && typeof window.__TAURITAVERN__ === 'object') {
+            try {
+                await reloadFrontendAfterPersonaMutation();
+            } catch (error) {
+                console.error('Failed to reload after persona deletion:', error);
+                toastr.error(t`Failed to reload the app after deleting the persona. See console for details.`, t`Persona Management`);
+            }
+            return;
+        }
+
         saveSettingsDebounced();
 
         // Use the existing mechanism to re-render the persona list and choose the next persona here
@@ -1724,9 +1756,8 @@ async function onPersonasRestoreInput(e) {
 
     const restoreResult = restorePersonasFromBackup(power_user, data, descriptorDefaults);
     const warnings = restoreResult.warnings;
-    const restoredPersonas = restoreResult.restoredPersonas;
 
-    for (const avatarId of restoredPersonas) {
+    for (const avatarId of Object.keys(data.personas)) {
         if (avatarSet.has(avatarId)) {
             continue;
         }
@@ -1751,6 +1782,14 @@ async function onPersonasRestoreInput(e) {
     setPersonaDescription();
     saveSettingsDebounced();
     $('#personas_restore_input').val('');
+    if (window.__TAURITAVERN__ && typeof window.__TAURITAVERN__ === 'object') {
+        try {
+            await reloadFrontendAfterPersonaMutation();
+        } catch (error) {
+            console.error('Failed to reload after persona import:', error);
+            toastr.error(t`Failed to reload the app after importing personas. See console for details.`, t`Persona Management`);
+        }
+    }
 }
 
 async function syncUserNameToPersona() {
