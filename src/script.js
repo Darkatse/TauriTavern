@@ -78,6 +78,8 @@ import {
     getWorldInfoSettings,
     setWorldInfoSettings,
     world_names,
+    updateWorldInfoList,
+    deleteWorldInfo,
     importEmbeddedWorldInfo,
     checkEmbeddedWorld,
     setWorldInfoButtonClass,
@@ -11420,11 +11422,37 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
         return;
     }
 
+    const worldsToDelete = new Set();
+
     for (const key of characterKey) {
         const character = characters.find(x => x.avatar == key);
         if (!character) {
             toastr.warning(t`Character ${key} not found. Skipping deletion.`);
             continue;
+        }
+
+        let primaryWorldName = String(character?.data?.extensions?.world || '').trim();
+        if (!primaryWorldName) {
+            const detailsResponse = await fetch('/api/characters/get', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ avatar_url: character.avatar }),
+                cache: 'no-cache',
+            });
+
+            if (!detailsResponse.ok) {
+                toastr.error(t`Failed to resolve linked worldbook for character deletion.`, t`Failed to delete character`);
+                continue;
+            }
+
+            try {
+                const details = await detailsResponse.json();
+                primaryWorldName = String(details?.data?.extensions?.world || details?.extensions?.world || '').trim();
+            } catch (error) {
+                console.error('Failed to parse character details response:', error);
+                toastr.error(t`Failed to resolve linked worldbook for character deletion.`, t`Failed to delete character`);
+                continue;
+            }
         }
 
         const chid = characters.indexOf(character);
@@ -11444,6 +11472,10 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
             continue;
         }
 
+        if (primaryWorldName) {
+            worldsToDelete.add(primaryWorldName);
+        }
+
         accountStorage.removeItem(`AlertWI_${character.avatar}`);
         accountStorage.removeItem(`AlertRegex_${character.avatar}`);
         accountStorage.removeItem(`mediaWarningShown:${character.avatar}`);
@@ -11461,6 +11493,22 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
     }
 
     await removeCharacterFromUI();
+
+    for (const worldName of worldsToDelete) {
+        try {
+            if (!world_names.includes(worldName)) {
+                await updateWorldInfoList();
+            }
+
+            const deleted = await deleteWorldInfo(worldName, { saveLinkedCharacter: false });
+            if (!deleted) {
+                toastr.warning(t`Failed to delete linked worldbook.`, t`Character Deleted`);
+            }
+        } catch (error) {
+            console.error('Failed to delete linked worldbook:', error);
+            toastr.error(t`Failed to delete linked worldbook.`, t`Character Deleted`);
+        }
+    }
 }
 
 /**
