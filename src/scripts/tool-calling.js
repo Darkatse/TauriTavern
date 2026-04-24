@@ -863,8 +863,9 @@ export class ToolManager {
      * Saves function tool invocations to the last user chat message extra metadata.
      * @param {ToolInvocation[]} invocations Successful tool invocations
      * @param {any?} native Provider-native metadata to persist for future turns
+     * @param {string?} reasoningContent Provider reasoning content needed to continue tool-call turns
      */
-    static async saveFunctionToolInvocations(invocations, native = null) {
+    static async saveFunctionToolInvocations(invocations, native = null, reasoningContent = null) {
         if (!Array.isArray(invocations) || invocations.length === 0) {
             return;
         }
@@ -880,6 +881,7 @@ export class ToolManager {
                 api: getGeneratingApi(),
                 model: getGeneratingModel(),
                 ...(native !== null && native !== undefined ? { native } : {}),
+                ...(reasoningContent ? { tool_reasoning_content: reasoningContent } : {}),
             },
         };
         chat.push(message);

@@ -36,7 +36,7 @@ pub(super) fn build_payload(
         ChatCompletionSource::OpenAi
         | ChatCompletionSource::Groq
         | ChatCompletionSource::SiliconFlow => Ok(openai::build(payload)),
-        ChatCompletionSource::DeepSeek => Ok(deepseek::build(payload)),
+        ChatCompletionSource::DeepSeek => deepseek::build(payload),
         ChatCompletionSource::Cohere => Ok(cohere::build(payload)?),
         ChatCompletionSource::Moonshot => Ok(moonshot::build(payload)),
         ChatCompletionSource::NanoGpt => nanogpt::build(payload),

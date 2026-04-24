@@ -5803,6 +5803,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 hasToolCalls && shouldDeleteMessage && await deleteLastMessage();
                 const invocationResult = await ToolManager.invokeFunctionTools(streamingProcessor.toolCalls);
                 const native = streamingProcessor?.native ?? null;
+                const reasoningContent = streamingProcessor?.reasoningHandler?.reasoning || null;
                 const shouldStopGeneration = (!invocationResult.invocations.length && shouldDeleteMessage) || invocationResult.stealthCalls.length;
                 if (hasToolCalls) {
                     if (shouldStopGeneration) {
@@ -5816,7 +5817,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
                     streamingProcessor = null;
                     depth = depth + 1;
-                    await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, native);
+                    await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, native, reasoningContent);
                     return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
                 }
             }
@@ -5871,6 +5872,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         let getMessage = extractMessageFromData(data);
         let title = extractTitleFromData(data);
         let reasoning = extractReasoningFromData(data);
+        const toolReasoning = extractReasoningFromData(data, { ignoreShowThoughts: true });
         let imageUrls = extractImagesFromData(data);
         const reasoningSignature = extractReasoningSignatureFromData(data);
         const native = data?.choices?.[0]?.message?.native ?? null;
@@ -5943,7 +5945,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 }
 
                 depth = depth + 1;
-                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, native);
+                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, native, toolReasoning);
                 return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
             }
         }
