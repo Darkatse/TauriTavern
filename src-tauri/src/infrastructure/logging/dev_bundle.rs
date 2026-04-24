@@ -170,6 +170,25 @@ pub fn export_dev_log_bundle(
     Ok(output_path)
 }
 
+#[cfg(target_os = "ios")]
+fn resolve_bundle_output_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, DomainError> {
+    let path_resolver = app_handle.path();
+
+    if let Ok(cache_dir) = path_resolver.app_cache_dir() {
+        return Ok(cache_dir.join(IOS_EXPORT_STAGING_ROOT_NAME));
+    }
+
+    let temp_dir = path_resolver.temp_dir().map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to resolve temp directory for export: {}",
+            error
+        ))
+    })?;
+
+    Ok(temp_dir.join(IOS_EXPORT_STAGING_ROOT_NAME))
+}
+
+#[cfg(not(target_os = "ios"))]
 fn resolve_bundle_output_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, DomainError> {
     if let Ok(download_dir) = app_handle.path().download_dir() {
         return Ok(download_dir);

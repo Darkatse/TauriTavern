@@ -7,6 +7,18 @@ import {
 import { payloadToJsonl } from '../../../scripts/tauri/chat/jsonl.js';
 import { registerChatRecentRoutes } from './chat-recent-routes.js';
 
+function mapChatSummaryResults(context, results) {
+    return Array.isArray(results)
+        ? results.map((entry) => ({
+            file_name: context.ensureJsonl(entry.file_name),
+            file_size: context.formatFileSize(entry.file_size),
+            message_count: Number(entry.message_count || 0),
+            preview_message: entry.preview || '',
+            last_mes: Number(entry.date || 0),
+        }))
+        : [];
+}
+
 export function registerChatRoutes(router, context, { jsonResponse }) {
     const isIntegrityError = (error) => {
         const serialized = (() => {
@@ -161,6 +173,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/chats/search', async ({ body }) => {
         const query = String(body?.query || '');
+        const hasQuery = query.trim().length > 0;
 
         if (body?.group_id) {
             const group = await context.safeInvoke('get_group', { id: String(body.group_id) });
@@ -174,41 +187,33 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
                 return jsonResponse([]);
             }
 
-            const results = await context.safeInvoke('search_group_chats', {
-                query,
-                chat_ids: chatIds,
-            });
+            const results = hasQuery
+                ? await context.safeInvoke('search_group_chats', {
+                    query,
+                    chat_ids: chatIds,
+                })
+                : await context.safeInvoke('list_group_chat_summaries', {
+                    chat_ids: chatIds,
+                    include_metadata: false,
+                });
 
-            const mapped = Array.isArray(results)
-                ? results.map((entry) => ({
-                    file_name: context.ensureJsonl(entry.file_name),
-                    file_size: context.formatFileSize(entry.file_size),
-                    message_count: Number(entry.message_count || 0),
-                    preview_message: entry.preview || '',
-                    last_mes: Number(entry.date || 0),
-                }))
-                : [];
-
+            const mapped = mapChatSummaryResults(context, results);
             mapped.sort((a, b) => Number(b.last_mes || 0) - Number(a.last_mes || 0));
             return jsonResponse(mapped);
         }
 
         const characterId = await context.resolveCharacterId({ avatar: body?.avatar_url });
-        const results = await context.safeInvoke('search_chats', {
-            query,
-            characterFilter: characterId || null,
-        });
+        const results = hasQuery
+            ? await context.safeInvoke('search_chats', {
+                query,
+                characterFilter: characterId || null,
+            })
+            : await context.safeInvoke('list_chat_summaries', {
+                character_filter: characterId || null,
+                include_metadata: false,
+            });
 
-        const mapped = Array.isArray(results)
-            ? results.map((entry) => ({
-                file_name: context.ensureJsonl(entry.file_name),
-                file_size: context.formatFileSize(entry.file_size),
-                message_count: Number(entry.message_count || 0),
-                preview_message: entry.preview || '',
-                last_mes: Number(entry.date || 0),
-            }))
-            : [];
-
+        const mapped = mapChatSummaryResults(context, results);
         return jsonResponse(mapped);
     });
 

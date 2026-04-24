@@ -1,3 +1,4 @@
+use chrono::DateTime;
 use std::io::Cursor;
 use std::path::PathBuf;
 
@@ -8,7 +9,9 @@ use tokio::fs;
 
 use crate::domain::models::character::Character;
 use crate::domain::repositories::character_repository::CharacterRepository;
-use crate::infrastructure::persistence::png_utils::write_character_data_to_png;
+use crate::infrastructure::persistence::png_utils::{
+    read_character_data_from_png, write_character_data_to_png,
+};
 
 use super::FileCharacterRepository;
 
@@ -60,6 +63,106 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
 
     let repository = FileCharacterRepository::new(characters_dir, chats_dir, default_avatar);
     (repository, root)
+}
+
+#[tokio::test]
+async fn find_by_name_repairs_invalid_create_date_and_persists_patch() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "name": "Invalid Date Character",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "hello",
+        "create_date": "not-a-date",
+    });
+
+    let source_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+
+    let character_path = root.join("characters").join("InvalidDate.png");
+    fs::write(&character_path, source_png)
+        .await
+        .expect("write character png");
+
+    let loaded = repository
+        .find_by_name("InvalidDate")
+        .await
+        .expect("load repaired character");
+
+    assert_ne!(loaded.create_date, "not-a-date");
+    assert!(
+        DateTime::parse_from_rfc3339(&loaded.create_date).is_ok(),
+        "expected repaired create_date to be RFC3339"
+    );
+
+    let updated_png = fs::read(&character_path)
+        .await
+        .expect("read updated character png");
+    let updated_json =
+        read_character_data_from_png(&updated_png).expect("extract updated card json");
+    let updated_value: serde_json::Value =
+        serde_json::from_str(&updated_json).expect("parse updated card json");
+
+    assert_eq!(
+        updated_value
+            .get("create_date")
+            .and_then(|value| value.as_str()),
+        Some(loaded.create_date.as_str())
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn find_by_name_repairs_legacy_utc_create_date_format() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "name": "Legacy Date Character",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "hello",
+        "create_date": "2026-03-16 12:34:56 UTC",
+    });
+
+    let source_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+
+    let character_path = root.join("characters").join("LegacyDate.png");
+    fs::write(&character_path, source_png)
+        .await
+        .expect("write character png");
+
+    let loaded = repository
+        .find_by_name("LegacyDate")
+        .await
+        .expect("load repaired character");
+
+    assert_eq!(loaded.create_date, "2026-03-16T12:34:56.000Z");
+
+    let updated_png = fs::read(&character_path)
+        .await
+        .expect("read updated character png");
+    let updated_json =
+        read_character_data_from_png(&updated_png).expect("extract updated card json");
+    let updated_value: serde_json::Value =
+        serde_json::from_str(&updated_json).expect("parse updated card json");
+
+    assert_eq!(
+        updated_value
+            .get("create_date")
+            .and_then(|value| value.as_str()),
+        Some("2026-03-16T12:34:56.000Z")
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]

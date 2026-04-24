@@ -19,6 +19,33 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
 
     let (endpoint, mut upstream_payload) = claude::build(payload)?;
     apply_custom_body_overrides(&mut upstream_payload, &include_raw, &exclude_raw)?;
+    claude::validate_request(&upstream_payload)?;
 
     Ok((endpoint, upstream_payload))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::build;
+
+    #[test]
+    fn claude_messages_overrides_are_revalidated_against_claude_contract() {
+        let payload = json!({
+            "model": "claude-opus-4-7",
+            "messages": [{"role": "user", "content": "hello"}],
+            "custom_include_body": "{\"top_k\":40}"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("build should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("does not support non-default sampling parameters: top_k")
+        );
+    }
 }

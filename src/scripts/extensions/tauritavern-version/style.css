@@ -4,6 +4,10 @@
     gap: 8px;
 }
 
+#tauritavern_version_settings [hidden] {
+    display: none !important;
+}
+
 #tauritavern_version_settings .ttv-info-table {
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 10px;

@@ -595,9 +595,7 @@ async fn webui_set_model(
 
     for _ in 0..MAX_ATTEMPTS {
         if *cancel.borrow() {
-            return Err(DomainError::InternalError(
-                "Generation cancelled by user".to_string(),
-            ));
+            return Err(DomainError::generation_cancelled_by_user());
         }
 
         let progress_fut = client
@@ -609,7 +607,7 @@ async fn webui_set_model(
             res = progress_fut => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
             changed = cancel.changed() => {
                 let _ = changed;
-                return Err(DomainError::InternalError("Generation cancelled by user".to_string()));
+                return Err(DomainError::generation_cancelled_by_user());
             }
         };
 
@@ -626,7 +624,7 @@ async fn webui_set_model(
             _ = sleep(CHECK_INTERVAL) => {},
             changed = cancel.changed() => {
                 let _ = changed;
-                return Err(DomainError::InternalError("Generation cancelled by user".to_string()));
+                return Err(DomainError::generation_cancelled_by_user());
             }
         }
     }
@@ -687,10 +685,10 @@ async fn webui_generate(
                     .header(reqwest::header::AUTHORIZATION, basic_auth_header(&auth))
                     .send()
                     .await;
-                return Err(DomainError::InternalError("Generation cancelled by user".to_string()));
+                return Err(DomainError::generation_cancelled_by_user());
             }
 
-            return Err(DomainError::InternalError("Generation cancelled by user".to_string()));
+            return Err(DomainError::generation_cancelled_by_user());
         }
     };
 
@@ -916,7 +914,7 @@ async fn comfy_generate(
         changed = cancel.changed() => {
             let _ = changed;
             let _ = client.post(interrupt_url).send().await;
-            return Err(DomainError::InternalError("Generation cancelled by user".to_string()));
+            return Err(DomainError::generation_cancelled_by_user());
         }
     };
 
@@ -940,9 +938,7 @@ async fn comfy_generate(
     let item = loop {
         if *cancel.borrow() {
             let _ = client.post(interrupt_url.clone()).send().await;
-            return Err(DomainError::InternalError(
-                "Generation cancelled by user".to_string(),
-            ));
+            return Err(DomainError::generation_cancelled_by_user());
         }
 
         let history_request = client.get(history_url.clone());
@@ -951,7 +947,7 @@ async fn comfy_generate(
             changed = cancel.changed() => {
                 let _ = changed;
                 let _ = client.post(interrupt_url.clone()).send().await;
-                return Err(DomainError::InternalError("Generation cancelled by user".to_string()));
+                return Err(DomainError::generation_cancelled_by_user());
             }
         };
 
@@ -972,7 +968,7 @@ async fn comfy_generate(
                 changed = cancel.changed() => {
                     let _ = changed;
                     let _ = client.post(interrupt_url.clone()).send().await;
-                    return Err(DomainError::InternalError("Generation cancelled by user".to_string()));
+                    return Err(DomainError::generation_cancelled_by_user());
                 }
             }
             continue;
@@ -1097,7 +1093,7 @@ async fn comfy_generate(
         res = view_request.send() => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
         changed = cancel.changed() => {
             let _ = changed;
-            return Err(DomainError::InternalError("Generation cancelled by user".to_string()));
+            return Err(DomainError::generation_cancelled_by_user());
         }
     };
 
@@ -1305,7 +1301,7 @@ async fn sdcpp_generate(
         res = request.send() => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
         changed = cancel.changed() => {
             let _ = changed;
-            return Err(DomainError::InternalError("Generation cancelled by user".to_string()));
+            return Err(DomainError::generation_cancelled_by_user());
         }
     };
 
@@ -1409,7 +1405,7 @@ async fn drawthings_generate(
         res = request.send() => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
         changed = cancel.changed() => {
             let _ = changed;
-            return Err(DomainError::InternalError("Generation cancelled by user".to_string()));
+            return Err(DomainError::generation_cancelled_by_user());
         }
     };
 

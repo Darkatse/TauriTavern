@@ -18,13 +18,14 @@ import {
     reloadCurrentChat,
     saveChatConditional,
     saveMetadata,
+    saveSettings,
     saveSettingsDebounced,
     setUserName,
     this_chid,
 } from '../script.js';
 import { persona_description_positions, power_user } from './power-user.js';
 import { getTokenCountAsync } from './tokenizers.js';
-import { PAGINATION_TEMPLATE, clearInfoBlock, debounce, delay, download, ensureImageFormatSupported, flashHighlight, getBase64Async, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, parseJsonFile, setInfoBlock, localizePagination, renderPaginationDropdown, paginationDropdownChangeHandler } from './utils.js';
+import { PAGINATION_TEMPLATE, cancelDebounce, clearInfoBlock, debounce, delay, download, ensureImageFormatSupported, flashHighlight, getBase64Async, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, parseJsonFile, setInfoBlock, localizePagination, renderPaginationDropdown, paginationDropdownChangeHandler } from './utils.js';
 import { debounce_timeout } from './constants.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
 import { groups, selected_group } from './group-chats.js';
@@ -34,6 +35,7 @@ import { openWorldInfoEditor, world_names } from './world-info.js';
 import { renderTemplateAsync } from './templates.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { accountStorage } from './util/AccountStorage.js';
+import { restorePersonasFromBackup, UNNAMED_PERSONA } from './persona-restore.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { SlashCommandNamedArgument, ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
 import { commonEnumProviders } from './slash-commands/SlashCommandCommonEnumsProvider.js';
@@ -83,6 +85,27 @@ let personaLastLoadedChatId = null;
 /** @type {function(string): void} */
 let navigateToAvatar = () => { };
 
+async function reloadFrontendAfterPersonaMutation() {
+    const hostAbi = window.__TAURITAVERN__;
+    if (!hostAbi || typeof hostAbi !== 'object') {
+        return;
+    }
+
+    const flushAll = hostAbi?.invoke?.flushAll;
+    if (typeof flushAll !== 'function') {
+        throw new Error('TauriTavern Host ABI is unavailable (invoke.flushAll)');
+    }
+
+    cancelDebounce(saveSettingsDebounced);
+    const saved = await saveSettings();
+    if (!saved) {
+        throw new Error('Settings could not be saved before reload');
+    }
+
+    await flushAll();
+    window.location.reload();
+}
+
 function createPersonaDescriptor({
     description = '',
     position = persona_description_positions.IN_PROMPT,
@@ -117,7 +140,7 @@ function ensurePersonaDescriptor(avatarId, defaults = {}) {
 }
 
 function getPersonaDisplayName(avatarId) {
-    return power_user.personas[avatarId] || '[Unnamed Persona]';
+    return power_user.personas[avatarId] || UNNAMED_PERSONA;
 }
 
 /**
@@ -279,7 +302,7 @@ function addMissingPersonas(avatarsList) {
 
     for (const avatarId of avatarsList) {
         if (!power_user.personas[avatarId]) {
-            power_user.personas[avatarId] = '[Unnamed Persona]';
+            power_user.personas[avatarId] = UNNAMED_PERSONA;
             changed = true;
         }
 
@@ -487,6 +510,12 @@ async function changeUserAvatar(e) {
         }
 
         await getUserAvatars(true, dataPath || overwriteName);
+        try {
+            await reloadFrontendAfterPersonaMutation();
+        } catch (error) {
+            console.error('Failed to reload after persona mutation:', error);
+            toastr.error(t`Failed to reload the app after updating personas. See console for details.`, t`Persona Management`);
+        }
     }
 
     // Will allow to select the same file twice in a row
@@ -923,7 +952,7 @@ async function selectCurrentPersona({ toastPersonaNameChange = true } = {}) {
     power_user.persona_description_lorebook = descriptor.lorebook ?? '';
 
     setPersonaDescription({
-        displayName: personaName ? personaName : '[Unnamed Persona]',
+        displayName: personaName ? personaName : UNNAMED_PERSONA,
     });
 
     // Update the locked persona if setting is enabled
@@ -1158,6 +1187,16 @@ async function deleteUserAvatar() {
             toastr.warning(t`The locked persona was deleted. You will need to set a new persona for this chat.`, t`Persona Deleted`);
             delete chat_metadata.persona;
             await saveMetadata();
+        }
+
+        if (window.__TAURITAVERN__ && typeof window.__TAURITAVERN__ === 'object') {
+            try {
+                await reloadFrontendAfterPersonaMutation();
+            } catch (error) {
+                console.error('Failed to reload after persona deletion:', error);
+                toastr.error(t`Failed to reload the app after deleting the persona. See console for details.`, t`Persona Management`);
+            }
+            return;
         }
 
         saveSettingsDebounced();
@@ -1705,45 +1744,31 @@ async function onPersonasRestoreInput(e) {
     }
 
     const avatarsList = await getUserAvatars(false);
-    const warnings = [];
-
-    // Merge personas with existing ones
-    for (const [key, value] of Object.entries(data.personas)) {
-        if (key in power_user.personas) {
-            warnings.push(`Persona "${key}" (${value}) already exists, skipping`);
-            continue;
-        }
-
-        power_user.personas[key] = value;
-
-        // If the avatar is missing, upload it
-        if (!avatarsList.includes(key)) {
-            warnings.push(`Persona image "${key}" (${value}) is missing, uploading default avatar`);
-            await uploadUserAvatar(default_user_avatar, key);
-        }
+    if (!Array.isArray(avatarsList)) {
+        throw new Error('Failed to load avatars list');
     }
+    const avatarSet = new Set(avatarsList);
+    const descriptorDefaults = {
+        defaultPosition: persona_description_positions.IN_PROMPT,
+        defaultDepth: DEFAULT_DEPTH,
+        defaultRole: DEFAULT_ROLE,
+    };
 
-    // Merge persona descriptions with existing ones
-    for (const [key, value] of Object.entries(data.persona_descriptions)) {
-        if (key in power_user.persona_descriptions) {
-            warnings.push(`Persona description for "${key}" (${power_user.personas[key]}) already exists, skipping`);
+    const restoreResult = restorePersonasFromBackup(power_user, data, descriptorDefaults);
+    const warnings = restoreResult.warnings;
+
+    for (const avatarId of Object.keys(data.personas)) {
+        if (avatarSet.has(avatarId)) {
             continue;
         }
 
-        if (!power_user.personas[key]) {
-            warnings.push(`Persona for "${key}" does not exist, skipping`);
-            continue;
-        }
+        const personaName = typeof data.personas?.[avatarId] === 'string'
+            ? data.personas[avatarId]
+            : power_user.personas[avatarId];
 
-        power_user.persona_descriptions[key] = value;
-    }
-
-    if (data.default_persona) {
-        if (data.default_persona in power_user.personas) {
-            power_user.default_persona = data.default_persona;
-        } else {
-            warnings.push(`Default persona "${data.default_persona}" does not exist, skipping`);
-        }
+        warnings.push(`Persona image "${avatarId}" (${personaName}) is missing, uploading default avatar`);
+        await uploadUserAvatar(default_user_avatar, avatarId);
+        avatarSet.add(avatarId);
     }
 
     if (warnings.length) {
@@ -1757,6 +1782,14 @@ async function onPersonasRestoreInput(e) {
     setPersonaDescription();
     saveSettingsDebounced();
     $('#personas_restore_input').val('');
+    if (window.__TAURITAVERN__ && typeof window.__TAURITAVERN__ === 'object') {
+        try {
+            await reloadFrontendAfterPersonaMutation();
+        } catch (error) {
+            console.error('Failed to reload after persona import:', error);
+            toastr.error(t`Failed to reload the app after importing personas. See console for details.`, t`Persona Management`);
+        }
+    }
 }
 
 async function syncUserNameToPersona() {

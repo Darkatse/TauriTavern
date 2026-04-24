@@ -14,6 +14,7 @@ pub fn configure_main_wkwebview(window: &WebviewWindow) -> tauri::Result<()> {
         let wkwebview = &*wkwebview_ptr.cast::<AnyObject>();
         disable_content_inset_adjustment(wkwebview);
         enable_element_fullscreen(wkwebview);
+        super::apple_webview_js_dialogs::install_js_dialog_ui_delegate(wkwebview);
     })
 }
 

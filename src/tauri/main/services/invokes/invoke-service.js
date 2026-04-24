@@ -136,6 +136,8 @@ export function createInvokeService({ invoke, policies }) {
                 return `Not found: ${nested}`;
             case 'Unauthorized':
                 return `Unauthorized: ${nested}`;
+            case 'Cancelled':
+                return nested;
             case 'InternalServerError':
                 return `Internal server error: ${nested}`;
             case 'TooManyRequests':

@@ -505,27 +505,6 @@ fn prefix_if_missing(
     format!("{decorated}{content}")
 }
 
-pub(super) fn add_reasoning_content_to_tool_calls(messages: &mut [Value]) {
-    for message in messages {
-        let Some(message_object) = message.as_object_mut() else {
-            continue;
-        };
-
-        let has_tool_calls = message_object
-            .get("tool_calls")
-            .and_then(Value::as_array)
-            .is_some_and(|calls| !calls.is_empty());
-        if !has_tool_calls || message_object.contains_key("reasoning_content") {
-            continue;
-        }
-
-        message_object.insert(
-            "reasoning_content".to_string(),
-            Value::String(String::new()),
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};

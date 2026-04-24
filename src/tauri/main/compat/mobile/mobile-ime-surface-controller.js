@@ -11,6 +11,7 @@ const SURFACE_KIND = /** @type {const} */ ({
 
 const FIXED_SHELL_ROOT_SELECTOR = [
     '#character_popup',
+    '#completion_prompt_manager_popup',
     '#top-settings-holder > .drawer > .drawer-content.openDrawer:not(.fillLeft):not(.fillRight)',
     '.drawer-content.openDrawer',
     '#floatingPrompt',
@@ -37,17 +38,39 @@ function requireShed() {
     return sheld;
 }
 
-function isEditable(element) {
+const IME_INPUT_TYPES = new Set([
+    'text',
+    'search',
+    'url',
+    'tel',
+    'email',
+    'password',
+    'number',
+]);
+
+function isImeEditable(element) {
     if (!(element instanceof HTMLElement)) {
         return false;
     }
 
     if (element instanceof HTMLTextAreaElement) {
-        return true;
+        return !(element.readOnly || element.disabled);
     }
 
     if (element instanceof HTMLInputElement) {
-        return true;
+        if (element.readOnly || element.disabled) {
+            return false;
+        }
+
+        const inputMode = typeof element.inputMode === 'string'
+            ? element.inputMode.trim().toLowerCase()
+            : '';
+        if (inputMode === 'none') {
+            return false;
+        }
+
+        const type = String(element.type || '').trim().toLowerCase();
+        return type === '' || IME_INPUT_TYPES.has(type);
     }
 
     return element.isContentEditable;
@@ -143,7 +166,7 @@ export function installMobileImeSurfaceController() {
 
     const onFocusIn = (event) => {
         const target = event.target;
-        if (!isEditable(target)) {
+        if (!isImeEditable(target)) {
             return;
         }
         applyRouting(/** @type {HTMLElement} */ (target));
@@ -152,7 +175,7 @@ export function installMobileImeSurfaceController() {
     const onFocusOut = () => {
         Promise.resolve().then(() => {
             const nextActive = document.activeElement;
-            if (isEditable(nextActive)) {
+            if (isImeEditable(nextActive)) {
                 return;
             }
             applyRouting(null);

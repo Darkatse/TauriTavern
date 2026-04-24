@@ -3,10 +3,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::errors::DomainError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PromptCacheKey {
     Claude,
     OpenRouterClaude,
+    CustomClaudeMessages { scope: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

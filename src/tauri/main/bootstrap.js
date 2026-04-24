@@ -14,8 +14,10 @@ import { installMobileImeSurfaceController } from './compat/mobile/mobile-ime-su
 import { installMobileOverlayCompatController } from './compat/mobile/mobile-overlay-compat-controller.js';
 import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compat.js';
 import { installMobileWindowOpenCompat } from './compat/mobile/mobile-window-open-compat.js';
+import { installDialogPolyfillCoverage } from './compat/dialog/dialog-polyfill-coverage.js';
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
 import { extractErrorText, resolveHostErrorResponse } from './kernel/host-error-response.js';
+import { isAbortError } from './kernel/abort-error.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
 import { installWorldInfoGlobalSelectorSelect2Enforcer } from './adapters/st/world-info-global-selector-select2-enforcer.js';
 import { installChatApi } from './api/chat.js';
@@ -157,13 +159,15 @@ function installHostAbi(context) {
     };
 }
 
-function installSameOriginWindowPatches(interceptors, downloadBridge, { iframeContractBridge } = {}) {
+function installSameOriginWindowPatches(interceptors, downloadBridge, { iframeContractBridge, runtimeCompat } = {}) {
     const trackedIframes = new WeakSet();
 
     const patchWindow = (targetWindow) => {
         if (!targetWindow || getWindowOrigin(targetWindow) !== window.location.origin) {
             return;
         }
+
+        runtimeCompat?.(targetWindow);
 
         interceptors.patchFetch(targetWindow);
         interceptors.patchJQueryAjax(targetWindow);
@@ -261,6 +265,7 @@ export function bootstrapTauriMain() {
     const isMobile = isMobileUserAgent(); if (isMobile) installTauriMobileCompat();
 
     installFrontendLogCapture();
+    installDialogPolyfillCoverage();
 
     installBackNavigationBridge();
     installNativeShareBridge();
@@ -314,6 +319,10 @@ export function bootstrapTauriMain() {
             const durationMs = (globalThis.performance?.now?.() ?? Date.now()) - startedAt;
             return finalResponse;
         } catch (error) {
+            if (isAbortError(error)) {
+                throw error;
+            }
+
             const message = extractErrorText(error);
             const resolved = resolveHostErrorResponse(message);
             const finalResponse = textResponse(resolved.body, resolved.status);
@@ -350,7 +359,17 @@ export function bootstrapTauriMain() {
     interceptors.patchFetch();
     interceptors.patchJQueryAjax();
     downloadBridge.patchWindow();
-    installSameOriginWindowPatches(interceptors, downloadBridge, { iframeContractBridge: isMobile ? installMobileIframeViewportContractBridge() : null }); if (isMobile) installMobileWindowOpenCompat(); preinstallPanelRuntime();
+    const runtimeCompat = (targetWindow) => {
+        installDialogPolyfillCoverage(targetWindow);
+        if (isMobile) {
+            installMobileRuntimeCompat(targetWindow);
+        }
+    };
+    installSameOriginWindowPatches(interceptors, downloadBridge, {
+        iframeContractBridge: isMobile ? installMobileIframeViewportContractBridge() : null,
+        runtimeCompat,
+    });
+    if (isMobile) installMobileWindowOpenCompat(); preinstallPanelRuntime();
     const readyPromise = initializeTauriIntegration(
         context,
         interceptors,

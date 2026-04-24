@@ -2,6 +2,8 @@
 
 本文档记录当前 iOS 端开发中已经踩过的关键问题、根因分析、已落地方案，以及对应的架构改动。目标是避免重复踩坑，并确保移动端样式契约（`--tt-inset-*`）在 iOS 上可预测、可维护。
 
+补充：iOS/iPadOS 的 **分发 Policy（profile + capabilities snapshot）** 属于“合规裁剪/能力分级”问题域，其当前实现快照与维护约束已收敛到 `docs/CurrentState/iOSPolicy.md`，本文件仍聚焦 WKWebView 行为差异与 iOS-only 桥接。
+
 ## 1. WKWebView safe-area 自动 inset 导致底部死区
 
 ### 1.1 现象
@@ -62,7 +64,7 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 
 - WebView 无法向用户暴露可操作的沙盒路径（即使文件写入成功，用户也无法访问）。
 - `<input type="file">` 在 WKWebView 上对 zip 的行为差异较大，不适合作为 data-migration 的唯一入口。
-- `window.confirm()` 在 iOS WebView 上存在不可靠性（可能不弹出/阻塞），会导致“看起来无反应”。
+- 若宿主未安装 `WKUIDelegate` 的 JS dialog bridge，`window.alert/confirm/prompt` 可能不弹出或阻塞；当前已在 Host policy 层补齐（见 `docs/WkWebViewJsDialogBridgePlan.md`）。
 
 ### 2.3 已落地方案（当前状态：已稳定可用）
 
@@ -81,7 +83,7 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
    - iPad 走 popoverPresentationController 绑定 sourceView/sourceRect，避免崩溃。
 
 4) **确认弹窗**
-   - iOS 导入确认使用 `Popup.show.confirm`（避免 `window.confirm` 在 iOS 上不可靠）。
+   - iOS 导入确认使用 `Popup.show.confirm`（保持与 SillyTavern 交互契约一致；不依赖同步阻塞式 dialog）。
    - 其他平台保持原语义不变。
 
 ### 2.4 重要实现位置（便于维护与回归）
@@ -170,3 +172,9 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 ### 4.4 支持边界
 
 - 该能力依赖 iOS 16 的 app-embedded WKWebView Fullscreen API，因此项目 iOS 支持线提升到 `iOS 16+`。
+
+## 5. iOS 分发 Policy（当前状态）
+
+iOS 外测/内测分发裁剪与能力分级已落地为 iOS-only 的 `ios_policy` 运行时系统（可被导入 `tauritavern-settings.json` 覆盖 profile/能力边界，且 iOS 上 fail-fast、桌面端忽略）。
+
+- 当前实现快照：`docs/CurrentState/iOSPolicy.md`

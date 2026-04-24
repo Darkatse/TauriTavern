@@ -312,6 +312,43 @@ test('geometry firewall implements fixed-shell IME contract (local keyboard offs
     assert.match(source, /\bscroll-padding-bottom\b/);
 });
 
+test('geometry firewall implements composer IME contract for wide Android tablets (lift + spacer)', async () => {
+    const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
+    const source = await readFile(firewallPath, 'utf8');
+
+    assert.match(source, /Android IME contract \(width-agnostic\)/);
+    assert.match(source, /body\s+#sheld\s*\{\s*[\s\S]*--tt-keyboard-offset/);
+    assert.match(source, /data-tt-android-ime-host/);
+    assert.match(source, /data-tt-android-ime-lift/);
+    assert.match(source, /data-tt-android-ime-spacer/);
+});
+
+test('geometry firewall keeps IME contract outside mobile breakpoint (not max-width gated)', async () => {
+    const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
+    const source = await readFile(firewallPath, 'utf8');
+
+    assert.match(
+        source,
+        /@media screen and \(min-width: 1001px\)[\s\S]*\}[\s\r\n]*\/\* Android IME contract \(width-agnostic\)/,
+    );
+});
+
+test('wide IME sizing keeps desktop drawer baseline (bottom form reserve)', async () => {
+    const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
+    const source = await readFile(firewallPath, 'utf8');
+
+    assert.match(source, /--tt-firewall-drawer-bottom-reserve/);
+    assert.match(source, /var\(--tt-firewall-drawer-bottom-reserve\)/);
+});
+
+test('mobile-styles stays upstream-friendly (no Android IME host plumbing duplication)', async () => {
+    const mobileStylesPath = path.join(REPO_ROOT, 'src/css/mobile-styles.css');
+    const source = await readFile(mobileStylesPath, 'utf8');
+
+    assert.doesNotMatch(source, /data-tt-android-ime-host/);
+    assert.doesNotMatch(source, /--tt-keyboard-offset/);
+});
+
 test('geometry firewall enforces viewport root contract (stable size + no root transform)', async () => {
     const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
     const source = await readFile(firewallPath, 'utf8');
@@ -340,7 +377,7 @@ test('geometry firewall ensures scroll reachability above bottom safe-area', asy
     assert.match(source, /body\s+#character_popup::after/);
     assert.match(source, /body\s+#right-nav-panel\s*>\s*\.scrollableInner::after/);
     assert.match(source, /body\s+#completion_prompt_manager_popup::after/);
-    assert.match(source, /height:\s*max\(var\(--tt-inset-bottom\),\s*0px\)/);
+    assert.match(source, /height:\s*max\(var\(--tt-viewport-bottom-inset,\s*var\(--tt-inset-bottom\)\),\s*0px\)/);
 });
 
 test('geometry firewall defines viewport-host outer geometry contract (explicit size)', async () => {

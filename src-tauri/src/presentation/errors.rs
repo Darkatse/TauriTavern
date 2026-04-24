@@ -15,6 +15,9 @@ pub enum CommandError {
     Unauthorized(String),
 
     #[error("{0}")]
+    Cancelled(String),
+
+    #[error("{0}")]
     TooManyRequests(String),
 
     #[error("Internal server error: {0}")]
@@ -29,6 +32,7 @@ impl From<ApplicationError> for CommandError {
             ApplicationError::Unauthorized(msg) => CommandError::Unauthorized(msg),
             ApplicationError::PermissionDenied(msg) => CommandError::Unauthorized(msg),
             ApplicationError::RateLimited(msg) => CommandError::TooManyRequests(msg),
+            ApplicationError::Cancelled(msg) => CommandError::Cancelled(msg),
             ApplicationError::InternalError(msg) => CommandError::InternalServerError(msg),
         }
     }
@@ -40,6 +44,7 @@ impl From<DomainError> for CommandError {
             DomainError::NotFound(msg) => CommandError::NotFound(msg),
             DomainError::InvalidData(msg) => CommandError::BadRequest(msg),
             DomainError::AuthenticationError(msg) => CommandError::Unauthorized(msg),
+            DomainError::Cancelled(msg) => CommandError::Cancelled(msg),
             DomainError::InternalError(msg) => CommandError::InternalServerError(msg),
             DomainError::RateLimited { message } => CommandError::TooManyRequests(message),
         }
@@ -49,5 +54,32 @@ impl From<DomainError> for CommandError {
 impl From<tauri::Error> for CommandError {
     fn from(error: tauri::Error) -> Self {
         CommandError::InternalServerError(error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::domain::errors::GENERATION_CANCELLED_BY_USER_MESSAGE;
+
+    use super::*;
+
+    #[test]
+    fn domain_cancelled_maps_to_command_cancelled() {
+        let error: CommandError = DomainError::generation_cancelled_by_user().into();
+
+        assert!(matches!(
+            &error,
+            CommandError::Cancelled(message) if message == GENERATION_CANCELLED_BY_USER_MESSAGE
+        ));
+    }
+
+    #[test]
+    fn application_cancelled_maps_to_command_cancelled() {
+        let error: CommandError = ApplicationError::Cancelled("Job cancelled".to_string()).into();
+
+        assert!(matches!(
+            &error,
+            CommandError::Cancelled(message) if message == "Job cancelled"
+        ));
     }
 }

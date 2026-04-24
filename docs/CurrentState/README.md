@@ -59,3 +59,7 @@
 11. `docs/CurrentState/NativeApiFormats.md`
    - Custom 原生 API 格式兼容现状（OpenAI Responses / Claude Messages / Gemini Interactions）
    - 包含端到端链路、支持/不支持边界与持续开发约束（尤其回滚 ST 与 thought-signatures）
+
+12. `docs/CurrentState/iOSPolicy.md`
+   - iOS/iPadOS-only 分发 Policy（profile + capabilities snapshot）当前实现快照
+   - 包含 settings 契约、baseline 矩阵、后端裁决点与前端 UI 投影的维护约束

@@ -6,7 +6,6 @@ use std::fs;
 use std::path::Path;
 
 use crate::domain::errors::DomainError;
-use crate::infrastructure::persistence::file_system::DataDirectory;
 
 use super::DataArchiveImportResult;
 use super::shared::{
@@ -52,8 +51,6 @@ pub fn run_import_data_archive(
     report_progress("applying", 92.0, "Merging data directory");
     ensure_not_cancelled(is_cancelled)?;
     apply::apply_overlay(&normalized_root, data_root, report_progress, is_cancelled)?;
-
-    tauri::async_runtime::block_on(DataDirectory::new(data_root.to_path_buf()).initialize())?;
 
     report_progress("completed", 100.0, "Import completed");
 

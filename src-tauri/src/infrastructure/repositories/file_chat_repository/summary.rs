@@ -70,44 +70,48 @@ impl SearchFingerprint {
         hasher.finish()
     }
 
-    fn trigram_hashes(value: &str) -> Vec<u64> {
-        let lowered = value.to_lowercase();
-        let chars: Vec<char> = lowered.chars().collect();
-        if chars.is_empty() {
-            return Vec::new();
-        }
+    fn visit_trigram_hashes(value: &str, mut visit: impl FnMut(u64)) -> bool {
+        let mut chars = value.chars().flat_map(|ch| ch.to_lowercase());
 
-        if chars.len() < 3 {
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            lowered.hash(&mut hasher);
-            return vec![hasher.finish()];
-        }
+        let Some(mut first) = chars.next() else {
+            return false;
+        };
+        let Some(mut second) = chars.next() else {
+            return false;
+        };
+        let Some(mut third) = chars.next() else {
+            return false;
+        };
 
-        let mut hashes = Vec::with_capacity(chars.len().saturating_sub(2));
-        for window in chars.windows(3) {
-            hashes.push(Self::hash_trigram([window[0], window[1], window[2]]));
+        loop {
+            visit(Self::hash_trigram([first, second, third]));
+            let Some(next) = chars.next() else {
+                return true;
+            };
+            first = second;
+            second = third;
+            third = next;
         }
-        hashes
     }
 
     pub(super) fn add_text(&mut self, value: &str) {
         self.normalize_len();
-        for hash in Self::trigram_hashes(value) {
-            self.set_hashed(hash);
-        }
+        Self::visit_trigram_hashes(value, |hash| self.set_hashed(hash));
     }
 
     fn might_match_fragment(&self, fragment: &str) -> bool {
-        let hashes = Self::trigram_hashes(fragment);
-        if hashes.is_empty() {
-            return true;
-        }
-
         if fragment.chars().count() < 3 {
             return true;
         }
 
-        hashes.into_iter().all(|hash| self.has_hashed(hash))
+        let mut matches = true;
+        let saw_trigram = Self::visit_trigram_hashes(fragment, |hash| {
+            if !self.has_hashed(hash) {
+                matches = false;
+            }
+        });
+
+        !saw_trigram || matches
     }
 
     pub(super) fn might_match_fragments(&self, fragments: &[String]) -> bool {
@@ -777,42 +781,57 @@ impl FileChatRepository {
         let file = File::open(path).await.map_err(|error| {
             DomainError::InternalError(format!("Failed to open chat file {:?}: {}", path, error))
         })?;
-        let reader = BufReader::new(file);
-        let mut lines = reader.lines();
+        let mut reader = BufReader::new(file);
 
         let mut line_count: usize = 0;
         let mut first_non_empty: Option<String> = None;
-        let mut last_non_empty: Option<String> = None;
+        let mut last_non_empty = String::new();
+        let mut has_last_non_empty = false;
         let mut fingerprint = include_fingerprint.then(SearchFingerprint::new);
         if let Some(value) = fingerprint.as_mut() {
             value.add_text(Self::strip_jsonl_extension(fallback_file_name));
         }
 
-        while let Some(line) = lines.next_line().await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to read chat file {:?}: {}", path, error))
-        })? {
-            if line.trim().is_empty() {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let bytes_read = reader.read_line(&mut line).await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to read chat file {:?}: {}",
+                    path, error
+                ))
+            })?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            let line_text = line.trim_end_matches(|ch| ch == '\r' || ch == '\n');
+            if line_text.trim().is_empty() {
                 continue;
             }
 
             line_count += 1;
             if first_non_empty.is_none() {
-                first_non_empty = Some(line.clone());
+                first_non_empty = Some(line_text.to_string());
             }
             if let Some(value) = fingerprint.as_mut() {
-                value.add_text(&line);
+                value.add_text(line_text);
             }
-            last_non_empty = Some(line);
+            last_non_empty.clear();
+            last_non_empty.push_str(line_text);
+            has_last_non_empty = true;
         }
 
         let header = first_non_empty
             .as_deref()
             .and_then(|line| serde_json::from_str::<Value>(line).ok())
             .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-        let last_message = last_non_empty
-            .as_deref()
-            .and_then(|line| serde_json::from_str::<Value>(line).ok())
-            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+        let last_message = if has_last_non_empty {
+            serde_json::from_str::<Value>(&last_non_empty)
+                .unwrap_or_else(|_| Value::Object(serde_json::Map::new()))
+        } else {
+            Value::Object(serde_json::Map::new())
+        };
 
         let character_name = header
             .get("character_name")

@@ -11,6 +11,7 @@
     "linux"
   ],
   "permissions": [
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "dialog:allow-message"
   ]
 }

@@ -20,16 +20,17 @@ use crate::application::services::settings_service::SettingsService;
 use crate::application::services::stable_diffusion_service::StableDiffusionService;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
+use crate::application::services::translate_service::TranslateService;
 use crate::application::services::tt_sync_service::TtSyncService;
 use crate::application::services::update_service::UpdateService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
+use crate::infrastructure::logging::logger;
 use crate::infrastructure::paths::RuntimePaths;
 
 mod bootstrap;
-mod migrations;
 
 pub struct AppState {
     pub character_service: Arc<CharacterService>,
@@ -51,10 +52,12 @@ pub struct AppState {
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
     pub stable_diffusion_service: Arc<StableDiffusionService>,
+    pub translate_service: Arc<TranslateService>,
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
     pub update_service: Arc<UpdateService>,
+    pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
 }
 
 impl AppState {
@@ -69,9 +72,6 @@ impl AppState {
         );
 
         let data_directory = bootstrap::initialize_data_directory(&runtime_paths.data_root).await?;
-
-        #[allow(deprecated)]
-        migrations::migrate_legacy_character_create_date_once(&data_directory).await?;
 
         let services = bootstrap::build_services(&app_handle, &data_directory).await?;
 
@@ -97,10 +97,12 @@ impl AppState {
             chat_completion_service: services.chat_completion_service,
             tokenization_service: services.tokenization_service,
             stable_diffusion_service: services.stable_diffusion_service,
+            translate_service: services.translate_service,
             world_info_service: services.world_info_service,
             lan_sync_service: services.lan_sync_service,
             tt_sync_service: services.tt_sync_service,
             update_service: services.update_service,
+            ios_policy: services.ios_policy,
         })
     }
 
@@ -144,7 +146,10 @@ pub fn spawn_initialization(app_handle: AppHandle, runtime_paths: RuntimePaths) 
                 }
             }
             Err(error) => {
-                tracing::error!("Failed to initialize application state: {}", error);
+                logger::error(&format!(
+                    "Failed to initialize application state: {}",
+                    error
+                ));
 
                 match app_handle.emit("app-error", error.to_string()) {
                     Ok(_) => {}

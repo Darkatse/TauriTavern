@@ -273,6 +273,11 @@ impl ChatRepository for FileChatRepository {
         logger::debug("Searching character chats with streaming scanner");
 
         let normalized_query = Self::normalize_search_query(query);
+        let fragments = Self::search_fragments(&normalized_query);
+        if fragments.is_empty() {
+            return self.list_chat_summaries(character_filter, false).await;
+        }
+
         let search_cache_key =
             Self::character_search_cache_key(&normalized_query, character_filter);
         if let Some(cached) = self.get_cached_search_results(&search_cache_key).await {
@@ -280,17 +285,12 @@ impl ChatRepository for FileChatRepository {
         }
 
         let descriptors = self.list_character_chat_files(character_filter).await?;
-        let fragments = Self::search_fragments(&normalized_query);
         let mut results = Vec::new();
 
         for descriptor in descriptors {
             let entry = self.get_chat_summary_entry(&descriptor, true).await?;
             let mut summary = entry.summary.clone();
             summary.chat_metadata = None;
-            if fragments.is_empty() {
-                results.push(summary);
-                continue;
-            }
 
             let file_stem = Self::strip_jsonl_extension(&descriptor.file_name);
             if Self::file_stem_matches_all(file_stem, &fragments) {

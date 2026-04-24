@@ -4360,9 +4360,10 @@ async function renameWorldInfo(name, data) {
  * Deletes a world info with the given name
  *
  * @param {string} worldInfoName - The name of the world info to delete
+ * @param {{ saveLinkedCharacter?: boolean }} [options] - Optional behavior overrides
  * @returns {Promise<boolean>} A promise that resolves to true if the world info was successfully deleted, false otherwise
  */
-export async function deleteWorldInfo(worldInfoName) {
+export async function deleteWorldInfo(worldInfoName, { saveLinkedCharacter = true } = {}) {
     worldInfoName = String(worldInfoName || '').trim();
     dirtyWorldInfos.delete(worldInfoName);
     if (!world_names.includes(worldInfoName)) {
@@ -4395,7 +4396,7 @@ export async function deleteWorldInfo(worldInfoName) {
     if ($('#character_world').val() === worldInfoName) {
         $('#character_world').val('').trigger('change');
         setWorldInfoButtonClass(undefined, false);
-        if (menu_type != 'create') {
+        if (saveLinkedCharacter && menu_type != 'create') {
             saveCharacterDebounced();
         }
     }

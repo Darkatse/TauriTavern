@@ -97,6 +97,10 @@ class HTMLTextAreaElementMock extends HTMLElementMock {
 class HTMLInputElementMock extends HTMLElementMock {
     constructor() {
         super('input');
+        this.type = 'text';
+        this.inputMode = '';
+        this.readOnly = false;
+        this.disabled = false;
     }
 }
 
@@ -394,6 +398,72 @@ test('focus routing: dialog surfaces are classified + routed, then restored on b
     assert.equal(dialog.getAttribute('data-tt-ime-surface'), null);
     assert.equal(dom.calls.length, 2);
     assert.equal(dom.calls[1], null);
+
+    controller.dispose();
+});
+
+test('focus routing ignores non-IME inputs such as checkboxes', async () => {
+    const dom = createFocusHarness();
+
+    const sheld = new HTMLElementMock('div');
+    sheld.id = 'sheld';
+    dom.body.appendChild(sheld);
+
+    const dialog = new HTMLElementMock('dialog');
+    dialog.className = 'popup';
+    dialog.setAttribute('open', '');
+    dom.body.appendChild(dialog);
+
+    const checkbox = new HTMLInputElementMock();
+    checkbox.type = 'checkbox';
+    dialog.appendChild(checkbox);
+
+    const modulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-ime-surface-controller.js',
+    );
+    const { installMobileImeSurfaceController } = await importFresh(modulePath);
+
+    const controller = installMobileImeSurfaceController();
+    assert.ok(controller);
+
+    dom.emit('focusin', { target: checkbox });
+    assert.equal(dialog.getAttribute('data-tt-ime-surface'), null);
+    assert.equal(dialog.hasAttribute('data-tt-ime-active'), false);
+    assert.equal(dom.calls.length, 0);
+
+    controller.dispose();
+});
+
+test('focus routing still routes IME-capable text inputs', async () => {
+    const dom = createFocusHarness();
+
+    const sheld = new HTMLElementMock('div');
+    sheld.id = 'sheld';
+    dom.body.appendChild(sheld);
+
+    const characterPopup = new HTMLElementMock('div');
+    characterPopup.id = 'character_popup';
+    dom.body.appendChild(characterPopup);
+
+    const nameInput = new HTMLInputElementMock();
+    nameInput.type = 'text';
+    characterPopup.appendChild(nameInput);
+
+    const modulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-ime-surface-controller.js',
+    );
+    const { installMobileImeSurfaceController } = await importFresh(modulePath);
+
+    const controller = installMobileImeSurfaceController();
+    assert.ok(controller);
+
+    dom.emit('focusin', { target: nameInput });
+    assert.equal(characterPopup.getAttribute('data-tt-ime-surface'), 'fixed-shell');
+    assert.ok(characterPopup.hasAttribute('data-tt-ime-active'));
+    assert.equal(dom.calls.length, 1);
+    assert.equal(dom.calls[0], characterPopup);
 
     controller.dispose();
 });

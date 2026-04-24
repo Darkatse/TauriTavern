@@ -19,6 +19,45 @@ mod upsync;
 
 const TAOBAO_REGISTRY: &str = "https://registry.npmmirror.com";
 
+#[derive(Debug, Clone, Copy)]
+enum IosPolicyProfileSelection {
+    Full,
+    IosInternalFull,
+    IosExternalBeta,
+}
+
+impl IosPolicyProfileSelection {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::IosInternalFull => "ios_internal_full",
+            Self::IosExternalBeta => "ios_external_beta",
+        }
+    }
+}
+
+fn prompt_ios_policy_profile(action: &str) -> Result<Option<IosPolicyProfileSelection>> {
+    let selections = &[
+        "✅ full（默认：无限制）",
+        "🧪 ios_internal_full（内部：全功能，默认禁用启动更新检查）",
+        "🚦 ios_external_beta（外测：review-safe 默认裁剪，可被导入覆盖解锁）",
+        "🔙 返回 (Back)",
+    ];
+
+    let selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt(format!("{}：选择 iOS Policy Profile", action))
+        .default(0)
+        .items(&selections[..])
+        .interact()?;
+
+    match selection {
+        0 => Ok(Some(IosPolicyProfileSelection::Full)),
+        1 => Ok(Some(IosPolicyProfileSelection::IosInternalFull)),
+        2 => Ok(Some(IosPolicyProfileSelection::IosExternalBeta)),
+        _ => Ok(None),
+    }
+}
+
 // 日志辅助函数
 fn log_info(msg: &str) {
     let time = Local::now().format("%H:%M:%S").to_string();
@@ -735,12 +774,35 @@ fn run_android_dev() -> Result<()> {
 }
 
 fn run_ios_dev() -> Result<()> {
-    log_info("正在启动 iOS 开发模式...");
+    let Some(profile) = prompt_ios_policy_profile("iOS Dev")? else {
+        return Ok(());
+    };
+
+    log_info(&format!(
+        "正在启动 iOS 开发模式... (policy: {})",
+        profile.as_str()
+    ));
 
     let status = run_sequential_attempts(&[
-        ("pnpm", vec!["run", "ios:dev"]),
-        ("corepack", vec!["pnpm", "run", "ios:dev"]),
-        ("npm", vec!["run", "ios:dev"]),
+        (
+            "pnpm",
+            vec!["run", "ios:dev:policy", "--", "--profile", profile.as_str()],
+        ),
+        (
+            "corepack",
+            vec![
+                "pnpm",
+                "run",
+                "ios:dev:policy",
+                "--",
+                "--profile",
+                profile.as_str(),
+            ],
+        ),
+        (
+            "npm",
+            vec!["run", "ios:dev:policy", "--", "--profile", profile.as_str()],
+        ),
     ])?;
 
     if !status.success() {
@@ -870,12 +932,47 @@ fn run_android_build_split_abi() -> Result<()> {
 }
 
 fn run_ios_build() -> Result<()> {
-    log_info("正在构建 iOS 生产版本...");
+    let Some(profile) = prompt_ios_policy_profile("iOS Build")? else {
+        return Ok(());
+    };
+
+    log_info(&format!(
+        "正在构建 iOS 生产版本... (policy: {})",
+        profile.as_str()
+    ));
 
     let status = run_sequential_attempts(&[
-        ("pnpm", vec!["run", "ios:build"]),
-        ("corepack", vec!["pnpm", "run", "ios:build"]),
-        ("npm", vec!["run", "ios:build"]),
+        (
+            "pnpm",
+            vec![
+                "run",
+                "ios:build:policy",
+                "--",
+                "--profile",
+                profile.as_str(),
+            ],
+        ),
+        (
+            "corepack",
+            vec![
+                "pnpm",
+                "run",
+                "ios:build:policy",
+                "--",
+                "--profile",
+                profile.as_str(),
+            ],
+        ),
+        (
+            "npm",
+            vec![
+                "run",
+                "ios:build:policy",
+                "--",
+                "--profile",
+                profile.as_str(),
+            ],
+        ),
     ])?;
 
     if status.success() {

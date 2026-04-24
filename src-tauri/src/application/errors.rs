@@ -7,6 +7,9 @@ pub enum ApplicationError {
     #[error("{0}")]
     RateLimited(String),
 
+    #[error("{0}")]
+    Cancelled(String),
+
     #[error("Internal error: {0}")]
     InternalError(String),
 
@@ -29,8 +32,26 @@ impl From<DomainError> for ApplicationError {
             DomainError::NotFound(msg) => ApplicationError::NotFound(msg),
             DomainError::InvalidData(msg) => ApplicationError::ValidationError(msg),
             DomainError::AuthenticationError(msg) => ApplicationError::Unauthorized(msg),
+            DomainError::Cancelled(msg) => ApplicationError::Cancelled(msg),
             DomainError::InternalError(msg) => ApplicationError::InternalError(msg),
             DomainError::RateLimited { message } => ApplicationError::RateLimited(message),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::domain::errors::GENERATION_CANCELLED_BY_USER_MESSAGE;
+
+    use super::*;
+
+    #[test]
+    fn domain_cancelled_maps_to_application_cancelled() {
+        let error: ApplicationError = DomainError::generation_cancelled_by_user().into();
+
+        assert!(matches!(
+            &error,
+            ApplicationError::Cancelled(message) if message == GENERATION_CANCELLED_BY_USER_MESSAGE
+        ));
     }
 }

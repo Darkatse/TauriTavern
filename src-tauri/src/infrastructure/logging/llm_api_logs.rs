@@ -349,7 +349,14 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
 
         let (ok, level, error_message, response_value) = match &result {
             Ok(value) => (true, "INFO".to_string(), None, Some(value)),
-            Err(error) => (false, "ERROR".to_string(), Some(error.to_string()), None),
+            Err(error) => {
+                let level = if matches!(error, DomainError::Cancelled(_)) {
+                    "WARN"
+                } else {
+                    "ERROR"
+                };
+                (false, level.to_string(), Some(error.to_string()), None)
+            }
         };
 
         let endpoint = format_endpoint(&config.base_url, endpoint_path);
@@ -371,7 +378,7 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
             timestamp_ms: started_at_ms,
             level,
             ok,
-            source: source.to_string(),
+            source: source.key().to_string(),
             model,
             endpoint,
             duration_ms,
@@ -481,13 +488,16 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
 
         let duration_ms = started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
         let ok = result.is_ok();
-        let (level, error_message) = if ok {
-            ("INFO".to_string(), None)
-        } else {
-            (
-                "ERROR".to_string(),
-                result.as_ref().err().map(ToString::to_string),
-            )
+        let (level, error_message) = match &result {
+            Ok(()) => ("INFO".to_string(), None),
+            Err(error) => {
+                let level = if matches!(error, DomainError::Cancelled(_)) {
+                    "WARN"
+                } else {
+                    "ERROR"
+                };
+                (level.to_string(), Some(error.to_string()))
+            }
         };
 
         let meta = LlmApiLogMeta {
@@ -495,7 +505,7 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
             timestamp_ms: started_at_ms,
             level,
             ok,
-            source: source.to_string(),
+            source: source.key().to_string(),
             model,
             endpoint,
             duration_ms,
@@ -521,28 +531,6 @@ fn stream_readable_source(
     }
 
     source
-}
-
-impl ToString for ChatCompletionSource {
-    fn to_string(&self) -> String {
-        match self {
-            ChatCompletionSource::OpenAi => "openai",
-            ChatCompletionSource::OpenRouter => "openrouter",
-            ChatCompletionSource::Custom => "custom",
-            ChatCompletionSource::Claude => "claude",
-            ChatCompletionSource::Makersuite => "makersuite",
-            ChatCompletionSource::VertexAi => "vertexai",
-            ChatCompletionSource::DeepSeek => "deepseek",
-            ChatCompletionSource::Cohere => "cohere",
-            ChatCompletionSource::Groq => "groq",
-            ChatCompletionSource::Moonshot => "moonshot",
-            ChatCompletionSource::NanoGpt => "nanogpt",
-            ChatCompletionSource::Chutes => "chutes",
-            ChatCompletionSource::SiliconFlow => "siliconflow",
-            ChatCompletionSource::Zai => "zai",
-        }
-        .to_string()
-    }
 }
 
 struct StreamReadableCollector {

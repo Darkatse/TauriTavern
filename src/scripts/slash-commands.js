@@ -78,6 +78,7 @@ import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { SlashCommandAbortController } from './slash-commands/SlashCommandAbortController.js';
 import { SlashCommandNamedArgumentAssignment } from './slash-commands/SlashCommandNamedArgumentAssignment.js';
 import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
+import { getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandBreakController } from './slash-commands/SlashCommandBreakController.js';
@@ -232,6 +233,7 @@ function setupConnectAPIMap() {
 export function initDefaultSlashCommands() {
     eventSource.on(event_types.CHAT_CHANGED, processChatSlashCommands);
     setupConnectAPIMap();
+    const promptInjectionsAllowed = getActiveIosPolicyCapabilities()?.scripting?.prompt_injections !== false;
 
     async function enableInstructCallback() {
         $('#instruct_enabled').prop('checked', true).trigger('input').trigger('change');
@@ -2496,99 +2498,101 @@ export function initDefaultSlashCommands() {
         ],
         helpString: t`Trims the text to the end of the last full sentence.`,
     }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-        name: 'inject',
-        returns: t`injection ID`,
-        callback: injectCallback,
-        namedArgumentList: [
-            SlashCommandNamedArgument.fromProps({
-                name: 'id',
-                description: t`injection ID`,
-                typeList: [ARGUMENT_TYPE.STRING],
-                isRequired: false,
-                enumProvider: commonEnumProviders.injects,
-            }),
-            new SlashCommandNamedArgument(
-                'position', t`injection position`, [ARGUMENT_TYPE.STRING], false, false, 'after', ['before', 'after', 'chat', 'none'],
-            ),
-            new SlashCommandNamedArgument(
-                'depth', t`injection depth`, [ARGUMENT_TYPE.NUMBER], false, false, '4',
-            ),
-            new SlashCommandNamedArgument(
-                'scan', t`include injection content into World Info scans`, [ARGUMENT_TYPE.BOOLEAN], false, false, 'false',
-            ),
-            SlashCommandNamedArgument.fromProps({
-                name: 'role',
-                description: t`role for in-chat injections`,
-                typeList: [ARGUMENT_TYPE.STRING],
-                isRequired: false,
-                enumList: [
-                    new SlashCommandEnumValue('system', null, enumTypes.enum, enumIcons.system),
-                    new SlashCommandEnumValue('assistant', null, enumTypes.enum, enumIcons.assistant),
-                    new SlashCommandEnumValue('user', null, enumTypes.enum, enumIcons.user),
-                ],
-            }),
-            new SlashCommandNamedArgument(
-                'ephemeral', t`remove injection after generation`, [ARGUMENT_TYPE.BOOLEAN], false, false, 'false',
-            ),
-            SlashCommandNamedArgument.fromProps({
-                name: 'filter',
-                description: t`if a filter is defined, an injection will only be performed if the closure returns true`,
-                typeList: [ARGUMENT_TYPE.CLOSURE],
-                isRequired: false,
-                acceptsMultiple: false,
-            }),
-        ],
-        unnamedArgumentList: [
-            new SlashCommandArgument(
-                t`text`, [ARGUMENT_TYPE.STRING], false,
-            ),
-        ],
-        helpString: t`Injects a text into the LLM prompt for the current chat. Requires a unique injection ID (will be auto-generated if not provided). Positions: "before" main prompt, "after" main prompt, in-"chat", hidden with "none" (default: after). Depth: injection depth for the prompt (default: 4). Role: role for in-chat injections (default: system). Scan: include injection content into World Info scans (default: false). Hidden injects in "none" position are not inserted into the prompt but can be used for triggering WI entries. Returns the injection ID.`,
-    }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-        name: 'listinjects',
-        callback: listInjectsCallback,
-        helpString: t`Lists all script injections for the current chat. Displays injects in a popup by default. Use the <code>return</code> argument to change the return type.`,
-        returns: t`Optionally the JSON object of script injections`,
-        namedArgumentList: [
-            SlashCommandNamedArgument.fromProps({
-                name: 'return',
-                description: t`The way how you want the return value to be provided`,
-                typeList: [ARGUMENT_TYPE.STRING],
-                defaultValue: 'popup-html',
-                enumList: slashCommandReturnHelper.enumList({ allowPipe: false, allowObject: true, allowChat: true, allowPopup: true, allowTextVersion: false }),
-                forceEnum: true,
-            }),
-            // TODO remove some day
-            SlashCommandNamedArgument.fromProps({
-                name: 'format',
-                description: t`!!! DEPRECATED - use "return" instead !!! output format`,
-                typeList: [ARGUMENT_TYPE.STRING],
-                isRequired: true,
-                forceEnum: true,
-                enumList: [
-                    new SlashCommandEnumValue('popup', t`Show injects in a popup.`, enumTypes.enum, enumIcons.default),
-                    new SlashCommandEnumValue('chat', t`Post a system message to the chat.`, enumTypes.enum, enumIcons.default),
-                    new SlashCommandEnumValue('none', t`Just return the injects as a JSON object.`, enumTypes.enum, enumIcons.default),
-                ],
-            }),
-        ],
-    }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-        name: 'flushinject',
-        aliases: ['flushinjects'],
-        unnamedArgumentList: [
-            SlashCommandArgument.fromProps({
-                description: t`injection ID or a variable name pointing to ID`,
-                typeList: [ARGUMENT_TYPE.STRING],
-                defaultValue: '',
-                enumProvider: commonEnumProviders.injects,
-            }),
-        ],
-        callback: flushInjectsCallback,
-        helpString: t`Removes a script injection for the current chat. If no ID is provided, removes all script injections.`,
-    }));
+    if (promptInjectionsAllowed) {
+        SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+            name: 'inject',
+            returns: t`injection ID`,
+            callback: injectCallback,
+            namedArgumentList: [
+                SlashCommandNamedArgument.fromProps({
+                    name: 'id',
+                    description: t`injection ID`,
+                    typeList: [ARGUMENT_TYPE.STRING],
+                    isRequired: false,
+                    enumProvider: commonEnumProviders.injects,
+                }),
+                new SlashCommandNamedArgument(
+                    'position', t`injection position`, [ARGUMENT_TYPE.STRING], false, false, 'after', ['before', 'after', 'chat', 'none'],
+                ),
+                new SlashCommandNamedArgument(
+                    'depth', t`injection depth`, [ARGUMENT_TYPE.NUMBER], false, false, '4',
+                ),
+                new SlashCommandNamedArgument(
+                    'scan', t`include injection content into World Info scans`, [ARGUMENT_TYPE.BOOLEAN], false, false, 'false',
+                ),
+                SlashCommandNamedArgument.fromProps({
+                    name: 'role',
+                    description: t`role for in-chat injections`,
+                    typeList: [ARGUMENT_TYPE.STRING],
+                    isRequired: false,
+                    enumList: [
+                        new SlashCommandEnumValue('system', null, enumTypes.enum, enumIcons.system),
+                        new SlashCommandEnumValue('assistant', null, enumTypes.enum, enumIcons.assistant),
+                        new SlashCommandEnumValue('user', null, enumTypes.enum, enumIcons.user),
+                    ],
+                }),
+                new SlashCommandNamedArgument(
+                    'ephemeral', t`remove injection after generation`, [ARGUMENT_TYPE.BOOLEAN], false, false, 'false',
+                ),
+                SlashCommandNamedArgument.fromProps({
+                    name: 'filter',
+                    description: t`if a filter is defined, an injection will only be performed if the closure returns true`,
+                    typeList: [ARGUMENT_TYPE.CLOSURE],
+                    isRequired: false,
+                    acceptsMultiple: false,
+                }),
+            ],
+            unnamedArgumentList: [
+                new SlashCommandArgument(
+                    t`text`, [ARGUMENT_TYPE.STRING], false,
+                ),
+            ],
+            helpString: t`Injects a text into the LLM prompt for the current chat. Requires a unique injection ID (will be auto-generated if not provided). Positions: "before" main prompt, "after" main prompt, in-"chat", hidden with "none" (default: after). Depth: injection depth for the prompt (default: 4). Role: role for in-chat injections (default: system). Scan: include injection content into World Info scans (default: false). Hidden injects in "none" position are not inserted into the prompt but can be used for triggering WI entries. Returns the injection ID.`,
+        }));
+        SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+            name: 'listinjects',
+            callback: listInjectsCallback,
+            helpString: t`Lists all script injections for the current chat. Displays injects in a popup by default. Use the <code>return</code> argument to change the return type.`,
+            returns: t`Optionally the JSON object of script injections`,
+            namedArgumentList: [
+                SlashCommandNamedArgument.fromProps({
+                    name: 'return',
+                    description: t`The way how you want the return value to be provided`,
+                    typeList: [ARGUMENT_TYPE.STRING],
+                    defaultValue: 'popup-html',
+                    enumList: slashCommandReturnHelper.enumList({ allowPipe: false, allowObject: true, allowChat: true, allowPopup: true, allowTextVersion: false }),
+                    forceEnum: true,
+                }),
+                // TODO remove some day
+                SlashCommandNamedArgument.fromProps({
+                    name: 'format',
+                    description: t`!!! DEPRECATED - use "return" instead !!! output format`,
+                    typeList: [ARGUMENT_TYPE.STRING],
+                    isRequired: true,
+                    forceEnum: true,
+                    enumList: [
+                        new SlashCommandEnumValue('popup', t`Show injects in a popup.`, enumTypes.enum, enumIcons.default),
+                        new SlashCommandEnumValue('chat', t`Post a system message to the chat.`, enumTypes.enum, enumIcons.default),
+                        new SlashCommandEnumValue('none', t`Just return the injects as a JSON object.`, enumTypes.enum, enumIcons.default),
+                    ],
+                }),
+            ],
+        }));
+        SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+            name: 'flushinject',
+            aliases: ['flushinjects'],
+            unnamedArgumentList: [
+                SlashCommandArgument.fromProps({
+                    description: t`injection ID or a variable name pointing to ID`,
+                    typeList: [ARGUMENT_TYPE.STRING],
+                    defaultValue: '',
+                    enumProvider: commonEnumProviders.injects,
+                }),
+            ],
+            callback: flushInjectsCallback,
+            helpString: t`Removes a script injection for the current chat. If no ID is provided, removes all script injections.`,
+        }));
+    }
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'tokens',
         callback: (_, text) => {

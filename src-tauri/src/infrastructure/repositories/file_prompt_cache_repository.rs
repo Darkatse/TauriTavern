@@ -26,10 +26,13 @@ impl FilePromptCacheRepository {
     }
 }
 
-fn prompt_cache_file_name(key: PromptCacheKey) -> &'static str {
+fn prompt_cache_file_name(key: PromptCacheKey) -> String {
     match key {
-        PromptCacheKey::Claude => "claude.json",
-        PromptCacheKey::OpenRouterClaude => "openrouter-claude.json",
+        PromptCacheKey::Claude => "claude.json".to_string(),
+        PromptCacheKey::OpenRouterClaude => "openrouter-claude.json".to_string(),
+        PromptCacheKey::CustomClaudeMessages { scope } => {
+            format!("custom-claude-messages-{scope}.json")
+        }
     }
 }
 

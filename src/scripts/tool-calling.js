@@ -11,6 +11,7 @@ import { enumTypes, SlashCommandEnumValue } from './slash-commands/SlashCommandE
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { slashCommandReturnHelper } from './slash-commands/SlashCommandReturnHelper.js';
 import { isTrueBoolean } from './utils.js';
+import { getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
 
 /**
  * @typedef {object} ToolInvocation
@@ -862,8 +863,9 @@ export class ToolManager {
      * Saves function tool invocations to the last user chat message extra metadata.
      * @param {ToolInvocation[]} invocations Successful tool invocations
      * @param {any?} native Provider-native metadata to persist for future turns
+     * @param {string?} reasoningContent Provider reasoning content needed to continue tool-call turns
      */
-    static async saveFunctionToolInvocations(invocations, native = null) {
+    static async saveFunctionToolInvocations(invocations, native = null, reasoningContent = null) {
         if (!Array.isArray(invocations) || invocations.length === 0) {
             return;
         }
@@ -879,6 +881,7 @@ export class ToolManager {
                 api: getGeneratingApi(),
                 model: getGeneratingModel(),
                 ...(native !== null && native !== undefined ? { native } : {}),
+                ...(reasoningContent ? { tool_reasoning_content: reasoningContent } : {}),
             },
         };
         chat.push(message);
@@ -901,6 +904,7 @@ export class ToolManager {
     }
 
     static initToolSlashCommands() {
+        const toolRegistrationAllowed = getActiveIosPolicyCapabilities()?.scripting?.tool_registration !== false;
         const toolsEnumProvider = () => ToolManager.tools.map(tool => {
             const toolOpenAI = tool.toFunctionOpenAI();
             return new SlashCommandEnumValue(toolOpenAI.function.name, toolOpenAI.function.description, enumTypes.enum, enumIcons.closure);
@@ -965,10 +969,11 @@ export class ToolManager {
             },
         }));
 
-        SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-            name: 'tools-register',
-            aliases: ['tool-register'],
-            helpString: `<div>Registers a new tool with the tool registry.</div>
+        if (toolRegistrationAllowed) {
+            SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+                name: 'tools-register',
+                aliases: ['tool-register'],
+                helpString: `<div>Registers a new tool with the tool registry.</div>
                 <ul>
                     <li>The <code>parameters</code> argument MUST be a JSON-serialized object with a valid JSON schema.</li>
                     <li>The unnamed argument MUST be a closure that accepts the function parameters as local script variables.</li>
@@ -1114,30 +1119,31 @@ export class ToolManager {
 
                 return '';
             },
-        }));
+            }));
 
-        SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-            name: 'tools-unregister',
-            aliases: ['tool-unregister'],
-            helpString: 'Unregisters a tool from the tool registry.',
-            unnamedArgumentList: [
-                SlashCommandArgument.fromProps({
-                    description: 'The name of the tool to unregister.',
-                    typeList: [ARGUMENT_TYPE.STRING],
-                    isRequired: true,
-                    acceptsMultiple: false,
-                    forceEnum: true,
-                    enumProvider: toolsEnumProvider,
-                }),
-            ],
-            callback: async (_, name) => {
-                if (typeof name !== 'string' || !name) {
-                    throw new Error('The unnamed argument must be a non-empty string.');
-                }
+            SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+                name: 'tools-unregister',
+                aliases: ['tool-unregister'],
+                helpString: 'Unregisters a tool from the tool registry.',
+                unnamedArgumentList: [
+                    SlashCommandArgument.fromProps({
+                        description: 'The name of the tool to unregister.',
+                        typeList: [ARGUMENT_TYPE.STRING],
+                        isRequired: true,
+                        acceptsMultiple: false,
+                        forceEnum: true,
+                        enumProvider: toolsEnumProvider,
+                    }),
+                ],
+                callback: async (_, name) => {
+                    if (typeof name !== 'string' || !name) {
+                        throw new Error('The unnamed argument must be a non-empty string.');
+                    }
 
-                ToolManager.unregisterFunctionTool(name);
-                return '';
-            },
-        }));
+                    ToolManager.unregisterFunctionTool(name);
+                    return '';
+                },
+            }));
+        }
     }
 }

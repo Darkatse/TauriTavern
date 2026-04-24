@@ -358,8 +358,20 @@ impl CharacterService {
             .import_character(Path::new(&dto.file_path), dto.preserve_file_name)
             .await?;
 
-        self.try_auto_import_embedded_world_info(&mut character)
-            .await?;
+        if let Err(error) = self
+            .try_auto_import_embedded_world_info(&mut character)
+            .await
+        {
+            let rollback_name = character.get_file_name();
+            if let Err(rollback_error) = self.repository.delete(&rollback_name, false).await {
+                return Err(ApplicationError::InternalError(format!(
+                    "Failed to rollback imported character {} after embedded world info import error ({}): {}",
+                    rollback_name, error, rollback_error
+                )));
+            }
+
+            return Err(error.into());
+        }
 
         Ok(CharacterDto::from(character))
     }
@@ -581,25 +593,23 @@ impl CharacterService {
             return Ok(());
         };
 
-        let converted_world = match character_book_to_world_info(&character_book) {
-            Ok(value) => value,
-            Err(error) => {
-                logger::warn(&format!(
-                    "Skipping embedded world info import for {}: {}",
-                    character.name, error
-                ));
-                return Ok(());
-            }
-        };
+        let converted_world = character_book_to_world_info(&character_book).map_err(|error| {
+            DomainError::InvalidData(format!(
+                "Embedded world info import failed for {}: {}",
+                character.name, error
+            ))
+        })?;
 
         let preferred_name = Self::resolve_embedded_world_name(character, &character_book);
-        let world_name = self
+        let (world_name, should_save) = self
             .resolve_available_world_name(&preferred_name, &converted_world)
             .await?;
 
-        self.world_info_repository
-            .save_world_info(&world_name, &converted_world)
-            .await?;
+        if should_save {
+            self.world_info_repository
+                .save_world_info(&world_name, &converted_world)
+                .await?;
+        }
 
         if character.data.extensions.world != world_name {
             character.data.extensions.world = world_name;
@@ -628,7 +638,37 @@ impl CharacterService {
         &self,
         preferred_name: &str,
         payload: &Value,
-    ) -> Result<String, DomainError> {
+    ) -> Result<(String, bool), DomainError> {
+        fn strip_trailing_index_suffix(name: &str) -> &str {
+            let trimmed = name.trim_end();
+            let Some(close_paren) = trimmed.rfind(')') else {
+                return name;
+            };
+            if close_paren + 1 != trimmed.len() {
+                return name;
+            }
+            let Some(open_paren) = trimmed[..close_paren].rfind('(') else {
+                return name;
+            };
+            if open_paren == 0 {
+                return name;
+            }
+            let prefix = trimmed[..open_paren].trim_end();
+            if prefix.is_empty() {
+                return name;
+            }
+            let digits = trimmed[open_paren + 1..close_paren].trim();
+            if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+                return name;
+            }
+
+            prefix
+        }
+
+        fn entries_match(a: &Value, b: &Value) -> bool {
+            a.get("entries") == b.get("entries")
+        }
+
         let base_name = sanitize_world_info_name(preferred_name);
         if base_name.is_empty() {
             return Err(DomainError::InvalidData(
@@ -642,8 +682,8 @@ impl CharacterService {
             .await?;
 
         if let Some(existing_payload) = existing {
-            if existing_payload == *payload {
-                return Ok(base_name);
+            if entries_match(&existing_payload, payload) {
+                return Ok((base_name, false));
             }
 
             let names: HashSet<String> = self
@@ -653,17 +693,19 @@ impl CharacterService {
                 .into_iter()
                 .collect();
 
+            let base_candidate = strip_trailing_index_suffix(&base_name);
             let mut suffix = 2usize;
             loop {
-                let candidate = sanitize_world_info_name(&format!("{} {}", base_name, suffix));
+                let candidate =
+                    sanitize_world_info_name(&format!("{} ({})", base_candidate, suffix));
                 if !candidate.is_empty() && !names.contains(&candidate) {
-                    return Ok(candidate);
+                    return Ok((candidate, true));
                 }
                 suffix += 1;
             }
         }
 
-        Ok(base_name)
+        Ok((base_name, true))
     }
 
     async fn build_export_card_value(&self, name: &str) -> Result<Value, DomainError> {

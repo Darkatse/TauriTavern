@@ -1,4 +1,6 @@
+use chrono::{DateTime, NaiveDateTime, SecondsFormat, TimeZone, Utc};
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
+use serde_json::Value;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
@@ -6,9 +8,14 @@ use tokio::fs;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::character::{Character, sanitize_filename};
+use crate::domain::models::chat::parse_message_timestamp;
 use crate::infrastructure::logging::logger;
-use crate::infrastructure::persistence::file_system::list_files_with_extension;
-use crate::infrastructure::persistence::png_utils::read_character_data_from_png;
+use crate::infrastructure::persistence::file_system::{
+    list_files_with_extension, replace_file_with_fallback, unique_temp_path,
+};
+use crate::infrastructure::persistence::png_utils::{
+    read_character_data_from_png, write_character_data_to_png,
+};
 
 use super::FileCharacterRepository;
 
@@ -40,6 +47,71 @@ fn file_ctime_millis(metadata: &std::fs::Metadata) -> Option<i64> {
 }
 
 impl FileCharacterRepository {
+    fn is_valid_character_create_date(value: &str) -> bool {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return true;
+        }
+
+        if trimmed.chars().all(|ch| ch.is_ascii_digit()) {
+            return trimmed.parse::<i64>().is_ok();
+        }
+
+        if DateTime::parse_from_rfc3339(trimmed).is_ok() {
+            return true;
+        }
+
+        parse_message_timestamp(trimmed) > 0
+    }
+
+    fn migrate_legacy_character_create_date_value(value: &str) -> Option<String> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let Ok(parsed) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S UTC") else {
+            return None;
+        };
+
+        Some(
+            chrono::DateTime::<Utc>::from_naive_utc_and_offset(parsed, Utc)
+                .to_rfc3339_opts(SecondsFormat::Millis, true),
+        )
+    }
+
+    fn format_timestamp_millis(timestamp_millis: i64) -> Option<String> {
+        Utc.timestamp_millis_opt(timestamp_millis)
+            .single()
+            .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Millis, true))
+    }
+
+    fn repaired_character_create_date(
+        value: &str,
+        fallback_timestamp_millis: Option<i64>,
+    ) -> Option<String> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if Self::is_valid_character_create_date(trimmed) {
+            return None;
+        }
+
+        if let Some(migrated) = Self::migrate_legacy_character_create_date_value(trimmed) {
+            return Some(migrated);
+        }
+
+        if let Some(timestamp_millis) = fallback_timestamp_millis {
+            if let Some(formatted) = Self::format_timestamp_millis(timestamp_millis) {
+                return Some(formatted);
+            }
+        }
+
+        Some(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true))
+    }
+
     pub(crate) fn normalize_character_file_stem(name: &str) -> Result<String, DomainError> {
         let normalized = sanitize_filename(name)
             .trim()
@@ -158,7 +230,13 @@ impl FileCharacterRepository {
             DomainError::InternalError(format!("Failed to read character file: {}", e))
         })?;
 
-        let json_data = read_character_data_from_png(&file_data)?;
+        let metadata = fs::metadata(path).await.map_err(|e| {
+            logger::error(&format!("Failed to read file metadata: {}", e));
+            DomainError::InternalError(format!("Failed to read file metadata: {}", e))
+        })?;
+        let timestamp_millis = file_ctime_millis(&metadata);
+
+        let mut json_data = read_character_data_from_png(&file_data)?;
 
         let mut character: Character = serde_json::from_str(&json_data).map_err(|e| {
             logger::error(&format!("Failed to parse character data: {}", e));
@@ -180,16 +258,64 @@ impl FileCharacterRepository {
             .unwrap_or("")
             .to_string();
 
-        character.json_data = Some(json_data);
-
-        let metadata = fs::metadata(path).await.map_err(|e| {
-            logger::error(&format!("Failed to read file metadata: {}", e));
-            DomainError::InternalError(format!("Failed to read file metadata: {}", e))
-        })?;
-
-        if let Some(timestamp_millis) = file_ctime_millis(&metadata) {
+        if let Some(timestamp_millis) = timestamp_millis {
             character.date_added = timestamp_millis;
         }
+
+        if let Some(repaired_create_date) =
+            Self::repaired_character_create_date(&character.create_date, timestamp_millis)
+        {
+            tracing::warn!(
+                character = %file_name,
+                old_create_date = %character.create_date,
+                new_create_date = %repaired_create_date,
+                "Repairing invalid character create_date"
+            );
+
+            let mut card_value: Value = serde_json::from_str(&json_data).map_err(|error| {
+                DomainError::InvalidData(format!(
+                    "Failed to parse character payload JSON in '{}': {}",
+                    path.display(),
+                    error
+                ))
+            })?;
+
+            let Some(object) = card_value.as_object_mut() else {
+                return Err(DomainError::InvalidData(format!(
+                    "Character payload must be a JSON object in '{}'",
+                    path.display()
+                )));
+            };
+
+            object.insert(
+                "create_date".to_string(),
+                Value::String(repaired_create_date.clone()),
+            );
+
+            let updated_json = serde_json::to_string(&card_value).map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to serialize repaired character payload for '{}': {}",
+                    path.display(),
+                    error
+                ))
+            })?;
+            let updated_png = write_character_data_to_png(&file_data, &updated_json)?;
+
+            let temp_path = unique_temp_path(path, "character.png");
+            fs::write(&temp_path, updated_png).await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to write repaired character temp file '{}': {}",
+                    temp_path.display(),
+                    error
+                ))
+            })?;
+            replace_file_with_fallback(&temp_path, path).await?;
+
+            character.create_date = repaired_create_date;
+            json_data = updated_json;
+        }
+
+        character.json_data = Some(json_data);
 
         let (chat_size, date_last_chat) = self.calculate_chat_stats(&file_name).await?;
         character.chat_size = chat_size;

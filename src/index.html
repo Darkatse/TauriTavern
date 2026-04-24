@@ -2106,12 +2106,12 @@
                                             <span data-i18n="Allows the model to return its thinking process.">
                                                 Allows the model to return its thinking process.
                                             </span>
-                                            <strong data-i18n="This setting affects visibility only." data-source-mode="except" data-source="zai,moonshot">
+                                            <strong data-i18n="This setting affects visibility only." data-source-mode="except" data-source="deepseek,zai,moonshot">
                                                 This setting affects visibility only.
                                             </strong>
                                         </div>
                                     </div>
-                                    <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,claude,xai,makersuite,vertexai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt">
+                                    <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,claude,xai,makersuite,vertexai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek">
                                         <div class="flex-container oneline-dropdown" title="Constrains effort on reasoning for reasoning models.&#10;Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning in a response." data-i18n="[title]Constrains effort on reasoning for reasoning models.">
                                             <label for="openai_reasoning_effort">
                                                 <span data-i18n="Reasoning Effort">Reasoning Effort</span>
@@ -2127,6 +2127,9 @@
                                             </select>
                                             <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="OpenAI-style options: low, medium, high. Minimum and maximum are aliased to low and high. Auto does not send an effort level.">
                                                 OpenAI-style options: low, medium, high. Minimum and maximum are aliased to low and high. Auto does not send an effort level.
+                                            </div>
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek">
+                                                DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.
                                             </div>
                                             <div class="toggle-description justifyLeft marginBot5" data-source="claude" data-i18n="Allocates a portion of the response length for thinking (min: 1024 tokens, low: 10%, medium: 25%, high: 50%, max: 95%), but minimum 1024 tokens. Auto does not request thinking.">
                                                 Allocates a portion of the response length for thinking (min: 1024 tokens, low: 10%, medium: 25%, high: 50%, max: 95%), but minimum 1024 tokens. Auto does not request thinking.
@@ -3108,6 +3111,7 @@
                                 <h4 data-i18n="Claude Model">Claude Model</h4>
                                 <select id="model_claude_select">
                                     <optgroup label="Versions">
+                                        <option value="claude-opus-4-7">claude-opus-4-7</option>
                                         <option value="claude-opus-4-6">claude-opus-4-6</option>
                                         <option value="claude-opus-4-5">claude-opus-4-5</option>
                                         <option value="claude-opus-4-5-20251101">claude-opus-4-5-20251101</option>
@@ -3636,9 +3640,11 @@
                             <div>
                                 <h4 data-i18n="DeepSeek Model">DeepSeek Model</h4>
                                 <select id="model_deepseek_select">
+                                    <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                                    <option value="deepseek-v4-pro">deepseek-v4-pro</option>
                                     <option value="deepseek-chat">deepseek-chat</option>
-                                    <option value="deepseek-coder">deepseek-coder</option>
                                     <option value="deepseek-reasoner">deepseek-reasoner</option>
+                                    <option value="deepseek-coder">deepseek-coder</option>
                                 </select>
                             </div>
                         </div>
@@ -3756,6 +3762,15 @@
                                     <span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span>
                                     <span data-i18n="completions note prefix"></span><code id="custom_endpoint_preview_suffix"></code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
                                 </small>
+                            </div>
+                            <div id="custom_claude_prompt_caching_section" style="display: none;">
+                                <label class="checkbox_label marginTopBot5" for="custom_claude_prompt_caching">
+                                    <input id="custom_claude_prompt_caching" type="checkbox" />
+                                    <span data-i18n="Apply Claude Prompt Caching Strategy">Apply Claude Prompt Caching Strategy</span>
+                                </label>
+                                <div class="toggle-description justifyLeft wide100p">
+                                    <span data-i18n="Apply Claude Prompt Caching Strategy Description">Opt in only if this endpoint supports Anthropic Claude prompt caching. TauriTavern will add Claude cache breakpoints and the required caching headers for Custom Claude Messages requests.</span>
+                                </div>
                             </div>
                             <h4>
                                 <span data-i18n="Custom API Key">Custom API Key</span>

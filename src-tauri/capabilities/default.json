@@ -11,6 +11,7 @@
     "barcode-scanner:allow-cancel",
     "barcode-scanner:allow-request-permissions",
     "opener:default",
+    "notification:allow-notify",
     "notification:allow-is-permission-granted",
     "fs:allow-open",
     "fs:allow-read",

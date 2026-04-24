@@ -62,7 +62,7 @@ fn install_window_state_plugin(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub async fn run() {
+pub fn run() {
     // Register cross-platform host plugins up front.
     // This is the only place that should know which native capabilities are part of
     // the app shell; downstream layers consume them through commands/bridges.
@@ -150,10 +150,38 @@ pub async fn run() {
             app.manage(user_dirs.clone());
 
             let tauritavern_settings = load_tauritavern_settings(&runtime_paths.data_root)?;
+            let ios_policy_scope =
+                crate::domain::ios_policy::IosPolicyScope::for_current_platform();
+            let ios_policy = if ios_policy_scope == crate::domain::ios_policy::IosPolicyScope::Ios {
+                let raw_policy =
+                    crate::infrastructure::ios_policy_cache::resolve_effective_raw_policy_sync(
+                        &runtime_paths.data_root,
+                        tauritavern_settings.ios_policy.as_ref(),
+                    )?;
+                crate::domain::ios_policy::resolve_ios_policy_activation_report(
+                    ios_policy_scope,
+                    raw_policy.as_ref(),
+                )?
+            } else {
+                crate::domain::ios_policy::resolve_ios_policy_activation_report(
+                    ios_policy_scope,
+                    tauritavern_settings.ios_policy.as_ref(),
+                )?
+            };
             let thumbnail_policy = std::sync::Arc::new(ThumbnailEndpointPolicy::new(
                 tauritavern_settings.avatar_persona_original_images_enabled,
             ));
             app.manage(thumbnail_policy.clone());
+
+            if ios_policy.scope == crate::domain::ios_policy::IosPolicyScope::Ios
+                && tauritavern_settings.request_proxy.enabled
+                && !ios_policy.capabilities.network.request_proxy
+            {
+                return Err(Box::new(crate::domain::errors::DomainError::InvalidData(
+                    "iOS policy disabled capability: network.request_proxy".to_string(),
+                )));
+            }
+
             http_client_pool.apply_request_proxy_settings(&tauritavern_settings.request_proxy)?;
             llm_api_log_store.apply_settings(tauritavern_settings.dev.effective_llm_api_keep());
             let _main_window =
@@ -278,6 +306,9 @@ fn create_main_window(
 
     #[cfg(target_os = "ios")]
     infrastructure::ios_webview::configure_main_wkwebview(&window)?;
+
+    #[cfg(target_os = "macos")]
+    infrastructure::macos_webview::configure_main_wkwebview(&window)?;
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     {

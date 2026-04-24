@@ -43,6 +43,52 @@ impl ChatCompletionSource {
             _ => None,
         }
     }
+
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::OpenAi => "openai",
+            Self::OpenRouter => "openrouter",
+            Self::Custom => "custom",
+            Self::Claude => "claude",
+            Self::Makersuite => "makersuite",
+            Self::VertexAi => "vertexai",
+            Self::DeepSeek => "deepseek",
+            Self::Cohere => "cohere",
+            Self::Groq => "groq",
+            Self::Moonshot => "moonshot",
+            Self::NanoGpt => "nanogpt",
+            Self::Chutes => "chutes",
+            Self::SiliconFlow => "siliconflow",
+            Self::Zai => "zai",
+        }
+    }
+
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::OpenAi => "OpenAI",
+            Self::OpenRouter => "OpenRouter",
+            Self::Custom => "Custom OpenAI",
+            Self::Claude => "Claude",
+            Self::Makersuite => "Google Gemini",
+            Self::VertexAi => "Google Vertex AI",
+            Self::DeepSeek => "DeepSeek",
+            Self::Cohere => "Cohere",
+            Self::Groq => "Groq",
+            Self::Moonshot => "Moonshot AI",
+            Self::NanoGpt => "NanoGPT",
+            Self::Chutes => "Chutes",
+            Self::SiliconFlow => "SiliconFlow",
+            Self::Zai => "Z.AI (GLM)",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnthropicBetaHeaderMode {
+    #[default]
+    None,
+    PromptCachingOnly,
+    ClaudeDefaults,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +97,7 @@ pub struct ChatCompletionApiConfig {
     pub api_key: String,
     pub authorization_header: Option<String>,
     pub extra_headers: HashMap<String, String>,
+    pub anthropic_beta_header_mode: AnthropicBetaHeaderMode,
 }
 
 pub type ChatCompletionStreamSender = UnboundedSender<String>;

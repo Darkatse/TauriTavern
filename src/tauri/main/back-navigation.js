@@ -47,7 +47,7 @@ function closeTopmostDialogPopup() {
         return true;
     }
 
-    if (dialog instanceof HTMLDialogElement) {
+    if (typeof dialog.close === 'function') {
         dialog.close();
         return true;
     }

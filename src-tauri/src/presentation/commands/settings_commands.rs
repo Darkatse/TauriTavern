@@ -10,7 +10,9 @@ use crate::application::dto::settings_dto::{
 use crate::domain::models::settings::RequestProxySettings;
 use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::logging::llm_api_logs::LlmApiLogStore;
-use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::commands::helpers::{
+    ensure_ios_policy_allows, log_command, map_command_error,
+};
 use crate::presentation::errors::CommandError;
 use crate::presentation::web_resources::thumbnail_endpoint::ThumbnailEndpointPolicy;
 
@@ -42,6 +44,14 @@ pub async fn update_tauritavern_settings(
     let request_proxy_settings: Option<RequestProxySettings> =
         dto.request_proxy.clone().map(Into::into);
     if let Some(settings) = request_proxy_settings.as_ref() {
+        if settings.enabled {
+            ensure_ios_policy_allows(
+                &app_state.ios_policy,
+                app_state.ios_policy.capabilities.network.request_proxy,
+                "network.request_proxy",
+            )?;
+        }
+
         HttpClientPool::validate_request_proxy_settings(settings)
             .map_err(map_command_error("Invalid request proxy settings"))?;
     }
@@ -82,6 +92,14 @@ pub async fn update_tauritavern_settings(
     let request_proxy_settings: Option<RequestProxySettings> =
         dto.request_proxy.clone().map(Into::into);
     if let Some(settings) = request_proxy_settings.as_ref() {
+        if settings.enabled {
+            ensure_ios_policy_allows(
+                &app_state.ios_policy,
+                app_state.ios_policy.capabilities.network.request_proxy,
+                "network.request_proxy",
+            )?;
+        }
+
         HttpClientPool::validate_request_proxy_settings(settings)
             .map_err(map_command_error("Invalid request proxy settings"))?;
     }

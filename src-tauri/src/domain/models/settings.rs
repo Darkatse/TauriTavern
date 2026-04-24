@@ -1,5 +1,21 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
+
+fn default_ios_policy_seed() -> Option<Value> {
+    if !cfg!(target_os = "ios") {
+        return None;
+    }
+
+    let profile = env!("TAURITAVERN_IOS_POLICY_PROFILE").trim();
+    if profile.is_empty() {
+        return None;
+    }
+
+    Some(json!({
+        "version": crate::domain::ios_policy::IOS_POLICY_VERSION,
+        "profile": profile,
+    }))
+}
 
 fn default_perf_profile() -> String {
     "auto".to_string()
@@ -139,14 +155,6 @@ impl Default for RequestProxySettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TauriTavernMigrationState {
-    /// One-time migration for legacy character cards whose `create_date` was stored as
-    /// `YYYY-MM-DD HH:MM:SS UTC` (TauriTavern bug) instead of ISO 8601.
-    #[serde(default)]
-    pub character_create_date_iso_v1: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevLoggingSettings {
     #[serde(default)]
@@ -196,13 +204,19 @@ pub struct TauriTavernSettings {
     #[serde(default = "default_avatar_persona_original_images_enabled")]
     pub avatar_persona_original_images_enabled: bool,
     #[serde(default)]
-    pub migrations: TauriTavernMigrationState,
-    #[serde(default)]
     pub dev: DevLoggingSettings,
     #[serde(default)]
     pub dynamic_theme: DynamicThemeSettings,
     #[serde(default = "default_model_settings")]
     pub models: ModelSettings,
+    /// iOS-only distribution policy (profile + capability overrides).
+    ///
+    /// NOTE: This field is intentionally stored as raw JSON to ensure:
+    /// - desktop builds can load settings exported from iOS even if the policy schema changes
+    /// - iOS builds can validate the schema strictly at runtime (fail-fast) without forcing
+    ///   non-iOS platforms to parse/apply it.
+    #[serde(default)]
+    pub ios_policy: Option<Value>,
 }
 
 impl Default for TauriTavernSettings {
@@ -218,10 +232,10 @@ impl Default for TauriTavernSettings {
             allow_keys_exposure: false,
             avatar_persona_original_images_enabled: default_avatar_persona_original_images_enabled(
             ),
-            migrations: TauriTavernMigrationState::default(),
             dev: DevLoggingSettings::default(),
             dynamic_theme: DynamicThemeSettings::default(),
             models: default_model_settings(),
+            ios_policy: default_ios_policy_seed(),
         }
     }
 }

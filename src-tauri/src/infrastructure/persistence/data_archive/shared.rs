@@ -223,9 +223,7 @@ pub fn cleanup_directory_sync(path: &Path) {
 
 pub fn ensure_not_cancelled(is_cancelled: &dyn Fn() -> bool) -> Result<(), DomainError> {
     if is_cancelled() {
-        return Err(DomainError::InternalError(
-            crate::infrastructure::persistence::data_archive::CANCELLED_ERROR_MARKER.to_string(),
-        ));
+        return Err(DomainError::cancelled("Job cancelled"));
     }
 
     Ok(())

@@ -404,6 +404,7 @@ fn map_domain_error(error: DomainError) -> (StatusCode, String) {
         DomainError::NotFound(message) => (StatusCode::NOT_FOUND, message),
         DomainError::InvalidData(message) => (StatusCode::BAD_REQUEST, message),
         DomainError::AuthenticationError(message) => (StatusCode::UNAUTHORIZED, message),
+        DomainError::Cancelled(message) => (StatusCode::from_u16(499).unwrap(), message),
         DomainError::InternalError(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
         DomainError::RateLimited { message } => (StatusCode::TOO_MANY_REQUESTS, message),
     }

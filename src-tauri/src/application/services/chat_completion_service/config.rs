@@ -9,7 +9,7 @@ use crate::application::dto::chat_completion_dto::{
 use crate::application::errors::ApplicationError;
 use crate::domain::models::secret::SecretKeys;
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionSource,
+    AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
 };
 use crate::domain::repositories::secret_repository::SecretRepository;
 
@@ -135,6 +135,7 @@ async fn resolve_api_config(
                 api_key,
                 authorization_header,
                 extra_headers,
+                anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
             })
         }
         _ => {
@@ -153,8 +154,7 @@ async fn resolve_api_config(
                     )
                 })?;
 
-                read_required_secret(secret_repository, secret_key, source_display_name(source))
-                    .await?
+                read_required_secret(secret_repository, secret_key, source.display_name()).await?
             };
 
             Ok(ChatCompletionApiConfig {
@@ -162,8 +162,16 @@ async fn resolve_api_config(
                 api_key,
                 authorization_header: None,
                 extra_headers: source_extra_headers(source),
+                anthropic_beta_header_mode: source_anthropic_beta_header_mode(source),
             })
         }
+    }
+}
+
+fn source_anthropic_beta_header_mode(source: ChatCompletionSource) -> AnthropicBetaHeaderMode {
+    match source {
+        ChatCompletionSource::Claude => AnthropicBetaHeaderMode::ClaudeDefaults,
+        _ => AnthropicBetaHeaderMode::None,
     }
 }
 
@@ -303,25 +311,6 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
     }
 }
 
-fn source_display_name(source: ChatCompletionSource) -> &'static str {
-    match source {
-        ChatCompletionSource::OpenAi => "OpenAI",
-        ChatCompletionSource::OpenRouter => "OpenRouter",
-        ChatCompletionSource::Claude => "Claude",
-        ChatCompletionSource::Makersuite => "Google Gemini",
-        ChatCompletionSource::VertexAi => "Google Vertex AI",
-        ChatCompletionSource::DeepSeek => "DeepSeek",
-        ChatCompletionSource::Cohere => "Cohere",
-        ChatCompletionSource::Groq => "Groq",
-        ChatCompletionSource::Moonshot => "Moonshot AI",
-        ChatCompletionSource::NanoGpt => "NanoGPT",
-        ChatCompletionSource::Chutes => "Chutes",
-        ChatCompletionSource::SiliconFlow => "SiliconFlow",
-        ChatCompletionSource::Zai => "Z.AI (GLM)",
-        ChatCompletionSource::Custom => "Custom OpenAI",
-    }
-}
-
 fn supports_reverse_proxy(source: ChatCompletionSource) -> bool {
     matches!(
         source,
@@ -349,6 +338,7 @@ async fn resolve_vertexai_generate_api_config(
             api_key: String::new(),
             authorization_header: Some(format!("Bearer {}", proxy_password)),
             extra_headers,
+            anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
         });
     }
 
@@ -390,6 +380,7 @@ async fn resolve_vertexai_generate_api_config(
                 api_key,
                 authorization_header: None,
                 extra_headers,
+                anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
             })
         }
         "full" => {
@@ -412,6 +403,7 @@ async fn resolve_vertexai_generate_api_config(
                 api_key: String::new(),
                 authorization_header: Some(format!("Bearer {}", access_token)),
                 extra_headers,
+                anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
             })
         }
         other => Err(ApplicationError::ValidationError(format!(

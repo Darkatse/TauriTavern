@@ -138,11 +138,19 @@ export function jsonResponse(data, status = 200) {
     });
 }
 
-export function textResponse(text, status = 200) {
-    return new Response(String(text), {
+export function textResponse(text, status = 200, statusText) {
+    const init = {
         status,
         headers: {
             'Content-Type': 'text/plain; charset=utf-8',
         },
+    };
+
+    if (statusText) {
+        init.statusText = String(statusText);
+    }
+
+    return new Response(String(text), {
+        ...init,
     });
 }

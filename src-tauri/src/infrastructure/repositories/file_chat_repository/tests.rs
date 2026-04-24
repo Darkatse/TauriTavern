@@ -1382,6 +1382,99 @@ async fn recent_summary_skips_fingerprint_and_search_builds_it_lazily() {
 }
 
 #[tokio::test]
+async fn empty_character_search_uses_summary_without_fingerprint() {
+    let (repository, root) = setup_repository().await;
+
+    let payload = payload_with_message(
+        "empty-search-character",
+        "2026-01-05T00:00:00.000Z",
+        "dragon keyword",
+        "Alice",
+    );
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
+        .await
+        .expect("save payload");
+
+    let results = repository
+        .search_chats("   ", Some("alice"))
+        .await
+        .expect("empty search should list summaries");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].file_name, "session.jsonl");
+
+    let index_path = root
+        .join("user")
+        .join("cache")
+        .join("chat_summary_index_v1.json");
+    let index_after_empty_search = fs::read_to_string(&index_path)
+        .await
+        .expect("read summary index after empty search");
+    let parsed: Value =
+        serde_json::from_str(&index_after_empty_search).expect("parse summary index");
+    let entries = parsed
+        .get("entries")
+        .and_then(Value::as_array)
+        .expect("entries should exist");
+    assert_eq!(entries.len(), 1);
+    assert!(
+        entries[0]
+            .get("fingerprint")
+            .map(Value::is_null)
+            .unwrap_or(true),
+        "empty search should not materialize fingerprint"
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn empty_group_search_uses_summary_without_fingerprint() {
+    let (repository, root) = setup_repository().await;
+
+    let payload = payload_with_message(
+        "empty-search-group",
+        "2026-01-05T00:00:00.000Z",
+        "dragon keyword",
+        "Group",
+    );
+    save_group_chat_payload_from_values(&repository, &root, "group-session", &payload, false)
+        .await
+        .expect("save group payload");
+
+    let chat_ids = vec!["group-session".to_string()];
+    let results = repository
+        .search_group_chats("", Some(&chat_ids))
+        .await
+        .expect("empty group search should list summaries");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].file_name, "group-session.jsonl");
+
+    let index_path = root
+        .join("user")
+        .join("cache")
+        .join("chat_summary_index_v1.json");
+    let index_after_empty_search = fs::read_to_string(&index_path)
+        .await
+        .expect("read summary index after empty group search");
+    let parsed: Value =
+        serde_json::from_str(&index_after_empty_search).expect("parse summary index");
+    let entries = parsed
+        .get("entries")
+        .and_then(Value::as_array)
+        .expect("entries should exist");
+    assert_eq!(entries.len(), 1);
+    assert!(
+        entries[0]
+            .get("fingerprint")
+            .map(Value::is_null)
+            .unwrap_or(true),
+        "empty group search should not materialize fingerprint"
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn character_chat_store_update_json_merges_and_replaces_values() {
     let (repository, root) = setup_repository().await;
 

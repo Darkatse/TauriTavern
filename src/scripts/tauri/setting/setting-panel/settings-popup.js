@@ -22,6 +22,7 @@ import {
     setChatHistoryBootstrapModeName,
 } from '../../../../tauri/main/services/chat-history/chat-history-mode-state.js';
 import { runOrPopup } from './popup-utils.js';
+import { getActiveIosPolicyCapabilities } from '../../../tauritavern/ios-policy.js';
 
 function isWindowsPlatform() {
     return typeof navigator !== 'undefined'
@@ -30,6 +31,9 @@ function isWindowsPlatform() {
 
 export async function openTauriTavernSettingsPopup() {
     const settings = await getTauriTavernSettings();
+    const iosCaps = getActiveIosPolicyCapabilities();
+    const requestProxyAllowed = iosCaps?.network?.request_proxy !== false;
+    const lanSyncAllowed = iosCaps?.sync?.lan !== false;
     const supportsCloseToTrayOnClose = isWindowsPlatform() && !isMobile();
     // Data directory selection is a desktop-only feature. Do not gate this on Bowser's `isMobile()`,
     // because iPadOS may present a desktop-like user agent (e.g. platform "MacIntel").
@@ -157,7 +161,7 @@ export async function openTauriTavernSettingsPopup() {
                 <small style="opacity: 0.85;" data-i18n="Requires reload to apply.">Requires reload to apply.</small>
             </div>
 
-            <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
+            <div id="tt-system-panel" class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
                 <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
                     <b data-i18n="System">System</b>
                 </div>
@@ -321,7 +325,7 @@ export async function openTauriTavernSettingsPopup() {
                 </div>
             </div>
 
-            <div class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
+            <div id="tt-sync-panel" class="flex-container flexFlowColumn" style="gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; background: rgba(0,0,0,0.12);">
                 <div class="flex-container alignItemsBaseline" style="justify-content: space-between; gap: 10px;">
                     <b data-i18n="Sync">Sync</b>
                 </div>
@@ -456,6 +460,16 @@ export async function openTauriTavernSettingsPopup() {
     const requestProxyDetails = root.querySelector('#tt-request-proxy-details');
     if (!(requestProxyDetails instanceof HTMLDetailsElement)) {
         throw new Error('TauriTavern settings: request proxy details not found');
+    }
+    if (!requestProxyAllowed) {
+        requestProxyDetails.hidden = true;
+    }
+    if (!requestProxyAllowed && !supportsDataRootSelection) {
+        const systemPanel = root.querySelector('#tt-system-panel');
+        if (!(systemPanel instanceof HTMLElement)) {
+            throw new Error('TauriTavern settings: system panel not found');
+        }
+        systemPanel.hidden = true;
     }
 
     const requestProxySummaryHint = root.querySelector('#tt-request-proxy-summary-hint');
@@ -712,10 +726,18 @@ export async function openTauriTavernSettingsPopup() {
     if (!(openSyncButton instanceof HTMLElement)) {
         throw new Error('TauriTavern settings: sync button not found');
     }
-    openSyncButton.addEventListener('click', () => runOrPopup(async () => {
-        const { openSyncPopup } = await import('./sync-popup.js');
-        await openSyncPopup();
-    }));
+    if (!lanSyncAllowed) {
+        const syncPanel = root.querySelector('#tt-sync-panel');
+        if (!(syncPanel instanceof HTMLElement)) {
+            throw new Error('TauriTavern settings: sync panel not found');
+        }
+        syncPanel.hidden = true;
+    } else {
+        openSyncButton.addEventListener('click', () => runOrPopup(async () => {
+            const { openSyncPopup } = await import('./sync-popup.js');
+            await openSyncPopup();
+        }));
+    }
 
     const panelRuntimeHelp = root.querySelector('#tt-help-panel-runtime');
     if (!(panelRuntimeHelp instanceof HTMLElement)) {
@@ -827,7 +849,7 @@ export async function openTauriTavernSettingsPopup() {
             content.style.gap = '8px';
             content.innerHTML = `
                 <b data-i18n="Claude Prompt Cache">Claude Prompt Cache</b>
-                <div data-i18n="Prompt Cache help: scope">Applies to Claude and OpenRouter (anthropic/claude*) requests.</div>
+                <div data-i18n="Prompt Cache help: scope">Applies to Claude, OpenRouter (anthropic/claude*), and opted-in Custom Claude Messages requests.</div>
                 <div data-i18n="Prompt Cache help: breakpoint">When enabled, cache breakpoints are placed at the end of the prompt. TauriTavern also automatically adds a smart breakpoint at the last block that is identical to the previous request to improve cache hits.</div>
             `.trim();
             await callGenericPopup(content, POPUP_TYPE.TEXT, '', {

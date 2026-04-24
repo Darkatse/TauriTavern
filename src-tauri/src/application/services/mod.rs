@@ -17,6 +17,7 @@ pub mod settings_service;
 pub mod stable_diffusion_service;
 pub mod theme_service;
 pub mod tokenization_service;
+pub mod translate_service;
 pub mod tt_sync_service;
 pub mod update_service;
 pub mod user_directory_service;

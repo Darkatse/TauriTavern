@@ -45,6 +45,8 @@ import {
     focusChatInput,
     installChatInputFocusKeeper,
 } from './scripts/chat-input-focus.js';
+import { getActiveIosPolicyCapabilities } from './scripts/tauritavern/ios-policy.js';
+import { applyIosPolicyUiProjection } from './scripts/tauritavern/ios-policy-ui.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -76,6 +78,8 @@ import {
     getWorldInfoSettings,
     setWorldInfoSettings,
     world_names,
+    updateWorldInfoList,
+    deleteWorldInfo,
     importEmbeddedWorldInfo,
     checkEmbeddedWorld,
     setWorldInfoButtonClass,
@@ -907,6 +911,15 @@ async function firstLoadInit() {
         const clientVersionPromise = getClientVersion();
         await initSecrets();
         const bootstrapSnapshot = await bootstrapPromise;
+        if (bootstrapSnapshot?.ios_policy?.scope === 'ios') {
+            if (!window.__TAURITAVERN__ || typeof window.__TAURITAVERN__ !== 'object') {
+                throw new Error('[TauriTavern][iOSPolicy] Host ABI is unavailable (window.__TAURITAVERN__).');
+            }
+            window.__TAURITAVERN__.iosPolicy = bootstrapSnapshot.ios_policy;
+        } else if (window.__TAURITAVERN__ && typeof window.__TAURITAVERN__ === 'object') {
+            window.__TAURITAVERN__.iosPolicy = bootstrapSnapshot.ios_policy;
+        }
+        applyIosPolicyUiProjection();
         const extensionsEnabled = Boolean(bootstrapSnapshot.settings?.enable_extensions)
             && bootstrapSnapshot.settings?.result != 'file not find'
             && Boolean(bootstrapSnapshot.settings?.settings);
@@ -5790,6 +5803,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 hasToolCalls && shouldDeleteMessage && await deleteLastMessage();
                 const invocationResult = await ToolManager.invokeFunctionTools(streamingProcessor.toolCalls);
                 const native = streamingProcessor?.native ?? null;
+                const reasoningContent = streamingProcessor?.reasoningHandler?.reasoning || null;
                 const shouldStopGeneration = (!invocationResult.invocations.length && shouldDeleteMessage) || invocationResult.stealthCalls.length;
                 if (hasToolCalls) {
                     if (shouldStopGeneration) {
@@ -5803,7 +5817,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
                     streamingProcessor = null;
                     depth = depth + 1;
-                    await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, native);
+                    await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, native, reasoningContent);
                     return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
                 }
             }
@@ -5858,6 +5872,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         let getMessage = extractMessageFromData(data);
         let title = extractTitleFromData(data);
         let reasoning = extractReasoningFromData(data);
+        const toolReasoning = extractReasoningFromData(data, { ignoreShowThoughts: true });
         let imageUrls = extractImagesFromData(data);
         const reasoningSignature = extractReasoningSignatureFromData(data);
         const native = data?.choices?.[0]?.message?.native ?? null;
@@ -5930,7 +5945,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 }
 
                 depth = depth + 1;
-                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, native);
+                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, native, toolReasoning);
                 return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
             }
         }
@@ -7739,7 +7754,7 @@ export function saveChatDebounced() {
     }, DEFAULT_SAVE_EDIT_TIMEOUT);
 }
 
-function markWindowedChatDirtyFromIndex(messageId) {
+export function markWindowedChatDirtyFromIndex(messageId) {
     const windowState = getWindowedChatState();
     if (!windowState) {
         return;
@@ -8475,6 +8490,12 @@ async function applySettingsSnapshot(data) {
             settings.main_api = 'openai';
         }
 
+        const iosCaps = getActiveIosPolicyCapabilities();
+        if (iosCaps && iosCaps.llm?.text_completions?.enabled === false && settings.main_api === 'textgenerationwebui') {
+            settings.main_api = 'openai';
+            globalThis.toastr?.warning?.('Text Completion is disabled by your iOS policy. Switched to Chat Completion.');
+        }
+
         main_api = settings.main_api;
         $('#main_api').val(main_api);
         $(`#main_api option[value=${main_api}]`).attr('selected', 'true');
@@ -8538,7 +8559,7 @@ export async function saveSettings(loopCounter = 0) {
     if (!settingsReady) {
         console.warn('Settings not ready, scheduling another save');
         saveSettingsDebounced();
-        return;
+        return false;
     }
 
     const MAX_RETRIES = 3;
@@ -8546,7 +8567,7 @@ export async function saveSettings(loopCounter = 0) {
         if (loopCounter < MAX_RETRIES) {
             console.warn('Response length is currently being overridden, scheduling another save');
             saveSettingsDebounced(++loopCounter);
-            return;
+            return false;
         }
         console.error('Response length is currently being overridden, but the save loop has reached the maximum number of retries');
         TempResponseLength.restore(null);
@@ -8593,9 +8614,11 @@ export async function saveSettings(loopCounter = 0) {
 
         settings = payload;
         await eventSource.emit(event_types.SETTINGS_UPDATED);
+        return true;
     } catch (error) {
         console.error('Error saving settings:', error);
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Settings could not be saved`);
+        return false;
     }
 }
 
@@ -11401,11 +11424,37 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
         return;
     }
 
+    const worldsToDelete = new Set();
+
     for (const key of characterKey) {
         const character = characters.find(x => x.avatar == key);
         if (!character) {
             toastr.warning(t`Character ${key} not found. Skipping deletion.`);
             continue;
+        }
+
+        let primaryWorldName = String(character?.data?.extensions?.world || '').trim();
+        if (!primaryWorldName) {
+            const detailsResponse = await fetch('/api/characters/get', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ avatar_url: character.avatar }),
+                cache: 'no-cache',
+            });
+
+            if (!detailsResponse.ok) {
+                toastr.error(t`Failed to resolve linked worldbook for character deletion.`, t`Failed to delete character`);
+                continue;
+            }
+
+            try {
+                const details = await detailsResponse.json();
+                primaryWorldName = String(details?.data?.extensions?.world || details?.extensions?.world || '').trim();
+            } catch (error) {
+                console.error('Failed to parse character details response:', error);
+                toastr.error(t`Failed to resolve linked worldbook for character deletion.`, t`Failed to delete character`);
+                continue;
+            }
         }
 
         const chid = characters.indexOf(character);
@@ -11425,6 +11474,10 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
             continue;
         }
 
+        if (primaryWorldName) {
+            worldsToDelete.add(primaryWorldName);
+        }
+
         accountStorage.removeItem(`AlertWI_${character.avatar}`);
         accountStorage.removeItem(`AlertRegex_${character.avatar}`);
         accountStorage.removeItem(`mediaWarningShown:${character.avatar}`);
@@ -11442,6 +11495,22 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
     }
 
     await removeCharacterFromUI();
+
+    for (const worldName of worldsToDelete) {
+        try {
+            if (!world_names.includes(worldName)) {
+                await updateWorldInfoList();
+            }
+
+            const deleted = await deleteWorldInfo(worldName, { saveLinkedCharacter: false });
+            if (!deleted) {
+                toastr.warning(t`Failed to delete linked worldbook.`, t`Character Deleted`);
+            }
+        } catch (error) {
+            console.error('Failed to delete linked worldbook:', error);
+            toastr.error(t`Failed to delete linked worldbook.`, t`Character Deleted`);
+        }
+    }
 }
 
 /**
@@ -13130,6 +13199,12 @@ jQuery(async function () {
     });
 
     $(document).on('click', '.external_import_button, #external_import_button', async () => {
+        const iosCaps = getActiveIosPolicyCapabilities();
+        if (iosCaps && iosCaps.content?.external_import === false) {
+            globalThis.toastr?.error?.('External import is disabled by your iOS policy.');
+            return;
+        }
+
         const html = await renderTemplateAsync('importCharacters');
         const input = await callGenericPopup(html, POPUP_TYPE.INPUT, '', { allowVerticalScrolling: true, wider: true, okButton: $('#popup_template').attr('popup-button-import'), rows: 4 });
 
