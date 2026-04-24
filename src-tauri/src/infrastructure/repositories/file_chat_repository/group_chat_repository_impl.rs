@@ -72,23 +72,23 @@ impl GroupChatRepository for FileChatRepository {
         logger::debug("Searching group chats with streaming scanner");
 
         let normalized_query = Self::normalize_search_query(query);
+        let fragments = Self::search_fragments(&normalized_query);
+        if fragments.is_empty() {
+            return self.list_group_chat_summaries(chat_ids, false).await;
+        }
+
         let search_cache_key = Self::group_search_cache_key(&normalized_query, chat_ids);
         if let Some(cached) = self.get_cached_search_results(&search_cache_key).await {
             return Ok(cached);
         }
 
         let descriptors = self.list_group_chat_files(chat_ids).await?;
-        let fragments = Self::search_fragments(&normalized_query);
         let mut results = Vec::new();
 
         for descriptor in descriptors {
             let entry = self.get_chat_summary_entry(&descriptor, true).await?;
             let mut summary = entry.summary.clone();
             summary.chat_metadata = None;
-            if fragments.is_empty() {
-                results.push(summary);
-                continue;
-            }
 
             let file_stem = Self::strip_jsonl_extension(&descriptor.file_name);
             if Self::file_stem_matches_all(file_stem, &fragments) {
