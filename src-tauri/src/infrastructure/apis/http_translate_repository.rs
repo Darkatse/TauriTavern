@@ -142,7 +142,11 @@ async fn translate_libre(
         "format": "text",
     });
 
-    if let Some(key) = api_key.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(key) = api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         payload["api_key"] = Value::String(key.to_string());
     }
 
@@ -194,9 +198,9 @@ async fn translate_lingva(
 ) -> Result<String, DomainError> {
     let mut url = base_url;
     {
-        let mut segments = url.path_segments_mut().map_err(|_| {
-            DomainError::InvalidData("Lingva URL cannot be a base".to_string())
-        })?;
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| DomainError::InvalidData("Lingva URL cannot be a base".to_string()))?;
         segments.push("auto");
         segments.push(lang.as_str());
         segments.push(text.as_str());
@@ -207,9 +211,7 @@ async fn translate_lingva(
         .header(ACCEPT, "application/json")
         .send()
         .await
-        .map_err(|error| {
-            DomainError::InternalError(format!("Lingva request failed: {error}"))
-        })?;
+        .map_err(|error| DomainError::InternalError(format!("Lingva request failed: {error}")))?;
 
     let status = response.status();
     if !status.is_success() {
@@ -353,9 +355,7 @@ async fn translate_onering(
         .header(ACCEPT, "application/json")
         .send()
         .await
-        .map_err(|error| {
-            DomainError::InternalError(format!("OneRing request failed: {error}"))
-        })?;
+        .map_err(|error| DomainError::InternalError(format!("OneRing request failed: {error}")))?;
 
     let status = response.status();
     if !status.is_success() {

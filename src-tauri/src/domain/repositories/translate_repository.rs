@@ -25,7 +25,6 @@ impl TranslateProvider {
             _ => None,
         }
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +52,10 @@ impl DeeplApiEndpoint {
 
 #[derive(Debug, Clone)]
 pub enum TranslateRequest {
-    Google { text: String, lang: String },
+    Google {
+        text: String,
+        lang: String,
+    },
     Libre {
         url: Url,
         api_key: Option<String>,
@@ -71,7 +73,11 @@ pub enum TranslateRequest {
         text: String,
         lang: String,
     },
-    Deeplx { url: Url, text: String, lang: String },
+    Deeplx {
+        url: Url,
+        text: String,
+        lang: String,
+    },
     OneRing {
         url: Url,
         text: String,

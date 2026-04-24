@@ -21,4 +21,3 @@ pub async fn translate_text(
         .await
         .map_err(map_command_error("Translation failed"))
 }
-

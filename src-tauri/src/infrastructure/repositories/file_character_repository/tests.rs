@@ -108,7 +108,9 @@ async fn find_by_name_repairs_invalid_create_date_and_persists_patch() {
         serde_json::from_str(&updated_json).expect("parse updated card json");
 
     assert_eq!(
-        updated_value.get("create_date").and_then(|value| value.as_str()),
+        updated_value
+            .get("create_date")
+            .and_then(|value| value.as_str()),
         Some(loaded.create_date.as_str())
     );
 
@@ -154,7 +156,9 @@ async fn find_by_name_repairs_legacy_utc_create_date_format() {
         serde_json::from_str(&updated_json).expect("parse updated card json");
 
     assert_eq!(
-        updated_value.get("create_date").and_then(|value| value.as_str()),
+        updated_value
+            .get("create_date")
+            .and_then(|value| value.as_str()),
         Some("2026-03-16T12:34:56.000Z")
     );
 

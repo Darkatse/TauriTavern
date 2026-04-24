@@ -30,11 +30,7 @@ impl TranslateService {
         }
     }
 
-    pub async fn translate(
-        &self,
-        provider: &str,
-        body: Value,
-    ) -> Result<String, ApplicationError> {
+    pub async fn translate(&self, provider: &str, body: Value) -> Result<String, ApplicationError> {
         let provider = TranslateProvider::parse(provider).ok_or_else(|| {
             ApplicationError::NotFound(format!("Unsupported translate provider: {provider}"))
         })?;
@@ -49,7 +45,10 @@ impl TranslateService {
                 let text = require_string(&body, "text")?;
                 let lang = normalize_libre_lang(require_string(&body, "lang")?);
                 let url = self
-                    .read_required_secret(SecretKeys::LIBRE_URL, "LibreTranslate URL is not configured.")
+                    .read_required_secret(
+                        SecretKeys::LIBRE_URL,
+                        "LibreTranslate URL is not configured.",
+                    )
                     .await?;
                 let url = parse_url_with_optional_trailing_slash(&url, "LibreTranslate")?;
                 let api_key = self.read_optional_secret(SecretKeys::LIBRE).await?;
@@ -119,10 +118,7 @@ impl TranslateService {
         Ok(self.translate_repository.translate(request).await?)
     }
 
-    async fn read_optional_secret(
-        &self,
-        key: &str,
-    ) -> Result<Option<String>, ApplicationError> {
+    async fn read_optional_secret(&self, key: &str) -> Result<Option<String>, ApplicationError> {
         Ok(self.secret_repository.read_secret(key, None).await?)
     }
 
@@ -181,9 +177,8 @@ fn optional_string(body: &Value, key: &str) -> Option<String> {
 
 fn parse_url_with_optional_trailing_slash(raw: &str, label: &str) -> Result<Url, ApplicationError> {
     let value = raw.trim();
-    Url::parse(value).map_err(|error| {
-        ApplicationError::ValidationError(format!("Invalid {label} URL: {error}"))
-    })
+    Url::parse(value)
+        .map_err(|error| ApplicationError::ValidationError(format!("Invalid {label} URL: {error}")))
 }
 
 fn parse_url_with_required_trailing_slash(raw: &str, label: &str) -> Result<Url, ApplicationError> {
@@ -194,9 +189,8 @@ fn parse_url_with_required_trailing_slash(raw: &str, label: &str) -> Result<Url,
         format!("{value}/")
     };
 
-    Url::parse(&normalized).map_err(|error| {
-        ApplicationError::ValidationError(format!("Invalid {label} URL: {error}"))
-    })
+    Url::parse(&normalized)
+        .map_err(|error| ApplicationError::ValidationError(format!("Invalid {label} URL: {error}")))
 }
 
 fn normalize_google_lang(lang: String) -> String {
@@ -243,9 +237,8 @@ fn parse_deepl_endpoint(body: &Value) -> Result<DeeplApiEndpoint, ApplicationErr
         return Ok(DeeplApiEndpoint::Free);
     };
 
-    DeeplApiEndpoint::parse(&raw).ok_or_else(|| {
-        ApplicationError::ValidationError(format!("Invalid DeepL endpoint: {raw}"))
-    })
+    DeeplApiEndpoint::parse(&raw)
+        .ok_or_else(|| ApplicationError::ValidationError(format!("Invalid DeepL endpoint: {raw}")))
 }
 
 #[cfg(test)]
