@@ -775,6 +775,56 @@ export function formatWorldInfo(value, { wiFormat = null } = {}) {
 }
 
 /**
+ * Apply attach-existing prompts directly onto the raw chat history messages.
+ * Why: the feature is defined against existing chat turns, not the final prompt stack.
+ * How: we resolve the target within the original latest-first message array by role and
+ * chronological index, then mutate that message content before any in-chat injection runs.
+ * Purpose: make "first user message end" and the generalized attach semantics match the
+ * original requirement instead of counting synthetic prompt-manager messages.
+ *
+ * @param {Prompt[]} attachedPrompts - Prompts configured for ATTACH_EXISTING.
+ * @param {Object[]} messages - Raw chat history messages in latest-first order.
+ */
+function applyAttachedPromptsToMessages(attachedPrompts, messages) {
+    if (!Array.isArray(attachedPrompts) || !attachedPrompts.length || !Array.isArray(messages) || !messages.length) {
+        return;
+    }
+
+    for (const attachPrompt of attachedPrompts) {
+        const attachContent = String(attachPrompt?.content ?? '').trim();
+        const attachRole = String(attachPrompt?.attach_role ?? '').trim();
+        const attachSide = attachPrompt?.attach_side === 'start' ? 'start' : 'end';
+        const requestedIndex = Number(attachPrompt?.attach_index) || 1;
+
+        if (!attachContent || !attachRole) {
+            continue;
+        }
+
+        const chronologicalRoleMatches = messages
+            .filter(message => message && !message.injected && message.role === attachRole)
+            .slice()
+            .reverse();
+
+        if (!chronologicalRoleMatches.length) {
+            continue;
+        }
+
+        const normalizedIndex = requestedIndex === 0 ? 1 : requestedIndex;
+        const targetIndex = normalizedIndex > 0 ? normalizedIndex - 1 : chronologicalRoleMatches.length + normalizedIndex;
+        const targetMessage = chronologicalRoleMatches[targetIndex];
+
+        if (!targetMessage) {
+            continue;
+        }
+
+        const currentContent = String(targetMessage.content ?? '');
+        targetMessage.content = attachSide === 'start'
+            ? [attachContent, currentContent].filter(Boolean).join('\n\n')
+            : [currentContent, attachContent].filter(Boolean).join('\n\n');
+    }
+}
+
+/**
  * This function populates the injections in the conversation.
  *
  * @param {Prompt[]} prompts - Array containing injection prompts.
@@ -1243,7 +1293,7 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     // Add ordered system and user prompts
     const systemPrompts = ['nsfw', 'jailbreak'];
     const userRelativePrompts = prompts.collection
-        .filter((prompt) => false === prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE)
+        .filter((prompt) => false === prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE && prompt.injection_position !== INJECTION_POSITION.ATTACH_EXISTING)
         .reduce((acc, prompt) => {
             acc.push(prompt.identifier);
             return acc;
@@ -1254,6 +1304,8 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
             acc.push(prompt);
             return acc;
         }, []);
+    const attachedPrompts = prompts.collection
+        .filter((prompt) => prompt.injection_position === INJECTION_POSITION.ATTACH_EXISTING);
 
     for (const identifier of [...systemPrompts, ...userRelativePrompts]) {
         await addToChatCompletion(identifier);
@@ -1316,6 +1368,12 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
         const toolMessage = [{ role: 'user', content: JSON.stringify(toolData) }];
         const toolTokens = await tokenHandler.countAsync(toolMessage);
         chatCompletion.reserveBudget(toolTokens);
+    }
+
+    // Apply attach-existing prompts before later prompt assembly mutates the history.
+    // This keeps indexing anchored to real chat turns instead of synthetic completion rows.
+    if (attachedPrompts.length > 0) {
+        applyAttachedPromptsToMessages(attachedPrompts, messages);
     }
 
     // Displace the message to be continued from its original position before performing in-chat injections
