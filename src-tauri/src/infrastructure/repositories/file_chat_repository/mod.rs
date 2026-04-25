@@ -11,6 +11,7 @@ mod extension_metadata;
 mod extension_store;
 mod group_chat_repository_impl;
 mod importing;
+mod integrity;
 mod locate;
 mod message_search;
 mod paths;

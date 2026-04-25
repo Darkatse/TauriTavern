@@ -12,6 +12,7 @@ use crate::infrastructure::persistence::jsonl_utils::{
 };
 
 use super::FileChatRepository;
+use super::integrity::verify_integrity_match;
 
 impl FileChatRepository {
     pub(super) fn parse_chat_from_payload(
@@ -139,18 +140,9 @@ impl FileChatRepository {
             ));
         };
 
-        let Some(incoming_integrity) = Self::extract_integrity_slug_from_header(header) else {
-            return Ok(());
-        };
-
+        let incoming_integrity = Self::extract_integrity_slug_from_header(header);
         let existing_integrity = self.read_integrity_slug_from_existing_file(path).await?;
-        if let Some(existing) = existing_integrity {
-            if existing != incoming_integrity {
-                return Err(DomainError::InvalidData("integrity".to_string()));
-            }
-        }
-
-        Ok(())
+        verify_integrity_match(existing_integrity.as_deref(), incoming_integrity.as_deref())
     }
 
     async fn read_incoming_integrity_from_file(
@@ -175,20 +167,9 @@ impl FileChatRepository {
             return Ok(());
         }
 
-        let Some(incoming_integrity) =
-            Self::read_incoming_integrity_from_file(payload_path).await?
-        else {
-            return Ok(());
-        };
-
+        let incoming_integrity = Self::read_incoming_integrity_from_file(payload_path).await?;
         let existing_integrity = self.read_integrity_slug_from_existing_file(path).await?;
-        if let Some(existing) = existing_integrity {
-            if existing != incoming_integrity {
-                return Err(DomainError::InvalidData("integrity".to_string()));
-            }
-        }
-
-        Ok(())
+        verify_integrity_match(existing_integrity.as_deref(), incoming_integrity.as_deref())
     }
 
     pub(super) async fn write_payload_to_path(

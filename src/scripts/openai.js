@@ -1239,8 +1239,8 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
 
     // Add quiet prompt to control prompts
     // This should always be last, even in control prompts. Add all further control prompts BEFORE this prompt
-    const quietPrompt = getRelativePromptById(prompts, 'quietPrompt');
-    const quietPromptMessage = quietPrompt ? await Message.fromPromptAsync(quietPrompt) : null;
+    const quietPromptEntry = getRelativePromptById(prompts, 'quietPrompt');
+    const quietPromptMessage = quietPromptEntry ? await Message.fromPromptAsync(quietPromptEntry) : null;
     if (quietPromptMessage && quietPromptMessage.content) {
         if (isImageInliningSupported() && quietImage) {
             await quietPromptMessage.addImage(quietImage);

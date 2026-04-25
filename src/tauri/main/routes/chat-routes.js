@@ -20,6 +20,8 @@ function mapChatSummaryResults(context, results) {
 }
 
 export function registerChatRoutes(router, context, { jsonResponse }) {
+    const allowMissingChat = (body) => Boolean(body?.allow_not_found ?? body?.allowNotFound);
+
     const isIntegrityError = (error) => {
         const serialized = (() => {
             try {
@@ -36,6 +38,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     };
 
     router.post('/api/chats/get', async ({ body }) => {
+        const allowNotFound = allowMissingChat(body);
         const characterId = await context.resolveCharacterId({
             avatar: body?.avatar_url,
             fallbackName: body?.ch_name || body?.character_name,
@@ -44,7 +47,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         const fileName = context.stripJsonl(body?.file_name || body?.chatfile || body?.file);
 
         if (!characterId || !fileName) {
-            return jsonResponse([]);
+            return jsonResponse({ error: 'Invalid chat payload request' }, 400);
         }
 
         try {
@@ -52,7 +55,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
                 characterName: characterId,
                 avatarUrl: body?.avatar_url,
                 fileName,
-                allowNotFound: true,
+                allowNotFound,
             });
             return jsonResponse(payload);
         } catch (error) {
@@ -327,13 +330,14 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/chats/group/get', async ({ body }) => {
+        const allowNotFound = allowMissingChat(body);
         const id = String(body?.id || '').trim();
         if (!id) {
-            return jsonResponse([], 400);
+            return jsonResponse({ error: 'Invalid group chat payload request' }, 400);
         }
 
         try {
-            const payload = await loadGroupChatPayload({ id, allowNotFound: true });
+            const payload = await loadGroupChatPayload({ id, allowNotFound });
             return jsonResponse(payload);
         } catch (error) {
             return jsonResponse(

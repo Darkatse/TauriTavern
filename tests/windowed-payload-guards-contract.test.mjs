@@ -43,7 +43,7 @@ test('windowed payload: clearChat(clearData:true) invalidates windowed state imm
 test('windowed payload: getChat drops stale tail-load results before committing UI/state', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
 
-    const getChatStart = source.indexOf('export async function getChat()');
+    const getChatStart = source.indexOf('export async function getChat');
     assert.ok(getChatStart >= 0);
     const slice = source.slice(getChatStart, getChatStart + 3200);
 
@@ -51,10 +51,32 @@ test('windowed payload: getChat drops stale tail-load results before committing 
     assert.match(slice, /\bconst\s+stillActive\s*=\s*[\s\S]*?;\s*if\s*\(!stillActive\)\s*\{\s*return;\s*\}/s);
 });
 
+test('chat bootstrap: missing payload can only create and save first message explicitly', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+
+    const getChatStart = source.indexOf('export async function getChat');
+    assert.ok(getChatStart >= 0);
+    const getChatSlice = source.slice(getChatStart, getChatStart + 4200);
+
+    assert.match(getChatSlice, /allowNewChat\s*=\s*false/);
+    assert.match(getChatSlice, /allowNotFound:\s*allowNewChat/);
+    assert.match(getChatSlice, /allow_not_found:\s*allowNewChat/);
+    const catchStart = getChatSlice.indexOf('} catch (error) {');
+    assert.ok(catchStart >= 0);
+    const catchSlice = getChatSlice.slice(catchStart, getChatSlice.indexOf('\n    }', catchStart));
+    assert.doesNotMatch(catchSlice, /getChatResult\(/);
+
+    const getChatResultStart = source.indexOf('async function getChatResult');
+    assert.ok(getChatResultStart >= 0);
+    const getChatResultSlice = source.slice(getChatResultStart, getChatResultStart + 900);
+    assert.match(getChatResultSlice, /if\s*\(\s*allowNewChat\s*&&\s*chat\.length\s*===\s*0\s*\)/);
+    assert.match(source, /await\s+getChat\(\s*\{\s*allowNewChat:\s*true\s*\}\s*\)/);
+});
+
 test('windowed payload: group tail-load does not mutate window state for background reads', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/group-chats.js'), 'utf8');
 
-    assert.match(source, /async function loadGroupChat\(\s*chatId\s*,\s*\{\s*updateWindowState\s*=\s*false\s*\}\s*=\s*\{\s*\}\s*\)/);
+    assert.match(source, /async function loadGroupChat\(\s*chatId\s*,\s*\{\s*updateWindowState\s*=\s*false,\s*allowNotFound\s*=\s*false\s*\}\s*=\s*\{\s*\}\s*\)/);
     assert.match(source, /if\s*\(\s*updateWindowState[\s\S]*?setWindowedChatState\s*\(/s);
 });
 
