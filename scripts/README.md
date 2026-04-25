@@ -51,10 +51,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\export-sillytavern-migration.
   校验前端宿主层文件规模和依赖边界，避免 Host Kernel 持续膨胀。对应 `pnpm run check:frontend`。
 - `tauri-ios-xcode-script.sh`
   包装 `tauri ios xcode-script`，补齐 Xcode GUI 构建环境中的 PATH / Node / pnpm，并在构建后处理 iOS 图标。
+- `generate-ios-app-icon-variants.swift`
+  从 `src-tauri/icons/icon.png` 生成 iOS `Any` / `Dark` / `Tinted` 三个 1024px App Icon 源图。
 - `ios-policy.mjs`
   iOS Dev/Build 包装脚本：为构建过程注入 `TAURITAVERN_IOS_POLICY_PROFILE`，并在 `ios_internal_full` / `ios_external_beta` 构建时自动使用 `--export-method app-store-connect`。
 - `ios-opaque-app-icons.swift`
-  将 iOS App Icon PNG 展平为不透明背景，供 `tauri-ios-xcode-script.sh` 调用。
+  校验 iOS App Icon appearance 变体，并只将基础 `Any` 图标展平为不透明背景，供 `tauri-ios-xcode-script.sh` 调用。
 - `ci/setup-macos-signing.sh`
   GitHub Actions / CI 中的 macOS 签名初始化脚本，用于导入证书、创建 keychain 与写入 Apple API Key 路径。
 - `guardrails/frontend-lines-baseline.json`
