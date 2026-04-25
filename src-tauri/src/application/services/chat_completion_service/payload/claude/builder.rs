@@ -3,13 +3,12 @@ use serde_json::{Map, Number, Value, json};
 use crate::application::errors::ApplicationError;
 
 use super::super::shared::insert_if_present;
-use super::contract::{ClaudeModelContract, ClaudeSamplingMode, ClaudeThinkingMode};
+use super::contract::{ClaudeModelContract, ClaudeThinkingMode};
 use super::messages::{
     convert_messages, merge_consecutive_messages, move_assistant_images_to_next_user_message,
 };
 use super::params::{
-    collect_non_default_sampling_params, has_non_default_temperature, has_non_default_top_k,
-    has_non_default_top_p, value_to_i64,
+    has_non_default_temperature, has_non_default_top_k, has_non_default_top_p, value_to_i64,
 };
 use super::tools::{map_openai_tools_to_claude, map_tool_choice_to_claude};
 
@@ -79,6 +78,19 @@ impl ClaudeReasoningEffort {
 pub(super) fn build_claude_payload(
     payload: &Map<String, Value>,
 ) -> Result<Map<String, Value>, ApplicationError> {
+    build_claude_payload_inner(payload, true)
+}
+
+pub(super) fn build_claude_payload_passthrough(
+    payload: &Map<String, Value>,
+) -> Result<Map<String, Value>, ApplicationError> {
+    build_claude_payload_inner(payload, false)
+}
+
+fn build_claude_payload_inner(
+    payload: &Map<String, Value>,
+    enforce_contract: bool,
+) -> Result<Map<String, Value>, ApplicationError> {
     let model = payload
         .get("model")
         .and_then(Value::as_str)
@@ -87,8 +99,12 @@ pub(super) fn build_claude_payload(
         .ok_or_else(|| {
             ApplicationError::ValidationError("Claude request is missing model".to_string())
         })?;
-    let contract = ClaudeModelContract::resolve(model);
-    let reasoning_effort = ClaudeReasoningEffort::parse(payload.get("reasoning_effort"))?;
+    let contract = enforce_contract.then(|| ClaudeModelContract::resolve(model));
+    let reasoning_effort = if contract.is_some() {
+        ClaudeReasoningEffort::parse(payload.get("reasoning_effort"))?
+    } else {
+        None
+    };
 
     let use_system_prompt = payload
         .get("use_sysprompt")
@@ -117,7 +133,9 @@ pub(super) fn build_claude_payload(
             "Claude model `{model}` does not support assistant_prefill with reasoning_effort"
         )));
     }
-    if assistant_prefill.is_some() && !contract.supports_assistant_prefill {
+    if assistant_prefill.is_some()
+        && contract.is_some_and(|contract| !contract.supports_assistant_prefill)
+    {
         return Err(ApplicationError::ValidationError(format!(
             "Claude model `{model}` does not support assistant_prefill"
         )));
@@ -163,7 +181,7 @@ pub(super) fn build_claude_payload(
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
     insert_if_present(&mut request, payload, "stream");
-    insert_claude_sampling_params(&mut request, payload, contract.sampling, model)?;
+    insert_claude_sampling_params(&mut request, payload);
 
     if let Some(stop) = payload.get("stop").filter(|value| value.is_array()) {
         request.insert("stop_sequences".to_string(), stop.clone());
@@ -222,46 +240,49 @@ pub(super) fn build_claude_payload(
         }
     }
 
-    match contract.thinking {
-        ClaudeThinkingMode::Unsupported => {
-            if reasoning_effort.is_some() {
-                return Err(ApplicationError::ValidationError(format!(
-                    "Claude model `{model}` does not support reasoning_effort"
-                )));
-            }
-        }
-        ClaudeThinkingMode::ManualOnly => {
-            if let Some(reasoning_effort) = reasoning_effort {
-                let budget_tokens = reasoning_effort.calculate_budget_tokens(max_tokens, stream);
-                if max_tokens <= CLAUDE_THINKING_MIN_TOKENS {
-                    max_tokens += CLAUDE_THINKING_MIN_TOKENS;
+    if let Some(contract) = contract {
+        match contract.thinking {
+            ClaudeThinkingMode::Unsupported => {
+                if reasoning_effort.is_some() {
+                    return Err(ApplicationError::ValidationError(format!(
+                        "Claude model `{model}` does not support reasoning_effort"
+                    )));
                 }
-
-                request.insert(
-                    "thinking".to_string(),
-                    json!({
-                        "type": "enabled",
-                        "budget_tokens": budget_tokens,
-                    }),
-                );
-                request.remove("temperature");
-                request.remove("top_p");
-                request.remove("top_k");
             }
-        }
-        ClaudeThinkingMode::ManualOrAdaptive | ClaudeThinkingMode::AdaptiveOnly => {
-            if let Some(reasoning_effort) = reasoning_effort {
-                request.insert(
-                    "thinking".to_string(),
-                    build_claude_adaptive_thinking(payload),
-                );
-                if contract.supports_output_effort {
+            ClaudeThinkingMode::ManualOnly => {
+                if let Some(reasoning_effort) = reasoning_effort {
+                    let budget_tokens =
+                        reasoning_effort.calculate_budget_tokens(max_tokens, stream);
+                    if max_tokens <= CLAUDE_THINKING_MIN_TOKENS {
+                        max_tokens += CLAUDE_THINKING_MIN_TOKENS;
+                    }
+
                     request.insert(
-                        "output_config".to_string(),
+                        "thinking".to_string(),
                         json!({
-                            "effort": reasoning_effort.as_adaptive_effort(),
+                            "type": "enabled",
+                            "budget_tokens": budget_tokens,
                         }),
                     );
+                    request.remove("temperature");
+                    request.remove("top_p");
+                    request.remove("top_k");
+                }
+            }
+            ClaudeThinkingMode::ManualOrAdaptive | ClaudeThinkingMode::AdaptiveOnly => {
+                if let Some(reasoning_effort) = reasoning_effort {
+                    request.insert(
+                        "thinking".to_string(),
+                        build_claude_adaptive_thinking(payload),
+                    );
+                    if contract.supports_output_effort {
+                        request.insert(
+                            "output_config".to_string(),
+                            json!({
+                                "effort": reasoning_effort.as_adaptive_effort(),
+                            }),
+                        );
+                    }
                 }
             }
         }
@@ -276,57 +297,16 @@ pub(super) fn build_claude_payload(
     Ok(request)
 }
 
-fn insert_claude_sampling_params(
-    request: &mut Map<String, Value>,
-    payload: &Map<String, Value>,
-    sampling: ClaudeSamplingMode,
-    model: &str,
-) -> Result<(), ApplicationError> {
-    let has_non_default_temperature = has_non_default_temperature(payload);
-    let has_non_default_top_p = has_non_default_top_p(payload);
-    let has_non_default_top_k = has_non_default_top_k(payload);
-
-    match sampling {
-        ClaudeSamplingMode::Full => {
-            if has_non_default_temperature {
-                insert_if_present(request, payload, "temperature");
-            }
-            if has_non_default_top_p {
-                insert_if_present(request, payload, "top_p");
-            }
-            if has_non_default_top_k {
-                insert_if_present(request, payload, "top_k");
-            }
-        }
-        ClaudeSamplingMode::TemperatureOrTopP => {
-            if has_non_default_temperature && has_non_default_top_p {
-                return Err(ApplicationError::ValidationError(format!(
-                    "Claude model `{model}` accepts either temperature or top_p, not both"
-                )));
-            }
-
-            if has_non_default_temperature {
-                insert_if_present(request, payload, "temperature");
-            }
-            if has_non_default_top_p {
-                insert_if_present(request, payload, "top_p");
-            }
-            if has_non_default_top_k {
-                insert_if_present(request, payload, "top_k");
-            }
-        }
-        ClaudeSamplingMode::None => {
-            let disallowed = collect_non_default_sampling_params(payload);
-            if !disallowed.is_empty() {
-                return Err(ApplicationError::ValidationError(format!(
-                    "Claude model `{model}` does not support non-default sampling parameters: {}",
-                    disallowed.join(", ")
-                )));
-            }
-        }
+fn insert_claude_sampling_params(request: &mut Map<String, Value>, payload: &Map<String, Value>) {
+    if has_non_default_temperature(payload) {
+        insert_if_present(request, payload, "temperature");
     }
-
-    Ok(())
+    if has_non_default_top_p(payload) {
+        insert_if_present(request, payload, "top_p");
+    }
+    if has_non_default_top_k(payload) {
+        insert_if_present(request, payload, "top_k");
+    }
 }
 
 fn build_claude_adaptive_thinking(payload: &Map<String, Value>) -> Value {

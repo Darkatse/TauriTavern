@@ -17,9 +17,8 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
         .unwrap_or_default()
         .to_string();
 
-    let (endpoint, mut upstream_payload) = claude::build(payload)?;
+    let (endpoint, mut upstream_payload) = claude::build_passthrough(payload)?;
     apply_custom_body_overrides(&mut upstream_payload, &include_raw, &exclude_raw)?;
-    claude::validate_request(&upstream_payload)?;
 
     Ok((endpoint, upstream_payload))
 }
@@ -31,21 +30,40 @@ mod tests {
     use super::build;
 
     #[test]
-    fn claude_messages_overrides_are_revalidated_against_claude_contract() {
+    fn claude_messages_exclude_runs_without_claude_contract_check() {
         let payload = json!({
-            "model": "claude-opus-4-7",
+            "model": "claude-opus-4.6",
             "messages": [{"role": "user", "content": "hello"}],
-            "custom_include_body": "{\"top_k\":40}"
+            "top_p": 0.8,
+            "custom_exclude_body": "- top_p"
         })
         .as_object()
         .cloned()
         .expect("payload must be object");
 
-        let error = build(payload).expect_err("build should fail");
-        assert!(
-            error
-                .to_string()
-                .contains("does not support non-default sampling parameters: top_k")
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert!(body.get("top_p").is_none());
+    }
+
+    #[test]
+    fn claude_messages_passthrough_keeps_user_sampling_params() {
+        let payload = json!({
+            "model": "claude-opus-4-7",
+            "messages": [{"role": "user", "content": "hello"}],
+            "top_k": 40
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert_eq!(
+            body.get("top_k").and_then(serde_json::Value::as_i64),
+            Some(40)
         );
     }
 }
