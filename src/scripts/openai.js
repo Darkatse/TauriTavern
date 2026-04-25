@@ -36,11 +36,18 @@ import { allowlistSettingAllows, getActiveIosPolicyCapabilities } from './taurit
 
 import {
     chatCompletionDefaultPrompts,
-    INJECTION_POSITION,
     Prompt,
     PromptManager,
     promptManagerDefaultPromptOrders,
 } from './PromptManager.js';
+import {
+    INJECTION_POSITION,
+    applyAttachedPromptsToMessages,
+    applyPromptManagerOverrides,
+    getPromptInjectionGroups,
+    getRelativePromptById,
+    isPromptInjectionPosition,
+} from './prompt-injections.js';
 
 import { forceCharacterEditorTokenize, getCustomStoppingStrings, persona_description_positions, power_user } from './power-user.js';
 import { SECRET_KEYS, secret_state, writeSecret } from './secrets.js';
@@ -871,8 +878,9 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     // Reserve budget for group nudge
     let groupNudgeMessage = null;
     const noGroupNudgeTypes = ['impersonate'];
-    if (selected_group && prompts.has('groupNudge') && !noGroupNudgeTypes.includes(type)) {
-        groupNudgeMessage = await Message.fromPromptAsync(prompts.get('groupNudge'));
+    const groupNudgePrompt = getRelativePromptById(prompts, 'groupNudge');
+    if (selected_group && groupNudgePrompt && !noGroupNudgeTypes.includes(type)) {
+        groupNudgeMessage = await Message.fromPromptAsync(groupNudgePrompt);
         chatCompletion.reserveBudget(groupNudgeMessage);
     }
 
@@ -1183,9 +1191,10 @@ export function getPromptRole(role) {
  * @param {string} options.cyclePrompt - The last prompt in the conversation.
  * @param {object[]} options.messages - Array containing all messages.
  * @param {object[]} options.messageExamples - Array containing all message examples.
+ * @param {(message: string) => void} options.attachWarning - Warning sink for attach-existing prompt issues.
  * @returns {Promise<void>}
  */
-async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples }) {
+async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning }) {
     // Helper function for preparing a prompt, that already exists within the prompt collection, for completion
     const addToChatCompletion = async (source, target = null) => {
         // We need the prompts array to determine a position for the source.
@@ -1198,8 +1207,8 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
 
         const prompt = prompts.get(source);
 
-        if (prompt.injection_position === INJECTION_POSITION.ABSOLUTE) {
-            promptManager.log(`Skipping prompt ${source} because it is an absolute prompt`);
+        if (!isPromptInjectionPosition(prompt, INJECTION_POSITION.RELATIVE)) {
+            promptManager.log(`Skipping prompt ${source} because it is not a relative prompt`);
             return;
         }
 
@@ -1224,12 +1233,14 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     chatCompletion.setOverriddenPrompts(prompts.overriddenPrompts);
     const controlPrompts = new MessageCollection('controlPrompts');
 
-    const impersonateMessage = await Message.fromPromptAsync(prompts.get('impersonate')) ?? null;
-    if (type === 'impersonate') controlPrompts.add(impersonateMessage);
+    const impersonatePrompt = getRelativePromptById(prompts, 'impersonate');
+    const impersonateMessage = impersonatePrompt ? await Message.fromPromptAsync(impersonatePrompt) : null;
+    if (type === 'impersonate' && impersonateMessage) controlPrompts.add(impersonateMessage);
 
     // Add quiet prompt to control prompts
     // This should always be last, even in control prompts. Add all further control prompts BEFORE this prompt
-    const quietPromptMessage = await Message.fromPromptAsync(prompts.get('quietPrompt')) ?? null;
+    const quietPrompt = getRelativePromptById(prompts, 'quietPrompt');
+    const quietPromptMessage = quietPrompt ? await Message.fromPromptAsync(quietPrompt) : null;
     if (quietPromptMessage && quietPromptMessage.content) {
         if (isImageInliningSupported() && quietImage) {
             await quietPromptMessage.addImage(quietImage);
@@ -1242,20 +1253,9 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
 
     // Add ordered system and user prompts
     const systemPrompts = ['nsfw', 'jailbreak'];
-    const userRelativePrompts = prompts.collection
-        .filter((prompt) => false === prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE)
-        .reduce((acc, prompt) => {
-            acc.push(prompt.identifier);
-            return acc;
-        }, []);
-    const absolutePrompts = prompts.collection
-        .filter((prompt) => prompt.injection_position === INJECTION_POSITION.ABSOLUTE)
-        .reduce((acc, prompt) => {
-            acc.push(prompt);
-            return acc;
-        }, []);
+    const { userRelativePromptIds, absolutePrompts, attachedPrompts } = getPromptInjectionGroups(prompts);
 
-    for (const identifier of [...systemPrompts, ...userRelativePrompts]) {
+    for (const identifier of [...systemPrompts, ...userRelativePromptIds]) {
         await addToChatCompletion(identifier);
     }
 
@@ -1266,6 +1266,10 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     if (bias && bias.trim().length) await addToChatCompletion('bias');
 
     const injectToMain = async (/** @type {Prompt} */ prompt, /** @type {string|number} */ position) => {
+        if (!isPromptInjectionPosition(prompt, INJECTION_POSITION.RELATIVE)) {
+            return;
+        }
+
         if (chatCompletion.has('main')) {
             const message = await Message.fromPromptAsync(prompt);
             chatCompletion.insert(message, 'main', position);
@@ -1316,6 +1320,12 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
         const toolMessage = [{ role: 'user', content: JSON.stringify(toolData) }];
         const toolTokens = await tokenHandler.countAsync(toolMessage);
         chatCompletion.reserveBudget(toolTokens);
+    }
+
+    // Apply attach-existing prompts before later prompt assembly mutates the history.
+    // This keeps indexing anchored to real chat turns instead of synthetic completion rows.
+    if (attachedPrompts.length > 0) {
+        applyAttachedPromptsToMessages(attachedPrompts, messages, { warn: attachWarning });
     }
 
     // Displace the message to be continued from its original position before performing in-chat injections
@@ -1477,16 +1487,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
         const collectionPrompt = prompts.get(prompt.identifier);
 
         // Apply system prompt role/depth overrides if they set in the prompt manager
-        if (collectionPrompt) {
-            // In-Chat / Relative
-            prompt.injection_position = collectionPrompt.injection_position ?? prompt.injection_position;
-            // Depth for In-Chat
-            prompt.injection_depth = collectionPrompt.injection_depth ?? prompt.injection_depth;
-            // Priority for In-Chat
-            prompt.injection_order = collectionPrompt.injection_order ?? prompt.injection_order;
-            // Role (system, user, assistant)
-            prompt.role = collectionPrompt.role ?? prompt.role;
-        }
+        applyPromptManagerOverrides(prompt, collectionPrompt);
 
         const newPrompt = promptManager.preparePrompt(prompt);
         const markerIndex = prompts.index(prompt.identifier);
@@ -1586,8 +1587,15 @@ export async function prepareOpenAIMessages({
             type,
         });
 
+        const attachWarning = (message) => {
+            console.warn(message);
+            if (dryRun === false) {
+                toastr.warning(message);
+            }
+        };
+
         // Fill the chat completion with as much context as the budget allows
-        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples });
+        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning });
     } catch (error) {
         if (error instanceof TokenBudgetExceededError) {
             toastr.error(t`Mandatory prompts exceed the context size.`);
