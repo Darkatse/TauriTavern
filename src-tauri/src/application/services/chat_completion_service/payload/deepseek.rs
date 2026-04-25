@@ -38,7 +38,7 @@ pub(super) fn build(mut payload: Map<String, Value>) -> Result<(String, Value), 
         add_assistant_prefix(&mut processed, tools_snapshot.as_ref(), "prefix");
 
         if thinking_mode == Some(DeepSeekThinkingMode::Enabled) {
-            validate_tool_call_reasoning_content(&processed)?;
+            ensure_tool_context_reasoning_content(&mut processed)?;
         }
 
         payload.insert("messages".to_string(), Value::Array(processed));
@@ -128,30 +128,47 @@ fn apply_thinking_mode(
     }
 }
 
-fn validate_tool_call_reasoning_content(messages: &[Value]) -> Result<(), ApplicationError> {
-    for message in messages {
+fn ensure_tool_context_reasoning_content(messages: &mut [Value]) -> Result<(), ApplicationError> {
+    let has_tool_context = messages.iter().any(|message| {
         let Some(message_object) = message.as_object() else {
+            return false;
+        };
+
+        message_object
+            .get("tool_calls")
+            .and_then(Value::as_array)
+            .is_some_and(|calls| !calls.is_empty())
+            || message_object.get("role").and_then(Value::as_str) == Some("tool")
+    });
+
+    if !has_tool_context {
+        return Ok(());
+    }
+
+    for message in messages {
+        let Some(message_object) = message.as_object_mut() else {
             continue;
         };
 
-        let has_tool_calls = message_object
-            .get("tool_calls")
-            .and_then(Value::as_array)
-            .is_some_and(|calls| !calls.is_empty());
-        if !has_tool_calls {
+        if message_object.get("role").and_then(Value::as_str) != Some("assistant") {
             continue;
         }
 
-        if message_object
-            .get("reasoning_content")
-            .is_some_and(Value::is_string)
-        {
-            continue;
+        match message_object.get("reasoning_content") {
+            Some(Value::String(_)) => {}
+            Some(_) => {
+                return Err(ApplicationError::ValidationError(
+                    "DeepSeek thinking assistant messages in tool context must have string reasoning_content"
+                        .to_string(),
+                ));
+            }
+            None => {
+                message_object.insert(
+                    "reasoning_content".to_string(),
+                    Value::String(String::new()),
+                );
+            }
         }
-
-        return Err(ApplicationError::ValidationError(
-            "DeepSeek thinking tool-call messages must include reasoning_content".to_string(),
-        ));
     }
 
     Ok(())
@@ -441,11 +458,13 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_thinking_tool_calls_require_reasoning_content() {
+    fn deepseek_thinking_tool_context_fills_missing_reasoning_content() {
         let payload = json!({
             "model": "deepseek-v4-flash",
             "messages": [
                 {"role":"user","content":"weather"},
+                {"role":"assistant","content":"I'll check."},
+                {"role":"user","content":"ok"},
                 {
                     "role":"assistant",
                     "content":"",
@@ -464,8 +483,77 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let error = build(payload).expect_err("missing reasoning_content must fail");
-        assert!(error.to_string().contains("must include reasoning_content"));
+        let (_, upstream) = build(payload).expect("payload should build");
+        let messages = upstream
+            .get("messages")
+            .and_then(Value::as_array)
+            .expect("messages must be array");
+
+        for index in [1_usize, 3] {
+            let assistant = messages
+                .get(index)
+                .and_then(Value::as_object)
+                .expect("assistant must be object");
+            assert_eq!(
+                assistant.get("reasoning_content").and_then(Value::as_str),
+                Some("")
+            );
+        }
+    }
+
+    #[test]
+    fn deepseek_thinking_without_tool_context_does_not_add_reasoning_content() {
+        let payload = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role":"user","content":"hello"},
+                {"role":"assistant","content":"hi"}
+            ],
+            "include_reasoning": true,
+            "chat_completion_source": "deepseek"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("payload should build");
+        let assistant = upstream
+            .get("messages")
+            .and_then(Value::as_array)
+            .and_then(|messages| messages.get(1))
+            .and_then(Value::as_object)
+            .expect("assistant must be object");
+
+        assert!(assistant.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn deepseek_thinking_tool_context_rejects_non_string_reasoning_content() {
+        let payload = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role":"user","content":"weather"},
+                {
+                    "role":"assistant",
+                    "content":"",
+                    "reasoning_content": {"text":"need weather"},
+                    "tool_calls":[{
+                        "id":"call_1",
+                        "type":"function",
+                        "function":{"name":"weather","arguments":"{}"}
+                    }]
+                },
+                {"role":"tool","tool_call_id":"call_1","content":"cloudy"}
+            ],
+            "include_reasoning": true,
+            "chat_completion_source": "deepseek"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("non-string reasoning_content must fail");
+        assert!(error.to_string().contains("string reasoning_content"));
     }
 
     #[test]

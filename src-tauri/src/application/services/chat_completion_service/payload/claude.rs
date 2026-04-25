@@ -16,6 +16,14 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
     Ok(("/messages".to_string(), request))
 }
 
+pub(super) fn build_passthrough(
+    payload: Map<String, Value>,
+) -> Result<(String, Value), ApplicationError> {
+    let request = Value::Object(builder::build_claude_payload_passthrough(&payload)?);
+
+    Ok(("/messages".to_string(), request))
+}
+
 pub(super) fn validate_request(payload: &Value) -> Result<(), ApplicationError> {
     validation::validate_request(payload)
 }
