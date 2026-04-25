@@ -12,6 +12,7 @@ import { renderTemplateAsync } from './templates.js';
 import { Popup } from './popup.js';
 import { t } from './i18n.js';
 import { isMobile } from './RossAscends-mods.js';
+import { INJECTION_POSITION, getPromptInjectionPosition } from './prompt-injections.js';
 
 function debouncePromise(func, delay) {
     let timeoutId;
@@ -30,15 +31,6 @@ function debouncePromise(func, delay) {
 
 const DEFAULT_DEPTH = 4;
 const DEFAULT_ORDER = 100;
-
-/**
- * @enum {number}
- */
-export const INJECTION_POSITION = {
-    RELATIVE: 0,
-    ABSOLUTE: 1,
-    ATTACH_EXISTING: 2,
-};
 
 /**
  * Register migrations for the prompt manager when settings are loaded or an Open AI preset is loaded.
@@ -568,20 +560,21 @@ class PromptManager {
             const entrySourceBlock = /** @type {HTMLDivElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_source_block'));
             const entrySource = /** @type {HTMLSpanElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_source'));
             const attachBlock = /** @type {HTMLDivElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_attach_block'));
+            const injectionPosition = getPromptInjectionPosition(prompt);
 
             nameField.value = prompt.name;
             roleField.value = 'system';
             promptField.value = prompt.content ?? '';
-            injectionPositionField.value = (prompt.injection_position ?? 0).toString();
+            injectionPositionField.value = injectionPosition.toString();
             injectionDepthField.value = (prompt.injection_depth ?? DEFAULT_DEPTH).toString();
             injectionOrderField.value = (prompt.injection_order ?? DEFAULT_ORDER).toString();
             Array.from(injectionTriggerField.options).forEach(option => {
                 option.selected = false;
             });
             injectionTriggerField.dispatchEvent(new Event('change', { bubbles: true }));
-            depthBlock.style.visibility = prompt.injection_position === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
-            orderBlock.style.visibility = prompt.injection_position === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
-            attachBlock.style.display = prompt.injection_position === INJECTION_POSITION.ATTACH_EXISTING ? 'flex' : 'none';
+            depthBlock.style.visibility = injectionPosition === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
+            orderBlock.style.visibility = injectionPosition === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
+            attachBlock.style.display = injectionPosition === INJECTION_POSITION.ATTACH_EXISTING ? 'flex' : 'none';
             attachRoleField.value = prompt.attach_role ?? 'user';
             attachIndexField.value = (prompt.attach_index ?? 1).toString();
             attachSideField.value = prompt.attach_side ?? 'end';
@@ -1396,21 +1389,22 @@ class PromptManager {
         const attachIndexField = /** @type {HTMLInputElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_index'));
         const attachSideField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_side'));
         const isPulledPrompt = Object.keys(this.promptSources).includes(prompt.identifier);
+        const injectionPosition = getPromptInjectionPosition(prompt);
 
         nameField.value = prompt.name ?? '';
         roleField.value = prompt.role || 'system';
         promptField.value = prompt.content ?? '';
         promptField.disabled = prompt.marker ?? false;
-        injectionPositionField.value = (prompt.injection_position ?? INJECTION_POSITION.RELATIVE).toString();
+        injectionPositionField.value = injectionPosition.toString();
         injectionDepthField.value = (prompt.injection_depth ?? DEFAULT_DEPTH).toString();
         injectionOrderField.value = (prompt.injection_order ?? DEFAULT_ORDER).toString();
         Array.from(injectionTriggerField.options).forEach(option => {
             option.selected = Array.isArray(prompt.injection_trigger) && prompt.injection_trigger.includes(option.value);
         });
         injectionTriggerField.dispatchEvent(new Event('change', { bubbles: true }));
-        injectionDepthBlock.style.visibility = prompt.injection_position === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
-        injectionOrderBlock.style.visibility = prompt.injection_position === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
-        attachBlock.style.display = prompt.injection_position === INJECTION_POSITION.ATTACH_EXISTING ? 'flex' : 'none';
+        injectionDepthBlock.style.visibility = injectionPosition === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
+        injectionOrderBlock.style.visibility = injectionPosition === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
+        attachBlock.style.display = injectionPosition === INJECTION_POSITION.ATTACH_EXISTING ? 'flex' : 'none';
         attachRoleField.value = prompt.attach_role ?? 'user';
         attachIndexField.value = (prompt.attach_index ?? 1).toString();
         attachSideField.value = prompt.attach_side ?? 'end';
@@ -1765,12 +1759,13 @@ class PromptManager {
             }
 
             const encodedName = escapeHtml(prompt.name);
-            const isMarkerPrompt = prompt.marker && prompt.injection_position === INJECTION_POSITION.RELATIVE;
-            const isSystemPrompt = !prompt.marker && prompt.system_prompt && prompt.injection_position === INJECTION_POSITION.RELATIVE && !prompt.forbid_overrides;
-            const isImportantPrompt = !prompt.marker && prompt.system_prompt && prompt.injection_position === INJECTION_POSITION.RELATIVE && prompt.forbid_overrides;
-            const isUserPrompt = !prompt.marker && !prompt.system_prompt && prompt.injection_position === INJECTION_POSITION.RELATIVE;
-            const isInjectionPrompt = prompt.injection_position === INJECTION_POSITION.ABSOLUTE;
-            const isAttachedPrompt = prompt.injection_position === INJECTION_POSITION.ATTACH_EXISTING;
+            const injectionPosition = getPromptInjectionPosition(prompt);
+            const isMarkerPrompt = prompt.marker && injectionPosition === INJECTION_POSITION.RELATIVE;
+            const isSystemPrompt = !prompt.marker && prompt.system_prompt && injectionPosition === INJECTION_POSITION.RELATIVE && !prompt.forbid_overrides;
+            const isImportantPrompt = !prompt.marker && prompt.system_prompt && injectionPosition === INJECTION_POSITION.RELATIVE && prompt.forbid_overrides;
+            const isUserPrompt = !prompt.marker && !prompt.system_prompt && injectionPosition === INJECTION_POSITION.RELATIVE;
+            const isInjectionPrompt = injectionPosition === INJECTION_POSITION.ABSOLUTE;
+            const isAttachedPrompt = injectionPosition === INJECTION_POSITION.ATTACH_EXISTING;
             const isOverriddenPrompt = Array.isArray(this.overriddenPrompts) && this.overriddenPrompts.includes(prompt.identifier);
             const importantClass = isImportantPrompt ? `${prefix}prompt_manager_important` : '';
             const iconLookup = prompt.role === 'system' && (prompt.marker || prompt.system_prompt) ? '' : prompt.role;
@@ -2192,4 +2187,5 @@ export {
     chatCompletionDefaultPrompts,
     promptManagerDefaultPromptOrders,
     Prompt,
+    INJECTION_POSITION,
 };
