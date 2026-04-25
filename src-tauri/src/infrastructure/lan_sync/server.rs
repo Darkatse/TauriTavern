@@ -4,7 +4,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::{ConnectInfo, Path, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Path, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -23,6 +23,8 @@ use crate::infrastructure::lan_sync::crypto::{derive_pair_secret, verify_request
 use crate::infrastructure::lan_sync::manifest::{diff_manifests, scan_manifest};
 use crate::infrastructure::lan_sync::paths::{resolve_relative_path, validate_relative_path};
 use crate::infrastructure::lan_sync::runtime::LanSyncRuntime;
+
+const SYNC_PLAN_BODY_LIMIT_BYTES: usize = 32 * 1024 * 1024;
 
 pub struct LanSyncServerHandle {
     pub addr: SocketAddr,
@@ -49,7 +51,10 @@ pub async fn spawn_lan_sync_server(
         .route("/v1/status", get(handle_status))
         .route("/v1/pair", post(handle_pair))
         .route("/v1/sync/pull", post(handle_sync_pull))
-        .route("/v1/sync/plan", post(handle_sync_plan))
+        .route(
+            "/v1/sync/plan",
+            post(handle_sync_plan).layer(sync_plan_body_limit()),
+        )
         .route("/v1/sync/file/*path", get(handle_sync_file))
         .with_state(runtime);
 
@@ -76,6 +81,10 @@ pub async fn spawn_lan_sync_server(
 
 async fn handle_status() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "ok": true })))
+}
+
+fn sync_plan_body_limit() -> DefaultBodyLimit {
+    DefaultBodyLimit::max(SYNC_PLAN_BODY_LIMIT_BYTES)
 }
 
 fn require_auth_headers(headers: &HeaderMap) -> Result<(&str, &str), (StatusCode, String)> {
@@ -417,4 +426,66 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    async fn accept_manifest(Json(_): Json<LanSyncManifest>) -> StatusCode {
+        StatusCode::OK
+    }
+
+    fn test_router() -> Router {
+        Router::new().route(
+            "/v1/sync/plan",
+            post(accept_manifest).layer(sync_plan_body_limit()),
+        )
+    }
+
+    fn manifest_body_at_least(min_size: usize) -> String {
+        let prefix = r#"{"entries":[{"relative_path":"default-user/chats/"#;
+        let suffix = r#".json","size_bytes":1,"modified_ms":1}]}"#;
+        let filler_len = min_size.saturating_sub(prefix.len() + suffix.len());
+        let body = format!("{prefix}{}{suffix}", "x".repeat(filler_len));
+        assert!(body.len() >= min_size);
+        body
+    }
+
+    async fn post_plan(body: String) -> StatusCode {
+        let response = test_router()
+            .oneshot(
+                Request::builder()
+                    .method(axum::http::Method::POST)
+                    .uri("/v1/sync/plan")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .expect("valid request"),
+            )
+            .await
+            .expect("router response");
+
+        response.status()
+    }
+
+    #[tokio::test]
+    async fn plan_route_accepts_manifest_above_axum_default_limit() {
+        const AXUM_DEFAULT_BODY_LIMIT_BYTES: usize = 2_097_152;
+
+        assert_eq!(
+            post_plan(manifest_body_at_least(AXUM_DEFAULT_BODY_LIMIT_BYTES + 4096)).await,
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn plan_route_rejects_manifest_above_explicit_limit() {
+        assert_eq!(
+            post_plan(manifest_body_at_least(SYNC_PLAN_BODY_LIMIT_BYTES + 1)).await,
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+    }
 }

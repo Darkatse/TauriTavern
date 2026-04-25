@@ -94,6 +94,9 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 portable = []
 
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
 [profile.dev]
 incremental = true
 
