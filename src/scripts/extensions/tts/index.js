@@ -613,8 +613,7 @@ async function processTtsQueue() {
             await tts(segmentText, voiceId, char, voiceMapKey);
 
         } catch (error) {
-            toastr.error(error.toString());
-            console.error(error);
+            handleTtsProviderError(error);
             currentTtsJob = null;
         }
         return;
@@ -709,8 +708,7 @@ async function processTtsQueue() {
         currentTtsJob = null;
 
     } catch (error) {
-        toastr.error(error.toString());
-        console.error(error);
+        handleTtsProviderError(error);
         currentTtsJob = null;
     }
 }
@@ -863,12 +861,39 @@ const defaultSettings = {
 };
 
 function setTtsStatus(status, success) {
-    $('#tts_status').text(status);
-    if (success) {
-        $('#tts_status').removeAttr('style');
+    const statusElement = $('#tts_status').removeClass('text_warning');
+    statusElement.text(status);
+    if (success === 'warning') {
+        statusElement.addClass('text_warning').removeAttr('style');
+    } else if (success) {
+        statusElement.removeAttr('style');
     } else {
-        $('#tts_status').css('color', 'red');
+        statusElement.css('color', 'red');
     }
+}
+
+function getTtsErrorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
+}
+
+function isTtsWarning(error) {
+    return error?.severity === 'warning';
+}
+
+function setTtsWarningStatus(error) {
+    const message = `TTS Provider warning. ${getTtsErrorMessage(error)}`;
+    console.warn(message, error);
+    setTtsStatus(message, 'warning');
+}
+
+function handleTtsProviderError(error) {
+    if (isTtsWarning(error)) {
+        setTtsWarningStatus(error);
+        return;
+    }
+
+    toastr.error(String(error));
+    console.error(error);
 }
 
 function onRefreshClick() {
@@ -883,9 +908,14 @@ function onRefreshClick() {
         initVoiceMap();
         updateVoiceMap();
     }).catch(error => {
-        toastr.error(error.toString());
+        if (isTtsWarning(error)) {
+            setTtsWarningStatus(error);
+            return;
+        }
+
+        toastr.error(String(error));
         console.error(error);
-        setTtsStatus(error, false);
+        setTtsStatus(getTtsErrorMessage(error), false);
     });
 }
 
@@ -1426,7 +1456,12 @@ async function initVoiceMapInternal(unrestricted) {
     try {
         await ttsProvider.checkReady();
     } catch (error) {
-        const message = `TTS Provider not ready. ${error}`;
+        if (isTtsWarning(error)) {
+            setTtsWarningStatus(error);
+            return;
+        }
+
+        const message = `TTS Provider not ready. ${getTtsErrorMessage(error)}`;
         setTtsStatus(message, false);
         return;
     }
