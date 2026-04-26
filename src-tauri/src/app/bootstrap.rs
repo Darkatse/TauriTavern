@@ -24,6 +24,7 @@ use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::translate_service::TranslateService;
 use crate::application::services::tt_sync_service::TtSyncService;
+use crate::application::services::tts_service::TtsService;
 use crate::application::services::update_service::UpdateService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
@@ -48,6 +49,7 @@ use crate::domain::repositories::stable_diffusion_repository::StableDiffusionRep
 use crate::domain::repositories::theme_repository::ThemeRepository;
 use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
 use crate::domain::repositories::translate_repository::TranslateRepository;
+use crate::domain::repositories::tts_repository::TtsRepository;
 use crate::domain::repositories::update_repository::UpdateRepository;
 use crate::domain::repositories::user_directory_repository::UserDirectoryRepository;
 use crate::domain::repositories::user_repository::UserRepository;
@@ -56,6 +58,7 @@ use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepositor
 use crate::infrastructure::apis::http_chat_completion_repository::HttpChatCompletionRepository;
 use crate::infrastructure::apis::http_stable_diffusion_repository::HttpStableDiffusionRepository;
 use crate::infrastructure::apis::http_translate_repository::HttpTranslateRepository;
+use crate::infrastructure::apis::http_tts_repository::HttpTtsRepository;
 use crate::infrastructure::apis::miktik_tokenizer_repository::MiktikTokenizerRepository;
 use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::logging::llm_api_logs::{
@@ -101,6 +104,7 @@ pub(super) struct AppServices {
     pub tokenization_service: Arc<TokenizationService>,
     pub stable_diffusion_service: Arc<StableDiffusionService>,
     pub translate_service: Arc<TranslateService>,
+    pub tts_service: Arc<TtsService>,
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
@@ -130,6 +134,7 @@ struct AppRepositories {
     tokenizer_repository: Arc<dyn TokenizerRepository>,
     stable_diffusion_repository: Arc<dyn StableDiffusionRepository>,
     translate_repository: Arc<dyn TranslateRepository>,
+    tts_repository: Arc<dyn TtsRepository>,
     world_info_repository: Arc<dyn WorldInfoRepository>,
     update_repository: Arc<dyn UpdateRepository>,
 }
@@ -202,6 +207,10 @@ pub(super) async fn build_services(
         repositories.translate_repository,
         repositories.secret_repository.clone(),
     ));
+    let tts_service = Arc::new(TtsService::new(
+        repositories.tts_repository,
+        repositories.secret_repository.clone(),
+    ));
     let world_info_service = Arc::new(WorldInfoService::new(
         repositories.world_info_repository.clone(),
     ));
@@ -264,6 +273,7 @@ pub(super) async fn build_services(
         tokenization_service,
         stable_diffusion_service,
         translate_service,
+        tts_service,
         world_info_service,
         lan_sync_service,
         tt_sync_service,
@@ -378,6 +388,8 @@ fn build_repositories(
 
     let translate_repository: Arc<dyn TranslateRepository> =
         Arc::new(HttpTranslateRepository::new(http_client_pool.clone()));
+    let tts_repository: Arc<dyn TtsRepository> =
+        Arc::new(HttpTtsRepository::new(http_client_pool.clone()));
 
     let world_info_repository: Arc<dyn WorldInfoRepository> = Arc::new(
         FileWorldInfoRepository::new(data_directory.default_user().join("worlds")),
@@ -408,6 +420,7 @@ fn build_repositories(
         tokenizer_repository,
         stable_diffusion_repository,
         translate_repository,
+        tts_repository,
         world_info_repository,
         update_repository,
     })

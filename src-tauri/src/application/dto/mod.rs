@@ -11,6 +11,7 @@ pub mod settings_dto;
 pub mod stable_diffusion_dto;
 pub mod theme_dto;
 pub mod tokenization_dto;
+pub mod tts_dto;
 pub mod user_directory_dto;
 pub mod user_dto;
 pub mod world_info_dto;

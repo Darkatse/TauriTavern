@@ -11,7 +11,6 @@ class GrokTtsProvider {
         { name: 'Leo', voice_id: 'leo', lang: 'en-US' },
         { name: 'Rex', voice_id: 'rex', lang: 'en-US' },
         { name: 'Sal', voice_id: 'sal', lang: 'en-US' },
-        { name: 'Una', voice_id: 'una', lang: 'en-US' },
     ];
 
     static languages = [
@@ -147,31 +146,28 @@ class GrokTtsProvider {
             return GrokTtsProvider.voices;
         }
 
-        try {
-            const response = await fetch('/api/tts/grok/voices', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-            });
+        const response = await fetch('/api/tts/grok/voices', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+        });
 
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-            }
-
-            const payload = await response.json();
-            const voices = Array.isArray(payload?.voices) ? payload.voices : [];
-            if (!voices.length) {
-                return GrokTtsProvider.voices;
-            }
-
-            return voices.map(voice => ({
-                name: String(voice?.name || voice?.voice_id || 'Unknown'),
-                voice_id: String(voice?.voice_id || '').toLowerCase(),
-                lang: 'en-US',
-            })).filter(voice => voice.voice_id);
-        } catch (error) {
-            console.warn('Failed to fetch Grok voices, using fallback list.', error);
-            return GrokTtsProvider.voices;
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${await response.text()}`);
         }
+
+        const payload = await response.json();
+        const voices = Array.isArray(payload?.voices) ? payload.voices : [];
+        const mappedVoices = voices.map(voice => ({
+            name: String(voice?.name || voice?.voice_id || 'Unknown'),
+            voice_id: String(voice?.voice_id || '').toLowerCase(),
+            lang: 'en-US',
+        })).filter(voice => voice.voice_id);
+
+        if (!mappedVoices.length) {
+            throw new Error('Grok voice list response did not include any voices');
+        }
+
+        return mappedVoices;
     }
 
     async previewTtsVoice(voiceId) {

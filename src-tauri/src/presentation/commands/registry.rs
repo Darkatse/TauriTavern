@@ -245,6 +245,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::stable_diffusion_commands::cancel_sd_request,
         // Translate commands
         super::translate_commands::translate_text,
+        // TTS commands
+        super::tts_commands::tts_handle,
         // Tokenizer commands
         super::tokenizer_commands::count_openai_tokens,
         super::tokenizer_commands::count_openai_tokens_batch,

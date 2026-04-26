@@ -33,6 +33,7 @@ pub mod theme_commands;
 pub mod tokenizer_commands;
 pub mod translate_commands;
 pub mod tt_sync_commands;
+pub mod tts_commands;
 pub mod update_commands;
 pub mod user_commands;
 pub mod user_directory_commands;

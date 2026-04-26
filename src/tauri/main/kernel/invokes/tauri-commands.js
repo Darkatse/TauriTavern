@@ -143,6 +143,7 @@ export {};
  *   | 'start_chat_completion_stream'
  *   | 'start_export_data_archive'
  *   | 'start_import_data_archive'
+ *   | 'tts_handle'
  *   | 'update_avatar'
  *   | 'update_character'
  *   | 'update_character_card_data'

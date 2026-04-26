@@ -19,6 +19,7 @@ pub mod stable_diffusion_repository;
 pub mod theme_repository;
 pub mod tokenizer_repository;
 pub mod translate_repository;
+pub mod tts_repository;
 pub mod update_repository;
 pub mod user_directory_repository;
 pub mod user_repository;

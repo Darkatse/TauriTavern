@@ -22,6 +22,7 @@ use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::translate_service::TranslateService;
 use crate::application::services::tt_sync_service::TtSyncService;
+use crate::application::services::tts_service::TtsService;
 use crate::application::services::update_service::UpdateService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
@@ -53,6 +54,7 @@ pub struct AppState {
     pub tokenization_service: Arc<TokenizationService>,
     pub stable_diffusion_service: Arc<StableDiffusionService>,
     pub translate_service: Arc<TranslateService>,
+    pub tts_service: Arc<TtsService>,
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
@@ -98,6 +100,7 @@ impl AppState {
             tokenization_service: services.tokenization_service,
             stable_diffusion_service: services.stable_diffusion_service,
             translate_service: services.translate_service,
+            tts_service: services.tts_service,
             world_info_service: services.world_info_service,
             lan_sync_service: services.lan_sync_service,
             tt_sync_service: services.tt_sync_service,

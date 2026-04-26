@@ -1,49 +1,48 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerTtsRoutes } from '../src/tauri/main/routes/tts-routes.js';
 
-test('grok tts route proxies audio generation with xAI request contract', async (t) => {
+function encodeBytes(bytes) {
+    return Buffer.from(Uint8Array.from(bytes)).toString('base64');
+}
+
+function encodeText(text) {
+    return Buffer.from(String(text), 'utf8').toString('base64');
+}
+
+test('grok tts route delegates generation to backend command', async () => {
     const router = createRouteRegistry();
     const safeInvokeCalls = [];
-    let upstreamCall = null;
     const context = {
         safeInvoke: async (command, args) => {
             safeInvokeCalls.push({ command, args });
-            return { value: 'xai-secret' };
+            return {
+                status: 200,
+                contentType: 'audio/mpeg',
+                bodyBase64: encodeBytes([1, 2, 3]),
+            };
         },
-    };
-
-    const originalFetch = globalThis.fetch;
-    t.after(() => {
-        globalThis.fetch = originalFetch;
-    });
-    globalThis.fetch = async (url, init) => {
-        upstreamCall = { url, init };
-        return new Response(Uint8Array.from([1, 2, 3]), {
-            status: 200,
-            headers: {
-                'Content-Type': 'audio/mpeg',
-            },
-        });
     };
 
     registerTtsRoutes(router, context);
 
+    const body = {
+        text: 'Hello world',
+        voiceId: 'EVE',
+        language: 'en',
+        outputFormat: {
+            codec: 'mp3',
+            sampleRate: 44100,
+            bitRate: 192000,
+        },
+    };
     const response = await router.handle({
         method: 'POST',
         path: '/api/tts/grok/generate',
-        body: {
-            text: 'Hello world',
-            voiceId: 'EVE',
-            language: 'en',
-            outputFormat: {
-                codec: 'mp3',
-                sampleRate: 44100,
-                bitRate: 192000,
-            },
-        },
+        body,
     });
 
     assert.ok(response);
@@ -52,46 +51,33 @@ test('grok tts route proxies audio generation with xAI request contract', async 
     assert.deepEqual(Array.from(new Uint8Array(await response.arrayBuffer())), [1, 2, 3]);
     assert.deepEqual(safeInvokeCalls, [
         {
-            command: 'find_secret',
+            command: 'tts_handle',
             args: {
-                dto: {
-                    key: 'api_key_xai',
-                },
+                path: 'grok/generate',
+                body,
             },
         },
     ]);
-    assert.equal(upstreamCall?.url, 'https://api.x.ai/v1/tts');
-    assert.equal(upstreamCall?.init?.headers?.Authorization, 'Bearer xai-secret');
-    assert.deepEqual(JSON.parse(upstreamCall?.init?.body), {
-        text: 'Hello world',
-        voice_id: 'eve',
-        language: 'en',
-        output_format: {
-            codec: 'mp3',
-            sample_rate: 44100,
-            bit_rate: 192000,
-        },
-    });
 });
 
-test('grok voice list route proxies upstream voices', async (t) => {
+test('grok voice list route delegates to backend command', async () => {
     const router = createRouteRegistry();
-    const context = {
-        safeInvoke: async () => ({ value: 'xai-secret' }),
+    const calls = [];
+    const payload = {
+        voices: [
+            { voice_id: 'eve', name: 'Eve', language: 'multilingual' },
+            { voice_id: 'ara', name: 'Ara', language: 'multilingual' },
+        ],
     };
-
-    const originalFetch = globalThis.fetch;
-    t.after(() => {
-        globalThis.fetch = originalFetch;
-    });
-    globalThis.fetch = async (url) => {
-        assert.equal(url, 'https://api.x.ai/v1/tts/voices');
-        return Response.json({
-            voices: [
-                { voice_id: 'eve', name: 'Eve', language: 'multilingual' },
-                { voice_id: 'una', name: 'Una', language: 'multilingual' },
-            ],
-        });
+    const context = {
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            return {
+                status: 200,
+                contentType: 'application/json',
+                bodyBase64: encodeText(JSON.stringify(payload)),
+            };
+        },
     };
 
     registerTtsRoutes(router, context);
@@ -104,34 +90,25 @@ test('grok voice list route proxies upstream voices', async (t) => {
 
     assert.ok(response);
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-        voices: [
-            { voice_id: 'eve', name: 'Eve', language: 'multilingual' },
-            { voice_id: 'una', name: 'Una', language: 'multilingual' },
-        ],
-    });
+    assert.deepEqual(await response.json(), payload);
+    assert.deepEqual(calls, [
+        {
+            command: 'tts_handle',
+            args: {
+                path: 'grok/voices',
+                body: {},
+            },
+        },
+    ]);
 });
 
-test('grok tts route surfaces upstream error text via statusText', async (t) => {
+test('tts route surfaces command errors via statusText', async () => {
     const router = createRouteRegistry();
     const context = {
-        safeInvoke: async () => ({ value: 'xai-secret' }),
+        safeInvoke: async () => {
+            throw new Error('Bad request: xAI API key is required');
+        },
     };
-
-    const originalFetch = globalThis.fetch;
-    t.after(() => {
-        globalThis.fetch = originalFetch;
-    });
-    globalThis.fetch = async () => new Response(JSON.stringify({
-        error: {
-            message: 'Rate limited',
-        },
-    }), {
-        status: 429,
-        headers: {
-            'Content-Type': 'application/json',
-        },
-    });
 
     registerTtsRoutes(router, context);
 
@@ -140,58 +117,43 @@ test('grok tts route surfaces upstream error text via statusText', async (t) => 
         path: '/api/tts/grok/generate',
         body: {
             text: 'Hello world',
-            voiceId: 'una',
+            voiceId: 'eve',
         },
     });
 
     assert.ok(response);
-    assert.equal(response.status, 429);
-    assert.equal(response.statusText, 'Rate limited');
-    assert.equal(await response.text(), 'Rate limited');
+    assert.equal(response.status, 400);
+    assert.equal(response.statusText, 'Bad request: xAI API key is required');
+    assert.equal(await response.text(), 'Bad request: xAI API key is required');
 });
 
-test('mimo tts route follows MiMo chat-completions audio contract', async (t) => {
+test('mimo tts route delegates generation to backend command', async () => {
     const router = createRouteRegistry();
     const safeInvokeCalls = [];
-    let upstreamCall = null;
     const context = {
         safeInvoke: async (command, args) => {
             safeInvokeCalls.push({ command, args });
-            return { value: 'mimo-secret' };
+            return {
+                status: 200,
+                contentType: 'audio/mpeg',
+                bodyBase64: encodeBytes([4, 5, 6]),
+            };
         },
-    };
-
-    const originalFetch = globalThis.fetch;
-    t.after(() => {
-        globalThis.fetch = originalFetch;
-    });
-    globalThis.fetch = async (url, init) => {
-        upstreamCall = { url, init };
-        return Response.json({
-            choices: [
-                {
-                    message: {
-                        audio: {
-                            data: Buffer.from(Uint8Array.from([4, 5, 6])).toString('base64'),
-                        },
-                    },
-                },
-            ],
-        });
     };
 
     registerTtsRoutes(router, context);
 
+    const body = {
+        text: '你好，世界',
+        voiceId: '冰糖',
+        model: 'mimo-v2.5-tts',
+        format: 'mp3',
+        instructions: '活泼一点，语速稍快。',
+    };
     const response = await router.handle({
         method: 'POST',
         path: '/api/tts/mimo/generate',
-        body: {
-            text: '你好，世界',
-            voiceId: '冰糖',
-            model: 'mimo-v2.5-tts',
-            format: 'mp3',
-            instructions: '活泼一点，语速稍快。',
-        },
+        body,
     });
 
     assert.ok(response);
@@ -200,49 +162,25 @@ test('mimo tts route follows MiMo chat-completions audio contract', async (t) =>
     assert.deepEqual(Array.from(new Uint8Array(await response.arrayBuffer())), [4, 5, 6]);
     assert.deepEqual(safeInvokeCalls, [
         {
-            command: 'find_secret',
+            command: 'tts_handle',
             args: {
-                dto: {
-                    key: 'api_key_mimo',
-                },
+                path: 'mimo/generate',
+                body,
             },
         },
     ]);
-    assert.equal(upstreamCall?.url, 'https://api.xiaomimimo.com/v1/chat/completions');
-    assert.equal(upstreamCall?.init?.headers['api-key'], 'mimo-secret');
-    assert.deepEqual(JSON.parse(upstreamCall?.init?.body), {
-        model: 'mimo-v2.5-tts',
-        messages: [
-            {
-                role: 'user',
-                content: '活泼一点，语速稍快。',
-            },
-            {
-                role: 'assistant',
-                content: '你好，世界',
-            },
-        ],
-        audio: {
-            format: 'mp3',
-            voice: '冰糖',
-        },
-    });
 });
 
-test('mimo tts route rejects unsupported models before calling upstream', async (t) => {
+test('tts route preserves backend validation response bodies', async () => {
     const router = createRouteRegistry();
+    const message = 'Unsupported MiMo model: mimo-v3-tts';
     const context = {
-        safeInvoke: async () => ({ value: 'mimo-secret' }),
-    };
-
-    const originalFetch = globalThis.fetch;
-    t.after(() => {
-        globalThis.fetch = originalFetch;
-    });
-    let fetchCalled = false;
-    globalThis.fetch = async () => {
-        fetchCalled = true;
-        throw new Error('should not reach upstream');
+        safeInvoke: async () => ({
+            status: 400,
+            contentType: 'text/plain; charset=utf-8',
+            bodyBase64: encodeText(message),
+            statusText: message,
+        }),
     };
 
     registerTtsRoutes(router, context);
@@ -258,7 +196,24 @@ test('mimo tts route rejects unsupported models before calling upstream', async 
 
     assert.ok(response);
     assert.equal(response.status, 400);
-    assert.equal(response.statusText, 'Unsupported MiMo model: mimo-v3-tts');
-    assert.equal(await response.text(), 'Unsupported MiMo model: mimo-v3-tts');
-    assert.equal(fetchCalled, false);
+    assert.equal(response.statusText, message);
+    assert.equal(await response.text(), message);
+});
+
+test('grok provider voice list contract avoids silent fallback', async () => {
+    const source = await readFile(new URL('../src/scripts/extensions/tts/grok.js', import.meta.url), 'utf8');
+
+    assert.doesNotMatch(source, /voice_id:\s*'una'/);
+    assert.doesNotMatch(source, /using fallback/i);
+    assert.match(source, /Grok voice list response did not include any voices/);
+});
+
+test('tts host route stays a backend-command adapter', async () => {
+    const source = await readFile(new URL('../src/tauri/main/routes/tts-routes.js', import.meta.url), 'utf8');
+
+    assert.doesNotMatch(source, /api\.x\.ai/);
+    assert.doesNotMatch(source, /xiaomimimo/);
+    assert.doesNotMatch(source, /find_secret/);
+    assert.doesNotMatch(source, /\bfetch\s*\(/);
+    assert.match(source, /tts_handle/);
 });
