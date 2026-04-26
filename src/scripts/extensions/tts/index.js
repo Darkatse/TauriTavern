@@ -37,6 +37,8 @@ import { MiniMaxTtsProvider } from './minimax.js';
 import { ElectronHubTtsProvider } from './electronhub.js';
 import { ChutesTtsProvider } from './chutes.js';
 import { VolcengineTtsProvider } from './volcengine.js';
+import { GrokTtsProvider } from './grok.js';
+import { MimoTtsProvider } from './mimo.js';
 
 const UPDATE_INTERVAL = 1000;
 const wrapper = new ModuleWorkerWrapper(moduleWorker);
@@ -134,8 +136,10 @@ const ttsProviders = {
     GSVI: GSVITtsProvider,
     'GPT-SoVITS-Adapter': GptSoVITSAdapterProvider,
     'GPT-SoVITS-V2 (Unofficial)': GptSovitsV2Provider,
+    Grok: GrokTtsProvider,
     Kokoro: KokoroTtsProvider,
     MiniMax: MiniMaxTtsProvider,
+    MiMo: MimoTtsProvider,
     Novel: NovelTtsProvider,
     OpenAI: OpenAITtsProvider,
     'OpenAI Compatible': OpenAICompatibleTtsProvider,
