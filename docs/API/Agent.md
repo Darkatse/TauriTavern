@@ -2,7 +2,7 @@
 
 本文档是 Agent Host ABI 草案。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
 
-状态：Phase 1 已实现最小骨架，本文仍包含后续阶段 API 草案。
+状态：Phase 2A 已实现最小工具循环与前端 dryRun adapter。本文以 Phase 2A 已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来草案。
 
 ## 1. 入口
 
@@ -14,34 +14,74 @@ const agent = window.__TAURITAVERN__.api.agent;
 
 Agent API 必须挂在 `window.__TAURITAVERN__.api.agent`。不要新增散落全局。
 
-## 2. 方法概览
+## 2. Phase 2A 方法概览
 
 ```ts
 type TauriTavernAgentApi = {
-  startRun(input: AgentStartRunInput): Promise<AgentRunHandle>;
-  subscribe(runId: string, handler: (event: AgentRunEvent) => void, options?: AgentSubscribeOptions): Promise<TauriTavernHostUnsubscribe>;
-  cancel(runId: string): Promise<void>;
-  approveToolCall(input: AgentApproveToolCallInput): Promise<void>;
-  listRuns(input: AgentListRunsInput): Promise<AgentRunSummary[]>;
+  startRunFromLegacyGenerate(input?: AgentStartRunFromLegacyGenerateInput): Promise<AgentRunHandle>;
+  startRunWithPromptSnapshot(input: AgentStartRunWithPromptSnapshotInput): Promise<AgentRunHandle>;
+  subscribe(runId: string, handler: (event: AgentRunEvent) => void, options?: AgentSubscribeOptions): TauriTavernHostUnsubscribe;
+  cancel(runId: string): Promise<AgentRunHandle>;
   readEvents(input: AgentReadEventsInput): Promise<AgentReadEventsResult>;
   readWorkspaceFile(input: AgentReadWorkspaceFileInput): Promise<AgentWorkspaceFile>;
-  readDiff(input: AgentReadDiffInput): Promise<AgentDiff>;
-  rollback(input: AgentRollbackInput): Promise<AgentRollbackResult>;
   commit(input: AgentCommitInput): Promise<AgentCommitResult>;
+  prepareCommit(input: AgentPrepareCommitInput): Promise<AgentCommitDraft>;
+  finalizeCommit(input: AgentFinalizeCommitInput): Promise<AgentCommitResult>;
+
+  approveToolCall(): never;
+  listRuns(): never;
+  readDiff(): never;
+  rollback(): never;
 };
 ```
 
 `subscribe()` 返回的 unsubscribe 必须幂等。
 
-## 3. startRun
+Phase 2A 没有公共 `startRun()` alias。启动职责必须一眼可见：
+
+- `startRunFromLegacyGenerate()`：从当前 Legacy Generate dryRun 兼容桥启动。
+- `startRunWithPromptSnapshot()`：调用方已经持有 prompt snapshot 时启动。
+
+`approveToolCall()`、`listRuns()`、`readDiff()`、`rollback()` 已预留名称，但当前实现会显式 throw，避免静默降级。
+
+## 3. startRunFromLegacyGenerate
 
 ```ts
-type AgentStartRunInput = {
+type AgentStartRunFromLegacyGenerateInput = {
+  chatRef?: AgentChatRef;
+  stableChatId?: string;
+  generationType?: 'normal' | 'regenerate' | 'swipe' | 'continue' | 'quiet' | 'impersonate';
+  generateOptions?: unknown;
+  profileId?: string;
+  generationIntent?: AgentGenerationIntent;
+  options?: {
+    autoCommit?: false;
+    stream?: false;
+  };
+};
+```
+
+`startRunFromLegacyGenerate()` 是 Phase 2A 前端兼容桥：它使用 Legacy `Generate(..., dryRun = true)` 捕获当前 SillyTavern prompt 语义，构造 `promptSnapshot.chatCompletionPayload`，再调用 `startRunWithPromptSnapshot()`。
+
+要求：
+
+- 只用于当前 active chat。
+- Phase 2A 只支持 `main_api = openai` 的 chat-completion 路径。
+- 必须禁用 Legacy ToolManager tools；Agent tools 只能由 Rust runtime 注册。
+- `stream` 与 `autoCommit` 必须为 `false` 或省略。
+- dryRun 没有产出 messages、已有 tool turns、已有 external tools 都必须 reject，不回退 Legacy Generate。
+
+注意：`Generate(..., dryRun = true)` 不返回 payload。它只 emit `GENERATE_AFTER_DATA`，然后 resolve `undefined`。调用方不应写 `const payload = await Generate(..., true)`；捕获逻辑由 `startRunFromLegacyGenerate()` 内部 adapter 负责。
+
+## 4. startRunWithPromptSnapshot
+
+```ts
+type AgentStartRunWithPromptSnapshotInput = {
   chatRef: AgentChatRef;
   stableChatId?: string;
-  generationType: 'normal' | 'regenerate' | 'swipe' | 'continue' | 'quiet' | 'impersonate';
+  generationType?: 'normal' | 'regenerate' | 'swipe' | 'continue' | 'quiet' | 'impersonate';
   profileId?: string;
-  promptSnapshot?: unknown;
+  promptSnapshot: unknown;
   generationIntent?: AgentGenerationIntent;
   workspaceMode?: 'new-run' | 'resume-run';
   resumeRunId?: string;
@@ -66,35 +106,38 @@ type AgentRunHandle = {
 - `runId` 是一次 Agent 执行身份，每次 normal/regenerate/swipe/continue 都必须生成新的 `runId`。
 - 同一稳定聊天的多次 run 应共享同一个 chat workspace，但各自拥有独立 run workspace。
 
-Public Host ABI 可以允许调用方省略 `stableChatId`，但 `api.agent.startRun()` 必须在调用 Rust command 前通过 `api.chat.open(chatRef).stableId()` 解析并校验。Rust command 不应自行读取 SillyTavern metadata。
+Public Host ABI 可以允许调用方省略 `stableChatId`，但 `api.agent.startRunWithPromptSnapshot()` 必须在调用 Rust command 前通过 `api.chat.open(chatRef).stableId()` 解析并校验。Rust command 不应自行读取 SillyTavern metadata。
 
-短期允许 `promptSnapshot`，长期目标是 `generationIntent`。
+Phase 2A 要求提供 `promptSnapshot`。长期目标是 `generationIntent + ContextFrame`，但当前 Rust runtime 不会只凭 `generationIntent` 组装上下文。
 
 要求：
 
 - `stableChatId` 进入 backend DTO 前必须非空；无法解析时 fail-fast。
-- `promptSnapshot` 与 `generationIntent` 至少提供一个。
-- `resume-run` 必须提供 `resumeRunId`。
-- `autoCommit` 默认由 profile/output policy 决定。
+- `promptSnapshot.chatCompletionPayload` 必须包含 chat-completion payload object。
+- Phase 2A 拒绝已有 `tools`、`tool_choice`、`role: "tool"` 或已有 `tool_calls` 的外部 tool turns。
+- Phase 2A 拒绝 `stream: true` 与 `autoCommit: true`。
+- `workspaceMode` / `resumeRunId` 当前只是后续阶段字段，不应作为 Phase 2A 行为依赖。
 - 参数无效必须 reject，不静默回退 Legacy Generate。
 
-## 4. subscribe
+## 5. subscribe
 
 ```ts
 type AgentSubscribeOptions = {
-  replay?: 'none' | 'from-seq';
   afterSeq?: number;
+  limit?: number;
+  intervalMs?: number;
+  onError?: (error: unknown) => void;
 };
 ```
 
 语义：
 
-- 默认不复播全部历史。
-- UI 首次打开 run 页面应先 `readEvents()`，再 `subscribe()`。
-- 如果订阅期间漏事件，调用方可用 `afterSeq` 补拉。
-- 底层 Tauri 事件名不是 Public Contract。
+- Phase 2A `subscribe()` 是前端 polling wrapper，底层调用 `readEvents()`。
+- 默认从 `afterSeq = 0` 开始读取；调用方可以传入 `afterSeq`。
+- 返回 unsubscribe 函数，必须幂等。
+- 底层 polling 细节和 Rust command 名不是 Public Contract。
 
-## 5. cancel
+## 6. cancel
 
 ```ts
 await agent.cancel(runId);
@@ -106,8 +149,11 @@ await agent.cancel(runId);
 - 尽力取消当前模型请求或工具调用。
 - Cancel 不是 failure。
 - Cancel 后不能自动 commit。
+- 返回最新 `AgentRunHandle`。
 
-## 6. approveToolCall
+## 7. approveToolCall
+
+Phase 2A 未实现审批流程；当前 `approveToolCall()` 会显式 throw。
 
 ```ts
 type AgentApproveToolCallInput = {
@@ -123,7 +169,7 @@ type AgentApproveToolCallInput = {
 - 审批结果写 journal。
 - 拒绝工具不等同 run failure；具体后续由 plan/profile policy 决定。
 
-## 7. readEvents
+## 8. readEvents
 
 ```ts
 type AgentReadEventsInput = {
@@ -134,10 +180,7 @@ type AgentReadEventsInput = {
 };
 
 type AgentReadEventsResult = {
-  runId: string;
   events: AgentRunEvent[];
-  hasMoreBefore: boolean;
-  hasMoreAfter: boolean;
 };
 ```
 
@@ -145,8 +188,9 @@ type AgentReadEventsResult = {
 
 - `limit` 必须有上限。
 - 移动端 UI 不应一次读取完整巨大 journal。
+- Phase 2A 暂不返回 `hasMoreBefore/hasMoreAfter`。
 
-## 8. readWorkspaceFile
+## 9. readWorkspaceFile
 
 ```ts
 type AgentReadWorkspaceFileInput = {
@@ -156,18 +200,19 @@ type AgentReadWorkspaceFileInput = {
 };
 
 type AgentWorkspaceFile = {
-  runId: string;
   path: string;
-  text?: string;
-  bytes?: number;
-  mime?: string;
-  sha256?: string;
+  text: string;
+  bytes: number;
+  sha256: string;
 };
 ```
 
 路径必须是 workspace relative path。非法路径直接 reject。
+Phase 2A 只读当前 run workspace 的 UTF-8 文本文件，不支持 `checkpointId` 参数。
 
-## 9. readDiff
+## 10. readDiff
+
+Phase 2A 未实现 diff；当前 `readDiff()` 会显式 throw。
 
 ```ts
 type AgentReadDiffInput = {
@@ -191,7 +236,9 @@ type AgentDiff = {
 
 第一期可以只支持文本 artifact 的 diff。
 
-## 10. rollback
+## 11. rollback
+
+Phase 2A 未实现 rollback；当前 `rollback()` 会显式 throw。
 
 ```ts
 type AgentRollbackInput = {
@@ -206,20 +253,17 @@ type AgentRollbackInput = {
 - `workspace`：只恢复 run workspace，不修改 chat。
 - `committed-message`：重组 artifact 并修改已提交聊天消息，必须走 chat 保存契约。
 
-## 11. commit
+## 12. commit
 
 ```ts
 type AgentCommitInput = {
   runId: string;
-  checkpointId?: string;
+  messageId?: string | number;
 };
 
 type AgentCommitResult = {
   runId: string;
-  chatRef: AgentChatRef;
-  stableChatId: string;
-  messageIndex?: number;
-  messageId?: string;
+  status: AgentRunStatus;
 };
 ```
 
@@ -232,7 +276,38 @@ Commit 必须：
 - 写 agent metadata。
 - 追加 `run_committed` event。
 
-## 12. Event Envelope
+Phase 2A `commit()` 是前端桥接 helper：先调用 `prepareCommit()`，校验当前 active chat 与 run 的 `chatRef/stableChatId` 一致，调用上游 `saveReply()` 写入聊天，再调用 `finalizeCommit()`。
+
+`prepareCommit()` 返回 draft：
+
+```ts
+type AgentPrepareCommitInput = {
+  runId: string;
+};
+
+type AgentCommitDraft = {
+  runId: string;
+  stableChatId: string;
+  chatRef: AgentChatRef;
+  generationType: string;
+  checkpoint: unknown;
+  message: {
+    mes: string;
+    extra?: unknown;
+  };
+};
+```
+
+`finalizeCommit()` 只允许在 backend run 状态为 `committing` 时调用：
+
+```ts
+type AgentFinalizeCommitInput = {
+  runId: string;
+  messageId?: string | number;
+};
+```
+
+## 13. Event Envelope
 
 ```ts
 type AgentRunEvent = {
@@ -250,7 +325,7 @@ type AgentRunEvent = {
 
 Agent event 不等同 SillyTavern `eventSource` 事件，不得伪装成 `GENERATION_*` 或 `TOOL_CALLS_*`。
 
-## 13. Errors
+## 14. Errors
 
 错误建议结构：
 
@@ -280,23 +355,29 @@ commit.cursor_integrity
 commit.save_failed
 ```
 
-## 14. Rust Command 草案
+## 15. Rust Command 草案
 
 ```text
-start_agent_run(dto, channel?)
-cancel_agent_run(run_id)
-approve_agent_tool_call(dto)
-list_agent_runs(chat_ref)
+start_agent_run(dto)
+cancel_agent_run(dto)
 read_agent_run_events(dto)
 read_agent_workspace_file(dto)
-read_agent_diff(dto)
-rollback_agent_run(dto)
-commit_agent_run(dto)
+prepare_agent_run_commit(dto)
+finalize_agent_run_commit(dto)
 ```
 
 Command 层必须是薄封装。Agent loop 不写在 command 内。
 
-## 15. Compatibility
+后续草案命令：
+
+```text
+approve_agent_tool_call(dto)
+list_agent_runs(chat_ref)
+read_agent_diff(dto)
+rollback_agent_run(dto)
+```
+
+## 16. Compatibility
 
 Agent Mode off：
 
@@ -308,4 +389,33 @@ Agent Mode on：
 
 - 短期可使用 dryRun 生成 prompt snapshot。
 - dryRun 不是纯函数，调用方必须理解它仍会触发上游事件。
+- dryRun 不返回 payload；Agent adapter 通过事件捕获 payload。
 - Agent tool loop 不递归 `Generate()`。
+
+## 17. Phase 2A 工具与手动验证
+
+当前仅开放两个内建工具：
+
+| Canonical name | Model-facing alias | 说明 |
+| --- | --- | --- |
+| `workspace.write_file` | `workspace_write_file` | 写 UTF-8 文本到 `output/`、`scratch/`、`plan/`、`summaries/` |
+| `workspace.finish` | `workspace_finish` | 结束工具循环，默认 final artifact 为 `output/main.md` |
+
+不存在 `workspace.read_file`、`workspace.apply_patch`、`chat.search`、`skill.read` 或 MCP 工具。
+
+推荐最小启动：
+
+```js
+await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
+
+const agent = window.__TAURITAVERN__.api.agent;
+
+const run = await agent.startRunFromLegacyGenerate({
+  generationType: 'normal',
+  options: { stream: false, autoCommit: false },
+});
+
+const stop = agent.subscribe(run.runId, event => console.log(event));
+```
+
+更完整的多阶段工具循环 smoke 见 `docs/CurrentState/AgentFramework.md`。

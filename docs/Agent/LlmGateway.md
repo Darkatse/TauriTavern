@@ -35,6 +35,8 @@
 
 ## 3. Phase 1 Wrapper
 
+当前状态（2026-04-26）：Phase 2A 已有轻量 `AgentModelGateway` wrapper，复用 `ChatCompletionService::generate_with_cancel()` 驱动非 streaming 工具循环。完整 provider-agnostic `ModelRequest` / `ModelResponse` 抽象仍未落地。
+
 Phase 1 建议：
 
 ```text
@@ -201,4 +203,3 @@ model.native_metadata_lost
 - Gemini native metadata round-trip。
 - cancel propagates。
 - LLM API log 不因 Agent 关闭。
-

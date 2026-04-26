@@ -8,6 +8,8 @@
 - Skill 是渐进披露的文本/资源包，不是自动吞入 prompt 的大文件。
 - Agent 可以消费 MCP 和 Skill，但必须经过 ToolRegistry、ContextFrame、Policy 与 Journal。
 
+当前状态（2026-04-26）：Phase 2A 尚未实现 `window.__TAURITAVERN__.api.mcp`，也未把 MCP/Skill 接入 Agent tool registry。当前 Agent registry 只有 `workspace.write_file` 与 `workspace.finish`。
+
 ## 1. MCP 边界
 
 MCP 模块建议提供：
@@ -200,4 +202,3 @@ Phase 2/6 最小实现：
 - tool result 写 journal。
 
 MCP 最小实现应晚于内置工具系统稳定之后。
-

@@ -4,18 +4,19 @@
 
 配套阅读顺序：
 
-1. `docs/AgentArchitecture.md`：系统边界、分层、数据流。
-2. `docs/AgentContract.md`：不可破坏的不变量与 fail-fast 约束。
-3. `docs/AgentImplementPlan.md`：分阶段实施计划与验收标准。
-4. `docs/Agent/Workspace.md`：Workspace、Artifact、Checkpoint 的存储语义。
-5. `docs/Agent/RunEventJournal.md`：Run Event、状态机、恢复/取消语义。
-6. `docs/Agent/ProfilesAndPreset.md`：Preset、Agent Profile、Plan Policy。
-7. `docs/Agent/ToolSystem.md`：Tool Registry、Tool Result、权限与审批。
-8. `docs/Agent/LlmGateway.md`：provider-agnostic LLM gateway 与现有 ChatCompletionService 的复用边界。
-9. `docs/Agent/McpSkill.md`：MCP 与 Skill 的边界。
-10. `docs/API/Agent.md`：前端 Host ABI 与 Tauri command 草案。
-11. `docs/API/MCP.md`：非 Agent 模式下的 MCP Host ABI 草案。
-12. `docs/Agent/TestingStrategy.md`：测试矩阵与回归守护。
+1. `docs/CurrentState/AgentFramework.md`：当前真实实现状态与手动 smoke。
+2. `docs/AgentArchitecture.md`：系统边界、分层、数据流。
+3. `docs/AgentContract.md`：不可破坏的不变量与 fail-fast 约束。
+4. `docs/AgentImplementPlan.md`：分阶段实施计划与验收标准。
+5. `docs/Agent/Workspace.md`：Workspace、Artifact、Checkpoint 的存储语义。
+6. `docs/Agent/RunEventJournal.md`：Run Event、状态机、恢复/取消语义。
+7. `docs/Agent/ProfilesAndPreset.md`：Preset、Agent Profile、Plan Policy。
+8. `docs/Agent/ToolSystem.md`：Tool Registry、Tool Result、权限与审批。
+9. `docs/Agent/LlmGateway.md`：provider-agnostic LLM gateway 与现有 ChatCompletionService 的复用边界。
+10. `docs/Agent/McpSkill.md`：MCP 与 Skill 的边界。
+11. `docs/API/Agent.md`：前端 Host ABI 与 Tauri command 草案。
+12. `docs/API/MCP.md`：非 Agent 模式下的 MCP Host ABI 草案。
+13. `docs/Agent/TestingStrategy.md`：测试矩阵与回归守护。
 
 ## 1. 核心定义
 
@@ -82,13 +83,15 @@ Agent 系统必须同时满足五个目标：
   ↓
 前端保持旧 Generate 前置语义
   ↓
-Generate(type, options, dryRun = true)
+window.__TAURITAVERN__.api.agent.startRunFromLegacyGenerate()
   ↓
-PromptSnapshot / GenerationIntent
+adapter 调用 Generate(type, { ...options, agentMode: true }, dryRun = true)
+  ↓
+GENERATE_AFTER_DATA 事件暴露 generate_data
+  ↓
+adapter 构造 promptSnapshot.chatCompletionPayload
   ↓
 解析 stableChatId
-  ↓
-window.__TAURITAVERN__.api.agent.startRun()
   ↓
 Rust AgentRunService
   ↓
@@ -133,7 +136,21 @@ LLM Gateway / provider adapter
 
 注意：`Generate(..., dryRun = true)` 不是纯函数。它会触发上游事件、执行 prompt assembly、触发部分 world info 扫描与工具注册判断；它只是跳过实际模型请求、聊天写入和工具执行等关键副作用。Agent 文档和代码中都不能把 dryRun 描述为“无副作用”。
 
-### 5.1 Run 与 Workspace 身份
+还要注意：Legacy `Generate(..., dryRun = true)` 不返回 payload；它在 `GENERATE_AFTER_DATA` 事件中暴露 `generate_data`，然后 resolve `undefined`。Phase 2A 的前端 adapter 必须监听事件捕获 payload，调用方不应依赖 `await Generate(..., true)` 的返回值。
+
+### 5.1 Phase 2A 当前落地边界
+
+截至 2026-04-26，Phase 2A 已经落地的是最小可审计工具循环，而不是完整 Agent 产品面：
+
+- Public Host ABI 入口为 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`，没有 `startRun()` alias。
+- `startRunFromLegacyGenerate()` 是当前推荐的兼容桥；它捕获 Legacy prompt 语义，同时禁用 Legacy ToolManager tools。
+- `startRunWithPromptSnapshot()` 是低层测试/集成入口；调用方必须提供不含 external tools/tool turns 的 chat completion payload。
+- 后端只开放 `workspace.write_file` / `workspace.finish` 两个内建工具，对模型暴露为 `workspace_write_file` / `workspace_finish`。
+- 当前可写 workspace 前缀为 `output/`、`scratch/`、`plan/`、`summaries/`。
+- 工具循环最多 6 轮，必须以 `workspace.finish` 结束；模型直接输出文本会 fail-fast。
+- `readDiff`、`rollback`、`resume-run`、tool approval、profile routing、MCP、timeline UI、主发送按钮 Agent toggle 仍未实现。
+
+### 5.2 Run 与 Workspace 身份
 
 Agent 身份必须分层：
 
@@ -307,7 +324,7 @@ window.__TAURITAVERN__.api.mcp
 
 - 提供 Agent Mode 开关与最小 timeline UI。
 - 在短期通过 `Generate(..., dryRun = true)` 生成 `PromptSnapshot`。
-- 调用 `api.agent.startRun()`、订阅 event、展示状态、发起 cancel/approve/rollback/commit。
+- 调用 `api.agent.startRunFromLegacyGenerate()` 或 `api.agent.startRunWithPromptSnapshot()`、订阅 event、展示状态、发起 cancel/approve/rollback/commit。
 - Agent Mode off 时不改变 Legacy Generate。
 
 前端不拥有 Agent 状态机，不递归调用 `Generate()` 实现工具循环，不把工具结果写进 chat 楼层。
@@ -397,7 +414,7 @@ SillyTavern 上游的事件和 chat message 结构仍是兼容层的基础。Age
 
 第一个可合并 Agent MVP 应只包含：
 
-1. `api.agent.startRun()`。
+1. `api.agent.startRunWithPromptSnapshot()`。
 2. run workspace。
 3. `events.jsonl`。
 4. `output/main.md`。

@@ -405,7 +405,39 @@ autoPruneAfterDays
 
 ## 13. MVP Workspace
 
-Phase 1 最小文件：
+Phase 2A 当前最小文件：
+
+```text
+_tauritavern/agent-workspaces/
+  index/
+    runs/
+      <run-id>.json
+  chats/
+    <workspace-id>/
+      runs/
+        <run-id>/
+          manifest.json
+          events.jsonl
+          input/
+            prompt_snapshot.json
+          output/
+            main.md
+          tool-results/
+            <tool-call-id>.json
+          checkpoints/
+            <checkpoint-id>.json
+```
+
+Phase 2A 模型可写路径前缀：
+
+```text
+output/
+scratch/
+plan/
+summaries/
+```
+
+Phase 1 早期设计中的最小概念结构仍可作为抽象理解：
 
 ```text
 runs/<run-id>/
@@ -423,5 +455,5 @@ runs/<run-id>/
 - journal
 - checkpoint
 - artifact commit
-- rollback 基础
+- rollback 基础数据结构（Phase 2A 尚未开放 rollback API）
 - 后续工具循环增量接入

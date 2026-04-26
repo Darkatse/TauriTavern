@@ -1,5 +1,7 @@
 // @ts-check
 
+import { buildAgentPromptSnapshot } from './agent-prompt-snapshot.js';
+
 const DEFAULT_EVENT_POLL_MS = 500;
 
 /**
@@ -12,9 +14,32 @@ const DEFAULT_EVENT_POLL_MS = 500;
  * @param {{ safeInvoke: (command: string, args?: any) => Promise<any> }} deps
  */
 function createAgentApi({ safeInvoke }) {
-    async function startRun(input) {
-        const dto = await normalizeStartRunInput(input);
+    async function startRunWithPromptSnapshot(input) {
+        const dto = await normalizePromptSnapshotRunInput(input);
         return safeInvoke('start_agent_run', { dto });
+    }
+
+    async function startRunFromLegacyGenerate(input = {}) {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+            throw new Error('Agent startRunFromLegacyGenerate input must be an object');
+        }
+
+        const generationType = normalizeGenerationType(input.generationType);
+        const agentOptions = normalizePhase2aAgentOptions(input.options);
+        const snapshot = await buildAgentPromptSnapshot({
+            generationType,
+            generateOptions: input.generateOptions,
+        });
+
+        return startRunWithPromptSnapshot({
+            chatRef: input.chatRef,
+            stableChatId: input.stableChatId,
+            generationType,
+            profileId: input.profileId,
+            promptSnapshot: snapshot.promptSnapshot,
+            generationIntent: mergePlainObject(snapshot.generationIntent, input.generationIntent),
+            options: agentOptions,
+        });
     }
 
     async function cancel(runId) {
@@ -124,7 +149,8 @@ function createAgentApi({ safeInvoke }) {
     }
 
     return {
-        startRun,
+        startRunWithPromptSnapshot,
+        startRunFromLegacyGenerate,
         cancel,
         readEvents,
         readWorkspaceFile,
@@ -144,23 +170,47 @@ function createAgentApi({ safeInvoke }) {
             });
         },
         approveToolCall() {
-            throw new Error('approveToolCall is not implemented in Agent Phase 1');
+            throw new Error('approveToolCall is not implemented in Agent Phase 2A');
         },
         listRuns() {
-            throw new Error('listRuns is not implemented in Agent Phase 1');
+            throw new Error('listRuns is not implemented in Agent Phase 2A');
         },
         readDiff() {
-            throw new Error('readDiff is not implemented in Agent Phase 1');
+            throw new Error('readDiff is not implemented in Agent Phase 2A');
         },
         rollback() {
-            throw new Error('rollback is not implemented in Agent Phase 1');
+            throw new Error('rollback is not implemented in Agent Phase 2A');
         },
     };
 }
 
-async function normalizeStartRunInput(input) {
+function normalizeGenerationType(value) {
+    return String(value || 'normal').trim() || 'normal';
+}
+
+function normalizePhase2aAgentOptions(value) {
+    if (value != null && !isPlainObject(value)) {
+        throw new Error('agent.options_invalid: options must be an object');
+    }
+
+    const options = value || {};
+    if (options.stream === true) {
+        throw new Error('agent.phase2a_stream_unsupported: Agent Phase 2A only supports non-streaming model calls');
+    }
+    if (options.autoCommit === true) {
+        throw new Error('agent.phase2a_auto_commit_unsupported: commit is owned by the frontend adapter in Agent Phase 2A');
+    }
+
+    return {
+        ...options,
+        stream: false,
+        autoCommit: false,
+    };
+}
+
+async function normalizePromptSnapshotRunInput(input) {
     if (!input || typeof input !== 'object') {
-        throw new Error('Agent startRun input is required');
+        throw new Error('Agent startRunWithPromptSnapshot input is required');
     }
 
     const chatRef = input.chatRef || window.__TAURITAVERN__?.api?.chat?.current?.ref?.();

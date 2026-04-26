@@ -49,7 +49,7 @@ ROI：极高。
 范围：
 
 ```text
-startRun
+start_agent_run command
 resolve stableChatId
 create run workspace
 materialize minimal input
@@ -98,7 +98,7 @@ minimal timeline UI
 
 - 新增 `src/tauri/main/api/agent.js`。
 - 在 `bootstrapTauriMain()` 安装 `installAgentApi(context)`。
-- `window.__TAURITAVERN__.api.agent.startRun()` 先通过 `api.chat.open(chatRef).stableId()` 解析 `stableChatId`，再调用 Tauri command。
+- `window.__TAURITAVERN__.api.agent.startRunWithPromptSnapshot()` 先通过 `api.chat.open(chatRef).stableId()` 解析 `stableChatId`，再调用 Tauri command。
 - 最小 timeline UI 可先只显示状态、model delta、checkpoint、commit。
 
 LLM 调用策略：
@@ -135,60 +135,132 @@ ROI：极高。
 
 ## Phase 2：最小工具循环
 
-目标：从 one-step 进入真正 Agent loop，但工具范围保持克制。
+目标：从 one-step 进入真正 Agent loop，但工具范围保持克制。Phase 2 的重点不是一次性做完整工具平台，而是先建立可审计、可恢复、可扩展的工具循环飞轮。
 
-内置工具：
+设计原则：
+
+- Agent tool loop 由 Rust runtime 拥有，不通过递归 `Generate()` 实现。
+- 工具结果写入 run journal / workspace，不写入 chat message。
+- 模型可见 schema 保持扁平、单操作、标量化，避免把核心参数设计成 `files[]`、`edits[]`、`hunks[]`。
+- Phase 2 默认只支持 provider-native tool call；不支持时 fail-fast，不静默模拟。
+- denied tool、非法路径、必需 artifact 缺失、native metadata 丢失都必须 fail-fast。
+- workspace-mutating tool 只能通过 WorkspaceRepository 写入，并在成功后 checkpoint。
+
+### Phase 2A：Agent Run Loop 地基
+
+目标：把 Phase 1 one-shot 改造成最小多轮 loop，只开放足够验证飞轮的工具。
+
+当前状态（截至 2026-04-26）：Phase 2A 后端工具循环与前端 dryRun adapter 已落地。它是最小可运行地基，不是完整 Agent 产品面。
+
+工具：
 
 ```text
-workspace.list_files
-workspace.read_file
-workspace.write_file
-workspace.apply_patch
-workspace.create_checkpoint
-workspace.finish
-chat.search
-chat.read_history_tail
-chat.read_history_before
-skill.list
-skill.read
-worldinfo.read_activated
+workspace.write_file(path: string, content: string)
+workspace.finish(final_path?: string, reason?: string)
 ```
+
+说明：文档中的 dotted name 是内部 canonical name。发送给 OpenAI-compatible function calling 时使用 provider-safe alias，例如 `workspace_write_file`、`workspace_finish`，runtime 再映射回 canonical name。
+
+Phase 2A 当前只开放上述两个工具。`workspace.read_file`、`workspace.apply_patch`、`chat.search`、`skill.read`、MCP 工具均未进入当前 registry。多阶段 smoke 应通过多次 `workspace.write_file` 写 `plan/`、`scratch/`、`summaries/`、`output/` 来验证循环。
 
 后端新增：
 
-- `ToolSpec`
-- `ToolCall`
-- `ToolResult`
-- `ToolRegistryService`
-- `ToolDispatchService`
-- `ToolPolicyResolver`
-- tool event journal
-- tool approval state
+- `ToolSpec` / `ToolCall` / `ToolResult` domain model。
+- 内建 tool registry，输出 OpenAI-compatible function tool schema。
+- 最小 tool dispatcher，只负责 `workspace.write_file` 与 `workspace.finish`。
+- provider-normalized tool call 提取器。
+- tool result 作为 OpenAI-compatible `tool` message 回填下一轮请求。
+- `workspace.finish` 结束 loop，并验证 `output/main.md` 等必需 artifact。
+- 工具循环最大 6 轮；超轮次、模型不调用工具、finish 后继续调用工具都会 fail-fast。
+- writable workspace path 当前限制为 `output/`、`scratch/`、`plan/`、`summaries/`。
 
-模型输出解释：
+前端新增：
 
-- 第一阶段可以支持 provider-native tool call。
-- 对不支持 tool call 的 provider，不应静默模拟；应根据 profile 明确拒绝或使用受控文本协议，并在 profile 中声明。
+- `api.agent.startRunFromLegacyGenerate()`：Phase 2A 推荐入口，内部调用 Legacy `Generate(..., dryRun = true)` 并监听 `GENERATE_AFTER_DATA` 捕获 prompt snapshot。
+- `api.agent.startRunWithPromptSnapshot()`：低层入口，调用方显式传入 `promptSnapshot.chatCompletionPayload`。
+- `api.agent.subscribe()`：当前为 polling wrapper，返回幂等 unsubscribe。
+- `api.agent.readWorkspaceFile()`：读取 run workspace 的 UTF-8 文本文件。
+- `api.agent.prepareCommit()` / `commit()` / `finalizeCommit()`：前端桥接 SillyTavern `saveReply()` 完成聊天写入。
+
+兼容边界：
+
+- Legacy `Generate(..., dryRun = true)` 不返回 payload；返回值是 `undefined`，payload 只通过事件暴露。
+- Agent Mode off 时不改变 Legacy `Generate()`、ToolManager 或上游事件语义。
+- Agent tools 由 Rust runtime 独占注册；Phase 2A 拒绝外部 `tools`、`tool_choice`、已有 `role: "tool"` 和已有 `tool_calls`。
+- `stream: true` 与 `autoCommit: true` 当前显式拒绝。
+- 不保留 `api.agent.startRun()` 旧 alias；公共启动方法名必须表达职责。
 
 验收：
 
-- 模型请求工具时，run 进入 tool dispatch 流程。
-- 工具参数、结果、错误、耗时写 journal。
-- 工具结果不写入 chat message。
-- 工具结果可作为 `ToolResults` component 进入下一轮模型请求。
-- denied tool fail-fast，并记录 policy violation。
-- workspace-mutating tool 后创建 checkpoint。
-- `workspace.finish` 结束 loop 并进入 artifact assembly。
+- run 可经历 `model -> tool -> model -> finish` 多轮循环。
+- `workspace.write_file` 写入 workspace，不写 chat。
+- 工具调用、结果、失败、耗时进入 journal。
+- mutation 成功后创建 checkpoint。
+- `workspace.finish` 后进入 artifact assembly 与 `AwaitingCommit`。
+- 模型不调用工具、未知工具、工具超轮次、非法 path 均暴露明确错误。
+
+### Phase 2B：Workspace 读改能力
+
+目标：让 Agent 能读取、检查、精确修改 workspace 文件。
+
+工具：
+
+```text
+workspace.list_files(path?: string, depth?: integer)
+workspace.read_file(path: string, start_line?: integer, line_count?: integer)
+workspace.apply_patch(path: string, old_string: string, new_string: string, replace_all?: boolean)
+```
+
+约束：
+
+- `apply_patch` 使用 Claude Code 风格的单文件精确替换，不使用 JSON hunk 数组。
+- mutating tool 维护 read-state / file version；未读、版本变化、匹配多处应返回可恢复 tool error。
+- policy denied 与 path traversal 仍 fail-fast。
+
+### Phase 2C：Chat/Skill/WorldInfo 只读上下文工具
+
+目标：把高 ROI 的只读上下文接入 Agent，但不污染 SillyTavern chat schema。
+
+候选工具：
+
+```text
+chat.search(query: string, limit?: integer, before_message_id?: string)
+chat.read_history_tail(limit?: integer)
+chat.read_history_before(message_id: string, limit?: integer)
+skill.list()
+skill.read(id: string)
+worldinfo.read_activated()
+```
+
+约束：
+
+- chat tools 只返回 snippet / stable ref，不返回可写句柄。
+- skill/worldinfo 缺失时按工具语义返回 recoverable error 或 fail-fast，不静默空结果。
+- 仍不触发 Legacy `TOOL_CALLS_*` 或 `GENERATION_*` 事件。
+
+### Phase 2D：Provider 与策略硬化
+
+目标：把工具循环从“可跑通”提升到“可长期维护”。
+
+内容：
+
+- provider schema sanitizer：canonical schema 深拷贝后按 OpenAI / Claude / Gemini / Responses 降级。
+- profile 显式声明 `tool_call_mode = native | text_protocol | disabled`。
+- tool budget、allowed tools、approval hook。
+- 前端 timeline 展示 tool events；approval UI 仅在存在需要审批的工具后启用。
+- 对 Claude/Gemini/Responses 的 tool call id、reasoning signature、native metadata 做回归测试。
 
 风险：
 
 - provider tool schema 差异。
 - 工具错误被吞掉导致模型无法自我修复。
+- 与 Legacy ToolManager 事件语义混淆。
 
 缓解：
 
-- 引入 provider-agnostic `ToolCall` / `ToolResult`。
-- 错误分为 recoverable tool error 与 system failure。
+- 内部统一 `ToolCall` / `ToolResult`，provider 差异只在 adapter 层。
+- recoverable tool error 作为 tool result 返回模型；policy/system failure fail-fast。
+- Agent timeline 只使用 `AgentRunEvent`，最终 commit 才通过既有 chat save 边界。
 
 ROI：高。  
 风险：中。

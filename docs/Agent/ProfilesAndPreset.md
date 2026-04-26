@@ -391,7 +391,9 @@ profile_switch_denied
 
 ## 12. MVP Profile
 
-Phase 1 最小 profile 可以硬编码或来自设置：
+当前状态（2026-04-26）：Phase 2A 尚未实现 profile resolution / profile routing。`profileId` 可以随 run 记录，但不会驱动模型、工具或 context policy。当前工具 registry 固定为 `workspace.write_file` 与 `workspace.finish`，输出 artifact 固定为 `output/main.md`。
+
+Phase 1/2A 最小 profile 可以理解为硬编码：
 
 ```json
 {
@@ -401,7 +403,7 @@ Phase 1 最小 profile 可以硬编码或来自设置：
     "mode": "prompt_snapshot"
   },
   "toolPolicy": {
-    "allow": [],
+    "allow": ["workspace.write_file", "workspace.finish"],
     "deny": ["*"]
   },
   "outputPolicy": {
@@ -412,5 +414,4 @@ Phase 1 最小 profile 可以硬编码或来自设置：
 }
 ```
 
-这个 profile 足以支撑 one-step Agent，同时给 Phase 2/3 留出自然扩展点。
-
+这个 profile 足以支撑 Phase 2A 最小工具循环，同时给 Phase 2B/3 留出自然扩展点。

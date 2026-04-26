@@ -29,6 +29,7 @@ pub enum AgentRunStatus {
     InitializingWorkspace,
     AssemblingContext,
     CallingModel,
+    DispatchingTool,
     ApplyingWorkspacePatch,
     CreatingCheckpoint,
     AssemblingArtifacts,
@@ -75,6 +76,47 @@ pub enum AgentRunEventLevel {
     Info,
     Warn,
     Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentToolSpec {
+    pub name: String,
+    pub model_name: String,
+    pub title: String,
+    pub description: String,
+    pub input_schema: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    #[serde(default)]
+    pub annotations: Value,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+    #[serde(default)]
+    pub provider_metadata: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentToolResult {
+    pub call_id: String,
+    pub name: String,
+    pub content: String,
+    #[serde(default)]
+    pub structured: Value,
+    #[serde(default)]
+    pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    #[serde(default)]
+    pub resource_refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

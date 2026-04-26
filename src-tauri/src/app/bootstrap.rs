@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio::sync::Semaphore;
 
+use crate::application::services::agent_model_gateway::ChatCompletionAgentModelGateway;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
@@ -211,7 +212,9 @@ pub(super) async fn build_services(
         repositories.agent_run_repository.clone(),
         repositories.workspace_repository.clone(),
         repositories.checkpoint_repository.clone(),
-        chat_completion_service.clone(),
+        Arc::new(ChatCompletionAgentModelGateway::new(
+            chat_completion_service.clone(),
+        )),
     ));
     let tokenization_service =
         Arc::new(TokenizationService::new(repositories.tokenizer_repository));

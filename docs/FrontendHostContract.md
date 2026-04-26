@@ -152,9 +152,15 @@
 
 - `api.agent`：TauriTavern Agent Run API。用于启动 Agent Run、订阅 run event、取消、审批工具、读取 workspace 文件/diff、rollback/commit。
   - 详细草案见：`docs/API/Agent.md`。
-  - `startRun()` 必须在调用 backend 前解析 `stableChatId`；`workspaceId` 由 `kind + stableChatId` 派生，`runId` 仍表示单次执行。
+  - Phase 2A 已落地最小 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`subscribe()`、`prepareCommit()`、`finalizeCommit()`、`commit()`。
+  - `startRunFromLegacyGenerate()` 是 Phase 2A 兼容入口：使用 Legacy dryRun 生成 `promptSnapshot`，再进入 Rust-owned Agent loop。
+  - `startRunWithPromptSnapshot()` 必须在调用 backend 前解析 `stableChatId`；`workspaceId` 由 `kind + stableChatId` 派生，`runId` 仍表示单次执行。
+  - 不存在公共 `startRun()` alias；启动入口必须通过名称表达来源和职责。
+  - Legacy `Generate(..., dryRun = true)` 不返回 payload；Agent adapter 必须通过 `GENERATE_AFTER_DATA` 事件捕获 `generate_data`。
+  - Phase 2A 仅开放 `workspace_write_file` / `workspace_finish` 两个模型可见工具；工具注册由 Rust runtime 独占，前端 Legacy ToolManager tools 必须禁用。
+  - Phase 2A 显式拒绝 `stream: true`、`autoCommit: true`、external tools、external tool choice 和已有 tool turns。
   - Agent event 属于 Agent Run journal/timeline 投影，不得伪装成上游 SillyTavern `GENERATION_*` / `TOOL_CALLS_*` 事件。
-  - `subscribe()` 必须返回幂等 `unsubscribe`；底层 Tauri 事件名与 Rust command 名属于 Internal，不是第三方 Public Contract。
+  - `subscribe()` 当前是 polling wrapper，必须返回幂等 `unsubscribe`；底层 Tauri 事件名与 Rust command 名属于 Internal，不是第三方 Public Contract。
   - Agent Mode off 时，Legacy `Generate()`、`ToolManager`、`api.chat` 行为必须不变。
 
 - `api.mcp`（规划中）：MCP Server/Tool/Resource/Prompt 的独立平台 API。Agent Mode 可以消费 MCP，但 MCP 不依附 Agent Mode。

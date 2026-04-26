@@ -107,10 +107,10 @@ native metadata round-trip
 
 ```text
 window.__TAURITAVERN__.api.agent exists after ready
-window.__TAURITAVERN__.api.mcp exists after ready
+window.__TAURITAVERN__.api.mcp exists after ready (Phase 5)
 subscribe returns idempotent unsubscribe
 Agent API uses safeInvoke, not raw command dependency in public caller
-types.d.ts includes agent/mcp types
+types.d.ts includes agent types; mcp types are Phase 5
 ```
 
 Legacy 回归：
@@ -121,6 +121,21 @@ Agent mode off: GENERATION_STARTED order unchanged
 Agent mode off: GENERATE_AFTER_DATA dryRun still emitted
 Agent mode off: ToolManager legacy behavior unchanged
 Agent event does not emit fake GENERATION_* events
+```
+
+Phase 2A 还必须覆盖：
+
+```text
+api.agent exposes startRunFromLegacyGenerate and startRunWithPromptSnapshot
+api.agent does not expose ambiguous startRun alias
+Generate(..., dryRun = true) resolves undefined and emits GENERATE_AFTER_DATA
+startRunFromLegacyGenerate captures dryRun payload through event listener
+agentMode disables Legacy ToolManager tools in prompt snapshot
+external tools/tool_choice/tool turns are rejected
+stream true and autoCommit true are rejected
+subscribe polling can read events in seq order
+readWorkspaceFile returns UTF-8 text, bytes, sha256
+future APIs approveToolCall/listRuns/readDiff/rollback throw explicitly
 ```
 
 ## 7. Windowed Payload Integration Tests
@@ -194,6 +209,16 @@ Golden fixtures 应尽量脱敏，不包含真实 API key 或私人聊天。
 
 ## 11. Phase Gates
 
+Phase 2A 当前落地门禁：
+
+- 后端 `cargo test --manifest-path src-tauri/Cargo.toml agent --lib` 通过。
+- 后端 `cargo check --manifest-path src-tauri/Cargo.toml` 通过。
+- 前端 `pnpm run check:types`、`pnpm run check:contracts`、`pnpm run check:frontend` 通过。
+- 控制台 smoke 能通过 `startRunFromLegacyGenerate()` 启动 run。
+- 控制台多阶段 smoke 能依次写入 `plan/outline.md`、`scratch/draft.md`、`summaries/revision_notes.md`、`output/main.md` 并进入 `awaiting_commit`。
+- `commit()` 能把 `output/main.md` 写入当前 active chat，并追加 `run_committed` / `run_completed`。
+- Agent Mode off 的 Legacy Generate 行为不变。
+
 Phase 1 不合并，除非：
 
 - one-step run 测试通过。
@@ -219,4 +244,3 @@ Phase 5 不合并，除非：
 - MCP stdio command allowlist 测试通过。
 - dangerous tool approval 测试通过。
 - Agent 不能编辑 MCP config。
-

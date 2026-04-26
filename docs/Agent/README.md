@@ -21,3 +21,5 @@
 ## 进度跟踪
 
 实时开发进度不写在本目录；请更新 `docs/CurrentState/AgentFramework.md`。
+
+截至 2026-04-26，Phase 2A 已落地最小工具循环与前端 dryRun adapter。当前真实能力边界以 `docs/CurrentState/AgentFramework.md` 为准；本目录中的部分内容仍是后续 Phase 2B+ / Phase 3+ 设计。

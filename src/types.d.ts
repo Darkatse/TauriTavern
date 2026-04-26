@@ -112,8 +112,15 @@ type TauriTavernAgentRunEvent = {
     payload?: any;
 };
 
+type TauriTavernAgentRunHandle = {
+    runId: string;
+    workspaceId: string;
+    stableChatId: string;
+    status: TauriTavernAgentRunStatus;
+};
+
 type TauriTavernAgentApi = {
-    startRun: (input: {
+    startRunWithPromptSnapshot: (input: {
         chatRef: TauriTavernChatRef;
         stableChatId?: string;
         generationType?: string;
@@ -121,12 +128,16 @@ type TauriTavernAgentApi = {
         promptSnapshot: any;
         generationIntent?: any;
         options?: { autoCommit?: boolean; stream?: boolean };
-    }) => Promise<{
-        runId: string;
-        workspaceId: string;
-        stableChatId: string;
-        status: TauriTavernAgentRunStatus;
-    }>;
+    }) => Promise<TauriTavernAgentRunHandle>;
+    startRunFromLegacyGenerate: (input?: {
+        chatRef?: TauriTavernChatRef;
+        stableChatId?: string;
+        generationType?: string;
+        generateOptions?: Record<string, any>;
+        profileId?: string | null;
+        generationIntent?: any;
+        options?: { autoCommit?: false; stream?: false };
+    }) => Promise<TauriTavernAgentRunHandle>;
     cancel: (runId: string) => Promise<{
         runId: string;
         workspaceId: string;
