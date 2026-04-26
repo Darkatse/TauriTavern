@@ -5,6 +5,20 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
+struct AppIconSet: Decodable {
+  let images: [AppIconImage]
+}
+
+struct AppIconImage: Decodable {
+  let filename: String?
+  let appearances: [AppIconAppearance]?
+}
+
+struct AppIconAppearance: Decodable {
+  let appearance: String
+  let value: String
+}
+
 struct HexColor {
   let red: CGFloat
   let green: CGFloat
@@ -20,6 +34,62 @@ struct HexColor {
     green = CGFloat((value >> 8) & 0xFF) / 255.0
     blue = CGFloat(value & 0xFF) / 255.0
   }
+}
+
+func loadAppIconSet(at url: URL) throws -> AppIconSet {
+  let contentsURL = url.appendingPathComponent("Contents.json")
+  let data = try Data(contentsOf: contentsURL)
+  return try JSONDecoder().decode(AppIconSet.self, from: data)
+}
+
+func luminosityValues(for image: AppIconImage) -> Set<String> {
+  Set((image.appearances ?? [])
+    .filter { $0.appearance == "luminosity" }
+    .map(\.value))
+}
+
+func requireIconVariantFiles(
+  appIconSet: AppIconSet,
+  appIconSetURL: URL,
+  fileManager: FileManager
+) throws -> Set<String> {
+  var primaryFilenames = Set<String>()
+  var darkFilenames = Set<String>()
+  var tintedFilenames = Set<String>()
+
+  for image in appIconSet.images {
+    guard let filename = image.filename else {
+      continue
+    }
+
+    let values = luminosityValues(for: image)
+    if values.isEmpty {
+      primaryFilenames.insert(filename)
+    }
+    if values.contains("dark") {
+      darkFilenames.insert(filename)
+    }
+    if values.contains("tinted") {
+      tintedFilenames.insert(filename)
+    }
+  }
+
+  if primaryFilenames.isEmpty || darkFilenames.isEmpty || tintedFilenames.isEmpty {
+    throw NSError(domain: "ios-opaque-app-icons", code: 6, userInfo: [
+      NSLocalizedDescriptionKey: "AppIcon.appiconset must define Any, Dark, and Tinted icon variants"
+    ])
+  }
+
+  for filename in primaryFilenames.union(darkFilenames).union(tintedFilenames) {
+    let fileURL = appIconSetURL.appendingPathComponent(filename)
+    guard fileManager.fileExists(atPath: fileURL.path) else {
+      throw NSError(domain: "ios-opaque-app-icons", code: 7, userInfo: [
+        NSLocalizedDescriptionKey: "AppIcon.appiconset references missing icon file: \(filename)"
+      ])
+    }
+  }
+
+  return primaryFilenames
 }
 
 func flattenPNG(at url: URL, background: HexColor) throws {
@@ -85,7 +155,7 @@ guard let appIconSetArgument = arguments.first else {
   exit(64)
 }
 
-let background = HexColor(arguments.dropFirst().first ?? "FFF3D6")
+let background = HexColor(arguments.dropFirst().first ?? "FFFAF2")
 let appIconSetURL = URL(fileURLWithPath: appIconSetArgument, isDirectory: true)
 let fileManager = FileManager.default
 
@@ -93,12 +163,20 @@ guard fileManager.fileExists(atPath: appIconSetURL.path) else {
   exit(0)
 }
 
+let appIconSet = try loadAppIconSet(at: appIconSetURL)
+let primaryIconFilenames = try requireIconVariantFiles(
+  appIconSet: appIconSet,
+  appIconSetURL: appIconSetURL,
+  fileManager: fileManager
+)
+
 let pngURLs = try fileManager.contentsOfDirectory(
   at: appIconSetURL,
   includingPropertiesForKeys: nil,
   options: [.skipsHiddenFiles]
 )
   .filter { $0.pathExtension.lowercased() == "png" }
+  .filter { primaryIconFilenames.contains($0.lastPathComponent) }
 
 for pngURL in pngURLs {
   try flattenPNG(at: pngURL, background: background)

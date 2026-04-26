@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -17,6 +18,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const YUAN_PRESET_PATH = path.join(REPO_ROOT, '.cache', 'Yuan ultranova 0.4.json');
 const SILLYTAVERN_OPENAI_PATH = path.join(REPO_ROOT, 'sillytavern-1.16.0', 'public', 'scripts', 'openai.js');
 const SILLYTAVERN_PROMPT_MANAGER_PATH = path.join(REPO_ROOT, 'sillytavern-1.16.0', 'public', 'scripts', 'PromptManager.js');
+const TAURITAVERN_OPENAI_PATH = path.join(REPO_ROOT, 'src', 'scripts', 'openai.js');
 
 const DEFAULT_ORDER_ID = 100000;
 const COMPLEX_YUAN_ORDER_ID = 100001;
@@ -69,6 +71,14 @@ test('SillyTavern 1.16.0 prompt-position baseline is the contract mirrored by th
     assert.match(openaiSource, /prompt\.injection_position !== INJECTION_POSITION\.ABSOLUTE/);
     assert.match(openaiSource, /prompt\.injection_position === INJECTION_POSITION\.ABSOLUTE/);
     assert.match(openaiSource, /prompt\.injection_position = collectionPrompt\.injection_position \?\? prompt\.injection_position/);
+});
+
+test('TauriTavern OpenAI prompt assembly module parses before app bootstrap', () => {
+    const result = spawnSync(process.execPath, ['--check', TAURITAVERN_OPENAI_PATH], {
+        encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
 test('Yuan ultranova preset prompt assembly matches SillyTavern for every prompt order in the preset', async () => {

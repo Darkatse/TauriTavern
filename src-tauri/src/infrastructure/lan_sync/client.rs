@@ -75,10 +75,7 @@ pub async fn merge_sync_from_device(
             .text()
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?;
-        return Err(DomainError::AuthenticationError(format!(
-            "Sync plan failed ({}): {}",
-            status, body
-        )));
+        return Err(sync_plan_failure_error(status, body));
     }
 
     let plan = response
@@ -275,6 +272,17 @@ async fn download_one(
     })
 }
 
+fn sync_plan_failure_error(status: reqwest::StatusCode, body: String) -> DomainError {
+    let message = format!("Sync plan failed ({}): {}", status, body);
+
+    match status.as_u16() {
+        400 | 413 => DomainError::InvalidData(message),
+        401 | 403 => DomainError::AuthenticationError(message),
+        404 => DomainError::NotFound(message),
+        _ => DomainError::InternalError(message),
+    }
+}
+
 fn build_source_url(address: &str, segments: &[&str]) -> Result<Url, DomainError> {
     let mut url =
         Url::parse(address).map_err(|error| DomainError::InvalidData(error.to_string()))?;
@@ -288,6 +296,32 @@ fn build_source_url(address: &str, segments: &[&str]) -> Result<Url, DomainError
     }
 
     Ok(url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sync_plan_failure_error;
+    use crate::domain::errors::DomainError;
+
+    #[test]
+    fn sync_plan_payload_too_large_is_invalid_data() {
+        let error = sync_plan_failure_error(
+            reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+            "length limit exceeded".to_owned(),
+        );
+
+        assert!(matches!(error, DomainError::InvalidData(_)));
+    }
+
+    #[test]
+    fn sync_plan_unauthorized_is_authentication_error() {
+        let error = sync_plan_failure_error(
+            reqwest::StatusCode::UNAUTHORIZED,
+            "Unknown device".to_owned(),
+        );
+
+        assert!(matches!(error, DomainError::AuthenticationError(_)));
+    }
 }
 
 fn build_source_file_url(address: &str, relative_path: &str) -> Result<Url, DomainError> {

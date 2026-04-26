@@ -431,13 +431,47 @@ async fn ensure_success(
         .text()
         .await
         .map_err(|error| DomainError::InternalError(error.to_string()))?;
-    let message = format!("{} ({}): {}", context, status, body);
+    let message = response_error_message(context, status, body);
 
+    Err(response_error(status, message))
+}
+
+fn response_error_message(context: &str, status: reqwest::StatusCode, body: String) -> String {
+    format!("{} ({}): {}", context, status, body)
+}
+
+fn response_error(status: reqwest::StatusCode, message: String) -> DomainError {
     match status.as_u16() {
-        400 => Err(DomainError::InvalidData(message)),
-        401 => Err(DomainError::AuthenticationError(message)),
-        404 => Err(DomainError::NotFound(message)),
-        _ => Err(DomainError::InternalError(message)),
+        400 | 413 => DomainError::InvalidData(message),
+        401 | 403 => DomainError::AuthenticationError(message),
+        404 => DomainError::NotFound(message),
+        _ => DomainError::InternalError(message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::response_error;
+    use crate::domain::errors::DomainError;
+
+    #[test]
+    fn payload_too_large_is_invalid_data() {
+        let error = response_error(
+            reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+            "TT-Sync pull plan failed (413 Payload Too Large): length limit exceeded".to_owned(),
+        );
+
+        assert!(matches!(error, DomainError::InvalidData(_)));
+    }
+
+    #[test]
+    fn unauthorized_is_authentication_error() {
+        let error = response_error(
+            reqwest::StatusCode::UNAUTHORIZED,
+            "invalid session".to_owned(),
+        );
+
+        assert!(matches!(error, DomainError::AuthenticationError(_)));
     }
 }
 

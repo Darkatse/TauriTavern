@@ -98,7 +98,7 @@ export function isTauriChatPayloadTransportEnabled() {
     return getChatHistoryBootstrapModeName() === CHAT_HISTORY_MODE_WINDOWED;
 }
 
-export async function loadCharacterChatPayload({ characterName, avatarUrl, fileName, allowNotFound = true }) {
+export async function loadCharacterChatPayload({ characterName, avatarUrl, fileName, allowNotFound = false }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
     if (!normalizedCharacter || !normalizedFile) {
@@ -122,7 +122,7 @@ export async function loadCharacterChatPayload({ characterName, avatarUrl, fileN
     return jsonlStreamToPayload(stream);
 }
 
-export async function loadCharacterChatPayloadTail({ characterName, avatarUrl, fileName, maxLines, allowNotFound = true }) {
+export async function loadCharacterChatPayloadTail({ characterName, avatarUrl, fileName, maxLines, allowNotFound = false }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
     if (!normalizedCharacter || !normalizedFile) {
@@ -251,7 +251,7 @@ export async function patchCharacterChatPayloadWindowed({ characterName, avatarU
     });
 }
 
-export async function loadGroupChatPayload({ id, allowNotFound = true }) {
+export async function loadGroupChatPayload({ id, allowNotFound = false }) {
     const normalizedId = normalizeChatFileName(id);
     if (!normalizedId) {
         throw new Error('Invalid group chat payload request');
@@ -273,7 +273,7 @@ export async function loadGroupChatPayload({ id, allowNotFound = true }) {
     return jsonlStreamToPayload(stream);
 }
 
-export async function loadGroupChatPayloadTail({ id, maxLines, allowNotFound = true }) {
+export async function loadGroupChatPayloadTail({ id, maxLines, allowNotFound = false }) {
     const normalizedId = normalizeChatFileName(id);
     if (!normalizedId) {
         throw new Error('Invalid group chat tail request');

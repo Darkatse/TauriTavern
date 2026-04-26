@@ -10,7 +10,7 @@ import { debounce, waitUntilCondition, escapeHtml, uuidv4 } from './utils.js';
 import { debounce_timeout } from './constants.js';
 import { renderTemplateAsync } from './templates.js';
 import { Popup } from './popup.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { isMobile } from './RossAscends-mods.js';
 import { INJECTION_POSITION, getPromptInjectionPosition } from './prompt-injections.js';
 
@@ -1759,6 +1759,9 @@ class PromptManager {
             }
 
             const encodedName = escapeHtml(prompt.name);
+            const attachSideText = prompt.attach_side === 'start'
+                ? translate('Prepend')
+                : translate('Append');
             const injectionPosition = getPromptInjectionPosition(prompt);
             const isMarkerPrompt = prompt.marker && injectionPosition === INJECTION_POSITION.RELATIVE;
             const isSystemPrompt = !prompt.marker && prompt.system_prompt && injectionPosition === INJECTION_POSITION.RELATIVE && !prompt.forbid_overrides;
@@ -1792,7 +1795,7 @@ class PromptManager {
                         ${roleIcon ? `<span data-role="${escapeHtml(prompt.role)}" class="fa-xs fa-solid ${roleIcon}" title="${roleTitle}"></span>` : ''}
                         ${isInjectionPrompt ? `<small class="prompt-manager-injection-depth">@ ${escapeHtml(prompt.injection_depth.toString())}</small>` : ''}
                         ${isAttachedPrompt
-                            ? `<small class="prompt-manager-injection-depth">${escapeHtml(prompt.attach_side === 'start' ? 'Prepend' : 'Append')} to ${escapeHtml(prompt.attach_role)} ${escapeHtml(String(prompt.attach_index))}</small>`
+                            ? `<small class="prompt-manager-injection-depth">${escapeHtml(attachSideText)} to ${escapeHtml(prompt.attach_role)} ${escapeHtml(String(prompt.attach_index))}</small>`
                             : ''}
                         ${isOverriddenPrompt ? '<small class="fa-solid fa-address-card prompt-manager-overridden" title="Pulled from a character card"></small>' : ''}
                     </span>

@@ -9,6 +9,7 @@ use crate::domain::repositories::chat_repository::{ChatPayloadCursor, ChatPayloa
 use crate::infrastructure::logging::logger;
 
 use super::FileChatRepository;
+use super::integrity::verify_integrity_match;
 use super::windowed_payload_io::{
     WINDOW_READ_CHUNK_BYTES, cursor_from_metadata, ensure_parent_dir,
     extract_integrity_slug_from_header_line, map_open_existing_error, open_existing_payload_file,
@@ -225,14 +226,8 @@ async fn patch_payload_windowed_internal(
     }
 
     if !force {
-        if let Some(incoming) = header_integrity {
-            let existing = extract_integrity_slug_from_header_line(&existing_header)?;
-            if let Some(existing) = existing {
-                if existing != incoming {
-                    return Err(DomainError::InvalidData("integrity".to_string()));
-                }
-            }
-        }
+        let existing = extract_integrity_slug_from_header_line(&existing_header)?;
+        verify_integrity_match(existing.as_deref(), header_integrity.as_deref())?;
     }
 
     let header_changed = match (

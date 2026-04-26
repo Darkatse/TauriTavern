@@ -4,6 +4,39 @@ import { saveTtsProviderSettings } from './index.js';
 export { SystemTtsProvider };
 import { t } from '../../i18n.js';
 
+const SPEECH_SYNTHESIS_UNSUPPORTED_MESSAGE = 'Speech synthesis API is not supported in this WebView';
+
+function getSpeechSynthesisApi() {
+    const synth = window.speechSynthesis;
+    const Utterance = window.SpeechSynthesisUtterance;
+
+    if (
+        typeof synth?.speak !== 'function' ||
+        typeof synth?.getVoices !== 'function' ||
+        typeof synth?.cancel !== 'function' ||
+        typeof Utterance !== 'function'
+    ) {
+        return null;
+    }
+
+    return { synth, Utterance };
+}
+
+function createSpeechSynthesisUnsupportedError() {
+    const error = new Error(SPEECH_SYNTHESIS_UNSUPPORTED_MESSAGE);
+    error.severity = 'warning';
+    return error;
+}
+
+function getRequiredSpeechSynthesisApi() {
+    const api = getSpeechSynthesisApi();
+    if (!api) {
+        throw createSpeechSynthesisUnsupportedError();
+    }
+
+    return api;
+}
+
 /**
  * Chunkify
  * Google Chrome Speech Synthesis Chunking Pattern
@@ -43,7 +76,8 @@ var speechUtteranceChunker = function (utt, settings, callback) {
             return;
         }
         var chunk = chunkArr[0];
-        newUtt = new SpeechSynthesisUtterance(chunk);
+        const { Utterance } = getRequiredSpeechSynthesisApi();
+        newUtt = new Utterance(chunk);
         var x;
         for (x in utt) {
             if (Object.hasOwn(utt, x) && x !== 'text') {
@@ -70,8 +104,9 @@ var speechUtteranceChunker = function (utt, settings, callback) {
     }
     console.log(newUtt); //IMPORTANT!! Do not remove: Logging the object out fixes some onend firing issues.
     //placing the speak invocation inside a callback fixes ordering and onend issues.
+    const { synth } = getRequiredSpeechSynthesisApi();
     setTimeout(function () {
-        speechSynthesis.speak(newUtt);
+        synth.speak(newUtt);
     }, 0);
 };
 
@@ -96,7 +131,7 @@ class SystemTtsProvider {
     };
 
     get settingsHtml() {
-        if (!('speechSynthesis' in window)) {
+        if (!getSpeechSynthesisApi()) {
             return t`Your browser or operating system doesn't support speech synthesis`;
         }
 
@@ -122,16 +157,18 @@ class SystemTtsProvider {
         }
 
         // iOS should only allows speech synthesis trigged by user interaction
-        if (isMobile()) {
+        const speechSynthesisApi = getSpeechSynthesisApi();
+        if (isMobile() && speechSynthesisApi) {
+            const { synth, Utterance } = speechSynthesisApi;
             let hasEnabledVoice = false;
 
             document.addEventListener('click', () => {
                 if (hasEnabledVoice) {
                     return;
                 }
-                const utterance = new SpeechSynthesisUtterance(' . ');
+                const utterance = new Utterance(' . ');
                 utterance.volume = 0;
-                speechSynthesis.speak(utterance);
+                synth.speak(utterance);
                 hasEnabledVoice = true;
             });
         }
@@ -161,7 +198,7 @@ class SystemTtsProvider {
 
     // Perform a simple readiness check by trying to fetch voiceIds
     async checkReady() {
-        await this.fetchTtsVoiceObjects();
+        getRequiredSpeechSynthesisApi();
     }
 
     async onRefreshClick() {
@@ -172,13 +209,11 @@ class SystemTtsProvider {
     //  TTS Interfaces //
     //#################//
     fetchTtsVoiceObjects() {
-        if (!('speechSynthesis' in window)) {
-            return Promise.resolve([]);
-        }
+        const { synth } = getRequiredSpeechSynthesisApi();
 
         return new Promise((resolve) => {
             setTimeout(() => {
-                let voices = speechSynthesis.getVoices();
+                let voices = synth.getVoices();
 
                 if (voices.length === 0) {
                     // Edge compat: Provide default when voices empty
@@ -201,13 +236,11 @@ class SystemTtsProvider {
     }
 
     previewTtsVoice(voiceId) {
-        if (!('speechSynthesis' in window)) {
-            throw new Error('Speech synthesis API is not supported');
-        }
+        const { synth, Utterance } = getRequiredSpeechSynthesisApi();
 
         let voice = null;
         if (voiceId !== SystemTtsProvider.BROWSER_DEFAULT_VOICE_ID) {
-            const voices = speechSynthesis.getVoices();
+            const voices = synth.getVoices();
             voice = voices.find(x => x.voiceURI === voiceId);
 
             if (!voice && voices.length > 0) {
@@ -219,10 +252,10 @@ class SystemTtsProvider {
             console.log('SystemTTS Preview: Using browser default voice as requested.');
         }
 
-        speechSynthesis.cancel();
+        synth.cancel();
         const langForPreview = voice ? voice.lang : (navigator.language || 'en-US');
         const text = getPreviewString(langForPreview);
-        const utterance = new SpeechSynthesisUtterance(text);
+        const utterance = new Utterance(text);
 
         if (voice) {
             utterance.voice = voice;
@@ -235,13 +268,11 @@ class SystemTtsProvider {
             console.error(`SystemTTS Preview Error: ${event.error}`, event);
         };
 
-        speechSynthesis.speak(utterance);
+        synth.speak(utterance);
     }
 
     async getVoice(voiceName) {
-        if (!('speechSynthesis' in window)) {
-            return { voice_id: null, name: 'API Not Supported' };
-        }
+        const { synth } = getRequiredSpeechSynthesisApi();
 
         if (voiceName === SystemTtsProvider.BROWSER_DEFAULT_VOICE_NAME) {
             return {
@@ -250,7 +281,7 @@ class SystemTtsProvider {
             };
         }
 
-        const voices = speechSynthesis.getVoices();
+        const voices = synth.getVoices();
 
         if (voices.length === 0) {
             console.warn('SystemTTS: Empty voice list, using default fallback');
@@ -270,16 +301,14 @@ class SystemTtsProvider {
     }
 
     async generateTts(text, voiceId) {
-        if (!('speechSynthesis' in window)) {
-            throw 'Speech synthesis API is not supported';
-        }
+        const { synth, Utterance } = getRequiredSpeechSynthesisApi();
 
         const silence = await fetch('/sounds/silence.mp3');
 
         return new Promise((resolve, reject) => {
-            const voices = speechSynthesis.getVoices();
+            const voices = synth.getVoices();
             const voice = voices.find(x => x.voiceURI === voiceId);
-            const utterance = new SpeechSynthesisUtterance(text);
+            const utterance = new Utterance(text);
             utterance.voice = voice;
             utterance.rate = this.settings.rate || 1;
             utterance.pitch = this.settings.pitch || 1;

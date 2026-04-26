@@ -56,6 +56,23 @@ fn payload_with_integrity(integrity: &str) -> Vec<Value> {
     ]
 }
 
+fn payload_without_integrity() -> Vec<Value> {
+    vec![
+        json!({
+            "chat_metadata": {},
+            "user_name": "unused",
+            "character_name": "unused",
+        }),
+        json!({
+            "name": "User",
+            "is_user": true,
+            "send_date": "2026-01-01T00:00:00.000Z",
+            "mes": "hello",
+            "extra": {},
+        }),
+    ]
+}
+
 fn payload_with_message(
     integrity: &str,
     send_date: &str,
@@ -242,6 +259,41 @@ async fn save_chat_payload_from_path_enforces_integrity() {
         .await
         .expect("load chat payload bytes");
     assert_eq!(loaded_bytes, payload_b.as_bytes());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn save_chat_payload_from_path_rejects_missing_integrity_when_existing_has_one() {
+    let (repository, root) = setup_repository().await;
+
+    let source_a = root.join("source-with-integrity.jsonl");
+    let payload_a = payload_to_jsonl(&payload_with_integrity("path-a"));
+    fs::write(&source_a, &payload_a)
+        .await
+        .expect("write source payload with integrity");
+
+    repository
+        .save_chat_payload_from_path("alice", "session", &source_a, false)
+        .await
+        .expect("save payload from source file");
+
+    let source_b = root.join("source-without-integrity.jsonl");
+    let payload_b = payload_to_jsonl(&payload_without_integrity());
+    fs::write(&source_b, &payload_b)
+        .await
+        .expect("write source payload without integrity");
+
+    let error = repository
+        .save_chat_payload_from_path("alice", "session", &source_b, false)
+        .await
+        .expect_err("save should fail when incoming integrity is missing");
+    assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
+
+    repository
+        .save_chat_payload_from_path("alice", "session", &source_b, true)
+        .await
+        .expect("forced save should bypass missing integrity check");
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -1804,6 +1856,48 @@ async fn patch_chat_payload_windowed_appends_and_rewrites_tail() {
         .map(|line| serde_json::from_str::<Value>(line).expect("parse json line"))
         .collect::<Vec<_>>();
     assert_eq!(values.len(), 2);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn patch_chat_payload_windowed_rejects_missing_integrity_when_existing_has_one() {
+    let (repository, root) = setup_repository().await;
+
+    let character_name = "alice";
+    let file_name = "session";
+    let payload = payload_with_integrity("patch-a");
+
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        character_name,
+        file_name,
+        &payload,
+        false,
+    )
+    .await
+    .expect("save initial payload");
+
+    let tail = repository
+        .get_chat_payload_tail_lines(character_name, file_name, 100)
+        .await
+        .expect("get tail");
+    let missing_integrity_header =
+        serde_json::to_string(&payload_without_integrity()[0]).expect("serialize header");
+
+    let error = repository
+        .patch_chat_payload_windowed(
+            character_name,
+            file_name,
+            tail.cursor,
+            missing_integrity_header,
+            ChatPayloadPatchOp::Append { lines: Vec::new() },
+            false,
+        )
+        .await
+        .expect_err("patch should fail when incoming integrity is missing");
+    assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
 
     let _ = fs::remove_dir_all(&root).await;
 }

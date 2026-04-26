@@ -12,6 +12,7 @@ use crate::domain::repositories::chat_repository::{
 use crate::infrastructure::logging::logger;
 
 use super::FileChatRepository;
+use super::integrity::verify_integrity_match;
 use super::windowed_payload_io::*;
 
 async fn read_tail_lines_with_offsets(
@@ -365,14 +366,8 @@ async fn save_payload_windowed_internal(
     }
 
     if !force {
-        if let Some(incoming) = header_integrity {
-            let existing = extract_integrity_slug_from_header_line(&existing_header)?;
-            if let Some(existing) = existing {
-                if existing != incoming {
-                    return Err(DomainError::InvalidData("integrity".to_string()));
-                }
-            }
-        }
+        let existing = extract_integrity_slug_from_header_line(&existing_header)?;
+        verify_integrity_match(existing.as_deref(), header_integrity.as_deref())?;
     }
 
     let header_changed = match (

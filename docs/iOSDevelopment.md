@@ -178,3 +178,50 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 iOS 外测/内测分发裁剪与能力分级已落地为 iOS-only 的 `ios_policy` 运行时系统（可被导入 `tauritavern-settings.json` 覆盖 profile/能力边界，且 iOS 上 fail-fast、桌面端忽略）。
 
 - 当前实现快照：`docs/CurrentState/iOSPolicy.md`
+
+## 6. iOS 18+ App Icon 外观变体
+
+### 6.1 现象
+
+iOS 深色图标模式下，App 放入文件夹后可能出现“文件夹外仍是普通图标，打开文件夹后变成深色图标”的不一致表现。
+
+### 6.2 根因
+
+iOS 18+ 支持 Home Screen 图标的 `Any` / `Dark` / `Tinted` 外观。若 AppIcon 只提供传统多尺寸 `Any` 图标，系统会自动生成深色/着色效果；文件夹缩略图和展开文件夹可能走不同缓存或渲染路径，从而出现外观不一致。
+
+### 6.3 当前方案
+
+`AppIcon.appiconset` 改为 Xcode single-size 1024px 源图，并显式提供：
+
+- `AppIcon-Light.png`：基础 `Any` 图标，不透明背景。
+- `AppIcon-Dark.png`：深色图标，透明背景，交给系统深色底承载。
+- `AppIcon-Tinted.png`：着色图标，透明背景，灰度前景。
+
+维护入口：
+
+- 生成脚本：`scripts/generate-ios-app-icon-variants.swift`
+- 构建期校验/展平：`scripts/ios-opaque-app-icons.swift`
+- 资产目录：`src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset`
+
+重新生成：
+
+```sh
+xcrun --sdk macosx swift scripts/generate-ios-app-icon-variants.swift \
+  src-tauri/icons/icon.png \
+  src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset
+```
+
+回归验证：
+
+```sh
+xcrun actool --compile /tmp/tt-appicon \
+  --platform iphonesimulator \
+  --minimum-deployment-target 16.0 \
+  --app-icon AppIcon \
+  --output-partial-info-plist /tmp/tt-appicon/partial.plist \
+  src-tauri/gen/apple/Assets.xcassets
+
+xcrun assetutil --info /tmp/tt-appicon/Assets.car
+```
+
+输出应包含 `UIAppearanceDark` 与 `ISAppearanceTintable`。若未来重新运行 `tauri icon`，必须重新生成并保留这三个 appearance 变体。

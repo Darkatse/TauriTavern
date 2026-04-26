@@ -209,17 +209,20 @@ async function regenerateGroup() {
  * @param {string} chatId Chat ID
  * @returns {Promise<ChatFile>} Array of chat messages
  */
-async function loadGroupChat(chatId, { updateWindowState = false } = {}) {
+async function loadGroupChat(chatId, { updateWindowState = false, allowNotFound = false } = {}) {
     const normalizedChatId = String(chatId || '').trim();
     if (!normalizedChatId) {
-        return [];
+        if (allowNotFound) {
+            return [];
+        }
+        throw new Error('Invalid group chat payload request');
     }
 
     if (isTauriChatPayloadTransportEnabled()) {
         const window = await loadGroupChatPayloadTail({
             id: normalizedChatId,
             maxLines: DEFAULT_CHAT_WINDOW_LINES,
-            allowNotFound: true,
+            allowNotFound,
         });
 
         if (updateWindowState && String(getCurrentChatId() || '').trim() === normalizedChatId) {
@@ -245,18 +248,38 @@ async function loadGroupChat(chatId, { updateWindowState = false } = {}) {
     const response = await fetch('/api/chats/group/get', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ id: normalizedChatId }),
+        body: JSON.stringify({ id: normalizedChatId, allow_not_found: allowNotFound }),
     });
 
-    if (response.ok) {
-        const data = await response.json();
-        if (!Array.isArray(data)) {
-            return [];
-        }
-        return data;
+    if (!response.ok) {
+        throw new Error('Group chat could not be loaded');
     }
 
-    return [];
+    const data = await response.json();
+    if (!Array.isArray(data)) {
+        throw new Error('Group chat payload response is invalid');
+    }
+
+    return data;
+}
+
+async function hasPersistedGroupChats(groupId) {
+    const response = await fetch('/api/chats/search', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ group_id: groupId }),
+    });
+
+    if (!response.ok) {
+        throw new Error('Group chat list could not be loaded');
+    }
+
+    const data = await response.json();
+    if (!Array.isArray(data)) {
+        throw new Error('Group chat list response is invalid');
+    }
+
+    return data.length > 0;
 }
 
 /**
@@ -301,7 +324,7 @@ async function validateGroup(group) {
  * @param {boolean} reload - Whether to reload the group chat after loading.
  * @returns {Promise<void>} A promise that resolves when the chat messages have been loaded.
  */
-export async function getGroupChat(groupId, reload = false) {
+export async function getGroupChat(groupId, reload = false, { allowNewChat = false } = {}) {
     const group = groups.find((x) => x.id === groupId);
     if (!group) {
         console.warn('Group not found', groupId);
@@ -323,12 +346,12 @@ export async function getGroupChat(groupId, reload = false) {
     }
 
     const chat_id = group.chat_id;
-    const data = await loadGroupChat(chat_id, { updateWindowState: true });
+    const data = await loadGroupChat(chat_id, { updateWindowState: true, allowNotFound: allowNewChat });
     if (!isStillActive()) {
         return;
     }
     const metadata = data?.[0]?.chat_metadata ?? {};
-    const freshChat = !metadata.tainted && (!Array.isArray(data) || !data.length);
+    const freshChat = allowNewChat && !metadata.tainted && (!Array.isArray(data) || !data.length);
 
     // Remove chat file header if present
     if (Array.isArray(data) && data.length && Object.hasOwn(data[0], 'chat_metadata')) {
@@ -2200,9 +2223,11 @@ export async function openGroupById(groupId) {
     }
 
     if (!is_send_press && !is_group_generating) {
+        const switchingGroup = selected_group !== groupId;
+        const allowNewChat = switchingGroup ? !(await hasPersistedGroupChats(groupId)) : false;
         select_group_chats(groupId, false);
 
-        if (selected_group !== groupId) {
+        if (switchingGroup) {
             groupChatQueueOrder = new Map();
             setCharacterId(undefined);
             setCharacterName('');
@@ -2212,7 +2237,7 @@ export async function openGroupById(groupId) {
             selected_group = groupId;
             setEditedMessageId(undefined);
             updateChatMetadata({}, true);
-            await getGroupChat(groupId);
+            await getGroupChat(groupId, false, { allowNewChat });
             return true;
         }
     }
@@ -2324,7 +2349,7 @@ export async function createNewGroupChat(groupId) {
     updateChatMetadata({}, true);
 
     await editGroup(group.id, true, false);
-    await getGroupChat(group.id);
+    await getGroupChat(group.id, false, { allowNewChat: true });
 }
 
 /**
