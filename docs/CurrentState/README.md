@@ -63,3 +63,7 @@
 12. `docs/CurrentState/iOSPolicy.md`
    - iOS/iPadOS-only 分发 Policy（profile + capabilities snapshot）当前实现快照
    - 包含 settings 契约、baseline 矩阵、后端裁决点与前端 UI 投影的维护约束
+
+13. `docs/CurrentState/AgentFramework.md`
+   - Agent 框架实时开发进度跟踪
+   - 当前仅记录规划/实施准备状态；具体架构与细节设计见 `docs/AgentArchitecture.md`、`docs/AgentContract.md`、`docs/AgentImplementPlan.md` 与 `docs/Agent/`

@@ -1,4 +1,5 @@
 // Application services
+pub mod agent_runtime_service;
 pub mod avatar_service;
 pub mod background_service;
 pub mod character_service;

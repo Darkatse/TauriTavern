@@ -150,6 +150,17 @@
 - 不把扫描循环控制、预算内部状态、可变中间态对象直接升格为 Public Contract。
 - `openEntry()` 必须复用上游 World Info 模块自身的导航能力；宿主 ABI 层不得直接依赖 `#WorldInfo`、`#world_editor_select`、`[uid=\"...\"]` 等 DOM 细节。
 
+- `api.agent`：TauriTavern Agent Run API。用于启动 Agent Run、订阅 run event、取消、审批工具、读取 workspace 文件/diff、rollback/commit。
+  - 详细草案见：`docs/API/Agent.md`。
+  - `startRun()` 必须在调用 backend 前解析 `stableChatId`；`workspaceId` 由 `kind + stableChatId` 派生，`runId` 仍表示单次执行。
+  - Agent event 属于 Agent Run journal/timeline 投影，不得伪装成上游 SillyTavern `GENERATION_*` / `TOOL_CALLS_*` 事件。
+  - `subscribe()` 必须返回幂等 `unsubscribe`；底层 Tauri 事件名与 Rust command 名属于 Internal，不是第三方 Public Contract。
+  - Agent Mode off 时，Legacy `Generate()`、`ToolManager`、`api.chat` 行为必须不变。
+
+- `api.mcp`（规划中）：MCP Server/Tool/Resource/Prompt 的独立平台 API。Agent Mode 可以消费 MCP，但 MCP 不依附 Agent Mode。
+  - 详细草案见：`docs/API/MCP.md`。
+  - MCP stdio command/config 不得由 Agent/Preset/角色卡/世界书直接写入；危险工具调用必须经过 capability policy 与审批。
+
 > 注意：`window.__TAURITAVERN__` 是“平台 ABI”，应保持**小而稳定**；不要把内部实现对象整个暴露出去。
 
 ---

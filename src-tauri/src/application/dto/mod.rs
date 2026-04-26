@@ -1,4 +1,5 @@
 // Data Transfer Objects
+pub mod agent_dto;
 pub mod background_dto;
 pub mod bootstrap_dto;
 pub mod character_dto;

@@ -87,6 +87,79 @@ type TauriTavernChatApi = {
     };
 };
 
+type TauriTavernAgentRunStatus =
+    | 'created'
+    | 'initializing_workspace'
+    | 'assembling_context'
+    | 'calling_model'
+    | 'applying_workspace_patch'
+    | 'creating_checkpoint'
+    | 'assembling_artifacts'
+    | 'awaiting_commit'
+    | 'committing'
+    | 'completed'
+    | 'cancelling'
+    | 'cancelled'
+    | 'failed';
+
+type TauriTavernAgentRunEvent = {
+    seq: number;
+    id: string;
+    runId: string;
+    timestamp: string;
+    level: 'debug' | 'info' | 'warn' | 'error';
+    type: string;
+    payload?: any;
+};
+
+type TauriTavernAgentApi = {
+    startRun: (input: {
+        chatRef: TauriTavernChatRef;
+        stableChatId?: string;
+        generationType?: string;
+        profileId?: string | null;
+        promptSnapshot: any;
+        generationIntent?: any;
+        options?: { autoCommit?: boolean; stream?: boolean };
+    }) => Promise<{
+        runId: string;
+        workspaceId: string;
+        stableChatId: string;
+        status: TauriTavernAgentRunStatus;
+    }>;
+    cancel: (runId: string) => Promise<{
+        runId: string;
+        workspaceId: string;
+        stableChatId: string;
+        status: TauriTavernAgentRunStatus;
+    }>;
+    readEvents: (input: {
+        runId: string;
+        afterSeq?: number;
+        beforeSeq?: number;
+        limit?: number;
+    }) => Promise<{ events: TauriTavernAgentRunEvent[] }>;
+    readWorkspaceFile: (input: {
+        runId: string;
+        path: string;
+    }) => Promise<{ path: string; text: string; bytes: number; sha256: string }>;
+    subscribe: (
+        runId: string,
+        handler: (event: TauriTavernAgentRunEvent) => void,
+        options?: { afterSeq?: number; limit?: number; intervalMs?: number; onError?: (error: unknown) => void },
+    ) => TauriTavernHostUnsubscribe;
+    commit: (input: { runId: string; messageId?: string | number }) => Promise<{
+        runId: string;
+        status: TauriTavernAgentRunStatus;
+    }>;
+    prepareCommit: (input: { runId: string }) => Promise<any>;
+    finalizeCommit: (input: { runId: string; messageId?: string | number }) => Promise<any>;
+    approveToolCall: () => never;
+    listRuns: () => never;
+    readDiff: () => never;
+    rollback: () => never;
+};
+
 type TauriTavernFrontendLogsApi = {
     list: (options?: { limit?: number }) => Promise<TauriTavernFrontendLogEntry[]>;
     subscribe: (
@@ -198,6 +271,7 @@ type TauriTavernLayoutApi = {
 
 type TauriTavernHostApi = {
     chat?: TauriTavernChatApi;
+    agent?: TauriTavernAgentApi;
     layout?: TauriTavernLayoutApi;
     dev?: TauriTavernDevApi;
     worldInfo?: TauriTavernWorldInfoApi;

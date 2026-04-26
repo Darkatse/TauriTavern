@@ -1,4 +1,5 @@
 // Domain models
+pub mod agent;
 pub mod avatar;
 pub mod background;
 pub mod character;

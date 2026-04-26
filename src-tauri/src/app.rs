@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
 use crate::application::services::character_service::CharacterService;
@@ -50,6 +51,7 @@ pub struct AppState {
     pub theme_service: Arc<ThemeService>,
     pub preset_service: Arc<PresetService>,
     pub quick_reply_service: Arc<QuickReplyService>,
+    pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
     pub stable_diffusion_service: Arc<StableDiffusionService>,
@@ -96,6 +98,7 @@ impl AppState {
             theme_service: services.theme_service,
             preset_service: services.preset_service,
             quick_reply_service: services.quick_reply_service,
+            agent_runtime_service: services.agent_runtime_service,
             chat_completion_service: services.chat_completion_service,
             tokenization_service: services.tokenization_service,
             stable_diffusion_service: services.stable_diffusion_service,
