@@ -1127,14 +1127,39 @@ function applyChatWidth(type) {
     chatWidthCounter.prop('disabled', isChatWidthForced).val(effectiveChatWidth);
 }
 
+const THEME_COLOR_TYPES = [
+    'main',
+    'italics',
+    'underline',
+    'quote',
+    'blurTint',
+    'chatTint',
+    'userMesBlurTint',
+    'botMesBlurTint',
+    'shadow',
+    'border',
+];
+
+function getRgbColorChannels(color) {
+    const [red, green, blue, alpha = '1'] = color.split('(')[1].split(')')[0].split(',').map(x => x.trim());
+    return { red, green, blue, alpha };
+}
+
 function applyThemeColor(type) {
+    if (type === undefined) {
+        for (const themeColorType of THEME_COLOR_TYPES) {
+            applyThemeColor(themeColorType);
+        }
+        return;
+    }
+
     if (type === 'main') {
         document.documentElement.style.setProperty('--SmartThemeBodyColor', power_user.main_text_color);
-        const color = power_user.main_text_color.split('(')[1].split(')')[0].split(',');
-        document.documentElement.style.setProperty('--SmartThemeCheckboxBgColorR', color[0]);
-        document.documentElement.style.setProperty('--SmartThemeCheckboxBgColorG', color[1]);
-        document.documentElement.style.setProperty('--SmartThemeCheckboxBgColorB', color[2]);
-        document.documentElement.style.setProperty('--SmartThemeCheckboxBgColorA', color[3]);
+        const color = getRgbColorChannels(power_user.main_text_color);
+        document.documentElement.style.setProperty('--SmartThemeCheckboxBgColorR', color.red);
+        document.documentElement.style.setProperty('--SmartThemeCheckboxBgColorG', color.green);
+        document.documentElement.style.setProperty('--SmartThemeCheckboxBgColorB', color.blue);
+        document.documentElement.style.setProperty('--SmartThemeCheckboxBgColorA', color.alpha);
     }
     if (type === 'italics') {
         document.documentElement.style.setProperty('--SmartThemeEmColor', power_user.italics_text_color);
