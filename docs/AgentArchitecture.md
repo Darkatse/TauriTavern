@@ -136,18 +136,19 @@ LLM Gateway / provider adapter
 
 注意：`Generate(..., dryRun = true)` 不是纯函数。它会触发上游事件、执行 prompt assembly、触发部分 world info 扫描与工具注册判断；它只是跳过实际模型请求、聊天写入和工具执行等关键副作用。Agent 文档和代码中都不能把 dryRun 描述为“无副作用”。
 
-还要注意：Legacy `Generate(..., dryRun = true)` 不返回 payload；它在 `GENERATE_AFTER_DATA` 事件中暴露 `generate_data`，然后 resolve `undefined`。Phase 2A 的前端 adapter 必须监听事件捕获 payload，调用方不应依赖 `await Generate(..., true)` 的返回值。
+还要注意：Legacy `Generate(..., dryRun = true)` 不返回 payload；它在 `GENERATE_AFTER_DATA` 事件中暴露 `generate_data`，然后 resolve `undefined`。当前前端 adapter 必须监听事件捕获 payload，调用方不应依赖 `await Generate(..., true)` 的返回值。
 
-### 5.1 Phase 2A 当前落地边界
+### 5.1 当前落地边界
 
-截至 2026-04-26，Phase 2A 已经落地的是最小可审计工具循环，而不是完整 Agent 产品面：
+截至 2026-04-26，当前已落地的是 Phase 2B workspace 读改工具循环，而不是完整 Agent 产品面：
 
 - Public Host ABI 入口为 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`，没有 `startRun()` alias。
 - `startRunFromLegacyGenerate()` 是当前推荐的兼容桥；它捕获 Legacy prompt 语义，同时禁用 Legacy ToolManager tools。
 - `startRunWithPromptSnapshot()` 是低层测试/集成入口；调用方必须提供不含 external tools/tool turns 的 chat completion payload。
-- 后端只开放 `workspace.write_file` / `workspace.finish` 两个内建工具，对模型暴露为 `workspace_write_file` / `workspace_finish`。
-- 当前可写 workspace 前缀为 `output/`、`scratch/`、`plan/`、`summaries/`。
-- 工具循环最多 6 轮，必须以 `workspace.finish` 结束；模型直接输出文本会 fail-fast。
+- 后端当前开放 `workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish` 五个内建工具，对模型暴露为 provider-safe alias。
+- 当前模型可见 / 可写 workspace 根为 `output/`、`scratch/`、`plan/`、`summaries/`；`input/`、`tool-args/`、`tool-results/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
+- 工具循环最多 80 轮，必须以 `workspace.finish` 结束；模型直接输出文本会 fail-fast。
+- 模型可修正的工具错误以 `is_error = true` tool result 回填下一轮；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
 - `readDiff`、`rollback`、`resume-run`、tool approval、profile routing、MCP、timeline UI、主发送按钮 Agent toggle 仍未实现。
 
 ### 5.2 Run 与 Workspace 身份
@@ -408,7 +409,7 @@ SillyTavern 上游的事件和 chat message 结构仍是兼容层的基础。Age
 - 危险工具必须审批，审批请求必须记录 journal。
 - Hidden/private resource 不能被 context assembly 读入模型请求。
 - Provider endpoint override 必须继续遵守现有 iOS policy 与 settings policy。
-- 任何 policy violation 必须 fail-fast，不允许静默降级为“工具不可见但继续跑”之类的模糊行为。
+- 任何 policy violation 都必须显式进入 journal：若属于模型可修正的工具参数/权限问题，返回 recoverable tool error；若属于宿主安全或状态机问题，则 fail-fast。禁止静默降级为“工具不可见但继续跑”之类的模糊行为。
 
 ## 13. 最小 MVP
 

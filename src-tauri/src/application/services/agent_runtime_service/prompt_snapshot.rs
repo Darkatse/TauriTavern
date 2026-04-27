@@ -36,10 +36,24 @@ pub(super) fn prepare_agent_tool_request(
     registry: &BuiltinAgentToolRegistry,
 ) -> Result<ChatCompletionGenerateRequestDto, ApplicationError> {
     let messages = ensure_messages_array(&mut request.payload)?;
-    messages.insert(0, json!({
-        "role": "system",
-        "content": "TauriTavern Agent Mode is active. Use workspace_write_file to write the final answer to output/main.md, then call workspace_finish. Tool results are private run state, not chat messages. Do not answer directly without finishing through tools.",
-    }));
+    let agent_system_prompt = [
+        "TauriTavern Agent Mode is active.",
+        "Work only through the Agent workspace tools. Tool results are private run state, not chat messages.",
+        "Use workspace_list_files to inspect visible workspace files.",
+        "Use workspace_read_file before modifying an existing file. Read output has line numbers; never include line number prefixes in old_string or new_string.",
+        "Use workspace_apply_patch for precise edits to existing files. The old_string must match exactly and uniquely unless replace_all is true.",
+        "Use workspace_write_file for new files or complete rewrites.",
+        "Write the final chat message body to output/main.md, then call workspace_finish.",
+        "Do not answer directly without finishing through workspace_finish.",
+    ]
+    .join("\n");
+    messages.insert(
+        0,
+        json!({
+            "role": "system",
+            "content": agent_system_prompt,
+        }),
+    );
 
     request
         .payload
@@ -63,7 +77,7 @@ pub(super) fn reject_external_tool_request(
         .is_some_and(|tools| !tools.is_empty());
     if has_tools {
         return Err(ApplicationError::ValidationError(
-            "agent.external_tools_unsupported_phase2a: Agent Phase 2A owns the tool registry"
+            "agent.external_tools_unsupported_phase2b: Agent Phase 2B owns the tool registry"
                 .to_string(),
         ));
     }
@@ -85,7 +99,7 @@ pub(super) fn reject_external_tool_request(
         })
     {
         return Err(ApplicationError::ValidationError(
-            "agent.external_tool_turns_unsupported_phase2a: prompt snapshot already contains tool turns"
+            "agent.external_tool_turns_unsupported_phase2b: prompt snapshot already contains tool turns"
                 .to_string(),
         ));
     }

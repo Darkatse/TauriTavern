@@ -8,7 +8,7 @@
 - Skill 是渐进披露的文本/资源包，不是自动吞入 prompt 的大文件。
 - Agent 可以消费 MCP 和 Skill，但必须经过 ToolRegistry、ContextFrame、Policy 与 Journal。
 
-当前状态（2026-04-26）：Phase 2A 尚未实现 `window.__TAURITAVERN__.api.mcp`，也未把 MCP/Skill 接入 Agent tool registry。当前 Agent registry 只有 `workspace.write_file` 与 `workspace.finish`。
+当前状态（2026-04-26）：尚未实现 `window.__TAURITAVERN__.api.mcp`，也未把 MCP/Skill 接入 Agent tool registry。当前 Agent registry 只有 Phase 2B workspace 内建工具：`workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish`。
 
 ## 1. MCP 边界
 
@@ -190,9 +190,9 @@ skill.list / preset auto include
 
 不要把所有 Skill 全文塞进 system prompt。
 
-## 12. MVP
+## 12. 后续最小实现
 
-Phase 2/6 最小实现：
+Skill 最小实现：
 
 - `SkillRepository` 列出本地 skill。
 - `skill.list`。

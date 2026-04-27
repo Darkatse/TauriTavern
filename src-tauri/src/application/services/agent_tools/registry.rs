@@ -1,6 +1,9 @@
 use serde_json::{Value, json};
 
-use super::workspace::{workspace_finish_spec, workspace_write_file_spec};
+use super::workspace::{
+    workspace_apply_patch_spec, workspace_finish_spec, workspace_list_files_spec,
+    workspace_read_file_spec, workspace_write_file_spec,
+};
 use crate::domain::models::agent::AgentToolSpec;
 
 #[derive(Debug, Clone)]
@@ -9,9 +12,15 @@ pub struct BuiltinAgentToolRegistry {
 }
 
 impl BuiltinAgentToolRegistry {
-    pub fn phase2a() -> Self {
+    pub fn phase2b() -> Self {
         Self {
-            specs: vec![workspace_write_file_spec(), workspace_finish_spec()],
+            specs: vec![
+                workspace_list_files_spec(),
+                workspace_read_file_spec(),
+                workspace_write_file_spec(),
+                workspace_apply_patch_spec(),
+                workspace_finish_spec(),
+            ],
         }
     }
 
@@ -45,18 +54,22 @@ impl BuiltinAgentToolRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_WRITE_FILE};
+    use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE, WORKSPACE_WRITE_FILE};
     use super::*;
 
     #[test]
     fn registry_uses_openai_safe_model_names() {
-        let registry = BuiltinAgentToolRegistry::phase2a();
+        let registry = BuiltinAgentToolRegistry::phase2b();
         let tools = registry.openai_tools();
 
-        assert_eq!(tools[0]["function"]["name"], "workspace_write_file");
+        assert_eq!(tools[0]["function"]["name"], "workspace_list_files");
         assert_eq!(
             registry.canonical_name("workspace_write_file"),
             Some(WORKSPACE_WRITE_FILE)
+        );
+        assert_eq!(
+            registry.canonical_name("workspace_read_file"),
+            Some(WORKSPACE_READ_FILE)
         );
         assert_eq!(
             registry.canonical_name("workspace.finish"),

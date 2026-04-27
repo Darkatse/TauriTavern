@@ -55,17 +55,14 @@ impl AgentRuntimeService {
         &self,
         run_id: &str,
         reason: &str,
+        event_type: &str,
+        payload: Value,
         path: WorkspacePath,
     ) -> Result<(), ApplicationError> {
         self.transition_status(run_id, AgentRunStatus::CreatingCheckpoint)
             .await?;
         let event = self
-            .event(
-                run_id,
-                AgentRunEventLevel::Info,
-                "workspace_file_written",
-                json!({ "path": path.as_str() }),
-            )
+            .event(run_id, AgentRunEventLevel::Info, event_type, payload)
             .await?;
         let checkpoint = self
             .checkpoint_repository

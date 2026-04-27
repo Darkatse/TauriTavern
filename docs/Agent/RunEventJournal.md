@@ -48,7 +48,7 @@ events.jsonl
 
 ## 3. Run Status
 
-Phase 2A 当前已落地状态：
+当前已落地状态：
 
 ```text
 Created
@@ -104,7 +104,7 @@ status_changed { from, to, reason }
 
 ## 4. Event 类型
 
-Phase 2A 当前实际写入的主要事件：
+当前实际写入的主要事件：
 
 ```text
 run_created
@@ -120,6 +120,7 @@ tool_result_stored
 tool_call_completed
 tool_call_failed
 workspace_file_written
+workspace_patch_applied
 checkpoint_created
 agent_loop_finished
 artifact_assembled
@@ -132,7 +133,7 @@ run_cancelled
 run_failed
 ```
 
-以下小节同时包含 Phase 2A 已落地事件和后续阶段设计事件；实现新事件时必须更新 `docs/CurrentState/AgentFramework.md`。
+以下小节同时包含当前已落地事件和后续阶段设计事件；实现新事件时必须更新 `docs/CurrentState/AgentFramework.md`。
 
 ### 4.1 Run Lifecycle
 
@@ -419,25 +420,35 @@ journal.append_failed
 
 `journal.append_failed` 是严重错误。没有 journal 就不能继续执行副作用。
 
-## 12. MVP Event Set
+## 12. 当前核心 Event Set
 
-Phase 1 至少实现：
+当前至少应保持：
 
 ```text
-run_started
+run_created
+generation_intent_recorded
 status_changed
 workspace_initialized
 context_assembled
 model_request_created
 model_completed
+tool_call_requested
+tool_call_started
+tool_result_stored
+tool_call_completed
+tool_call_failed
 workspace_file_written
+workspace_patch_applied
 checkpoint_created
+agent_loop_finished
 artifact_assembled
 commit_started
+commit_draft_created
 run_committed
+run_completed
 run_cancel_requested
 run_cancelled
 run_failed
 ```
 
-这套最小事件已经足够支撑 one-step run、timeline、cancel、debug 和 rollback 基础。
+这套事件已经足够支撑当前 tool loop、timeline、cancel、debug、commit 和后续 rollback/diff 基础。

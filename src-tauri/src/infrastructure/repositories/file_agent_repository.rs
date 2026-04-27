@@ -21,7 +21,9 @@ use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunRepository,
 };
 use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
-use crate::domain::repositories::workspace_repository::{WorkspaceFile, WorkspaceRepository};
+use crate::domain::repositories::workspace_repository::{
+    WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
+};
 use crate::infrastructure::persistence::file_system::{
     read_json_file, replace_file_with_fallback, unique_temp_path, write_json_file,
 };
@@ -389,6 +391,171 @@ impl WorkspaceRepository for FileAgentRepository {
 
         workspace_file_from_text(path.clone(), text)
     }
+
+    async fn list_files(
+        &self,
+        run_id: &str,
+        path: Option<&WorkspacePath>,
+        depth: usize,
+        max_entries: usize,
+    ) -> Result<WorkspaceFileList, DomainError> {
+        let run_dir = self.load_run_dir(run_id).await?;
+        let root = match path {
+            Some(path) => self.safe_workspace_path(run_id, path, false).await?,
+            None => run_dir.clone(),
+        };
+
+        let canonical_run_dir = fs::canonicalize(&run_dir).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to resolve agent workspace root {}: {}",
+                run_dir.display(),
+                error
+            ))
+        })?;
+        let canonical_root = fs::canonicalize(&root).await.map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                DomainError::NotFound(format!(
+                    "Workspace path not found: {}",
+                    path.map(WorkspacePath::as_str).unwrap_or(".")
+                ))
+            } else {
+                DomainError::InternalError(format!(
+                    "Failed to resolve workspace list root {}: {}",
+                    root.display(),
+                    error
+                ))
+            }
+        })?;
+        if !canonical_root.starts_with(&canonical_run_dir) {
+            return Err(DomainError::InvalidData(format!(
+                "Workspace path escapes run directory: {}",
+                path.map(WorkspacePath::as_str).unwrap_or(".")
+            )));
+        }
+
+        let root_metadata = fs::symlink_metadata(&root).await.map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                DomainError::NotFound(format!(
+                    "Workspace path not found: {}",
+                    path.map(WorkspacePath::as_str).unwrap_or(".")
+                ))
+            } else {
+                DomainError::InternalError(format!(
+                    "Failed to inspect workspace path {}: {}",
+                    root.display(),
+                    error
+                ))
+            }
+        })?;
+        if root_metadata.file_type().is_symlink() {
+            return Err(DomainError::InvalidData(format!(
+                "Workspace path targets a symlink: {}",
+                path.map(WorkspacePath::as_str).unwrap_or(".")
+            )));
+        }
+
+        let mut entries = Vec::new();
+        let mut stack = vec![(root, 0_usize)];
+        let mut truncated = false;
+
+        while let Some((dir, level)) = stack.pop() {
+            let metadata = fs::metadata(&dir).await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to inspect workspace path {}: {}",
+                    dir.display(),
+                    error
+                ))
+            })?;
+            if metadata.is_file() {
+                entries.push(WorkspaceEntry {
+                    path: workspace_path_from_run_dir(&run_dir, &dir)?,
+                    kind: WorkspaceEntryKind::File,
+                    bytes: Some(metadata.len()),
+                });
+                continue;
+            }
+            if !metadata.is_dir() {
+                continue;
+            }
+
+            let mut children = fs::read_dir(&dir).await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to read workspace directory {}: {}",
+                    dir.display(),
+                    error
+                ))
+            })?;
+            let mut child_paths = Vec::new();
+            while let Some(entry) = children.next_entry().await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to read workspace directory entry {}: {}",
+                    dir.display(),
+                    error
+                ))
+            })? {
+                child_paths.push(entry.path());
+            }
+            child_paths.sort();
+
+            for child in child_paths.into_iter().rev() {
+                if entries.len() >= max_entries {
+                    truncated = true;
+                    break;
+                }
+
+                let metadata = fs::symlink_metadata(&child).await.map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to inspect workspace path {}: {}",
+                        child.display(),
+                        error
+                    ))
+                })?;
+                if metadata.file_type().is_symlink() {
+                    return Err(DomainError::InvalidData(format!(
+                        "Workspace path targets a symlink: {}",
+                        child.display()
+                    )));
+                }
+
+                let path = workspace_path_from_run_dir(&run_dir, &child)?;
+                if metadata.is_dir() {
+                    entries.push(WorkspaceEntry {
+                        path,
+                        kind: WorkspaceEntryKind::Directory,
+                        bytes: None,
+                    });
+                    if level < depth {
+                        stack.push((child, level + 1));
+                    }
+                } else if metadata.is_file() {
+                    entries.push(WorkspaceEntry {
+                        path,
+                        kind: WorkspaceEntryKind::File,
+                        bytes: Some(metadata.len()),
+                    });
+                }
+            }
+
+            if truncated {
+                break;
+            }
+        }
+
+        entries.sort_by(|a, b| {
+            let kind_order = match (&a.kind, &b.kind) {
+                (WorkspaceEntryKind::Directory, WorkspaceEntryKind::File) => {
+                    std::cmp::Ordering::Less
+                }
+                (WorkspaceEntryKind::File, WorkspaceEntryKind::Directory) => {
+                    std::cmp::Ordering::Greater
+                }
+                _ => std::cmp::Ordering::Equal,
+            };
+            kind_order.then_with(|| a.path.as_str().cmp(b.path.as_str()))
+        });
+
+        Ok(WorkspaceFileList { entries, truncated })
+    }
 }
 
 #[async_trait]
@@ -531,6 +698,25 @@ fn workspace_file_from_text(
         bytes: bytes.len() as u64,
         sha256: sha256_hex(&bytes),
     })
+}
+
+fn workspace_path_from_run_dir(
+    run_dir: &Path,
+    target: &Path,
+) -> Result<WorkspacePath, DomainError> {
+    let relative = target.strip_prefix(run_dir).map_err(|error| {
+        DomainError::InvalidData(format!(
+            "Workspace path is outside run directory {}: {}",
+            run_dir.display(),
+            error
+        ))
+    })?;
+    let value = relative
+        .iter()
+        .map(|part| part.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    WorkspacePath::parse(value)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

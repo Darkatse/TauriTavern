@@ -25,7 +25,7 @@ function createAgentApi({ safeInvoke }) {
         }
 
         const generationType = normalizeGenerationType(input.generationType);
-        const agentOptions = normalizePhase2aAgentOptions(input.options);
+        const agentOptions = normalizePhase2bAgentOptions(input.options);
         const snapshot = await buildAgentPromptSnapshot({
             generationType,
             generateOptions: input.generateOptions,
@@ -170,16 +170,16 @@ function createAgentApi({ safeInvoke }) {
             });
         },
         approveToolCall() {
-            throw new Error('approveToolCall is not implemented in Agent Phase 2A');
+            throw new Error('approveToolCall is not implemented in Agent Phase 2B');
         },
         listRuns() {
-            throw new Error('listRuns is not implemented in Agent Phase 2A');
+            throw new Error('listRuns is not implemented in Agent Phase 2B');
         },
         readDiff() {
-            throw new Error('readDiff is not implemented in Agent Phase 2A');
+            throw new Error('readDiff is not implemented in Agent Phase 2B');
         },
         rollback() {
-            throw new Error('rollback is not implemented in Agent Phase 2A');
+            throw new Error('rollback is not implemented in Agent Phase 2B');
         },
     };
 }
@@ -188,17 +188,17 @@ function normalizeGenerationType(value) {
     return String(value || 'normal').trim() || 'normal';
 }
 
-function normalizePhase2aAgentOptions(value) {
+function normalizePhase2bAgentOptions(value) {
     if (value != null && !isPlainObject(value)) {
         throw new Error('agent.options_invalid: options must be an object');
     }
 
     const options = value || {};
     if (options.stream === true) {
-        throw new Error('agent.phase2a_stream_unsupported: Agent Phase 2A only supports non-streaming model calls');
+        throw new Error('agent.phase2b_stream_unsupported: Agent Phase 2B only supports non-streaming model calls');
     }
     if (options.autoCommit === true) {
-        throw new Error('agent.phase2a_auto_commit_unsupported: commit is owned by the frontend adapter in Agent Phase 2A');
+        throw new Error('agent.phase2b_auto_commit_unsupported: commit is owned by the frontend adapter in Agent Phase 2B');
     }
 
     return {

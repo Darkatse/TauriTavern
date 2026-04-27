@@ -4,7 +4,7 @@
 
 1. `docs/AgentArchitecture.md`：系统边界、分层、数据流。
 2. `docs/AgentContract.md`：不可破坏的不变量与 fail-fast 约束。
-3. `docs/AgentImplementPlan.md`：分阶段实施计划与验收标准。
+3. `docs/AgentImplementPlan.md`：当前实施基线、下一步计划与验收命令。
 
 ## 细节文档
 
@@ -22,4 +22,4 @@
 
 实时开发进度不写在本目录；请更新 `docs/CurrentState/AgentFramework.md`。
 
-截至 2026-04-26，Phase 2A 已落地最小工具循环与前端 dryRun adapter。当前真实能力边界以 `docs/CurrentState/AgentFramework.md` 为准；本目录中的部分内容仍是后续 Phase 2B+ / Phase 3+ 设计。
+截至 2026-04-26，Phase 2B workspace 读改工具循环与前端 dryRun adapter 已落地。当前真实能力边界以 `docs/CurrentState/AgentFramework.md` 为准；本目录中的 profile、MCP、timeline、diff/rollback 等内容仍是后续设计。

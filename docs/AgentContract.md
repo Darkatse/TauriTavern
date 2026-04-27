@@ -122,7 +122,7 @@ expectedArtifacts
 approvalRequired
 ```
 
-Plan policy violation 必须 fail-fast。
+Plan policy violation 必须显式记录。模型可修正的工具请求可以返回 recoverable tool error；会破坏 plan/state 安全性的违规必须 fail-fast。
 
 ### 1.7 Commit 必须走现有 Chat 保存契约
 
@@ -139,7 +139,7 @@ Agent commit 不能直接写 chat JSONL。
 
 ### 1.8 Fail Fast，不静默降级
 
-以下情况必须返回明确错误并写 journal：
+以下情况必须返回明确错误并写 journal；模型工具参数层可修正的问题回填模型，宿主安全/状态机问题 fail-fast：
 
 - workspace path traversal
 - missing required artifact
@@ -278,13 +278,14 @@ Agent Mode on 的短期桥接可以使用 dryRun 获取 `PromptSnapshot`。但 A
 
 dryRun 不能被视为纯函数。它仍会触发上游事件、prompt 组合、World Info dry-run scan、OpenAI prompt ready 等兼容行为。Agent 只能把它当作短期 prompt snapshot 生产器，不能依赖它没有任何副作用。
 
-Phase 2A 的额外硬约束：
+当前 Agent tool loop 的额外硬约束：
 
 - `Generate(..., dryRun = true)` 不返回 payload；payload 只能从 `GENERATE_AFTER_DATA` 事件捕获。任何调用方把 `await Generate(..., true)` 当作 payload 都是错误用法。
 - 公共 Agent 启动入口只有 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`；不保留职责不清的 `startRun()` alias。
 - `startRunFromLegacyGenerate()` 内部可以调用 Legacy dryRun，但工具循环必须在 Rust runtime 中推进，不得递归调用 `Generate()`。
-- Phase 2A 工具注册由 Rust runtime 独占；prompt snapshot 中不得携带 external `tools`、`tool_choice`、`role: "tool"` 或已有 `tool_calls`。
-- Phase 2A 只支持非 streaming、非 autoCommit；请求 `stream: true` 或 `autoCommit: true` 必须 fail-fast。
+- 工具注册由 Rust runtime 独占；prompt snapshot 中不得携带 external `tools`、`tool_choice`、`role: "tool"` 或已有 `tool_calls`。
+- 当前只支持非 streaming、非 autoCommit；请求 `stream: true` 或 `autoCommit: true` 必须 fail-fast。
+- 模型可修正的工具参数错误必须作为 `is_error = true` tool result 回填模型；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误必须 fail-fast。
 
 Agent run/timeline/tool event 不得伪装成上游 `GENERATION_*` 或 `TOOL_CALLS_*` 事件。上游事件属于 Legacy Generate 兼容面。
 

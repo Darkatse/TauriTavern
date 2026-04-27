@@ -3,7 +3,7 @@ use serde_json::json;
 use super::AgentRuntimeService;
 use super::ids::safe_workspace_file_stem;
 use crate::application::errors::ApplicationError;
-use crate::application::services::agent_tools::AgentToolDispatchOutcome;
+use crate::application::services::agent_tools::{AgentToolDispatchOutcome, AgentToolSession};
 use crate::domain::models::agent::{
     AgentRunEventLevel, AgentRunStatus, AgentToolCall, AgentToolResult, WorkspacePath,
 };
@@ -13,7 +13,9 @@ impl AgentRuntimeService {
         &self,
         run_id: &str,
         call: &AgentToolCall,
+        session: &mut AgentToolSession,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
+        let arguments_ref = self.store_tool_arguments(run_id, call).await?;
         self.event(
             run_id,
             AgentRunEventLevel::Info,
@@ -21,7 +23,7 @@ impl AgentRuntimeService {
             json!({
                 "callId": call.id.as_str(),
                 "name": call.name.as_str(),
-                "arguments": &call.arguments,
+                "argumentsRef": arguments_ref.as_str(),
                 "providerMetadata": &call.provider_metadata,
             }),
         )
@@ -39,7 +41,7 @@ impl AgentRuntimeService {
         )
         .await?;
 
-        match self.tool_dispatcher.dispatch(run_id, call).await {
+        match self.tool_dispatcher.dispatch(run_id, call, session).await {
             Ok(outcome) => {
                 self.store_tool_result(run_id, &outcome.result).await?;
                 self.event(
@@ -59,6 +61,7 @@ impl AgentRuntimeService {
                         "name": outcome.result.name.as_str(),
                         "isError": outcome.result.is_error,
                         "errorCode": outcome.result.error_code.as_deref(),
+                        "message": outcome.result.is_error.then_some(outcome.result.content.as_str()),
                         "elapsedMs": outcome.elapsed_ms,
                         "resourceRefs": &outcome.result.resource_refs,
                     }),
@@ -111,5 +114,25 @@ impl AgentRuntimeService {
         )
         .await?;
         Ok(())
+    }
+
+    async fn store_tool_arguments(
+        &self,
+        run_id: &str,
+        call: &AgentToolCall,
+    ) -> Result<WorkspacePath, ApplicationError> {
+        let path = WorkspacePath::parse(format!(
+            "tool-args/{}.json",
+            safe_workspace_file_stem(&call.id)
+        ))?;
+        let text = serde_json::to_string_pretty(&call.arguments).map_err(|error| {
+            ApplicationError::ValidationError(format!(
+                "agent.tool_arguments_serialize_failed: {error}"
+            ))
+        })?;
+        self.workspace_repository
+            .write_text(run_id, &path, &text)
+            .await?;
+        Ok(path)
     }
 }

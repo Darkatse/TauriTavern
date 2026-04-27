@@ -66,4 +66,4 @@
 
 13. `docs/CurrentState/AgentFramework.md`
    - Agent 框架实时开发进度跟踪
-   - 当前记录 Phase 2A 最小工具循环、前端 dryRun adapter、Host ABI、手动 smoke 与后续限制；具体架构与细节设计见 `docs/AgentArchitecture.md`、`docs/AgentContract.md`、`docs/AgentImplementPlan.md` 与 `docs/Agent/`
+   - 当前记录 Phase 2B workspace 读改工具循环、前端 dryRun adapter、Host ABI、手动 smoke 与后续限制；具体架构与细节设计见 `docs/AgentArchitecture.md`、`docs/AgentContract.md`、`docs/AgentImplementPlan.md` 与 `docs/Agent/`

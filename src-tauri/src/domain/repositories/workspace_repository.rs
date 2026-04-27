@@ -12,6 +12,25 @@ pub struct WorkspaceFile {
     pub sha256: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceEntryKind {
+    File,
+    Directory,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceEntry {
+    pub path: WorkspacePath,
+    pub kind: WorkspaceEntryKind,
+    pub bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceFileList {
+    pub entries: Vec<WorkspaceEntry>,
+    pub truncated: bool,
+}
+
 #[async_trait]
 pub trait WorkspaceRepository: Send + Sync {
     async fn initialize_run(
@@ -35,4 +54,12 @@ pub trait WorkspaceRepository: Send + Sync {
         run_id: &str,
         path: &WorkspacePath,
     ) -> Result<WorkspaceFile, DomainError>;
+
+    async fn list_files(
+        &self,
+        run_id: &str,
+        path: Option<&WorkspacePath>,
+        depth: usize,
+        max_entries: usize,
+    ) -> Result<WorkspaceFileList, DomainError>;
 }

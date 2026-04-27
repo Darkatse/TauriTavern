@@ -2,7 +2,7 @@
 
 本文档定义 Agent Runtime 与现有 LLM 调用链之间的边界。
 
-结论先行：Agent 需要 provider-agnostic `LlmGateway`，但第一阶段必须复用现有 `ChatCompletionService`，不能新建一套绕过现有 policy、日志、proxy、secret、prompt cache 的 HTTP 路径。
+结论先行：Agent 长期需要 provider-agnostic `LlmGateway`，但当前已落地实现必须复用现有 `ChatCompletionService`，不能新建一套绕过现有 policy、日志、proxy、secret、prompt cache 的 HTTP 路径。
 
 ## 1. Ground of Truth
 
@@ -33,11 +33,11 @@
 - 绕过 `ChatCompletionService` 的捷径。
 - MCP Sampling 的实现。
 
-## 3. Phase 1 Wrapper
+## 3. 当前 Wrapper
 
-当前状态（2026-04-26）：Phase 2A 已有轻量 `AgentModelGateway` wrapper，复用 `ChatCompletionService::generate_with_cancel()` 驱动非 streaming 工具循环。完整 provider-agnostic `ModelRequest` / `ModelResponse` 抽象仍未落地。
+当前状态（2026-04-26）：已有轻量 `AgentModelGateway` wrapper，复用 `ChatCompletionService::generate_with_cancel()` 驱动非 streaming 工具循环。完整 provider-agnostic `ModelRequest` / `ModelResponse` 抽象仍未落地。
 
-Phase 1 建议：
+当前调用链：
 
 ```text
 AgentRuntimeService

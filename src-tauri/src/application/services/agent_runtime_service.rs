@@ -24,7 +24,7 @@ mod tool_execution;
 mod tests;
 
 pub(super) type AgentCancelReceiver = watch::Receiver<bool>;
-pub(super) const MAX_AGENT_TOOL_ROUNDS: usize = 6;
+pub(super) const MAX_AGENT_TOOL_ROUNDS: usize = 80;
 
 pub struct AgentRuntimeService {
     run_repository: Arc<dyn AgentRunRepository>,
@@ -43,7 +43,7 @@ impl AgentRuntimeService {
         checkpoint_repository: Arc<dyn CheckpointRepository>,
         model_gateway: Arc<dyn AgentModelGateway>,
     ) -> Self {
-        let tool_registry = BuiltinAgentToolRegistry::phase2a();
+        let tool_registry = BuiltinAgentToolRegistry::phase2b();
         let tool_dispatcher = AgentToolDispatcher::new(workspace_repository.clone());
         Self {
             run_repository,

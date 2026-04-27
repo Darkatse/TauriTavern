@@ -30,9 +30,9 @@ const api = host?.api;
 - `api.extension.store`
   - 面向需要**全局持久化**的扩展（不绑定 chat）。
   - 提供 Extension KV JSON + Blob 存储，支持多 table。
-- `api.agent`（Phase 2A 已落地最小工具循环）
+- `api.agent`（已落地 Phase 2B workspace 读改工具循环）
   - 面向 Agent Run / timeline / workspace / checkpoint / commit。
-  - 当前提供启动 run、订阅/读取事件、取消、读取 workspace 文件、prepare/finalize/commit。
+  - 当前提供启动 run、订阅/读取事件、取消、读取 workspace 文件、prepare/finalize/commit；模型侧内建 workspace list/read/write/patch/finish 工具由 Rust runtime 注册。
   - approval、listRuns、readDiff、rollback 仍是后续阶段；当前入口显式 throw。
 - `api.mcp`（规划中）
   - 面向 MCP server/tool/resource/prompt 的独立平台能力。
@@ -55,5 +55,5 @@ const api = host?.api;
 
 - API 类型定义见 `src/types.d.ts`
 - 宿主契约与稳定性边界见 `docs/FrontendHostContract.md`
-- Agent Phase 2A 已落地最小 Host ABI；当前真实边界见 `docs/API/Agent.md` 与 `docs/CurrentState/AgentFramework.md`
+- Agent 已落地当前 Host ABI 与 Phase 2B workspace 读改工具；真实边界见 `docs/API/Agent.md` 与 `docs/CurrentState/AgentFramework.md`
 - MCP 仍处于规划阶段；实现前请以 `docs/API/MCP.md` 与 `docs/FrontendHostContract.md` 的草案约束为准

@@ -403,9 +403,9 @@ autoPruneAfterDays
 - workspace tree 展示应懒加载。
 - timeline 读取 journal 应支持分页。
 
-## 13. MVP Workspace
+## 13. 当前 Workspace
 
-Phase 2A 当前最小文件：
+当前 run workspace 物理布局：
 
 ```text
 _tauritavern/agent-workspaces/
@@ -420,15 +420,22 @@ _tauritavern/agent-workspaces/
           events.jsonl
           input/
             prompt_snapshot.json
+          tool-args/
+            <tool-call-id>.json
           output/
             main.md
+          scratch/
+          plan/
+          summaries/
           tool-results/
             <tool-call-id>.json
           checkpoints/
-            <checkpoint-id>.json
+            <checkpoint-id>/
+              checkpoint.json
+              <snapshotted workspace files...>
 ```
 
-Phase 2A 模型可写路径前缀：
+当前模型可见 / 可写 workspace 根：
 
 ```text
 output/
@@ -437,7 +444,7 @@ plan/
 summaries/
 ```
 
-Phase 1 早期设计中的最小概念结构仍可作为抽象理解：
+早期设计中的最小概念结构仍可作为抽象理解：
 
 ```text
 runs/<run-id>/
@@ -451,9 +458,9 @@ runs/<run-id>/
 
 这个结构足以支撑：
 
-- one-step run
+- minimal run
 - journal
 - checkpoint
 - artifact commit
-- rollback 基础数据结构（Phase 2A 尚未开放 rollback API）
-- 后续工具循环增量接入
+- rollback 基础数据结构（当前尚未开放 rollback API）
+- workspace list/read/write/patch 工具循环

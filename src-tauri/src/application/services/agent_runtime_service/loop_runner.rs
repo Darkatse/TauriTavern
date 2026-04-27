@@ -8,7 +8,7 @@ use super::prompt_snapshot::request_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, MAX_AGENT_TOOL_ROUNDS};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
-use crate::application::services::agent_tools::AgentToolEffect;
+use crate::application::services::agent_tools::{AgentToolEffect, AgentToolSession};
 use crate::domain::models::agent::{AgentRunEventLevel, AgentRunStatus, WorkspacePath};
 
 impl AgentRuntimeService {
@@ -18,6 +18,7 @@ impl AgentRuntimeService {
         mut request: ChatCompletionGenerateRequestDto,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<Option<WorkspacePath>, ApplicationError> {
+        let mut tool_session = AgentToolSession::default();
         for round in 1..=MAX_AGENT_TOOL_ROUNDS {
             self.transition_status(run_id, AgentRunStatus::CallingModel)
                 .await?;
@@ -53,7 +54,7 @@ impl AgentRuntimeService {
 
             if tool_calls.is_empty() {
                 return Err(ApplicationError::ValidationError(
-                    "model.tool_call_required_phase2a: model must call workspace_write_file and workspace_finish in Agent Phase 2A".to_string(),
+                    "model.tool_call_required_phase2b: model must use workspace tools and finish through workspace_finish in Agent Phase 2B".to_string(),
                 ));
             }
 
@@ -68,12 +69,42 @@ impl AgentRuntimeService {
                     ));
                 }
 
-                let outcome = self.dispatch_tool_call(run_id, &call).await?;
+                let outcome = self
+                    .dispatch_tool_call(run_id, &call, &mut tool_session)
+                    .await?;
                 match &outcome.effect {
                     AgentToolEffect::WorkspaceFileWritten { file } => {
                         self.checkpoint_workspace_file(
                             run_id,
                             "tool_workspace_write",
+                            "workspace_file_written",
+                            json!({
+                                "path": file.path.as_str(),
+                                "bytes": file.bytes,
+                                "sha256": file.sha256.as_str(),
+                            }),
+                            file.path.clone(),
+                        )
+                        .await?;
+                    }
+                    AgentToolEffect::WorkspaceFilePatched {
+                        file,
+                        replacements,
+                        old_sha256,
+                    } => {
+                        self.transition_status(run_id, AgentRunStatus::ApplyingWorkspacePatch)
+                            .await?;
+                        self.checkpoint_workspace_file(
+                            run_id,
+                            "tool_workspace_patch",
+                            "workspace_patch_applied",
+                            json!({
+                                "path": file.path.as_str(),
+                                "bytes": file.bytes,
+                                "oldSha256": old_sha256,
+                                "sha256": file.sha256.as_str(),
+                                "replacements": replacements,
+                            }),
                             file.path.clone(),
                         )
                         .await?;

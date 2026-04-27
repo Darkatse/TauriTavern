@@ -42,8 +42,8 @@ Domain tests 不应需要 Tauri、文件系统或 HTTP。
 覆盖：
 
 ```text
-one-step run success
-one-step run model failure
+agent loop success
+agent loop model failure
 cancel before model call
 cancel during model call
 workspace write creates checkpoint
@@ -123,7 +123,7 @@ Agent mode off: ToolManager legacy behavior unchanged
 Agent event does not emit fake GENERATION_* events
 ```
 
-Phase 2A 还必须覆盖：
+当前 Agent Host ABI 与工具循环必须覆盖：
 
 ```text
 api.agent exposes startRunFromLegacyGenerate and startRunWithPromptSnapshot
@@ -135,6 +135,10 @@ external tools/tool_choice/tool turns are rejected
 stream true and autoCommit true are rejected
 subscribe polling can read events in seq order
 readWorkspaceFile returns UTF-8 text, bytes, sha256
+workspace_list_files accepts omitted/empty/dot path as workspace root
+workspace_read_file full read records read-state
+workspace_apply_patch requires full read-state and checkpoints on success
+recoverable tool errors are returned to the model instead of failing the run
 future APIs approveToolCall/listRuns/readDiff/rollback throw explicitly
 ```
 
@@ -185,7 +189,7 @@ mobile default budgets
 
 指标建议：
 
-- Phase 1 one-step run workspace 初始化耗时。
+- Agent run workspace 初始化耗时。
 - Journal append/read latency。
 - Large history Agent start memory growth。
 - Timeline first render event count。
@@ -209,28 +213,21 @@ Golden fixtures 应尽量脱敏，不包含真实 API key 或私人聊天。
 
 ## 11. Phase Gates
 
-Phase 2A 当前落地门禁：
+当前落地门禁：
 
 - 后端 `cargo test --manifest-path src-tauri/Cargo.toml agent --lib` 通过。
 - 后端 `cargo check --manifest-path src-tauri/Cargo.toml` 通过。
 - 前端 `pnpm run check:types`、`pnpm run check:contracts`、`pnpm run check:frontend` 通过。
 - 控制台 smoke 能通过 `startRunFromLegacyGenerate()` 启动 run。
-- 控制台多阶段 smoke 能依次写入 `plan/outline.md`、`scratch/draft.md`、`summaries/revision_notes.md`、`output/main.md` 并进入 `awaiting_commit`。
+- 控制台 workspace 读改 smoke 能依次写入 `plan/outline.md`、`scratch/draft.md`，调用 `workspace_list_files`，完整读取 draft，使用 `workspace_apply_patch` 修改 draft，写入 `summaries/revision_notes.md`、`output/main.md` 并进入 `awaiting_commit`。
 - `commit()` 能把 `output/main.md` 写入当前 active chat，并追加 `run_committed` / `run_completed`。
 - Agent Mode off 的 Legacy Generate 行为不变。
 
-Phase 1 不合并，除非：
-
-- one-step run 测试通过。
-- cancel 测试通过。
-- artifact commit 测试通过。
-- Agent Mode off smoke tests 通过。
-
-Phase 2 不合并，除非：
+后续工具/运行时变更不合并，除非：
 
 - tool loop 测试通过。
 - tool result 不写 chat message。
-- policy denied 测试通过。
+- recoverable tool error 回填模型测试通过。
 - workspace path security 测试通过。
 
 Phase 3 不合并，除非：

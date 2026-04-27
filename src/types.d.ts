@@ -92,6 +92,7 @@ type TauriTavernAgentRunStatus =
     | 'initializing_workspace'
     | 'assembling_context'
     | 'calling_model'
+    | 'dispatching_tool'
     | 'applying_workspace_patch'
     | 'creating_checkpoint'
     | 'assembling_artifacts'

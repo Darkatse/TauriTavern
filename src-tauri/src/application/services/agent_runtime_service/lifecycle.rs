@@ -23,13 +23,13 @@ impl AgentRuntimeService {
     ) -> Result<AgentRunHandleDto, ApplicationError> {
         if dto.options.stream {
             return Err(ApplicationError::ValidationError(
-                "agent.phase2a_stream_unsupported: Agent Phase 2A only supports non-streaming model calls"
+                "agent.phase2b_stream_unsupported: Agent Phase 2B only supports non-streaming model calls"
                     .to_string(),
             ));
         }
         if dto.options.auto_commit {
             return Err(ApplicationError::ValidationError(
-                "agent.phase2a_auto_commit_unsupported: commit is owned by the frontend adapter in Agent Phase 2A"
+                "agent.phase2b_auto_commit_unsupported: commit is owned by the frontend adapter in Agent Phase 2B"
                     .to_string(),
             ));
         }
