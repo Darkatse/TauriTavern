@@ -106,6 +106,7 @@ import { updateReasoningUI, parseReasoningFromString, getReasoningTemplateByName
 import { IGNORE_SYMBOL } from './constants.js';
 import { macros } from './macros/macro-system.js';
 import { createSafeGenerate } from './util/safe-generate.js';
+import { registerA11ySelector, a11yProcessors, announceA11y } from './a11y.js';
 
 const generateSafely = createSafeGenerate({
     waitForIdle: waitForGenerationIdle,
@@ -292,6 +293,11 @@ export function getContext() {
         openThirdPartyExtensionMenu,
         symbols: {
             ignore: IGNORE_SYMBOL,
+        },
+        a11y: {
+            registerSelector: registerA11ySelector,
+            processors: a11yProcessors,
+            announce: announceA11y,
         },
     };
 }
