@@ -4,7 +4,7 @@
  * A tiny global parking lot that keeps iframe browsing contexts alive by
  * moving them into a hidden DOM container instead of destroying them.
  *
- * This is a Phase-1 mechanism:
+ * This parking mechanism:
  * - Keeps scroll-driven runtimes smooth (no reload when coming back).
  * - Enforces a hard cap (mobile) by evicting oldest parked iframes.
  * - Uses TTL to avoid leaking parked instances after DOM rebuilds.

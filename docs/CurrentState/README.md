@@ -63,3 +63,7 @@
 12. `docs/CurrentState/iOSPolicy.md`
    - iOS/iPadOS-only 分发 Policy（profile + capabilities snapshot）当前实现快照
    - 包含 settings 契约、baseline 矩阵、后端裁决点与前端 UI 投影的维护约束
+
+13. `docs/CurrentState/Accessibility.md`
+   - 无障碍系统当前实现快照：shared a11y core、Screen Reader Assistance、键盘交互、主界面语义、复杂 UI 排序辅助与 i18n 契约
+   - 包含关闭 Screen Reader Assistance 后的兼容性边界、owner module 维护原则和回归检查点

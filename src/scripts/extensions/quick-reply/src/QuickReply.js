@@ -12,6 +12,7 @@ import { SlashCommandParserError } from '../../../slash-commands/SlashCommandPar
 import { SlashCommandScope } from '../../../slash-commands/SlashCommandScope.js';
 import { accountStorage } from '../../../util/AccountStorage.js';
 import { debounce, delay, getSortableDelay, showFontAwesomePicker } from '../../../utils.js';
+import { t } from '../../../i18n.js';
 import { log, quickReplyApi, warn } from '../index.js';
 import { QuickReplyContextLink } from './QuickReplyContextLink.js';
 import { QuickReplySet } from './QuickReplySet.js';
@@ -55,6 +56,7 @@ export class QuickReply {
     /**@type {function}*/ onUpdate;
     /**@type {function}*/ onInsertBefore;
     /**@type {function}*/ onTransfer;
+    /**@type {function}*/ onMove;
 
 
     /**@type {HTMLElement}*/ dom;
@@ -171,7 +173,7 @@ export class QuickReply {
 
 
 
-    renderSettings(idx) {
+    renderSettings(idx, total = idx + 1, showScreenReaderSortUi = false) {
         if (!this.settingsDom) {
             const item = document.createElement('div'); {
                 this.settingsDom = item;
@@ -299,6 +301,32 @@ export class QuickReply {
                 }
                 const actions = document.createElement('div'); {
                     actions.classList.add('qr--actions');
+                    if (showScreenReaderSortUi) {
+                        const moveUp = document.createElement('div'); {
+                            moveUp.classList.add('qr--moveUp', 'qr--action', 'menu_button', 'fa-fw', 'fa-solid', 'fa-chevron-up');
+                            moveUp.title = t`Move quick reply up`;
+                            moveUp.setAttribute('aria-label', moveUp.title);
+                            moveUp.setAttribute('aria-disabled', String(idx === 0));
+                            if (idx === 0) {
+                                moveUp.classList.add('disabled');
+                            } else {
+                                moveUp.addEventListener('click', () => this.move('up'));
+                            }
+                            actions.append(moveUp);
+                        }
+                        const moveDown = document.createElement('div'); {
+                            moveDown.classList.add('qr--moveDown', 'qr--action', 'menu_button', 'fa-fw', 'fa-solid', 'fa-chevron-down');
+                            moveDown.title = t`Move quick reply down`;
+                            moveDown.setAttribute('aria-label', moveDown.title);
+                            moveDown.setAttribute('aria-disabled', String(idx === total - 1));
+                            if (idx === total - 1) {
+                                moveDown.classList.add('disabled');
+                            } else {
+                                moveDown.addEventListener('click', () => this.move('down'));
+                            }
+                            actions.append(moveDown);
+                        }
+                    }
                     const move = document.createElement('div'); {
                         move.classList.add('qr--action');
                         move.classList.add('menu_button');
@@ -385,6 +413,13 @@ export class QuickReply {
     }
     unrenderSettings() {
         this.settingsDom?.remove();
+        this.settingsDom = null;
+    }
+
+    move(direction) {
+        if (this.onMove) {
+            this.onMove(direction);
+        }
     }
 
     async showEditor() {
