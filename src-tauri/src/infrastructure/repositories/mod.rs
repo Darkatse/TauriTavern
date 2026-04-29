@@ -1,4 +1,5 @@
 // Repository implementations
+pub mod file_agent_repository;
 pub mod file_avatar_repository;
 pub mod file_background_repository;
 pub mod file_character_repository;

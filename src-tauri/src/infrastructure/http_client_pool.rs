@@ -17,6 +17,8 @@ pub const TOKENIZER_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 pub const IMAGE_GENERATION_CONNECT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const TRANSLATION_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const TRANSLATION_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+pub const TTS_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
+pub const TTS_REQUEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HttpClientProfile {
@@ -27,6 +29,7 @@ pub enum HttpClientProfile {
     ChatCompletionStream,
     ImageGeneration,
     Translation,
+    Tts,
 }
 
 #[derive(Default)]
@@ -158,6 +161,9 @@ fn build_profile_client(
         HttpClientProfile::Translation => builder
             .connect_timeout(TRANSLATION_CONNECT_TIMEOUT)
             .timeout(TRANSLATION_REQUEST_TIMEOUT),
+        HttpClientProfile::Tts => builder
+            .connect_timeout(TTS_CONNECT_TIMEOUT)
+            .timeout(TTS_REQUEST_TIMEOUT),
     };
 
     if let Some(proxy) = proxy {

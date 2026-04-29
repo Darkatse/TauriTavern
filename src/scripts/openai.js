@@ -1192,9 +1192,10 @@ export function getPromptRole(role) {
  * @param {object[]} options.messages - Array containing all messages.
  * @param {object[]} options.messageExamples - Array containing all message examples.
  * @param {(message: string) => void} options.attachWarning - Warning sink for attach-existing prompt issues.
+ * @param {boolean} [options.agentMode] Skip legacy frontend tool registration for Agent-owned tool loops.
  * @returns {Promise<void>}
  */
-async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning }) {
+async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning, agentMode = false }) {
     // Helper function for preparing a prompt, that already exists within the prompt collection, for completion
     const addToChatCompletion = async (source, target = null) => {
         // We need the prompts array to determine a position for the source.
@@ -1314,7 +1315,7 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     }
 
     // Pre-allocation of tokens for tool data
-    if (ToolManager.canPerformToolCalls(type)) {
+    if (!agentMode && ToolManager.canPerformToolCalls(type)) {
         const toolData = {};
         await ToolManager.registerFunctionToolsOpenAI(toolData);
         const toolMessage = [{ role: 'user', content: JSON.stringify(toolData) }];
@@ -1540,6 +1541,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
  * @param {object} content.extensionPrompts - An array of additional prompts.
  * @param {object[]} content.messages - An array of messages to be used as chat history.
  * @param {string[]} content.messageExamples - An array of messages to be used as dialogue examples.
+ * @param {boolean} [content.agentMode] Skip legacy frontend tool state for Agent-owned tool loops.
  * @param dryRun - Whether this is a live call or not.
  * @returns {Promise<(any[]|boolean)[]>} An array where the first element is the prepared chat and the second element is a boolean flag.
  */
@@ -1560,6 +1562,7 @@ export async function prepareOpenAIMessages({
     jailbreakPromptOverride,
     messages,
     messageExamples,
+    agentMode = false,
 }, dryRun) {
     // Without a character selected, there is no way to accurately calculate tokens
     if (!promptManager.activeCharacter && dryRun) return [null, false];
@@ -1595,7 +1598,7 @@ export async function prepareOpenAIMessages({
         };
 
         // Fill the chat completion with as much context as the budget allows
-        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning });
+        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning, agentMode });
     } catch (error) {
         if (error instanceof TokenBudgetExceededError) {
             toastr.error(t`Mandatory prompts exceed the context size.`);
@@ -2564,10 +2567,10 @@ function getVerbosity(settings = null) {
  * @param {string} model Model name
  * @param {string} type Request type (impersonate, quiet, continue, etc)
  * @param {ChatCompletionMessage[]} messages Array of chat completion messages
- * @param {import('../script.js').AdditionalRequestOptions} options Additional request options
+ * @param {import('../script.js').AdditionalRequestOptions & { agentMode?: boolean }} options Additional request options
  * @returns {Promise<object>} Final generation parameters object appropriate for the chat completion source
  */
-export async function createGenerationParameters(settings, model, type, messages, { jsonSchema = null } = {}) {
+export async function createGenerationParameters(settings, model, type, messages, { jsonSchema = null, agentMode = false } = {}) {
     // HACK: Filter out null and non-object messages
     if (!Array.isArray(messages)) {
         throw new Error('messages must be an array');
@@ -2645,10 +2648,10 @@ export async function createGenerationParameters(settings, model, type, messages
     ];
 
     const isO1 = gptSources.includes(settings.chat_completion_source) && ['o1-2024-12-17', 'o1'].includes(model);
-    const stream = settings.stream_openai && type !== 'quiet' && !isO1;
+    const stream = !agentMode && settings.stream_openai && type !== 'quiet' && !isO1;
 
     const noMultiSwipeTypes = ['quiet', 'impersonate', 'continue'];
-    const canMultiSwipe = settings.n > 1 && !noMultiSwipeTypes.includes(type) && multiswipeSources.includes(settings.chat_completion_source);
+    const canMultiSwipe = !agentMode && settings.n > 1 && !noMultiSwipeTypes.includes(type) && multiswipeSources.includes(settings.chat_completion_source);
 
     let logit_bias = {};
     if (settings.bias_preset_selected
@@ -2700,7 +2703,7 @@ export async function createGenerationParameters(settings, model, type, messages
         }
     }
 
-    if (!canMultiSwipe && ToolManager.canPerformToolCalls(type, settings, model)) {
+    if (!agentMode && !canMultiSwipe && ToolManager.canPerformToolCalls(type, settings, model)) {
         await ToolManager.registerFunctionToolsOpenAI(generate_data);
     }
 

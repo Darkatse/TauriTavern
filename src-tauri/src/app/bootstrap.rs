@@ -4,6 +4,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio::sync::Semaphore;
 
+use crate::application::services::agent_model_gateway::ChatCompletionAgentModelGateway;
+use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
 use crate::application::services::character_service::CharacterService;
@@ -24,16 +26,19 @@ use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::translate_service::TranslateService;
 use crate::application::services::tt_sync_service::TtSyncService;
+use crate::application::services::tts_service::TtsService;
 use crate::application::services::update_service::UpdateService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
+use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::avatar_repository::AvatarRepository;
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::chat_completion_repository::ChatCompletionRepository;
 use crate::domain::repositories::chat_repository::ChatRepository;
+use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
 use crate::domain::repositories::content_repository::ContentRepository;
 use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::domain::repositories::extension_store_repository::ExtensionStoreRepository;
@@ -48,20 +53,24 @@ use crate::domain::repositories::stable_diffusion_repository::StableDiffusionRep
 use crate::domain::repositories::theme_repository::ThemeRepository;
 use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
 use crate::domain::repositories::translate_repository::TranslateRepository;
+use crate::domain::repositories::tts_repository::TtsRepository;
 use crate::domain::repositories::update_repository::UpdateRepository;
 use crate::domain::repositories::user_directory_repository::UserDirectoryRepository;
 use crate::domain::repositories::user_repository::UserRepository;
+use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
 use crate::infrastructure::apis::http_chat_completion_repository::HttpChatCompletionRepository;
 use crate::infrastructure::apis::http_stable_diffusion_repository::HttpStableDiffusionRepository;
 use crate::infrastructure::apis::http_translate_repository::HttpTranslateRepository;
+use crate::infrastructure::apis::http_tts_repository::HttpTtsRepository;
 use crate::infrastructure::apis::miktik_tokenizer_repository::MiktikTokenizerRepository;
 use crate::infrastructure::http_client_pool::HttpClientPool;
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
 use crate::infrastructure::persistence::file_system::DataDirectory;
+use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
 use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
 use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
@@ -97,10 +106,12 @@ pub(super) struct AppServices {
     pub theme_service: Arc<ThemeService>,
     pub preset_service: Arc<PresetService>,
     pub quick_reply_service: Arc<QuickReplyService>,
+    pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
     pub stable_diffusion_service: Arc<StableDiffusionService>,
     pub translate_service: Arc<TranslateService>,
+    pub tts_service: Arc<TtsService>,
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
@@ -126,10 +137,14 @@ struct AppRepositories {
     theme_repository: Arc<dyn ThemeRepository>,
     preset_repository: Arc<dyn PresetRepository>,
     quick_reply_repository: Arc<dyn QuickReplyRepository>,
+    agent_run_repository: Arc<dyn AgentRunRepository>,
+    workspace_repository: Arc<dyn WorkspaceRepository>,
+    checkpoint_repository: Arc<dyn CheckpointRepository>,
     chat_completion_repository: Arc<dyn ChatCompletionRepository>,
     tokenizer_repository: Arc<dyn TokenizerRepository>,
     stable_diffusion_repository: Arc<dyn StableDiffusionRepository>,
     translate_repository: Arc<dyn TranslateRepository>,
+    tts_repository: Arc<dyn TtsRepository>,
     world_info_repository: Arc<dyn WorldInfoRepository>,
     update_repository: Arc<dyn UpdateRepository>,
 }
@@ -193,6 +208,14 @@ pub(super) async fn build_services(
         repositories.prompt_cache_repository.clone(),
         ios_policy.clone(),
     ));
+    let agent_runtime_service = Arc::new(AgentRuntimeService::new(
+        repositories.agent_run_repository.clone(),
+        repositories.workspace_repository.clone(),
+        repositories.checkpoint_repository.clone(),
+        Arc::new(ChatCompletionAgentModelGateway::new(
+            chat_completion_service.clone(),
+        )),
+    ));
     let tokenization_service =
         Arc::new(TokenizationService::new(repositories.tokenizer_repository));
     let stable_diffusion_service = Arc::new(StableDiffusionService::new(
@@ -200,6 +223,10 @@ pub(super) async fn build_services(
     ));
     let translate_service = Arc::new(TranslateService::new(
         repositories.translate_repository,
+        repositories.secret_repository.clone(),
+    ));
+    let tts_service = Arc::new(TtsService::new(
+        repositories.tts_repository,
         repositories.secret_repository.clone(),
     ));
     let world_info_service = Arc::new(WorldInfoService::new(
@@ -260,10 +287,12 @@ pub(super) async fn build_services(
         theme_service,
         preset_service,
         quick_reply_service,
+        agent_runtime_service,
         chat_completion_service,
         tokenization_service,
         stable_diffusion_service,
         translate_service,
+        tts_service,
         world_info_service,
         lan_sync_service,
         tt_sync_service,
@@ -359,6 +388,13 @@ fn build_repositories(
         FileQuickReplyRepository::new(data_directory.default_user().join("QuickReplies")),
     );
 
+    let file_agent_repository = Arc::new(FileAgentRepository::new(
+        data_root.join("_tauritavern").join("agent-workspaces"),
+    ));
+    let agent_run_repository: Arc<dyn AgentRunRepository> = file_agent_repository.clone();
+    let workspace_repository: Arc<dyn WorkspaceRepository> = file_agent_repository.clone();
+    let checkpoint_repository: Arc<dyn CheckpointRepository> = file_agent_repository;
+
     let llm_api_log_store = app_handle.state::<Arc<LlmApiLogStore>>().inner().clone();
     let chat_completion_repository: Arc<dyn ChatCompletionRepository> =
         Arc::new(LoggingChatCompletionRepository::new(
@@ -378,6 +414,8 @@ fn build_repositories(
 
     let translate_repository: Arc<dyn TranslateRepository> =
         Arc::new(HttpTranslateRepository::new(http_client_pool.clone()));
+    let tts_repository: Arc<dyn TtsRepository> =
+        Arc::new(HttpTtsRepository::new(http_client_pool.clone()));
 
     let world_info_repository: Arc<dyn WorldInfoRepository> = Arc::new(
         FileWorldInfoRepository::new(data_directory.default_user().join("worlds")),
@@ -404,10 +442,14 @@ fn build_repositories(
         theme_repository,
         preset_repository,
         quick_reply_repository,
+        agent_run_repository,
+        workspace_repository,
+        checkpoint_repository,
         chat_completion_repository,
         tokenizer_repository,
         stable_diffusion_repository,
         translate_repository,
+        tts_repository,
         world_info_repository,
         update_repository,
     })

@@ -1,4 +1,7 @@
 // Application services
+pub mod agent_model_gateway;
+pub mod agent_runtime_service;
+pub mod agent_tools;
 pub mod avatar_service;
 pub mod background_service;
 pub mod character_service;
@@ -19,6 +22,7 @@ pub mod theme_service;
 pub mod tokenization_service;
 pub mod translate_service;
 pub mod tt_sync_service;
+pub mod tts_service;
 pub mod update_service;
 pub mod user_directory_service;
 pub mod user_service;

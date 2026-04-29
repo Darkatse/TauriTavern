@@ -67,3 +67,7 @@
 13. `docs/CurrentState/Accessibility.md`
    - 无障碍系统当前实现快照：shared a11y core、Screen Reader Assistance、键盘交互、主界面语义、复杂 UI 排序辅助与 i18n 契约
    - 包含关闭 Screen Reader Assistance 后的兼容性边界、owner module 维护原则和回归检查点
+
+14. `docs/CurrentState/AgentFramework.md`
+   - Agent 框架实时开发进度跟踪
+   - 当前记录 Phase 2B workspace 读改工具循环、前端 dryRun adapter、Host ABI、手动 smoke 与后续限制；具体架构与细节设计见 `docs/AgentArchitecture.md`、`docs/AgentContract.md`、`docs/AgentImplementPlan.md` 与 `docs/Agent/`

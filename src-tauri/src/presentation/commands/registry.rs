@@ -234,6 +234,13 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // Quick reply commands
         super::quick_reply_commands::save_quick_reply_set,
         super::quick_reply_commands::delete_quick_reply_set,
+        // Agent runtime commands
+        super::agent_commands::start_agent_run,
+        super::agent_commands::cancel_agent_run,
+        super::agent_commands::read_agent_run_events,
+        super::agent_commands::read_agent_workspace_file,
+        super::agent_commands::prepare_agent_run_commit,
+        super::agent_commands::finalize_agent_run_commit,
         // Chat completion commands
         super::chat_completion_commands::get_chat_completions_status,
         super::chat_completion_commands::generate_chat_completion,
@@ -245,6 +252,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::stable_diffusion_commands::cancel_sd_request,
         // Translate commands
         super::translate_commands::translate_text,
+        // TTS commands
+        super::tts_commands::tts_handle,
         // Tokenizer commands
         super::tokenizer_commands::count_openai_tokens,
         super::tokenizer_commands::count_openai_tokens_batch,

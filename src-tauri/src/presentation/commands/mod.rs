@@ -1,4 +1,5 @@
 // Tauri commands
+pub mod agent_commands;
 pub mod avatar_commands;
 pub mod background_commands;
 pub mod bootstrap_commands;
@@ -33,6 +34,7 @@ pub mod theme_commands;
 pub mod tokenizer_commands;
 pub mod translate_commands;
 pub mod tt_sync_commands;
+pub mod tts_commands;
 pub mod update_commands;
 pub mod user_commands;
 pub mod user_directory_commands;

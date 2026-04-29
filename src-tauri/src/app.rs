@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
 use crate::application::services::character_service::CharacterService;
@@ -22,6 +23,7 @@ use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
 use crate::application::services::translate_service::TranslateService;
 use crate::application::services::tt_sync_service::TtSyncService;
+use crate::application::services::tts_service::TtsService;
 use crate::application::services::update_service::UpdateService;
 use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
@@ -49,10 +51,12 @@ pub struct AppState {
     pub theme_service: Arc<ThemeService>,
     pub preset_service: Arc<PresetService>,
     pub quick_reply_service: Arc<QuickReplyService>,
+    pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
     pub stable_diffusion_service: Arc<StableDiffusionService>,
     pub translate_service: Arc<TranslateService>,
+    pub tts_service: Arc<TtsService>,
     pub world_info_service: Arc<WorldInfoService>,
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
@@ -94,10 +98,12 @@ impl AppState {
             theme_service: services.theme_service,
             preset_service: services.preset_service,
             quick_reply_service: services.quick_reply_service,
+            agent_runtime_service: services.agent_runtime_service,
             chat_completion_service: services.chat_completion_service,
             tokenization_service: services.tokenization_service,
             stable_diffusion_service: services.stable_diffusion_service,
             translate_service: services.translate_service,
+            tts_service: services.tts_service,
             world_info_service: services.world_info_service,
             lan_sync_service: services.lan_sync_service,
             tt_sync_service: services.tt_sync_service,

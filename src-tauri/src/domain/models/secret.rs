@@ -213,6 +213,7 @@ impl SecretKeys {
     pub const AIMLAPI: &'static str = "api_key_aimlapi";
     pub const FALAI: &'static str = "api_key_falai";
     pub const XAI: &'static str = "api_key_xai";
+    pub const MIMO: &'static str = "api_key_mimo";
     pub const FIREWORKS: &'static str = "api_key_fireworks";
     pub const VERTEXAI_SERVICE_ACCOUNT: &'static str = "vertexai_service_account_json";
     pub const MINIMAX: &'static str = "api_key_minimax";
@@ -277,6 +278,7 @@ impl SecretKeys {
             Self::AIMLAPI,
             Self::FALAI,
             Self::XAI,
+            Self::MIMO,
             Self::FIREWORKS,
             Self::VERTEXAI_SERVICE_ACCOUNT,
             Self::MINIMAX,

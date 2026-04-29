@@ -1,10 +1,12 @@
 // Repository interfaces
+pub mod agent_run_repository;
 pub mod avatar_repository;
 pub mod background_repository;
 pub mod character_repository;
 pub mod chat_completion_repository;
 pub mod chat_repository;
 pub mod chat_types;
+pub mod checkpoint_repository;
 pub mod content_repository;
 pub mod extension_repository;
 pub mod extension_store_repository;
@@ -19,7 +21,9 @@ pub mod stable_diffusion_repository;
 pub mod theme_repository;
 pub mod tokenizer_repository;
 pub mod translate_repository;
+pub mod tts_repository;
 pub mod update_repository;
 pub mod user_directory_repository;
 pub mod user_repository;
+pub mod workspace_repository;
 pub mod world_info_repository;

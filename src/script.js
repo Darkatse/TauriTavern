@@ -4679,6 +4679,7 @@ function removeLastMessage() {
  * @property {string} [quietName] Name to use for the quiet prompt (defaults to "System:")
  * @property {number} [depth] Recursion depth for the generation. Used to prevent infinite loops in tool calls.
  * @property {JsonSchema} [jsonSchema] JSON schema to use for the structured generation. Usually requires a special instruction.
+ * @property {boolean} [agentMode] Internal TauriTavern Agent prompt snapshot mode.
  */
 
 const generationIdleGate = createGenerationIdleGate();
@@ -4723,7 +4724,7 @@ export async function Generate(type, options = {}, dryRun = false) {
     }
 }
 
-async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0 } = {}, dryRun = false) {
+async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, agentMode = false } = {}, dryRun = false) {
     console.log('Generate entered');
     setGenerationProgress(0);
     generation_started = new Date();
@@ -5782,6 +5783,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 jailbreakPromptOverride: jailbreak,
                 messages: oaiMessages,
                 messageExamples: oaiMessageExamples,
+                agentMode,
             }, dryRun);
             generate_data = { prompt: prompt };
 
