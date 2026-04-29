@@ -35,7 +35,7 @@
 
 ## 3. 当前 Wrapper
 
-当前状态（2026-04-26）：已有轻量 `AgentModelGateway` wrapper，复用 `ChatCompletionService::generate_with_cancel()` 驱动非 streaming 工具循环。完整 provider-agnostic `ModelRequest` / `ModelResponse` 抽象仍未落地。
+当前状态（2026-04-29）：已有轻量 `AgentModelGateway` wrapper，复用 `ChatCompletionService::generate_with_cancel()` 驱动非 streaming 工具循环；Phase 2C 已在该循环中接入 chat/worldinfo/workspace 内建工具。完整 provider-agnostic `ModelRequest` / `ModelResponse` 抽象仍未落地。
 
 当前调用链：
 

@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use crate::domain::errors::DomainError;
 
 use super::chat_types::{
-    ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
-    ChatPayloadPatchOp, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery,
+    ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
+    ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery,
     LocatedChatMessage, PinnedGroupChat,
 };
 
@@ -170,6 +170,13 @@ pub trait GroupChatRepository: Send + Sync {
         chat_id: &str,
         query: FindLastMessageQuery,
     ) -> Result<Option<LocatedChatMessage>, DomainError>;
+
+    /// Read selected messages by absolute 0-based message index.
+    async fn read_group_chat_messages(
+        &self,
+        chat_id: &str,
+        indices: &[usize],
+    ) -> Result<ChatMessagesReadResult, DomainError>;
 
     /// Search messages inside a group chat payload.
     async fn search_group_chat_messages(

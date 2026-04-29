@@ -293,6 +293,13 @@ Agent run/timeline/tool event 不得伪装成上游 `GENERATION_*` 或 `TOOL_CAL
 
 Agent 读取历史必须优先使用后端 chat repository/windowed payload/search 能力。
 
+当前已落地的聊天上下文工具必须遵守：
+
+- `chat.search` 只能搜索当前 run 绑定的聊天；模型只提供 `query` 与可选过滤参数。
+- `chat.read_messages` 使用 0-based message index；JSONL header 不计入 index。
+- 长消息读取必须支持字符范围，不能强行把整条超长消息塞回 prompt。
+- 搜索/读取结果可以返回 snippet、text slice 与 stable ref，但不能扩大前端常驻 chat window。
+
 禁止：
 
 - 把完整 chat history 注入前端常驻 `chat`。

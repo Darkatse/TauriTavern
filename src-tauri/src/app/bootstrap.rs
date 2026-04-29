@@ -212,6 +212,8 @@ pub(super) async fn build_services(
         repositories.agent_run_repository.clone(),
         repositories.workspace_repository.clone(),
         repositories.checkpoint_repository.clone(),
+        repositories.chat_repository.clone(),
+        repositories.group_chat_repository.clone(),
         Arc::new(ChatCompletionAgentModelGateway::new(
             chat_completion_service.clone(),
         )),

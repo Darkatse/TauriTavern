@@ -38,7 +38,10 @@ pub(super) fn prepare_agent_tool_request(
     let messages = ensure_messages_array(&mut request.payload)?;
     let agent_system_prompt = [
         "TauriTavern Agent Mode is active.",
-        "Work only through the Agent workspace tools. Tool results are private run state, not chat messages.",
+        "Work through Agent tools. Tool results are private run state, not chat messages.",
+        "Use chat_search to find relevant prior messages when you need more context. Only query is required.",
+        "Use chat_read_messages with message indexes from chat_search, or exact indexes you already know. For long messages, read smaller ranges with start_char and max_chars.",
+        "Use worldinfo_read_activated when active lore for this run matters.",
         "Use workspace_list_files to inspect visible workspace files.",
         "Use workspace_read_file before modifying an existing file. Read output has line numbers; never include line number prefixes in old_string or new_string.",
         "Use workspace_apply_patch for precise edits to existing files. The old_string must match exactly and uniquely unless replace_all is true.",

@@ -54,7 +54,8 @@ impl AgentRuntimeService {
 
             if tool_calls.is_empty() {
                 return Err(ApplicationError::ValidationError(
-                    "model.tool_call_required_phase2b: model must use workspace tools and finish through workspace_finish in Agent Phase 2B".to_string(),
+                    "model.tool_call_required: model must use Agent tools and finish through workspace_finish"
+                        .to_string(),
                 ));
             }
 

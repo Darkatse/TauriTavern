@@ -3,10 +3,15 @@ use std::time::Instant;
 
 use serde_json::json;
 
+use super::chat;
 use super::session::AgentToolSession;
 use super::workspace;
+use super::world_info;
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult, WorkspacePath};
+use crate::domain::repositories::agent_run_repository::AgentRunRepository;
+use crate::domain::repositories::chat_repository::ChatRepository;
+use crate::domain::repositories::group_chat_repository::GroupChatRepository;
 use crate::domain::repositories::workspace_repository::{WorkspaceFile, WorkspaceRepository};
 
 #[derive(Debug, Clone)]
@@ -33,12 +38,23 @@ pub enum AgentToolEffect {
 }
 
 pub struct AgentToolDispatcher {
+    run_repository: Arc<dyn AgentRunRepository>,
+    chat_repository: Arc<dyn ChatRepository>,
+    group_chat_repository: Arc<dyn GroupChatRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
 }
 
 impl AgentToolDispatcher {
-    pub fn new(workspace_repository: Arc<dyn WorkspaceRepository>) -> Self {
+    pub fn new(
+        run_repository: Arc<dyn AgentRunRepository>,
+        chat_repository: Arc<dyn ChatRepository>,
+        group_chat_repository: Arc<dyn GroupChatRepository>,
+        workspace_repository: Arc<dyn WorkspaceRepository>,
+    ) -> Self {
         Self {
+            run_repository,
+            chat_repository,
+            group_chat_repository,
             workspace_repository,
         }
     }
@@ -51,6 +67,29 @@ impl AgentToolDispatcher {
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
         let outcome = match call.name.as_str() {
+            chat::CHAT_SEARCH => {
+                chat::search(
+                    self.run_repository.as_ref(),
+                    self.chat_repository.as_ref(),
+                    self.group_chat_repository.as_ref(),
+                    run_id,
+                    call,
+                )
+                .await?
+            }
+            chat::CHAT_READ_MESSAGES => {
+                chat::read_messages(
+                    self.run_repository.as_ref(),
+                    self.chat_repository.as_ref(),
+                    self.group_chat_repository.as_ref(),
+                    run_id,
+                    call,
+                )
+                .await?
+            }
+            world_info::WORLDINFO_READ_ACTIVATED => {
+                world_info::read_activated(self.workspace_repository.as_ref(), run_id, call).await?
+            }
             workspace::WORKSPACE_LIST_FILES => {
                 workspace::list_files(self.workspace_repository.as_ref(), run_id, call).await?
             }

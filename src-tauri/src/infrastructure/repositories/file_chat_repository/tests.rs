@@ -854,6 +854,109 @@ async fn search_character_chat_messages_returns_scored_hits_and_respects_role_fi
 }
 
 #[tokio::test]
+async fn read_character_chat_messages_returns_selected_messages_and_total_count() {
+    let (repository, root) = setup_repository().await;
+
+    let payload = vec![
+        json!({
+            "chat_metadata": {
+                "integrity": "read-a",
+            },
+            "user_name": "unused",
+            "character_name": "unused",
+        }),
+        json!({
+            "name": "User",
+            "is_user": true,
+            "is_system": false,
+            "send_date": "2026-01-01T00:00:00.000Z",
+            "mes": "first message",
+            "extra": {},
+        }),
+        json!({
+            "name": "Alice",
+            "is_user": false,
+            "is_system": false,
+            "send_date": "2026-01-01T00:00:01.000Z",
+            "mes": "second message",
+            "extra": {},
+        }),
+        json!({
+            "name": "System",
+            "is_user": false,
+            "is_system": true,
+            "send_date": "2026-01-01T00:00:02.000Z",
+            "mes": "system message",
+            "extra": {},
+        }),
+    ];
+
+    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
+        .await
+        .expect("save payload");
+
+    let result = repository
+        .read_character_chat_messages("alice", "session", &[2, 0])
+        .await
+        .expect("read messages");
+
+    assert_eq!(result.total_messages, 3);
+    assert_eq!(result.messages.len(), 2);
+    assert_eq!(result.messages[0].index, 0);
+    assert_eq!(result.messages[0].role, ChatMessageRole::User);
+    assert_eq!(result.messages[0].text, "first message");
+    assert_eq!(result.messages[1].index, 2);
+    assert_eq!(result.messages[1].role, ChatMessageRole::System);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn read_group_chat_messages_uses_message_indexes_without_header() {
+    let (repository, root) = setup_repository().await;
+
+    let payload = vec![
+        json!({
+            "chat_metadata": {},
+            "user_name": "unused",
+            "character_name": "unused",
+        }),
+        json!({
+            "name": "User",
+            "is_user": true,
+            "is_system": false,
+            "send_date": "2026-01-01T00:00:00.000Z",
+            "mes": "group first",
+            "extra": {},
+        }),
+        json!({
+            "name": "Alice",
+            "is_user": false,
+            "is_system": false,
+            "send_date": "2026-01-01T00:00:01.000Z",
+            "mes": "group second",
+            "extra": {},
+        }),
+    ];
+
+    save_group_chat_payload_from_values(&repository, &root, "group-session", &payload, false)
+        .await
+        .expect("save group payload");
+
+    let result = repository
+        .read_group_chat_messages("group-session", &[1])
+        .await
+        .expect("read group message");
+
+    assert_eq!(result.total_messages, 2);
+    assert_eq!(result.messages.len(), 1);
+    assert_eq!(result.messages[0].index, 1);
+    assert_eq!(result.messages[0].text, "group second");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn search_group_chat_messages_respects_scan_limit() {
     let (repository, root) = setup_repository().await;
 

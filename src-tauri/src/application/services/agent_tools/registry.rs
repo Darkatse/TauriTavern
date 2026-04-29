@@ -1,9 +1,11 @@
 use serde_json::{Value, json};
 
+use super::chat::{chat_read_messages_spec, chat_search_spec};
 use super::workspace::{
     workspace_apply_patch_spec, workspace_finish_spec, workspace_list_files_spec,
     workspace_read_file_spec, workspace_write_file_spec,
 };
+use super::world_info::worldinfo_read_activated_spec;
 use crate::domain::models::agent::AgentToolSpec;
 
 #[derive(Debug, Clone)]
@@ -12,9 +14,12 @@ pub struct BuiltinAgentToolRegistry {
 }
 
 impl BuiltinAgentToolRegistry {
-    pub fn phase2b() -> Self {
+    pub fn phase2c() -> Self {
         Self {
             specs: vec![
+                chat_search_spec(),
+                chat_read_messages_spec(),
+                worldinfo_read_activated_spec(),
                 workspace_list_files_spec(),
                 workspace_read_file_spec(),
                 workspace_write_file_spec(),
@@ -59,10 +64,10 @@ mod tests {
 
     #[test]
     fn registry_uses_openai_safe_model_names() {
-        let registry = BuiltinAgentToolRegistry::phase2b();
+        let registry = BuiltinAgentToolRegistry::phase2c();
         let tools = registry.openai_tools();
 
-        assert_eq!(tools[0]["function"]["name"], "workspace_list_files");
+        assert_eq!(tools[0]["function"]["name"], "chat_search");
         assert_eq!(
             registry.canonical_name("workspace_write_file"),
             Some(WORKSPACE_WRITE_FILE)

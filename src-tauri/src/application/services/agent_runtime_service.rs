@@ -6,7 +6,9 @@ use tokio::sync::{RwLock, watch};
 use crate::application::services::agent_model_gateway::AgentModelGateway;
 use crate::application::services::agent_tools::{AgentToolDispatcher, BuiltinAgentToolRegistry};
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
+use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
+use crate::domain::repositories::group_chat_repository::GroupChatRepository;
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 
 mod artifacts;
@@ -41,10 +43,17 @@ impl AgentRuntimeService {
         run_repository: Arc<dyn AgentRunRepository>,
         workspace_repository: Arc<dyn WorkspaceRepository>,
         checkpoint_repository: Arc<dyn CheckpointRepository>,
+        chat_repository: Arc<dyn ChatRepository>,
+        group_chat_repository: Arc<dyn GroupChatRepository>,
         model_gateway: Arc<dyn AgentModelGateway>,
     ) -> Self {
-        let tool_registry = BuiltinAgentToolRegistry::phase2b();
-        let tool_dispatcher = AgentToolDispatcher::new(workspace_repository.clone());
+        let tool_registry = BuiltinAgentToolRegistry::phase2c();
+        let tool_dispatcher = AgentToolDispatcher::new(
+            run_repository.clone(),
+            chat_repository,
+            group_chat_repository,
+            workspace_repository.clone(),
+        );
         Self {
             run_repository,
             workspace_repository,

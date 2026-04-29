@@ -9,8 +9,9 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage};
 use crate::domain::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatMessageSearchHit, ChatMessageSearchQuery,
-    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail, ChatRepository,
-    ChatSearchResult, FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat,
+    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp,
+    ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
+    PinnedCharacterChat,
 };
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::chat_format_importers::{
@@ -822,6 +823,16 @@ impl ChatRepository for FileChatRepository {
         query: FindLastMessageQuery,
     ) -> Result<Option<LocatedChatMessage>, DomainError> {
         self.find_last_character_chat_message_internal(character_name, file_name, query)
+            .await
+    }
+
+    async fn read_character_chat_messages(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        indices: &[usize],
+    ) -> Result<ChatMessagesReadResult, DomainError> {
+        self.read_character_chat_messages_internal(character_name, file_name, indices)
             .await
     }
 

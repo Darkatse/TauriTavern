@@ -238,7 +238,7 @@ mod tests {
             }]
         });
 
-        let registry = BuiltinAgentToolRegistry::phase2b();
+        let registry = BuiltinAgentToolRegistry::phase2c();
         let calls = extract_agent_tool_calls(&response, &registry).unwrap();
 
         assert_eq!(calls.len(), 1);

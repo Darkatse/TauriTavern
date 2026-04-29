@@ -140,16 +140,18 @@ LLM Gateway / provider adapter
 
 ### 5.1 当前落地边界
 
-截至 2026-04-26，当前已落地的是 Phase 2B workspace 读改工具循环，而不是完整 Agent 产品面：
+截至 2026-04-29，当前已落地的是 Phase 2C 上下文只读工具 + workspace 读改工具循环，而不是完整 Agent 产品面：
 
 - Public Host ABI 入口为 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`，没有 `startRun()` alias。
-- `startRunFromLegacyGenerate()` 是当前推荐的兼容桥；它捕获 Legacy prompt 语义，同时禁用 Legacy ToolManager tools。
+- `startRunFromLegacyGenerate()` 是当前推荐的兼容桥；它捕获 Legacy prompt 语义与本轮最终 `worldInfoActivation`，同时禁用 Legacy ToolManager tools。
 - `startRunWithPromptSnapshot()` 是低层测试/集成入口；调用方必须提供不含 external tools/tool turns 的 chat completion payload。
-- 后端当前开放 `workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish` 五个内建工具，对模型暴露为 provider-safe alias。
+- 后端当前开放 `chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish` 八个内建工具，对模型暴露为 provider-safe alias。
+- `chat.search` 与 `chat.read_messages` 只读取当前 run 绑定的聊天，不允许模型指定任意 chat target；message index 从 0 开始，JSONL header 不计入消息。
+- `worldinfo.read_activated` 只读取本次 run prompt snapshot 中 materialized 的激活结果，不把全局 last activation 当作运行时真相。
 - 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，只有 `finalizeCommit()` 成功后才 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
 - 工具循环最多 80 轮，必须以 `workspace.finish` 结束；模型直接输出文本会 fail-fast。
 - 模型可修正的工具错误以 `is_error = true` tool result 回填下一轮；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
-- `readDiff`、`rollback`、`resume-run`、tool approval、profile routing、MCP、timeline UI、主发送按钮 Agent toggle 仍未实现。
+- `skill.list`、`skill.read`、`readDiff`、`rollback`、`resume-run`、tool approval、profile routing、MCP、timeline UI、主发送按钮 Agent toggle 仍未实现。
 
 ### 5.2 Run 与 Workspace 身份
 
@@ -411,18 +413,18 @@ SillyTavern 上游的事件和 chat message 结构仍是兼容层的基础。Age
 - Provider endpoint override 必须继续遵守现有 iOS policy 与 settings policy。
 - 任何 policy violation 都必须显式进入 journal：若属于模型可修正的工具参数/权限问题，返回 recoverable tool error；若属于宿主安全或状态机问题，则 fail-fast。禁止静默降级为“工具不可见但继续跑”之类的模糊行为。
 
-## 13. 最小 MVP
+## 13. 当前基线与下一步
 
-第一个可合并 Agent MVP 应只包含：
+第一个最小 Agent 骨架已经并入当前基线：
 
-1. `api.agent.startRunWithPromptSnapshot()`。
-2. run workspace。
-3. `events.jsonl`。
-4. `output/main.md`。
+1. `api.agent.startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()`。
+2. run workspace 与 chat 级 `persist/` projection。
+3. append-only `events.jsonl`。
+4. `output/main.md` artifact。
 5. checkpoint snapshot。
-6. 单次 LLM call。
-7. artifact commit 到 chat。
-8. 最小 timeline UI。
+6. Rust-owned model/tool loop。
+7. chat/worldinfo/workspace 内建工具。
+8. artifact commit 到 chat。
 9. Agent Mode off 行为完全不变。
 
-这个 MVP 的价值不是炫技，而是验证 runtime boundary、journal、workspace、commit、rollback 这些后续能力赖以存在的骨架。
+下一步的架构重点不再是证明 Agent loop 可行，而是补齐三个长期能力：provider-agnostic model/tool adapter、创作者可控的 profile/context policy、可理解的 timeline/diff/rollback UI。

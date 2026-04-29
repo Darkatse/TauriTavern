@@ -391,7 +391,7 @@ profile_switch_denied
 
 ## 12. MVP Profile
 
-当前状态（2026-04-26）：尚未实现 profile resolution / profile routing。`profileId` 可以随 run 记录，但不会驱动模型、工具或 context policy。当前工具 registry 固定为 Phase 2B workspace 内建工具集，输出 artifact 固定为 `output/main.md`。
+当前状态（2026-04-29）：尚未实现 profile resolution / profile routing。`profileId` 可以随 run 记录，但不会驱动模型、工具或 context policy。当前工具 registry 固定为 Phase 2C 内建工具集，输出 artifact 固定为 `output/main.md`。
 
 当前最小 profile 可以理解为硬编码：
 
@@ -408,7 +408,10 @@ profile_switch_denied
       "workspace.read_file",
       "workspace.write_file",
       "workspace.apply_patch",
-      "workspace.finish"
+      "workspace.finish",
+      "chat.search",
+      "chat.read_messages",
+      "worldinfo.read_activated"
     ],
     "deny": ["*"]
   },
@@ -420,4 +423,4 @@ profile_switch_denied
 }
 ```
 
-这个 profile 足以支撑当前 workspace 读改工具循环，同时给后续 context tools、profile routing 与 MCP 留出自然扩展点。
+这个 profile 足以支撑当前上下文只读工具与 workspace 读改工具循环，同时给后续 Skill、profile routing 与 MCP 留出自然扩展点。

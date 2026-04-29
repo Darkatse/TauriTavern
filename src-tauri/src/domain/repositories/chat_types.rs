@@ -127,6 +127,27 @@ pub struct ChatMessageSearchQuery {
     pub filters: Option<ChatMessageSearchFilters>,
 }
 
+/// One chat message loaded by absolute 0-based message index.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessageReadItem {
+    pub index: usize,
+    pub role: ChatMessageRole,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send_date: Option<String>,
+    pub text: String,
+}
+
+/// Result for reading selected messages from a chat payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessagesReadResult {
+    pub total_messages: usize,
+    pub messages: Vec<ChatMessageReadItem>,
+}
+
 /// Search hit returned for chat message search queries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

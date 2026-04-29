@@ -6,9 +6,10 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 pub use super::chat_types::{
-    ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery,
-    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail, ChatSearchResult,
-    FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
+    ChatMessageReadItem, ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchHit,
+    ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor,
+    ChatPayloadPatchOp, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery,
+    LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
 };
 
 /// Chat import format
@@ -288,6 +289,14 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
         query: FindLastMessageQuery,
     ) -> Result<Option<LocatedChatMessage>, DomainError>;
+
+    /// Read selected messages by absolute 0-based message index.
+    async fn read_character_chat_messages(
+        &self,
+        character_name: &str,
+        file_name: &str,
+        indices: &[usize],
+    ) -> Result<ChatMessagesReadResult, DomainError>;
 
     /// Search messages inside a character chat payload.
     async fn search_character_chat_messages(

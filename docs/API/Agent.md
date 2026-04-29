@@ -2,7 +2,7 @@
 
 本文档是 Agent Host ABI 草案。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
 
-状态：当前已实现 Phase 2B workspace 读改工具循环与前端 dryRun adapter。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来草案。
+状态：当前已实现 Phase 2C 上下文只读工具、workspace 读改工具循环与前端 dryRun adapter。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来草案。
 
 ## 1. 入口
 
@@ -61,13 +61,14 @@ type AgentStartRunFromLegacyGenerateInput = {
 };
 ```
 
-`startRunFromLegacyGenerate()` 是当前前端兼容桥：它使用 Legacy `Generate(..., dryRun = true)` 捕获当前 SillyTavern prompt 语义，构造 `promptSnapshot.chatCompletionPayload`，再调用 `startRunWithPromptSnapshot()`。
+`startRunFromLegacyGenerate()` 是当前前端兼容桥：它使用 Legacy `Generate(..., dryRun = true)` 捕获当前 SillyTavern prompt 语义，构造 `promptSnapshot.chatCompletionPayload`，捕获本轮 dryRun 最终 `worldInfoActivation`，再调用 `startRunWithPromptSnapshot()`。
 
 要求：
 
 - 只用于当前 active chat。
 - 当前只支持 `main_api = openai` 的 chat-completion 路径。
 - 必须禁用 Legacy ToolManager tools；Agent tools 只能由 Rust runtime 注册。
+- `worldInfoActivation` 必须来自本次 dryRun 的最终 `WORLDINFO_SCAN_DONE`，不能读取全局 last activation 当作 run 真相。
 - `stream` 与 `autoCommit` 必须为 `false` 或省略。
 - dryRun 没有产出 messages、已有 tool turns、已有 external tools 都必须 reject，不回退 Legacy Generate。
 
@@ -81,13 +82,29 @@ type AgentStartRunWithPromptSnapshotInput = {
   stableChatId?: string;
   generationType?: 'normal' | 'regenerate' | 'swipe' | 'continue' | 'quiet' | 'impersonate';
   profileId?: string;
-  promptSnapshot: unknown;
+  promptSnapshot: AgentPromptSnapshot;
   generationIntent?: AgentGenerationIntent;
   workspaceMode?: 'new-run' | 'resume-run';
   resumeRunId?: string;
   options?: {
     autoCommit?: boolean;
     stream?: boolean;
+  };
+};
+
+type AgentPromptSnapshot = {
+  chatCompletionPayload: unknown;
+  worldInfoActivation?: {
+    timestampMs: number;
+    trigger: string;
+    entries: Array<{
+      world: string;
+      uid: string | number;
+      displayName: string;
+      constant: boolean;
+      content: string;
+      position?: 'before' | 'after' | 'an_top' | 'an_bottom' | 'depth' | 'em_top' | 'em_bottom' | 'outlet';
+    }>;
   };
 };
 
@@ -108,12 +125,13 @@ type AgentRunHandle = {
 
 Public Host ABI 可以允许调用方省略 `stableChatId`，但 `api.agent.startRunWithPromptSnapshot()` 必须在调用 Rust command 前通过 `api.chat.open(chatRef).stableId()` 解析并校验。Rust command 不应自行读取 SillyTavern metadata。
 
-当前要求提供 `promptSnapshot`。长期目标是 `generationIntent + ContextFrame`，但当前 Rust runtime 不会只凭 `generationIntent` 组装上下文。
+当前要求提供 `promptSnapshot.chatCompletionPayload`。`promptSnapshot.worldInfoActivation` 是可选字段，由 `worldinfo_read_activated` 读取；长期目标是 `generationIntent + ContextFrame`，但当前 Rust runtime 不会只凭 `generationIntent` 组装上下文。
 
 要求：
 
 - `stableChatId` 进入 backend DTO 前必须非空；无法解析时 fail-fast。
 - `promptSnapshot.chatCompletionPayload` 必须包含 chat-completion payload object。
+- 如果调用方希望 `worldinfo_read_activated` 返回非错误结果，必须在 prompt snapshot 中提供本次 run 的 `worldInfoActivation`。
 - 当前拒绝已有 `tools`、`tool_choice`、`role: "tool"` 或已有 `tool_calls` 的外部 tool turns。
 - 当前拒绝 `stream: true` 与 `autoCommit: true`。
 - `workspaceMode` / `resumeRunId` 当前只是后续阶段字段，不应作为当前行为依赖。
@@ -394,17 +412,20 @@ Agent Mode on：
 
 ## 17. 当前工具与手动验证
 
-当前开放五个内建工具：
+当前开放八个内建工具：
 
 | Canonical name | Model-facing alias | 说明 |
 | --- | --- | --- |
+| `chat.search` | `chat_search` | 搜索当前 run 绑定的聊天。只有 `query` 必填；可选 `limit`、`role`、`start_message`、`end_message`、`scan_limit`。返回 message index、snippet 与 ref。 |
+| `chat.read_messages` | `chat_read_messages` | 按 0-based message index 读取当前聊天消息；每项可选 `start_char`、`max_chars` 读取长消息片段。 |
+| `worldinfo.read_activated` | `worldinfo_read_activated` | 读取本次 run 的最终激活世界书条目；模型可读文本只包含条目名、世界书名、条目内容。 |
 | `workspace.list_files` | `workspace_list_files` | 列出模型可见 workspace 文件；`path` 省略、空字符串、`.`、`./` 表示 workspace root |
 | `workspace.read_file` | `workspace_read_file` | 读取 UTF-8 文本文件并返回行号；完整读取记录 read-state |
 | `workspace.write_file` | `workspace_write_file` | 写 UTF-8 文本到 manifest 可写 roots，当前为 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/` |
 | `workspace.apply_patch` | `workspace_apply_patch` | 单文件 `old_string` / `new_string` 精确替换，要求已完整读取或由本 run 创建/修改 |
 | `workspace.finish` | `workspace_finish` | 结束工具循环，默认 final artifact 为 `output/main.md` |
 
-不存在 `chat.search`、`skill.read`、WorldInfo 工具或 MCP 工具。
+当前不存在 `skill.list`、`skill.read`、MCP、shell 或 extension bridge 工具。
 
 模型可修正的工具错误会作为 `is_error = true` tool result 回填下一轮。宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍然让 run failed。
 

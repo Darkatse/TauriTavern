@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -23,8 +24,10 @@ use crate::domain::models::agent::{
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunRepository,
 };
+use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
+use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
 
 #[test]
 fn workspace_id_uses_stable_chat_id_not_character_chat_file_name() {
@@ -105,6 +108,8 @@ async fn agent_loop_writes_artifact_and_reaches_awaiting_commit() {
         repository.clone(),
         repository.clone(),
         repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
         model_gateway,
     );
     let request = ChatCompletionGenerateRequestDto {
@@ -248,6 +253,8 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
         repository.clone(),
         repository.clone(),
         repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
         model_gateway,
     );
     let request = ChatCompletionGenerateRequestDto {
@@ -369,6 +376,8 @@ async fn finalize_commit_promotes_persistent_workspace_projection() {
         repository.clone(),
         repository.clone(),
         repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
         model_gateway,
     );
     let request = ChatCompletionGenerateRequestDto {
@@ -528,6 +537,8 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
         repository.clone(),
         repository.clone(),
         repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
         model_gateway,
     );
     let request = ChatCompletionGenerateRequestDto {
@@ -621,7 +632,13 @@ async fn workspace_patch_requires_full_read_state() {
         .await
         .expect("seed artifact");
 
-    let dispatcher = AgentToolDispatcher::new(repository.clone());
+    let chat_repository = test_chat_repository(&root);
+    let dispatcher = AgentToolDispatcher::new(
+        repository.clone(),
+        chat_repository.clone(),
+        chat_repository,
+        repository.clone(),
+    );
     let mut session = AgentToolSession::default();
     let patch_call = AgentToolCall {
         id: "call_patch".to_string(),
@@ -677,8 +694,217 @@ async fn workspace_patch_requires_full_read_state() {
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
 
+#[tokio::test]
+async fn dispatcher_searches_and_reads_current_chat_messages() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-chat-tools-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let chat_repository = test_chat_repository(&root);
+    let run = AgentRun {
+        id: "run_chat_tools_test".to_string(),
+        workspace_id: "chat_tools_test".to_string(),
+        stable_chat_id: "stable_chat_tools_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "alice".to_string(),
+            file_name: "session".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .initialize_run(&run, &build_agent_manifest(&run), &json!({"messages": []}))
+        .await
+        .expect("initialize workspace");
+    save_character_payload(
+        &chat_repository,
+        &root,
+        "alice",
+        "session",
+        &[
+            json!({
+                "chat_metadata": {},
+                "user_name": "unused",
+                "character_name": "unused",
+            }),
+            json!({
+                "name": "User",
+                "is_user": true,
+                "is_system": false,
+                "send_date": "2026-01-01T00:00:00.000Z",
+                "mes": "hello",
+                "extra": {},
+            }),
+            json!({
+                "name": "Alice",
+                "is_user": false,
+                "is_system": false,
+                "send_date": "2026-01-01T00:00:01.000Z",
+                "mes": "the blue lantern is hidden under the bridge",
+                "extra": {},
+            }),
+        ],
+    )
+    .await;
+
+    let dispatcher = AgentToolDispatcher::new(
+        repository.clone(),
+        chat_repository.clone(),
+        chat_repository,
+        repository.clone(),
+    );
+    let mut session = AgentToolSession::default();
+    let search_call = AgentToolCall {
+        id: "call_search".to_string(),
+        name: "chat.search".to_string(),
+        arguments: json!({ "query": "blue lantern" }),
+        provider_metadata: Value::Null,
+    };
+    let searched = dispatcher
+        .dispatch(&run.id, &search_call, &mut session)
+        .await
+        .expect("dispatch search");
+    assert!(!searched.result.is_error);
+    assert_eq!(searched.result.structured["hits"][0]["index"], 1);
+    assert!(searched.result.structured["hits"][0].get("text").is_none());
+
+    let read_call = AgentToolCall {
+        id: "call_read_messages".to_string(),
+        name: "chat.read_messages".to_string(),
+        arguments: json!({
+            "messages": [{ "index": 1, "start_char": 4, "max_chars": 12 }]
+        }),
+        provider_metadata: Value::Null,
+    };
+    let read = dispatcher
+        .dispatch(&run.id, &read_call, &mut session)
+        .await
+        .expect("dispatch read messages");
+    assert!(!read.result.is_error);
+    assert_eq!(
+        read.result.structured["messages"][0]["text"],
+        "blue lantern"
+    );
+    assert_eq!(read.result.resource_refs[0], "chat:current#1:chars=4..16");
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn dispatcher_reads_worldinfo_activation_from_run_snapshot() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-worldinfo-tool-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let chat_repository = test_chat_repository(&root);
+    let run = AgentRun {
+        id: "run_worldinfo_tool_test".to_string(),
+        workspace_id: "worldinfo_tool_test".to_string(),
+        stable_chat_id: "stable_worldinfo_tool_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "alice".to_string(),
+            file_name: "session".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run),
+            &json!({
+                "chatCompletionPayload": {
+                    "messages": [{ "role": "user", "content": "hello" }]
+                },
+                "worldInfoActivation": {
+                    "timestampMs": 1,
+                    "trigger": "normal",
+                    "entries": [{
+                        "world": "lorebook",
+                        "uid": 7,
+                        "displayName": "Hidden bridge",
+                        "constant": false,
+                        "position": "before",
+                        "content": "The bridge has a hidden blue lantern."
+                    }]
+                }
+            }),
+        )
+        .await
+        .expect("initialize workspace");
+
+    let dispatcher = AgentToolDispatcher::new(
+        repository.clone(),
+        chat_repository.clone(),
+        chat_repository,
+        repository.clone(),
+    );
+    let mut session = AgentToolSession::default();
+    let call = AgentToolCall {
+        id: "call_worldinfo".to_string(),
+        name: "worldinfo.read_activated".to_string(),
+        arguments: json!({}),
+        provider_metadata: Value::Null,
+    };
+    let result = dispatcher
+        .dispatch(&run.id, &call, &mut session)
+        .await
+        .expect("dispatch worldinfo");
+
+    assert!(!result.result.is_error);
+    assert!(result.result.content.contains("hidden blue lantern"));
+    assert_eq!(result.result.resource_refs[0], "worldinfo:lorebook#7");
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
 struct MockAgentModelGateway {
     responses: Mutex<VecDeque<Value>>,
+}
+
+fn test_chat_repository(root: &Path) -> Arc<FileChatRepository> {
+    Arc::new(FileChatRepository::new(
+        root.join("characters"),
+        root.join("chats"),
+        root.join("group_chats"),
+        root.join("backups"),
+    ))
+}
+
+async fn save_character_payload(
+    repository: &FileChatRepository,
+    root: &Path,
+    character_name: &str,
+    file_name: &str,
+    payload: &[Value],
+) {
+    let source_path = root.join(format!("chat-payload-{}.jsonl", Uuid::new_v4().simple()));
+    tokio::fs::write(&source_path, payload_to_jsonl(payload))
+        .await
+        .expect("write payload");
+    repository
+        .save_chat_payload_from_path(character_name, file_name, &source_path, false)
+        .await
+        .expect("save payload");
+}
+
+fn payload_to_jsonl(payload: &[Value]) -> String {
+    let mut text = String::new();
+    for value in payload {
+        text.push_str(&serde_json::to_string(value).expect("serialize jsonl value"));
+        text.push('\n');
+    }
+    text
 }
 
 impl MockAgentModelGateway {

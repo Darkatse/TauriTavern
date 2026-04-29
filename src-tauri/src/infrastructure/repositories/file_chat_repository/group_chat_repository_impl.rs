@@ -8,8 +8,8 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::chat_types::{
-    ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
-    ChatPayloadPatchOp, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery,
+    ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
+    ChatPayloadCursor, ChatPayloadPatchOp, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery,
     LocatedChatMessage, PinnedGroupChat,
 };
 use crate::domain::repositories::group_chat_repository::GroupChatRepository;
@@ -349,6 +349,15 @@ impl GroupChatRepository for FileChatRepository {
         query: FindLastMessageQuery,
     ) -> Result<Option<LocatedChatMessage>, DomainError> {
         self.find_last_group_chat_message_internal(chat_id, query)
+            .await
+    }
+
+    async fn read_group_chat_messages(
+        &self,
+        chat_id: &str,
+        indices: &[usize],
+    ) -> Result<ChatMessagesReadResult, DomainError> {
+        self.read_group_chat_messages_internal(chat_id, indices)
             .await
     }
 
