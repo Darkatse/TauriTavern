@@ -74,16 +74,17 @@ rollback()
 
 当前没有 `chat.search`、`skill.read`、WorldInfo 只读工具、MCP 工具、shell 工具或外部 extension tools。
 
-Workspace 当前模型可见 / 可写根目录由 `WorkspaceAccessPolicy::phase2b_default()` 集中定义：
+Workspace 当前模型可见 / 可写根目录由 run manifest roots 驱动：
 
 ```text
 output/
 scratch/
 plan/
 summaries/
+persist/
 ```
 
-这个 root 集合是当前产品策略，不是路径安全边界。路径规范化、安全拒绝、symlink/escape 防护仍属于 host / repository 不变量。
+这个 root 集合是当前产品策略，不是路径安全边界。路径规范化、安全拒绝、symlink/escape 防护仍属于 host / repository 不变量。`persist/` 是 chat workspace 级持久 root 的 run projection，只有 `finalizeCommit()` 成功后才 promote 回稳定 chat workspace。
 
 ## 4. 工具错误语义
 

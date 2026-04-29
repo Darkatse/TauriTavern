@@ -195,6 +195,7 @@ pub struct WorkspaceManifest {
     pub chat_ref: AgentChatRef,
     pub created_at: DateTime<Utc>,
     pub input: WorkspaceInputManifest,
+    pub roots: Vec<WorkspaceRootSpec>,
     pub artifacts: Vec<ArtifactSpec>,
     pub commit_policy: CommitPolicy,
 }
@@ -204,6 +205,46 @@ pub struct WorkspaceManifest {
 pub struct WorkspaceInputManifest {
     pub mode: String,
     pub prompt_snapshot_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRootSpec {
+    pub path: String,
+    pub lifecycle: WorkspaceRootLifecycle,
+    pub scope: WorkspaceRootScope,
+    pub mount: WorkspaceRootMount,
+    pub visible: bool,
+    pub writable: bool,
+    pub commit: WorkspaceRootCommit,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceRootLifecycle {
+    Run,
+    Persistent,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceRootScope {
+    Run,
+    Chat,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceRootMount {
+    Materialized,
+    ProjectedOverlay,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceRootCommit {
+    Never,
+    OnRunCompleted,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,6 +297,28 @@ pub struct CheckpointFile {
     pub path: String,
     pub sha256: String,
     pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspacePersistentChangeSet {
+    pub changes: Vec<WorkspacePersistentChange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspacePersistentChange {
+    pub path: String,
+    pub kind: WorkspacePersistentChangeKind,
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspacePersistentChangeKind {
+    Added,
+    Modified,
 }
 
 #[cfg(test)]

@@ -28,6 +28,7 @@ agent-workspaces/
         user/
         skills/
         memory/
+      persist/
       runs/
         <run-id>/
           manifest.json
@@ -36,6 +37,7 @@ agent-workspaces/
           plan/
           scratch/
           summaries/
+          persist/
           checkpoints/
           patches/
           events.jsonl
@@ -414,12 +416,15 @@ _tauritavern/agent-workspaces/
       <run-id>.json
   chats/
     <workspace-id>/
+      persist/
+        <promoted persistent files>
       runs/
         <run-id>/
           manifest.json
           events.jsonl
           input/
             prompt_snapshot.json
+            persist_snapshot.json
           tool-args/
             <tool-call-id>.json
           output/
@@ -427,6 +432,8 @@ _tauritavern/agent-workspaces/
           scratch/
           plan/
           summaries/
+          persist/
+            <run projection of chat-level persist files>
           tool-results/
             <tool-call-id>.json
           checkpoints/
@@ -442,7 +449,17 @@ output/
 scratch/
 plan/
 summaries/
+persist/
 ```
+
+`persist/` 是 chat workspace 级持久 root 的 run projection：
+
+```text
+chats/<workspace-id>/persist/                # 稳定持久层
+chats/<workspace-id>/runs/<run-id>/persist/  # 本 run 投影
+```
+
+run 初始化时，稳定 `persist/` 会复制到本次 run 的 `persist/`，并在 `input/persist_snapshot.json` 中记录 base sha。模型在 run 中通过普通 workspace 工具读写 `persist/`；这些写入在 `finalizeCommit()` 成功前不会写回稳定层。`prepareCommit()` 会计算 persistent changes 并检查并发冲突，`finalizeCommit()` 成功后才 promote 回 `chats/<workspace-id>/persist/`。Failed、Cancelled 或未 finalize 的 run 不会污染后续 run。
 
 早期设计中的最小概念结构仍可作为抽象理解：
 

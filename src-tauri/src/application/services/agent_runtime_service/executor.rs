@@ -78,6 +78,25 @@ impl AgentRuntimeService {
             }),
         )
         .await?;
+        let persistent_roots = manifest
+            .roots
+            .iter()
+            .filter(|root| {
+                root.commit == crate::domain::models::agent::WorkspaceRootCommit::OnRunCompleted
+            })
+            .map(|root| root.path.as_str())
+            .collect::<Vec<_>>();
+        if !persistent_roots.is_empty() {
+            self.event(
+                run_id,
+                AgentRunEventLevel::Info,
+                "persistent_projection_initialized",
+                json!({
+                    "roots": persistent_roots,
+                }),
+            )
+            .await?;
+        }
         self.ensure_not_cancelled(cancel)?;
 
         let request = prepare_agent_tool_request(request, &self.tool_registry)?;

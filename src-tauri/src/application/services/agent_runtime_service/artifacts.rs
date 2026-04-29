@@ -4,7 +4,8 @@ use super::AgentRuntimeService;
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::{
     AgentRun, ArtifactSpec, ArtifactTarget, CommitPolicy, WorkspaceInputManifest,
-    WorkspaceManifest, WorkspacePath,
+    WorkspaceManifest, WorkspacePath, WorkspaceRootCommit, WorkspaceRootLifecycle,
+    WorkspaceRootMount, WorkspaceRootScope, WorkspaceRootSpec,
 };
 use crate::domain::repositories::workspace_repository::WorkspaceFile;
 
@@ -19,6 +20,7 @@ pub(super) fn build_agent_manifest(run: &AgentRun) -> WorkspaceManifest {
             mode: "prompt_snapshot".to_string(),
             prompt_snapshot_path: "input/prompt_snapshot.json".to_string(),
         },
+        roots: default_workspace_roots(),
         artifacts: vec![ArtifactSpec {
             id: "main".to_string(),
             path: "output/main.md".to_string(),
@@ -32,6 +34,36 @@ pub(super) fn build_agent_manifest(run: &AgentRun) -> WorkspaceManifest {
             combine_template: None,
             store_artifacts_in_extra: true,
         },
+    }
+}
+
+fn default_workspace_roots() -> Vec<WorkspaceRootSpec> {
+    vec![
+        run_root("output"),
+        run_root("scratch"),
+        run_root("plan"),
+        run_root("summaries"),
+        WorkspaceRootSpec {
+            path: "persist".to_string(),
+            lifecycle: WorkspaceRootLifecycle::Persistent,
+            scope: WorkspaceRootScope::Chat,
+            mount: WorkspaceRootMount::ProjectedOverlay,
+            visible: true,
+            writable: true,
+            commit: WorkspaceRootCommit::OnRunCompleted,
+        },
+    ]
+}
+
+fn run_root(path: &str) -> WorkspaceRootSpec {
+    WorkspaceRootSpec {
+        path: path.to_string(),
+        lifecycle: WorkspaceRootLifecycle::Run,
+        scope: WorkspaceRootScope::Run,
+        mount: WorkspaceRootMount::Materialized,
+        visible: true,
+        writable: true,
+        commit: WorkspaceRootCommit::Never,
     }
 }
 

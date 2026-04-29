@@ -10,6 +10,7 @@ use uuid::Uuid;
 use super::AgentRuntimeService;
 use super::artifacts::build_agent_manifest;
 use super::ids::workspace_id_for_stable_chat_id;
+use crate::application::dto::agent_dto::{AgentFinalizeCommitDto, AgentPrepareCommitDto};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_model_gateway::AgentModelGateway;
@@ -291,6 +292,159 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
         events
             .iter()
             .any(|event| event.event_type == "workspace_patch_applied")
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn finalize_commit_promotes_persistent_workspace_projection() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-persist-loop-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_persist_loop_test".to_string(),
+        workspace_id: "chat_persist_loop_test".to_string(),
+        stable_chat_id: "stable_persist_loop_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_write_output",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_write_file",
+                                "arguments": "{\"path\":\"output/main.md\",\"content\":\"committed story\"}"
+                            }
+                        },
+                        {
+                            "id": "call_write_persist",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_write_file",
+                                "arguments": "{\"path\":\"persist/MEMORY.md\",\"content\":\"The theatre sister thread is unresolved.\"}"
+                            }
+                        }
+                    ]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_finish",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_finish",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }),
+    ]));
+
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        model_gateway,
+    );
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": [{ "role": "user", "content": "write and remember" }]
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+
+    service
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, request, &mut cancel_receiver)
+        .await
+        .expect("agent loop");
+    service
+        .prepare_commit(AgentPrepareCommitDto {
+            run_id: run.id.clone(),
+        })
+        .await
+        .expect("prepare commit");
+    service
+        .finalize_commit(AgentFinalizeCommitDto {
+            run_id: run.id.clone(),
+            message_id: Some("message_1".to_string()),
+        })
+        .await
+        .expect("finalize commit");
+
+    let next_run = AgentRun {
+        id: "run_persist_loop_next".to_string(),
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        ..run.clone()
+    };
+    repository
+        .create_run(&next_run)
+        .await
+        .expect("create next run");
+    repository
+        .initialize_run(
+            &next_run,
+            &build_agent_manifest(&next_run),
+            &json!({"messages": []}),
+        )
+        .await
+        .expect("initialize next run");
+    let projected = repository
+        .read_text(
+            &next_run.id,
+            &WorkspacePath::parse("persist/MEMORY.md").unwrap(),
+        )
+        .await
+        .expect("read projected persist");
+    assert_eq!(projected.text, "The theatre sister thread is unresolved.");
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 100,
+            },
+        )
+        .await
+        .expect("read events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "persistent_changes_committed")
     );
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");

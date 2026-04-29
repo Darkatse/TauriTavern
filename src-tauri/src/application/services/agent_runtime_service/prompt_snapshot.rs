@@ -43,6 +43,8 @@ pub(super) fn prepare_agent_tool_request(
         "Use workspace_read_file before modifying an existing file. Read output has line numbers; never include line number prefixes in old_string or new_string.",
         "Use workspace_apply_patch for precise edits to existing files. The old_string must match exactly and uniquely unless replace_all is true.",
         "Use workspace_write_file for new files or complete rewrites.",
+        "Use persist/ for concise information that should carry into later runs of this same chat, such as durable plot facts, unresolved threads, relationship state, and user style preferences.",
+        "Do not copy full chat history, final replies, tool results, or temporary reasoning into persist/.",
         "Write the final chat message body to output/main.md, then call workspace_finish.",
         "Do not answer directly without finishing through workspace_finish.",
     ]

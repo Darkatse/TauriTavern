@@ -175,7 +175,10 @@ output/
 scratch/
 plan/
 summaries/
+persist/
 ```
+
+这些前缀由 run manifest roots 驱动，而不是工具层硬编码。`persist/` 是 chat workspace 级持久 root 的 run projection：模型在 run 中通过普通 workspace 工具写入，`finalizeCommit()` 成功后才 promote 回稳定 chat workspace；未提交、失败或取消的 run 不会写回。
 
 工具参数会写入 `tool-args/<call-id>.json`，工具结果会写入 `tool-results/<call-id>.json`，并作为 OpenAI-compatible `tool` message 回填下一轮模型请求。工具结果不会写入 SillyTavern chat 楼层。
 

@@ -16,18 +16,37 @@ impl AgentRuntimeService {
         dto: AgentPrepareCommitDto,
     ) -> Result<AgentCommitDraftDto, ApplicationError> {
         let run = self.run_repository.load_run(&dto.run_id).await?;
-        let run = match run.status {
-            AgentRunStatus::AwaitingCommit => {
-                self.transition_status(&dto.run_id, AgentRunStatus::Committing)
-                    .await?
-            }
-            AgentRunStatus::Committing => run,
+        match run.status {
+            AgentRunStatus::AwaitingCommit | AgentRunStatus::Committing => {}
             status => {
                 return Err(ApplicationError::ValidationError(format!(
                     "agent.invalid_commit_state: expected awaiting_commit or committing, got {:?}",
                     status
                 )));
             }
+        }
+        let persistent_changes = match self
+            .workspace_repository
+            .prepare_persistent_changes(&dto.run_id)
+            .await
+        {
+            Ok(changes) => changes,
+            Err(error) => {
+                self.event(
+                    &dto.run_id,
+                    AgentRunEventLevel::Error,
+                    "persistent_changes_prepare_failed",
+                    json!({ "message": error.to_string() }),
+                )
+                .await?;
+                return Err(error.into());
+            }
+        };
+        let run = if run.status == AgentRunStatus::AwaitingCommit {
+            self.transition_status(&dto.run_id, AgentRunStatus::Committing)
+                .await?
+        } else {
+            run
         };
         let commit_event = self
             .event(
@@ -79,6 +98,17 @@ impl AgentRuntimeService {
         self.event(
             &dto.run_id,
             AgentRunEventLevel::Info,
+            "persistent_changes_prepared",
+            json!({
+                "changeCount": persistent_changes.changes.len(),
+                "changes": &persistent_changes.changes,
+            }),
+        )
+        .await?;
+
+        self.event(
+            &dto.run_id,
+            AgentRunEventLevel::Info,
             "commit_draft_created",
             json!({
                 "checkpointId": checkpoint.id.as_str(),
@@ -98,6 +128,7 @@ impl AgentRuntimeService {
                     "stableChatId": run.stable_chat_id.as_str(),
                     "profileId": run.profile_id.as_ref(),
                     "checkpointId": checkpoint.id.as_str(),
+                    "persistentChanges": &persistent_changes.changes,
                     "artifacts": [{
                         "id": message_artifact.id.as_str(),
                         "path": file.path.as_str(),
@@ -134,6 +165,34 @@ impl AgentRuntimeService {
                 run.status
             )));
         }
+
+        let persistent_changes = match self
+            .workspace_repository
+            .commit_persistent_changes(&dto.run_id)
+            .await
+        {
+            Ok(changes) => changes,
+            Err(error) => {
+                self.event(
+                    &dto.run_id,
+                    AgentRunEventLevel::Error,
+                    "persistent_changes_commit_failed",
+                    json!({ "message": error.to_string() }),
+                )
+                .await?;
+                return Err(error.into());
+            }
+        };
+        self.event(
+            &dto.run_id,
+            AgentRunEventLevel::Info,
+            "persistent_changes_committed",
+            json!({
+                "changeCount": persistent_changes.changes.len(),
+                "changes": &persistent_changes.changes,
+            }),
+        )
+        .await?;
 
         self.event(
             &dto.run_id,

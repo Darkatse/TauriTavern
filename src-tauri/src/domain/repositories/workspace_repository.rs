@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::agent::{AgentRun, WorkspaceManifest, WorkspacePath};
+use crate::domain::models::agent::{
+    AgentRun, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
+};
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceFile {
@@ -62,4 +64,14 @@ pub trait WorkspaceRepository: Send + Sync {
         depth: usize,
         max_entries: usize,
     ) -> Result<WorkspaceFileList, DomainError>;
+
+    async fn prepare_persistent_changes(
+        &self,
+        run_id: &str,
+    ) -> Result<WorkspacePersistentChangeSet, DomainError>;
+
+    async fn commit_persistent_changes(
+        &self,
+        run_id: &str,
+    ) -> Result<WorkspacePersistentChangeSet, DomainError>;
 }

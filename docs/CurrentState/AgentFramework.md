@@ -4,9 +4,10 @@
 
 ## 当前状态
 
-截至 2026-04-26：
+截至 2026-04-29：
 
 - Phase 2B Workspace 读改能力已落地。
+- Chat workspace 级 `persist/` 持久 root 已落地：run 初始化时投影到本次 run，`finalizeCommit()` 成功后才写回稳定 chat workspace。
 - `window.__TAURITAVERN__.api.agent` 已挂载最小可用 Host ABI。
 - `window.__TAURITAVERN__.api.mcp` 尚未实现。
 - 已完成第一轮架构/契约/实施计划/API 草案文档整理。
@@ -20,17 +21,17 @@ Phase 2B 当前能力是“可审计最小工具循环 + workspace 读改 Agent 
 - `startRunWithPromptSnapshot()` 会在前端解析 `stableChatId`，后端只接受非空稳定聊天身份。
 - 后端为每次执行生成独立 `runId`，并由 `kind + stableChatId` 派生稳定 `workspaceId`。
 - 后端复用现有 `ChatCompletionService` 调用 LLM，不直接绕过 provider 解析、secret、proxy、日志、iOS policy、endpoint policy 或取消注册。
-- Runtime 会初始化 workspace、保存 prompt snapshot、写入 append-only run event、执行 `model -> tool -> model -> finish` 循环，支持列出/读取/精确修改 workspace 文件，写出 `output/main.md`、创建 checkpoint，并进入 `awaiting_commit`。
-- commit 目前由前端桥接：`prepare_agent_run_commit` 生成 draft，前端调用 SillyTavern `saveReply()` 写入当前聊天，再调用 `finalize_agent_run_commit` 完成 run。
+- Runtime 会初始化 workspace、保存 prompt snapshot、投影 chat 级 `persist/`、写入 append-only run event、执行 `model -> tool -> model -> finish` 循环，支持列出/读取/精确修改 workspace 文件，写出 `output/main.md`、创建 checkpoint，并进入 `awaiting_commit`。
+- commit 目前由前端桥接：`prepare_agent_run_commit` 生成 draft，前端调用 SillyTavern `saveReply()` 写入当前聊天，再调用 `finalize_agent_run_commit` 完成 run；只有 finalize 成功后，本 run 对 `persist/` 的变更才 promote 回 chat workspace。
 - Phase 2B 明确拒绝 stream、autoCommit、external tools/tool turns；diff UI、rollback、resume、profile routing 仍是后续阶段。
 
 Phase 2B 当前工具集非常克制：
 
 | Canonical name | Model-facing alias | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `workspace.list_files` | `workspace_list_files` | 已落地 | 列出模型可见 workspace 文件；可见前缀为 `output/`、`scratch/`、`plan/`、`summaries/` |
+| `workspace.list_files` | `workspace_list_files` | 已落地 | 列出模型可见 workspace 文件；可见前缀由 manifest roots 决定，当前为 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/` |
 | `workspace.read_file` | `workspace_read_file` | 已落地 | 读取 UTF-8 文本文件并返回行号；完整读取会记录 read-state |
-| `workspace.write_file` | `workspace_write_file` | 已落地 | 写 UTF-8 文本到 run workspace；当前可写前缀为 `output/`、`scratch/`、`plan/`、`summaries/` |
+| `workspace.write_file` | `workspace_write_file` | 已落地 | 写 UTF-8 文本到 run workspace；当前可写前缀由 manifest roots 决定，包含 `persist/` 投影 |
 | `workspace.apply_patch` | `workspace_apply_patch` | 已落地 | Claude Code 风格单文件精确替换；要求已完整读取或由本 run 创建/修改 |
 | `workspace.finish` | `workspace_finish` | 已落地 | 结束工具循环；默认 final artifact 是 `output/main.md` |
 
@@ -62,22 +63,23 @@ Phase 2B 当前工具集非常克制：
 | --- | --- | --- | --- | --- |
 | 2026-04-26 | 基线 | 已并入当前架构 | 本地工作区 | 原 Phase 0/1/2A 的文档、domain/runtime/storage、workspace、journal、checkpoint、commit bridge、Host ABI、最小 tool loop 与 dryRun adapter 已吸收为当前基线 |
 | 2026-04-26 | Phase 2B | 后端读改能力落地 | 本地工作区 | `workspace.list_files/read_file/apply_patch`、read-state guard、patch checkpoint |
+| 2026-04-29 | Workspace Persist | 已落地 | 本地工作区 | manifest roots、chat 级 `persist/` projection、commit-time promote、并发冲突检测 |
 
 ## 实施检查表
 
 | 项目 | 状态 | 代码入口 | 测试/验证 | 备注 |
 | --- | --- | --- | --- | --- |
-| Agent domain models | 已落地 | `src-tauri/src/domain/models/agent/mod.rs` | `cargo test --manifest-path src-tauri/Cargo.toml agent --lib` | `AgentRun` / `AgentRunEvent` / `WorkspacePath` / manifest / artifact / checkpoint；ABI 使用 camelCase |
-| Repository traits | 已落地 | `src-tauri/src/domain/repositories/agent_run_repository.rs`、`workspace_repository.rs`、`checkpoint_repository.rs` | `cargo check --manifest-path src-tauri/Cargo.toml` | application layer 依赖 trait，不直接依赖文件系统 |
-| FileAgentRepository | 已落地 | `src-tauri/src/infrastructure/repositories/file_agent_repository.rs` | `repository_round_trips_run_workspace_event_and_checkpoint` | 根目录为 `_tauritavern/agent-workspaces`；保存 run index、manifest、JSONL event、workspace file、checkpoint |
+| Agent domain models | 已落地 | `src-tauri/src/domain/models/agent/mod.rs` | `cargo test --manifest-path src-tauri/Cargo.toml agent --lib` | `AgentRun` / `AgentRunEvent` / `WorkspacePath` / manifest roots / artifact / checkpoint；ABI 使用 camelCase |
+| Repository traits | 已落地 | `src-tauri/src/domain/repositories/agent_run_repository.rs`、`workspace_repository.rs`、`checkpoint_repository.rs` | `cargo check --manifest-path src-tauri/Cargo.toml` | application layer 依赖 trait；`WorkspaceRepository` 负责 run workspace 与 persistent projection/promote |
+| FileAgentRepository | 已落地 | `src-tauri/src/infrastructure/repositories/file_agent_repository.rs` | `repository_round_trips_run_workspace_event_and_checkpoint`、`persistent_workspace_projects_run_changes_only_after_commit` | 根目录为 `_tauritavern/agent-workspaces`；保存 run index、manifest、JSONL event、workspace file、checkpoint、chat 级 `persist/` |
 | AgentRuntimeService | 已落地 | `src-tauri/src/application/services/agent_runtime_service.rs`、`src-tauri/src/application/services/agent_runtime_service/` | `cargo test --manifest-path src-tauri/Cargo.toml agent --lib` | 已拆分 lifecycle/executor/loop/model_turn/tool_execution/journal 等子模块 |
 | LLM gateway wrapper | 部分落地 | `AgentRuntimeService` 复用 `ChatCompletionService::generate_with_cancel` | `cargo check --manifest-path src-tauri/Cargo.toml` | 还没有 provider-agnostic `ModelRequest`/`LlmGatewayService` 抽象 |
 | Tauri commands | 已落地 | `src-tauri/src/presentation/commands/agent_commands.rs`、`registry.rs` | `cargo check --manifest-path src-tauri/Cargo.toml` | `start/cancel/readEvents/readWorkspaceFile/prepareCommit/finalizeCommit` |
 | `api.agent` Host ABI | 已落地 | `src/tauri/main/api/agent.js`、`src/tauri/main/api/agent-prompt-snapshot.js`、`src/tauri/main/bootstrap.js`、`src/types.d.ts` | `pnpm run check:types`、`pnpm run check:frontend` | `startRunFromLegacyGenerate()` 为 dryRun adapter；`subscribe()` 当前为 polling；future API 显式 throw |
-| Commit bridge | 已落地 | `src/tauri/main/api/agent.js` | 手动控制台测试路径 | 前端 `saveReply()` 写 chat，合并 `tauritavern.agent` metadata，再 finalize |
+| Commit bridge | 已落地 | `src/tauri/main/api/agent.js`、`agent_runtime_service/commit.rs` | `finalize_commit_promotes_persistent_workspace_projection` | 前端 `saveReply()` 写 chat，合并 `tauritavern.agent` metadata，再 finalize；finalize 后 promote `persist/` |
 | Stable chat identity | 已落地 | `active-chat-ref.js`、`chat.js`、`agent.js`、`AgentRuntimeService` | `workspace_id_uses_stable_chat_id_not_character_chat_file_name` | `workspaceId = chat_ + sha256(kind + stableChatId)[0..16]` |
 | 最小 timeline UI | 未开始 | - | - | 不伪装成 SillyTavern `GENERATION_*` 事件 |
-| ToolRegistry/ToolDispatch | Phase 2B 已落地 | `src-tauri/src/application/services/agent_tools.rs`、`src-tauri/src/application/services/agent_tools/`、`agent_runtime_service/tool_execution.rs` | `cargo test --manifest-path src-tauri/Cargo.toml agent --lib` | 当前开放 `workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish` |
+| ToolRegistry/ToolDispatch | Phase 2B 已落地 | `src-tauri/src/application/services/agent_tools.rs`、`src-tauri/src/application/services/agent_tools/`、`agent_runtime_service/tool_execution.rs` | `cargo test --manifest-path src-tauri/Cargo.toml agent --lib` | 当前开放 `workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish`；可见/可写根由 manifest roots 驱动 |
 | `api.mcp` Host ABI | 未开始 | - | - | Phase 5，MCP 独立于 Agent Mode |
 
 ## 当前后端运行流
@@ -119,6 +121,7 @@ run_created
 generation_intent_recorded
 status_changed
 workspace_initialized
+persistent_projection_initialized
 context_assembled
 model_request_created
 model_completed
@@ -132,7 +135,9 @@ checkpoint_created
 agent_loop_finished
 artifact_assembled
 commit_started
+persistent_changes_prepared / persistent_changes_prepare_failed
 commit_draft_created
+persistent_changes_committed / persistent_changes_commit_failed
 run_committed
 run_completed
 run_cancel_requested
@@ -153,16 +158,21 @@ _tauritavern/agent-workspaces/
       <run-id>.json
   chats/
     <workspace-id>/
+      persist/
+        <promoted persistent files>
       runs/
         <run-id>/
           manifest.json
           events.jsonl
           input/
             prompt_snapshot.json
+            persist_snapshot.json
           tool-args/
             <tool-call-id>.json
           output/
             main.md
+          persist/
+            <run projection of chat-level persist files>
           tool-results/
             <tool-call-id>.json
           checkpoints/
@@ -172,6 +182,18 @@ _tauritavern/agent-workspaces/
 ```
 
 Workspace path 必须是相对路径。`workspace.list_files` 的 `path` 省略、空字符串、空白字符串、`.`、`./` 表示 workspace root；其他工具仍要求非空文件路径。绝对路径、Windows drive prefix、NUL、`..` 会被 workspace path parser 拒绝，并在工具参数层作为可恢复 tool error 回传模型。
+
+当前 manifest roots 使模型可见 / 可写：
+
+```text
+output/
+scratch/
+plan/
+summaries/
+persist/
+```
+
+`persist/` 是 chat workspace 级持久 root 的 run projection。run 中修改 `persist/` 只影响本 run；`prepareCommit()` 会预检 persistent changes 与并发冲突，`finalizeCommit()` 成功后才 promote 回 `chats/<workspace-id>/persist/`。Failed、Cancelled 或未 finalize 的 run 不会污染下一轮。
 
 ## 当前手动测试入口
 
@@ -294,7 +316,7 @@ pnpm run check:frontend
 
 最近一次 Rust 侧验证结果：
 
-- `cargo test --manifest-path src-tauri/Cargo.toml agent --lib`：19 passed。
+- `cargo test --manifest-path src-tauri/Cargo.toml agent --lib`：22 passed。
 - `cargo check --manifest-path src-tauri/Cargo.toml`：passed。
 
 前端、类型与契约检查在 Agent Host ABI 接入后通过；后续改动 `src/tauri/main/api/agent.js`、`src/tauri/main/api/agent-prompt-snapshot.js`、`src/types.d.ts` 或 docs contract 时必须重新运行。
