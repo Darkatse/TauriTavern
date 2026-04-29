@@ -19,6 +19,7 @@ import { createThirdPartyStylesheetResolver } from './extensions/runtime/third-p
 import { createExtensionAssetLoader } from './extensions/runtime/asset-loader.js';
 import { getExtensionResourceUrl, isThirdPartyExtension } from './extensions/runtime/resource-paths.js';
 import { waitForTauriMainReady } from './extensions/runtime/tauri-ready.js';
+import { isScreenReaderAssistanceEnabled } from './a11y/screen-reader.js';
 
 export {
     getContext,
@@ -735,6 +736,25 @@ async function addExtensionsButtonAndMenu() {
         placement: 'top-start',
     });
 
+    function focusFirstScreenReaderExtensionsMenuItem() {
+        if (!isScreenReaderAssistanceEnabled()) {
+            return;
+        }
+
+        requestAnimationFrame(() => {
+            if (!dropdown.is(':visible')) {
+                return;
+            }
+
+            const firstMenuItem = dropdown.find('.list-group-item[tabindex]:visible').get(0);
+            if (!(firstMenuItem instanceof HTMLElement)) {
+                throw new Error('screen reader extensions menu focus requires a visible focusable item');
+            }
+
+            firstMenuItem.focus();
+        });
+    }
+
     $(button).on('click', function () {
         if (isDropdownVisible) {
             dropdown.fadeOut(animation_duration);
@@ -742,6 +762,7 @@ async function addExtensionsButtonAndMenu() {
         } else {
             dropdown.fadeIn(animation_duration);
             isDropdownVisible = true;
+            focusFirstScreenReaderExtensionsMenuItem();
         }
         popper.update();
     });

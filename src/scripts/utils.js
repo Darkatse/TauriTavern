@@ -2418,13 +2418,26 @@ export function getFreeName(name, list, numberFormatter = (n) => ` #${n}`) {
 }
 
 let generatedInlineDrawerContentId = 0;
+const INLINE_DRAWER_HEADER_CONTROL_ATTRIBUTE = 'data-tt-inline-drawer-header-control';
+const INLINE_DRAWER_HEADER_ADDED_ATTRIBUTE = 'data-tt-inline-drawer-header-added';
+const INLINE_DRAWER_ICON_HIDDEN_ATTRIBUTE = 'data-tt-inline-drawer-icon-hidden';
+const INLINE_DRAWER_ICON_ORIGINAL_ROLE_ATTRIBUTE = 'data-tt-inline-drawer-icon-original-role';
+const INLINE_DRAWER_ICON_ORIGINAL_NOT_FOCUSABLE_ATTRIBUTE = 'data-tt-inline-drawer-icon-original-not-focusable';
 
 /**
  * @param {HTMLElement} drawer
  * @param {HTMLElement} content
+ * @param {boolean} preferHeaderControl
  * @returns {HTMLElement | null}
  */
-function getInlineDrawerControl(drawer, content) {
+function getInlineDrawerControl(drawer, content, preferHeaderControl = false) {
+    if (preferHeaderControl) {
+        const headerControl = drawer.querySelector(':scope > .inline-drawer-toggle.inline-drawer-header');
+        if (headerControl instanceof HTMLElement && !content.contains(headerControl)) {
+            return headerControl;
+        }
+    }
+
     const controls = drawer.querySelectorAll('.inline-drawer-toggle .inline-drawer-icon, .inline-drawer-toggle.inline-drawer-icon, .inline-drawer-toggle');
     for (const control of controls) {
         if (control instanceof HTMLElement && !content.contains(control)) {
@@ -2434,14 +2447,99 @@ function getInlineDrawerControl(drawer, content) {
     return null;
 }
 
+function addInlineDrawerHeaderAttribute(control, attribute, value = '') {
+    if (control.hasAttribute(attribute)) {
+        return;
+    }
+
+    const added = new Set((control.getAttribute(INLINE_DRAWER_HEADER_ADDED_ATTRIBUTE) ?? '').split(/\s+/).filter(Boolean));
+    added.add(attribute);
+    control.setAttribute(INLINE_DRAWER_HEADER_ADDED_ATTRIBUTE, Array.from(added).join(' '));
+    control.setAttribute(attribute, value);
+}
+
+function restoreInlineDrawerHeaderControl(control) {
+    if (!control.hasAttribute(INLINE_DRAWER_HEADER_CONTROL_ATTRIBUTE)) {
+        return;
+    }
+
+    const added = (control.getAttribute(INLINE_DRAWER_HEADER_ADDED_ATTRIBUTE) ?? '').split(/\s+/).filter(Boolean);
+    for (const attribute of added) {
+        if (attribute.startsWith('class:')) {
+            continue;
+        }
+        control.removeAttribute(attribute);
+    }
+
+    if (added.includes('class:interactable')) {
+        control.classList.remove('interactable');
+    }
+
+    control.removeAttribute(INLINE_DRAWER_HEADER_CONTROL_ATTRIBUTE);
+    control.removeAttribute(INLINE_DRAWER_HEADER_ADDED_ATTRIBUTE);
+}
+
+function enableInlineDrawerHeaderControl(control) {
+    if (!control.classList.contains('interactable')) {
+        const added = new Set((control.getAttribute(INLINE_DRAWER_HEADER_ADDED_ATTRIBUTE) ?? '').split(/\s+/).filter(Boolean));
+        added.add('class:interactable');
+        control.setAttribute(INLINE_DRAWER_HEADER_ADDED_ATTRIBUTE, Array.from(added).join(' '));
+        control.classList.add('interactable');
+    }
+
+    control.setAttribute(INLINE_DRAWER_HEADER_CONTROL_ATTRIBUTE, '');
+    addInlineDrawerHeaderAttribute(control, 'role', 'button');
+    addInlineDrawerHeaderAttribute(control, 'tabindex', '0');
+}
+
+function hideInlineDrawerHeaderIcon(control) {
+    const icon = control.querySelector('.inline-drawer-icon');
+    if (!(icon instanceof HTMLElement)) {
+        return;
+    }
+
+    if (!icon.hasAttribute(INLINE_DRAWER_ICON_HIDDEN_ATTRIBUTE) && icon.classList.contains('not_focusable')) {
+        icon.setAttribute(INLINE_DRAWER_ICON_ORIGINAL_NOT_FOCUSABLE_ATTRIBUTE, '');
+    }
+    if (!icon.hasAttribute(INLINE_DRAWER_ICON_HIDDEN_ATTRIBUTE) && icon.hasAttribute('role')) {
+        icon.setAttribute(INLINE_DRAWER_ICON_ORIGINAL_ROLE_ATTRIBUTE, icon.getAttribute('role'));
+    }
+
+    icon.setAttribute(INLINE_DRAWER_ICON_HIDDEN_ATTRIBUTE, '');
+    icon.classList.add('not_focusable');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.removeAttribute('role');
+    icon.removeAttribute('tabindex');
+}
+
+function restoreInlineDrawerHeaderIcon(control) {
+    const icon = control.querySelector('.inline-drawer-icon');
+    if (!(icon instanceof HTMLElement) || !icon.hasAttribute(INLINE_DRAWER_ICON_HIDDEN_ATTRIBUTE)) {
+        return;
+    }
+
+    icon.removeAttribute(INLINE_DRAWER_ICON_HIDDEN_ATTRIBUTE);
+    icon.removeAttribute('aria-hidden');
+    if (!icon.hasAttribute(INLINE_DRAWER_ICON_ORIGINAL_NOT_FOCUSABLE_ATTRIBUTE)) {
+        icon.classList.remove('not_focusable');
+    }
+    if (icon.hasAttribute(INLINE_DRAWER_ICON_ORIGINAL_ROLE_ATTRIBUTE)) {
+        icon.setAttribute('role', icon.getAttribute(INLINE_DRAWER_ICON_ORIGINAL_ROLE_ATTRIBUTE));
+    }
+    icon.removeAttribute(INLINE_DRAWER_ICON_ORIGINAL_NOT_FOCUSABLE_ATTRIBUTE);
+    icon.removeAttribute(INLINE_DRAWER_ICON_ORIGINAL_ROLE_ATTRIBUTE);
+}
+
 /**
  * Synchronizes disclosure semantics for an inline drawer.
  *
  * @param {HTMLElement} drawer - The inline drawer element to synchronize
  * @param {boolean} [open] - The explicit expanded state. When omitted, it is inferred from inline display.
+ * @param {object} [options] - Synchronization options
+ * @param {boolean} [options.preferHeaderControl=false] - Use a direct header toggle as the focusable disclosure control when available
  * @returns {{control: HTMLElement, content: HTMLElement, open: boolean}}
  */
-export function syncInlineDrawerAccessibility(drawer, open = undefined) {
+export function syncInlineDrawerAccessibility(drawer, open = undefined, options = {}) {
     if (!(drawer instanceof HTMLElement)) {
         throw new Error('inline drawer accessibility requires an HTMLElement drawer');
     }
@@ -2452,9 +2550,21 @@ export function syncInlineDrawerAccessibility(drawer, open = undefined) {
         throw new Error('inline drawer accessibility requires a direct .inline-drawer-content child');
     }
 
-    const control = getInlineDrawerControl(drawer, content);
+    const preferHeaderControl = options.preferHeaderControl === true;
+    const headerControl = drawer.querySelector(':scope > .inline-drawer-toggle.inline-drawer-header');
+    if (!preferHeaderControl && headerControl instanceof HTMLElement) {
+        restoreInlineDrawerHeaderIcon(headerControl);
+        restoreInlineDrawerHeaderControl(headerControl);
+    }
+
+    const control = getInlineDrawerControl(drawer, content, preferHeaderControl);
     if (!control) {
         throw new Error('inline drawer accessibility requires an inline drawer toggle control outside content');
+    }
+
+    if (preferHeaderControl && control === headerControl) {
+        enableInlineDrawerHeaderControl(control);
+        hideInlineDrawerHeaderIcon(control);
     }
 
     if (!content.id) {
@@ -2462,13 +2572,24 @@ export function syncInlineDrawerAccessibility(drawer, open = undefined) {
     }
 
     open ??= content.style.display !== 'none';
+    if (preferHeaderControl && control === headerControl) {
+        addInlineDrawerHeaderAttribute(control, 'aria-controls', content.id);
+        addInlineDrawerHeaderAttribute(control, 'aria-expanded', String(open));
+    }
     control.setAttribute('aria-controls', content.id);
     control.setAttribute('aria-expanded', String(open));
 
     if (!control.hasAttribute('aria-label') && !control.hasAttribute('aria-labelledby')) {
         const accessibleName = control.getAttribute('title')?.trim() || drawer.querySelector(':scope > .inline-drawer-header')?.textContent?.trim();
+        if (!accessibleName && preferHeaderControl && control === headerControl) {
+            throw new Error('inline drawer header control requires an accessible name');
+        }
         if (accessibleName) {
-            control.setAttribute('aria-label', accessibleName);
+            if (preferHeaderControl && control === headerControl) {
+                addInlineDrawerHeaderAttribute(control, 'aria-label', accessibleName);
+            } else {
+                control.setAttribute('aria-label', accessibleName);
+            }
         }
     }
 

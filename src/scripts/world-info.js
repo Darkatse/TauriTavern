@@ -24,6 +24,7 @@ import { renderTemplateAsync } from './templates.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
+import { isScreenReaderAssistanceEnabled } from './a11y/screen-reader.js';
 
 export const world_info_insertion_strategy = {
     evenly: 0,
@@ -3430,6 +3431,37 @@ function handleEntryStateSelectorHelper({ entryStateSelector, entry, data, name 
     entryStateSelector.find(`option[value=${entryState()}]`).prop('selected', true).trigger('input', { noSave: true });
 }
 
+function getWorldInfoEntryAccessibleName(entry) {
+    const comment = String(entry.comment ?? '').trim();
+    if (comment) {
+        return comment;
+    }
+
+    const keys = Array.isArray(entry.key) ? entry.key.map(key => String(key).trim()).filter(Boolean).join(', ') : '';
+    if (keys) {
+        return keys;
+    }
+
+    return String(entry.uid);
+}
+
+function syncEntryKillSwitchAccessibility(entryKillSwitch, entry, isActive) {
+    if (!isScreenReaderAssistanceEnabled()) {
+        return;
+    }
+
+    const control = entryKillSwitch.get(0);
+    if (!(control instanceof HTMLElement)) {
+        throw new Error(`World Info entry kill switch is missing for entry ${entry.uid}`);
+    }
+
+    control.classList.add('interactable');
+    control.setAttribute('role', 'switch');
+    control.setAttribute('tabindex', '0');
+    control.setAttribute('aria-checked', String(isActive));
+    control.setAttribute('aria-label', t`World Info entry ${getWorldInfoEntryAccessibleName(entry)}`);
+}
+
 /**
  * Helper to handle kill switch toggle.
  * @param {object} params - Parameters for handling the kill switch toggle.
@@ -3449,12 +3481,14 @@ function handleEntryKillSwitchHelper({ entryKillSwitch, entry, data, name, templ
         template.toggleClass('disabledWIEntry', !isActive);
         entryKillSwitch.toggleClass('fa-toggle-off', !isActive);
         entryKillSwitch.toggleClass('fa-toggle-on', isActive);
+        syncEntryKillSwitchAccessibility(entryKillSwitch, data.entries[uid], isActive);
         await saveWorldInfo(name, data);
     });
     const isActive = !entry.disable;
     template.toggleClass('disabledWIEntry', !isActive);
     entryKillSwitch.toggleClass('fa-toggle-off', !isActive);
     entryKillSwitch.toggleClass('fa-toggle-on', isActive);
+    syncEntryKillSwitchAccessibility(entryKillSwitch, entry, isActive);
 }
 
 /**
@@ -6420,6 +6454,14 @@ export function initWorldInfo() {
         // Save sort order, but do not save search sorting, as this is a temporary sorting option
         if (value !== 'search') accountStorage.setItem(SORT_ORDER_KEY, value);
         updateEditor(navigation_option.none);
+    });
+
+    eventSource.on(event_types.SCREEN_READER_ASSISTANCE_CHANGED, async () => {
+        if ($('#world_popup_entries_list .world_entry').length === 0) {
+            return;
+        }
+
+        await updateEditor(navigation_option.none, false);
     });
 
     $(document).on('click', '.chat_lorebook_button', assignLorebookToChat);
