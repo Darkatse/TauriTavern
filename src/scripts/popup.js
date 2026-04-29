@@ -72,6 +72,7 @@ export const POPUP_RESULT = {
  * @property {string} id - The id for the html element
  * @property {string} label - The label text for the input
  * @property {string?} [tooltip=null] - Optional tooltip icon displayed behind the label
+ * @property {string?} [tooltipIcon=null] - Optional Font Awesome icon class for the tooltip
  * @property {boolean|string|undefined} [defaultState=false] - The default state when opening the popup (false if not set)
  * @property {string?} [type='checkbox'] - The type of the input (default is checkbox)
  */
@@ -342,7 +343,7 @@ export class Popup {
 
                 if (input.tooltip) {
                     const tooltip = document.createElement('div');
-                    tooltip.classList.add('fa-solid', 'fa-circle-info', 'opacity50p');
+                    tooltip.classList.add('fa-solid', input.tooltipIcon ?? 'fa-circle-info', 'opacity50p');
                     tooltip.title = input.tooltip;
                     tooltip.dataset.i18n = '[title]' + input.tooltip;
                     label.appendChild(tooltip);

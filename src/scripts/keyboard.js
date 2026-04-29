@@ -16,6 +16,7 @@ const interactableSelectors = [
     '.mes_buttons .mes_button', // Small inline buttons on the chat messages
     '.extraMesButtons>div:not(.mes_button)', // The extra/extension buttons inline on the chat messages
     '.swipe_left, .swipe_right', // Swipe buttons on the last message
+    '.mes_stop', // Stop generation button in the chat composer
     '.stscript_btn', // STscript buttons in the chat bar
     '.select2_choice_clickable+span.select2-container .select2-selection__choice__display', // select2 control elements if they are meant to be clickable
     '.avatar_load_preview', // Char display avatar selection
@@ -32,6 +33,100 @@ export const CUSTOM_INTERACTABLE_CONTROL_CLASS = 'custom_interactable';
 
 export const NOT_FOCUSABLE_CONTROL_CLASS = 'not_focusable';
 export const DISABLED_CONTROL_CLASS = 'disabled';
+
+/**
+ * @param {Element} element
+ * @returns {boolean}
+ */
+function hasDisabledOrNotFocusableAncestor(element) {
+    let currentElement = element;
+    while (currentElement) {
+        if (currentElement.classList.contains(NOT_FOCUSABLE_CONTROL_CLASS) || currentElement.classList.contains(DISABLED_CONTROL_CLASS)) {
+            return true;
+        }
+        currentElement = currentElement.parentElement;
+    }
+    return false;
+}
+
+/**
+ * @param {HTMLElement} element
+ * @returns {boolean}
+ */
+function isNativeKeyboardControl(element) {
+    return element.matches('button, input, select, textarea, summary, a[href]');
+}
+
+/**
+ * @param {HTMLElement} element
+ * @returns {boolean}
+ */
+function isEditableTarget(element) {
+    return element.matches('input, textarea, select') || element.isContentEditable;
+}
+
+/**
+ * @param {KeyboardEvent} event
+ * @returns {boolean}
+ */
+function isActivationKey(event) {
+    return event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar';
+}
+
+/**
+ * @param {HTMLElement} start
+ * @returns {HTMLElement | null}
+ */
+function findKeyboardInteractable(start) {
+    let target = start;
+    while (target) {
+        if (isKeyboardInteractable(target)) {
+            return target;
+        }
+        target = target.parentElement;
+    }
+    return null;
+}
+
+/**
+ * @param {HTMLElement} element
+ * @returns {string}
+ */
+function getAccessibleNameFromMetadata(element) {
+    const title = element.getAttribute('title')?.trim();
+    if (title) {
+        return title;
+    }
+
+    const tooltip = element.getAttribute('data-tooltip')?.trim();
+    if (tooltip) {
+        return tooltip.split('\n')[0].trim();
+    }
+
+    return '';
+}
+
+/**
+ * @param {HTMLElement} interactable
+ */
+function syncInteractableAccessibility(interactable) {
+    if (!isNativeKeyboardControl(interactable) && !interactable.hasAttribute('role') && !interactable.matches('.bg_tabs_list .bg_tab_button')) {
+        interactable.setAttribute('role', 'button');
+    }
+
+    if (!interactable.hasAttribute('aria-label') && !interactable.hasAttribute('aria-labelledby')) {
+        const accessibleName = getAccessibleNameFromMetadata(interactable);
+        if (accessibleName) {
+            interactable.setAttribute('aria-label', accessibleName);
+        }
+    }
+
+    if (hasDisabledOrNotFocusableAncestor(interactable)) {
+        interactable.setAttribute('aria-disabled', 'true');
+    } else {
+        interactable.removeAttribute('aria-disabled');
+    }
+}
 
 /**
  * An observer that will check if any new interactables or scroll reset containers are added to the body
@@ -124,20 +219,7 @@ export function makeKeyboardInteractable(...interactables) {
             interactable.classList.add(INTERACTABLE_CONTROL_CLASS);
         }
 
-        /**
-         * Check if the element or any parent element has 'disabled' or 'not_focusable' class
-         * @param {Element} el
-         * @returns {boolean}
-         */
-        const hasDisabledOrNotFocusableAncestor = (el) => {
-            while (el) {
-                if (el.classList.contains(NOT_FOCUSABLE_CONTROL_CLASS) || el.classList.contains(DISABLED_CONTROL_CLASS)) {
-                    return true;
-                }
-                el = el.parentElement;
-            }
-            return false;
-        };
+        syncInteractableAccessibility(interactable);
 
         // Set/remove the tabindex accordingly to the classes. Remembering if it had a custom value.
         if (!hasDisabledOrNotFocusableAncestor(interactable)) {
@@ -146,7 +228,9 @@ export function makeKeyboardInteractable(...interactables) {
                 interactable.setAttribute('tabindex', tabIndex);
             }
         } else {
-            interactable.setAttribute('data-original-tabindex', interactable.getAttribute('tabindex'));
+            if (interactable.hasAttribute('tabindex') && !interactable.hasAttribute('data-original-tabindex')) {
+                interactable.setAttribute('data-original-tabindex', interactable.getAttribute('tabindex'));
+            }
             interactable.removeAttribute('tabindex');
         }
     });
@@ -200,31 +284,30 @@ function initializeScrollResetBehaviors(element = document) {
 }
 
 /**
- * Handles keydown events on the document to trigger click on Enter key press for interactables
+ * Handles keydown events on the document to trigger click on Enter/Space key press for interactables
  *
  * @param {KeyboardEvent} event - The keyboard event
  */
 function handleGlobalKeyDown(event) {
-    if (event.key === 'Enter') {
-        if (!(event.target instanceof HTMLElement))
-            return;
-
-        // Only count enter on this interactable if no modifier key is pressed
-        if (event.altKey || event.ctrlKey || event.shiftKey)
-            return;
-
-        // Traverse up the DOM tree to find the actual interactable element
-        let target = event.target;
-        while (target && !isKeyboardInteractable(target)) {
-            target = target.parentElement;
-        }
-
-        // Trigger click if a valid interactable is found and it's not disabled
-        if (target && !target.classList.contains(DISABLED_CONTROL_CLASS)) {
-            console.debug('Triggering click on keyboard-focused interactable control via Enter', target);
-            target.click();
-        }
+    if (!isActivationKey(event)) {
+        return;
     }
+
+    if (!(event.target instanceof HTMLElement)) {
+        return;
+    }
+
+    if (event.altKey || event.ctrlKey || event.shiftKey || event.metaKey || isEditableTarget(event.target)) {
+        return;
+    }
+
+    const target = findKeyboardInteractable(event.target);
+    if (!target || hasDisabledOrNotFocusableAncestor(target) || isNativeKeyboardControl(target)) {
+        return;
+    }
+
+    event.preventDefault();
+    target.click();
 }
 
 /**
