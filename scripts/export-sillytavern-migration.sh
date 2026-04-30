@@ -10,14 +10,31 @@ FINAL_ZIP_PATH=""
 INCLUDE_BACKUPS=0
 IS_TERMUX=0
 READ_INPUT=""
+ACTIVE_CHILD_PID=""
 
 cleanup() {
+    if [ -n "${ACTIVE_CHILD_PID:-}" ]; then
+        kill "$ACTIVE_CHILD_PID" >/dev/null 2>&1 || true
+        wait "$ACTIVE_CHILD_PID" 2>/dev/null || true
+        ACTIVE_CHILD_PID=""
+    fi
+
     if [ -n "${WORK_DIR:-}" ] && [ -d "$WORK_DIR" ]; then
-        rm -rf "$WORK_DIR"
+        rm -rf "$WORK_DIR" || true
     fi
 }
 
-trap cleanup EXIT INT TERM
+handle_signal() {
+    exit_status=$1
+    trap - EXIT INT TERM
+    printf '\n' >&2
+    cleanup
+    exit "$exit_status"
+}
+
+trap cleanup EXIT
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
 
 msg() {
     case "${LANG_CODE}:$1" in
@@ -342,6 +359,7 @@ create_staging_zip() {
         zip -r "$ZIP_PATH" data >"$progress_fifo" 2>&1
     ) &
     zip_pid=$!
+    ACTIVE_CHILD_PID=$zip_pid
 
     processed=0
     while IFS= read -r line; do
@@ -356,8 +374,9 @@ create_staging_zip() {
         esac
     done <"$progress_fifo"
 
-    wait "$zip_pid"
-    zip_status=$?
+    zip_status=0
+    wait "$zip_pid" || zip_status=$?
+    ACTIVE_CHILD_PID=""
     rm -f "$progress_fifo"
 
     if [ "$processed" -lt "$entry_count" ]; then
