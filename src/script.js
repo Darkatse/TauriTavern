@@ -328,7 +328,7 @@ import { initDataMaid } from './scripts/data-maid.js';
 import { clearItemizedPrompts, deleteItemizedPromptForMessage, deleteItemizedPrompts, findItemizedPromptSet, hasItemizedPromptForMessage, initItemizedPrompts, itemizedParams, itemizedPrompts, loadItemizedPrompts, promptItemize, replaceItemizedPromptText, saveItemizedPrompts, swapItemizedPrompts, unloadItemizedPrompts, upsertItemizedPromptRecord } from './scripts/itemized-prompts.js';
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
 import { event_types, eventSource } from './scripts/events.js';
-import { initAccessibility, announceA11y, handleDrawerFocus, setAccessibilityEnabled } from './scripts/a11y.js';
+import { initAccessibility } from './scripts/a11y.js';
 import { applyStreamFadeIn } from './scripts/util/stream-fadein.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
@@ -738,7 +738,7 @@ let this_del_mes = -1;
 /** @type {string} */
 let this_edit_mes_chname = '';
 /** @type {number|undefined} */
-export let this_edit_mes_id = undefined;
+let this_edit_mes_id = undefined;
 /** @type {Map<number, HTMLElement>} */
 const ttMessageEditStash = new Map();
 
@@ -4128,10 +4128,6 @@ class StreamingProcessor {
         await this.onProgressStreaming(messageId, text, true);
         const messageElement = chatElement.find(`.mes[mesid="${messageId}"]`);
         const message = chat[messageId];
-
-        // A11y: Announce full response with character name
-        announceA11y(t`${message.name} replied: ${text}`);
-
         addCopyToCodeBlocks(messageElement);
 
         await this.reasoningHandler.finish(messageId);
@@ -4813,16 +4809,6 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
     if (!dryRun) {
         deactivateSendButtons();
-
-        // A11y: Announce generation start and focus stop button
-        announceA11y(t`AI is generating...`);
-        // Focus stop button so it can be easily activated with Enter/Space/Escape
-        setTimeout(() => {
-            const stopBtn = document.getElementById('mes_stop');
-            if (stopBtn && stopBtn.offsetParent !== null) {
-                stopBtn.focus();
-            }
-        }, 100);
     }
 
     let { messageBias, promptBias, isUserPromptBias } = getBiasStrings(textareaText, type);
@@ -8516,8 +8502,6 @@ async function applySettingsSnapshot(data) {
         // Apply theme toggles from power user settings
         applyPowerUserSettings();
 
-        setAccessibilityEnabled(power_user.accessibility_mode ?? false);
-
         // Load character tags
         loadTagsSettings(settings);
 
@@ -11628,14 +11612,9 @@ function doDrawerOpenClick() {
  */
 export async function doNavbarIconClick() {
     const icon = $(this).find('.drawer-icon');
-    const drawerContainer = $(this).parent();
-    const drawer = drawerContainer.find('.drawer-content');
-    const drawerWasOpenAlready = drawerContainer.find('.drawer-content').hasClass('openDrawer');
-    const targetDrawerID = drawerContainer.find('.drawer-content').attr('id');
-    const drawerElement = document.getElementById(targetDrawerID);
-
-    // A11y: Handle ARIA states
-    handleDrawerFocus(drawerContainer, drawerElement, !drawerWasOpenAlready);
+    const drawer = $(this).parent().find('.drawer-content');
+    const drawerWasOpenAlready = $(this).parent().find('.drawer-content').hasClass('openDrawer');
+    const targetDrawerID = $(this).parent().find('.drawer-content').attr('id');
 
     if (!drawerWasOpenAlready) {
         const $openDrawers = $('.openDrawer:not(.pinnedOpen)');
