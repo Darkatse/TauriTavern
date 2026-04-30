@@ -77,22 +77,6 @@ function focusPromptSortControl(promptManager, identifier, direction) {
     control.focus();
 }
 
-function focusPromptActionControl(promptManager, identifier, selector) {
-    const promptElement = Array.from(promptManager.listElement.querySelectorAll(`.${promptManager.configuration.prefix}prompt_manager_prompt`))
-        .find(element => element.dataset.pmIdentifier === identifier);
-
-    if (!(promptElement instanceof HTMLElement)) {
-        throw new Error(`Prompt action focus target not found for ${identifier}`);
-    }
-
-    const control = promptElement.querySelector(selector);
-    if (!(control instanceof HTMLElement)) {
-        throw new Error(`Prompt action control not found for ${identifier}: ${selector}`);
-    }
-
-    control.focus();
-}
-
 /**
  * Register migrations for the prompt manager when settings are loaded or an Open AI preset is loaded.
  */
@@ -500,23 +484,15 @@ class PromptManager {
         this.sanitizeServiceSettings();
 
         // Enable and disable prompts
-        this.handleToggle = async (event) => {
+        this.handleToggle = (event) => {
             const promptID = event.target.closest('.' + this.configuration.prefix + 'prompt_manager_prompt').dataset.pmIdentifier;
             const promptOrderEntry = this.getPromptOrderEntry(this.activeCharacter, promptID);
             const counts = this.tokenHandler.getCounts();
-            const restoreFocus = isScreenReaderAssistanceEnabled();
 
             counts[promptID] = null;
             promptOrderEntry.enabled = !promptOrderEntry.enabled;
-            const savePromise = this.saveServiceSettings();
-            try {
-                await this.render();
-                if (restoreFocus) {
-                    focusPromptActionControl(this, promptID, '.prompt-manager-toggle-action');
-                }
-            } finally {
-                await savePromise;
-            }
+            this.render();
+            this.saveServiceSettings();
         };
 
         // Open edit form and load selected prompt
@@ -932,51 +908,43 @@ class PromptManager {
         document.getElementById(this.configuration.prefix + 'prompt_manager')?.closest('.scrollableInner')?.scrollTo(0, scrollPosition);
     }
 
-    async #renderPromptManagerSurface() {
-        this.profileStart('render');
-        try {
-            const scrollPosition = this.#getScrollPosition();
-            await this.renderPromptManager();
-            await this.renderPromptManagerListItems();
-            this.makeDraggable();
-            this.#setScrollPosition(scrollPosition);
-        } finally {
-            this.profileEnd('render');
-        }
-    }
-
     /**
      * Main rendering function
      *
      * @param afterTryGenerate - Whether a dry run should be attempted before rendering
-     * @returns {Promise<void>}
      */
     render(afterTryGenerate = true) {
-        if (main_api !== 'openai') return Promise.resolve();
+        if (main_api !== 'openai') return;
 
-        if ('character' === this.configuration.promptOrder.strategy && null === this.activeCharacter) return Promise.resolve();
+        if ('character' === this.configuration.promptOrder.strategy && null === this.activeCharacter) return;
         this.error = null;
 
-        return waitUntilCondition(() => !is_send_press && !is_group_generating, 1024 * 1024, 100).then(async () => {
+        waitUntilCondition(() => !is_send_press && !is_group_generating, 1024 * 1024, 100).then(async () => {
             if (true === afterTryGenerate) {
                 // Executed during dry-run for determining context composition
                 this.profileStart('filling context');
-                try {
-                    await this.tryGenerate();
-                } finally {
+                this.tryGenerate().finally(async () => {
                     this.profileEnd('filling context');
-                    await this.#renderPromptManagerSurface();
-                }
+                    this.profileStart('render');
+                    const scrollPosition = this.#getScrollPosition();
+                    await this.renderPromptManager();
+                    await this.renderPromptManagerListItems();
+                    this.makeDraggable();
+                    this.#setScrollPosition(scrollPosition);
+                    this.profileEnd('render');
+                });
             } else {
                 // Executed during live communication
-                await this.#renderPromptManagerSurface();
+                this.profileStart('render');
+                const scrollPosition = this.#getScrollPosition();
+                await this.renderPromptManager();
+                await this.renderPromptManagerListItems();
+                this.makeDraggable();
+                this.#setScrollPosition(scrollPosition);
+                this.profileEnd('render');
             }
-        }).catch(error => {
-            if (error?.message === 'Timed out waiting for condition to be true') {
-                console.log('Timeout while waiting for send press to be false');
-                return;
-            }
-            throw error;
+        }).catch(() => {
+            console.log('Timeout while waiting for send press to be false');
         });
     }
 
@@ -1850,17 +1818,11 @@ class PromptManager {
             }
 
             const calculatedTokens = tokens ? tokens : '-';
-            const encodedName = escapeHtml(prompt.name);
 
             let detachSpanHtml = '';
             if (this.isPromptDeletionAllowed(prompt)) {
-                const detachTitle = showScreenReaderSortUi ? escapeHtml(t`Remove prompt ${prompt.name}`) : escapeHtml(t`Remove`);
-                const detachScreenReaderAttributes = showScreenReaderSortUi
-                    ? ` role="button" tabindex="0" aria-label="${detachTitle}"`
-                    : '';
-                const detachScreenReaderClass = showScreenReaderSortUi ? ' interactable' : '';
                 detachSpanHtml = `
-                    <span title="${detachTitle}" class="prompt-manager-detach-action caution fa-solid fa-chain-broken fa-xs${detachScreenReaderClass}"${detachScreenReaderAttributes}></span>
+                    <span title="Remove" class="prompt-manager-detach-action caution fa-solid fa-chain-broken fa-xs"></span>
                 `;
             } else {
                 detachSpanHtml = '<span class="fa-solid"></span>';
@@ -1868,13 +1830,8 @@ class PromptManager {
 
             let editSpanHtml = '';
             if (this.isPromptEditAllowed(prompt)) {
-                const editTitle = showScreenReaderSortUi ? escapeHtml(t`Edit prompt ${prompt.name}`) : escapeHtml(t`Edit`);
-                const editScreenReaderAttributes = showScreenReaderSortUi
-                    ? ` role="button" tabindex="0" aria-label="${editTitle}"`
-                    : '';
-                const editScreenReaderClass = showScreenReaderSortUi ? ' interactable' : '';
                 editSpanHtml = `
-                    <span title="${editTitle}" class="prompt-manager-edit-action fa-solid fa-pencil fa-xs${editScreenReaderClass}"${editScreenReaderAttributes}></span>
+                    <span title="edit" class="prompt-manager-edit-action fa-solid fa-pencil fa-xs"></span>
                 `;
             } else {
                 editSpanHtml = '<span class="fa-solid"></span>';
@@ -1882,20 +1839,15 @@ class PromptManager {
 
             let toggleSpanHtml = '';
             if (this.isPromptToggleAllowed(prompt)) {
-                const toggleTitle = escapeHtml(listEntry.enabled ? t`Disable prompt ${prompt.name}` : t`Enable prompt ${prompt.name}`);
-                const toggleScreenReaderAttributes = showScreenReaderSortUi
-                    ? ` title="${toggleTitle}" role="button" tabindex="0" aria-label="${toggleTitle}" aria-pressed="${listEntry.enabled}"`
-                    : '';
-                const toggleScreenReaderClass = showScreenReaderSortUi ? ' interactable' : '';
                 toggleSpanHtml = `
-                    <span class="prompt-manager-toggle-action ${listEntry.enabled ? 'fa-solid fa-toggle-on' : 'fa-solid fa-toggle-off'}${toggleScreenReaderClass}"${toggleScreenReaderAttributes}></span>
+                    <span class="prompt-manager-toggle-action ${listEntry.enabled ? 'fa-solid fa-toggle-on' : 'fa-solid fa-toggle-off'}"></span>
                 `;
             } else {
                 toggleSpanHtml = '<span class="fa-solid"></span>';
             }
 
-            const moveUpTitle = escapeHtml(showScreenReaderSortUi ? t`Move prompt ${prompt.name} up` : t`Move prompt up`);
-            const moveDownTitle = escapeHtml(showScreenReaderSortUi ? t`Move prompt ${prompt.name} down` : t`Move prompt down`);
+            const moveUpTitle = escapeHtml(t`Move prompt up`);
+            const moveDownTitle = escapeHtml(t`Move prompt down`);
             const moveUpDisabledClass = promptIndex === 0 ? ' disabled' : '';
             const moveDownDisabledClass = promptIndex === prompts.length - 1 ? ' disabled' : '';
             const moveUpSpanHtml = showScreenReaderSortUi ? `
@@ -1905,6 +1857,7 @@ class PromptManager {
                 <span title="${moveDownTitle}" aria-label="${moveDownTitle}" aria-disabled="${promptIndex === prompts.length - 1}" data-pm-direction="down" class="prompt-manager-move-down-action menu_button menu_button_icon fa-solid fa-chevron-down fa-xs${moveDownDisabledClass}"></span>
             ` : '';
 
+            const encodedName = escapeHtml(prompt.name);
             const attachSideText = prompt.attach_side === 'start'
                 ? translate('Prepend')
                 : translate('Append');
@@ -1926,17 +1879,9 @@ class PromptManager {
             };
             const roleIcon = promptRoles[iconLookup]?.roleIcon || '';
             const roleTitle = promptRoles[iconLookup]?.roleTitle || '';
-            let inspectPromptHtml = `<span title="${encodedName}">${encodedName}</span>`;
-            if (this.isPromptInspectionAllowed(prompt)) {
-                const inspectScreenReaderClass = showScreenReaderSortUi ? ' interactable' : '';
-                const inspectScreenReaderAttributes = showScreenReaderSortUi
-                    ? ` role="button" tabindex="0" aria-label="${escapeHtml(t`Inspect prompt ${prompt.name}`)}"`
-                    : '';
-                inspectPromptHtml = `<a title="${encodedName}" class="prompt-manager-inspect-action${inspectScreenReaderClass}"${inspectScreenReaderAttributes}>${encodedName}</a>`;
-            }
 
             listItemHtml += `
-                <li class="${prefix}prompt_manager_prompt ${draggableClass} ${enabledClass} ${markerClass} ${importantClass}" data-pm-identifier="${escapeHtml(prompt.identifier)}" data-pm-name="${encodedName}">
+                <li class="${prefix}prompt_manager_prompt ${draggableClass} ${enabledClass} ${markerClass} ${importantClass}" data-pm-identifier="${escapeHtml(prompt.identifier)}">
                     <span class="drag-handle">☰</span>
                     <span class="${prefix}prompt_manager_prompt_name" data-pm-name="${encodedName}">
                         ${isMarkerPrompt ? '<span class="fa-fw fa-solid fa-thumb-tack" title="Marker"></span>' : ''}
@@ -1945,7 +1890,7 @@ class PromptManager {
                         ${isUserPrompt ? '<span class="fa-fw fa-solid fa-asterisk" title="Preset Prompt"></span>' : ''}
                         ${isInjectionPrompt ? '<span class="fa-fw fa-solid fa-syringe" title="In-Chat Injection"></span>' : ''}
                         ${isAttachedPrompt ? '<span class="fa-fw fa-solid fa-paperclip" title="Attached to Existing Message"></span>' : ''}
-                        ${inspectPromptHtml}
+                        ${this.isPromptInspectionAllowed(prompt) ? `<a title="${encodedName}" class="prompt-manager-inspect-action">${encodedName}</a>` : `<span title="${encodedName}">${encodedName}</span>`}
                         ${roleIcon ? `<span data-role="${escapeHtml(prompt.role)}" class="fa-xs fa-solid ${roleIcon}" title="${roleTitle}"></span>` : ''}
                         ${isInjectionPrompt ? `<small class="prompt-manager-injection-depth">@ ${escapeHtml(prompt.injection_depth.toString())}</small>` : ''}
                         ${isAttachedPrompt
@@ -2005,11 +1950,7 @@ class PromptManager {
                     }
 
                     const result = await this.movePromptInActiveOrder(identifier, direction);
-                    const promptName = promptElement.dataset.pmName;
-                    if (!promptName) {
-                        throw new Error(`Prompt sort action requires prompt name for ${identifier}.`);
-                    }
-                    ensurePromptSortStatus(this).textContent = t`Moved ${promptName} to position ${result.position} of ${result.total}.`;
+                    ensurePromptSortStatus(this).textContent = t`Moved to position ${result.position} of ${result.total}.`;
                     focusPromptSortControl(this, result.identifier, direction);
                 });
             });

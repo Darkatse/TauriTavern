@@ -14,10 +14,8 @@
     "check:frontend:baseline": "node scripts/check-frontend-guardrails.mjs --update-baseline",
     "check:types": "tsc -p tsconfig.host.json",
     "check:contracts": "pnpm run test:contracts",
-    "check:a11y": "pnpm run test:a11y",
     "test": "pnpm run test:contracts",
     "test:contracts": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\"",
-    "test:a11y": "playwright test --config=playwright.config.mjs",
     "web:build": "webpack --config webpack.config.js",
     "web:dev": "webpack --config webpack.config.js --watch",
     "tauri:dev": "tauri dev",
@@ -34,8 +32,6 @@
     "fastools:run": "cargo run --manifest-path fastools/Cargo.toml"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.11.2",
-    "@playwright/test": "^1.59.1",
     "@tauri-apps/cli": "^2.10.0",
     "@types/archiver": "^6.0.3",
     "@types/bytes": "^3.1.5",

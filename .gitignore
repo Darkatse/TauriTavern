@@ -11,8 +11,6 @@ node_modules
 dist
 dist-ssr
 .cache
-test-results
-playwright-report
 *.local
 
 # Editor directories and files

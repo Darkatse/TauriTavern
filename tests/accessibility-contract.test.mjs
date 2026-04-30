@@ -45,15 +45,8 @@ const ACCESSIBILITY_I18N_KEYS = [
     'Swipe ${0} of ${1}',
     'Editing',
     'Editing message ${0}',
-    'Inspect prompt ${0}',
-    'Remove prompt ${0}',
-    'Edit prompt ${0}',
-    'Enable prompt ${0}',
-    'Disable prompt ${0}',
     'Move prompt up',
     'Move prompt down',
-    'Move prompt ${0} up',
-    'Move prompt ${0} down',
     'Move quick reply up',
     'Move quick reply down',
     'Move quick reply set up',
@@ -61,8 +54,6 @@ const ACCESSIBILITY_I18N_KEYS = [
     'Move script up',
     'Move script down',
     'Moved to position ${0} of ${1}.',
-    'Moved ${0} to position ${1} of ${2}.',
-    'World Info entry ${0}',
     'AI is generating a response. Stop button is available.',
     'AI response ready.',
     'Generation stopped.',
@@ -179,14 +170,14 @@ test('shared a11y core has no app-level imports or public extension surface', as
     assert.doesNotMatch(source, /\bregisterA11ySelector\b/);
 });
 
-test('main generation flow no longer calls old broad screen-reader helpers', async () => {
+test('main generation and drawer flows no longer call screen-reader helpers directly', async () => {
     const source = await readRepoFile('src/script.js');
 
     assert.doesNotMatch(source, /\bannounceA11y\b/);
     assert.doesNotMatch(source, /\bsetAccessibilityEnabled\b/);
     assert.doesNotMatch(source, /\bhandleDrawerFocus\b/);
     assert.match(source, /import\s+\{\s*initAccessibility\s*\}\s+from\s+'\.\/scripts\/a11y\.js';/);
-    assert.match(source, /import\s+\{\s*initScreenReaderAssistance,\s*isScreenReaderAssistanceEnabled,\s*setScreenReaderAssistanceEnabled\s*\}\s+from\s+'\.\/scripts\/a11y\/screen-reader\.js';/);
+    assert.match(source, /import\s+\{\s*initScreenReaderAssistance,\s*setScreenReaderAssistanceEnabled\s*\}\s+from\s+'\.\/scripts\/a11y\/screen-reader\.js';/);
 });
 
 test('SillyTavern context does not expose an undocumented a11y API', async () => {
@@ -429,6 +420,32 @@ test('Screen Reader Assistance does not log chat content while announcing', asyn
     }
 });
 
+test('Screen reader smoke coverage defines task-oriented flows with module ownership', async () => {
+    const checklist = await readRepoFile('docs/AccessibilitySmokeChecklist.md');
+    const plan = await readRepoFile('docs/BlindAccessibilityCompletionPlan.md');
+
+    for (const phrase of [
+        'VoiceOver',
+        'NVDA',
+        'Owner module',
+        'onboarding',
+        'send a message',
+        'stop generation',
+        'read the latest reply',
+        'message actions',
+        'left drawer',
+        'right drawer',
+        'Settings search',
+        'Prompt Manager',
+        'Quick Reply',
+        'Regex',
+    ]) {
+        assert.match(checklist, new RegExp(phrase, 'i'));
+    }
+
+    assert.match(plan, /AccessibilitySmokeChecklist\.md/);
+});
+
 test('Keyboard contract supports named activation without editable-field side effects', async () => {
     const keyboard = await readRepoFile('src/scripts/keyboard.js');
     const html = await readRepoFile('src/index.html');
@@ -470,20 +487,10 @@ test('Main landmarks and owner-managed disclosure state are exposed', async () =
     assert.match(script, /setAttribute\('aria-controls', content\.id\)/);
     assert.match(script, /setAttribute\('aria-expanded', String\(isNavbarDrawerOpen\(drawerToggle\)\)\)/);
     assert.match(script, /syncAllNavbarDrawerAccessibility\(\);/);
-    assert.match(script, /function syncInlineDrawerAccessibilityForMode/);
-    assert.match(script, /preferHeaderControl: isScreenReaderAssistanceEnabled\(\),/);
-    assert.match(script, /document\.querySelectorAll\('\.inline-drawer'\)\.forEach\(syncInlineDrawerAccessibilityForMode\);/);
-    assert.match(script, /eventSource\.on\(event_types\.SCREEN_READER_ASSISTANCE_CHANGED, syncAllInlineDrawerAccessibilityForMode\);/);
-    assert.match(script, /syncInlineDrawerAccessibility\(drawerEl, open, \{\s*preferHeaderControl: isScreenReaderAssistanceEnabled\(\),\s*}\);/s);
-    assert.doesNotMatch(script, /SCREEN_READER_INLINE_DRAWER|tt-sra-inline|syncScreenReaderInlineDrawerControl/);
+    assert.match(script, /syncInlineDrawerAccessibility\(drawerEl, open\);/);
     assert.doesNotMatch(script, /inline-drawer-toggle:[\s\S]*console\.debug/);
 
     assert.match(utils, /export function syncInlineDrawerAccessibility/);
-    assert.match(utils, /options\.preferHeaderControl === true/);
-    assert.match(utils, /function enableInlineDrawerHeaderControl/);
-    assert.match(utils, /function restoreInlineDrawerHeaderControl/);
-    assert.match(utils, /function hideInlineDrawerHeaderIcon/);
-    assert.match(utils, /function restoreInlineDrawerHeaderIcon/);
     assert.match(utils, /throw new Error\('inline drawer accessibility requires/);
     assert.match(utils, /setAttribute\('aria-controls', content\.id\)/);
     assert.match(utils, /setAttribute\('aria-expanded', String\(open\)\)/);
@@ -554,45 +561,7 @@ test('Settings search and key form controls expose names and live result state',
     assert.match(settingsSearch, /counter\.setAttribute\('aria-label', t`\$\{label\} value`\);/);
     assert.match(settingsSearch, /settingsSearchStatus\.textContent = highlightedCount === 1 \? t`1 matching setting\.` : t`\$\{highlightedCount\} matching settings\.`;/);
     assert.match(settingsSearch, /\$\(document\)\.on\('input change', SETTINGS_RANGE_SELECTOR, function \(\) \{/);
-    assert.match(settingsSearch, /function syncScreenReaderSettingDescriptions/);
-    assert.match(settingsSearch, /syncExistingStreamingDescription\('stream_toggle', enabled\);/);
-    assert.match(settingsSearch, /GENERATED_STREAMING_DESCRIPTION_IDS\.forEach\(id => syncGeneratedStreamingDescription\(id, enabled\)\);/);
-    assert.match(settingsSearch, /eventSource\.on\(event_types\.SCREEN_READER_ASSISTANCE_CHANGED, syncScreenReaderSettingDescriptions\);/);
     assert.match(settingsSearch, /initSettingsFormAccessibility\(\);/);
-});
-
-test('Screen Reader Assistance owner patches restore missing named controls without global selectors', async () => {
-    const a11yCore = await readRepoFile('src/scripts/a11y.js');
-    const screenReader = await readRepoFile('src/scripts/a11y/screen-reader.js');
-    const promptManager = await readRepoFile('src/scripts/PromptManager.js');
-    const worldInfo = await readRepoFile('src/scripts/world-info.js');
-    const script = await readRepoFile('src/script.js');
-    const extensions = await readRepoFile('src/scripts/extensions.js');
-
-    assert.doesNotMatch(`${a11yCore}\n${screenReader}`, /\bkillSwitch\b|prompt-manager-toggle-action|inline-drawer-toggle|extensionsMenu/);
-
-    assert.match(promptManager, /function focusPromptActionControl/);
-    assert.match(promptManager, /this\.handleToggle = async \(event\) =>/);
-    assert.match(promptManager, /await this\.render\(\);/);
-    assert.match(promptManager, /async #renderPromptManagerSurface\(\)/);
-    assert.match(promptManager, /return waitUntilCondition\(\(\) => !is_send_press && !is_group_generating/);
-    assert.match(promptManager, /t`Move prompt \$\{prompt\.name\} up`/);
-    assert.match(promptManager, /t`Move prompt \$\{prompt\.name\} down`/);
-    assert.match(promptManager, /aria-pressed="\$\{listEntry\.enabled\}"/);
-    assert.match(promptManager, /t`Moved \$\{promptName\} to position \$\{result\.position\} of \$\{result\.total\}\.`/);
-
-    assert.match(worldInfo, /from '\.\/a11y\/screen-reader\.js'/);
-    assert.match(worldInfo, /function syncEntryKillSwitchAccessibility/);
-    assert.match(worldInfo, /setAttribute\('role', 'switch'\)/);
-    assert.match(worldInfo, /setAttribute\('aria-checked', String\(isActive\)\)/);
-    assert.match(worldInfo, /t`World Info entry \$\{getWorldInfoEntryAccessibleName\(entry\)\}`/);
-    assert.match(worldInfo, /eventSource\.on\(event_types\.SCREEN_READER_ASSISTANCE_CHANGED, async \(\) =>/);
-
-    assert.match(script, /function focusFirstScreenReaderOptionsMenuItem/);
-    assert.match(script, /menu\.find\('\.options-content a\[tabindex\]:visible'\)/);
-    assert.match(extensions, /from '\.\/a11y\/screen-reader\.js'/);
-    assert.match(extensions, /function focusFirstScreenReaderExtensionsMenuItem/);
-    assert.match(extensions, /dropdown\.find\('\.list-group-item\[tabindex\]:visible'\)/);
 });
 
 test('Accessibility user-facing strings are translated for Chinese locales', async () => {

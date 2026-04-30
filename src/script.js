@@ -330,7 +330,7 @@ import { clearItemizedPrompts, deleteItemizedPromptForMessage, deleteItemizedPro
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
 import { event_types, eventSource } from './scripts/events.js';
 import { initAccessibility } from './scripts/a11y.js';
-import { initScreenReaderAssistance, isScreenReaderAssistanceEnabled, setScreenReaderAssistanceEnabled } from './scripts/a11y/screen-reader.js';
+import { initScreenReaderAssistance, setScreenReaderAssistanceEnabled } from './scripts/a11y/screen-reader.js';
 import { applyStreamFadeIn } from './scripts/util/stream-fadein.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
@@ -11748,26 +11748,14 @@ function syncAllNavbarDrawerAccessibility() {
     document.querySelectorAll('.drawer-toggle').forEach(syncNavbarDrawerAccessibility);
 }
 
-function syncInlineDrawerAccessibilityForMode(drawer) {
-    if (!(drawer instanceof HTMLElement)) {
-        throw new Error('inline drawer accessibility requires an HTMLElement drawer');
-    }
-    const content = drawer.querySelector(':scope > .inline-drawer-content');
-    if (!(content instanceof HTMLElement)) {
-        throw new Error('inline drawer accessibility requires a direct .inline-drawer-content child');
-    }
-
-    syncInlineDrawerAccessibility(drawer, isInlineDrawerContentOpen(content), {
-        preferHeaderControl: isScreenReaderAssistanceEnabled(),
-    });
-}
-
-function syncAllInlineDrawerAccessibilityForMode() {
-    document.querySelectorAll('.inline-drawer').forEach(syncInlineDrawerAccessibilityForMode);
-}
-
 function initializeInlineDrawerAccessibility() {
-    document.querySelectorAll('.inline-drawer').forEach(syncInlineDrawerAccessibilityForMode);
+    document.querySelectorAll('.inline-drawer').forEach(drawer => {
+        const content = drawer.querySelector(':scope > .inline-drawer-content');
+        if (!(content instanceof HTMLElement)) {
+            throw new Error('inline drawer accessibility requires a direct .inline-drawer-content child');
+        }
+        syncInlineDrawerAccessibility(drawer, isInlineDrawerContentOpen(content));
+    });
 }
 
 /**
@@ -12361,7 +12349,6 @@ jQuery(async function () {
         menu.fadeIn(animation_duration);
         optionsPopper.update();
         isOptionsMenuVisible = true;
-        focusFirstScreenReaderOptionsMenuItem();
     }
 
     function hideMenu() {
@@ -12372,25 +12359,6 @@ jQuery(async function () {
 
     function isMouseOverButtonOrMenu() {
         return menu.is(':hover, :focus-within') || button.is(':hover, :focus');
-    }
-
-    function focusFirstScreenReaderOptionsMenuItem() {
-        if (!isScreenReaderAssistanceEnabled()) {
-            return;
-        }
-
-        requestAnimationFrame(() => {
-            if (!menu.is(':visible')) {
-                return;
-            }
-
-            const firstMenuItem = menu.find('.options-content a[tabindex]:visible').get(0);
-            if (!(firstMenuItem instanceof HTMLElement)) {
-                throw new Error('screen reader message options focus requires a visible focusable option');
-            }
-
-            firstMenuItem.focus();
-        });
     }
 
     button.on('click', function () {
@@ -13042,7 +13010,6 @@ jQuery(async function () {
     $('.drawer-toggle').on('click', doNavbarIconClick);
     syncAllNavbarDrawerAccessibility();
     initializeInlineDrawerAccessibility();
-    eventSource.on(event_types.SCREEN_READER_ASSISTANCE_CHANGED, syncAllInlineDrawerAccessibilityForMode);
 
     $('html').on('touchstart mousedown', async function (e) {
         const clickTarget = $(e.target);
@@ -13107,9 +13074,7 @@ jQuery(async function () {
         icon.toggleClass('up', open);
         icon.toggleClass('fa-circle-chevron-down', !open);
         icon.toggleClass('fa-circle-chevron-up', open);
-        syncInlineDrawerAccessibility(drawerEl, open, {
-            preferHeaderControl: isScreenReaderAssistanceEnabled(),
-        });
+        syncInlineDrawerAccessibility(drawerEl, open);
         drawerEl.dispatchEvent(new CustomEvent('inline-drawer-toggle', { bubbles: true, detail: { open } }));
         const motion = setInlineDrawerContentOpen(drawerContentEl, open, { durationMs: animation_duration });
         void motion.then(() => {

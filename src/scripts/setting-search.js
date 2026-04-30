@@ -1,6 +1,4 @@
 import { t } from './i18n.js';
-import { event_types, eventSource } from './events.js';
-import { isScreenReaderAssistanceEnabled } from './a11y/screen-reader.js';
 
 /**
  * Search for settings that match the search string and highlight them.
@@ -30,13 +28,6 @@ const SETTINGS_RANGE_SELECTOR = [
     '#blur_strength',
     '#shadow_width',
 ].join(', ');
-
-const GENERATED_STREAMING_DESCRIPTION_IDS = [
-    'streaming_textgenerationwebui',
-    'streaming_kobold',
-    'streaming_novel',
-];
-const SCREEN_READER_DESCRIPTION_ID_ATTRIBUTE = 'data-tt-sra-description-id';
 
 /**
  * @param {string} id
@@ -77,82 +68,6 @@ function syncRangePair(sliderId, counterId, label) {
     syncRangeValueText(slider);
 }
 
-function setDescribedByToken(control, descriptionId, enabled) {
-    const tokens = new Set((control.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean));
-    if (enabled) {
-        tokens.add(descriptionId);
-    } else {
-        tokens.delete(descriptionId);
-    }
-
-    if (tokens.size > 0) {
-        control.setAttribute('aria-describedby', Array.from(tokens).join(' '));
-    } else {
-        control.removeAttribute('aria-describedby');
-    }
-}
-
-function getStreamingDescriptionText() {
-    return `${t`Display the response bit by bit as it is generated.`} ${t`When this is off, responses will be displayed all at once when they are complete.`}`;
-}
-
-function syncGeneratedStreamingDescription(controlId, enabled) {
-    const control = requireElementById(controlId);
-    if (!(control instanceof HTMLInputElement) || control.type !== 'checkbox') {
-        throw new Error(`Streaming description target must be an input[type="checkbox"]: #${controlId}`);
-    }
-
-    const descriptionId = `${controlId}_screen_reader_description`;
-    let description = document.getElementById(descriptionId);
-
-    if (enabled) {
-        if (!description) {
-            description = document.createElement('span');
-            description.id = descriptionId;
-            description.classList.add('sr-only');
-            control.insertAdjacentElement('afterend', description);
-        }
-        description.textContent = getStreamingDescriptionText();
-        setDescribedByToken(control, descriptionId, true);
-        return;
-    }
-
-    setDescribedByToken(control, descriptionId, false);
-    description?.remove();
-}
-
-function syncExistingStreamingDescription(controlId, enabled) {
-    const control = requireElementById(controlId);
-    if (!(control instanceof HTMLInputElement) || control.type !== 'checkbox') {
-        throw new Error(`Streaming description target must be an input[type="checkbox"]: #${controlId}`);
-    }
-
-    const description = control.closest('.range-block')?.querySelector('.toggle-description');
-    if (!(description instanceof HTMLElement)) {
-        throw new Error(`Streaming description is missing for #${controlId}`);
-    }
-
-    if (enabled && !description.id) {
-        description.id = `${controlId}_description`;
-        description.setAttribute(SCREEN_READER_DESCRIPTION_ID_ATTRIBUTE, '');
-    }
-
-    if (description.id) {
-        setDescribedByToken(control, description.id, enabled);
-    }
-
-    if (!enabled && description.hasAttribute(SCREEN_READER_DESCRIPTION_ID_ATTRIBUTE)) {
-        description.removeAttribute('id');
-        description.removeAttribute(SCREEN_READER_DESCRIPTION_ID_ATTRIBUTE);
-    }
-}
-
-function syncScreenReaderSettingDescriptions() {
-    const enabled = isScreenReaderAssistanceEnabled();
-    syncExistingStreamingDescription('stream_toggle', enabled);
-    GENERATED_STREAMING_DESCRIPTION_IDS.forEach(id => syncGeneratedStreamingDescription(id, enabled));
-}
-
 function initSettingsFormAccessibility() {
     syncRangePair('amount_gen', 'amount_gen_counter', t`Response tokens`);
     syncRangePair('max_context', 'max_context_counter', t`Context tokens`);
@@ -167,9 +82,6 @@ function initSettingsFormAccessibility() {
         }
         syncRangeValueText(this);
     });
-
-    syncScreenReaderSettingDescriptions();
-    eventSource.on(event_types.SCREEN_READER_ASSISTANCE_CHANGED, syncScreenReaderSettingDescriptions);
 }
 
 /**
