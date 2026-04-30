@@ -208,7 +208,6 @@ import {
     ensureImageFormatSupported,
     flashHighlight,
     toggleDrawer,
-    syncInlineDrawerAccessibility,
     isElementInViewport,
     copyText,
     escapeHtml,
@@ -329,8 +328,7 @@ import { initDataMaid } from './scripts/data-maid.js';
 import { clearItemizedPrompts, deleteItemizedPromptForMessage, deleteItemizedPrompts, findItemizedPromptSet, hasItemizedPromptForMessage, initItemizedPrompts, itemizedParams, itemizedPrompts, loadItemizedPrompts, promptItemize, replaceItemizedPromptText, saveItemizedPrompts, swapItemizedPrompts, unloadItemizedPrompts, upsertItemizedPromptRecord } from './scripts/itemized-prompts.js';
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
 import { event_types, eventSource } from './scripts/events.js';
-import { initAccessibility } from './scripts/a11y.js';
-import { initScreenReaderAssistance, setScreenReaderAssistanceEnabled } from './scripts/a11y/screen-reader.js';
+import { initAccessibility, announceA11y, handleDrawerFocus, setAccessibilityEnabled } from './scripts/a11y.js';
 import { applyStreamFadeIn } from './scripts/util/stream-fadein.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
@@ -740,7 +738,7 @@ let this_del_mes = -1;
 /** @type {string} */
 let this_edit_mes_chname = '';
 /** @type {number|undefined} */
-let this_edit_mes_id = undefined;
+export let this_edit_mes_id = undefined;
 /** @type {Map<number, HTMLElement>} */
 const ttMessageEditStash = new Map();
 
@@ -981,7 +979,6 @@ async function firstLoadInit() {
         initDataMaid();
         initItemizedPrompts();
         initAccessibility();
-        initScreenReaderAssistance();
         addDebugFunctions();
 
         let deferThirdPartyExtensions = false;
@@ -2917,57 +2914,6 @@ function updateMessageItemizedPromptButton(message, { messageId = chat.indexOf(m
     }
 }
 
-function getMessageAccessibilityType(message) {
-    if (message.is_system) {
-        return message.extra?.type === system_message_types.NARRATOR ? t`narrator` : t`system`;
-    }
-
-    if (message.is_user) {
-        return t`user`;
-    }
-
-    return selected_group ? t`group member` : t`assistant`;
-}
-
-function syncMessageAccessibility(messageElement, message, messageId) {
-    const element = messageElement instanceof HTMLElement ? messageElement : messageElement.get?.(0);
-    if (!(element instanceof HTMLElement)) {
-        throw new Error(`Message accessibility requires a rendered message element for message ${messageId}`);
-    }
-
-    if (!message) {
-        throw new Error(`Message accessibility requires chat data for message ${messageId}`);
-    }
-
-    const messageNumber = Number(messageId) + 1;
-    const currentSwipe = Number(message.swipe_id ?? 0) + 1;
-    const totalSwipes = Number(message.swipes?.length ?? 1);
-    const timestamp = element.getAttribute('timestamp') || '';
-    const author = message.name || (message.is_user ? name1 : name2);
-    const parts = [
-        t`Message ${messageNumber}`,
-        author,
-        getMessageAccessibilityType(message),
-    ];
-
-    if (timestamp) {
-        parts.push(t`Sent ${timestamp}`);
-    }
-
-    if (!message.is_user && totalSwipes > 1) {
-        parts.push(t`Swipe ${currentSwipe} of ${totalSwipes}`);
-    }
-
-    if (element.getAttribute('data-editing') === 'true') {
-        parts.push(t`Editing`);
-    }
-
-    element.setAttribute('role', 'article');
-    element.setAttribute('aria-label', parts.join(', '));
-    element.dataset.messageAuthor = author;
-    element.dataset.messageType = getMessageAccessibilityType(message);
-}
-
 /**
  * Gets messageFormatting for a ChatMessage object.
  * @param {ChatMessage} message
@@ -3160,7 +3106,6 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
         updateSwipeCounter(messageId, { message: mes, messageElement });
     }
 
-    syncMessageAccessibility(messageElement, mes, messageId);
     return messageElement;
 }
 
@@ -3959,13 +3904,13 @@ export function isStreamingEnabled() {
 }
 
 function showStopButton() {
-    $('#mes_stop').css({ 'display': 'flex' }).attr({ 'aria-hidden': 'false', 'aria-disabled': 'false' });
+    $('#mes_stop').css({ 'display': 'flex' });
 }
 
 function hideStopButton() {
     // prevent NOOP, because hideStopButton() gets called multiple times
     if ($('#mes_stop').css('display') !== 'none') {
-        $('#mes_stop').css({ 'display': 'none' }).attr({ 'aria-hidden': 'true', 'aria-disabled': 'true' });
+        $('#mes_stop').css({ 'display': 'none' });
         eventSource.emit(event_types.GENERATION_ENDED, chat.length);
     }
 }
@@ -4184,6 +4129,9 @@ class StreamingProcessor {
         const messageElement = chatElement.find(`.mes[mesid="${messageId}"]`);
         const message = chat[messageId];
 
+        // A11y: Announce full response with character name
+        announceA11y(t`${message.name} replied: ${text}`);
+
         addCopyToCodeBlocks(messageElement);
 
         await this.reasoningHandler.finish(messageId);
@@ -4248,7 +4196,6 @@ class StreamingProcessor {
         this.isStopped = true;
 
         this.markUIGenStopped();
-        eventSource.emit(event_types.GENERATION_FAILED);
 
         const noEmitTypes = ['swipe', 'impersonate', 'continue'];
         if (!noEmitTypes.includes(this.type)) {
@@ -4775,7 +4722,6 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         if (!pingResult) {
             unblockGeneration(type);
             toastr.error(t`Verify that the server is running and accessible.`, t`ST Server cannot be reached`);
-            eventSource.emit(event_types.GENERATION_FAILED);
             throw new Error('Server unreachable');
         }
 
@@ -4867,6 +4813,16 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
     if (!dryRun) {
         deactivateSendButtons();
+
+        // A11y: Announce generation start and focus stop button
+        announceA11y(t`AI is generating...`);
+        // Focus stop button so it can be easily activated with Enter/Space/Escape
+        setTimeout(() => {
+            const stopBtn = document.getElementById('mes_stop');
+            if (stopBtn && stopBtn.offsetParent !== null) {
+                stopBtn.focus();
+            }
+        }, 100);
     }
 
     let { messageBias, promptBias, isUserPromptBias } = getBiasStrings(textareaText, type);
@@ -6073,7 +6029,6 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         }
 
         unblockGeneration(type);
-        eventSource.emit(event_types.GENERATION_FAILED);
         console.log(exception);
         streamingProcessor = null;
         throw exception;
@@ -8479,10 +8434,6 @@ export function changeMainAPI(api = null) {
     forceCharacterEditorTokenize();
 }
 
-const ONBOARDING_SCREEN_READER_ASSISTANCE_INPUT_ID = 'onboarding_screen_reader_assistance';
-const ONBOARDING_SCREEN_READER_ASSISTANCE_LABEL = 'Accessibility option: Screen Reader Assistance for low-vision users';
-const ONBOARDING_SCREEN_READER_ASSISTANCE_TOOLTIP = 'Helpful for low-vision users. Announces generation status and important chat updates for screen readers. May add a small performance cost. You can turn it off later in User Settings.';
-
 export function setUserName(value, { toastPersonaNameChange = true } = {}) {
     name1 = value;
     if (name1 === undefined || name1 == '')
@@ -8495,24 +8446,9 @@ export function setUserName(value, { toastPersonaNameChange = true } = {}) {
     saveSettingsDebounced();
 }
 
-async function doOnboarding(avatarId, { screenReaderAssistanceDefault = true } = {}) {
-    const template = $('#onboarding_template .onboarding').clone();
-    const popup = new Popup(template, POPUP_TYPE.INPUT, currentUser?.name || name1, {
-        wider: true,
-        cancelButton: false,
-        customInputs: [{
-            id: ONBOARDING_SCREEN_READER_ASSISTANCE_INPUT_ID,
-            label: ONBOARDING_SCREEN_READER_ASSISTANCE_LABEL,
-            tooltip: ONBOARDING_SCREEN_READER_ASSISTANCE_TOOLTIP,
-            tooltipIcon: 'fa-universal-access',
-            defaultState: screenReaderAssistanceDefault,
-        }],
-    });
-    let userName = await popup.show();
-    const screenReaderAssistance = popup.inputResults?.get(ONBOARDING_SCREEN_READER_ASSISTANCE_INPUT_ID);
-    if (typeof screenReaderAssistance !== 'boolean') {
-        throw new Error('Onboarding screen reader assistance result is missing');
-    }
+async function doOnboarding(avatarId) {
+    const template = $('#onboarding_template .onboarding');
+    let userName = await callGenericPopup(template, POPUP_TYPE.INPUT, currentUser?.name || name1, { wider: true, cancelButton: false });
 
     if (userName) {
         userName = String(userName).replace('\n', ' ');
@@ -8524,10 +8460,6 @@ async function doOnboarding(avatarId, { screenReaderAssistanceDefault = true } =
             position: persona_description_positions.IN_PROMPT,
         };
     }
-
-    power_user.screen_reader_assistance = screenReaderAssistance;
-    setScreenReaderAssistanceEnabled(screenReaderAssistance);
-    saveSettingsDebounced();
 }
 
 function reloadLoop() {
@@ -8583,6 +8515,8 @@ async function applySettingsSnapshot(data) {
 
         // Apply theme toggles from power user settings
         applyPowerUserSettings();
+
+        setAccessibilityEnabled(power_user.accessibility_mode ?? false);
 
         // Load character tags
         loadTagsSettings(settings);
@@ -8647,10 +8581,7 @@ async function applySettingsSnapshot(data) {
 
         if (firstRun) {
             hideLoader();
-            const hasScreenReaderAssistanceSetting = settings.power_user && Object.hasOwn(settings.power_user, 'screen_reader_assistance');
-            await doOnboarding(user_avatar, {
-                screenReaderAssistanceDefault: hasScreenReaderAssistanceSetting ? power_user.screen_reader_assistance : true,
-            });
+            await doOnboarding(user_avatar);
             firstRun = false;
         }
     }
@@ -8923,7 +8854,6 @@ export async function messageEdit(editMessageId) {
     ttMessageEditStash.set(editMessageId, stash);
     messageBlock.find('.mes_buttons').css('display', 'none');
     messageBlock.find('.mes_edit_buttons').css('display', 'inline-flex');
-    messageElement.attr('data-editing', 'true');
 
     // Also edit reasoning, if it exists
     const reasoningEdit = messageBlock.find('.mes_reasoning_edit:visible');
@@ -8935,7 +8865,6 @@ export async function messageEdit(editMessageId) {
     editTextArea.id = 'curEditTextarea';
     editTextArea.className = 'edit_textarea mdHotkeys';
     editTextArea.dataset.macros = '';
-    editTextArea.setAttribute('aria-label', t`Editing message ${editMessageId + 1}`);
     messageText.append(editTextArea);
 
     const text = trimSpaces(editMessage.mes || '');
@@ -8957,7 +8886,6 @@ export async function messageEdit(editMessageId) {
         chatElement.scrollTop(chatScrollPosition);
     }
 
-    syncMessageAccessibility(messageElement, editMessage, editMessageId);
     updateEditArrowClasses();
 }
 
@@ -8979,7 +8907,6 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
     const thisMesBlock = thisMesDiv.find('.mes_block');
     const messageText = thisMesBlock.find('.mes_text');
     messageText.empty();
-    thisMesDiv.removeAttr('data-editing');
     thisMesDiv.find('.mes_edit_buttons').css('display', 'none');
     thisMesBlock.find('.mes_buttons').css('display', '');
 
@@ -9023,7 +8950,6 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
         console.warn(`The message editor was closed on message #${messageId} while #${this_edit_mes_id} is being edited.`);
     }
 
-    syncMessageAccessibility(thisMesDiv, chat[messageId], messageId);
     showSwipeButtons();
 }
 
@@ -9107,9 +9033,6 @@ async function messageEditDone(div) {
 
     await eventSource.emit(event_types.MESSAGE_EDITED, this_edit_mes_id);
     text = chat[this_edit_mes_id]?.mes ?? text;
-    const editMessageId = this_edit_mes_id;
-    const messageElement = div.closest('.mes');
-    messageElement.removeAttr('data-editing');
     mesBlock.find('.mes_edit_buttons').css('display', 'none');
     mesBlock.find('.mes_buttons').css('display', '');
 
@@ -9142,8 +9065,8 @@ async function messageEditDone(div) {
     );
     mesBlock.find('.mes_bias').empty();
     mesBlock.find('.mes_bias').append(messageFormatting(bias, '', false, false, -1, {}, false));
-    appendMediaToMessage(mes, messageElement);
-    addCopyToCodeBlocks(messageElement);
+    appendMediaToMessage(mes, div.closest('.mes'));
+    addCopyToCodeBlocks(div.closest('.mes'));
 
     const reasoningEditDone = mesBlock.find('.mes_reasoning_edit_done:visible');
     if (reasoningEditDone.length > 0) {
@@ -9151,7 +9074,6 @@ async function messageEditDone(div) {
     }
 
     await eventSource.emit(event_types.MESSAGE_UPDATED, this_edit_mes_id);
-    syncMessageAccessibility(messageElement, mes, editMessageId);
     this_edit_mes_id = undefined;
     await saveChatConditional();
     showSwipeButtons();
@@ -9873,12 +9795,9 @@ export async function updateSwipeCounter(mesId, { message = undefined, messageEl
         syncMesToSwipe(mesId);
     }
 
-    const currentSwipe = (message?.swipe_id ?? 0) + 1;
-    const totalSwipes = message?.swipes?.length ?? 1;
-    const swipeCounterText = formatSwipeCounter(currentSwipe, totalSwipes);
+    const swipeCounterText = formatSwipeCounter((message?.swipe_id + 1), message?.swipes?.length);
     const swipeCounter = messageElement.find('.swipes-counter');
-    swipeCounter.text(swipeCounterText).attr('aria-label', t`Swipe ${currentSwipe} of ${totalSwipes}`).prop('hidden', false);
-    syncMessageAccessibility(swipeCounter.closest('.mes'), message, mesId);
+    swipeCounter.text(swipeCounterText).prop('hidden', false);
 }
 
 /**
@@ -10160,10 +10079,8 @@ export function updateViewMessageIds(startIndex = null) {
     const minId = startIndex ?? getFirstDisplayedMessageId();
 
     chatElement.find('.mes').each(function (index, element) {
-        const messageId = minId + index;
-        $(element).attr('mesid', messageId);
-        $(element).find('.mesIDDisplay').text(`#${messageId}`);
-        syncMessageAccessibility(element, chat[messageId], messageId);
+        $(element).attr('mesid', minId + index);
+        $(element).find('.mesIDDisplay').text(`#${minId + index}`);
     });
 
     chatElement.find('.mes').removeClass('last_mes');
@@ -11689,75 +11606,6 @@ export async function newAssistantChat({ temporary = false } = {}) {
     sendSystemMessage(system_message_types.ASSISTANT_NOTE);
 }
 
-function getNavbarDrawerToggleElement(drawerToggle) {
-    const toggleElement = $(drawerToggle).get(0);
-    if (!(toggleElement instanceof HTMLElement)) {
-        throw new Error('Navbar drawer accessibility requires a drawer toggle element');
-    }
-    return toggleElement;
-}
-
-function getNavbarDrawerContent(drawerToggle) {
-    const toggleElement = getNavbarDrawerToggleElement(drawerToggle);
-    const drawerElement = toggleElement.closest('.drawer');
-    if (!(drawerElement instanceof HTMLElement)) {
-        throw new Error('Navbar drawer accessibility requires a .drawer ancestor');
-    }
-
-    const content = drawerElement.querySelector(':scope > .drawer-content');
-    if (!(content instanceof HTMLElement)) {
-        throw new Error('Navbar drawer accessibility requires a direct .drawer-content child');
-    }
-
-    if (!content.id) {
-        throw new Error('Navbar drawer accessibility requires drawer content to have an id');
-    }
-
-    return content;
-}
-
-function getNavbarDrawerControl(drawerToggle) {
-    const toggleElement = getNavbarDrawerToggleElement(drawerToggle);
-    const control = toggleElement.querySelector('.drawer-icon') ?? toggleElement;
-    if (!(control instanceof HTMLElement)) {
-        throw new Error('Navbar drawer accessibility requires a drawer control element');
-    }
-    return control;
-}
-
-function isNavbarDrawerOpen(drawerToggle) {
-    return getNavbarDrawerContent(drawerToggle).classList.contains('openDrawer');
-}
-
-function syncNavbarDrawerAccessibility(drawerToggle) {
-    const content = getNavbarDrawerContent(drawerToggle);
-    const control = getNavbarDrawerControl(drawerToggle);
-
-    control.setAttribute('aria-controls', content.id);
-    control.setAttribute('aria-expanded', String(isNavbarDrawerOpen(drawerToggle)));
-
-    if (!control.hasAttribute('aria-label') && !control.hasAttribute('aria-labelledby')) {
-        const accessibleName = control.getAttribute('title')?.trim() || getNavbarDrawerToggleElement(drawerToggle).getAttribute('title')?.trim();
-        if (accessibleName) {
-            control.setAttribute('aria-label', accessibleName);
-        }
-    }
-}
-
-function syncAllNavbarDrawerAccessibility() {
-    document.querySelectorAll('.drawer-toggle').forEach(syncNavbarDrawerAccessibility);
-}
-
-function initializeInlineDrawerAccessibility() {
-    document.querySelectorAll('.inline-drawer').forEach(drawer => {
-        const content = drawer.querySelector(':scope > .inline-drawer-content');
-        if (!(content instanceof HTMLElement)) {
-            throw new Error('inline drawer accessibility requires a direct .inline-drawer-content child');
-        }
-        syncInlineDrawerAccessibility(drawer, isInlineDrawerContentOpen(content));
-    });
-}
-
 /**
  * Event handler to open a navbar drawer when a drawer open button is clicked.
  * Handles click events on .drawer-opener elements.
@@ -11780,9 +11628,14 @@ function doDrawerOpenClick() {
  */
 export async function doNavbarIconClick() {
     const icon = $(this).find('.drawer-icon');
-    const drawer = $(this).parent().find('.drawer-content');
-    const drawerWasOpenAlready = $(this).parent().find('.drawer-content').hasClass('openDrawer');
-    const targetDrawerID = $(this).parent().find('.drawer-content').attr('id');
+    const drawerContainer = $(this).parent();
+    const drawer = drawerContainer.find('.drawer-content');
+    const drawerWasOpenAlready = drawerContainer.find('.drawer-content').hasClass('openDrawer');
+    const targetDrawerID = drawerContainer.find('.drawer-content').attr('id');
+    const drawerElement = document.getElementById(targetDrawerID);
+
+    // A11y: Handle ARIA states
+    handleDrawerFocus(drawerContainer, drawerElement, !drawerWasOpenAlready);
 
     if (!drawerWasOpenAlready) {
         const $openDrawers = $('.openDrawer:not(.pinnedOpen)');
@@ -11793,13 +11646,11 @@ export async function doNavbarIconClick() {
         for (const el of $openDrawers) {
             $(el).toggleClass('closedDrawer openDrawer');
         }
-        syncAllNavbarDrawerAccessibility();
         if ($openDrawers.length && animation_duration) {
             await delay(animation_duration);
         }
         icon.toggleClass('openIcon closedIcon');
         drawer.toggleClass('openDrawer closedDrawer');
-        syncAllNavbarDrawerAccessibility();
 
         if (targetDrawerID === 'right-nav-panel') {
             favsToHotswap();
@@ -11816,7 +11667,6 @@ export async function doNavbarIconClick() {
     } else if (drawerWasOpenAlready) {
         icon.toggleClass('closedIcon openIcon');
         drawer.toggleClass('closedDrawer openDrawer');
-        syncAllNavbarDrawerAccessibility();
     }
 }
 
@@ -13008,8 +12858,6 @@ jQuery(async function () {
     $(document).on('click', '.drawer-opener', doDrawerOpenClick);
 
     $('.drawer-toggle').on('click', doNavbarIconClick);
-    syncAllNavbarDrawerAccessibility();
-    initializeInlineDrawerAccessibility();
 
     $('html').on('touchstart mousedown', async function (e) {
         const clickTarget = $(e.target);
@@ -13048,7 +12896,6 @@ jQuery(async function () {
                 // Toggle icon and drawer classes
                 $('.openIcon').not('.drawerPinnedOpen').toggleClass('closedIcon openIcon');
                 $openDrawers.toggleClass('closedDrawer openDrawer');
-                syncAllNavbarDrawerAccessibility();
             }
         }
     });
@@ -13060,13 +12907,15 @@ jQuery(async function () {
         const drawer = $(this).closest('.inline-drawer');
         const drawerEl = drawer.get(0);
         if (!drawerEl || drawerEl.nodeType !== 1) {
-            throw new Error('inline-drawer-toggle requires a .inline-drawer ancestor');
+            console.debug('inline-drawer-toggle: .inline-drawer ancestor not found', this);
+            return;
         }
         const icon = drawer.find('>.inline-drawer-header .inline-drawer-icon');
         const drawerContent = drawer.find('>.inline-drawer-content');
         const drawerContentEl = drawerContent.get(0);
         if (!drawerContentEl || drawerContentEl.nodeType !== 1) {
-            throw new Error('inline-drawer-toggle requires a direct .inline-drawer-content child');
+            console.debug('inline-drawer-toggle: .inline-drawer-content not found', drawerEl);
+            return;
         }
 
         const open = !isInlineDrawerContentOpen(drawerContentEl);
@@ -13074,7 +12923,6 @@ jQuery(async function () {
         icon.toggleClass('up', open);
         icon.toggleClass('fa-circle-chevron-down', !open);
         icon.toggleClass('fa-circle-chevron-up', open);
-        syncInlineDrawerAccessibility(drawerEl, open);
         drawerEl.dispatchEvent(new CustomEvent('inline-drawer-toggle', { bubbles: true, detail: { open } }));
         const motion = setInlineDrawerContentOpen(drawerContentEl, open, { durationMs: animation_duration });
         void motion.then(() => {

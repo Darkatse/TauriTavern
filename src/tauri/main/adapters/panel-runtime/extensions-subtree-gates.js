@@ -53,8 +53,8 @@ function restoreChildren(host, frag) {
 }
 
 /**
- * Parks extension settings DOM under `#rm_extensions_block` while the drawer is
- * closed, keeping the mount containers connected for compatibility.
+ * Phase 1: Park extension settings DOM under `#rm_extensions_block` while the
+ * drawer is closed, keeping the mount containers connected for compatibility.
  *
  * @param {{ manager: EmbeddedRuntimeManager }} options
  */

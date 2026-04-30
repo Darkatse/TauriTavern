@@ -31,7 +31,6 @@ import {
     settingsReady,
 } from '../script.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
-import { setScreenReaderAssistanceEnabled } from './a11y/screen-reader.js';
 import { isMobile, initMovingUI, favsToHotswap } from './RossAscends-mods.js';
 import {
     groups,
@@ -350,7 +349,7 @@ export const power_user = {
     click_to_edit: false,
     media_display: MEDIA_DISPLAY.LIST,
     image_overswipe: IMAGE_OVERSWIPE.GENERATE,
-    screen_reader_assistance: false,
+    accessibility_mode: true,
 };
 
 let themes = [];
@@ -525,11 +524,6 @@ function switchReducedMotion() {
     setAnimationDuration(overrideDuration);
     $('#reduced_motion').prop('checked', power_user.reduced_motion);
     $('body').toggleClass('reduced-motion', power_user.reduced_motion);
-}
-
-function switchScreenReaderAssistance() {
-    $('#screen_reader_assistance').prop('checked', power_user.screen_reader_assistance);
-    setScreenReaderAssistanceEnabled(power_user.screen_reader_assistance);
 }
 
 function switchCompactInputArea() {
@@ -1550,7 +1544,6 @@ export function applyPowerUserSettings() {
     switchHideChatAvatars();
     switchTokenCount();
     switchMessageActions();
-    switchScreenReaderAssistance();
     switchSwipeNumAllMessages();
 }
 
@@ -1624,7 +1617,6 @@ export async function loadPowerUserSettings(settings, data) {
             delete settings.power_user.auto_sort_tags;
         }
         Object.assign(power_user, settings.power_user);
-        delete power_user.accessibility_mode;
     }
 
     if (power_user.stscript === undefined) {
@@ -1685,12 +1677,6 @@ export async function loadPowerUserSettings(settings, data) {
 
     if (typeof power_user.mobile_immersive_fullscreen !== 'boolean') {
         power_user.mobile_immersive_fullscreen = true;
-    }
-
-    if (power_user.screen_reader_assistance === undefined) {
-        power_user.screen_reader_assistance = false;
-    } else if (typeof power_user.screen_reader_assistance !== 'boolean') {
-        throw new Error('Invalid power_user.screen_reader_assistance setting: expected boolean');
     }
 
     if (typeof power_user.chat_width !== 'number') {
@@ -1846,7 +1832,6 @@ export async function loadPowerUserSettings(settings, data) {
     $('#bot-mes-blur-tint-color-picker').attr('color', power_user.bot_mes_blur_tint_color);
     $('#shadow-color-picker').attr('color', power_user.shadow_color);
     $('#border-color-picker').attr('color', power_user.border_color);
-    $('#screen_reader_assistance').prop('checked', power_user.screen_reader_assistance);
     $('#reduced_motion').prop('checked', power_user.reduced_motion);
     $('#auto-connect-checkbox').prop('checked', power_user.auto_connect);
     $('#auto-load-chat-checkbox').prop('checked', power_user.auto_load_chat);
@@ -4329,12 +4314,6 @@ jQuery(() => {
 
     $('#restore_user_input').on('input', function () {
         power_user.restore_user_input = !!$(this).prop('checked');
-        saveSettingsDebounced();
-    });
-
-    $('#screen_reader_assistance').on('input', function () {
-        power_user.screen_reader_assistance = !!$(this).prop('checked');
-        switchScreenReaderAssistance();
         saveSettingsDebounced();
     });
 

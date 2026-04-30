@@ -5,9 +5,9 @@ export {};
 /**
  * Host-known backend invoke command names.
  *
- * This list makes the invoke surface searchable and typo-resistant without
- * forcing a TS build. Keep it scoped to commands referenced by the host kernel
- * (`src/tauri/main/**`).
+ * Phase 3 goal: make the invoke surface searchable and typo-resistant without
+ * forcing a TS build. Keep this list scoped to commands referenced by the host
+ * kernel (`src/tauri/main/**`).
  *
  * @typedef {(
  *   | 'build_openai_logit_bias'

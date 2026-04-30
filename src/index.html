@@ -64,13 +64,13 @@
     <!-- top bar central settings buttons -->
     <div id="top-bar">
     </div>
-    <div id="top-settings-holder" role="banner" aria-label="Application navigation" data-i18n="[aria-label]Application navigation">
+    <div id="top-settings-holder">
         <!-- background selection menu -->
         <div id="ai-config-button" class="drawer">
             <div class="drawer-toggle drawer-header">
                 <div id="leftNavDrawerIcon" class="drawer-icon fa-solid fa-sliders fa-fw closedIcon" title="AI Response Configuration" data-i18n="[title]AI Response Configuration"></div>
             </div>
-            <div id="left-nav-panel" class="drawer-content fillLeft closedDrawer" role="region" aria-label="AI response configuration" data-i18n="[aria-label]AI response configuration">
+            <div id="left-nav-panel" class="drawer-content fillLeft closedDrawer">
                 <div id="left-nav-panelheader" class="fa-solid fa-grip drag-grabber"></div>
                 <div id="lm_button_panel_pin_div" title="Locked = AI Configuration panel will stay open" data-i18n="[title]AI Configuration panel will stay open">
                     <input type="checkbox" id="lm_button_panel_pin">
@@ -2237,7 +2237,7 @@
                 <h3 class="margin0" id="title_api">API</h3>
                 <div class="flex-container flexFlowColumn">
                     <div id="main-API-selector-block">
-                        <select id="main_api" aria-label="Main API" data-i18n="[aria-label]Main API">
+                        <select id="main_api">
                             <option value="textgenerationwebui" data-i18n="Text Completion">Text Completion</option>
                             <option value="openai" data-i18n="Chat Completion">Chat Completion</option>
                             <option value="novel" data-i18n="NovelAI">NovelAI</option>
@@ -4824,8 +4824,7 @@
                                 </div>
                             </div>
                         </div>
-                        <textarea id="settingsSearch" class="textarea_compact flex1" rows="1" placeholder="Search Settings" aria-label="Search settings" aria-controls="user-settings-block-content" aria-describedby="settingsSearchStatus" data-i18n="[placeholder]Search Settings;[aria-label]Search settings"></textarea>
-                        <div id="settingsSearchStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+                        <textarea id="settingsSearch" class="textarea_compact flex1" rows="1" placeholder="Search Settings" data-i18n="[placeholder]Search Settings"></textarea>
                     </div>
                 </div>
                 <div id="user-settings-block-content" class="flex-container spaceEvenly">
@@ -4992,9 +4991,9 @@
                             <div name="themeToggles">
                                 <!-- <h4 data-i18n="Theme Toggles">Theme Toggles</h4> -->
 
-                                <label for="screen_reader_assistance" class="checkbox_label" title="Announces generation status and important chat updates for screen readers. May add a small performance cost." data-i18n="[title]Announces generation status and important chat updates for screen readers. May add a small performance cost.">
-                                    <input id="screen_reader_assistance" type="checkbox" />
-                                    <small data-i18n="Screen Reader Assistance">Screen Reader Assistance</small>
+                                <label for="accessibility_mode" class="checkbox_label" title="Enables screen reader optimizations, focus management, and ARIA labels." data-i18n="[title]Enables screen reader optimizations, focus management, and ARIA labels.">
+                                    <input id="accessibility_mode" type="checkbox" checked />
+                                    <small data-i18n="Accessibility Mode">Accessibility Mode</small>
                                     <i class="fa-solid fa-universal-access"></i>
                                 </label>
                                 <label for="reduced_motion" class="checkbox_label" title="Disable animations and transitions" data-i18n="[title]Disables animations and transitions">
@@ -5888,7 +5887,7 @@
                 <div id="rightNavDrawerIcon" class="drawer-icon fa-solid fa-address-card fa-fw closedIcon" title="Character Management" data-i18n="[title]Character Management">
                 </div>
             </div>
-            <nav id="right-nav-panel" class="drawer-content closedDrawer fillRight" aria-label="Character management" data-i18n="[aria-label]Character management">
+            <nav id="right-nav-panel" class="drawer-content closedDrawer fillRight">
                 <div id="right-nav-panelheader" class="fa-solid fa-grip drag-grabber">
                 </div>
                 <div id="CharListButtonAndHotSwaps" class="flex-container flexnowrap">
@@ -7275,7 +7274,7 @@
             </div>
         </div>
         <div id="message_template" class="template_element">
-            <div class="mes" mesid="" ch_name="" is_user="" is_system="" bookmark_link="" role="article">
+            <div class="mes" mesid="" ch_name="" is_user="" is_system="" bookmark_link="">
                 <div class="for_checkbox"></div><input type="checkbox" class="del_checkbox">
                 <div class="mesAvatarWrapper">
                     <div class="avatar">
@@ -7285,7 +7284,7 @@
                     <div class="mes_timer"></div>
                     <div class="tokenCounterDisplay"></div>
                 </div>
-                <div class="swipe_left fa-solid fa-chevron-left" title="Previous swipe" data-i18n="[title]Previous swipe"></div>
+                <div class="swipe_left fa-solid fa-chevron-left"></div>
                 <div class="mes_block">
                     <div class="ch_name flex-container justifySpaceBetween">
                         <div class="flex-container flex1 alignitemscenter">
@@ -7309,19 +7308,19 @@
                                 <div title="Embed file or image" class="mes_button mes_embed fa-solid fa-paperclip" data-i18n="[title]Embed file or image"></div>
                                 <div title="Create checkpoint" class="mes_button mes_create_bookmark fa-regular fa-solid fa-flag-checkered" data-i18n="[title]Create checkpoint"></div>
                                 <div title="Create branch" class="mes_button mes_create_branch fa-regular fa-code-branch" data-i18n="[title]Create Branch"></div>
-                                <div title="Copy message" class="mes_button mes_copy fa-solid fa-copy " data-i18n="[title]Copy message"></div>
+                                <div title="Copy" class="mes_button mes_copy fa-solid fa-copy " data-i18n="[title]Copy"></div>
                             </div>
-                            <div data-tooltip="Click to open checkpoint chat&#10;Shift+Click to replace the existing checkpoint with a new one" class="mes_button mes_bookmark fa-solid fa-flag" title="Open checkpoint chat" data-i18n="[title]Open checkpoint chat;[data-tooltip]Open checkpoint chat&#10;Shift+Click to replace the existing checkpoint with a new one"></div>
-                            <div title="Edit message" class="mes_button mes_edit fa-solid fa-pencil " data-i18n="[title]Edit message"></div>
+                            <div data-tooltip="Click to open checkpoint chat&#10;Shift+Click to replace the existing checkpoint with a new one" class="mes_button mes_bookmark fa-solid fa-flag" data-i18n="[data-tooltip]Open checkpoint chat&#10;Shift+Click to replace the existing checkpoint with a new one"></div>
+                            <div title="Edit" class="mes_button mes_edit fa-solid fa-pencil " data-i18n="[title]Edit"></div>
                         </div>
                         <div class="mes_edit_buttons">
-                            <div class="mes_edit_done menu_button  fa-solid fa-check" title="Save edit" data-i18n="[title]Save edit"></div>
-                            <div class="mes_edit_copy menu_button  fa-solid fa-copy" title="Copy edited message" data-i18n="[title]Copy edited message"></div>
+                            <div class="mes_edit_done menu_button  fa-solid fa-check" title="Confirm" data-i18n="[title]Confirm"></div>
+                            <div class="mes_edit_copy menu_button  fa-solid fa-copy" title="Copy this message" data-i18n="[title]Copy this message"></div>
                             <div class="mes_edit_add_reasoning menu_button fa-solid fa-lightbulb" title="Add a reasoning block" data-i18n="[title]Add a reasoning block"></div>
-                            <div class="mes_edit_delete menu_button  fa-solid fa-trash-can" title="Delete message" data-i18n="[title]Delete message"></div>
+                            <div class="mes_edit_delete menu_button  fa-solid fa-trash-can" title="Delete this message" data-i18n="[title]Delete this message"></div>
                             <div class="mes_edit_up menu_button  fa-solid fa-chevron-up " title="Move message up" data-i18n="[title]Move message up"></div>
                             <div class="mes_edit_down menu_button  fa-solid fa-chevron-down" title="Move message down" data-i18n="[title]Move message down"></div>
-                            <div class="mes_edit_cancel menu_button  fa-solid fa-xmark" title="Cancel edit" data-i18n="[title]Cancel edit"></div>
+                            <div class="mes_edit_cancel menu_button  fa-solid fa-xmark" title="Cancel" data-i18n="[title]Cancel"></div>
                         </div>
                     </div>
                     <details class="mes_reasoning_details">
@@ -7349,7 +7348,7 @@
                     <div class="mes_bias"></div>
                 </div>
                 <div class="flex-container swipeRightBlock flexFlowColumn flexNoGap">
-                    <div class="swipe_right fa-solid fa-chevron-right" title="Next swipe" data-i18n="[title]Next swipe"></div>
+                    <div class="swipe_right fa-solid fa-chevron-right"></div>
                     <div class="swipes-counter"></div>
                 </div>
             </div>
@@ -7962,16 +7961,16 @@
         </div>
 
     </div>
-    <div id="sheld" role="main" aria-label="Chat workspace" data-i18n="[aria-label]Chat workspace">
+    <div id="sheld">
         <div id="sheldheader" class="fa-solid fa-grip drag-grabber"></div>
-        <div id="chat" role="region" aria-label="Chat messages" data-i18n="[aria-label]Chat messages">
+        <div id="chat">
         </div>
         <div id="form_sheld">
             <div id="dialogue_del_mes">
                 <div id="dialogue_del_mes_ok" data-i18n="Delete" class="menu_button">Delete</div>
                 <div id="dialogue_del_mes_cancel" data-i18n="Cancel" class="menu_button">Cancel</div>
             </div>
-            <div id="send_form" class="no-connection" role="form" aria-label="Message composer" data-i18n="[aria-label]Message composer">
+            <div id="send_form" class="no-connection">
                 <form id="file_form" class="wide100p displayNone">
                     <div class="file_attached">
                         <input id="file_form_input" type="file" multiple hidden>
@@ -7986,7 +7985,7 @@
                 </form>
                 <div id="nonQRFormItems">
                     <div id="leftSendForm" class="alignContentCenter">
-                        <div id="options_button" class="fa-solid fa-bars interactable" title="Open message options" data-i18n="[title]Open message options"></div>
+                        <div id="options_button" class="fa-solid fa-bars interactable"></div>
                     </div>
                     <textarea id="send_textarea" name="text" class="mdHotkeys" data-i18n="[no_connection_text]Not connected to API!;[connected_text]Type a message, or /? for help" placeholder="Not connected to API!" no_connection_text="Not connected to API!" connected_text="Type a message, or /? for help" autocomplete="off"></textarea>
                     <div id="rightSendForm" class="alignContentCenter">
@@ -7999,7 +7998,7 @@
                         <div id="stscript_stop" title="Abort script execution" class="stscript_btn stscript_stop" data-i18n="[title]Abort script execution">
                             <i class="fa-solid fa-stop"></i>
                         </div>
-                        <div id="mes_stop" class="mes_stop interactable" title="Abort request" data-i18n="[title]Abort request">
+                        <div id="mes_stop" title="Abort request" class="mes_stop" data-i18n="[title]Abort request">
                             <i class="fa-solid fa-circle-stop"></i>
                         </div>
                         <div id="mes_impersonate" class="fa-solid fa-user-secret interactable displayNone" title="Ask AI to write your message for you" data-i18n="[title]Ask AI to write your message for you" tabindex="0"></div>

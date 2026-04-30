@@ -5,15 +5,7 @@ import { executeSlashCommandsOnChatInput, executeSlashCommandsWithOptions } from
 import { SlashCommandScope } from '../../../slash-commands/SlashCommandScope.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { debounceAsync, warn } from '../index.js';
-import { isScreenReaderAssistanceEnabled } from '../../../a11y/screen-reader.js';
-import { t } from '../../../i18n.js';
 import { QuickReply } from './QuickReply.js';
-
-function getSortDirectionOffset(direction) {
-    if (direction === 'up') return -1;
-    if (direction === 'down') return 1;
-    throw new Error(`Unsupported quick reply sort direction: ${direction}`);
-}
 
 export class QuickReplySet {
     /**@type {QuickReplySet[]}*/ static list = [];
@@ -49,7 +41,6 @@ export class QuickReplySet {
     /**@type {function}*/ save;
     /**@type {HTMLElement}*/ dom;
     /**@type {HTMLElement}*/ settingsDom;
-    /**@type {HTMLElement}*/ settingsSortStatus;
 
     constructor() {
         this.save = debounceAsync(()=>this.performSave(), 200);
@@ -118,91 +109,7 @@ export class QuickReplySet {
      * @param {number} idx
      */
     renderSettingsItem(qr, idx) {
-        this.settingsDom.append(qr.renderSettings(idx, this.qrList.length, isScreenReaderAssistanceEnabled()));
-    }
-
-    unrenderSettings() {
-        this.settingsDom?.remove();
-        this.settingsDom = null;
-        this.settingsSortStatus?.remove();
-        this.settingsSortStatus = null;
-        this.qrList.forEach(qr => qr.unrenderSettings());
-    }
-
-    rerenderSettings() {
-        if (!this.settingsDom) return;
-
-        this.settingsDom.innerHTML = '';
-        this.qrList.forEach(qr => qr.unrenderSettings());
-        if (!isScreenReaderAssistanceEnabled()) {
-            this.settingsSortStatus?.remove();
-            this.settingsSortStatus = null;
-        }
-        this.qrList.forEach((qr, idx) => this.renderSettingsItem(qr, idx));
-    }
-
-    moveQuickReply(id, direction) {
-        const numericId = Number(id);
-        const index = this.qrList.findIndex(qr=>qr.id === numericId);
-        if (index === -1) {
-            throw new Error(`Quick Reply not found: ${id}`);
-        }
-
-        const targetIndex = index + getSortDirectionOffset(direction);
-        if (targetIndex < 0 || targetIndex >= this.qrList.length) {
-            return { id: numericId, position: index + 1, total: this.qrList.length, moved: false };
-        }
-
-        this.qrList.splice(targetIndex, 0, this.qrList.splice(index, 1)[0]);
-        this.save();
-        this.rerender();
-        this.rerenderSettings();
-        return { id: numericId, position: targetIndex + 1, total: this.qrList.length, moved: true };
-    }
-
-    moveQuickReplyFromUi(id, direction) {
-        const result = this.moveQuickReply(id, direction);
-        this.announceSortPosition(result.position, result.total);
-        this.focusQuickReplySortControl(result.id, direction);
-        return result;
-    }
-
-    announceSortPosition(position, total) {
-        const status = this.ensureSortStatus();
-        status.textContent = t`Moved to position ${position} of ${total}.`;
-    }
-
-    ensureSortStatus() {
-        if (!this.settingsDom) {
-            throw new Error('Quick Reply sort status requires rendered settings.');
-        }
-
-        if (!this.settingsSortStatus?.isConnected) {
-            this.settingsSortStatus = document.createElement('div');
-            this.settingsSortStatus.classList.add('qr--sortStatus', 'sr-only');
-            this.settingsSortStatus.setAttribute('role', 'status');
-            this.settingsSortStatus.setAttribute('aria-live', 'polite');
-            this.settingsSortStatus.setAttribute('aria-atomic', 'true');
-            this.settingsDom.insertAdjacentElement('afterend', this.settingsSortStatus);
-        }
-
-        return this.settingsSortStatus;
-    }
-
-    focusQuickReplySortControl(id, direction) {
-        const quickReply = this.qrList.find(qr => qr.id === Number(id));
-        if (!quickReply?.settingsDom) {
-            throw new Error(`Quick Reply focus target not found: ${id}`);
-        }
-
-        const selector = direction === 'up' ? '.qr--moveUp' : '.qr--moveDown';
-        let control = quickReply.settingsDom.querySelector(`${selector}:not(.disabled)`);
-        control ??= quickReply.settingsDom.querySelector('.qr--moveUp:not(.disabled), .qr--moveDown:not(.disabled)');
-        if (!(control instanceof HTMLElement)) {
-            throw new Error(`Quick Reply sort control not found: ${id}`);
-        }
-
-        control.focus();
+        this.settingsDom.append(qr.renderSettings(idx));
     }
 
     /**
@@ -354,7 +261,6 @@ export class QuickReplySet {
         qr.onExecute = (_, options)=>this.executeWithOptions(qr, options);
         qr.onDelete = ()=>this.removeQuickReply(qr);
         qr.onUpdate = ()=>this.save();
-        qr.onMove = direction=>this.moveQuickReplyFromUi(qr.id, direction);
         qr.onInsertBefore = (qrJson)=>{
             this.addQuickReplyFromText(qrJson);
             const newQr = this.qrList.pop();

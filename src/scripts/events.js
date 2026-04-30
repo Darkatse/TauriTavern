@@ -23,8 +23,6 @@ export const event_types = {
     GENERATION_STARTED: 'generation_started',
     GENERATION_STOPPED: 'generation_stopped',
     GENERATION_ENDED: 'generation_ended',
-    GENERATION_FAILED: 'generation_failed',
-    SCREEN_READER_ASSISTANCE_CHANGED: 'screen_reader_assistance_changed',
     SD_PROMPT_PROCESSING: 'sd_prompt_processing',
     EXTENSIONS_FIRST_LOAD: 'extensions_first_load',
     EXTENSION_SETTINGS_LOADED: 'extension_settings_loaded',

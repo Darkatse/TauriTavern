@@ -24,10 +24,6 @@
     width: 100%
 }
 
-#completion_prompt_manager #completion_prompt_manager_list.completion_prompt_manager_sort_assist li {
-    grid-template-columns: 4fr 120px 45px;
-}
-
 #completion_prompt_manager #completion_prompt_manager_list .completion_prompt_manager_prompt .completion_prompt_manager_prompt_name .fa-solid {
     color: var(--white50a);
 }
@@ -66,10 +62,6 @@
     border: 1px solid var(--SmartThemeBorderColor);
     --completion-prompt-manager-handle-column: 0px;
     grid-template-columns: var(--completion-prompt-manager-handle-column) 4fr 80px 45px;
-}
-
-#completion_prompt_manager #completion_prompt_manager_list.completion_prompt_manager_sort_assist li.completion_prompt_manager_prompt {
-    grid-template-columns: var(--completion-prompt-manager-handle-column) 4fr 120px 45px;
 }
 
 #completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt .prompt_manager_prompt_controls {

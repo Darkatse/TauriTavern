@@ -185,11 +185,6 @@ const init = async () => {
     buttons.show();
     settings.onSave = ()=>buttons.refresh();
 
-    eventSource.on(event_types.SCREEN_READER_ASSISTANCE_CHANGED, () => {
-        QuickReplySet.list.forEach(qrs => qrs.unrenderSettings());
-        manager.rerender();
-    });
-
     globalThis.executeQuickReplyByName = async(name, args = {}, options = {}) => {
         let qr = [
             ...settings.config.setList,
