@@ -467,8 +467,8 @@ let isAiGenerating = false;
  * @param {boolean} force - 如果为 true，使用 assertive 模式打断当前语音，否则用 polite 模式
  */
 export function announceA11y(text, force = false) {
-  if (!text) return;
-  console.log(`%c[A11y] ${text}`, 'color: #4caf50');
+  if (!isA11yEnabled || !text) return;
+  logDebug('announceA11y', text, { force });
   let announcer = document.getElementById('a11y-announcer');
 
   // 动态创建一个不可见的 DOM 节点用于播报
@@ -508,11 +508,18 @@ export function announceA11y(text, force = false) {
  * 抽屉式折叠面板的焦点处理逻辑
  */
 export function handleDrawerFocus(triggerButton, drawerElement, isOpening) {
-  if (!isA11yEnabled) return;
-  if (isOpening) {
-    triggerButton.attr('aria-expanded', 'true');
-  } else {
-    triggerButton.attr('aria-expanded', 'false');
+  if (!isA11yEnabled || !triggerButton || !drawerElement) return;
+
+  let drawerId = $(drawerElement).attr('id');
+  if (!drawerId) {
+    drawerId = `a11y-drawer-${Date.now()}`;
+    $(drawerElement).attr('id', drawerId);
+  }
+
+  triggerButton.attr('aria-controls', drawerId);
+  triggerButton.attr('aria-expanded', isOpening ? 'true' : 'false');
+
+  if (!isOpening) {
     triggerButton.trigger('focus');
   }
 }
@@ -1523,17 +1530,23 @@ function cleanupA11y() {
     mainObserver.disconnect();
     mainObserver = null;
   }
-  $(`[${GENERIC_ATTR}]`).removeAttr(GENERIC_ATTR);
-  $(
-    '[role="button"], [role="list"], [role="listitem"], [role="toolbar"], [role="tablist"], [role="tab"], [role="status"]',
-  ).removeAttr(
+
+  // 仅清理被脚本接管过的元素，防止破坏原生 DOM
+  const managedElements = $(`[${GENERIC_ATTR}], .a11y-refactored, [data-a11y-processed-ext]`);
+  managedElements.removeAttr(
     'role tabindex aria-label aria-hidden aria-expanded aria-controls aria-pressed aria-valuemin aria-valuemax aria-describedby aria-labelledby aria-haspopup aria-checked aria-level',
   );
+  managedElements.filter(`[${GENERIC_ATTR}]`).removeAttr(GENERIC_ATTR);
+  managedElements.filter('.a11y-refactored').removeClass('a11y-refactored');
+  managedElements.filter('[data-a11y-processed-ext]').removeAttr('data-a11y-processed-ext');
+
   $('.a11y-sort-button').remove();
-  $('.a11y-refactored').removeClass('a11y-refactored');
   $('[id^="st-a11y-"]').removeAttr('id');
   $('[id^="drawer-"]').removeAttr('id');
   $('[id^="label-st-a11y-"]').removeAttr('id');
+
+  // 恢复原本被隐藏的发送按钮
+  $('#send_but').removeAttr('tabindex aria-hidden');
 }
 
 /**
@@ -1581,9 +1594,7 @@ export function setAccessibilityEnabled(enabled) {
 
   mainObserver.observe(document.body, {
     childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['style', 'class', 'hidden', 'open', 'aria-hidden'],
+    subtree: true
   });
 }
 
@@ -1893,15 +1904,15 @@ export function initAccessibility() {
     }
   });
 
-  // 设置页面级的 ARIA Landmark (界标)，方便屏幕阅读器按区域（如 Banner、Region、Main）快速跳转
+  // 设置 ARIA Landmark，方便屏幕阅读器按区域快速跳转
   const setupLandmarks = () => {
+    if (!isA11yEnabled) return;
     $('#top-settings-holder').attr({ role: 'banner', 'aria-label': 'Main Navigation' });
     $('#left-nav-panel').attr({ role: 'region', 'aria-label': 'AI Configuration' });
     $('#right-nav-panel').attr({ role: 'region', 'aria-label': 'Character Management' });
     $('#sheld').attr({ role: 'main', 'aria-label': 'Chat Log' });
     $('#send_form').attr({ role: 'form', 'aria-label': 'Message Input' });
   };
-  setupLandmarks();
 
   // 全局焦点重置规则：从侧边栏等抽屉面板按 Esc 也能快速回到主聊天框
   $(document).on('keydown', function (e) {
@@ -1914,7 +1925,10 @@ export function initAccessibility() {
     }
   });
 
-  // 初始化时全量刷一遍无障碍规则
-  applyGenericA11yRules(document.body);
-  enhanceSpecificA11y();
+  // 如果状态是开启的，才初始化地标和刷一遍规则
+  if (isA11yEnabled) {
+    setupLandmarks();
+    applyGenericA11yRules(document.body);
+    enhanceSpecificA11y();
+  }
 }

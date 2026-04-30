@@ -30,6 +30,7 @@ import {
     deleteMessage,
     settingsReady,
 } from '../script.js';
+import { setAccessibilityEnabled } from './a11y.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { isMobile, initMovingUI, favsToHotswap } from './RossAscends-mods.js';
 import {
@@ -1840,6 +1841,8 @@ export async function loadPowerUserSettings(settings, data) {
     $('#click_to_edit').prop('checked', power_user.click_to_edit);
     $('#media_display').val(power_user.media_display);
     $('#image_overswipe').val(power_user.image_overswipe);
+    $('#accessibility_mode').prop('checked', power_user.accessibility_mode);
+    $('#onboarding_a11y').prop('checked', power_user.accessibility_mode);
 
     for (const theme of themes) {
         const option = document.createElement('option');
@@ -4396,6 +4399,20 @@ jQuery(() => {
 
     $('#image_overswipe').on('input', function () {
         power_user.image_overswipe = $(this).val().toString();
+        saveSettingsDebounced();
+    });
+
+    // 绑定所有的无障碍设置开关
+    $('#accessibility_mode, #onboarding_a11y').on('change', function () {
+        const isEnabled = !!$(this).prop('checked');
+        power_user.accessibility_mode = isEnabled;
+
+        // 保持设置页和Onboarding界面的复选框状态同步
+        $('#accessibility_mode').prop('checked', isEnabled);
+        $('#onboarding_a11y').prop('checked', isEnabled);
+
+        // 动态执行无障碍控制
+        setAccessibilityEnabled(isEnabled);
         saveSettingsDebounced();
     });
 

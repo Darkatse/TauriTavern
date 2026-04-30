@@ -4129,9 +4129,6 @@ class StreamingProcessor {
         const messageElement = chatElement.find(`.mes[mesid="${messageId}"]`);
         const message = chat[messageId];
 
-        // A11y: Announce full response with character name
-        announceA11y(t`${message.name} replied: ${text}`);
-
         addCopyToCodeBlocks(messageElement);
 
         await this.reasoningHandler.finish(messageId);
@@ -4812,16 +4809,6 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 
     if (!dryRun) {
         deactivateSendButtons();
-
-        // A11y: Announce generation start and focus stop button
-        announceA11y(t`AI is generating...`);
-        // Focus stop button so it can be easily activated with Enter/Space/Escape
-        setTimeout(() => {
-            const stopBtn = document.getElementById('mes_stop');
-            if (stopBtn && stopBtn.offsetParent !== null) {
-                stopBtn.focus();
-            }
-        }, 100);
     }
 
     let { messageBias, promptBias, isUserPromptBias } = getBiasStrings(textareaText, type);
