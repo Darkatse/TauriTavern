@@ -13,7 +13,6 @@ import { Popup } from './popup.js';
 import { t, translate } from './i18n.js';
 import { isMobile } from './RossAscends-mods.js';
 import { INJECTION_POSITION, getPromptInjectionPosition } from './prompt-injections.js';
-import { isScreenReaderAssistanceEnabled } from './a11y/screen-reader.js';
 
 function debouncePromise(func, delay) {
     let timeoutId;
@@ -32,50 +31,6 @@ function debouncePromise(func, delay) {
 
 const DEFAULT_DEPTH = 4;
 const DEFAULT_ORDER = 100;
-
-function getSortDirectionOffset(direction) {
-    if (direction === 'up') return -1;
-    if (direction === 'down') return 1;
-    throw new Error(`Unsupported sort direction: ${direction}`);
-}
-
-function ensurePromptSortStatus(promptManager) {
-    const statusId = `${promptManager.configuration.prefix}prompt_manager_sort_status`;
-    let status = document.getElementById(statusId);
-
-    if (!status) {
-        status = document.createElement('div');
-        status.id = statusId;
-        status.classList.add('sr-only');
-        status.setAttribute('role', 'status');
-        status.setAttribute('aria-live', 'polite');
-        status.setAttribute('aria-atomic', 'true');
-        promptManager.listElement.insertAdjacentElement('afterend', status);
-    }
-
-    return status;
-}
-
-function removePromptSortStatus(promptManager) {
-    document.getElementById(`${promptManager.configuration.prefix}prompt_manager_sort_status`)?.remove();
-}
-
-function focusPromptSortControl(promptManager, identifier, direction) {
-    const promptElement = Array.from(promptManager.listElement.querySelectorAll(`.${promptManager.configuration.prefix}prompt_manager_prompt`))
-        .find(element => element.dataset.pmIdentifier === identifier);
-
-    if (!(promptElement instanceof HTMLElement)) {
-        throw new Error(`Prompt sort focus target not found for ${identifier}`);
-    }
-
-    let control = promptElement.querySelector(`[data-pm-direction="${direction}"]:not(.disabled)`);
-    control ??= promptElement.querySelector('.prompt-manager-move-up-action:not(.disabled), .prompt-manager-move-down-action:not(.disabled)');
-    if (!(control instanceof HTMLElement)) {
-        throw new Error(`Prompt sort control not found for ${identifier}`);
-    }
-
-    control.focus();
-}
 
 /**
  * Register migrations for the prompt manager when settings are loaded or an Open AI preset is loaded.
@@ -886,7 +841,6 @@ class PromptManager {
 
         // Re-render prompt manager on world settings update
         eventSource.on(event_types.WORLDINFO_SETTINGS_UPDATED, () => this.renderDebounced());
-        eventSource.on(event_types.SCREEN_READER_ASSISTANCE_CHANGED, () => this.renderDebounced(false));
 
         this.log('Initialized');
     }
@@ -1267,43 +1221,6 @@ class PromptManager {
      */
     getPromptOrderForCharacter(character) {
         return !character ? [] : (this.serviceSettings.prompt_order.find(list => String(list.character_id) === String(character.id))?.order ?? []);
-    }
-
-    /**
-     * Moves a prompt in the active prompt order and persists the updated order.
-     * @param {string} identifier Prompt identifier
-     * @param {'up'|'down'} direction Move direction
-     * @returns {Promise<{identifier: string, position: number, total: number, moved: boolean}>}
-     */
-    async movePromptInActiveOrder(identifier, direction) {
-        if (!this.activeCharacter) {
-            throw new Error('Cannot move prompt without an active character order.');
-        }
-
-        const promptOrder = this.getPromptOrderForCharacter(this.activeCharacter);
-        const index = promptOrder.findIndex(entry => entry?.identifier === identifier);
-        if (index === -1) {
-            throw new Error(`Prompt order entry not found: ${identifier}`);
-        }
-
-        const targetIndex = index + getSortDirectionOffset(direction);
-        if (targetIndex < 0 || targetIndex >= promptOrder.length) {
-            return { identifier, position: index + 1, total: promptOrder.length, moved: false };
-        }
-
-        const updatedPromptOrder = promptOrder.slice();
-        updatedPromptOrder.splice(targetIndex, 0, updatedPromptOrder.splice(index, 1)[0]);
-
-        this.removePromptOrderForCharacter(this.activeCharacter);
-        this.addPromptOrderForCharacter(this.activeCharacter, updatedPromptOrder);
-        await this.saveServiceSettings();
-
-        if (this.listElement) {
-            await this.renderPromptManagerListItems();
-            this.makeDraggable();
-        }
-
-        return { identifier, position: targetIndex + 1, total: updatedPromptOrder.length, moved: true };
     }
 
     /**
@@ -1781,15 +1698,10 @@ class PromptManager {
         promptManagerList.innerHTML = '';
 
         const { prefix } = this.configuration;
-        const showScreenReaderSortUi = isScreenReaderAssistanceEnabled();
-        promptManagerList.classList.toggle(`${prefix}prompt_manager_sort_assist`, showScreenReaderSortUi);
-        if (!showScreenReaderSortUi) {
-            removePromptSortStatus(this);
-        }
 
         let listItemHtml = await renderTemplateAsync('promptManagerListHeader', { prefix });
 
-        this.getPromptsForCharacter(this.activeCharacter).forEach((prompt, promptIndex, prompts) => {
+        this.getPromptsForCharacter(this.activeCharacter).forEach(prompt => {
             if (!prompt) return;
 
             const listEntry = this.getPromptOrderEntry(this.activeCharacter, prompt.identifier);
@@ -1846,17 +1758,6 @@ class PromptManager {
                 toggleSpanHtml = '<span class="fa-solid"></span>';
             }
 
-            const moveUpTitle = escapeHtml(t`Move prompt up`);
-            const moveDownTitle = escapeHtml(t`Move prompt down`);
-            const moveUpDisabledClass = promptIndex === 0 ? ' disabled' : '';
-            const moveDownDisabledClass = promptIndex === prompts.length - 1 ? ' disabled' : '';
-            const moveUpSpanHtml = showScreenReaderSortUi ? `
-                <span title="${moveUpTitle}" aria-label="${moveUpTitle}" aria-disabled="${promptIndex === 0}" data-pm-direction="up" class="prompt-manager-move-up-action menu_button menu_button_icon fa-solid fa-chevron-up fa-xs${moveUpDisabledClass}"></span>
-            ` : '';
-            const moveDownSpanHtml = showScreenReaderSortUi ? `
-                <span title="${moveDownTitle}" aria-label="${moveDownTitle}" aria-disabled="${promptIndex === prompts.length - 1}" data-pm-direction="down" class="prompt-manager-move-down-action menu_button menu_button_icon fa-solid fa-chevron-down fa-xs${moveDownDisabledClass}"></span>
-            ` : '';
-
             const encodedName = escapeHtml(prompt.name);
             const attachSideText = prompt.attach_side === 'start'
                 ? translate('Prepend')
@@ -1900,8 +1801,6 @@ class PromptManager {
                     </span>
                     <span>
                             <span class="prompt_manager_prompt_controls">
-                                ${moveUpSpanHtml}
-                                ${moveDownSpanHtml}
                                 ${detachSpanHtml}
                                 ${editSpanHtml}
                                 ${toggleSpanHtml}
@@ -1931,30 +1830,6 @@ class PromptManager {
         Array.from(promptManagerList.querySelectorAll('.prompt-manager-toggle-action')).forEach(el => {
             el.addEventListener('click', this.handleToggle);
         });
-
-        if (showScreenReaderSortUi) {
-            Array.from(promptManagerList.querySelectorAll('.prompt-manager-move-up-action, .prompt-manager-move-down-action')).forEach(el => {
-                el.addEventListener('click', async (event) => {
-                    const control = event.currentTarget;
-                    if (!(control instanceof HTMLElement) || control.classList.contains('disabled')) return;
-
-                    const promptElement = control.closest('.' + this.configuration.prefix + 'prompt_manager_prompt');
-                    if (!(promptElement instanceof HTMLElement)) {
-                        throw new Error('Prompt sort action requires a prompt element.');
-                    }
-
-                    const identifier = promptElement.dataset.pmIdentifier;
-                    const direction = control.dataset.pmDirection;
-                    if (!identifier || !direction) {
-                        throw new Error('Prompt sort action requires identifier and direction.');
-                    }
-
-                    const result = await this.movePromptInActiveOrder(identifier, direction);
-                    ensurePromptSortStatus(this).textContent = t`Moved to position ${result.position} of ${result.total}.`;
-                    focusPromptSortControl(this, result.identifier, direction);
-                });
-            });
-        }
     }
 
     /**

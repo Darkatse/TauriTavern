@@ -146,8 +146,8 @@ function finalizeLittleWhiteBoxPre(pre, xbHash) {
  * (JS-Slash-Runner: `div.TH-render`, LittleWhiteBox: `.xiaobaix-iframe-wrapper`)
  * when their frontend code blocks are unchanged.
  *
- * This render transaction primitive prevents host re-render flows
- * (`.html()/.empty()+append`) from tearing down iframe runtimes.
+ * This is the Phase ER-3.0 "render transaction" primitive: it prevents host
+ * re-render flows (`.html()/.empty()+append`) from tearing down iframe runtimes.
  *
  * @param {HTMLElement} messageElement `.mes` element.
  * @param {string} html New HTML for `.mes_text`.
@@ -161,8 +161,8 @@ export function replaceMesTextHtmlPreservingJsSlashRunnerRuntimes(messageElement
  * (JS-Slash-Runner: `div.TH-render`, LittleWhiteBox: `.xiaobaix-iframe-wrapper`)
  * when their frontend code blocks are unchanged.
  *
- * This render transaction primitive prevents host re-render flows
- * (`.html()/.empty()+append`) from tearing down iframe runtimes.
+ * This is the Phase ER-3.0 "render transaction" primitive: it prevents host
+ * re-render flows (`.html()/.empty()+append`) from tearing down iframe runtimes.
  *
  * @param {HTMLElement} messageElement `.mes` element.
  * @param {string} html New HTML for `.mes_text`.

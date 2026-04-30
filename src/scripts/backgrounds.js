@@ -80,8 +80,6 @@ const BG_TABS = Object.freeze({
     [BG_SOURCES.CHAT]: 'bg_chat_tab',
 });
 
-const BG_TABS_SELECTOR = '#bg_tabs';
-
 /**
  * Global IntersectionObserver instance for lazy loading backgrounds
  * @type {IntersectionObserver|null}
@@ -1051,33 +1049,6 @@ export function getActiveBackgroundTab() {
     return $('#bg_tabs').tabs('option', 'active');
 }
 
-function syncBackgroundTabAccessibility() {
-    document.querySelectorAll(`${BG_TABS_SELECTOR} .bg_tab_button`).forEach(tab => {
-        const link = tab.querySelector('a[href^="#"]');
-        if (!(link instanceof HTMLAnchorElement)) {
-            throw new Error('Background tab accessibility requires each tab to have an anchor target');
-        }
-
-        const panelId = link.getAttribute('href')?.slice(1);
-        const panel = panelId ? document.getElementById(panelId) : null;
-        if (!panelId || !(panel instanceof HTMLElement)) {
-            throw new Error('Background tab accessibility requires each tab target to resolve to a panel');
-        }
-
-        if (!tab.id) {
-            tab.id = `${panelId}_button`;
-        }
-
-        const selected = tab.classList.contains('ui-tabs-active');
-        tab.setAttribute('role', 'tab');
-        tab.setAttribute('aria-controls', panel.id);
-        tab.setAttribute('aria-selected', selected ? 'true' : 'false');
-        tab.setAttribute('tabindex', selected ? '0' : '-1');
-        panel.setAttribute('role', 'tabpanel');
-        panel.setAttribute('aria-labelledby', tab.id);
-    });
-}
-
 export function initBackgrounds() {
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
     eventSource.on(event_types.FORCE_SET_BACKGROUND, forceSetBackground);
@@ -1190,6 +1161,5 @@ export function initBackgrounds() {
         });
     });
 
-    $(BG_TABS_SELECTOR).on('tabsactivate', syncBackgroundTabAccessibility).tabs();
-    syncBackgroundTabAccessibility();
+    $('#bg_tabs').tabs();
 }

@@ -2417,64 +2417,6 @@ export function getFreeName(name, list, numberFormatter = (n) => ` #${n}`) {
     return `${name}${numberFormatter(counter)}`;
 }
 
-let generatedInlineDrawerContentId = 0;
-
-/**
- * @param {HTMLElement} drawer
- * @param {HTMLElement} content
- * @returns {HTMLElement | null}
- */
-function getInlineDrawerControl(drawer, content) {
-    const controls = drawer.querySelectorAll('.inline-drawer-toggle .inline-drawer-icon, .inline-drawer-toggle.inline-drawer-icon, .inline-drawer-toggle');
-    for (const control of controls) {
-        if (control instanceof HTMLElement && !content.contains(control)) {
-            return control;
-        }
-    }
-    return null;
-}
-
-/**
- * Synchronizes disclosure semantics for an inline drawer.
- *
- * @param {HTMLElement} drawer - The inline drawer element to synchronize
- * @param {boolean} [open] - The explicit expanded state. When omitted, it is inferred from inline display.
- * @returns {{control: HTMLElement, content: HTMLElement, open: boolean}}
- */
-export function syncInlineDrawerAccessibility(drawer, open = undefined) {
-    if (!(drawer instanceof HTMLElement)) {
-        throw new Error('inline drawer accessibility requires an HTMLElement drawer');
-    }
-
-    /** @type {HTMLElement | null} */
-    const content = drawer.querySelector(':scope > .inline-drawer-content');
-    if (!content) {
-        throw new Error('inline drawer accessibility requires a direct .inline-drawer-content child');
-    }
-
-    const control = getInlineDrawerControl(drawer, content);
-    if (!control) {
-        throw new Error('inline drawer accessibility requires an inline drawer toggle control outside content');
-    }
-
-    if (!content.id) {
-        content.id = `tt-inline-drawer-content-${++generatedInlineDrawerContentId}`;
-    }
-
-    open ??= content.style.display !== 'none';
-    control.setAttribute('aria-controls', content.id);
-    control.setAttribute('aria-expanded', String(open));
-
-    if (!control.hasAttribute('aria-label') && !control.hasAttribute('aria-labelledby')) {
-        const accessibleName = control.getAttribute('title')?.trim() || drawer.querySelector(':scope > .inline-drawer-header')?.textContent?.trim();
-        if (accessibleName) {
-            control.setAttribute('aria-label', accessibleName);
-        }
-    }
-
-    return { control, content, open };
-}
-
 
 /**
  * Toggles the visibility of a drawer by changing the display style of its content.
@@ -2484,11 +2426,14 @@ export function syncInlineDrawerAccessibility(drawer, open = undefined) {
  * @param {boolean} [expand=true] - Whether to expand or collapse the drawer
  */
 export function toggleDrawer(drawer, expand = true) {
-    const { control, content } = syncInlineDrawerAccessibility(drawer, expand);
-    /** @type {HTMLElement | null} */
-    const icon = control.classList.contains('inline-drawer-icon') ? control : control.querySelector('.inline-drawer-icon');
-    if (!icon) {
-        throw new Error('inline drawer accessibility requires a direct .inline-drawer-icon control');
+    /** @type {HTMLElement} */
+    const icon = drawer.querySelector(':scope > .inline-drawer-header .inline-drawer-icon');
+    /** @type {HTMLElement} */
+    const content = drawer.querySelector(':scope > .inline-drawer-content');
+
+    if (!icon || !content) {
+        console.debug('toggleDrawer: No icon or content found in the drawer element.');
+        return;
     }
 
     if (expand) {
@@ -2501,7 +2446,6 @@ export function toggleDrawer(drawer, expand = true) {
         content.style.display = 'none';
     }
 
-    syncInlineDrawerAccessibility(drawer, expand);
     drawer.dispatchEvent(new CustomEvent('inline-drawer-toggle', { bubbles: true }));
 
     // Set the height of "autoSetHeight" textareas within the inline-drawer to their scroll height

@@ -13,7 +13,6 @@ import { allowPresetScripts, allowScopedScripts, disallowPresetScripts, disallow
 import { t } from '../../i18n.js';
 import { accountStorage } from '../../util/AccountStorage.js';
 import { getPresetManager } from '../../preset-manager.js';
-import { isScreenReaderAssistanceEnabled } from '../../a11y/screen-reader.js';
 
 // Re-exports for legacy extensions
 export { getRegexScripts };
@@ -34,61 +33,6 @@ async function flushRegexChatNow() {
         return;
     }
     await regexRefreshCoordinator.flushNow();
-}
-
-function getSortDirectionOffset(direction) {
-    if (direction === 'up') return -1;
-    if (direction === 'down') return 1;
-    throw new Error(`Unsupported regex sort direction: ${direction}`);
-}
-
-function ensureRegexSortStatus() {
-    const container = document.getElementById('regex_container');
-    if (!(container instanceof HTMLElement)) {
-        throw new Error('Regex sort status requires the regex container.');
-    }
-
-    let status = document.getElementById('regex_sort_status');
-    if (!status) {
-        status = document.createElement('div');
-        status.id = 'regex_sort_status';
-        status.classList.add('sr-only');
-        status.setAttribute('role', 'status');
-        status.setAttribute('aria-live', 'polite');
-        status.setAttribute('aria-atomic', 'true');
-        container.append(status);
-    }
-
-    return status;
-}
-
-function removeRegexSortStatus() {
-    document.getElementById('regex_sort_status')?.remove();
-}
-
-function announceRegexSortPosition(position, total) {
-    ensureRegexSortStatus().textContent = t`Moved to position ${position} of ${total}.`;
-}
-
-function focusRegexSortControl(scriptId, direction) {
-    const scriptElement = document.getElementById(scriptId);
-    if (!(scriptElement instanceof HTMLElement)) {
-        throw new Error(`Regex sort focus target not found: ${scriptId}`);
-    }
-
-    const selector = direction === 'up' ? '.move_regex_up' : '.move_regex_down';
-    let control = scriptElement.querySelector(`${selector}:not(.disabled)`);
-    control ??= scriptElement.querySelector('.move_regex_up:not(.disabled), .move_regex_down:not(.disabled)');
-    if (!(control instanceof HTMLElement)) {
-        throw new Error(`Regex sort control not found: ${scriptId}`);
-    }
-
-    control.focus();
-}
-
-function syncRegexSortControl(control, disabled) {
-    control.toggleClass('disabled', disabled);
-    control.attr('aria-disabled', String(disabled));
 }
 
 /**
@@ -694,48 +638,11 @@ async function moveRegexScript(script, toType, fromType = null, saveSettings = t
     await saveRegexScript(script, -1, toType, saveSettings);
 }
 
-export async function moveRegexScriptWithinType(scriptId, scriptType, direction) {
-    if (!Object.values(SCRIPT_TYPES).includes(scriptType)) {
-        throw new Error(`Invalid regex script type: ${scriptType}`);
-    }
-
-    const scripts = getScriptsByType(scriptType);
-    const index = scripts.findIndex(script => script.id === scriptId);
-    if (index === -1) {
-        throw new Error(`Regex script not found: ${scriptId}`);
-    }
-
-    const targetIndex = index + getSortDirectionOffset(direction);
-    if (targetIndex < 0 || targetIndex >= scripts.length) {
-        return { id: scriptId, position: index + 1, total: scripts.length, moved: false };
-    }
-
-    const updatedScripts = scripts.slice();
-    updatedScripts.splice(targetIndex, 0, updatedScripts.splice(index, 1)[0]);
-
-    await saveScriptsByType(updatedScripts, scriptType);
-    saveSettingsDebounced();
-    requestRegexChatRefresh();
-    await loadRegexScripts();
-
-    return { id: scriptId, position: targetIndex + 1, total: updatedScripts.length, moved: true };
-}
-
-async function onRegexSortButtonClick(scriptId, scriptType, direction) {
-    const result = await moveRegexScriptWithinType(scriptId, scriptType, direction);
-    announceRegexSortPosition(result.position, result.total);
-    focusRegexSortControl(result.id, direction);
-}
-
 async function loadRegexScripts() {
     $('#saved_regex_scripts').empty();
     $('#saved_scoped_scripts').empty();
     $('#saved_preset_scripts').empty();
     setToggleAllIcon(false);
-    const showScreenReaderSortUi = isScreenReaderAssistanceEnabled();
-    if (!showScreenReaderSortUi) {
-        removeRegexSortStatus();
-    }
 
     const scriptTemplate = $(await renderExtensionTemplateAsync('regex', 'scriptTemplate'));
 
@@ -745,9 +652,8 @@ async function loadRegexScripts() {
      * @param {import('../../char-data.js').RegexScriptData} script Script data
      * @param {SCRIPT_TYPES} scriptType Type of the script
      * @param {number} index Index of the script in the array
-     * @param {number} total Number of scripts in the array
      */
-    function renderScript(container, script, scriptType, index, total) {
+    function renderScript(container, script, scriptType, index) {
         // Have to clone here
         const scriptHtml = scriptTemplate.clone();
         const save = () => saveRegexScript(script, index, scriptType);
@@ -758,21 +664,6 @@ async function loadRegexScripts() {
 
         scriptHtml.attr('id', script.id);
         scriptHtml.find('.regex_script_name').text(script.scriptName).attr('title', script.scriptName);
-        const moveUp = scriptHtml.find('.move_regex_up');
-        const moveDown = scriptHtml.find('.move_regex_down');
-        if (!showScreenReaderSortUi) {
-            moveUp.remove();
-            moveDown.remove();
-        } else {
-            syncRegexSortControl(moveUp, index === 0);
-            syncRegexSortControl(moveDown, index === total - 1);
-            if (index > 0) {
-                moveUp.on('click', async () => await onRegexSortButtonClick(script.id, scriptType, 'up'));
-            }
-            if (index < total - 1) {
-                moveDown.on('click', async () => await onRegexSortButtonClick(script.id, scriptType, 'down'));
-            }
-        }
         scriptHtml.find('.disable_regex').prop('checked', script.disabled ?? false)
             .on('input', async function () {
                 script.disabled = !!$(this).prop('checked');
@@ -867,12 +758,9 @@ async function loadRegexScripts() {
         $(container).append(scriptHtml);
     }
 
-    const globalScripts = getScriptsByType(SCRIPT_TYPES.GLOBAL);
-    const scopedScripts = getScriptsByType(SCRIPT_TYPES.SCOPED);
-    const presetScripts = getScriptsByType(SCRIPT_TYPES.PRESET);
-    globalScripts.forEach((script, index) => renderScript('#saved_regex_scripts', script, SCRIPT_TYPES.GLOBAL, index, globalScripts.length));
-    scopedScripts.forEach((script, index) => renderScript('#saved_scoped_scripts', script, SCRIPT_TYPES.SCOPED, index, scopedScripts.length));
-    presetScripts.forEach((script, index) => renderScript('#saved_preset_scripts', script, SCRIPT_TYPES.PRESET, index, presetScripts.length));
+    getScriptsByType(SCRIPT_TYPES.GLOBAL).forEach((script, index) => renderScript('#saved_regex_scripts', script, SCRIPT_TYPES.GLOBAL, index));
+    getScriptsByType(SCRIPT_TYPES.SCOPED).forEach((script, index) => renderScript('#saved_scoped_scripts', script, SCRIPT_TYPES.SCOPED, index));
+    getScriptsByType(SCRIPT_TYPES.PRESET).forEach((script, index) => renderScript('#saved_preset_scripts', script, SCRIPT_TYPES.PRESET, index));
 
     $('#regex_scoped_toggle').prop('checked', isScopedScriptsAllowed(characters?.[this_chid]));
     $('#regex_preset_toggle').prop('checked', isPresetScriptsAllowed(getCurrentPresetAPI(), getCurrentPresetName()));
@@ -2118,7 +2006,6 @@ jQuery(async () => {
     });
 
     await loadRegexScripts();
-    eventSource.on(event_types.SCREEN_READER_ASSISTANCE_CHANGED, async () => await loadRegexScripts());
     // @ts-ignore
     $('#saved_regex_scripts').sortable('enable');
 

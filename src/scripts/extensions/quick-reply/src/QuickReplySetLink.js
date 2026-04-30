@@ -1,4 +1,3 @@
-import { t } from '../../../i18n.js';
 import { QuickReplySet } from './QuickReplySet.js';
 
 export class QuickReplySetLink {
@@ -20,14 +19,13 @@ export class QuickReplySetLink {
     /**@type {Function}*/ onUpdate;
     /**@type {Function}*/ onRequestEditSet;
     /**@type {Function}*/ onDelete;
-    /**@type {Function}*/ onMove;
 
     /**@type {HTMLElement}*/ settingsDom;
 
 
 
 
-    renderSettings(idx, total = idx + 1, showScreenReaderSortUi = false, visualIndex = idx) {
+    renderSettings(idx) {
         this.index = idx;
         const item = document.createElement('div'); {
             this.settingsDom = item;
@@ -38,32 +36,6 @@ export class QuickReplySetLink {
                 drag.classList.add('ui-sortable-handle');
                 drag.textContent = '☰';
                 item.append(drag);
-            }
-            if (showScreenReaderSortUi) {
-                const moveUp = document.createElement('div'); {
-                    moveUp.classList.add('qr--moveSetUp', 'menu_button', 'menu_button_icon', 'fa-solid', 'fa-chevron-up');
-                    moveUp.title = t`Move quick reply set up`;
-                    moveUp.setAttribute('aria-label', moveUp.title);
-                    moveUp.setAttribute('aria-disabled', String(visualIndex === 0));
-                    if (visualIndex === 0) {
-                        moveUp.classList.add('disabled');
-                    } else {
-                        moveUp.addEventListener('click', () => this.move('up'));
-                    }
-                    item.append(moveUp);
-                }
-                const moveDown = document.createElement('div'); {
-                    moveDown.classList.add('qr--moveSetDown', 'menu_button', 'menu_button_icon', 'fa-solid', 'fa-chevron-down');
-                    moveDown.title = t`Move quick reply set down`;
-                    moveDown.setAttribute('aria-label', moveDown.title);
-                    moveDown.setAttribute('aria-disabled', String(visualIndex === total - 1));
-                    if (visualIndex === total - 1) {
-                        moveDown.classList.add('disabled');
-                    } else {
-                        moveDown.addEventListener('click', () => this.move('down'));
-                    }
-                    item.append(moveDown);
-                }
             }
             const set = document.createElement('select'); {
                 set.classList.add('qr--set');
@@ -142,11 +114,6 @@ export class QuickReplySetLink {
         this.unrenderSettings();
         if (this.onDelete) {
             this.onDelete();
-        }
-    }
-    move(direction) {
-        if (this.onMove) {
-            this.onMove(direction);
         }
     }
 
