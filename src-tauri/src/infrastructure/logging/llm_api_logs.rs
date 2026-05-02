@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter};
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
-    ChatCompletionSource, ChatCompletionStreamSender,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamSender,
 };
 
 pub const LLM_API_LOG_EVENT: &str = "tauritavern-llm-api-log";
@@ -335,7 +335,7 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
         payload: &Value,
-    ) -> Result<Value, DomainError> {
+    ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
         let started = Instant::now();
         let started_at_ms = chrono::Utc::now().timestamp_millis();
 
@@ -348,7 +348,7 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
         let duration_ms = started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
 
         let (ok, level, error_message, response_value) = match &result {
-            Ok(value) => (true, "INFO".to_string(), None, Some(value)),
+            Ok(response) => (true, "INFO".to_string(), None, Some(&response.body)),
             Err(error) => {
                 let level = if matches!(error, DomainError::Cancelled(_)) {
                     "WARN"

@@ -85,9 +85,15 @@ Plan
 DiffSummary
 ```
 
-Provider adapter 只能把已经编译好的 `ModelRequest` 转换为 OpenAI/Claude/Gemini/DeepSeek/Cohere 等 provider 格式。
+Provider adapter 只能把已经编译好的 `AgentModelRequest` / `ModelRequest` 转换为 OpenAI/Claude/Gemini/Responses/OpenAI-compatible 等 provider 格式。
 
 禁止在 provider payload builder 中硬编码 TauriTavern Agent 的 prompt 结构。
+
+当前 Phase 2D 已落地的额外要求：
+
+- Agent runtime 必须消费 canonical `AgentModelRequest` / `AgentModelResponse`，不能重新直接解析 provider raw response。
+- Provider-native blocks 只能作为 opaque metadata / `Native` part 携带，不能被 runtime 解释为通用语义。
+- Tool call id 缺失必须 fail-fast；不得自动生成 fallback id。
 
 ### 1.5 Agent Profile 是运行策略，不只是模型选择
 

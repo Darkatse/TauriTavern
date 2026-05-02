@@ -2,7 +2,7 @@
 
 本文档是 Agent Host ABI 草案。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
 
-状态：当前已实现 Phase 2C 上下文只读工具、workspace 读改工具循环与前端 dryRun adapter。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来草案。
+状态：当前已实现 Phase 2D canonical model IR、provider native metadata 保真、上下文只读工具、workspace 读改工具循环与前端 dryRun adapter。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来草案。
 
 ## 1. 入口
 

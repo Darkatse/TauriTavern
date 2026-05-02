@@ -14,12 +14,15 @@ use super::ids::workspace_id_for_stable_chat_id;
 use crate::application::dto::agent_dto::{AgentFinalizeCommitDto, AgentPrepareCommitDto};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
-use crate::application::services::agent_model_gateway::AgentModelGateway;
+use crate::application::services::agent_model_gateway::{
+    AgentModelGateway, decode_chat_completion_response,
+};
 use crate::application::services::agent_tools::{
     AgentToolDispatcher, AgentToolEffect, AgentToolSession,
 };
 use crate::domain::models::agent::{
-    AgentChatRef, AgentRun, AgentRunEventLevel, AgentRunStatus, AgentToolCall, WorkspacePath,
+    AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentModelResponse, AgentModelRole,
+    AgentRun, AgentRunEventLevel, AgentRunStatus, AgentToolCall, WorkspacePath,
 };
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunRepository,
@@ -103,6 +106,7 @@ async fn agent_loop_writes_artifact_and_reaches_awaiting_commit() {
             }]
         }),
     ]));
+    let model_gateway_probe = model_gateway.clone();
 
     let service = AgentRuntimeService::new(
         repository.clone(),
@@ -138,6 +142,25 @@ async fn agent_loop_writes_artifact_and_reaches_awaiting_commit() {
         .await
         .expect("read artifact");
     assert_eq!(artifact.text, "hello from loop");
+
+    let model_requests = model_gateway_probe.requests().await;
+    let second_request = model_requests.get(1).expect("second model request");
+    let hydrated_tool_result = second_request
+        .messages
+        .iter()
+        .find(|message| message.role == AgentModelRole::Tool)
+        .and_then(|message| message.parts.first())
+        .and_then(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some(result),
+            _ => None,
+        })
+        .expect("hydrated tool result");
+    assert!(
+        hydrated_tool_result
+            .content
+            .contains("Full content of output/main.md")
+    );
+    assert!(hydrated_tool_result.content.contains("hello from loop"));
 
     let events = repository
         .read_events(
@@ -870,6 +893,7 @@ async fn dispatcher_reads_worldinfo_activation_from_run_snapshot() {
 
 struct MockAgentModelGateway {
     responses: Mutex<VecDeque<Value>>,
+    requests: Mutex<Vec<AgentModelRequest>>,
 }
 
 fn test_chat_repository(root: &Path) -> Arc<FileChatRepository> {
@@ -911,7 +935,12 @@ impl MockAgentModelGateway {
     fn new(responses: Vec<Value>) -> Self {
         Self {
             responses: Mutex::new(responses.into()),
+            requests: Mutex::new(Vec::new()),
         }
+    }
+
+    async fn requests(&self) -> Vec<AgentModelRequest> {
+        self.requests.lock().await.clone()
     }
 }
 
@@ -919,13 +948,15 @@ impl MockAgentModelGateway {
 impl AgentModelGateway for MockAgentModelGateway {
     async fn generate_with_cancel(
         &self,
-        _request: ChatCompletionGenerateRequestDto,
+        request: AgentModelRequest,
         _cancel: watch::Receiver<bool>,
-    ) -> Result<Value, ApplicationError> {
-        self.responses.lock().await.pop_front().ok_or_else(|| {
+    ) -> Result<AgentModelResponse, ApplicationError> {
+        self.requests.lock().await.push(request.clone());
+        let response = self.responses.lock().await.pop_front().ok_or_else(|| {
             ApplicationError::ValidationError(
                 "mock_model.empty_responses: no response left".to_string(),
             )
-        })
+        })?;
+        decode_chat_completion_response(response, &request.tools)
     }
 }

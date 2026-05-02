@@ -196,7 +196,7 @@ model_completed
 model_failed
 ```
 
-`model_request_created` 应记录 request ref、profile id、provider/source、model、token estimate，不应默认记录完整 prompt。完整 prompt 是否保存取决于调试设置与隐私策略。
+当前 `model_request_created` 记录 canonical request summary（source、custom format、model、message count、tool count、round），不默认记录完整 prompt。长期应记录 request ref、profile id、provider/source、model、token estimate；完整 prompt 是否保存取决于调试设置与隐私策略。
 
 ### 4.5 Tool
 
@@ -208,6 +208,7 @@ tool_call_denied
 tool_call_started
 tool_call_completed
 tool_call_failed
+context_tool_result_hydrated
 ```
 
 `tool_call_requested`：

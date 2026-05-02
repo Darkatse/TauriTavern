@@ -7,7 +7,8 @@ use tokio::sync::mpsc;
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
@@ -335,7 +336,7 @@ pub(super) async fn generate(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-) -> Result<Value, DomainError> {
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
     let payload = apply_tool_followup_payload(repository, &config.base_url, payload)?;
 
@@ -443,6 +444,14 @@ fn apply_tool_followup_payload(
     let Some(input) = object.get("input").and_then(Value::as_array) else {
         return Ok(payload.clone());
     };
+
+    if input.iter().any(|item| {
+        item.get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value == "function_call")
+    }) {
+        return Ok(payload.clone());
+    }
 
     let last_assistant_index = input.iter().rposition(|item| {
         item.get("role")

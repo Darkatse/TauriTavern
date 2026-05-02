@@ -7,7 +7,8 @@ use tokio::sync::mpsc;
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
@@ -360,7 +361,7 @@ pub(super) async fn generate(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-) -> Result<Value, DomainError> {
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let url = build_gemini_url(&config.base_url, endpoint_path);
 
     let client = repository.client()?;

@@ -243,6 +243,52 @@ fn claude_tool_calls_and_results_are_structured() {
 }
 
 #[test]
+fn claude_native_content_blocks_are_replayed() {
+    let payload = json!({
+        "model": "claude-sonnet-4-20250514",
+        "messages": [{
+            "role": "assistant",
+            "content": "",
+            "native": {
+                "claude": {
+                    "content": [
+                        { "type": "thinking", "thinking": "plan", "signature": "sig_thinking" },
+                        { "type": "tool_use", "id": "call_1", "name": "weather", "input": { "city": "Paris" } }
+                    ]
+                }
+            },
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": "weather", "arguments": "{\"city\":\"Paris\"}" }
+            }]
+        }],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "weather",
+                "description": "get weather",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let blocks = upstream
+        .pointer("/messages/0/content")
+        .and_then(Value::as_array)
+        .expect("assistant native content should be replayed");
+
+    assert_eq!(blocks[0]["type"], "thinking");
+    assert_eq!(blocks[0]["signature"], "sig_thinking");
+    assert_eq!(blocks[1]["type"], "tool_use");
+    assert_eq!(blocks[1]["id"], "call_1");
+}
+
+#[test]
 fn claude_tool_calls_are_text_when_tools_disabled() {
     let payload = json!({
         "model": "claude-3-5-sonnet-latest",

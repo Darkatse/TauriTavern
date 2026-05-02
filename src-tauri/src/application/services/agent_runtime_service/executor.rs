@@ -107,7 +107,7 @@ impl AgentRuntimeService {
             AgentRunEventLevel::Info,
             "context_assembled",
             json!({
-                "request": request_summary(&request.payload),
+                "request": request_summary(&request),
                 "tools": self.tool_registry.specs(),
                 "maxRounds": MAX_AGENT_TOOL_ROUNDS,
             }),

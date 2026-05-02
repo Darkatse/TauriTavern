@@ -391,7 +391,7 @@ profile_switch_denied
 
 ## 12. MVP Profile
 
-当前状态（2026-04-29）：尚未实现 profile resolution / profile routing。`profileId` 可以随 run 记录，但不会驱动模型、工具或 context policy。当前工具 registry 固定为 Phase 2C 内建工具集，输出 artifact 固定为 `output/main.md`。
+当前状态（2026-05-02）：尚未实现 profile resolution / profile routing。`profileId` 可以随 run 记录，但不会驱动模型、工具或 context policy。当前工具 registry 固定为 Phase 2D 内建工具集，输出 artifact 固定为 `output/main.md`；模型请求已经走 canonical `AgentModelRequest`，但 profile 还不能控制 provider switch、allowed tools 或 context budget。
 
 当前最小 profile 可以理解为硬编码：
 

@@ -3,7 +3,8 @@ use serde_json::{Value, json};
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
@@ -78,7 +79,7 @@ pub(super) async fn generate(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
-) -> Result<Value, DomainError> {
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let payload_object = payload.as_object().ok_or_else(|| {
         DomainError::InvalidData("Gemini payload must be a JSON object".to_string())
     })?;

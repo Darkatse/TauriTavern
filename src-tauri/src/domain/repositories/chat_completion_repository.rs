@@ -103,6 +103,40 @@ pub struct ChatCompletionApiConfig {
 pub type ChatCompletionStreamSender = UnboundedSender<String>;
 pub type ChatCompletionCancelReceiver = watch::Receiver<bool>;
 
+#[derive(Debug, Clone, Default)]
+pub struct ChatCompletionNormalizationReport {
+    pub synthetic_tool_call_ids: Vec<String>,
+}
+
+impl ChatCompletionNormalizationReport {
+    pub fn synthetic_tool_call_ids(&self) -> &[String] {
+        &self.synthetic_tool_call_ids
+    }
+
+    pub fn record_synthetic_tool_call_id(&mut self, id: impl Into<String>) {
+        self.synthetic_tool_call_ids.push(id.into());
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatCompletionRepositoryGenerateResponse {
+    pub body: Value,
+    pub normalization_report: ChatCompletionNormalizationReport,
+}
+
+impl ChatCompletionRepositoryGenerateResponse {
+    pub fn new(body: Value, normalization_report: ChatCompletionNormalizationReport) -> Self {
+        Self {
+            body,
+            normalization_report,
+        }
+    }
+
+    pub fn from_body(body: Value) -> Self {
+        Self::new(body, ChatCompletionNormalizationReport::default())
+    }
+}
+
 #[async_trait]
 pub trait ChatCompletionRepository: Send + Sync {
     async fn list_models(
@@ -117,7 +151,7 @@ pub trait ChatCompletionRepository: Send + Sync {
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
         payload: &Value,
-    ) -> Result<Value, DomainError>;
+    ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError>;
 
     async fn generate_stream(
         &self,

@@ -356,7 +356,16 @@ fn convert_messages(
             .trim()
             .to_lowercase();
 
-        let mut parts = convert_message_content_to_parts(message.get("content"), is_gemini3);
+        let native_gemini_parts = if role == "assistant" {
+            message_native_gemini_parts(message)
+        } else {
+            None
+        };
+        let mut parts = if let Some(native_parts) = native_gemini_parts.clone() {
+            native_parts
+        } else {
+            convert_message_content_to_parts(message.get("content"), is_gemini3)
+        };
 
         if role == "assistant" {
             let tool_calls = extract_openai_tool_calls(message.get("tool_calls"));
@@ -364,7 +373,9 @@ fn convert_messages(
                 for tool_call in &tool_calls {
                     tool_name_by_id.insert(tool_call.id.clone(), tool_call.name.clone());
                 }
-                parts.extend(convert_openai_tool_calls_to_parts(&tool_calls));
+                if native_gemini_parts.is_none() {
+                    parts.extend(convert_openai_tool_calls_to_parts(&tool_calls));
+                }
             }
         }
 
@@ -605,6 +616,16 @@ fn convert_message_content_to_parts(content: Option<&Value>, is_gemini3: bool) -
         Value::Null => Vec::new(),
         other => vec![json!({ "text": other.to_string() })],
     }
+}
+
+fn message_native_gemini_parts(message: &Map<String, Value>) -> Option<Vec<Value>> {
+    message
+        .get("native")?
+        .get("gemini")?
+        .get("content")?
+        .get("parts")?
+        .as_array()
+        .cloned()
 }
 
 fn convert_openai_tool_calls_to_parts(tool_calls: &[OpenAiToolCall]) -> Vec<Value> {

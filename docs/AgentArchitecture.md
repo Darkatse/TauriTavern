@@ -140,18 +140,22 @@ LLM Gateway / provider adapter
 
 ### 5.1 当前落地边界
 
-截至 2026-04-29，当前已落地的是 Phase 2C 上下文只读工具 + workspace 读改工具循环，而不是完整 Agent 产品面：
+截至 2026-05-02，当前已落地的是 Phase 2D canonical model IR + provider native metadata 保真 + 上下文只读工具 + workspace 读改工具循环，而不是完整 Agent 产品面：
 
 - Public Host ABI 入口为 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`，没有 `startRun()` alias。
 - `startRunFromLegacyGenerate()` 是当前推荐的兼容桥；它捕获 Legacy prompt 语义与本轮最终 `worldInfoActivation`，同时禁用 Legacy ToolManager tools。
 - `startRunWithPromptSnapshot()` 是低层测试/集成入口；调用方必须提供不含 external tools/tool turns 的 chat completion payload。
 - 后端当前开放 `chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish` 八个内建工具，对模型暴露为 provider-safe alias。
+- Agent runtime 当前使用 `AgentModelRequest` / `AgentModelResponse` / `AgentModelContentPart` 作为内部模型语义，不再直接读写 OpenAI-compatible raw JSON。
+- `AgentModelGateway` 仍复用 `ChatCompletionService::generate_with_cancel()`，在 canonical IR 与现有 provider payload pipeline 之间转换。
+- Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native metadata 以 opaque `Native` part 保存和回放；tool call id 缺失会 fail-fast。
+- 前 5 轮 `workspace.write_file` / `workspace.apply_patch` 成功结果会把完整文件内容 hydrate 到下一轮模型上下文。
 - `chat.search` 与 `chat.read_messages` 只读取当前 run 绑定的聊天，不允许模型指定任意 chat target；message index 从 0 开始，JSONL header 不计入消息。
 - `worldinfo.read_activated` 只读取本次 run prompt snapshot 中 materialized 的激活结果，不把全局 last activation 当作运行时真相。
 - 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，只有 `finalizeCommit()` 成功后才 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
 - 工具循环最多 80 轮，必须以 `workspace.finish` 结束；模型直接输出文本会 fail-fast。
 - 模型可修正的工具错误以 `is_error = true` tool result 回填下一轮；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
-- `skill.list`、`skill.read`、`readDiff`、`rollback`、`resume-run`、tool approval、profile routing、MCP、timeline UI、主发送按钮 Agent toggle 仍未实现。
+- `skill.list`、`skill.read`、`readDiff`、`rollback`、`resume-run`、tool approval、profile routing、MCP、timeline UI、streaming Agent loop、主发送按钮 Agent toggle 仍未实现。
 
 ### 5.2 Run 与 Workspace 身份
 
@@ -279,7 +283,9 @@ src-tauri/src/
 - 复用现有 provider 能力、policy 检查、prompt caching、logging、proxy/client 配置、cancellation。
 - 输出 provider-agnostic `ModelResponse` / streaming delta / tool call。
 
-第一期必须通过适配现有 `ChatCompletionService` 完成，而不是直接调用 `HttpChatCompletionRepository` 或新建 HTTP client。长期目标是在不破坏现有 chat completion API 的前提下抽出更明确的 model gateway。
+当前 Phase 2D 已落地 `AgentModelGateway` wrapper：Agent runtime 消费 canonical `AgentModelRequest` / `AgentModelResponse`，gateway 再编码为现有 `ChatCompletionGenerateRequestDto` 并调用 `ChatCompletionService::generate_with_cancel()`。它仍不是新 HTTP client，也不绕过 `HttpChatCompletionRepository` 外层的 logging、policy、secret、prompt cache 和 cancel 链路。
+
+后续应把当前 `agent_model_gateway.rs` 拆成 provider adapter 模块，但不能退回到 runtime 直接拼 provider-specific payload。
 
 当前 `ChatCompletionStreamEvent::Chunk` 只是 provider SSE `data` 字符串的桥接，不是 Agent timeline 语义事件。Agent 必须定义自己的 `AgentRunEvent`，不能把 provider stream chunk 当作 run event。
 
@@ -426,5 +432,8 @@ SillyTavern 上游的事件和 chat message 结构仍是兼容层的基础。Age
 7. chat/worldinfo/workspace 内建工具。
 8. artifact commit 到 chat。
 9. Agent Mode off 行为完全不变。
+10. canonical model IR 与 `AgentModelGateway`。
+11. provider native metadata opaque 保留/回放。
+12. recent workspace write/patch tool result hydration。
 
-下一步的架构重点不再是证明 Agent loop 可行，而是补齐三个长期能力：provider-agnostic model/tool adapter、创作者可控的 profile/context policy、可理解的 timeline/diff/rollback UI。
+下一步的架构重点不再是证明 Agent loop 可行，而是补齐三个长期能力：更清晰的 provider adapter 模块、创作者可控的 profile/context policy、可理解的 timeline/diff/rollback UI。

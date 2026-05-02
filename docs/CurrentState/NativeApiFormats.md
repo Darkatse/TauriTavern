@@ -146,5 +146,5 @@ streaming 语义：
 
 1. **回滚兼容**：Custom 变体落盘必须保持 `chat_completion_source="custom"`，不要把 UI 选择值（如 `custom_openai_responses`）写入设置文件。
 2. **tool_call_id 透明性**：tool loop 不应假设 tool_call_id 是 OpenAI UUID；必须把它当作不透明字符串传递与存储。
-3. **native metadata 保真**（Gemini）：`message.extra.native` 必须端到端保存/回放，且不得“清洗未知字段”（否则签名链会断）。
+3. **native metadata 保真**：Agent Phase 2D 会通过 normalized `message.native` / canonical `Native` part 保留 Claude content blocks、Gemini content parts、OpenAI Responses output items、Gemini Interactions outputs。不得“清洗未知字段”，否则签名链或 reasoning continuation 会断。
 4. **Custom Claude 不注入 anthropic-beta**：该行为是为了兼容第三方；现在只有显式 opt-in 的 prompt caching 会自动补 caching header，其他场景仍不得硬编码回退。

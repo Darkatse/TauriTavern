@@ -2,7 +2,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
-pub(super) fn normalize_claude_response(response: Value) -> Value {
+use crate::domain::repositories::chat_completion_repository::{
+    ChatCompletionNormalizationReport, ChatCompletionRepositoryGenerateResponse,
+};
+
+pub(super) fn normalize_claude_response(
+    response: Value,
+) -> ChatCompletionRepositoryGenerateResponse {
+    let mut report = ChatCompletionNormalizationReport::default();
     let content_blocks = response
         .get("content")
         .and_then(Value::as_array)
@@ -36,7 +43,7 @@ pub(super) fn normalize_claude_response(response: Value) -> Value {
                 let name = as_non_empty_str(block_object.get("name")).unwrap_or("tool");
                 let id = as_non_empty_str(block_object.get("id"))
                     .map(str::to_string)
-                    .unwrap_or_else(|| format!("tool_call_{index}"));
+                    .unwrap_or_else(|| synthetic_tool_call_id(&mut report, index));
                 let arguments = to_openai_arguments(
                     block_object
                         .get("input")
@@ -64,6 +71,12 @@ pub(super) fn normalize_claude_response(response: Value) -> Value {
     );
     if !tool_calls.is_empty() {
         message.insert("tool_calls".to_string(), Value::Array(tool_calls));
+    }
+    if !content_blocks.is_empty() {
+        message.insert(
+            "native".to_string(),
+            json!({ "claude": { "content": content_blocks.clone() } }),
+        );
     }
 
     let finish_reason = map_claude_finish_reason(
@@ -118,10 +131,13 @@ pub(super) fn normalize_claude_response(response: Value) -> Value {
         normalized.insert("content".to_string(), Value::Array(content_blocks));
     }
 
-    Value::Object(normalized)
+    ChatCompletionRepositoryGenerateResponse::new(Value::Object(normalized), report)
 }
 
-pub(super) fn normalize_gemini_response(response: Value) -> Value {
+pub(super) fn normalize_gemini_response(
+    response: Value,
+) -> ChatCompletionRepositoryGenerateResponse {
+    let mut report = ChatCompletionNormalizationReport::default();
     let candidates = response
         .get("candidates")
         .and_then(Value::as_array)
@@ -165,7 +181,7 @@ pub(super) fn normalize_gemini_response(response: Value) -> Value {
             let id = as_non_empty_str(function_call.get("id"))
                 .map(str::to_string)
                 .or_else(|| as_non_empty_str(part_object.get("id")).map(str::to_string))
-                .unwrap_or_else(|| format!("tool_call_{index}"));
+                .unwrap_or_else(|| synthetic_tool_call_id(&mut report, index));
             let signature = as_non_empty_str(part_object.get("thoughtSignature"));
 
             tool_calls.push(build_openai_tool_call(&id, name, arguments, signature));
@@ -242,13 +258,29 @@ pub(super) fn normalize_gemini_response(response: Value) -> Value {
     }
 
     if let Some(response_content) = response_content {
+        if let Some(choice) = normalized
+            .get_mut("choices")
+            .and_then(Value::as_array_mut)
+            .and_then(|choices| choices.first_mut())
+            .and_then(Value::as_object_mut)
+            .and_then(|choice| choice.get_mut("message"))
+            .and_then(Value::as_object_mut)
+        {
+            choice.insert(
+                "native".to_string(),
+                json!({ "gemini": { "content": response_content.clone() } }),
+            );
+        }
         normalized.insert("responseContent".to_string(), response_content);
     }
 
-    Value::Object(normalized)
+    ChatCompletionRepositoryGenerateResponse::new(Value::Object(normalized), report)
 }
 
-pub(super) fn normalize_openai_responses_response(response: Value) -> Value {
+pub(super) fn normalize_openai_responses_response(
+    response: Value,
+) -> ChatCompletionRepositoryGenerateResponse {
+    let mut report = ChatCompletionNormalizationReport::default();
     let output_items = response
         .get("output")
         .and_then(Value::as_array)
@@ -303,7 +335,7 @@ pub(super) fn normalize_openai_responses_response(response: Value) -> Value {
                 let call_id = as_non_empty_str(item_object.get("call_id"))
                     .map(str::to_string)
                     .or_else(|| as_non_empty_str(item_object.get("id")).map(str::to_string))
-                    .unwrap_or_else(|| format!("tool_call_{index}"));
+                    .unwrap_or_else(|| synthetic_tool_call_id(&mut report, index));
                 let arguments = to_openai_arguments(
                     item_object
                         .get("arguments")
@@ -340,6 +372,17 @@ pub(super) fn normalize_openai_responses_response(response: Value) -> Value {
     message.insert("content".to_string(), Value::String(content));
     if !tool_calls.is_empty() {
         message.insert("tool_calls".to_string(), Value::Array(tool_calls));
+    }
+    if !output_items.is_empty() {
+        message.insert(
+            "native".to_string(),
+            json!({
+                "openai_responses": {
+                    "responseId": response.get("id"),
+                    "output": output_items,
+                }
+            }),
+        );
     }
 
     let finish_reason = if message.contains_key("tool_calls") {
@@ -388,10 +431,13 @@ pub(super) fn normalize_openai_responses_response(response: Value) -> Value {
         normalized.insert("usage".to_string(), usage);
     }
 
-    Value::Object(normalized)
+    ChatCompletionRepositoryGenerateResponse::new(Value::Object(normalized), report)
 }
 
-pub(super) fn normalize_gemini_interactions_response(response: Value) -> Value {
+pub(super) fn normalize_gemini_interactions_response(
+    response: Value,
+) -> ChatCompletionRepositoryGenerateResponse {
+    let mut report = ChatCompletionNormalizationReport::default();
     let outputs = response
         .get("outputs")
         .and_then(Value::as_array)
@@ -436,7 +482,7 @@ pub(super) fn normalize_gemini_interactions_response(response: Value) -> Value {
                 let name = as_non_empty_str(output_object.get("name")).unwrap_or("tool");
                 let id = as_non_empty_str(output_object.get("id"))
                     .map(str::to_string)
-                    .unwrap_or_else(|| format!("tool_call_{index}"));
+                    .unwrap_or_else(|| synthetic_tool_call_id(&mut report, index));
                 let arguments = to_openai_arguments(
                     output_object
                         .get("arguments")
@@ -526,7 +572,13 @@ pub(super) fn normalize_gemini_interactions_response(response: Value) -> Value {
         normalized.insert("usage".to_string(), usage);
     }
 
-    Value::Object(normalized)
+    ChatCompletionRepositoryGenerateResponse::new(Value::Object(normalized), report)
+}
+
+fn synthetic_tool_call_id(report: &mut ChatCompletionNormalizationReport, index: usize) -> String {
+    let id = format!("tool_call_{index}");
+    report.record_synthetic_tool_call_id(id.clone());
+    id
 }
 
 fn map_claude_finish_reason(stop_reason: Option<&str>, has_tool_calls: bool) -> Option<String> {
@@ -723,7 +775,7 @@ mod tests {
             "stop_reason": "tool_use"
         });
 
-        let normalized = normalize_claude_response(response);
+        let normalized = normalize_claude_response(response).body;
         let tool_call = normalized
             .get("choices")
             .and_then(Value::as_array)
@@ -751,6 +803,32 @@ mod tests {
                 .unwrap_or_default(),
             "sig_1"
         );
+
+        let native_content = normalized
+            .pointer("/choices/0/message/native/claude/content")
+            .and_then(Value::as_array)
+            .expect("claude native content should be preserved");
+        assert_eq!(native_content[0]["type"], "tool_use");
+    }
+
+    #[test]
+    fn normalize_claude_reports_synthetic_tool_call_id() {
+        let response = json!({
+            "id": "claude-response",
+            "model": "claude-3-5-sonnet-latest",
+            "content": [{
+                "type": "tool_use",
+                "name": "workspace_write_file",
+                "input": { "path": "output/main.md", "content": "hi" }
+            }],
+            "stop_reason": "tool_use"
+        });
+
+        let normalized = normalize_claude_response(response);
+        assert_eq!(
+            normalized.normalization_report.synthetic_tool_call_ids(),
+            &["tool_call_0".to_string()]
+        );
     }
 
     #[test]
@@ -771,7 +849,7 @@ mod tests {
             }]
         });
 
-        let normalized = normalize_gemini_response(response);
+        let normalized = normalize_gemini_response(response).body;
         let tool_call = normalized
             .get("choices")
             .and_then(Value::as_array)
@@ -800,6 +878,13 @@ mod tests {
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
             "sig_2"
+        );
+
+        assert_eq!(
+            normalized
+                .pointer("/choices/0/message/native/gemini/content/parts/0/thoughtSignature")
+                .and_then(Value::as_str),
+            Some("sig_2")
         );
     }
 
@@ -833,7 +918,7 @@ mod tests {
             ]
         });
 
-        let normalized = normalize_openai_responses_response(response);
+        let normalized = normalize_openai_responses_response(response).body;
         assert_eq!(
             normalized.get("object").and_then(Value::as_str),
             Some("chat.completion")
@@ -864,6 +949,19 @@ mod tests {
             tool_call.get("id").and_then(Value::as_str),
             Some("call_weather")
         );
+        assert_eq!(
+            message
+                .get("native")
+                .and_then(Value::as_object)
+                .and_then(|native| native.get("openai_responses"))
+                .and_then(Value::as_object)
+                .and_then(|responses| responses.get("output"))
+                .and_then(Value::as_array)
+                .and_then(|output| output.get(1))
+                .and_then(|item| item.get("call_id"))
+                .and_then(Value::as_str),
+            Some("call_weather")
+        );
     }
 
     #[test]
@@ -880,7 +978,7 @@ mod tests {
             ]
         });
 
-        let normalized = normalize_gemini_interactions_response(response);
+        let normalized = normalize_gemini_interactions_response(response).body;
 
         let message = normalized
             .get("choices")

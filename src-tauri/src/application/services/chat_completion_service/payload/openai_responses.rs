@@ -160,6 +160,13 @@ fn build_input_items(messages: Option<&Value>) -> Result<Vec<Value>, Application
             .unwrap_or("user")
             .trim();
 
+        if raw_role.eq_ignore_ascii_case("assistant") {
+            if let Some(native_output) = message_native_openai_responses_output(message) {
+                input.extend(native_output);
+                continue;
+            }
+        }
+
         if raw_role.eq_ignore_ascii_case("tool") || raw_role.eq_ignore_ascii_case("function") {
             if index >= trailing_tool_start {
                 let call_id = message_tool_call_id(message).ok_or_else(|| {
@@ -196,6 +203,15 @@ fn build_input_items(messages: Option<&Value>) -> Result<Vec<Value>, Application
     }
 
     Ok(input)
+}
+
+fn message_native_openai_responses_output(message: &Map<String, Value>) -> Option<Vec<Value>> {
+    message
+        .get("native")?
+        .get("openai_responses")?
+        .get("output")?
+        .as_array()
+        .cloned()
 }
 
 fn map_openai_tools_to_responses(tools: &[Value]) -> Vec<Value> {
@@ -313,7 +329,7 @@ fn map_openai_tool_choice_to_responses(tool_choice: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::build;
 
@@ -382,5 +398,48 @@ mod tests {
         assert_eq!(tools[0]["type"], "function");
         assert_eq!(tools[0]["name"], "get_weather");
         assert_eq!(tools[0]["strict"], false);
+    }
+
+    #[test]
+    fn openai_responses_payload_replays_native_output_items() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "openai_responses",
+            "model": "gpt-5",
+            "messages": [
+                { "role": "user", "content": "hi" },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "native": {
+                        "openai_responses": {
+                            "responseId": "resp_1",
+                            "output": [{
+                                "id": "fc_1",
+                                "type": "function_call",
+                                "call_id": "call_1",
+                                "name": "workspace_write_file",
+                                "arguments": "{\"path\":\"output/main.md\",\"content\":\"hi\"}"
+                            }]
+                        }
+                    }
+                },
+                { "role": "tool", "tool_call_id": "call_1", "content": "ok" }
+            ]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+        let input = upstream
+            .get("input")
+            .and_then(Value::as_array)
+            .expect("input should exist");
+
+        assert_eq!(input[1]["type"], "function_call");
+        assert_eq!(input[1]["call_id"], "call_1");
+        assert_eq!(input[2]["type"], "function_call_output");
+        assert_eq!(input[2]["call_id"], "call_1");
     }
 }

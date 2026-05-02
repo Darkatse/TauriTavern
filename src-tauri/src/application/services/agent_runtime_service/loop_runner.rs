@@ -1,21 +1,21 @@
 use serde_json::json;
 
 use super::model_turn::{
-    append_tool_turn_to_request, assistant_message_for_next_turn, extract_agent_tool_calls,
-    extract_response_text,
+    append_tool_turn_to_request, assistant_message_for_next_turn, extract_response_text,
 };
 use super::prompt_snapshot::request_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, MAX_AGENT_TOOL_ROUNDS};
-use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{AgentToolEffect, AgentToolSession};
-use crate::domain::models::agent::{AgentRunEventLevel, AgentRunStatus, WorkspacePath};
+use crate::domain::models::agent::{
+    AgentModelRequest, AgentRunEventLevel, AgentRunStatus, AgentToolResult, WorkspacePath,
+};
 
 impl AgentRuntimeService {
     pub(super) async fn run_tool_loop(
         &self,
         run_id: &str,
-        mut request: ChatCompletionGenerateRequestDto,
+        mut request: AgentModelRequest,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<Option<WorkspacePath>, ApplicationError> {
         let mut tool_session = AgentToolSession::default();
@@ -28,7 +28,7 @@ impl AgentRuntimeService {
                 "model_request_created",
                 json!({
                     "round": round,
-                    "request": request_summary(&request.payload),
+                    "request": request_summary(&request),
                 }),
             )
             .await?;
@@ -39,7 +39,7 @@ impl AgentRuntimeService {
                 .await?;
             self.ensure_not_cancelled(cancel)?;
 
-            let tool_calls = extract_agent_tool_calls(&response, &self.tool_registry)?;
+            let tool_calls = response.tool_calls.clone();
             self.event(
                 run_id,
                 AgentRunEventLevel::Info,
@@ -47,7 +47,7 @@ impl AgentRuntimeService {
                 json!({
                     "round": round,
                     "toolCallCount": tool_calls.len(),
-                    "textBytes": extract_response_text(&response).unwrap_or_default().as_bytes().len(),
+                    "textBytes": extract_response_text(&response).as_bytes().len(),
                 }),
             )
             .await?;
@@ -131,10 +131,73 @@ impl AgentRuntimeService {
                 return Ok(Some(final_path));
             }
 
+            let tool_results = self
+                .hydrate_recent_tool_results_for_model(run_id, round, &tool_results)
+                .await?;
             append_tool_turn_to_request(&mut request, assistant_message, &tool_results)?;
             self.ensure_not_cancelled(cancel)?;
         }
 
         Ok(None)
+    }
+
+    async fn hydrate_recent_tool_results_for_model(
+        &self,
+        run_id: &str,
+        round: usize,
+        tool_results: &[AgentToolResult],
+    ) -> Result<Vec<AgentToolResult>, ApplicationError> {
+        if round > 5 {
+            return Ok(tool_results.to_vec());
+        }
+
+        let mut hydrated = Vec::with_capacity(tool_results.len());
+        for result in tool_results {
+            let mut result = result.clone();
+            if result.is_error
+                || !(result.name == "workspace.write_file"
+                    || result.name == "workspace.apply_patch")
+            {
+                hydrated.push(result);
+                continue;
+            }
+
+            let Some(path) = result
+                .structured
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                hydrated.push(result);
+                continue;
+            };
+            let workspace_path = WorkspacePath::parse(path)?;
+            let file = self
+                .workspace_repository
+                .read_text(run_id, &workspace_path)
+                .await?;
+            result.content = format!(
+                "{}\n\nFull content of {}:\n{}",
+                result.content,
+                file.path.as_str(),
+                file.text
+            );
+            self.event(
+                run_id,
+                AgentRunEventLevel::Debug,
+                "context_tool_result_hydrated",
+                json!({
+                    "round": round,
+                    "callId": result.call_id.as_str(),
+                    "path": file.path.as_str(),
+                    "bytes": file.bytes,
+                }),
+            )
+            .await?;
+            hydrated.push(result);
+        }
+
+        Ok(hydrated)
     }
 }

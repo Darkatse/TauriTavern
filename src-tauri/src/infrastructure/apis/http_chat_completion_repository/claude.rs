@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionStreamSender,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
@@ -59,7 +59,7 @@ pub(super) async fn generate(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-) -> Result<Value, DomainError> {
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let endpoint_path = if endpoint_path.trim().is_empty() {
         "/messages"
     } else {

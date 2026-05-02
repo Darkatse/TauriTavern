@@ -1,18 +1,20 @@
 # TauriTavern Agent Implementation Plan
 
-本文档记录 **当前可继续开发的实施基线与后续顺序**。旧的 Phase 0 / 1 / 2A / 2B 展开式计划已经收敛为架构约束、测试守护和进度台账；后续开发不应再从旧阶段文档倒推当前行为。当前事实以 `docs/CurrentState/AgentFramework.md` 为准，架构边界以 `docs/AgentArchitecture.md` 与 `docs/AgentContract.md` 为准。
+本文档记录当前可继续开发的实施基线与后续顺序。旧 Phase 0 / 1 / 2A / 2B / 2C 的展开式计划已经收敛为当前架构、测试与契约；后续开发不应再从旧阶段文档倒推当前行为。
+
+当前事实以 `docs/CurrentState/AgentFramework.md` 为准，架构边界以 `docs/AgentArchitecture.md` 与 `docs/AgentContract.md` 为准。
 
 ## 1. 当前基线
 
-截至 2026-04-29，Agent 已进入 Phase 2C 后的可运行状态：
+截至 2026-05-02，Agent Phase 2D 核心已经落地：
 
-- Rust 后端已拥有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
+- Rust 后端拥有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 前端 Host ABI 已挂载 `window.__TAURITAVERN__.api.agent`。
-- Agent 启动仍通过 `PromptSnapshot` 过渡输入；`GenerationIntent + ContextFrame` 尚未接管 context assembly。
-- `startRunFromLegacyGenerate()` 使用 Legacy dryRun 捕获 `chatCompletionPayload`，并额外捕获本轮 dryRun 最终 `worldInfoActivation`。
-- Legacy Generate 尚未默认切换到 Agent；当前 Agent 通过控制台、扩展或后续 UI 显式调用。
-- LLM 调用复用 `ChatCompletionService::generate_with_cancel()`，不得绕过现有 provider、secret、proxy、日志、endpoint policy、iOS policy 和取消链路。
+- Agent 启动仍通过 `PromptSnapshot` 兼容桥进入；`GenerationIntent + ContextFrame` 尚未接管 context assembly。
+- `startRunFromLegacyGenerate()` 使用 Legacy dryRun 捕获 `chatCompletionPayload` 与本轮最终 `worldInfoActivation`。
+- LLM 调用复用 `ChatCompletionService::generate_with_cancel()`，不得绕过现有 provider、secret、proxy、日志、endpoint policy、iOS policy、prompt cache 和取消链路。
 - Tool loop 由 Rust runtime 独占推进，不递归调用前端 `Generate()`。
+- Agent runtime 已使用 canonical model IR，不再把 OpenAI-compatible raw JSON 当作运行时事实。
 
 旧阶段只保留为这些不变量：
 
@@ -39,18 +41,7 @@ api.agent.commit(input)
 api.agent.finalizeCommit(input)
 ```
 
-明确不存在公共 `api.agent.startRun()` alias。启动入口必须通过名称表达来源：
-
-- `startRunFromLegacyGenerate()`：使用 Legacy `Generate(..., dryRun = true)` 捕获当前 prompt 语义与本轮 world info 激活结果。
-- `startRunWithPromptSnapshot()`：调用方已经持有 `promptSnapshot.chatCompletionPayload`，可选携带 `promptSnapshot.worldInfoActivation`。
-
-当前显式拒绝：
-
-- `stream: true`
-- `autoCommit: true`
-- prompt snapshot 中已有 external `tools`
-- external `tool_choice`
-- 已有 `role: "tool"` 或 assistant `tool_calls`
+明确不存在公共 `api.agent.startRun()` alias。
 
 当前 future API 只保留显式 throw：
 
@@ -61,20 +52,84 @@ readDiff()
 rollback()
 ```
 
-## 3. 当前工具集
+## 3. 当前 Model Gateway
 
-内部 canonical name 使用 dotted form；发给 OpenAI-compatible function calling 时使用 provider-safe alias。
+当前 Agent model 调用链：
 
-| Canonical name | Model alias | 类型 | 当前语义 |
-| --- | --- | --- | --- |
-| `chat.search` | `chat_search` | read-only | 搜索当前 run 绑定的聊天。只有 `query` 必填；可选 `limit`、`role`、`start_message`、`end_message`、`scan_limit`。返回 message index、snippet 与 `chat:current#<index>` ref。 |
-| `chat.read_messages` | `chat_read_messages` | read-only | 按 0-based message index 读取当前聊天消息；每项可选 `start_char`、`max_chars` 读取长消息片段。 |
-| `worldinfo.read_activated` | `worldinfo_read_activated` | read-only | 读取本次 Agent run dryRun 捕获的最终激活世界书条目；模型可读文本只包含条目名、世界书名、条目内容。 |
-| `workspace.list_files` | `workspace_list_files` | read-only | 列出模型可见 workspace 文件。`path` 省略、空字符串、`.`、`./` 都表示 workspace root。 |
-| `workspace.read_file` | `workspace_read_file` | read-only | 读取 UTF-8 文本文件，返回行号；完整读取会记录 read-state。 |
-| `workspace.write_file` | `workspace_write_file` | mutating | 写完整 UTF-8 文件；成功后记录 read-state 并创建 checkpoint。 |
-| `workspace.apply_patch` | `workspace_apply_patch` | mutating | Claude Code 风格 `old_string` / `new_string` 精确替换；成功后创建 checkpoint。 |
-| `workspace.finish` | `workspace_finish` | control | 结束 loop；默认 final artifact 是 `output/main.md`。 |
+```text
+AgentRuntimeService
+  -> AgentModelGateway.generate_with_cancel(AgentModelRequest)
+    -> encode_chat_completion_request()
+      -> ChatCompletionService.generate_with_cancel(ChatCompletionGenerateRequestDto)
+    -> decode_chat_completion_response()
+  -> AgentModelResponse
+```
+
+当前 canonical IR：
+
+- `AgentModelRequest`
+- `AgentModelResponse`
+- `AgentModelMessage`
+- `AgentModelContentPart`
+
+`AgentModelContentPart` 当前支持：
+
+- `Text`
+- `Reasoning`
+- `ToolCall`
+- `ToolResult`
+- `Media`
+- `ResourceRef`
+- `Native`
+
+Phase 2D 已落地：
+
+- provider format detection：OpenAI-compatible、OpenAI Responses、Claude Messages、Gemini、Gemini Interactions。
+- canonical tool specs 到 provider-facing function tools 的转换。
+- provider-specific schema sanitizer。Gemini / Gemini Interactions 会移除当前不兼容的 JSON Schema 关键字；Claude 只做轻量清洗；OpenAI / Responses 保持完整 schema。
+- OpenAI Responses 请求自动 include `reasoning.encrypted_content`。
+- missing `tool_call_id` fail-fast，不再 fallback 生成 `tool_call_{index}`。
+- response decode 保留 text、reasoning、tool calls、native metadata。
+
+仍待拆分：
+
+- `AgentModelGateway` 现在承担 encode/decode/sanitizer，后续应拆成 `agent_model_gateway/` 模块目录与 provider adapter 文件。
+- 还没有正式 `ModelDelta` streaming adapter。
+- 还没有 profile-driven provider switch policy。
+
+## 4. 当前 Native Metadata 策略
+
+Provider native data 是 opaque state，不是 Agent 业务语义。Runtime 可以携带和回放，但不能解释、改写或摘要。
+
+已落地保留：
+
+| Provider format | 保留字段 | 回放位置 |
+| --- | --- | --- |
+| Claude Messages | assistant `content` blocks，包含 `thinking` / `tool_use` / signature | Claude payload message conversion |
+| Gemini | response `content.parts`，包含 `thoughtSignature` | Makersuite payload message conversion |
+| Gemini Interactions | raw `outputs` | Gemini Interactions payload message conversion |
+| OpenAI Responses | raw `output` items 与 `responseId` | Responses payload `input` items |
+
+约束：
+
+- tool call id 是不透明字符串。
+- same-provider continuation 需要的 native state 丢失时必须 fail-fast 或测试失败。
+- cross-provider switch 只能迁移 canonical 语义；旧 provider 的私有 signature/encrypted reasoning 不能伪装为目标 provider 可用状态。
+
+## 5. 当前工具集
+
+Tool registry 只产 canonical `AgentToolSpec`，不再暴露 OpenAI-shaped `openai_tools()`。
+
+| Canonical name | Model alias | 类型 |
+| --- | --- | --- |
+| `chat.search` | `chat_search` | read-only |
+| `chat.read_messages` | `chat_read_messages` | read-only |
+| `worldinfo.read_activated` | `worldinfo_read_activated` | read-only |
+| `workspace.list_files` | `workspace_list_files` | read-only |
+| `workspace.read_file` | `workspace_read_file` | read-only |
+| `workspace.write_file` | `workspace_write_file` | mutating |
+| `workspace.apply_patch` | `workspace_apply_patch` | mutating |
+| `workspace.finish` | `workspace_finish` | control |
 
 当前尚未落地：
 
@@ -84,28 +139,20 @@ rollback()
 - 外部 extension tools
 - tool approval / policy routing
 
-Workspace 当前模型可见 / 可写根目录由 run manifest roots 驱动：
-
-```text
-output/
-scratch/
-plan/
-summaries/
-persist/
-```
-
-这个 root 集合是当前产品策略，不是路径安全边界。路径规范化、安全拒绝、symlink/escape 防护仍属于 host / repository 不变量。`persist/` 是 chat workspace 级持久 root 的 run projection，只有 `finalizeCommit()` 成功后才 promote 回稳定 chat workspace。
-
-## 4. 工具错误语义
+## 6. 工具结果语义
 
 必须区分两类错误：
 
-- **Recoverable tool error**：模型参数、路径字符串、可见/可写策略、文件不存在、chat message index 不存在、读取范围非法、结果超过工具预算、patch 未完整读取、sha 过期、匹配 0 次或多次等模型可修正问题。返回 `AgentToolResult { is_error: true }`，写入 `tool_call_failed` warn event，并作为 tool message 回填下一轮模型。
-- **Fatal runtime error**：journal 写入失败、workspace repository 内部 IO 错误、chat JSONL 损坏、manifest/checkpoint 损坏、模型响应结构不可解析、取消、序列化失败、状态机错误等宿主级问题。直接让 run 进入 failed 或 cancelled。
+- Recoverable tool error：模型参数、路径字符串、可见/可写策略、文件不存在、chat message index 不存在、读取范围非法、结果超过工具预算、patch 未完整读取、sha 过期、匹配 0 次或多次等模型可修正问题。返回 `AgentToolResult { is_error: true }`，写入 `tool_call_failed` warn event，并作为 tool message 回填下一轮模型。
+- Fatal runtime error：journal 写入失败、workspace repository 内部 IO 错误、chat JSONL 损坏、manifest/checkpoint 损坏、模型响应结构不可解析、取消、序列化失败、状态机错误等宿主级问题。直接让 run 进入 failed 或 cancelled。
 
-这个边界的目标是让模型能自我修正普通工具调用错误，同时不隐藏真实系统错误。
+Phase 2D 已落地 recent hydration：
 
-## 5. 当前运行流
+- 前 5 轮 `workspace.write_file` / `workspace.apply_patch` 成功结果会读取目标 workspace 文件，将完整文本加入下一轮模型上下文。
+- hydration 只影响 model request，不改变 workspace/journal 真相。
+- hydration 会写 `context_tool_result_hydrated` debug event。
+
+## 7. 当前运行流
 
 ```text
 api.agent.startRunFromLegacyGenerate(input?)
@@ -122,7 +169,7 @@ AgentRuntimeService::start_run()
   ↓
 initialize_run 写 manifest / prompt snapshot / workspace root
   ↓
-prepare_agent_tool_request 注入 Rust-owned tools
+prepare_agent_tool_request 生成 AgentModelRequest
   ↓
 model -> read-only context tools / workspace tools -> model -> ... -> workspace.finish
   ↓
@@ -137,24 +184,45 @@ validate_final_artifact(output/main.md)
 prepareCommit / saveReply / finalizeCommit
 ```
 
-工具循环最多 80 轮。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会以当前代码中的 `model.tool_call_required_phase2b` 失败；这是历史命名遗留，不代表当前能力仍停留在 Phase 2B。
+工具循环最多 80 轮。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会以 `model.tool_call_required` 失败。
 
-## 6. 后续实施顺序
+## 8. 后续实施顺序
 
-### 6.1 Phase 2D：Provider 与策略硬化
+### 8.1 Phase 2D 后续硬化
 
-目标：让工具循环从“OpenAI-compatible 可跑”变成“多 provider 可维护”。
+目标：把当前已落地的 gateway 核心拆成更长期可维护的 provider adapter 结构。
 
 内容：
 
-- provider schema sanitizer：canonical schema 深拷贝后按 OpenAI / Claude / Gemini / Responses 降级。
-- 保留 provider-native tool call metadata，尤其是 Claude/Gemini 的 tool id、reasoning signature 或等价字段。
+- 将 `agent_model_gateway.rs` 拆成模块目录：
+  - `mod.rs`
+  - `format.rs`
+  - `encode.rs`
+  - `decode.rs`
+  - `schema.rs`
+  - `providers/openai.rs`
+  - `providers/responses.rs`
+  - `providers/claude.rs`
+  - `providers/gemini.rs`
+- 增加 same-provider native metadata loss 测试。
+- 增加 cross-provider switch policy 测试，明确哪些 metadata 不可迁移。
+- 把 `provider_state` 从占位字段推进为 run-scoped continuation state。
+- 增加 schema sanitizer 覆盖更多 JSON Schema edge cases。
+
+### 8.2 Profile 与 Context Policy
+
+目标：让创作者控制模型、工具、预算和上下文，而不是写死在 runtime。
+
+内容：
+
 - profile 显式声明 allowed tools、tool budget、tool call mode。
-- unknown tool、schema mismatch、missing native metadata 必须有测试。
+- profile 显式声明 provider switch policy。
+- profile 显式声明 ContextFrame 资源预算。
+- Plan node 若锁定 profile，runtime 必须拒绝模型自行切换。
 
-### 6.2 Phase 2E：剩余只读上下文资源
+### 8.3 剩余只读上下文资源
 
-目标：在不膨胀 prompt snapshot 的前提下，继续把创作者资源变成按需读取的工具/virtual resource。
+目标：在不膨胀 prompt snapshot 的前提下，把创作者资源变成按需读取的工具/virtual resource。
 
 优先级：
 
@@ -162,13 +230,7 @@ prepareCommit / saveReply / finalizeCommit
 - preset / character author resources 的统一 Skill-like 入口
 - 可审计的 context budget 与 resource refs
 
-不做：
-
-- 不把所有 skill / 角色卡附加资源自动塞入 system prompt。
-- 不给模型可写 chat 句柄。
-- 不复制完整聊天或完整世界书到 workspace。
-
-### 6.3 Phase 3：Timeline UI 与人工控制
+### 8.4 Timeline UI 与人工控制
 
 目标：给创作者可理解、可暂停、可提交的 Agent run 体验。
 
@@ -181,12 +243,7 @@ prepareCommit / saveReply / finalizeCommit
 - commit preview 与手动提交。
 - cancel UI。
 
-不做：
-
-- 不把 Agent event 冒充 Legacy Generate event。
-- 不在 UI 中直接编辑 run repository 文件。
-
-### 6.4 Phase 4：Diff / Rollback / Resume
+### 8.5 Diff / Rollback / Resume
 
 目标：让多轮创作具备可控回退能力。
 
@@ -196,7 +253,7 @@ prepareCommit / saveReply / finalizeCommit
 - `rollback()`：先只恢复 run workspace，不修改已提交聊天消息。
 - `resumeRun()`：明确 run continuation 语义，避免复用已 closed run 的状态机。
 
-### 6.5 Phase 5：MCP / Extension Tool
+### 8.6 MCP / Extension Tool
 
 目标：引入外部工具生态，但保持 Tauri-native 安全边界。
 
@@ -207,15 +264,24 @@ prepareCommit / saveReply / finalizeCommit
 - 危险工具必须进入 capability policy 与审批。
 - Agent 消费 MCP tool 前必须经过 profile / policy resolution。
 
-## 7. 验收命令
+## 9. 验收命令
 
-Agent 相关变更至少运行：
+Agent 相关 Rust 变更至少运行：
 
 ```bash
 cargo fmt --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml agent --lib
 cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml agent --lib
 git diff --check
+```
+
+涉及 provider adapter / normalizer 时额外运行相关过滤测试：
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml agent_model_gateway
+cargo test --manifest-path src-tauri/Cargo.toml openai_responses_payload
+cargo test --manifest-path src-tauri/Cargo.toml claude_native_content_blocks_are_replayed
+cargo test --manifest-path src-tauri/Cargo.toml normalize_
 ```
 
 涉及前端 Host ABI、类型或契约时再运行：
@@ -226,14 +292,14 @@ pnpm run check:frontend
 pnpm run check:contracts
 ```
 
-## 8. 每次修改必须同步的文档
+## 10. 每次修改必须同步的文档
 
 - 当前事实：`docs/CurrentState/AgentFramework.md`
 - 架构边界：`docs/AgentArchitecture.md`
 - 硬契约：`docs/AgentContract.md`
-- Host ABI：`docs/API/Agent.md`、`docs/FrontendHostContract.md`、`src/types.d.ts`
+- LLM gateway：`docs/Agent/LlmGateway.md`
 - 工具语义：`docs/Agent/ToolSystem.md`
 - workspace 语义：`docs/Agent/Workspace.md`
 - 事件语义：`docs/Agent/RunEventJournal.md`
-
-任何文档如果继续描述“当前没有 `chat.search` / `worldinfo.read_activated`”或“当前只开放 workspace 五工具”，都应视为过期并立即修正。
+- 测试矩阵：`docs/Agent/TestingStrategy.md`
+- Host ABI：`docs/API/Agent.md`、`docs/FrontendHostContract.md`、`src/types.d.ts`

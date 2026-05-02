@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
-    ChatCompletionSource, ChatCompletionStreamSender,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamSender,
 };
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
@@ -450,7 +450,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
         payload: &Value,
-    ) -> Result<Value, DomainError> {
+    ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
         let source_name = source.display_name();
 
         match source {
@@ -463,7 +463,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::Chutes
             | ChatCompletionSource::SiliconFlow
             | ChatCompletionSource::Zai => {
-                openai::generate(self, config, endpoint_path, payload, source_name).await
+                openai::generate(self, config, endpoint_path, payload, source_name)
+                    .await
+                    .map(ChatCompletionRepositoryGenerateResponse::from_body)
             }
             ChatCompletionSource::Custom => {
                 if endpoint_path == "/responses" {
@@ -494,12 +496,14 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                     )
                     .await
                 } else {
-                    openai::generate(self, config, endpoint_path, payload, source_name).await
+                    openai::generate(self, config, endpoint_path, payload, source_name)
+                        .await
+                        .map(ChatCompletionRepositoryGenerateResponse::from_body)
                 }
             }
-            ChatCompletionSource::Cohere => {
-                cohere::generate(self, config, endpoint_path, payload).await
-            }
+            ChatCompletionSource::Cohere => cohere::generate(self, config, endpoint_path, payload)
+                .await
+                .map(ChatCompletionRepositoryGenerateResponse::from_body),
             ChatCompletionSource::Claude => {
                 claude::generate(self, config, endpoint_path, payload, source_name).await
             }

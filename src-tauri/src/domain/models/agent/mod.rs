@@ -2,7 +2,7 @@ use std::path::Component;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::domain::errors::DomainError;
 
@@ -117,6 +117,81 @@ pub struct AgentToolResult {
     pub error_code: Option<String>,
     #[serde(default)]
     pub resource_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentModelRole {
+    System,
+    Developer,
+    User,
+    Assistant,
+    Tool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum AgentModelContentPart {
+    Text {
+        text: String,
+    },
+    Reasoning {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default)]
+        provider_metadata: Value,
+    },
+    ToolCall {
+        call: AgentToolCall,
+    },
+    ToolResult {
+        result: AgentToolResult,
+    },
+    Media {
+        mime_type: String,
+        value: Value,
+    },
+    ResourceRef {
+        uri: String,
+    },
+    Native {
+        provider: String,
+        value: Value,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelMessage {
+    pub role: AgentModelRole,
+    #[serde(default)]
+    pub parts: Vec<AgentModelContentPart>,
+    #[serde(default)]
+    pub provider_metadata: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelRequest {
+    pub payload: Map<String, Value>,
+    pub messages: Vec<AgentModelMessage>,
+    pub tools: Vec<AgentToolSpec>,
+    #[serde(default)]
+    pub tool_choice: Value,
+    #[serde(default)]
+    pub provider_state: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelResponse {
+    pub message: AgentModelMessage,
+    pub tool_calls: Vec<AgentToolCall>,
+    pub text: String,
+    #[serde(default)]
+    pub provider_metadata: Value,
+    #[serde(default)]
+    pub raw_response: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

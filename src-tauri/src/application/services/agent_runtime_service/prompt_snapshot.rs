@@ -3,6 +3,9 @@ use serde_json::{Map, Value, json};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::BuiltinAgentToolRegistry;
+use crate::domain::models::agent::{
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole,
+};
 
 pub(super) fn request_from_prompt_snapshot(
     prompt_snapshot: &Value,
@@ -34,8 +37,10 @@ pub(super) fn request_from_prompt_snapshot(
 pub(super) fn prepare_agent_tool_request(
     mut request: ChatCompletionGenerateRequestDto,
     registry: &BuiltinAgentToolRegistry,
-) -> Result<ChatCompletionGenerateRequestDto, ApplicationError> {
-    let messages = ensure_messages_array(&mut request.payload)?;
+) -> Result<AgentModelRequest, ApplicationError> {
+    reject_external_tool_request(&request.payload)?;
+
+    let mut messages = messages_from_payload(&mut request.payload)?;
     let agent_system_prompt = [
         "TauriTavern Agent Mode is active.",
         "Work through Agent tools. Tool results are private run state, not chat messages.",
@@ -52,25 +57,21 @@ pub(super) fn prepare_agent_tool_request(
         "Do not answer directly without finishing through workspace_finish.",
     ]
     .join("\n");
-    messages.insert(
-        0,
-        json!({
-            "role": "system",
-            "content": agent_system_prompt,
-        }),
-    );
+    messages.insert(0, text_message(AgentModelRole::System, agent_system_prompt));
 
-    request
-        .payload
-        .insert("tools".to_string(), Value::Array(registry.openai_tools()));
-    request
-        .payload
-        .insert("tool_choice".to_string(), Value::String("auto".to_string()));
+    request.payload.remove("tools");
+    request.payload.remove("tool_choice");
     request
         .payload
         .insert("stream".to_string(), Value::Bool(false));
 
-    Ok(request)
+    Ok(AgentModelRequest {
+        payload: request.payload,
+        messages,
+        tools: registry.specs().to_vec(),
+        tool_choice: Value::String("auto".to_string()),
+        provider_state: Value::Null,
+    })
 }
 
 pub(super) fn reject_external_tool_request(
@@ -83,6 +84,13 @@ pub(super) fn reject_external_tool_request(
     if has_tools {
         return Err(ApplicationError::ValidationError(
             "agent.external_tools_unsupported_phase2b: Agent Phase 2B owns the tool registry"
+                .to_string(),
+        ));
+    }
+
+    if payload.contains_key("tool_choice") {
+        return Err(ApplicationError::ValidationError(
+            "agent.external_tool_choice_unsupported_phase2b: Agent Phase 2B owns tool choice"
                 .to_string(),
         ));
     }
@@ -112,11 +120,13 @@ pub(super) fn reject_external_tool_request(
     Ok(())
 }
 
-pub(super) fn request_summary(payload: &Map<String, Value>) -> Value {
+pub(super) fn request_summary(request: &AgentModelRequest) -> Value {
     json!({
-        "chatCompletionSource": payload.get("chat_completion_source").and_then(Value::as_str),
-        "model": payload.get("model").and_then(Value::as_str),
-        "messageCount": payload.get("messages").and_then(Value::as_array).map(|messages| messages.len()),
+        "chatCompletionSource": request.payload.get("chat_completion_source").and_then(Value::as_str),
+        "customApiFormat": request.payload.get("custom_api_format").and_then(Value::as_str),
+        "model": request.payload.get("model").and_then(Value::as_str),
+        "messageCount": request.messages.len(),
+        "toolCount": request.tools.len(),
     })
 }
 
@@ -141,35 +151,138 @@ fn find_payload_object(value: &Value) -> Option<Map<String, Value>> {
     None
 }
 
-fn ensure_messages_array(
+fn messages_from_payload(
     payload: &mut Map<String, Value>,
-) -> Result<&mut Vec<Value>, ApplicationError> {
-    if !payload.contains_key("messages") {
-        let prompt = payload
-            .get("prompt")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| {
-                ApplicationError::ValidationError(
-                    "agent.tool_loop_requires_messages: prompt snapshot must contain messages or a string prompt"
-                        .to_string(),
-                )
-            })?;
-        payload.insert(
-            "messages".to_string(),
-            Value::Array(vec![json!({
+) -> Result<Vec<AgentModelMessage>, ApplicationError> {
+    let messages = match payload.remove("messages") {
+        Some(Value::Array(messages)) => messages,
+        Some(Value::String(prompt)) => vec![json!({
+            "role": "user",
+            "content": prompt,
+        })],
+        Some(_) => {
+            return Err(ApplicationError::ValidationError(
+                "agent.tool_loop_requires_messages: messages must be an array".to_string(),
+            ));
+        }
+        None => {
+            let prompt = payload
+                .remove("prompt")
+                .and_then(|value| value.as_str().map(str::to_string))
+                .ok_or_else(|| {
+                    ApplicationError::ValidationError(
+                        "agent.tool_loop_requires_messages: prompt snapshot must contain messages or a string prompt"
+                            .to_string(),
+                    )
+                })?;
+            vec![json!({
                 "role": "user",
                 "content": prompt,
-            })]),
+            })]
+        }
+    };
+    payload.remove("prompt");
+
+    messages
+        .iter()
+        .map(message_from_openai_value)
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn message_from_openai_value(value: &Value) -> Result<AgentModelMessage, ApplicationError> {
+    let object = value.as_object().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "agent.invalid_prompt_snapshot: message must be an object".to_string(),
+        )
+    })?;
+    let role = match object
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("user")
+        .trim()
+        .to_lowercase()
+        .as_str()
+    {
+        "system" => AgentModelRole::System,
+        "developer" => AgentModelRole::Developer,
+        "assistant" => AgentModelRole::Assistant,
+        "tool" | "function" => AgentModelRole::Tool,
+        _ => AgentModelRole::User,
+    };
+
+    let provider_metadata = json!({
+        "openai": {
+            "name": object.get("name").and_then(Value::as_str),
+        }
+    });
+
+    Ok(AgentModelMessage {
+        role,
+        parts: content_parts_from_openai_value(object.get("content")),
+        provider_metadata,
+    })
+}
+
+fn content_parts_from_openai_value(value: Option<&Value>) -> Vec<AgentModelContentPart> {
+    match value {
+        Some(Value::String(text)) => vec![AgentModelContentPart::Text { text: text.clone() }],
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .map(|part| match part {
+                Value::String(text) => AgentModelContentPart::Text { text: text.clone() },
+                Value::Object(object)
+                    if object.get("type").and_then(Value::as_str) == Some("text") =>
+                {
+                    AgentModelContentPart::Text {
+                        text: object
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    }
+                }
+                other => AgentModelContentPart::Native {
+                    provider: "openai.content_part".to_string(),
+                    value: other.clone(),
+                },
+            })
+            .collect(),
+        Some(Value::Null) | None => Vec::new(),
+        Some(other) => vec![AgentModelContentPart::Text {
+            text: other.to_string(),
+        }],
+    }
+}
+
+fn text_message(role: AgentModelRole, text: String) -> AgentModelMessage {
+    AgentModelMessage {
+        role,
+        parts: vec![AgentModelContentPart::Text { text }],
+        provider_metadata: Value::Null,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{reject_external_tool_request, request_from_prompt_snapshot};
+
+    #[test]
+    fn rejects_external_tool_choice_even_when_null() {
+        let prompt_snapshot = json!({
+            "chatCompletionPayload": {
+                "messages": [{ "role": "user", "content": "hello" }],
+                "tool_choice": null
+            }
+        });
+        let request = request_from_prompt_snapshot(&prompt_snapshot).expect("request");
+
+        let error = reject_external_tool_request(&request.payload).expect_err("tool_choice fails");
+        assert!(
+            error
+                .to_string()
+                .contains("agent.external_tool_choice_unsupported_phase2b")
         );
     }
-
-    payload
-        .get_mut("messages")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "agent.tool_loop_requires_messages: messages must be an array".to_string(),
-            )
-        })
 }
