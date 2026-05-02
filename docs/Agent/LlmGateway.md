@@ -144,7 +144,7 @@ Provider native metadata 必须当作 opaque continuation state。
 - OpenAI Responses 续接时，gateway 根据 `messageCursor` 只发送新消息，并注入 `previous_response_id`。
 - Claude / Gemini / OpenAI Responses / Gemini Interactions 会记录 `nativeContinuation`；tool call 存在但 native metadata 丢失时 fail-fast。
 
-OpenAI Responses Agent 路径使用 persistent WebSocket session。session 由 `sessionId` 复用，run 完成、失败或取消后异步关闭；关闭动作不得阻塞 run 最终状态落盘。
+OpenAI Responses Agent 路径使用 persistent WebSocket session。session 由 `sessionId` 复用，建连复用 `HttpClientPool` 的 ChatCompletion WebSocket profile；run 完成、失败或取消后异步关闭，关闭动作不得阻塞 run 最终状态落盘。
 
 ## 6. Tool Schema
 

@@ -11,7 +11,7 @@
 - Rust 后端已有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 前端已挂载 `window.__TAURITAVERN__.api.agent` 最小 Host ABI。
 - Agent 启动仍通过 `PromptSnapshot` 兼容桥进入；`GenerationIntent + ContextFrame` 尚未接管上下文组装。
-- LLM 调用仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 或取消链路。Responses WebSocket 与 HTTP client pool 的 proxy / timeout parity 是当前传输层待硬化项，见 `docs/CurrentState/NativeApiFormats.md`。
+- LLM 调用仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 或取消链路。Responses WebSocket 建连已收敛到 `HttpClientPool` 的 ChatCompletion WebSocket profile，见 `docs/CurrentState/NativeApiFormats.md`。
 - Agent runtime 已不再把 OpenAI-compatible raw JSON 当作内部事实；运行时使用 canonical `AgentModelRequest` / `AgentModelResponse` / `AgentModelMessage` / `AgentModelContentPart`。
 - `AgentModelGateway` 在 Agent canonical IR 与现有 `ChatCompletionGenerateRequestDto` 之间转换；provider-native metadata 作为 opaque `Native` part 保留。
 - `provider_state` 已是 run-scoped continuation contract；OpenAI Responses 使用它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
@@ -336,7 +336,7 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 ## 守护契约
 
 - Agent Mode off 时 Legacy `Generate()` 行为不变。
-- LLM 调用不绕过 `ChatCompletionService`、LLM API log、secret、iOS policy、prompt cache；Responses WebSocket 的 proxy/timeout parity 作为传输债务跟踪，不得扩散成新的并行 LLM 调用链。
+- LLM 调用不绕过 `ChatCompletionService`、LLM API log、secret、iOS policy、prompt cache；Responses WebSocket 必须继续复用 `HttpClientPool`，不得扩散成新的并行 LLM 调用链。
 - Agent runtime 使用 canonical model IR，不把 provider native format 当内部业务事实。
 - Provider native metadata 不解析、不清洗、不改写；丢失必要 native metadata 必须 fail-fast 或测试失败。
 - Tool call id 是不透明字符串。

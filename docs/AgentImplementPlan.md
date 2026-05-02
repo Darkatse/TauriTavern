@@ -12,7 +12,7 @@
 - 前端 Host ABI 已挂载 `window.__TAURITAVERN__.api.agent`。
 - Agent 启动仍通过 `PromptSnapshot` 兼容桥进入；`GenerationIntent + ContextFrame` 尚未接管 context assembly。
 - `startRunFromLegacyGenerate()` 使用 Legacy dryRun 捕获 `chatCompletionPayload` 与本轮最终 `worldInfoActivation`。
-- LLM 调用复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 和取消链路。Responses WebSocket 与 HTTP client pool 的 proxy / timeout parity 是当前传输层待硬化项。
+- LLM 调用复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 和取消链路。Responses WebSocket 建连已收敛到 `HttpClientPool` 的 ChatCompletion WebSocket profile。
 - Tool loop 由 Rust runtime 独占推进，不递归调用前端 `Generate()`。
 - Agent runtime 已使用 canonical model IR，不再把 OpenAI-compatible raw JSON 当作运行时事实。
 - `provider_state` 已用于 run-scoped continuation。OpenAI Responses 通过它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
@@ -210,7 +210,7 @@ prepareCommit / saveReply / finalizeCommit
 - 增加 same-provider native metadata loss 测试。
 - 增加 cross-provider switch policy 测试，明确哪些 metadata 不可迁移。
 - 继续收紧 `provider_state` 契约测试，覆盖 Responses `messageCursor`、`previousResponseId`、session close 与日志剥离。
-- 对齐 Responses WebSocket connector 与 HTTP client pool 的 proxy / timeout 语义，避免普通 Custom ChatCompletion 路径被 transport 细节隐性改变。
+- 继续保持 Responses WebSocket connector 复用 HTTP client pool，避免普通 Custom ChatCompletion 路径被 transport 细节隐性改变。
 - 增加 schema sanitizer 覆盖更多 JSON Schema edge cases。
 
 ### 8.2 Profile 与 Context Policy

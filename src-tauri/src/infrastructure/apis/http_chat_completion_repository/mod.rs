@@ -130,6 +130,11 @@ impl HttpChatCompletionRepository {
             .client(HttpClientProfile::ChatCompletionStream)
     }
 
+    fn websocket_client(&self) -> Result<(Client, u64), DomainError> {
+        self.http_clients
+            .client_with_revision(HttpClientProfile::ChatCompletionWebSocket)
+    }
+
     fn build_url(base_url: &str, path: &str) -> String {
         format!("{}{}", base_url.trim_end_matches('/'), path)
     }

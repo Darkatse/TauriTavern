@@ -106,14 +106,11 @@ sessionId -> ResponsesWsSessionPool -> response.create -> response.completed
 当前行为：
 
 - 同一个 `sessionId` 会复用同一条 WebSocket，除非 base URL / endpoint 的 connection key 变化。
+- WebSocket 建连复用 `HttpClientPool` 的 ChatCompletion WebSocket profile，通过统一 HTTP client 发起 Upgrade；代理、TLS/client 构建与连接超时语义与 ChatCompletion transport 对齐。
+- connection key 包含 transport revision；request proxy / client 配置变更会触发 session 重建。
 - persistent session 路径失败时直接返回错误，不做 HTTP fallback。
 - session 出错时会从 pool 移除。
 - Agent run 完成、失败或取消后，runtime 会在最终状态写入之后异步关闭 provider session，清理动作不阻塞 `awaiting_commit` / `failed` / `cancelled` 落盘。
-
-已知传输债务：
-
-- WebSocket connector 当前由 OpenAI Responses repository 直接建立；它仍在 `ChatCompletionService` / logging / secret / policy 链路内，但与既有 HTTP client pool 的 proxy / timeout 语义尚未完全对齐。
-- 后续硬化该 transport 时，不得改变本文件定义的 `provider_state` 字段契约与 fail-fast 语义。
 
 ## 6. Native Metadata Fail-Fast
 

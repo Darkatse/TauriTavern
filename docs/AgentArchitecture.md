@@ -46,7 +46,7 @@ MCP / Tool Direct Call
 - 后端已经采用 Clean Architecture，依赖方向是外层依赖内层、内层定义接口、外层实现接口。见 `docs/BackendStructure.md:7`、`docs/BackendStructure.md:40`。
 - 应用服务由 `AppState` 管理并在 `bootstrap::build_services()` 装配。见 `src-tauri/src/app.rs:36`、`src-tauri/src/app/bootstrap.rs:150`。
 - 当前 LLM 请求经过 `ChatCompletionService`，该服务负责 provider 解析、iOS policy、endpoint override policy、payload build、prompt caching 和取消注册。见 `src-tauri/src/application/services/chat_completion_service/mod.rs:32`、`src-tauri/src/application/services/chat_completion_service/mod.rs:302`、`src-tauri/src/application/services/chat_completion_service/mod.rs:358`。
-- 当前 LLM API 日志依赖 bootstrap 中装配的 `LoggingChatCompletionRepository` wrapper；Agent 不得直接调用 `HttpChatCompletionRepository` 绕过日志、secret 或 policy。Responses WebSocket 的 proxy / timeout parity 是当前传输债务，不应扩散成第二套 LLM 调用链。见 `src-tauri/src/app/bootstrap.rs:372`。
+- 当前 LLM API 日志依赖 bootstrap 中装配的 `LoggingChatCompletionRepository` wrapper；Agent 不得直接调用 `HttpChatCompletionRepository` 绕过日志、secret 或 policy。Responses WebSocket 建连已复用 `HttpClientPool` 的 ChatCompletion WebSocket profile，不应扩散成第二套 LLM 调用链。见 `src-tauri/src/app/bootstrap.rs:372`。
 - 当前 chat payload 分片读写由 `ChatService` 和 `ChatRepository` 承担，windowed save/patch 是正式契约。见 `src-tauri/src/application/services/chat_service.rs:495`、`src-tauri/src/application/services/chat_service.rs:563`、`src-tauri/src/domain/repositories/chat_repository.rs:145`、`src-tauri/src/domain/repositories/chat_repository.rs:162`。
 - 前端 Public ABI 的统一入口是 `window.__TAURITAVERN__`，应保持小而稳定。见 `docs/FrontendHostContract.md:92`、`src/tauri/main/bootstrap.js:139`。
 - 当前 `Generate()` 支持 dryRun，并在 `GENERATE_AFTER_DATA` 提供生成请求数据。见 `src/script.js:4660`、`src/script.js:5743`。
@@ -284,7 +284,7 @@ src-tauri/src/
 - 复用现有 provider 能力、policy 检查、prompt caching、logging、proxy/client 配置、cancellation。
 - 输出 provider-agnostic `ModelResponse` / streaming delta / tool call。
 
-当前已落地 `AgentModelGateway` wrapper：Agent runtime 消费 canonical `AgentModelRequest` / `AgentModelResponse`，gateway 再编码为现有 `ChatCompletionGenerateRequestDto` 并调用 `ChatCompletionService::generate_exchange_with_cancel()`。它仍不是新 HTTP client，也不绕过 `HttpChatCompletionRepository` 外层的 logging、policy、secret、prompt cache 和 cancel 链路。Responses WebSocket connector 与 HTTP client pool 的 proxy / timeout parity 仍是待硬化传输债务。
+当前已落地 `AgentModelGateway` wrapper：Agent runtime 消费 canonical `AgentModelRequest` / `AgentModelResponse`，gateway 再编码为现有 `ChatCompletionGenerateRequestDto` 并调用 `ChatCompletionService::generate_exchange_with_cancel()`。它仍不是新 HTTP client，也不绕过 `HttpChatCompletionRepository` 外层的 logging、policy、secret、prompt cache 和 cancel 链路。Responses WebSocket 建连由 `HttpClientPool` 提供统一代理、TLS/client 构建与连接超时语义。
 
 后续应把当前 `agent_model_gateway.rs` 拆成 provider adapter 模块，但不能退回到 runtime 直接拼 provider-specific payload。
 

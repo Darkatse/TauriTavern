@@ -3,15 +3,14 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
-use reqwest::header::{ACCEPT, CONTENT_TYPE};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderName, HeaderValue};
+use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, mpsc};
-use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::handshake::client::Request as WsRequest;
-use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION as WS_AUTHORIZATION;
-use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
+use tokio_tungstenite::tungstenite::handshake::client::generate_key;
+use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
+use tokio_tungstenite::tungstenite::protocol::Role;
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
@@ -22,8 +21,7 @@ use crate::domain::repositories::chat_completion_repository::{
 use super::HttpChatCompletionRepository;
 use super::normalizers;
 
-type ResponsesWsStream =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type ResponsesWsStream = tokio_tungstenite::WebSocketStream<reqwest::Upgraded>;
 
 #[derive(Default)]
 pub(super) struct ResponsesWsSessionPool {
@@ -38,18 +36,20 @@ struct ResponsesWsSession {
 impl ResponsesWsSessionPool {
     async fn session(
         &self,
+        repository: &HttpChatCompletionRepository,
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
         session_id: &str,
     ) -> Result<Arc<Mutex<ResponsesWsSession>>, DomainError> {
-        let connection_key = ws_connection_key(config, endpoint_path)?;
+        let (client, transport_revision) = repository.websocket_client()?;
+        let connection_key = ws_connection_key(config, endpoint_path, transport_revision)?;
         if let Some(session) = self.sessions.lock().await.get(session_id).cloned() {
             if session.lock().await.connection_key == connection_key {
                 return Ok(session);
             }
         }
 
-        let socket = connect_responses_ws(config, endpoint_path).await?;
+        let socket = connect_responses_ws(client, config, endpoint_path).await?;
         let session = Arc::new(Mutex::new(ResponsesWsSession {
             connection_key,
             socket,
@@ -407,6 +407,7 @@ pub(super) async fn generate(
     if let Some(session_id) = provider_session_id(payload)? {
         return generate_persistent_ws(
             &repository.openai_responses_ws_sessions,
+            repository,
             config,
             endpoint_path,
             payload,
@@ -415,7 +416,7 @@ pub(super) async fn generate(
         .await;
     }
 
-    match generate_ws(config, endpoint_path, payload).await {
+    match generate_ws(repository, config, endpoint_path, payload).await {
         Ok(response) => Ok(response),
         Err(error) if is_cancelled(&error) => Err(error),
         Err(error) => {
@@ -479,6 +480,7 @@ pub(super) async fn generate_stream(
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
     match generate_stream_ws(
+        repository,
         config,
         endpoint_path,
         payload,
@@ -575,13 +577,16 @@ struct ResponsesWsStreamError {
 
 async fn generate_persistent_ws(
     pool: &ResponsesWsSessionPool,
+    repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
     session_id: &str,
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let event = response_create_event(payload)?;
-    let session = pool.session(config, endpoint_path, session_id).await?;
+    let session = pool
+        .session(repository, config, endpoint_path, session_id)
+        .await?;
     let result = {
         let mut session = session.lock().await;
         session.generate(event).await
@@ -658,11 +663,13 @@ impl ResponsesWsSession {
 }
 
 async fn generate_ws(
+    repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-    let mut socket = connect_responses_ws(config, endpoint_path).await?;
+    let (client, _transport_revision) = repository.websocket_client()?;
+    let mut socket = connect_responses_ws(client, config, endpoint_path).await?;
     let event = response_create_event(payload)?;
     socket
         .send(Message::Text(event.to_string().into()))
@@ -710,13 +717,21 @@ async fn generate_ws(
 }
 
 async fn generate_stream_ws(
+    repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
     sender: ChatCompletionStreamSender,
     mut cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), ResponsesWsStreamError> {
-    let mut socket = connect_responses_ws(config, endpoint_path)
+    let (client, _transport_revision) =
+        repository
+            .websocket_client()
+            .map_err(|error| ResponsesWsStreamError {
+                error,
+                emitted: false,
+            })?;
+    let mut socket = connect_responses_ws(client, config, endpoint_path)
         .await
         .map_err(|error| ResponsesWsStreamError {
             error,
@@ -838,64 +853,101 @@ fn forward_ws_stream_event(
 }
 
 async fn connect_responses_ws(
+    client: Client,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
-) -> Result<
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
-    DomainError,
-> {
-    let request = build_ws_request(config, endpoint_path)?;
-    let (socket, _) = connect_async(request).await.map_err(|error| {
+) -> Result<ResponsesWsStream, DomainError> {
+    let key = generate_key();
+    let request = build_ws_upgrade_request(&client, config, endpoint_path, &key)?;
+    let response = client.execute(request).await.map_err(|error| {
         DomainError::InternalError(format!(
-            "OpenAI Responses WebSocket connect failed: {error}"
+            "OpenAI Responses WebSocket upgrade request failed: {error}"
         ))
     })?;
-    Ok(socket)
+
+    if response.status() != StatusCode::SWITCHING_PROTOCOLS {
+        return Err(HttpChatCompletionRepository::map_error_response(
+            "OpenAI Responses WebSocket",
+            response,
+            "OpenAI Responses WebSocket upgrade failed",
+        )
+        .await);
+    }
+    verify_ws_upgrade_response(&response, &key)?;
+
+    let upgraded = response.upgrade().await.map_err(|error| {
+        DomainError::InternalError(format!(
+            "OpenAI Responses WebSocket upgrade failed: {error}"
+        ))
+    })?;
+    Ok(tokio_tungstenite::WebSocketStream::from_raw_socket(upgraded, Role::Client, None).await)
 }
 
-fn build_ws_request(
+fn build_ws_upgrade_request(
+    client: &Client,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
-) -> Result<WsRequest, DomainError> {
-    let ws_url = responses_ws_url(&config.base_url, endpoint_path)?;
-    let mut request = ws_url.into_client_request().map_err(|error| {
+    key: &str,
+) -> Result<reqwest::Request, DomainError> {
+    let url = responses_ws_upgrade_url(&config.base_url, endpoint_path)?;
+    let request = client.get(url);
+    let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
+    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let mut request = request.build().map_err(|error| {
         DomainError::InvalidData(format!(
-            "Invalid OpenAI Responses WebSocket request: {error}"
+            "Invalid OpenAI Responses WebSocket upgrade request: {error}"
         ))
     })?;
 
-    if let Some(header) = websocket_authorization_header(config) {
-        let value = HeaderValue::from_str(&header).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Invalid OpenAI Responses WebSocket Authorization header: {error}"
-            ))
-        })?;
-        request.headers_mut().insert(WS_AUTHORIZATION, value);
-    }
-
-    for (key, value) in &config.extra_headers {
-        if key.trim().is_empty() || value.trim().is_empty() {
-            continue;
-        }
-        let name = HeaderName::from_bytes(key.as_bytes()).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Invalid OpenAI Responses WebSocket header name {key}: {error}"
-            ))
-        })?;
-        let value = HeaderValue::from_str(value).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Invalid OpenAI Responses WebSocket header value for {key}: {error}"
-            ))
-        })?;
-        request.headers_mut().insert(name, value);
-    }
+    let key = HeaderValue::from_str(key).map_err(|error| {
+        DomainError::InvalidData(format!(
+            "Invalid OpenAI Responses WebSocket key header: {error}"
+        ))
+    })?;
+    let headers = request.headers_mut();
+    headers.insert(
+        HeaderName::from_static("connection"),
+        HeaderValue::from_static("Upgrade"),
+    );
+    headers.insert(
+        HeaderName::from_static("upgrade"),
+        HeaderValue::from_static("websocket"),
+    );
+    headers.insert(
+        HeaderName::from_static("sec-websocket-version"),
+        HeaderValue::from_static("13"),
+    );
+    headers.insert(HeaderName::from_static("sec-websocket-key"), key);
 
     Ok(request)
+}
+
+fn verify_ws_upgrade_response(response: &reqwest::Response, key: &str) -> Result<(), DomainError> {
+    let expected = derive_accept_key(key.as_bytes());
+    let accept = response
+        .headers()
+        .get(HeaderName::from_static("sec-websocket-accept"))
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .ok_or_else(|| {
+            DomainError::InternalError(
+                "OpenAI Responses WebSocket upgrade missing Sec-WebSocket-Accept".to_string(),
+            )
+        })?;
+
+    if accept != expected {
+        return Err(DomainError::InternalError(
+            "OpenAI Responses WebSocket upgrade returned invalid Sec-WebSocket-Accept".to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 fn ws_connection_key(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
+    transport_revision: u64,
 ) -> Result<String, DomainError> {
     let mut headers = config
         .extra_headers
@@ -905,8 +957,9 @@ fn ws_connection_key(
     headers.sort_unstable();
 
     Ok(format!(
-        "{}\n{}\n{}",
+        "{}\n{}\n{}\n{}",
         responses_ws_url(&config.base_url, endpoint_path)?,
+        transport_revision,
         websocket_authorization_header(config).unwrap_or_default(),
         headers.join("\n")
     ))
@@ -923,6 +976,29 @@ fn websocket_authorization_header(config: &ChatCompletionApiConfig) -> Option<St
             let api_key = config.api_key.trim();
             (!api_key.is_empty()).then(|| format!("Bearer {api_key}"))
         })
+}
+
+fn responses_ws_upgrade_url(base_url: &str, endpoint_path: &str) -> Result<String, DomainError> {
+    let http_url = HttpChatCompletionRepository::build_url(base_url, endpoint_path);
+    let mut url = url::Url::parse(&http_url).map_err(|error| {
+        DomainError::InvalidData(format!(
+            "Invalid OpenAI Responses WebSocket URL {http_url}: {error}"
+        ))
+    })?;
+    let scheme = match url.scheme() {
+        "https" | "http" => return Ok(url.to_string()),
+        "wss" => "https",
+        "ws" => "http",
+        other => {
+            return Err(DomainError::InvalidData(format!(
+                "OpenAI Responses WebSocket URL must use http, https, ws, or wss scheme: {other}"
+            )));
+        }
+    };
+    url.set_scheme(scheme).map_err(|_| {
+        DomainError::InvalidData(format!("Invalid OpenAI Responses WebSocket URL {http_url}"))
+    })?;
+    Ok(url.to_string())
 }
 
 fn responses_ws_url(base_url: &str, endpoint_path: &str) -> Result<String, DomainError> {
@@ -1073,6 +1149,18 @@ mod tests {
     }
 
     #[test]
+    fn responses_ws_upgrade_url_maps_ws_schemes_back_to_http() {
+        assert_eq!(
+            responses_ws_upgrade_url("wss://api.openai.com/v1", "/responses").unwrap(),
+            "https://api.openai.com/v1/responses"
+        );
+        assert_eq!(
+            responses_ws_upgrade_url("ws://localhost:8080/v1", "/responses").unwrap(),
+            "http://localhost:8080/v1/responses"
+        );
+    }
+
+    #[test]
     fn response_create_event_removes_http_only_fields() {
         let mut payload = json!({
             "model": "gpt-test",
@@ -1105,15 +1193,41 @@ mod tests {
             anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
         };
 
-        let request = build_ws_request(&config, "/responses").unwrap();
+        let client = Client::new();
+        let request = build_ws_upgrade_request(&client, &config, "/responses", "test-key").unwrap();
 
         assert_eq!(
             request
                 .headers()
-                .get(WS_AUTHORIZATION)
+                .get("authorization")
                 .and_then(|value| value.to_str().ok()),
             Some("Bearer override")
         );
+        assert_eq!(
+            request
+                .headers()
+                .get("sec-websocket-key")
+                .and_then(|value| value.to_str().ok()),
+            Some("test-key")
+        );
+    }
+
+    #[test]
+    fn ws_connection_key_includes_transport_revision() {
+        let config = ChatCompletionApiConfig {
+            base_url: "https://api.openai.com/v1".to_string(),
+            api_key: "secret".to_string(),
+            authorization_header: None,
+            extra_headers: HashMap::new(),
+            anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+        };
+
+        let first = ws_connection_key(&config, "/responses", 1).unwrap();
+        let second = ws_connection_key(&config, "/responses", 2).unwrap();
+
+        assert_ne!(first, second);
+        assert!(first.contains("\n1\nBearer secret\n"));
+        assert!(second.contains("\n2\nBearer secret\n"));
     }
 
     #[test]

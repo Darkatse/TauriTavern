@@ -35,7 +35,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", default-features = false, features = ["io"] }
 futures-util = "0.3"
-tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
 reqwest = { version = "0.13", default-features = false, features = ["http2", "json", "query", "rustls", "socks", "stream"] }
 bytes = "1"
 async-compression = { version = "0.4", features = ["tokio", "zstd"] }

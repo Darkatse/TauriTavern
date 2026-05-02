@@ -27,6 +27,7 @@ pub enum HttpClientProfile {
     Tokenizer,
     ChatCompletion,
     ChatCompletionStream,
+    ChatCompletionWebSocket,
     ImageGeneration,
     Translation,
     Tts,
@@ -77,11 +78,19 @@ impl HttpClientPool {
     }
 
     pub fn client(&self, profile: HttpClientProfile) -> Result<Client, DomainError> {
+        self.client_with_revision(profile)
+            .map(|(client, _revision)| client)
+    }
+
+    pub(crate) fn client_with_revision(
+        &self,
+        profile: HttpClientProfile,
+    ) -> Result<(Client, u64), DomainError> {
         loop {
             let (revision, proxy) = {
                 let state = self.state.read().unwrap();
                 if let Some(client) = state.clients.get(&profile) {
-                    return Ok(client.clone());
+                    return Ok((client.clone(), state.revision));
                 }
 
                 (state.revision, state.proxy.clone())
@@ -95,10 +104,10 @@ impl HttpClientPool {
             }
 
             match state.clients.entry(profile) {
-                Entry::Occupied(entry) => return Ok(entry.get().clone()),
+                Entry::Occupied(entry) => return Ok((entry.get().clone(), state.revision)),
                 Entry::Vacant(entry) => {
                     entry.insert(client.clone());
-                    return Ok(client);
+                    return Ok((client, state.revision));
                 }
             }
         }
@@ -155,6 +164,9 @@ fn build_profile_client(
         HttpClientProfile::ChatCompletionStream => {
             builder.connect_timeout(CHAT_COMPLETION_CONNECT_TIMEOUT)
         }
+        HttpClientProfile::ChatCompletionWebSocket => builder
+            .http1_only()
+            .connect_timeout(CHAT_COMPLETION_CONNECT_TIMEOUT),
         HttpClientProfile::ImageGeneration => {
             builder.connect_timeout(IMAGE_GENERATION_CONNECT_TIMEOUT)
         }
@@ -253,6 +265,24 @@ mod tests {
         let state = pool.state.read().unwrap();
         assert_eq!(state.clients.len(), 0);
         assert_eq!(state.revision, revision_before + 1);
+    }
+
+    #[test]
+    fn client_with_revision_tracks_proxy_revision() {
+        let pool = HttpClientPool::new();
+
+        let (_, initial_revision) = pool
+            .client_with_revision(HttpClientProfile::ChatCompletionWebSocket)
+            .unwrap();
+
+        pool.apply_request_proxy_settings(&RequestProxySettings::default())
+            .unwrap();
+
+        let (_, next_revision) = pool
+            .client_with_revision(HttpClientProfile::ChatCompletionWebSocket)
+            .unwrap();
+
+        assert_eq!(next_revision, initial_revision + 1);
     }
 
     #[test]

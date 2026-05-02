@@ -107,9 +107,10 @@ Connection Profiles（Connection Manager 扩展）：
 - 普通 Custom `/responses` 非流式请求当前会先尝试 WebSocket `response.create`，失败后回退 HTTP（取消错误不回退）
 - 普通 Custom `/responses` 流式请求当前会先尝试 WebSocket stream；若失败且尚未向前端发送 chunk，则回退 HTTP streaming
 - 带内部 `_tauritavern_provider_state.sessionId` 的请求走 run-scoped persistent WebSocket session；该路径失败时不回退 HTTP
+- Responses WebSocket 建连通过 `HttpClientPool` 的 ChatCompletion WebSocket profile 发起 HTTP Upgrade，再交给 WebSocket frame stream；因此沿用现有代理、TLS/client 构建与连接超时契约
+- persistent session 的 connection key 包含 transport revision；request proxy / client 配置变更后会重建 session
 - 上游 HTTP payload 会剥离 `_tauritavern_provider_state`
 - WebSocket `response.create` payload 会剥离 `_tauritavern_provider_state`、`stream` 与 `background`
-- 已知传输债务：当前 Responses WebSocket connector 仍需与既有 HTTP client pool 的 proxy / timeout 语义完全对齐；后续修复不得改变 Custom / Agent payload 契约
 
 流式侧（repository）：
 - 解析 Responses 语义事件（如 `response.output_text.delta` / `response.output_item.added` / `response.function_call_arguments.delta`）
