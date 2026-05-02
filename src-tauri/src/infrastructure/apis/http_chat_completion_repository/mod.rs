@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use reqwest::header::AUTHORIZATION;
@@ -31,7 +31,7 @@ struct PromptCachePerformanceUsage {
 
 pub struct HttpChatCompletionRepository {
     http_clients: Arc<HttpClientPool>,
-    openai_responses_previous_response_id_by_call_id: Mutex<HashMap<String, String>>,
+    openai_responses_ws_sessions: openai_responses::ResponsesWsSessionPool,
 }
 
 #[derive(Default)]
@@ -117,7 +117,7 @@ impl HttpChatCompletionRepository {
     pub fn new(http_clients: Arc<HttpClientPool>) -> Self {
         Self {
             http_clients,
-            openai_responses_previous_response_id_by_call_id: Mutex::new(HashMap::new()),
+            openai_responses_ws_sessions: openai_responses::ResponsesWsSessionPool::default(),
         }
     }
 
@@ -619,6 +619,10 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                     .await
             }
         }
+    }
+
+    async fn close_provider_session(&self, session_id: &str) {
+        self.openai_responses_ws_sessions.close(session_id).await;
     }
 }
 

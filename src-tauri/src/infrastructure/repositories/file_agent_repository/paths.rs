@@ -200,6 +200,7 @@ pub(super) fn validate_workspace_root_path(value: &str) -> Result<String, Domain
         path.as_str(),
         "runs"
             | "input"
+            | "model-responses"
             | "tool-args"
             | "tool-results"
             | "checkpoints"

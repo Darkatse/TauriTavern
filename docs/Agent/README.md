@@ -22,4 +22,4 @@
 
 实时开发进度不写在本目录；请更新 `docs/CurrentState/AgentFramework.md`。
 
-截至 2026-05-02，Phase 2D canonical model IR、provider native metadata 保真、上下文只读工具、workspace 读改工具循环与前端 dryRun adapter 已落地。当前真实能力边界以 `docs/CurrentState/AgentFramework.md` 为准；本目录中的 profile、MCP、timeline、diff/rollback 等内容仍是后续设计。
+截至 2026-05-02，canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、workspace 读改工具循环与前端 dryRun adapter 已落地。当前真实能力边界以 `docs/CurrentState/AgentFramework.md` 与 `docs/CurrentState/AgentProviderState.md` 为准；本目录中的 profile、MCP、timeline、diff/rollback 等内容仍是后续设计。

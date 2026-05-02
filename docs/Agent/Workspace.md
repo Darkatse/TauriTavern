@@ -33,6 +33,9 @@ agent-workspaces/
         <run-id>/
           manifest.json
           input/
+          tool-args/
+          tool-results/
+          model-responses/
           output/
           plan/
           scratch/
@@ -427,6 +430,10 @@ _tauritavern/agent-workspaces/
             persist_snapshot.json
           tool-args/
             <tool-call-id>.json
+          tool-results/
+            <tool-call-id>.json
+          model-responses/
+            round-XXX.json
           output/
             main.md
           scratch/
@@ -434,8 +441,6 @@ _tauritavern/agent-workspaces/
           summaries/
           persist/
             <run projection of chat-level persist files>
-          tool-results/
-            <tool-call-id>.json
           checkpoints/
             <checkpoint-id>/
               checkpoint.json

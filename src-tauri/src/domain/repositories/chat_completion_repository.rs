@@ -102,6 +102,7 @@ pub struct ChatCompletionApiConfig {
 
 pub type ChatCompletionStreamSender = UnboundedSender<String>;
 pub type ChatCompletionCancelReceiver = watch::Receiver<bool>;
+pub const CHAT_COMPLETION_PROVIDER_STATE_FIELD: &str = "_tauritavern_provider_state";
 
 #[derive(Debug, Clone, Default)]
 pub struct ChatCompletionNormalizationReport {
@@ -162,6 +163,8 @@ pub trait ChatCompletionRepository: Send + Sync {
         sender: ChatCompletionStreamSender,
         cancel: ChatCompletionCancelReceiver,
     ) -> Result<(), DomainError>;
+
+    async fn close_provider_session(&self, session_id: &str);
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -15,14 +16,14 @@ use crate::application::dto::agent_dto::{AgentFinalizeCommitDto, AgentPrepareCom
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_model_gateway::{
-    AgentModelGateway, decode_chat_completion_response,
+    AgentModelExchange, AgentModelGateway, decode_chat_completion_response,
 };
 use crate::application::services::agent_tools::{
     AgentToolDispatcher, AgentToolEffect, AgentToolSession,
 };
 use crate::domain::models::agent::{
-    AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentModelResponse, AgentModelRole,
-    AgentRun, AgentRunEventLevel, AgentRunStatus, AgentToolCall, WorkspacePath,
+    AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentModelRole, AgentRun,
+    AgentRunEventLevel, AgentRunStatus, AgentToolCall, WorkspacePath,
 };
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunRepository,
@@ -143,6 +144,18 @@ async fn agent_loop_writes_artifact_and_reaches_awaiting_commit() {
         .expect("read artifact");
     assert_eq!(artifact.text, "hello from loop");
 
+    let stored_response = repository
+        .read_text(
+            &run.id,
+            &WorkspacePath::parse("model-responses/round-001.json").unwrap(),
+        )
+        .await
+        .expect("read stored model response");
+    let stored_response: Value =
+        serde_json::from_str(&stored_response.text).expect("stored response JSON");
+    assert_eq!(stored_response["round"], json!(1));
+    assert!(stored_response["response"]["rawResponse"]["choices"].is_array());
+
     let model_requests = model_gateway_probe.requests().await;
     let second_request = model_requests.get(1).expect("second model request");
     let hydrated_tool_result = second_request
@@ -161,6 +174,7 @@ async fn agent_loop_writes_artifact_and_reaches_awaiting_commit() {
             .contains("Full content of output/main.md")
     );
     assert!(hydrated_tool_result.content.contains("hello from loop"));
+    wait_for_closed_sessions(&model_gateway_probe, vec!["run_loop_test".to_string()]).await;
 
     let events = repository
         .read_events(
@@ -177,6 +191,11 @@ async fn agent_loop_writes_artifact_and_reaches_awaiting_commit() {
         events
             .iter()
             .any(|event| event.event_type == "agent_loop_finished")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "model_response_stored")
     );
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
@@ -894,6 +913,7 @@ async fn dispatcher_reads_worldinfo_activation_from_run_snapshot() {
 struct MockAgentModelGateway {
     responses: Mutex<VecDeque<Value>>,
     requests: Mutex<Vec<AgentModelRequest>>,
+    closed_sessions: Mutex<Vec<String>>,
 }
 
 fn test_chat_repository(root: &Path) -> Arc<FileChatRepository> {
@@ -936,12 +956,30 @@ impl MockAgentModelGateway {
         Self {
             responses: Mutex::new(responses.into()),
             requests: Mutex::new(Vec::new()),
+            closed_sessions: Mutex::new(Vec::new()),
         }
     }
 
     async fn requests(&self) -> Vec<AgentModelRequest> {
         self.requests.lock().await.clone()
     }
+
+    async fn closed_sessions(&self) -> Vec<String> {
+        self.closed_sessions.lock().await.clone()
+    }
+}
+
+async fn wait_for_closed_sessions(gateway: &MockAgentModelGateway, expected: Vec<String>) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if gateway.closed_sessions().await == expected {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("agent provider session cleanup");
 }
 
 #[async_trait]
@@ -950,13 +988,24 @@ impl AgentModelGateway for MockAgentModelGateway {
         &self,
         request: AgentModelRequest,
         _cancel: watch::Receiver<bool>,
-    ) -> Result<AgentModelResponse, ApplicationError> {
+    ) -> Result<AgentModelExchange, ApplicationError> {
         self.requests.lock().await.push(request.clone());
         let response = self.responses.lock().await.pop_front().ok_or_else(|| {
             ApplicationError::ValidationError(
                 "mock_model.empty_responses: no response left".to_string(),
             )
         })?;
-        decode_chat_completion_response(response, &request.tools)
+        let response = decode_chat_completion_response(response, &request.tools)?;
+        Ok(AgentModelExchange {
+            response,
+            provider_state: request.provider_state,
+        })
+    }
+
+    async fn close_session(&self, session_id: &str) {
+        self.closed_sessions
+            .lock()
+            .await
+            .push(session_id.to_string());
     }
 }

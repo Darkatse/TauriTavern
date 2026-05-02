@@ -1,11 +1,14 @@
+use std::collections::HashSet;
+
 use serde_json::{Map, Number, Value, json};
 
 use crate::application::errors::ApplicationError;
+use crate::domain::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 
 use super::shared::{apply_custom_body_overrides, message_content_to_text};
 use super::tool_calls::message_tool_call_id;
 
-const CUSTOM_API_FORMAT: &str = "custom_api_format";
+const REASONING_ENCRYPTED_CONTENT: &str = "reasoning.encrypted_content";
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let include_raw = payload
@@ -23,6 +26,8 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
 
     let mut upstream_payload = Value::Object(request);
     apply_custom_body_overrides(&mut upstream_payload, &include_raw, &exclude_raw)?;
+    copy_internal_provider_state(&payload, &mut upstream_payload)?;
+    finalize_openai_responses_payload(&mut upstream_payload)?;
 
     Ok(("/responses".to_string(), upstream_payload))
 }
@@ -41,18 +46,39 @@ fn build_openai_responses_payload(
             )
         })?;
 
-    let input = build_input_items(payload.get("messages"))?;
+    let previous_response_id = non_empty_string(payload.get("previous_response_id"));
+    let input = build_input_items(payload.get("messages"), previous_response_id.is_some())?;
 
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
     request.insert("input".to_string(), Value::Array(input));
+    request.insert(
+        "store".to_string(),
+        payload
+            .get("store")
+            .filter(|value| !value.is_null())
+            .cloned()
+            .unwrap_or(Value::Bool(false)),
+    );
 
-    request.insert("store".to_string(), Value::Bool(false));
-
-    for key in ["stream", "temperature", "top_p", "seed"] {
+    for key in [
+        "stream",
+        "temperature",
+        "top_p",
+        "seed",
+        "metadata",
+        "parallel_tool_calls",
+        "include",
+    ] {
         if let Some(value) = payload.get(key).filter(|value| !value.is_null()) {
             request.insert(key.to_string(), value.clone());
         }
+    }
+    if let Some(previous_response_id) = previous_response_id {
+        request.insert(
+            "previous_response_id".to_string(),
+            Value::String(previous_response_id),
+        );
     }
 
     if let Some(max_tokens) = payload
@@ -109,12 +135,15 @@ fn build_openai_responses_payload(
         }
     }
 
-    request.remove(CUSTOM_API_FORMAT);
+    ensure_reasoning_encrypted_include(&mut request)?;
 
     Ok(request)
 }
 
-fn build_input_items(messages: Option<&Value>) -> Result<Vec<Value>, ApplicationError> {
+fn build_input_items(
+    messages: Option<&Value>,
+    allow_orphan_tool_outputs: bool,
+) -> Result<Vec<Value>, ApplicationError> {
     let Some(messages) = messages else {
         return Ok(Vec::new());
     };
@@ -126,92 +155,342 @@ fn build_input_items(messages: Option<&Value>) -> Result<Vec<Value>, Application
         })]);
     }
 
-    let Some(entries) = messages.as_array() else {
+    let entries = messages.as_array().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "OpenAI Responses messages must be a string or an array".to_string(),
+        )
+    })?;
+
+    ResponsesTranscriptCompiler {
+        allow_orphan_tool_outputs,
+        ..Default::default()
+    }
+    .compile(entries)
+}
+
+#[derive(Default)]
+struct ResponsesTranscriptCompiler {
+    input: Vec<Value>,
+    function_call_ids: HashSet<String>,
+    allow_orphan_tool_outputs: bool,
+}
+
+impl ResponsesTranscriptCompiler {
+    fn compile(mut self, entries: &[Value]) -> Result<Vec<Value>, ApplicationError> {
+        for entry in entries {
+            let message = entry.as_object().ok_or_else(|| {
+                ApplicationError::ValidationError(
+                    "OpenAI Responses message entry must be an object".to_string(),
+                )
+            })?;
+            self.compile_message(message)?;
+        }
+
+        Ok(self.input)
+    }
+
+    fn compile_message(&mut self, message: &Map<String, Value>) -> Result<(), ApplicationError> {
+        let role = non_empty_string(message.get("role"))
+            .map(|role| role.to_ascii_lowercase())
+            .ok_or_else(|| {
+                ApplicationError::ValidationError(
+                    "OpenAI Responses message entry is missing role".to_string(),
+                )
+            })?;
+
+        match role.as_str() {
+            "assistant" => self.compile_assistant_message(message),
+            "tool" | "function" => self.compile_tool_message(message),
+            "system" => {
+                self.input.push(json!({
+                    "role": "developer",
+                    "content": message_content_to_text(message.get("content")),
+                }));
+                Ok(())
+            }
+            "developer" | "user" => {
+                self.input.push(json!({
+                    "role": role,
+                    "content": message_content_to_text(message.get("content")),
+                }));
+                Ok(())
+            }
+            other => Err(ApplicationError::ValidationError(format!(
+                "OpenAI Responses message role is unsupported: {other}"
+            ))),
+        }
+    }
+
+    fn compile_assistant_message(
+        &mut self,
+        message: &Map<String, Value>,
+    ) -> Result<(), ApplicationError> {
+        if let Some(native_output) = message_native_openai_responses_output(message)? {
+            for item in native_output {
+                self.remember_function_call_item(&item)?;
+                self.input.push(item);
+            }
+            return Ok(());
+        }
+
+        let text = message_content_to_text(message.get("content"));
+        if !text.trim().is_empty() {
+            self.input.push(json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": text }],
+            }));
+        }
+
+        for call in assistant_function_calls(message.get("tool_calls"))? {
+            self.function_call_ids.insert(call.call_id.clone());
+            self.input.push(call.into_responses_item());
+        }
+
+        Ok(())
+    }
+
+    fn compile_tool_message(
+        &mut self,
+        message: &Map<String, Value>,
+    ) -> Result<(), ApplicationError> {
+        let call_id = message_tool_call_id(message).ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "Tool message is missing tool_call_id required for Responses function_call_output"
+                    .to_string(),
+            )
+        })?;
+
+        if !self.allow_orphan_tool_outputs && !self.function_call_ids.contains(&call_id) {
+            return Err(ApplicationError::ValidationError(format!(
+                "Responses function_call_output references call_id without preceding function_call: {call_id}"
+            )));
+        }
+
+        self.input.push(json!({
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": message_content_to_text(message.get("content")),
+        }));
+
+        Ok(())
+    }
+
+    fn remember_function_call_item(&mut self, item: &Value) -> Result<(), ApplicationError> {
+        let object = item.as_object().ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "OpenAI Responses native output item must be an object".to_string(),
+            )
+        })?;
+
+        if object.get("type").and_then(Value::as_str) != Some("function_call") {
+            return Ok(());
+        }
+
+        let call_id = non_empty_string(object.get("call_id")).ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "OpenAI Responses native function_call item is missing call_id".to_string(),
+            )
+        })?;
+        self.function_call_ids.insert(call_id);
+
+        Ok(())
+    }
+}
+
+fn copy_internal_provider_state(
+    source: &Map<String, Value>,
+    upstream_payload: &mut Value,
+) -> Result<(), ApplicationError> {
+    let Some(provider_state) = source.get(CHAT_COMPLETION_PROVIDER_STATE_FIELD) else {
+        return Ok(());
+    };
+    let object = upstream_payload.as_object_mut().ok_or_else(|| {
+        ApplicationError::InternalError("OpenAI Responses payload must be an object".to_string())
+    })?;
+    object.insert(
+        CHAT_COMPLETION_PROVIDER_STATE_FIELD.to_string(),
+        provider_state.clone(),
+    );
+    Ok(())
+}
+
+struct ResponsesFunctionCall {
+    call_id: String,
+    name: String,
+    arguments: String,
+}
+
+impl ResponsesFunctionCall {
+    fn into_responses_item(self) -> Value {
+        json!({
+            "type": "function_call",
+            "call_id": self.call_id,
+            "name": self.name,
+            "arguments": self.arguments,
+        })
+    }
+}
+
+fn assistant_function_calls(
+    value: Option<&Value>,
+) -> Result<Vec<ResponsesFunctionCall>, ApplicationError> {
+    let Some(value) = value else {
         return Ok(Vec::new());
     };
 
-    let trailing_tool_messages = entries
+    let calls = value.as_array().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "Assistant tool_calls must be an array for OpenAI Responses".to_string(),
+        )
+    })?;
+
+    calls
         .iter()
-        .rev()
-        .take_while(|entry| {
-            entry
-                .as_object()
-                .and_then(|object| object.get("role"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .map(|role| {
-                    role.eq_ignore_ascii_case("tool") || role.eq_ignore_ascii_case("function")
-                })
-                .unwrap_or(false)
-        })
-        .count();
-    let trailing_tool_start = entries.len().saturating_sub(trailing_tool_messages);
-
-    let mut input = Vec::new();
-
-    for (index, entry) in entries.iter().enumerate() {
-        let Some(message) = entry.as_object() else {
-            continue;
-        };
-
-        let raw_role = message
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or("user")
-            .trim();
-
-        if raw_role.eq_ignore_ascii_case("assistant") {
-            if let Some(native_output) = message_native_openai_responses_output(message) {
-                input.extend(native_output);
-                continue;
-            }
-        }
-
-        if raw_role.eq_ignore_ascii_case("tool") || raw_role.eq_ignore_ascii_case("function") {
-            if index >= trailing_tool_start {
-                let call_id = message_tool_call_id(message).ok_or_else(|| {
+        .map(|call| {
+            let object = call.as_object().ok_or_else(|| {
+                ApplicationError::ValidationError(
+                    "Assistant tool_call entry must be an object".to_string(),
+                )
+            })?;
+            let function = object
+                .get("function")
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
                     ApplicationError::ValidationError(
-                        "Tool message is missing tool_call_id required for Responses function_call_output".to_string(),
+                        "Assistant tool_call entry is missing function".to_string(),
                     )
                 })?;
 
-                input.push(json!({
-                    "type": "function_call_output",
-                    "call_id": call_id,
-                    "output": message_content_to_text(message.get("content")),
-                }));
-            } else {
-                input.push(json!({
-                    "role": "user",
-                    "content": message_content_to_text(message.get("content")),
-                }));
-            }
+            let call_id = non_empty_string(object.get("id")).ok_or_else(|| {
+                ApplicationError::ValidationError(
+                    "Assistant tool_call entry is missing id".to_string(),
+                )
+            })?;
+            let name = non_empty_string(function.get("name")).ok_or_else(|| {
+                ApplicationError::ValidationError(
+                    "Assistant tool_call function is missing name".to_string(),
+                )
+            })?;
+            let arguments = function_call_arguments(function.get("arguments"))?;
 
-            continue;
-        }
-
-        let mapped_role = if raw_role.eq_ignore_ascii_case("system") {
-            "developer"
-        } else {
-            raw_role
-        };
-
-        input.push(json!({
-            "role": mapped_role,
-            "content": message_content_to_text(message.get("content")),
-        }));
-    }
-
-    Ok(input)
+            Ok(ResponsesFunctionCall {
+                call_id,
+                name,
+                arguments,
+            })
+        })
+        .collect()
 }
 
-fn message_native_openai_responses_output(message: &Map<String, Value>) -> Option<Vec<Value>> {
-    message
-        .get("native")?
-        .get("openai_responses")?
-        .get("output")?
-        .as_array()
+fn function_call_arguments(value: Option<&Value>) -> Result<String, ApplicationError> {
+    match value {
+        Some(Value::String(arguments)) => Ok(arguments.clone()),
+        Some(Value::Null) | None => Ok("{}".to_string()),
+        Some(value) => serde_json::to_string(value).map_err(|error| {
+            ApplicationError::ValidationError(format!(
+                "Assistant tool_call arguments are not serializable: {error}"
+            ))
+        }),
+    }
+}
+
+fn message_native_openai_responses_output(
+    message: &Map<String, Value>,
+) -> Result<Option<Vec<Value>>, ApplicationError> {
+    let Some(native) = message.get("native") else {
+        return Ok(None);
+    };
+    let Some(openai_responses) = native.get("openai_responses") else {
+        return Ok(None);
+    };
+
+    let output = openai_responses
+        .get("output")
+        .and_then(Value::as_array)
         .cloned()
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "OpenAI Responses native metadata is missing output array".to_string(),
+            )
+        })?;
+
+    Ok(Some(output))
+}
+
+fn finalize_openai_responses_payload(payload: &mut Value) -> Result<(), ApplicationError> {
+    let object = payload.as_object_mut().ok_or_else(|| {
+        ApplicationError::InternalError("OpenAI Responses payload must be an object".to_string())
+    })?;
+
+    validate_openai_responses_payload(object)?;
+    ensure_reasoning_encrypted_include(object)?;
+    validate_openai_responses_payload(object)
+}
+
+fn validate_openai_responses_payload(object: &Map<String, Value>) -> Result<(), ApplicationError> {
+    non_empty_string(object.get("model")).ok_or_else(|| {
+        ApplicationError::ValidationError("OpenAI Responses payload is missing model".to_string())
+    })?;
+
+    if object.get("input").and_then(Value::as_array).is_none() {
+        return Err(ApplicationError::ValidationError(
+            "OpenAI Responses payload is missing input array".to_string(),
+        ));
+    }
+
+    if let Some(store) = object.get("store") {
+        if !store.is_boolean() {
+            return Err(ApplicationError::ValidationError(
+                "OpenAI Responses store must be a boolean".to_string(),
+            ));
+        }
+    }
+
+    if let Some(include) = object.get("include") {
+        validate_include(include)?;
+    }
+
+    Ok(())
+}
+
+fn ensure_reasoning_encrypted_include(
+    object: &mut Map<String, Value>,
+) -> Result<(), ApplicationError> {
+    let entry = object
+        .entry("include".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let items = entry.as_array_mut().ok_or_else(|| {
+        ApplicationError::ValidationError("OpenAI Responses include must be an array".to_string())
+    })?;
+    let encrypted = Value::String(REASONING_ENCRYPTED_CONTENT.to_string());
+    if !items.iter().any(|item| item == &encrypted) {
+        items.push(encrypted);
+    }
+
+    Ok(())
+}
+
+fn validate_include(include: &Value) -> Result<(), ApplicationError> {
+    let items = include.as_array().ok_or_else(|| {
+        ApplicationError::ValidationError("OpenAI Responses include must be an array".to_string())
+    })?;
+
+    if items.iter().all(Value::is_string) {
+        Ok(())
+    } else {
+        Err(ApplicationError::ValidationError(
+            "OpenAI Responses include entries must be strings".to_string(),
+        ))
+    }
+}
+
+fn non_empty_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn map_openai_tools_to_responses(tools: &[Value]) -> Vec<Value> {
@@ -334,7 +613,7 @@ mod tests {
     use super::build;
 
     #[test]
-    fn openai_responses_payload_maps_system_to_developer_and_trailing_tool_output() {
+    fn openai_responses_payload_maps_system_and_tool_turns_to_typed_items() {
         let payload = json!({
             "chat_completion_source": "custom",
             "custom_api_format": "openai_responses",
@@ -342,9 +621,21 @@ mod tests {
             "messages": [
                 { "role": "system", "content": "sys" },
                 { "role": "user", "content": "hi" },
-                { "role": "assistant", "content": "" },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": "{\"city\":\"Paris\"}"
+                        }
+                    }]
+                },
                 { "role": "tool", "tool_call_id": "call_123", "content": "ok" }
             ],
+            "include": ["file_search_call.results"],
             "stream": true,
             "custom_url": "https://example.com/v1"
         })
@@ -366,9 +657,27 @@ mod tests {
 
         assert_eq!(input[0]["role"], "developer");
         assert_eq!(input[0]["content"], "sys");
+        assert_eq!(input[2]["type"], "function_call");
+        assert_eq!(input[2]["call_id"], "call_123");
+        assert_eq!(input[2]["name"], "get_weather");
         assert_eq!(input[3]["type"], "function_call_output");
         assert_eq!(input[3]["call_id"], "call_123");
         assert_eq!(input[3]["output"], "ok");
+
+        let include = request
+            .get("include")
+            .and_then(Value::as_array)
+            .expect("include should exist");
+        assert!(
+            include
+                .iter()
+                .any(|value| value == "file_search_call.results")
+        );
+        assert!(
+            include
+                .iter()
+                .any(|value| value == "reasoning.encrypted_content")
+        );
     }
 
     #[test]
@@ -441,5 +750,147 @@ mod tests {
         assert_eq!(input[1]["call_id"], "call_1");
         assert_eq!(input[2]["type"], "function_call_output");
         assert_eq!(input[2]["call_id"], "call_1");
+    }
+
+    #[test]
+    fn openai_responses_payload_keeps_non_trailing_tool_outputs_typed() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "openai_responses",
+            "model": "gpt-5",
+            "messages": [
+                { "role": "user", "content": "start" },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "native": {
+                        "openai_responses": {
+                            "responseId": "resp_1",
+                            "output": [{
+                                "id": "fc_1",
+                                "type": "function_call",
+                                "call_id": "call_1",
+                                "name": "workspace_write_file",
+                                "arguments": "{\"path\":\"output/main.md\",\"content\":\"draft\"}"
+                            }]
+                        }
+                    }
+                },
+                { "role": "tool", "tool_call_id": "call_1", "content": "wrote draft" },
+                {
+                    "role": "assistant",
+                    "content": "checking",
+                    "native": {
+                        "openai_responses": {
+                            "responseId": "resp_2",
+                            "output": [{
+                                "id": "fc_2",
+                                "type": "function_call",
+                                "call_id": "call_2",
+                                "name": "workspace_read_file",
+                                "arguments": "{\"path\":\"output/main.md\"}"
+                            }]
+                        }
+                    }
+                },
+                { "role": "tool", "tool_call_id": "call_2", "content": "draft" }
+            ]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+        let input = upstream
+            .get("input")
+            .and_then(Value::as_array)
+            .expect("input should exist");
+
+        assert_eq!(input[2]["type"], "function_call_output");
+        assert_eq!(input[2]["call_id"], "call_1");
+        assert_eq!(input[4]["type"], "function_call_output");
+        assert_eq!(input[4]["call_id"], "call_2");
+    }
+
+    #[test]
+    fn openai_responses_payload_readds_reasoning_include_after_overrides() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "openai_responses",
+            "model": "gpt-5",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "custom_include_body": "{\"include\":[\"file_search_call.results\"]}"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+        let include = upstream
+            .get("include")
+            .and_then(Value::as_array)
+            .expect("include should exist");
+
+        assert!(
+            include
+                .iter()
+                .any(|value| value == "file_search_call.results")
+        );
+        assert!(
+            include
+                .iter()
+                .any(|value| value == "reasoning.encrypted_content")
+        );
+    }
+
+    #[test]
+    fn openai_responses_payload_rejects_orphan_tool_output() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "openai_responses",
+            "model": "gpt-5",
+            "messages": [
+                { "role": "user", "content": "hi" },
+                { "role": "tool", "tool_call_id": "call_1", "content": "orphan" }
+            ]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("without preceding function_call")
+        );
+    }
+
+    #[test]
+    fn openai_responses_payload_allows_incremental_tool_output_after_previous_response() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "openai_responses",
+            "model": "gpt-5",
+            "previous_response_id": "resp_123",
+            "messages": [
+                { "role": "tool", "tool_call_id": "call_123", "content": "ok" }
+            ],
+            "custom_url": "https://example.com/v1"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(upstream["previous_response_id"], json!("resp_123"));
+        assert_eq!(
+            upstream["input"],
+            json!([{
+                "type": "function_call_output",
+                "call_id": "call_123",
+                "output": "ok"
+            }])
+        );
     }
 }

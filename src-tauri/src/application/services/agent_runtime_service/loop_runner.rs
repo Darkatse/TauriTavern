@@ -33,11 +33,24 @@ impl AgentRuntimeService {
             )
             .await?;
 
-            let response = self
+            let exchange = self
                 .model_gateway
                 .generate_with_cancel(request.clone(), cancel.clone())
                 .await?;
             self.ensure_not_cancelled(cancel)?;
+            let response = exchange.response;
+            let model_response_path = self.store_model_response(run_id, round, &response).await?;
+            request.provider_state = exchange.provider_state;
+            self.event(
+                run_id,
+                AgentRunEventLevel::Debug,
+                "provider_state_updated",
+                json!({
+                    "round": round,
+                    "providerState": provider_state_summary(&request.provider_state),
+                }),
+            )
+            .await?;
 
             let tool_calls = response.tool_calls.clone();
             self.event(
@@ -46,6 +59,7 @@ impl AgentRuntimeService {
                 "model_completed",
                 json!({
                     "round": round,
+                    "modelResponsePath": model_response_path.as_str(),
                     "toolCallCount": tool_calls.len(),
                     "textBytes": extract_response_text(&response).as_bytes().len(),
                 }),
@@ -200,4 +214,16 @@ impl AgentRuntimeService {
 
         Ok(hydrated)
     }
+}
+
+fn provider_state_summary(provider_state: &serde_json::Value) -> serde_json::Value {
+    json!({
+        "chatCompletionSource": provider_state.get("chatCompletionSource"),
+        "providerFormat": provider_state.get("providerFormat"),
+        "transport": provider_state.get("transport"),
+        "messageCursor": provider_state.get("messageCursor"),
+        "lastResponseId": provider_state.get("lastResponseId"),
+        "previousResponseId": provider_state.get("previousResponseId"),
+        "nativeContinuation": provider_state.get("nativeContinuation"),
+    })
 }

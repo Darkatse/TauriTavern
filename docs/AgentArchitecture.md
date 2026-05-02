@@ -46,7 +46,7 @@ MCP / Tool Direct Call
 - 后端已经采用 Clean Architecture，依赖方向是外层依赖内层、内层定义接口、外层实现接口。见 `docs/BackendStructure.md:7`、`docs/BackendStructure.md:40`。
 - 应用服务由 `AppState` 管理并在 `bootstrap::build_services()` 装配。见 `src-tauri/src/app.rs:36`、`src-tauri/src/app/bootstrap.rs:150`。
 - 当前 LLM 请求经过 `ChatCompletionService`，该服务负责 provider 解析、iOS policy、endpoint override policy、payload build、prompt caching 和取消注册。见 `src-tauri/src/application/services/chat_completion_service/mod.rs:32`、`src-tauri/src/application/services/chat_completion_service/mod.rs:302`、`src-tauri/src/application/services/chat_completion_service/mod.rs:358`。
-- 当前 LLM API 日志依赖 bootstrap 中装配的 `LoggingChatCompletionRepository` wrapper；Agent 不得直接调用 `HttpChatCompletionRepository` 绕过日志、proxy、secret 或 policy。见 `src-tauri/src/app/bootstrap.rs:372`。
+- 当前 LLM API 日志依赖 bootstrap 中装配的 `LoggingChatCompletionRepository` wrapper；Agent 不得直接调用 `HttpChatCompletionRepository` 绕过日志、secret 或 policy。Responses WebSocket 的 proxy / timeout parity 是当前传输债务，不应扩散成第二套 LLM 调用链。见 `src-tauri/src/app/bootstrap.rs:372`。
 - 当前 chat payload 分片读写由 `ChatService` 和 `ChatRepository` 承担，windowed save/patch 是正式契约。见 `src-tauri/src/application/services/chat_service.rs:495`、`src-tauri/src/application/services/chat_service.rs:563`、`src-tauri/src/domain/repositories/chat_repository.rs:145`、`src-tauri/src/domain/repositories/chat_repository.rs:162`。
 - 前端 Public ABI 的统一入口是 `window.__TAURITAVERN__`，应保持小而稳定。见 `docs/FrontendHostContract.md:92`、`src/tauri/main/bootstrap.js:139`。
 - 当前 `Generate()` 支持 dryRun，并在 `GENERATE_AFTER_DATA` 提供生成请求数据。见 `src/script.js:4660`、`src/script.js:5743`。
@@ -140,19 +140,20 @@ LLM Gateway / provider adapter
 
 ### 5.1 当前落地边界
 
-截至 2026-05-02，当前已落地的是 Phase 2D canonical model IR + provider native metadata 保真 + 上下文只读工具 + workspace 读改工具循环，而不是完整 Agent 产品面：
+截至 2026-05-02，当前已落地的是 canonical model IR + provider native metadata 保真 + provider_state continuation + 上下文只读工具 + workspace 读改工具循环，而不是完整 Agent 产品面：
 
 - Public Host ABI 入口为 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`，没有 `startRun()` alias。
 - `startRunFromLegacyGenerate()` 是当前推荐的兼容桥；它捕获 Legacy prompt 语义与本轮最终 `worldInfoActivation`，同时禁用 Legacy ToolManager tools。
 - `startRunWithPromptSnapshot()` 是低层测试/集成入口；调用方必须提供不含 external tools/tool turns 的 chat completion payload。
 - 后端当前开放 `chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish` 八个内建工具，对模型暴露为 provider-safe alias。
 - Agent runtime 当前使用 `AgentModelRequest` / `AgentModelResponse` / `AgentModelContentPart` 作为内部模型语义，不再直接读写 OpenAI-compatible raw JSON。
-- `AgentModelGateway` 仍复用 `ChatCompletionService::generate_with_cancel()`，在 canonical IR 与现有 provider payload pipeline 之间转换。
+- `AgentModelGateway` 仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，在 canonical IR 与现有 provider payload pipeline 之间转换。
 - Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native metadata 以 opaque `Native` part 保存和回放；tool call id 缺失会 fail-fast。
+- Agent `provider_state` 已用于 run-scoped continuation；OpenAI Responses 通过 persistent WebSocket、incremental input 与 `previous_response_id` 续接。详见 `docs/CurrentState/AgentProviderState.md`。
 - 前 5 轮 `workspace.write_file` / `workspace.apply_patch` 成功结果会把完整文件内容 hydrate 到下一轮模型上下文。
 - `chat.search` 与 `chat.read_messages` 只读取当前 run 绑定的聊天，不允许模型指定任意 chat target；message index 从 0 开始，JSONL header 不计入消息。
 - `worldinfo.read_activated` 只读取本次 run prompt snapshot 中 materialized 的激活结果，不把全局 last activation 当作运行时真相。
-- 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，只有 `finalizeCommit()` 成功后才 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
+- 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，只有 `finalizeCommit()` 成功后才 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`model-responses/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
 - 工具循环最多 80 轮，必须以 `workspace.finish` 结束；模型直接输出文本会 fail-fast。
 - 模型可修正的工具错误以 `is_error = true` tool result 回填下一轮；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
 - `skill.list`、`skill.read`、`readDiff`、`rollback`、`resume-run`、tool approval、profile routing、MCP、timeline UI、streaming Agent loop、主发送按钮 Agent toggle 仍未实现。
@@ -283,7 +284,7 @@ src-tauri/src/
 - 复用现有 provider 能力、policy 检查、prompt caching、logging、proxy/client 配置、cancellation。
 - 输出 provider-agnostic `ModelResponse` / streaming delta / tool call。
 
-当前 Phase 2D 已落地 `AgentModelGateway` wrapper：Agent runtime 消费 canonical `AgentModelRequest` / `AgentModelResponse`，gateway 再编码为现有 `ChatCompletionGenerateRequestDto` 并调用 `ChatCompletionService::generate_with_cancel()`。它仍不是新 HTTP client，也不绕过 `HttpChatCompletionRepository` 外层的 logging、policy、secret、prompt cache 和 cancel 链路。
+当前已落地 `AgentModelGateway` wrapper：Agent runtime 消费 canonical `AgentModelRequest` / `AgentModelResponse`，gateway 再编码为现有 `ChatCompletionGenerateRequestDto` 并调用 `ChatCompletionService::generate_exchange_with_cancel()`。它仍不是新 HTTP client，也不绕过 `HttpChatCompletionRepository` 外层的 logging、policy、secret、prompt cache 和 cancel 链路。Responses WebSocket connector 与 HTTP client pool 的 proxy / timeout parity 仍是待硬化传输债务。
 
 后续应把当前 `agent_model_gateway.rs` 拆成 provider adapter 模块，但不能退回到 runtime 直接拼 provider-specific payload。
 

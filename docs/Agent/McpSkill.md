@@ -8,7 +8,7 @@
 - Skill 是渐进披露的文本/资源包，不是自动吞入 prompt 的大文件。
 - Agent 可以消费 MCP 和 Skill，但必须经过 ToolRegistry、ContextFrame、Policy 与 Journal。
 
-当前状态（2026-05-02）：尚未实现 `window.__TAURITAVERN__.api.mcp`，也未把 MCP/Skill 接入 Agent tool registry。当前 Agent registry 已有 Phase 2D 内建工具：`chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish`。
+当前状态（2026-05-02）：尚未实现 `window.__TAURITAVERN__.api.mcp`，也未把 MCP/Skill 接入 Agent tool registry。当前 Agent registry 已有内建工具：`chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish`。
 
 ## 1. MCP 边界
 

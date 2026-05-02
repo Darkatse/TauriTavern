@@ -18,13 +18,13 @@ Agent 不维护第二套 provider registry，不直接调用 `HttpChatCompletion
 
 ## 2. 当前调用链
 
-当前 Phase 2D 调用链：
+当前调用链：
 
 ```text
 AgentRuntimeService
   -> AgentModelGateway.generate_with_cancel(AgentModelRequest)
     -> encode_chat_completion_request()
-      -> ChatCompletionService.generate_with_cancel(ChatCompletionGenerateRequestDto)
+      -> ChatCompletionService.generate_exchange_with_cancel(ChatCompletionGenerateRequestDto)
         -> payload builder
         -> ChatCompletionRepository
         -> LoggingChatCompletionRepository
@@ -75,7 +75,7 @@ Native
 - `Reasoning` 可以保存 provider 返回的可见/摘要化 reasoning，但不要求所有 provider 都有。
 - `Native` 保存 provider-private blocks，不解析、不清洗、不改写。
 - `payload` 仍承载现有 ChatCompletionService 需要的 source/model/settings 字段。
-- `provider_state` 是后续 run-scoped continuation state 的落点，当前仍是占位。
+- `provider_state` 是当前已落地的 run-scoped continuation state，详见 `docs/CurrentState/AgentProviderState.md`。
 
 ## 4. Provider Format
 
@@ -129,6 +129,22 @@ Provider native metadata 必须当作 opaque continuation state。
 - 把 OpenAI encrypted reasoning 当作可解释内容。
 
 同 provider continuation 所需 native state 丢失时，应 fail-fast 或测试失败。跨 provider switch 只能迁移 canonical 语义，不能伪装 provider-private state 已迁移。
+
+## 5.1 Provider State Contract
+
+`provider_state` 由 Agent runtime 初始化，由 `AgentModelGateway` 在每轮模型调用后更新。
+
+当前契约：
+
+- 初始状态只包含 `sessionId = runId`。
+- gateway 会把该状态以内部字段 `_tauritavern_provider_state` 写入 ChatCompletion payload。
+- LLM API log 与真正发往 provider 的 payload 都必须剥离 `_tauritavern_provider_state`。
+- 每轮成功后，gateway 返回 `sessionId`、`chatCompletionSource`、`providerFormat`、`messageCursor`、`lastResponseId`。
+- OpenAI Responses 会额外返回 `transport: "responses_websocket"` 与 `previousResponseId`。
+- OpenAI Responses 续接时，gateway 根据 `messageCursor` 只发送新消息，并注入 `previous_response_id`。
+- Claude / Gemini / OpenAI Responses / Gemini Interactions 会记录 `nativeContinuation`；tool call 存在但 native metadata 丢失时 fail-fast。
+
+OpenAI Responses Agent 路径使用 persistent WebSocket session。session 由 `sessionId` 复用，run 完成、失败或取消后异步关闭；关闭动作不得阻塞 run 最终状态落盘。
 
 ## 6. Tool Schema
 
@@ -243,6 +259,9 @@ model.native_metadata_lost
 - Agent loop 通过 canonical response 推进。
 - 前 5 轮 workspace write result hydration。
 - OpenAI Responses native output items 回放。
+- OpenAI Responses `provider_state.previousResponseId` 注入与 `messageCursor` 增量输入。
+- Claude / Gemini native continuation 计数与缺失 fail-fast。
+- LLM API log 剥离 `_tauritavern_provider_state`。
 - Claude native content blocks 回放。
 - normalizer 保留 Claude/Gemini/OpenAI Responses/Gemini Interactions native metadata。
 
@@ -252,4 +271,4 @@ model.native_metadata_lost
 - cross-provider switch 明确不可迁移 provider-private state。
 - prompt cache 与 provider-native state 共存。
 - stream `ModelDelta` 不泄漏 raw provider event。
-- LLM API log 不因 Agent 关闭。
+- persistent provider session close 不阻塞 Agent 最终状态。

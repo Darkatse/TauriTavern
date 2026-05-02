@@ -111,8 +111,11 @@ run_created
 generation_intent_recorded
 status_changed
 workspace_initialized
+persistent_projection_initialized
 context_assembled
 model_request_created
+model_response_stored
+provider_state_updated
 model_completed
 tool_call_requested
 tool_call_started
@@ -122,10 +125,15 @@ tool_call_failed
 workspace_file_written
 workspace_patch_applied
 checkpoint_created
+context_tool_result_hydrated
 agent_loop_finished
 artifact_assembled
 commit_started
+persistent_changes_prepared
+persistent_changes_prepare_failed
 commit_draft_created
+persistent_changes_committed
+persistent_changes_commit_failed
 run_committed
 run_completed
 run_cancel_requested
@@ -192,11 +200,15 @@ model_request_created
 model_request_sent
 model_delta
 model_tool_call_delta
+model_response_stored
+provider_state_updated
 model_completed
 model_failed
 ```
 
 当前 `model_request_created` 记录 canonical request summary（source、custom format、model、message count、tool count、round），不默认记录完整 prompt。长期应记录 request ref、profile id、provider/source、model、token estimate；完整 prompt 是否保存取决于调试设置与隐私策略。
+
+当前 `model_response_stored` 会把完整 `AgentModelResponse` 写入 `model-responses/round-XXX.json`，event 只记录路径与摘要。`provider_state_updated` 只记录 `provider_state` 摘要字段，不记录完整内部 payload。
 
 ### 4.5 Tool
 
@@ -430,8 +442,11 @@ run_created
 generation_intent_recorded
 status_changed
 workspace_initialized
+persistent_projection_initialized
 context_assembled
 model_request_created
+model_response_stored
+provider_state_updated
 model_completed
 tool_call_requested
 tool_call_started
@@ -441,10 +456,13 @@ tool_call_failed
 workspace_file_written
 workspace_patch_applied
 checkpoint_created
+context_tool_result_hydrated
 agent_loop_finished
 artifact_assembled
 commit_started
+persistent_changes_prepared
 commit_draft_created
+persistent_changes_committed
 run_committed
 run_completed
 run_cancel_requested

@@ -58,11 +58,15 @@
 
 11. `docs/CurrentState/NativeApiFormats.md`
    - Custom 原生 API 格式兼容现状（OpenAI Responses / Claude Messages / Gemini Interactions）
-   - 包含端到端链路、支持/不支持边界与持续开发约束（尤其回滚 ST 与 thought-signatures）
+   - 包含端到端链路、支持/不支持边界与持续开发约束（尤其回滚 ST、Responses continuation 与 thought-signatures）
 
 12. `docs/CurrentState/iOSPolicy.md`
    - iOS/iPadOS-only 分发 Policy（profile + capabilities snapshot）当前实现快照
    - 包含 settings 契约、baseline 矩阵、后端裁决点与前端 UI 投影的维护约束
 13. `docs/CurrentState/AgentFramework.md`
    - Agent 框架实时开发进度跟踪
-   - 当前记录 Phase 2D canonical model IR、provider native metadata 保真、上下文只读工具、workspace 读改工具循环、前端 dryRun adapter、Host ABI、验证命令与后续限制；具体架构与细节设计见 `docs/AgentArchitecture.md`、`docs/AgentContract.md`、`docs/AgentImplementPlan.md` 与 `docs/Agent/`
+   - 当前记录 canonical model IR、provider native metadata 保真、上下文只读工具、workspace 读改工具循环、前端 dryRun adapter、Host ABI、验证命令与后续限制；具体架构与细节设计见 `docs/AgentArchitecture.md`、`docs/AgentContract.md`、`docs/AgentImplementPlan.md` 与 `docs/Agent/`
+
+14. `docs/CurrentState/AgentProviderState.md`
+   - Agent `provider_state` 当前契约
+   - 包含 run-scoped continuation、OpenAI Responses persistent WebSocket / incremental input / `previous_response_id`、内部字段剥离、native metadata fail-fast 与可观测性约束

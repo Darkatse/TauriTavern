@@ -482,6 +482,12 @@ impl ChatCompletionService {
         self.active_generations.complete(request_id).await;
     }
 
+    pub async fn close_provider_session(&self, session_id: &str) {
+        self.chat_completion_repository
+            .close_provider_session(session_id)
+            .await;
+    }
+
     fn resolve_source(&self, raw: &str) -> Result<ChatCompletionSource, ApplicationError> {
         ChatCompletionSource::parse(raw).ok_or_else(|| {
             ApplicationError::ValidationError(format!(

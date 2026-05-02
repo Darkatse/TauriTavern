@@ -14,6 +14,7 @@ use crate::domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelResponse,
     AgentModelRole, AgentToolCall, AgentToolSpec,
 };
+use crate::domain::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
 
 #[async_trait]
@@ -22,7 +23,15 @@ pub trait AgentModelGateway: Send + Sync {
         &self,
         request: AgentModelRequest,
         cancel: watch::Receiver<bool>,
-    ) -> Result<AgentModelResponse, ApplicationError>;
+    ) -> Result<AgentModelExchange, ApplicationError>;
+
+    async fn close_session(&self, session_id: &str);
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentModelExchange {
+    pub response: AgentModelResponse,
+    pub provider_state: Value,
 }
 
 pub struct ChatCompletionAgentModelGateway {
@@ -43,13 +52,27 @@ impl AgentModelGateway for ChatCompletionAgentModelGateway {
         &self,
         request: AgentModelRequest,
         cancel: watch::Receiver<bool>,
-    ) -> Result<AgentModelResponse, ApplicationError> {
+    ) -> Result<AgentModelExchange, ApplicationError> {
         let dto = encode_chat_completion_request(&request)?;
         let exchange = self
             .chat_completion_service
             .generate_exchange_with_cancel(dto, cancel)
             .await?;
-        decode_chat_completion_exchange(exchange, &request.tools)
+        let source = exchange.source;
+        let provider_format = exchange.provider_format;
+        let response = decode_chat_completion_exchange(exchange, &request.tools)?;
+        let provider_state = next_provider_state(&request, source, provider_format, &response)?;
+
+        Ok(AgentModelExchange {
+            response,
+            provider_state,
+        })
+    }
+
+    async fn close_session(&self, session_id: &str) {
+        self.chat_completion_service
+            .close_provider_session(session_id)
+            .await;
     }
 }
 
@@ -70,13 +93,12 @@ pub(crate) fn encode_chat_completion_request(
     })?;
     let provider_format = ChatCompletionProviderFormat::from_payload(source, &request.payload)?;
     let mut payload = request.payload.clone();
+    apply_provider_state_to_payload(&mut payload, request, provider_format)?;
 
     payload.insert(
         "messages".to_string(),
         Value::Array(
-            request
-                .messages
-                .iter()
+            messages_for_provider(request, provider_format)?
                 .map(|message| encode_openai_compatible_message(message, &request.tools))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
@@ -103,6 +125,168 @@ pub(crate) fn encode_chat_completion_request(
 
     payload.insert("stream".to_string(), Value::Bool(false));
     Ok(ChatCompletionGenerateRequestDto { payload })
+}
+
+fn messages_for_provider(
+    request: &AgentModelRequest,
+    provider_format: ChatCompletionProviderFormat,
+) -> Result<Box<dyn Iterator<Item = &AgentModelMessage> + '_>, ApplicationError> {
+    if provider_format != ChatCompletionProviderFormat::OpenAiResponses {
+        return Ok(Box::new(request.messages.iter()));
+    }
+
+    if provider_state_string(&request.provider_state, "previousResponseId").is_none() {
+        return Ok(Box::new(request.messages.iter()));
+    }
+
+    let cursor =
+        provider_state_usize(&request.provider_state, "messageCursor").ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.provider_state_invalid: OpenAI Responses continuation is missing messageCursor"
+                    .to_string(),
+            )
+        })?;
+    if cursor > request.messages.len() {
+        return Err(ApplicationError::ValidationError(format!(
+            "agent.provider_state_invalid: messageCursor {cursor} exceeds message count {}",
+            request.messages.len()
+        )));
+    }
+
+    Ok(Box::new(request.messages.iter().skip(cursor).filter(
+        |message| message.role != AgentModelRole::Assistant,
+    )))
+}
+
+fn apply_provider_state_to_payload(
+    payload: &mut Map<String, Value>,
+    request: &AgentModelRequest,
+    provider_format: ChatCompletionProviderFormat,
+) -> Result<(), ApplicationError> {
+    if request.provider_state.is_null() {
+        return Ok(());
+    }
+
+    payload.insert(
+        CHAT_COMPLETION_PROVIDER_STATE_FIELD.to_string(),
+        request.provider_state.clone(),
+    );
+
+    if provider_format != ChatCompletionProviderFormat::OpenAiResponses {
+        return Ok(());
+    }
+
+    if let Some(previous_response_id) =
+        provider_state_string(&request.provider_state, "previousResponseId")
+    {
+        payload.insert(
+            "previous_response_id".to_string(),
+            Value::String(previous_response_id.to_string()),
+        );
+    }
+
+    Ok(())
+}
+
+fn next_provider_state(
+    request: &AgentModelRequest,
+    source: ChatCompletionSource,
+    provider_format: ChatCompletionProviderFormat,
+    response: &AgentModelResponse,
+) -> Result<Value, ApplicationError> {
+    let session_id = provider_state_string(&request.provider_state, "sessionId")
+        .map(str::to_string)
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.provider_state_invalid: sessionId is required".to_string(),
+            )
+        })?;
+
+    let response_id = response
+        .provider_metadata
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let mut state = json!({
+        "sessionId": session_id,
+        "chatCompletionSource": source.key(),
+        "providerFormat": provider_format.key(),
+        "messageCursor": request.messages.len(),
+        "lastResponseId": response_id.clone(),
+    });
+
+    if let Some(provider) = native_provider_for_format(provider_format) {
+        let part_count = native_part_count(response, provider);
+        if !response.tool_calls.is_empty() && part_count == 0 {
+            return Err(ApplicationError::ValidationError(format!(
+                "model.native_metadata_lost: {provider} continuation requires native metadata"
+            )));
+        }
+        state["nativeContinuation"] = json!({
+            "provider": provider,
+            "partCount": part_count,
+        });
+    }
+
+    if provider_format == ChatCompletionProviderFormat::OpenAiResponses {
+        let response_id = response_id.ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.provider_state_invalid: OpenAI Responses continuation is missing response id"
+                    .to_string(),
+            )
+        })?;
+        state["transport"] = Value::String("responses_websocket".to_string());
+        state["previousResponseId"] = Value::String(response_id);
+    }
+
+    Ok(state)
+}
+
+fn native_provider_for_format(
+    provider_format: ChatCompletionProviderFormat,
+) -> Option<&'static str> {
+    match provider_format {
+        ChatCompletionProviderFormat::OpenAiCompatible => None,
+        ChatCompletionProviderFormat::OpenAiResponses => Some("openai_responses"),
+        ChatCompletionProviderFormat::ClaudeMessages => Some("claude"),
+        ChatCompletionProviderFormat::Gemini => Some("gemini"),
+        ChatCompletionProviderFormat::GeminiInteractions => Some("gemini_interactions"),
+    }
+}
+
+fn native_part_count(response: &AgentModelResponse, provider: &str) -> usize {
+    response
+        .message
+        .parts
+        .iter()
+        .filter(|part| {
+            matches!(
+                part,
+                AgentModelContentPart::Native {
+                    provider: part_provider,
+                    ..
+                } if part_provider == provider
+            )
+        })
+        .count()
+}
+
+fn provider_state_string<'a>(state: &'a Value, key: &str) -> Option<&'a str> {
+    state
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn provider_state_usize(state: &Value, key: &str) -> Option<usize> {
+    state
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
 }
 
 #[cfg(test)]
@@ -729,5 +913,246 @@ mod tests {
         assert!(sanitized.get("$defs").is_none());
         assert!(sanitized["properties"]["mode"].get("const").is_none());
         assert!(sanitized["properties"]["mode"].get("default").is_none());
+    }
+
+    #[test]
+    fn openai_responses_continuation_sends_only_new_tool_results() {
+        let registry = BuiltinAgentToolRegistry::phase2c();
+        let request = AgentModelRequest {
+            payload: json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": "openai_responses",
+                "model": "gpt-5"
+            })
+            .as_object()
+            .cloned()
+            .unwrap(),
+            messages: vec![
+                AgentModelMessage {
+                    role: AgentModelRole::System,
+                    parts: vec![AgentModelContentPart::Text {
+                        text: "sys".to_string(),
+                    }],
+                    provider_metadata: Value::Null,
+                },
+                AgentModelMessage {
+                    role: AgentModelRole::User,
+                    parts: vec![AgentModelContentPart::Text {
+                        text: "hi".to_string(),
+                    }],
+                    provider_metadata: Value::Null,
+                },
+                AgentModelMessage {
+                    role: AgentModelRole::Assistant,
+                    parts: vec![AgentModelContentPart::ToolCall {
+                        call: AgentToolCall {
+                            id: "call_1".to_string(),
+                            name: "workspace.write_file".to_string(),
+                            arguments: json!({"path":"output/main.md","content":"hi"}),
+                            provider_metadata: Value::Null,
+                        },
+                    }],
+                    provider_metadata: Value::Null,
+                },
+                AgentModelMessage {
+                    role: AgentModelRole::Tool,
+                    parts: vec![AgentModelContentPart::ToolResult {
+                        result: crate::domain::models::agent::AgentToolResult {
+                            call_id: "call_1".to_string(),
+                            name: "workspace.write_file".to_string(),
+                            content: "ok".to_string(),
+                            structured: Value::Null,
+                            is_error: false,
+                            error_code: None,
+                            resource_refs: Vec::new(),
+                        },
+                    }],
+                    provider_metadata: Value::Null,
+                },
+            ],
+            tools: registry.specs().to_vec(),
+            tool_choice: Value::String("auto".to_string()),
+            provider_state: json!({
+                "sessionId": "run_1",
+                "providerFormat": "openai_responses",
+                "previousResponseId": "resp_1",
+                "messageCursor": 2
+            }),
+        };
+
+        let dto = encode_chat_completion_request(&request).unwrap();
+        let messages = dto.payload["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "tool");
+        assert_eq!(dto.payload["previous_response_id"], "resp_1");
+        assert!(
+            dto.payload
+                .get(CHAT_COMPLETION_PROVIDER_STATE_FIELD)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn claude_provider_state_records_native_continuation() {
+        let registry = BuiltinAgentToolRegistry::phase2c();
+        let request = provider_state_test_request("run_claude");
+        let raw = json!({
+            "id": "msg_1",
+            "model": "claude-test",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"hi\"}"
+                        },
+                        "signature": "sig_1"
+                    }],
+                    "native": {
+                        "claude": {
+                            "content": [{
+                                "type": "tool_use",
+                                "id": "call_1",
+                                "name": "workspace_write_file",
+                                "input": { "path": "output/main.md", "content": "hi" },
+                                "signature": "sig_1"
+                            }]
+                        }
+                    }
+                }
+            }]
+        });
+        let exchange = ChatCompletionExchange {
+            source: ChatCompletionSource::Claude,
+            provider_format: ChatCompletionProviderFormat::ClaudeMessages,
+            normalized_response: NormalizedChatCompletionResponse::from_value(raw).unwrap(),
+            normalization_report: ChatCompletionNormalizationReport::default(),
+        };
+
+        let response = decode_chat_completion_exchange(exchange, registry.specs()).unwrap();
+        let state = next_provider_state(
+            &request,
+            ChatCompletionSource::Claude,
+            ChatCompletionProviderFormat::ClaudeMessages,
+            &response,
+        )
+        .unwrap();
+
+        assert_eq!(state["nativeContinuation"]["provider"], "claude");
+        assert_eq!(state["nativeContinuation"]["partCount"], 1);
+    }
+
+    #[test]
+    fn gemini_provider_state_records_native_continuation() {
+        let registry = BuiltinAgentToolRegistry::phase2c();
+        let request = provider_state_test_request("run_gemini");
+        let raw = json!({
+            "id": "gemini-chat-completion",
+            "model": "gemini-test",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"hi\"}"
+                        },
+                        "signature": "sig_1"
+                    }],
+                    "native": {
+                        "gemini": {
+                            "content": {
+                                "role": "model",
+                                "parts": [{
+                                    "functionCall": {
+                                        "id": "call_1",
+                                        "name": "workspace_write_file",
+                                        "args": { "path": "output/main.md", "content": "hi" }
+                                    },
+                                    "thoughtSignature": "sig_1"
+                                }]
+                            }
+                        }
+                    }
+                }
+            }]
+        });
+        let exchange = ChatCompletionExchange {
+            source: ChatCompletionSource::Makersuite,
+            provider_format: ChatCompletionProviderFormat::Gemini,
+            normalized_response: NormalizedChatCompletionResponse::from_value(raw).unwrap(),
+            normalization_report: ChatCompletionNormalizationReport::default(),
+        };
+
+        let response = decode_chat_completion_exchange(exchange, registry.specs()).unwrap();
+        let state = next_provider_state(
+            &request,
+            ChatCompletionSource::Makersuite,
+            ChatCompletionProviderFormat::Gemini,
+            &response,
+        )
+        .unwrap();
+
+        assert_eq!(state["nativeContinuation"]["provider"], "gemini");
+        assert_eq!(state["nativeContinuation"]["partCount"], 1);
+    }
+
+    #[test]
+    fn provider_state_rejects_missing_native_continuation_for_native_providers() {
+        let registry = BuiltinAgentToolRegistry::phase2c();
+        let request = provider_state_test_request("run_missing_native");
+        let raw = json!({
+            "id": "msg_1",
+            "model": "claude-test",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"hi\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+        let response =
+            decode_chat_completion_response(raw, registry.specs()).expect("decode response");
+
+        let error = next_provider_state(
+            &request,
+            ChatCompletionSource::Claude,
+            ChatCompletionProviderFormat::ClaudeMessages,
+            &response,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("model.native_metadata_lost"));
+    }
+
+    fn provider_state_test_request(session_id: &str) -> AgentModelRequest {
+        AgentModelRequest {
+            payload: json!({
+                "chat_completion_source": "claude",
+                "model": "test-model"
+            })
+            .as_object()
+            .cloned()
+            .unwrap(),
+            messages: Vec::new(),
+            tools: BuiltinAgentToolRegistry::phase2c().specs().to_vec(),
+            tool_choice: Value::String("auto".to_string()),
+            provider_state: json!({ "sessionId": session_id }),
+        }
     }
 }

@@ -1,20 +1,21 @@
 # TauriTavern Agent Implementation Plan
 
-本文档记录当前可继续开发的实施基线与后续顺序。旧 Phase 0 / 1 / 2A / 2B / 2C 的展开式计划已经收敛为当前架构、测试与契约；后续开发不应再从旧阶段文档倒推当前行为。
+本文档记录当前可继续开发的实施基线与后续顺序。旧阶段性施工计划已经收敛为当前架构、测试与契约；后续开发不应再从旧阶段文档倒推当前行为。
 
 当前事实以 `docs/CurrentState/AgentFramework.md` 为准，架构边界以 `docs/AgentArchitecture.md` 与 `docs/AgentContract.md` 为准。
 
 ## 1. 当前基线
 
-截至 2026-05-02，Agent Phase 2D 核心已经落地：
+截至 2026-05-02，Agent 当前核心已经落地：
 
 - Rust 后端拥有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 前端 Host ABI 已挂载 `window.__TAURITAVERN__.api.agent`。
 - Agent 启动仍通过 `PromptSnapshot` 兼容桥进入；`GenerationIntent + ContextFrame` 尚未接管 context assembly。
 - `startRunFromLegacyGenerate()` 使用 Legacy dryRun 捕获 `chatCompletionPayload` 与本轮最终 `worldInfoActivation`。
-- LLM 调用复用 `ChatCompletionService::generate_with_cancel()`，不得绕过现有 provider、secret、proxy、日志、endpoint policy、iOS policy、prompt cache 和取消链路。
+- LLM 调用复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 和取消链路。Responses WebSocket 与 HTTP client pool 的 proxy / timeout parity 是当前传输层待硬化项。
 - Tool loop 由 Rust runtime 独占推进，不递归调用前端 `Generate()`。
 - Agent runtime 已使用 canonical model IR，不再把 OpenAI-compatible raw JSON 当作运行时事实。
+- `provider_state` 已用于 run-scoped continuation。OpenAI Responses 通过它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
 
 旧阶段只保留为这些不变量：
 
@@ -60,7 +61,7 @@ rollback()
 AgentRuntimeService
   -> AgentModelGateway.generate_with_cancel(AgentModelRequest)
     -> encode_chat_completion_request()
-      -> ChatCompletionService.generate_with_cancel(ChatCompletionGenerateRequestDto)
+      -> ChatCompletionService.generate_exchange_with_cancel(ChatCompletionGenerateRequestDto)
     -> decode_chat_completion_response()
   -> AgentModelResponse
 ```
@@ -82,12 +83,14 @@ AgentRuntimeService
 - `ResourceRef`
 - `Native`
 
-Phase 2D 已落地：
+当前已落地：
 
 - provider format detection：OpenAI-compatible、OpenAI Responses、Claude Messages、Gemini、Gemini Interactions。
 - canonical tool specs 到 provider-facing function tools 的转换。
 - provider-specific schema sanitizer。Gemini / Gemini Interactions 会移除当前不兼容的 JSON Schema 关键字；Claude 只做轻量清洗；OpenAI / Responses 保持完整 schema。
 - OpenAI Responses 请求自动 include `reasoning.encrypted_content`。
+- Agent OpenAI Responses 续接会使用 `provider_state.previousResponseId` 注入 `previous_response_id`，并用 `messageCursor` 只发送新消息。
+- Agent payload 内部字段 `_tauritavern_provider_state` 不进入 LLM API log，也不会发送给上游 provider。
 - missing `tool_call_id` fail-fast，不再 fallback 生成 `tool_call_{index}`。
 - response decode 保留 text、reasoning、tool calls、native metadata。
 
@@ -146,7 +149,7 @@ Tool registry 只产 canonical `AgentToolSpec`，不再暴露 OpenAI-shaped `ope
 - Recoverable tool error：模型参数、路径字符串、可见/可写策略、文件不存在、chat message index 不存在、读取范围非法、结果超过工具预算、patch 未完整读取、sha 过期、匹配 0 次或多次等模型可修正问题。返回 `AgentToolResult { is_error: true }`，写入 `tool_call_failed` warn event，并作为 tool message 回填下一轮模型。
 - Fatal runtime error：journal 写入失败、workspace repository 内部 IO 错误、chat JSONL 损坏、manifest/checkpoint 损坏、模型响应结构不可解析、取消、序列化失败、状态机错误等宿主级问题。直接让 run 进入 failed 或 cancelled。
 
-Phase 2D 已落地 recent hydration：
+当前已落地 recent hydration：
 
 - 前 5 轮 `workspace.write_file` / `workspace.apply_patch` 成功结果会读取目标 workspace 文件，将完整文本加入下一轮模型上下文。
 - hydration 只影响 model request，不改变 workspace/journal 真相。
@@ -188,7 +191,7 @@ prepareCommit / saveReply / finalizeCommit
 
 ## 8. 后续实施顺序
 
-### 8.1 Phase 2D 后续硬化
+### 8.1 Gateway / Provider Contract 硬化
 
 目标：把当前已落地的 gateway 核心拆成更长期可维护的 provider adapter 结构。
 
@@ -206,7 +209,8 @@ prepareCommit / saveReply / finalizeCommit
   - `providers/gemini.rs`
 - 增加 same-provider native metadata loss 测试。
 - 增加 cross-provider switch policy 测试，明确哪些 metadata 不可迁移。
-- 把 `provider_state` 从占位字段推进为 run-scoped continuation state。
+- 继续收紧 `provider_state` 契约测试，覆盖 Responses `messageCursor`、`previousResponseId`、session close 与日志剥离。
+- 对齐 Responses WebSocket connector 与 HTTP client pool 的 proxy / timeout 语义，避免普通 Custom ChatCompletion 路径被 transport 细节隐性改变。
 - 增加 schema sanitizer 覆盖更多 JSON Schema edge cases。
 
 ### 8.2 Profile 与 Context Policy

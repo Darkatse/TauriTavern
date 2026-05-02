@@ -37,6 +37,7 @@ pub(super) fn request_from_prompt_snapshot(
 pub(super) fn prepare_agent_tool_request(
     mut request: ChatCompletionGenerateRequestDto,
     registry: &BuiltinAgentToolRegistry,
+    run_id: &str,
 ) -> Result<AgentModelRequest, ApplicationError> {
     reject_external_tool_request(&request.payload)?;
 
@@ -70,7 +71,7 @@ pub(super) fn prepare_agent_tool_request(
         messages,
         tools: registry.specs().to_vec(),
         tool_choice: Value::String("auto".to_string()),
-        provider_state: Value::Null,
+        provider_state: json!({ "sessionId": run_id }),
     })
 }
 

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -11,8 +12,9 @@ use tauri::{AppHandle, Emitter};
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamSender,
+    CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    ChatCompletionRepository, ChatCompletionRepositoryGenerateResponse, ChatCompletionSource,
+    ChatCompletionStreamSender,
 };
 
 pub const LLM_API_LOG_EVENT: &str = "tauritavern-llm-api-log";
@@ -360,10 +362,11 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
         };
 
         let endpoint = format_endpoint(&config.base_url, endpoint_path);
-        let model = extract_model(payload);
+        let log_payload = wire_log_payload(payload);
+        let model = extract_model(&log_payload);
 
-        let request_raw = pretty_json(payload);
-        let request_readable = format_request_readable(source, payload);
+        let request_raw = pretty_json(&log_payload);
+        let request_readable = format_request_readable(source, &log_payload);
         let (response_readable, response_raw_inline, response_raw_kind) = match response_value {
             Some(value) => (
                 format_response_readable(value),
@@ -410,10 +413,11 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
 
         let id = self.store.allocate_id();
         let endpoint = format_endpoint(&config.base_url, endpoint_path);
-        let model = extract_model(payload);
+        let log_payload = wire_log_payload(payload);
+        let model = extract_model(&log_payload);
 
-        let request_raw = pretty_json(payload);
-        let request_readable = format_request_readable(source, payload);
+        let request_raw = pretty_json(&log_payload);
+        let request_readable = format_request_readable(source, &log_payload);
         let request_path = request_raw_path(self.store.log_root.as_path(), id);
         tauri::async_runtime::spawn(async move {
             if let Err(error) = tokio::fs::write(&request_path, request_raw).await {
@@ -519,6 +523,10 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
 
         self.store.record_entry(meta, None, None).await;
         result
+    }
+
+    async fn close_provider_session(&self, session_id: &str) {
+        self.inner.close_provider_session(session_id).await;
     }
 }
 
@@ -708,6 +716,19 @@ fn extract_model(payload: &Value) -> Option<String> {
 
 fn pretty_json(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
+fn wire_log_payload(payload: &Value) -> Cow<'_, Value> {
+    let Some(object) = payload.as_object() else {
+        return Cow::Borrowed(payload);
+    };
+    if !object.contains_key(CHAT_COMPLETION_PROVIDER_STATE_FIELD) {
+        return Cow::Borrowed(payload);
+    }
+
+    let mut object = object.clone();
+    object.remove(CHAT_COMPLETION_PROVIDER_STATE_FIELD);
+    Cow::Owned(Value::Object(object))
 }
 
 fn format_request_readable(source: ChatCompletionSource, payload: &Value) -> String {
@@ -1120,9 +1141,11 @@ async fn persist_index_file(
 mod tests {
     use serde_json::json;
 
+    use crate::domain::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
+
     use super::{
         ChatCompletionSource, StreamReadableCollector, format_endpoint, format_request_readable,
-        stream_readable_source,
+        pretty_json, stream_readable_source, wire_log_payload,
     };
 
     #[test]
@@ -1158,6 +1181,30 @@ mod tests {
         assert_eq!(
             readable,
             "[developer]\nsys\n\n[user]\nhi\n\n[tool call_id=call_123]\nok"
+        );
+    }
+
+    #[test]
+    fn wire_log_payload_strips_internal_provider_state() {
+        let mut payload = json!({
+            "model": "gpt-5",
+            "input": [{ "role": "user", "content": "hi" }]
+        });
+        payload.as_object_mut().unwrap().insert(
+            CHAT_COMPLETION_PROVIDER_STATE_FIELD.to_string(),
+            json!({
+                "sessionId": "run_123",
+                "previousResponseId": "resp_123"
+            }),
+        );
+
+        let payload = wire_log_payload(&payload);
+
+        assert!(payload.get(CHAT_COMPLETION_PROVIDER_STATE_FIELD).is_none());
+        assert!(!pretty_json(&payload).contains(CHAT_COMPLETION_PROVIDER_STATE_FIELD));
+        assert_eq!(
+            format_request_readable(ChatCompletionSource::Custom, &payload),
+            "[user]\nhi"
         );
     }
 

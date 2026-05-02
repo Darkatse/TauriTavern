@@ -2,18 +2,19 @@
 
 本文档是 Agent 框架的当前事实入口。后续开发先读本文，再读 `docs/AgentArchitecture.md`、`docs/AgentContract.md`、`docs/AgentImplementPlan.md` 与 `docs/Agent/` 下的专题文档。
 
-旧 Phase 0 / 1 / 2A / 2B / 2C 的展开式说明已经吸收为当前基线，不再作为开发入口；需要历史背景时只看 git history。
+旧阶段性施工说明已经吸收为当前基线，不再作为开发入口；需要历史背景时只看 git history。
 
 ## 当前基线
 
-截至 2026-05-02，Agent 后端已进入 Phase 2D 基线：
+截至 2026-05-02，Agent 当前基线：
 
 - Rust 后端已有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 前端已挂载 `window.__TAURITAVERN__.api.agent` 最小 Host ABI。
 - Agent 启动仍通过 `PromptSnapshot` 兼容桥进入；`GenerationIntent + ContextFrame` 尚未接管上下文组装。
-- LLM 调用仍复用 `ChatCompletionService::generate_with_cancel()`，不得绕过现有 provider、secret、proxy、日志、endpoint policy、iOS policy、prompt cache 或取消链路。
+- LLM 调用仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 或取消链路。Responses WebSocket 与 HTTP client pool 的 proxy / timeout parity 是当前传输层待硬化项，见 `docs/CurrentState/NativeApiFormats.md`。
 - Agent runtime 已不再把 OpenAI-compatible raw JSON 当作内部事实；运行时使用 canonical `AgentModelRequest` / `AgentModelResponse` / `AgentModelMessage` / `AgentModelContentPart`。
 - `AgentModelGateway` 在 Agent canonical IR 与现有 `ChatCompletionGenerateRequestDto` 之间转换；provider-native metadata 作为 opaque `Native` part 保留。
+- `provider_state` 已是 run-scoped continuation contract；OpenAI Responses 使用它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Legacy Generate 尚未默认切到 Agent；Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
 
@@ -71,7 +72,7 @@ Tool registry 只产 canonical `AgentToolSpec`。Provider-facing alias 由 gatew
 AgentRuntimeService
   -> AgentModelGateway.generate_with_cancel(AgentModelRequest)
     -> encode_chat_completion_request()
-      -> ChatCompletionService.generate_with_cancel(ChatCompletionGenerateRequestDto)
+      -> ChatCompletionService.generate_exchange_with_cancel(ChatCompletionGenerateRequestDto)
         -> provider payload builder / repository / logging wrapper
     -> decode_chat_completion_response()
   -> AgentModelResponse
@@ -107,6 +108,16 @@ AgentModelContentPart {
 - Tool schema 在 gateway 边界按 provider format 做深拷贝 sanitizer；canonical schema 本身不被污染。
 - Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native blocks 会进入 normalized `message.native`，再进入 Agent `Native` part。
 
+当前 `provider_state` 契约：
+
+- 初始值是 `{ "sessionId": runId }`。
+- 每轮成功后由 `AgentModelGateway` 返回新的 `provider_state`，包含 `sessionId`、`chatCompletionSource`、`providerFormat`、`messageCursor`、`lastResponseId`。
+- OpenAI Responses 额外包含 `transport: "responses_websocket"` 与 `previousResponseId`。
+- OpenAI Responses 第二轮起只发送 `messageCursor` 之后的新消息，并过滤 assistant messages；缺失或越界 cursor 会 fail-fast。
+- native provider 返回 tool call 但缺失对应 native part 时，以 `model.native_metadata_lost` fail-fast。
+- ChatCompletion payload 内部使用 `_tauritavern_provider_state` 传递该状态；LLM API log 与真正发往上游的 payload 都会剥离该字段。
+- 完整契约见 `docs/CurrentState/AgentProviderState.md`。
+
 当前 native metadata 保留点：
 
 - Claude：保留 assistant `content` blocks，用于回放 `thinking` / `tool_use` / signature。
@@ -121,7 +132,7 @@ AgentModelContentPart {
 - journal / workspace 保存的是真实 tool result、tool args、resource refs。
 - 下一轮模型上下文使用 canonical `ToolResult` part。
 
-Phase 2D 已落地 recent hydration：
+当前已落地 recent hydration：
 
 - 前 5 轮中，`workspace.write_file` 与 `workspace.apply_patch` 成功后，会把目标文件当前完整内容回填到下一轮模型上下文。
 - 该回填只影响 model request，不改变实际 workspace/journal 真相。
@@ -209,6 +220,8 @@ workspace_file_written
 workspace_patch_applied
 checkpoint_created
 context_tool_result_hydrated
+provider_state_updated
+model_response_stored
 agent_loop_finished
 artifact_assembled
 commit_started
@@ -246,6 +259,8 @@ _tauritavern/agent-workspaces/
             <tool-call-id>.json
           tool-results/
             <tool-call-id>.json
+          model-responses/
+            round-XXX.json
           output/
             main.md
           scratch/
@@ -281,7 +296,7 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 
 ## 最近验证命令
 
-Phase 2D 落地时最近一次 Rust 侧验证：
+最近一次 Rust 侧验证基线：
 
 - `cargo check`
 - `cargo test agent_model_gateway`
@@ -310,6 +325,7 @@ Phase 2D 落地时最近一次 Rust 侧验证：
 新增或修改 Agent 相关实现时，请同步：
 
 - `docs/CurrentState/AgentFramework.md`
+- `docs/CurrentState/AgentProviderState.md`
 - `docs/AgentImplementPlan.md`
 - `docs/Agent/LlmGateway.md`
 - `docs/Agent/ToolSystem.md`
@@ -320,7 +336,7 @@ Phase 2D 落地时最近一次 Rust 侧验证：
 ## 守护契约
 
 - Agent Mode off 时 Legacy `Generate()` 行为不变。
-- LLM 调用不绕过 `ChatCompletionService`、LLM API log、proxy、secret、iOS policy、prompt cache。
+- LLM 调用不绕过 `ChatCompletionService`、LLM API log、secret、iOS policy、prompt cache；Responses WebSocket 的 proxy/timeout parity 作为传输债务跟踪，不得扩散成新的并行 LLM 调用链。
 - Agent runtime 使用 canonical model IR，不把 provider native format 当内部业务事实。
 - Provider native metadata 不解析、不清洗、不改写；丢失必要 native metadata 必须 fail-fast 或测试失败。
 - Tool call id 是不透明字符串。

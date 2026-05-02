@@ -18,7 +18,7 @@ impl AgentRuntimeService {
         mut cancel: AgentCancelReceiver,
     ) {
         let result = self
-            .execute_agent_loop_run_inner(&run_id, prompt_snapshot, request, &mut cancel)
+            .execute_agent_loop_run_body(&run_id, prompt_snapshot, request, &mut cancel)
             .await;
 
         match result {
@@ -52,9 +52,33 @@ impl AgentRuntimeService {
                 self.active_runs.write().await.remove(&run_id);
             }
         }
+
+        self.close_model_session_after_run(run_id);
     }
 
+    #[cfg(test)]
     pub(super) async fn execute_agent_loop_run_inner(
+        &self,
+        run_id: &str,
+        prompt_snapshot: Value,
+        request: ChatCompletionGenerateRequestDto,
+        cancel: &mut AgentCancelReceiver,
+    ) -> Result<(), ApplicationError> {
+        let result = self
+            .execute_agent_loop_run_body(run_id, prompt_snapshot, request, cancel)
+            .await;
+        self.close_model_session_after_run(run_id.to_string());
+        result
+    }
+
+    fn close_model_session_after_run(&self, run_id: String) {
+        let model_gateway = Arc::clone(&self.model_gateway);
+        tauri::async_runtime::spawn(async move {
+            model_gateway.close_session(&run_id).await;
+        });
+    }
+
+    async fn execute_agent_loop_run_body(
         &self,
         run_id: &str,
         prompt_snapshot: Value,
@@ -99,7 +123,7 @@ impl AgentRuntimeService {
         }
         self.ensure_not_cancelled(cancel)?;
 
-        let request = prepare_agent_tool_request(request, &self.tool_registry)?;
+        let request = prepare_agent_tool_request(request, &self.tool_registry, run_id)?;
         self.transition_status(run_id, AgentRunStatus::AssemblingContext)
             .await?;
         self.event(

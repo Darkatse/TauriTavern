@@ -1,6 +1,6 @@
 # 原生 API 格式（Custom）兼容现状
 
-最后更新：2026-04-10
+最后更新：2026-05-02
 
 本文件描述 **TauriTavern 已落地** 的三家原生 API 格式兼容（OpenAI Responses / Claude Messages / Gemini Interactions）的当前实现快照与持续开发约束。
 
@@ -76,13 +76,13 @@ Connection Profiles（Connection Manager 扩展）：
 | Custom 变体 | 非流式 | 流式 | tool calling | thought signature / native blocks | 回滚 ST 启动 |
 |---|---:|---:|---:|---:|---:|
 | OpenAI-compatible (`/chat/completions`) | ✅ | ✅ | ✅（上游 ST 语义） | ✅（现有链路） | ✅ |
-| OpenAI Responses (`/responses`) | ✅（normalize→chat.completion） | ✅（SSE→chat.completion.chunk） | ✅（含 follow-up） | ⚠️（未落盘 response_id/native） | ✅ |
+| OpenAI Responses (`/responses`) | ✅（normalize→chat.completion） | ✅（Responses events→chat.completion.chunk） | ✅（full transcript replay / `previous_response_id`） | ✅（backend normalizer / Agent gateway 保留 raw `output` 与 `responseId`） | ✅ |
 | Claude Messages (`/messages`) | ✅（normalize→chat.completion） | ✅（Anthropic events） | ✅（沿用 Claude tool loop） | ✅（现有链路） | ✅ |
 | Gemini Interactions (`/interactions`) | ✅（normalize→chat.completion，含 native） | ✅（SSE→chat.completion.chunk，末包带 native） | ✅ | ✅（`message.extra.native` 回放 outputs） | ✅ |
 
 ### 3.2 明确的当前限制
 
-- **Custom OpenAI Responses：`previous_response_id` 映射为内存缓存**（call_id → response_id）。应用重启后无法继续依赖旧 call_id 做 follow-up（需要重新生成 tool call）。
+- **Custom OpenAI Responses 不再维护 call_id → response_id 内存缓存**。普通 Custom 请求依赖完整 transcript / native output replay；带 `previous_response_id` 的请求允许只发送新的 function call outputs。Agent 请求的 `previous_response_id` 来自 run-scoped `provider_state`。
 - **Custom 的 model list / status check** 已按 `custom_api_format` 对齐传输协议：OpenAI-compatible / Responses 继续使用兼容 `/models`，Claude Messages 使用 Claude `/models`，Gemini Interactions 使用 Gemini `/models`。
 - **Claude streaming 不做 chunk 归一化**：前端需走 Anthropic events 分支解析（现状就是如此，优先复用既有 Claude 语义）。
 
@@ -94,8 +94,22 @@ Connection Profiles（Connection Manager 扩展）：
 
 请求侧（payload）：
 - `messages[]` → `input[]` items；`system` → `developer`
-- 仅将 **尾部连续的 tool messages** 映射为 `function_call_output`（需要 `tool_call_id` → `call_id`）
-- 固定 `store=false`；tool follow-up 依赖 `previous_response_id`（现按实现假定在 `store=false` 仍可用）
+- assistant message 若携带 `message.native.openai_responses.output`，则原样回放 raw Responses `output` items，并记住其中的 `function_call.call_id`
+- assistant text 会编码为 Responses `message` / `output_text`
+- assistant `tool_calls[]` 会编码为 Responses `function_call` items；`id` / `function.name` / `function.arguments` 必须可解析，缺失结构会 fail-fast
+- `tool` / `function` message 会编码为 `function_call_output`，必须有 `tool_call_id`
+- 没有 `previous_response_id` 时，`function_call_output` 必须能在同次 transcript 中找到前置 `function_call`；否则 fail-fast
+- 有 `previous_response_id` 时，允许 orphan `function_call_output`，因为前置 function call 可由 provider previous response state 提供
+- `store` 默认 `false`；`include` 会保证包含 `reasoning.encrypted_content`，用于 reasoning/native continuation
+- `previous_response_id`、`max_tokens` / `max_completion_tokens`→`max_output_tokens`、`reasoning_effort`→`reasoning.effort`、`verbosity`、`metadata`、`parallel_tool_calls` 等字段按当前 payload builder 映射
+
+传输侧（repository）：
+- 普通 Custom `/responses` 非流式请求当前会先尝试 WebSocket `response.create`，失败后回退 HTTP（取消错误不回退）
+- 普通 Custom `/responses` 流式请求当前会先尝试 WebSocket stream；若失败且尚未向前端发送 chunk，则回退 HTTP streaming
+- 带内部 `_tauritavern_provider_state.sessionId` 的请求走 run-scoped persistent WebSocket session；该路径失败时不回退 HTTP
+- 上游 HTTP payload 会剥离 `_tauritavern_provider_state`
+- WebSocket `response.create` payload 会剥离 `_tauritavern_provider_state`、`stream` 与 `background`
+- 已知传输债务：当前 Responses WebSocket connector 仍需与既有 HTTP client pool 的 proxy / timeout 语义完全对齐；后续修复不得改变 Custom / Agent payload 契约
 
 流式侧（repository）：
 - 解析 Responses 语义事件（如 `response.output_text.delta` / `response.output_item.added` / `response.function_call_arguments.delta`）
@@ -105,8 +119,9 @@ Connection Profiles（Connection Manager 扩展）：
   - tool call delta → `choices[0].delta.tool_calls[]`（`id` 使用 Responses 的 `call_id`）
 
 tool follow-up（关键契约）：
-- 从 tool outputs（`function_call_output`）提取 call_id → 查内存缓存得到 `previous_response_id`
-- follow-up 请求仅发送 “上一条 assistant 后的 tail items”，并注入 `previous_response_id`
+- 普通 Custom Responses 不再依赖 repository 内存缓存。若没有 `previous_response_id`，请求必须通过 full transcript replay 或 native output replay 提供前置 `function_call`。
+- 若 payload 已有 `previous_response_id`，builder 允许只发送对应的 `function_call_output`。
+- Agent Responses follow-up 由 `AgentModelGateway` 的 `provider_state.previousResponseId` 驱动；详见 `docs/CurrentState/AgentProviderState.md`。
 
 ### 4.2 Gemini Interactions（/v1beta/interactions）
 
@@ -146,5 +161,5 @@ streaming 语义：
 
 1. **回滚兼容**：Custom 变体落盘必须保持 `chat_completion_source="custom"`，不要把 UI 选择值（如 `custom_openai_responses`）写入设置文件。
 2. **tool_call_id 透明性**：tool loop 不应假设 tool_call_id 是 OpenAI UUID；必须把它当作不透明字符串传递与存储。
-3. **native metadata 保真**：Agent Phase 2D 会通过 normalized `message.native` / canonical `Native` part 保留 Claude content blocks、Gemini content parts、OpenAI Responses output items、Gemini Interactions outputs。不得“清洗未知字段”，否则签名链或 reasoning continuation 会断。
+3. **native metadata 保真**：Agent gateway 会通过 normalized `message.native` / canonical `Native` part 保留 Claude content blocks、Gemini content parts、OpenAI Responses output items、Gemini Interactions outputs。不得“清洗未知字段”，否则签名链或 reasoning continuation 会断。
 4. **Custom Claude 不注入 anthropic-beta**：该行为是为了兼容第三方；现在只有显式 opt-in 的 prompt caching 会自动补 caching header，其他场景仍不得硬编码回退。
