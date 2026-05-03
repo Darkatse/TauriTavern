@@ -16,6 +16,8 @@
 
 `provider_state` 不是 prompt 内容，不是用户设置，也不是要发送给上游 provider 的公开字段。
 
+当前实现位置：`agent_model_gateway/provider_state.rs` 负责注入内部字段与生成下一轮 state；`agent_model_gateway/providers/responses.rs` 负责 OpenAI Responses 的 `previous_response_id` 与增量输入规则。
+
 ## 2. 当前字段
 
 Agent run 初始化时，`prepare_agent_tool_request()` 写入：
@@ -64,7 +66,7 @@ OpenAI Responses 额外写入：
 
 ## 3. 请求侧流转
 
-`AgentModelGateway.encode_chat_completion_request()` 会把 `provider_state` 复制到 ChatCompletion payload 顶层内部字段：
+`agent_model_gateway::encode` 会把 `provider_state` 复制到 ChatCompletion payload 顶层内部字段：
 
 ```json
 {

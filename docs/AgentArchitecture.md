@@ -288,7 +288,7 @@ src-tauri/src/
 
 当前已落地 `AgentModelGateway` wrapper：Agent runtime 消费 canonical `AgentModelRequest` / `AgentModelResponse`，gateway 再编码为现有 `ChatCompletionGenerateRequestDto` 并调用 `ChatCompletionService::generate_exchange_with_cancel()`。它仍不是新 HTTP client，也不绕过 `HttpChatCompletionRepository` 外层的 logging、policy、secret、prompt cache 和 cancel 链路。Responses WebSocket 建连由 `HttpClientPool` 提供统一代理、TLS/client 构建与连接超时语义。
 
-后续应把当前 `agent_model_gateway.rs` 拆成 provider adapter 模块，但不能退回到 runtime 直接拼 provider-specific payload。
+Gateway 代码已拆成 `agent_model_gateway/` 模块目录：`mod.rs` 保留 trait / wrapper，`encode.rs` / `decode.rs` / `schema.rs` / `provider_state.rs` 处理通用转换与 continuation，`providers/*` 承载 provider-specific adapter 规则。后续修改不能退回到 runtime 直接拼 provider-specific payload。
 
 当前 `ChatCompletionStreamEvent::Chunk` 只是 provider SSE `data` 字符串的桥接，不是 Agent timeline 语义事件。Agent 必须定义自己的 `AgentRunEvent`，不能把 provider stream chunk 当作 run event。
 

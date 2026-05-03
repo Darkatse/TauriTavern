@@ -149,7 +149,8 @@ pub enum DomainError {
 
 当前与 AI 相关的新增服务包括：
 
-- `ChatCompletionService`：封装 Chat Completion 状态检查与生成流程（当前支持 OpenAI / Claude / Gemini(MakerSuite) / Custom OpenAI-compatible）。
+- `ChatCompletionService`：封装 Chat Completion 状态检查与生成流程（当前支持 OpenAI / Claude / Gemini(MakerSuite) / Custom OpenAI-compatible / Custom native formats）。
+- `ChatCompletionAgentModelGateway`：Agent runtime 的 LLM 边界，负责在 canonical `AgentModelRequest` / `AgentModelResponse` 与现有 `ChatCompletionService` exchange 之间转换，不直接调用 HTTP repository。
 - `TokenizationService`：统一 token 计数、编码/解码、logit bias token 映射（基于 `tiktoken-rs`，非 OpenAI 模型先 fallback）。
 
 `ChatCompletionService` 已按 provider 能力拆分为模块目录：
@@ -157,6 +158,12 @@ pub enum DomainError {
 - `application/services/chat_completion_service/config.rs`：provider 配置与密钥解析（含 custom base URL / header 解析）。
 - `application/services/chat_completion_service/payload/*`：按 provider 构建上游请求体。
 - `application/services/chat_completion_service/custom_parameters.rs`：custom body/header 参数解析。
+
+`AgentModelGateway` 已拆为模块目录：
+
+- `application/services/agent_model_gateway/mod.rs`：gateway trait 与 `ChatCompletionAgentModelGateway` wrapper。
+- `application/services/agent_model_gateway/encode.rs` / `decode.rs`：canonical IR 与 normalized ChatCompletion exchange 转换。
+- `application/services/agent_model_gateway/schema.rs` / `provider_state.rs` / `providers/*`：tool schema sanitizer、run-scoped continuation 与 provider-specific adapter 规则。
 
 ```rust
 // 示例: 角色服务

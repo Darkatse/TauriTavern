@@ -1,6 +1,6 @@
 # TauriTavern Agent Implementation Plan
 
-本文档记录当前可继续开发的实施基线与后续顺序。历史施工计划已经收敛为当前架构、测试与契约；后续开发不应再从旧计划倒推当前行为。
+本文档记录当前可继续开发的实施基线与后续顺序。历史施工计划已经收敛为当前架构、测试与契约；第 8 节只保留 Phase 台账用于追踪，不作为旧行为的事实来源。
 
 当前事实以 `docs/CurrentState/AgentFramework.md` 为准，架构边界以 `docs/AgentArchitecture.md` 与 `docs/AgentContract.md` 为准。
 
@@ -86,6 +86,7 @@ AgentRuntimeService
 
 当前已落地：
 
+- `AgentModelGateway` 已从旧单文件拆成 `agent_model_gateway/` 模块目录：`mod.rs` 只保留 trait / wrapper，`encode.rs` / `decode.rs` / `format.rs` / `schema.rs` / `provider_state.rs` / `providers/*` 分别承担转换、格式解析、schema 清洗、continuation 与 provider-specific 规则。
 - provider format detection：OpenAI-compatible、OpenAI Responses、Claude Messages、Gemini、Gemini Interactions。
 - canonical tool specs 到 provider-facing function tools 的转换。
 - provider-specific schema sanitizer。Gemini / Gemini Interactions 会移除当前不兼容的 JSON Schema 关键字；Claude 只做轻量清洗；OpenAI / Responses 保持完整 schema。
@@ -95,9 +96,8 @@ AgentRuntimeService
 - missing `tool_call_id` fail-fast，不再 fallback 生成 `tool_call_{index}`。
 - response decode 保留 text、reasoning、tool calls、native metadata。
 
-仍待拆分：
+仍待：
 
-- `AgentModelGateway` 现在承担 encode/decode/sanitizer，后续应拆成 `agent_model_gateway/` 模块目录与 provider adapter 文件。
 - 还没有正式 `ModelDelta` streaming adapter。
 - 还没有 profile-driven provider switch policy。
 
@@ -194,52 +194,96 @@ prepareCommit / saveReply / finalizeCommit
 
 ## 8. 后续实施顺序
 
-### 8.1 Gateway / Provider Contract 硬化
+本节按 Phase 台账追踪，便于提交与回归管理。已完成 Phase 只记录基线和守护项；后续开发从第一个未完成 Phase 继续。
 
-目标：把当前已落地的 gateway 核心拆成更长期可维护的 provider adapter 结构。
+### Phase 0：文档、契约、测试守护（已完成，持续维护）
 
-内容：
+已完成：
 
-- 将 `agent_model_gateway.rs` 拆成模块目录：
-  - `mod.rs`
-  - `format.rs`
-  - `encode.rs`
-  - `decode.rs`
-  - `schema.rs`
-  - `providers/openai.rs`
-  - `providers/responses.rs`
-  - `providers/claude.rs`
-  - `providers/gemini.rs`
-- 增加 same-provider native metadata loss 测试。
-- 增加 cross-provider switch policy 测试，明确哪些 metadata 不可迁移。
-- 继续收紧 `provider_state` 契约测试，覆盖 Responses `messageCursor`、`previousResponseId`、session close 与日志剥离。
-- 继续保持 Responses WebSocket connector 复用 HTTP client pool，避免普通 Custom ChatCompletion 路径被 transport 细节隐性改变。
-- 增加 schema sanitizer 覆盖更多 JSON Schema edge cases。
+- Agent 架构、硬契约、工具系统、workspace、journal、LLM gateway、Skill 与测试策略文档已成体系。
+- `docs/CurrentState/AgentFramework.md` 与 `docs/CurrentState/AgentProviderState.md` 作为当前事实入口。
 
-### 8.2 Profile 与 Context Policy
+持续守护：
+
+- Agent 相关实现变更必须同步当前事实、架构边界、Host ABI、工具语义、workspace 语义与测试策略。
+
+### Phase 1：Workspace + Journal + One-Step Agent（已完成）
+
+已完成：
+
+- Rust 后端 Agent runtime、run workspace、manifest、journal、checkpoint、commit bridge 已落地。
+- `api.agent.startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` / subscribe / cancel / readEvents / commit bridge 已落地。
+- Agent Mode off 不改变 Legacy Generate、ToolManager、事件顺序与 chat 保存语义。
+
+### Phase 2A：Tool Loop Foundation（已完成）
+
+已完成：
+
+- Rust runtime 独占推进 tool loop，不递归调用前端 `Generate()`。
+- Tool registry 产 canonical `AgentToolSpec`，provider-facing alias 由 gateway 渲染。
+- 工具调用、工具结果、recoverable tool error、fatal runtime error 与 journal 语义已落地。
+
+### Phase 2B：Workspace 读改工具（已完成）
+
+已完成：
+
+- `workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish` 已落地。
+- workspace mutation 后创建 checkpoint；完整读取 / 写入 read-state 约束已接入。
+- `output/`、`scratch/`、`plan/`、`summaries/`、`persist/` 是当前模型可见 root。
+
+### Phase 2C：上下文只读工具（已完成）
+
+已完成：
+
+- `chat.search` / `chat.read_messages` 只读取当前 run 绑定的聊天。
+- `worldinfo.read_activated` 只读取本次 run 捕获的最终激活世界书条目。
+- 只读工具结果以 resource ref / snippet / tool result 回填模型，不写入 chat 楼层。
+
+### Phase 2D：Gateway / Provider Contract 硬化（已完成基线，持续守护）
+
+结论：`Gateway / Provider Contract 硬化` 不应继续列为未完成主任务。当前基线已经完成；后续只按守护项补测试和防回退。
+
+已完成：
+
+- `AgentModelGateway` 已拆成 `agent_model_gateway/` 模块目录：`mod.rs` wrapper、`encode.rs` / `decode.rs` 转换、`format.rs` 格式解析、`schema.rs` sanitizer、`provider_state.rs` continuation、`providers/*` provider-specific adapter。
+- canonical `AgentModelRequest` / `AgentModelResponse` 已取代 runtime 直接解析 OpenAI-shaped raw JSON。
+- OpenAI-compatible、OpenAI Responses、Claude Messages、Gemini、Gemini Interactions 的 provider format detection 与 schema sanitizer 已落地。
+- OpenAI Responses `provider_state.previousResponseId` / `messageCursor` 增量输入、persistent WebSocket 与 `_tauritavern_provider_state` 内部传递已落地。
+- missing `tool_call_id`、same-provider native metadata loss、cross-provider private metadata 迁移均有 fail-fast / 测试守护。
+
+持续守护：
+
+- 不退回单文件 Gateway，不让 runtime 直拼 provider-specific payload。
+- 继续扩展 schema sanitizer edge case、session close、prompt cache 与 provider-native state 共存测试。
+- 新 provider adapter 必须保持 native metadata opaque，不得清洗签名、encrypted reasoning 或 tool call id。
+
+### Phase 2E：Skill 管理与读取（已完成基线）
+
+已完成：
+
+- Agent Skill repository/service、导入导出、embedded skill 导入确认、`api.skill` 已落地。
+- `skill.list` / `skill.read` 已接入 Agent tool registry。
+- Preset / Character embedded source refs 与删除清理语义已落地。
+
+后续归属：
+
+- Skill 可见性、deny policy、read budget 不属于 Phase 2E 基础能力；合并到 Phase 3 policy 工作。
+
+### Phase 3：Profile / Context / Skill Policy（下一步）
 
 目标：让创作者控制模型、工具、预算和上下文，而不是写死在 runtime。
 
 内容：
 
 - profile 显式声明 allowed tools、tool budget、tool call mode。
-- profile 显式声明 provider switch policy。
-- profile 显式声明 ContextFrame 资源预算。
-- Plan node 若锁定 profile，runtime 必须拒绝模型自行切换。
-
-### 8.3 Skill Policy 与创作者资源合流
-
-目标：在不膨胀 prompt snapshot 的前提下，把已安装 Skill 与创作者资源变成可审计、可预算的按需读取资源。
-
-内容：
-
+- profile 显式声明 provider switch policy 与 ContextFrame 资源预算。
 - profile / preset / character 声明 visible skills、deny skills 与 read budget。
 - `skill.list` 根据 policy 只返回当前 run 可见 Skill。
 - `skill.read` 对不可见 Skill、超预算读取和非法资源返回 recoverable tool error。
 - preset / character author resources 复用 Skill-like 索引与 source ref 语义，不另建平行资源系统。
-- journal 记录 Skill read 的 tool args、resource refs 与失败原因。
+- Plan node 若锁定 profile，runtime 必须拒绝模型自行切换。
 
-### 8.4 Timeline UI 与人工控制
+### Phase 4：Timeline UI 与人工控制
 
 目标：给创作者可理解、可暂停、可提交的 Agent run 体验。
 
@@ -252,7 +296,7 @@ prepareCommit / saveReply / finalizeCommit
 - commit preview 与手动提交。
 - cancel UI。
 
-### 8.5 Diff / Rollback / Resume
+### Phase 5：Diff / Rollback / Resume
 
 目标：让多轮创作具备可控回退能力。
 
@@ -262,7 +306,7 @@ prepareCommit / saveReply / finalizeCommit
 - `rollback()`：先只恢复 run workspace，不修改已提交聊天消息。
 - `resumeRun()`：明确 run continuation 语义，避免复用已 closed run 的状态机。
 
-### 8.6 MCP / Extension Tool
+### Phase 6：MCP / Extension Tool
 
 目标：引入外部工具生态，但保持 Tauri-native 安全边界。
 

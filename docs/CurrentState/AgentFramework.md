@@ -118,6 +118,7 @@ AgentModelContentPart {
 
 当前实现重点：
 
+- `AgentModelGateway` 已拆为 `agent_model_gateway/` 模块目录：`mod.rs` 保留 trait / `ChatCompletionAgentModelGateway` wrapper；`encode.rs` / `decode.rs` 做 canonical IR 与 normalized ChatCompletion exchange 转换；`format.rs` 解析 source / provider format；`schema.rs` 做 tool schema sanitizer；`provider_state.rs` 管理 continuation；`providers/*` 放 provider-specific adapter 规则。
 - Agent runtime 只消费 `AgentModelResponse.tool_calls`，不再读 `/choices/0/message/tool_calls`。
 - Tool call id 必须是 provider 返回的不透明字符串；缺失 `tool_call_id` 会 fail-fast。
 - OpenAI Responses 请求会注入 `include: ["reasoning.encrypted_content"]`，以便保留 reasoning continuation 所需 opaque 内容。
@@ -337,7 +338,6 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - 设计 Agent Mode toggle 与 Legacy Generate 的清晰分流，不改变 Agent Mode off 语义。
 - 建立最小 timeline/event viewer。
 - 将 `PromptSnapshot` 过渡输入逐步替换为 `GenerationIntent + ContextFrame`。
-- 把 `AgentModelGateway` 进一步拆成明确的 provider adapter 模块，减少单文件体积。
 - 完成 profile policy：allowed tools、tool budget、tool call mode、provider switch policy。
 - 将 Skill 可见性、deny policy 与 read budget 接入 profile / preset / character resolver。
 - 实现 readDiff、rollback、listRuns、resume-run、autoCommit/streaming 的明确策略。

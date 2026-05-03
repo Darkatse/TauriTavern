@@ -35,6 +35,15 @@ AgentRuntimeService
 
 当前只实现非 streaming Agent tool loop。`ChatCompletionStreamEvent::Chunk` 仍只是 provider SSE bridge，不是 Agent timeline event。
 
+当前代码布局：
+
+- `agent_model_gateway/mod.rs`：`AgentModelGateway` trait、`AgentModelExchange`、`ChatCompletionAgentModelGateway` wrapper。
+- `encode.rs` / `decode.rs`：canonical `AgentModelRequest` / `AgentModelResponse` 与 normalized ChatCompletion exchange 的双向转换。
+- `format.rs`：根据 request payload 解析 `ChatCompletionSource` 与 `ChatCompletionProviderFormat`。
+- `schema.rs`：按 provider adapter 清洗 tool JSON Schema。
+- `provider_state.rs`：写入内部 `_tauritavern_provider_state`，并生成下一轮 run-scoped continuation。
+- `providers/*`：OpenAI-compatible、OpenAI Responses、Claude、Gemini / Gemini Interactions 的 provider-specific 规则。
+
 ## 3. Canonical Model IR
 
 Agent runtime 只消费 canonical IR：
@@ -261,14 +270,14 @@ model.native_metadata_lost
 - OpenAI Responses native output items 回放。
 - OpenAI Responses `provider_state.previousResponseId` 注入与 `messageCursor` 增量输入。
 - Claude / Gemini native continuation 计数与缺失 fail-fast。
+- same-provider native metadata loss fail-fast。
+- cross-provider switch 不迁移 provider-private state。
 - LLM API log 剥离 `_tauritavern_provider_state`。
 - Claude native content blocks 回放。
 - normalizer 保留 Claude/Gemini/OpenAI Responses/Gemini Interactions native metadata。
 
 后续最低补齐：
 
-- same-provider native metadata loss fail-fast。
-- cross-provider switch 明确不可迁移 provider-private state。
 - prompt cache 与 provider-native state 共存。
 - stream `ModelDelta` 不泄漏 raw provider event。
 - persistent provider session close 不阻塞 Agent 最终状态。
