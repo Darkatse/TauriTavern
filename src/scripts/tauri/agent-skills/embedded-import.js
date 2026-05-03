@@ -1,6 +1,6 @@
 // @ts-check
 
-import { t } from '../../i18n.js';
+import { t, translate } from '../../i18n.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 import { SURFACE, applySurface } from '../../tauritavern/layout-kit.js';
 import { buildSkillImportReminderKey, hasSkillImportReminder, setSkillImportReminder } from './reminders.js';
@@ -295,7 +295,7 @@ function appendText(parent, tagName, text) {
 function getConflictLabel(preview) {
     const kind = String(preview?.conflict?.kind || '');
     if (kind === 'new') {
-        return t`New`;
+        return t`New Agent Skill`;
     }
     if (kind === 'same') {
         return t`Already installed`;
@@ -375,7 +375,7 @@ function buildPreviewPopupContent(previews, sourceLabel) {
             const warnings = document.createElement('ul');
             warnings.style.margin = '0.25rem 0 0 1rem';
             for (const warning of preview.warnings) {
-                appendText(warnings, 'li', String(warning));
+                appendText(warnings, 'li', translate(String(warning)));
             }
             item.append(warnings);
         }
