@@ -21,6 +21,7 @@ use crate::application::services::agent_model_gateway::{
 use crate::application::services::agent_tools::{
     AgentToolDispatcher, AgentToolEffect, AgentToolSession,
 };
+use crate::application::services::skill_service::SkillService;
 use crate::domain::models::agent::{
     AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentModelRole, AgentRun,
     AgentRunEventLevel, AgentRunStatus, AgentToolCall, WorkspacePath,
@@ -32,6 +33,7 @@ use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
+use crate::infrastructure::repositories::file_skill_repository::FileSkillRepository;
 
 #[test]
 fn workspace_id_uses_stable_chat_id_not_character_chat_file_name() {
@@ -115,6 +117,7 @@ async fn agent_loop_writes_artifact_and_reaches_awaiting_commit() {
         repository.clone(),
         test_chat_repository(&root),
         test_chat_repository(&root),
+        test_skill_service(&root),
         model_gateway,
     );
     let request = ChatCompletionGenerateRequestDto {
@@ -297,6 +300,7 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
         repository.clone(),
         test_chat_repository(&root),
         test_chat_repository(&root),
+        test_skill_service(&root),
         model_gateway,
     );
     let request = ChatCompletionGenerateRequestDto {
@@ -420,6 +424,7 @@ async fn finalize_commit_promotes_persistent_workspace_projection() {
         repository.clone(),
         test_chat_repository(&root),
         test_chat_repository(&root),
+        test_skill_service(&root),
         model_gateway,
     );
     let request = ChatCompletionGenerateRequestDto {
@@ -581,6 +586,7 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
         repository.clone(),
         test_chat_repository(&root),
         test_chat_repository(&root),
+        test_skill_service(&root),
         model_gateway,
     );
     let request = ChatCompletionGenerateRequestDto {
@@ -680,6 +686,7 @@ async fn workspace_patch_requires_full_read_state() {
         chat_repository.clone(),
         chat_repository,
         repository.clone(),
+        test_skill_service(&root),
     );
     let mut session = AgentToolSession::default();
     let patch_call = AgentToolCall {
@@ -799,6 +806,7 @@ async fn dispatcher_searches_and_reads_current_chat_messages() {
         chat_repository.clone(),
         chat_repository,
         repository.clone(),
+        test_skill_service(&root),
     );
     let mut session = AgentToolSession::default();
     let search_call = AgentToolCall {
@@ -890,6 +898,7 @@ async fn dispatcher_reads_worldinfo_activation_from_run_snapshot() {
         chat_repository.clone(),
         chat_repository,
         repository.clone(),
+        test_skill_service(&root),
     );
     let mut session = AgentToolSession::default();
     let call = AgentToolCall {
@@ -923,6 +932,12 @@ fn test_chat_repository(root: &Path) -> Arc<FileChatRepository> {
         root.join("group_chats"),
         root.join("backups"),
     ))
+}
+
+fn test_skill_service(root: &Path) -> Arc<SkillService> {
+    Arc::new(SkillService::new(Arc::new(FileSkillRepository::new(
+        root.join("skills"),
+    ))))
 }
 
 async fn save_character_payload(

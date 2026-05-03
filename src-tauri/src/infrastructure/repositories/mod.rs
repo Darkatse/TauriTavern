@@ -13,6 +13,7 @@ pub mod file_prompt_cache_repository;
 pub mod file_quick_reply_repository;
 pub mod file_secret_repository;
 pub mod file_settings_repository;
+pub mod file_skill_repository;
 pub mod file_theme_repository;
 pub mod file_user_directory_repository;
 pub mod file_user_repository;

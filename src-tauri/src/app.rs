@@ -18,6 +18,7 @@ use crate::application::services::preset_service::PresetService;
 use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
+use crate::application::services::skill_service::SkillService;
 use crate::application::services::stable_diffusion_service::StableDiffusionService;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
@@ -42,6 +43,7 @@ pub struct AppState {
     pub settings_service: Arc<SettingsService>,
     pub user_directory_service: Arc<UserDirectoryService>,
     pub secret_service: Arc<SecretService>,
+    pub skill_service: Arc<SkillService>,
     pub content_service: Arc<ContentService>,
     pub extension_service: Arc<ExtensionService>,
     pub extension_store_service: Arc<ExtensionStoreService>,
@@ -89,6 +91,7 @@ impl AppState {
             settings_service: services.settings_service,
             user_directory_service: services.user_directory_service,
             secret_service: services.secret_service,
+            skill_service: services.skill_service,
             content_service: services.content_service,
             extension_service: services.extension_service,
             extension_store_service: services.extension_store_service,

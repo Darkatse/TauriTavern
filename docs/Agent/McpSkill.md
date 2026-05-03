@@ -6,9 +6,9 @@
 
 - MCP 是独立平台集成能力，不是 Agent Runtime 本体。
 - Skill 是渐进披露的文本/资源包，不是自动吞入 prompt 的大文件。
-- Agent 可以消费 MCP 和 Skill，但必须经过 ToolRegistry、ContextFrame、Policy 与 Journal。
+- Agent 可以消费 MCP 和 Skill，但必须经过 ToolRegistry、Policy 与 Journal；不得由 prompt 直接打开旁路。
 
-当前状态（2026-05-02）：尚未实现 `window.__TAURITAVERN__.api.mcp`，也未把 MCP/Skill 接入 Agent tool registry。当前 Agent registry 已有内建工具：`chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish`。
+当前状态（2026-05-02）：尚未实现 `window.__TAURITAVERN__.api.mcp`，MCP 也未接入 Agent tool registry。Skill 已落地 `window.__TAURITAVERN__.api.skill`，并已通过 `skill.list` / `skill.read` 接入 Agent tool registry。当前 Skill 细节以 `docs/Agent/Skill.md` 与 `docs/API/Skill.md` 为准。
 
 ## 1. MCP 边界
 
@@ -120,19 +120,16 @@ skills/
     assets/
 ```
 
-`SKILL.md` frontmatter 示例：
+当前 `SKILL.md` frontmatter 最小示例：
 
 ```yaml
 ---
 name: long-form-romance
 description: 长篇恋爱剧情写作技巧
-allowed-tools:
-  - workspace.read_file
-  - workspace.apply_patch
-when-to-use: 当需要扩写情感铺垫和细腻心理描写时
-context: lazy
 ---
 ```
+
+工具权限、MCP server、预算与可见性不由 Skill frontmatter 直接授予；这些能力必须进入 profile/policy/approval 体系。TauriTavern 专属 metadata 可放在可选 `agents/tauritavern.json`，schema 无效时应 fail-fast。
 
 ## 8. Skill 读取策略
 
@@ -141,17 +138,15 @@ Agent 默认只看到 skill 索引：
 ```text
 name
 description
-when-to-use
-allowed-tools
 ```
 
 读取全文必须通过：
 
 ```text
-skill.read(name, section?, budget?)
+skill.read(name, path?, max_chars?)
 ```
 
-`skill.read` 是 tool call，必须写 journal。Preset 可以声明某些 skill 自动进入 context，但仍受 budget 管控。
+`skill.read` 是 tool call，必须写 journal。当前默认读取 `SKILL.md`，只支持 UTF-8 文本文件；profile/preset/character 的 visible、deny 与 read budget policy 仍是后续工作。
 
 ## 9. Skill 来源
 
@@ -167,38 +162,44 @@ Skill 可以来自：
 
 ## 10. Skill 与 Workspace
 
-Skill 可以表现为 workspace resource：
+当前 Skill 不挂进 Agent workspace 根，而是通过 `skill.read` 作为 tool result 回填模型。未来如果需要统一资源视图，可以把 Skill 表现为 read-only virtual resource：
 
 ```text
 skills/<name>/SKILL.md
 skills/<name>/examples/foo.md
 ```
 
-但它默认是 read-only virtual resource。Agent 不能修改原始 skill；如果需要摘录或改写，应写入 `scratch/` 或 `summaries/`。
+它必须保持 read-only。Agent 不能修改原始 skill；如果需要摘录或改写，应写入 `scratch/`、`summaries/` 或 `output/`。
 
 ## 11. Agent Context
 
-Skill 进入 prompt 的路径：
+Skill 进入模型上下文的当前路径：
 
 ```text
-skill.list / preset auto include
+skill.list / skill.read
   -> SkillService
-  -> WorkspaceResource or PromptComponent::Skill
-  -> ContextAssemblyService
-  -> ModelRequest
+  -> Agent tool result
+  -> ModelRequest next turn
 ```
 
 不要把所有 Skill 全文塞进 system prompt。
 
-## 12. 后续最小实现
+## 12. 当前已落地与后续
 
-Skill 最小实现：
+Skill 已落地：
 
-- `SkillRepository` 列出本地 skill。
+- `SkillRepository` / `FileSkillRepository` / `SkillService`。
+- `api.skill` 管理入口。
+- `.ttskill` 导入导出。
+- Preset / Character embedded skill 导入确认与 source ref 清理。
 - `skill.list`。
 - `skill.read`。
-- profile/preset 控制可见 skill。
-- skill content 受 budget 限制。
 - tool result 写 journal。
+
+Skill 后续只补：
+
+- profile/preset/character 控制可见 skill。
+- skill content 受 read budget 限制。
+- recommended skill 与 embedded skill 在 profile resolver 中合流。
 
 MCP 最小实现应晚于内置工具系统稳定之后。

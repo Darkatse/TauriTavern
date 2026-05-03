@@ -411,7 +411,9 @@ profile_switch_denied
       "workspace.finish",
       "chat.search",
       "chat.read_messages",
-      "worldinfo.read_activated"
+      "worldinfo.read_activated",
+      "skill.list",
+      "skill.read"
     ],
     "deny": ["*"]
   },
@@ -423,4 +425,4 @@ profile_switch_denied
 }
 ```
 
-这个 profile 足以支撑当前上下文只读工具与 workspace 读改工具循环，同时给后续 Skill、profile routing 与 MCP 留出自然扩展点。
+这个 profile 足以支撑当前上下文只读工具、Skill 读取与 workspace 读改工具循环。后续 profile routing 应在此基础上收窄 Skill 可见性、deny policy 与 read budget，而不是新增平行工具入口。

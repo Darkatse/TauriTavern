@@ -7,16 +7,18 @@
 1. `docs/CurrentState/AgentFramework.md`：当前真实实现状态与手动 smoke。
 2. `docs/AgentArchitecture.md`：系统边界、分层、数据流。
 3. `docs/AgentContract.md`：不可破坏的不变量与 fail-fast 约束。
-4. `docs/AgentImplementPlan.md`：分阶段实施计划与验收标准。
+4. `docs/AgentImplementPlan.md`：当前实施基线、后续顺序与验收命令。
 5. `docs/Agent/Workspace.md`：Workspace、Artifact、Checkpoint 的存储语义。
 6. `docs/Agent/RunEventJournal.md`：Run Event、状态机、恢复/取消语义。
 7. `docs/Agent/ProfilesAndPreset.md`：Preset、Agent Profile、Plan Policy。
 8. `docs/Agent/ToolSystem.md`：Tool Registry、Tool Result、权限与审批。
 9. `docs/Agent/LlmGateway.md`：provider-agnostic LLM gateway 与现有 ChatCompletionService 的复用边界。
-10. `docs/Agent/McpSkill.md`：MCP 与 Skill 的边界。
-11. `docs/API/Agent.md`：前端 Host ABI 与 Tauri command 草案。
-12. `docs/API/MCP.md`：非 Agent 模式下的 MCP Host ABI 草案。
-13. `docs/Agent/TestingStrategy.md`：测试矩阵与回归守护。
+10. `docs/Agent/Skill.md`：当前 Skill 格式、存储、导入导出、Agent tool 与安全边界。
+11. `docs/Agent/McpSkill.md`：MCP 与 Skill 的边界。
+12. `docs/API/Agent.md`：前端 Agent Host ABI。
+13. `docs/API/Skill.md`：前端 Skill 管理 Host ABI。
+14. `docs/API/MCP.md`：非 Agent 模式下的 MCP Host ABI 草案。
+15. `docs/Agent/TestingStrategy.md`：测试矩阵与回归守护。
 
 ## 1. 核心定义
 
@@ -64,7 +66,7 @@ Agent 系统必须同时满足五个目标：
 
 ## 4. 非目标
 
-第一阶段不追求这些事项：
+当前不追求这些事项：
 
 - 不重写完整 SillyTavern PromptManager。
 - 不把所有历史消息复制到 workspace。
@@ -145,7 +147,7 @@ LLM Gateway / provider adapter
 - Public Host ABI 入口为 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`，没有 `startRun()` alias。
 - `startRunFromLegacyGenerate()` 是当前推荐的兼容桥；它捕获 Legacy prompt 语义与本轮最终 `worldInfoActivation`，同时禁用 Legacy ToolManager tools。
 - `startRunWithPromptSnapshot()` 是低层测试/集成入口；调用方必须提供不含 external tools/tool turns 的 chat completion payload。
-- 后端当前开放 `chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish` 八个内建工具，对模型暴露为 provider-safe alias。
+- 后端当前开放 `chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`skill.list`、`skill.read`、`workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish` 十个内建工具，对模型暴露为 provider-safe alias。
 - Agent runtime 当前使用 `AgentModelRequest` / `AgentModelResponse` / `AgentModelContentPart` 作为内部模型语义，不再直接读写 OpenAI-compatible raw JSON。
 - `AgentModelGateway` 仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，在 canonical IR 与现有 provider payload pipeline 之间转换。
 - Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native metadata 以 opaque `Native` part 保存和回放；tool call id 缺失会 fail-fast。
@@ -156,7 +158,7 @@ LLM Gateway / provider adapter
 - 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，只有 `finalizeCommit()` 成功后才 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`model-responses/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
 - 工具循环最多 80 轮，必须以 `workspace.finish` 结束；模型直接输出文本会 fail-fast。
 - 模型可修正的工具错误以 `is_error = true` tool result 回填下一轮；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
-- `skill.list`、`skill.read`、`readDiff`、`rollback`、`resume-run`、tool approval、profile routing、MCP、timeline UI、streaming Agent loop、主发送按钮 Agent toggle 仍未实现。
+- Skill profile policy、readDiff、rollback、resume-run、tool approval、profile routing、MCP、timeline UI、streaming Agent loop、主发送按钮 Agent toggle 仍未实现。
 
 ### 5.2 Run 与 Workspace 身份
 

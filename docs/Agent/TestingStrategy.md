@@ -1,6 +1,6 @@
 # TauriTavern Agent Testing Strategy
 
-本文档定义 Agent 系统的测试策略。Agent 涉及生成、文件、工具、外部协议、保存与兼容事件，测试必须从第一阶段就建立。
+本文档定义 Agent 系统的测试策略。Agent 涉及生成、文件、工具、外部协议、保存与兼容事件，测试必须持续作为开发入口的一部分。
 
 ## 1. 测试目标
 
@@ -74,7 +74,9 @@ workspace repository rejects symlink escape
 workspace repository handles unicode relative paths
 file sizes and retention
 MCP config allowlist
-SkillRepository list/read
+SkillRepository preview/install/read/export/source refs
+Skill archive roundtrip hash
+Skill repository rejects symlink escape
 ```
 
 文件测试应使用临时目录，并覆盖 macOS/Linux/Windows path 差异。
@@ -109,10 +111,11 @@ recent workspace write/patch tool result hydration
 
 ```text
 window.__TAURITAVERN__.api.agent exists after ready
+window.__TAURITAVERN__.api.skill exists after ready
 window.__TAURITAVERN__.api.mcp exists after ready when MCP Host ABI lands
 subscribe returns idempotent unsubscribe
 Agent API uses safeInvoke, not raw command dependency in public caller
-types.d.ts includes agent types; mcp types land with MCP Host ABI
+types.d.ts includes agent and skill types; mcp types land with MCP Host ABI
 ```
 
 Legacy 回归：

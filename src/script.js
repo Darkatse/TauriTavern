@@ -11126,6 +11126,48 @@ function selectImportedChar(charId) {
 }
 
 /**
+ * @param {{ avatarFileName: string; label: string }} options
+ */
+async function maybePromptForImportedCharacterSkills({ avatarFileName, label }) {
+    const hostAbi = window.__TAURITAVERN__;
+    if (!hostAbi) {
+        return;
+    }
+
+    try {
+        if (!hostAbi.api?.skill) {
+            throw new Error('TauriTavern Agent Skill API is not available');
+        }
+
+        const { maybePromptForCharacterEmbeddedSkills } = await import('./scripts/tauri/agent-skills/embedded-import.js');
+        await maybePromptForCharacterEmbeddedSkills({
+            avatarFileName,
+            label,
+            loadCharacter: async () => {
+                const response = await fetch('/api/characters/get', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({ avatar_url: avatarFileName }),
+                    cache: 'no-cache',
+                });
+
+                if (!response.ok) {
+                    const details = String(await response.text()).trim();
+                    const reason = details || response.statusText || `HTTP ${response.status}`;
+                    throw new Error(`Failed to read imported character for Agent Skill scan: ${reason}`);
+                }
+
+                return response.json();
+            },
+        });
+    } catch (error) {
+        console.error('Failed to start Agent Skill import prompt for character', error);
+        const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
+        toastr.error(message, t`Agent Skill import failed`);
+    }
+}
+
+/**
  * Imports a character from a file.
  * @param {File} file File to import
  * @param {object} [options] - Options
@@ -11206,6 +11248,10 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
                 await importCharactersTags([avatarFileName]);
                 selectImportedChar(data.file_name);
             }
+            await maybePromptForImportedCharacterSkills({
+                avatarFileName,
+                label: String(data.file_name).replace('.png', ''),
+            });
             return avatarFileName;
         }
     } catch (error) {
@@ -11518,6 +11564,8 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
             worldsToDelete.add(primaryWorldName);
         }
 
+        const { clearCharacterSkillImportReminders } = await import('./scripts/tauri/agent-skills/reminders.js');
+        clearCharacterSkillImportReminders(character.avatar);
         accountStorage.removeItem(`AlertWI_${character.avatar}`);
         accountStorage.removeItem(`AlertRegex_${character.avatar}`);
         accountStorage.removeItem(`mediaWarningShown:${character.avatar}`);

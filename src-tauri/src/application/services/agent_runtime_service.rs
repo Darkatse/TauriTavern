@@ -5,6 +5,7 @@ use tokio::sync::{RwLock, watch};
 
 use crate::application::services::agent_model_gateway::AgentModelGateway;
 use crate::application::services::agent_tools::{AgentToolDispatcher, BuiltinAgentToolRegistry};
+use crate::application::services::skill_service::SkillService;
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
@@ -46,6 +47,7 @@ impl AgentRuntimeService {
         checkpoint_repository: Arc<dyn CheckpointRepository>,
         chat_repository: Arc<dyn ChatRepository>,
         group_chat_repository: Arc<dyn GroupChatRepository>,
+        skill_service: Arc<SkillService>,
         model_gateway: Arc<dyn AgentModelGateway>,
     ) -> Self {
         let tool_registry = BuiltinAgentToolRegistry::phase2c();
@@ -54,6 +56,7 @@ impl AgentRuntimeService {
             chat_repository,
             group_chat_repository,
             workspace_repository.clone(),
+            skill_service,
         );
         Self {
             run_repository,

@@ -12,6 +12,8 @@ use crate::application::dto::character_dto::{
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
+const SKILL_SOURCE_KIND_CHARACTER: &str = "character";
+
 #[tauri::command]
 pub async fn get_all_characters(
     shallow: bool,
@@ -126,11 +128,25 @@ pub async fn delete_character(
 ) -> Result<(), CommandError> {
     log_command(format!("delete_character {}", dto.name));
 
+    let name = dto.name.clone();
     app_state
         .character_service
         .delete_character(dto)
         .await
-        .map_err(map_command_error("Failed to delete character"))
+        .map_err(map_command_error("Failed to delete character"))?;
+
+    app_state
+        .skill_service
+        .delete_skills_for_source(
+            SKILL_SOURCE_KIND_CHARACTER,
+            &character_skill_source_id(&name),
+        )
+        .await
+        .map_err(map_command_error(
+            "Failed to delete Agent Skills linked to character",
+        ))?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -237,4 +253,8 @@ pub async fn clear_character_cache(
         .clear_cache()
         .await
         .map_err(map_command_error("Failed to clear character cache"))
+}
+
+fn character_skill_source_id(name: &str) -> String {
+    format!("character:{}", name.trim())
 }

@@ -21,6 +21,7 @@ use crate::application::services::preset_service::PresetService;
 use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
+use crate::application::services::skill_service::SkillService;
 use crate::application::services::stable_diffusion_service::StableDiffusionService;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
@@ -49,6 +50,7 @@ use crate::domain::repositories::prompt_cache_repository::PromptCacheRepository;
 use crate::domain::repositories::quick_reply_repository::QuickReplyRepository;
 use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::domain::repositories::settings_repository::SettingsRepository;
+use crate::domain::repositories::skill_repository::SkillRepository;
 use crate::domain::repositories::stable_diffusion_repository::StableDiffusionRepository;
 use crate::domain::repositories::theme_repository::ThemeRepository;
 use crate::domain::repositories::tokenizer_repository::TokenizerRepository;
@@ -84,6 +86,7 @@ use crate::infrastructure::repositories::file_prompt_cache_repository::FilePromp
 use crate::infrastructure::repositories::file_quick_reply_repository::FileQuickReplyRepository;
 use crate::infrastructure::repositories::file_secret_repository::FileSecretRepository;
 use crate::infrastructure::repositories::file_settings_repository::FileSettingsRepository;
+use crate::infrastructure::repositories::file_skill_repository::FileSkillRepository;
 use crate::infrastructure::repositories::file_theme_repository::FileThemeRepository;
 use crate::infrastructure::repositories::file_user_directory_repository::FileUserDirectoryRepository;
 use crate::infrastructure::repositories::file_user_repository::FileUserRepository;
@@ -97,6 +100,7 @@ pub(super) struct AppServices {
     pub settings_service: Arc<SettingsService>,
     pub user_directory_service: Arc<UserDirectoryService>,
     pub secret_service: Arc<SecretService>,
+    pub skill_service: Arc<SkillService>,
     pub content_service: Arc<ContentService>,
     pub extension_service: Arc<ExtensionService>,
     pub extension_store_service: Arc<ExtensionStoreService>,
@@ -128,6 +132,7 @@ struct AppRepositories {
     prompt_cache_repository: Arc<dyn PromptCacheRepository>,
     user_directory_repository: Arc<dyn UserDirectoryRepository>,
     secret_repository: Arc<dyn SecretRepository>,
+    skill_repository: Arc<dyn SkillRepository>,
     content_repository: Arc<dyn ContentRepository>,
     extension_repository: Arc<dyn ExtensionRepository>,
     extension_store_repository: Arc<dyn ExtensionStoreRepository>,
@@ -201,6 +206,7 @@ pub(super) async fn build_services(
     let quick_reply_service = Arc::new(QuickReplyService::new(
         repositories.quick_reply_repository.clone(),
     ));
+    let skill_service = Arc::new(SkillService::new(repositories.skill_repository.clone()));
     let chat_completion_service = Arc::new(ChatCompletionService::new(
         repositories.chat_completion_repository,
         repositories.secret_repository.clone(),
@@ -214,6 +220,7 @@ pub(super) async fn build_services(
         repositories.checkpoint_repository.clone(),
         repositories.chat_repository.clone(),
         repositories.group_chat_repository.clone(),
+        skill_service.clone(),
         Arc::new(ChatCompletionAgentModelGateway::new(
             chat_completion_service.clone(),
         )),
@@ -280,6 +287,7 @@ pub(super) async fn build_services(
         settings_service,
         user_directory_service,
         secret_service,
+        skill_service,
         content_service,
         extension_service,
         extension_store_service,
@@ -344,6 +352,9 @@ fn build_repositories(
 
     let secret_repository: Arc<dyn SecretRepository> = Arc::new(FileSecretRepository::new(
         default_user_dir.join("secrets.json"),
+    ));
+    let skill_repository: Arc<dyn SkillRepository> = Arc::new(FileSkillRepository::new(
+        data_root.join("_tauritavern").join("skills"),
     ));
 
     let content_repository: Arc<dyn ContentRepository> = Arc::new(FileContentRepository::new(
@@ -435,6 +446,7 @@ fn build_repositories(
         prompt_cache_repository,
         user_directory_repository,
         secret_repository,
+        skill_repository,
         content_repository,
         extension_repository,
         extension_store_repository,

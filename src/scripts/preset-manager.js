@@ -1122,7 +1122,16 @@ export async function initPresetManager() {
         await presetManager.savePreset(name, data);
         const successToast = !presetManager.isAdvancedFormatting() ? t`Preset imported` : t`Template imported`;
         toastr.success(successToast);
-        e.target.value = null;
+        try {
+            const { maybePromptForPresetEmbeddedSkills } = await import('./tauri/agent-skills/embedded-import.js');
+            await maybePromptForPresetEmbeddedSkills({ apiId, name, preset: data });
+        } catch (error) {
+            console.error('Failed to start Agent Skill import prompt for preset', error);
+            const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
+            toastr.error(message, t`Agent Skill import failed`);
+        } finally {
+            e.target.value = null;
+        }
     });
 
     $(document).on('click', '[data-preset-manager-delete]', async function () {
@@ -1146,6 +1155,8 @@ export async function initPresetManager() {
         if (result) {
             const successToast = !presetManager.isAdvancedFormatting() ? t`Preset deleted` : t`Template deleted`;
             toastr.success(successToast);
+            const { clearPresetSkillImportReminders } = await import('./tauri/agent-skills/reminders.js');
+            clearPresetSkillImportReminders(apiId, name);
             await eventSource.emit(event_types.PRESET_DELETED, { apiId, name });
         } else {
             const warningToast = !presetManager.isAdvancedFormatting() ? t`Preset was not deleted from server` : t`Template was not deleted from server`;

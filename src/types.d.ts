@@ -172,6 +172,119 @@ type TauriTavernAgentApi = {
     rollback: () => never;
 };
 
+type TauriTavernSkillFileKind = 'text' | 'binary';
+
+type TauriTavernSkillImportConflictKind = 'new' | 'same' | 'different';
+
+type TauriTavernSkillInstallConflictStrategy = 'skip' | 'replace';
+
+type TauriTavernSkillInstallAction = 'installed' | 'replaced' | 'already_installed' | 'skipped';
+
+type TauriTavernSkillIndexEntry = {
+    name: string;
+    description: string;
+    displayName?: string;
+    sourceKind?: string;
+    license?: string;
+    author?: string;
+    version?: string;
+    tags: string[];
+    installedHash: string;
+    fileCount: number;
+    totalBytes: number;
+    hasScripts: boolean;
+    hasBinary: boolean;
+    installedAt: string;
+    sourceRefs?: TauriTavernSkillSourceRef[];
+};
+
+type TauriTavernSkillSourceRef = {
+    kind: string;
+    id: string;
+    label: string;
+    installedHash: string;
+};
+
+type TauriTavernSkillInlineFile = {
+    path: string;
+    encoding?: 'utf8' | 'utf-8' | 'base64';
+    content: string;
+    mediaType?: string;
+    sizeBytes?: number;
+    sha256?: string;
+};
+
+type TauriTavernSkillImportInput =
+    | {
+        kind: 'inlineFiles';
+        files: TauriTavernSkillInlineFile[];
+        source?: any;
+    }
+    | {
+        kind: 'directory';
+        path: string;
+        source?: any;
+    }
+    | {
+        kind: 'archiveFile';
+        path: string;
+        source?: any;
+    };
+
+type TauriTavernSkillFileRef = {
+    path: string;
+    kind: TauriTavernSkillFileKind;
+    mediaType: string;
+    sizeBytes: number;
+    sha256: string;
+};
+
+type TauriTavernSkillImportPreview = {
+    skill: TauriTavernSkillIndexEntry;
+    files: TauriTavernSkillFileRef[];
+    conflict: {
+        kind: TauriTavernSkillImportConflictKind;
+        installedHash?: string;
+    };
+    warnings: string[];
+    source: any;
+};
+
+type TauriTavernSkillInstallResult = {
+    name: string;
+    action: TauriTavernSkillInstallAction;
+    skill?: TauriTavernSkillIndexEntry;
+};
+
+type TauriTavernSkillReadResult = {
+    name: string;
+    path: string;
+    content: string;
+    chars: number;
+    bytes: number;
+    sha256: string;
+    truncated: boolean;
+    resourceRef: string;
+};
+
+type TauriTavernSkillExportPayload = {
+    fileName: string;
+    contentBase64: string;
+    sha256: string;
+};
+
+type TauriTavernSkillApi = {
+    list: () => Promise<TauriTavernSkillIndexEntry[]>;
+    previewImport: (input: TauriTavernSkillImportInput) => Promise<TauriTavernSkillImportPreview>;
+    installImport: (request: {
+        input: TauriTavernSkillImportInput;
+        conflictStrategy?: TauriTavernSkillInstallConflictStrategy;
+    }) => Promise<TauriTavernSkillInstallResult>;
+    readFile: (options: { name: string; path: string; maxChars?: number }) => Promise<TauriTavernSkillReadResult>;
+    export: (options: { name: string }) => Promise<TauriTavernSkillExportPayload>;
+    exportSkill: (options: { name: string }) => Promise<TauriTavernSkillExportPayload>;
+};
+
 type TauriTavernFrontendLogsApi = {
     list: (options?: { limit?: number }) => Promise<TauriTavernFrontendLogEntry[]>;
     subscribe: (
@@ -284,6 +397,7 @@ type TauriTavernLayoutApi = {
 type TauriTavernHostApi = {
     chat?: TauriTavernChatApi;
     agent?: TauriTavernAgentApi;
+    skill?: TauriTavernSkillApi;
     layout?: TauriTavernLayoutApi;
     dev?: TauriTavernDevApi;
     worldInfo?: TauriTavernWorldInfoApi;

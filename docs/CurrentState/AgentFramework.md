@@ -2,7 +2,7 @@
 
 本文档是 Agent 框架的当前事实入口。后续开发先读本文，再读 `docs/AgentArchitecture.md`、`docs/AgentContract.md`、`docs/AgentImplementPlan.md` 与 `docs/Agent/` 下的专题文档。
 
-旧阶段性施工说明已经吸收为当前基线，不再作为开发入口；需要历史背景时只看 git history。
+历史施工说明已经吸收为当前基线，不再作为开发入口；需要历史背景时只看 git history。
 
 ## 当前基线
 
@@ -15,6 +15,7 @@
 - Agent runtime 已不再把 OpenAI-compatible raw JSON 当作内部事实；运行时使用 canonical `AgentModelRequest` / `AgentModelResponse` / `AgentModelMessage` / `AgentModelContentPart`。
 - `AgentModelGateway` 在 Agent canonical IR 与现有 `ChatCompletionGenerateRequestDto` 之间转换；provider-native metadata 作为 opaque `Native` part 保留。
 - `provider_state` 已是 run-scoped continuation contract；OpenAI Responses 使用它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
+- Agent Skill 管理、导入导出、embedded skill 提示导入、`skill.list` / `skill.read` 已落地。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Legacy Generate 尚未默认切到 Agent；Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
 
@@ -33,6 +34,19 @@ api.agent.prepareCommit(input)
 api.agent.commit(input)
 api.agent.finalizeCommit(input)
 ```
+
+Skill 管理 API 已落地：
+
+```ts
+api.skill.list()
+api.skill.previewImport(input)
+api.skill.installImport(request)
+api.skill.readFile(input)
+api.skill.export(input)
+api.skill.exportSkill(input)
+```
+
+`api.skill` 是用户/UI/扩展侧的 Skill 管理入口；Agent run 内只通过 `skill.list` / `skill.read` 工具消费已安装 Skill。
 
 明确不存在公共 `api.agent.startRun()` alias。启动入口必须表达 prompt 来源：
 
@@ -56,13 +70,15 @@ Tool registry 只产 canonical `AgentToolSpec`。Provider-facing alias 由 gatew
 | `chat.search` | `chat_search` | read-only | 搜索当前 run 绑定的聊天。只有 `query` 必填；可选 `limit`、`role`、`start_message`、`end_message`、`scan_limit`。 |
 | `chat.read_messages` | `chat_read_messages` | read-only | 按 0-based message index 读取当前聊天消息；每项可选 `start_char`、`max_chars`。JSONL header 不计入 index。 |
 | `worldinfo.read_activated` | `worldinfo_read_activated` | read-only | 读取本次 Agent run 捕获的最终激活世界书条目，不读取全局 last activation。 |
+| `skill.list` | `skill_list` | read-only | 列出当前已安装 Skill 的索引摘要。profile visible/deny policy 尚未接入，因此目前是全局安装索引。 |
+| `skill.read` | `skill_read` | read-only | 读取已安装 Skill 内的 UTF-8 文本文件；默认 `SKILL.md`，支持 `path` 与 `max_chars`。 |
 | `workspace.list_files` | `workspace_list_files` | read-only | 列出模型可见 workspace 文件。`path` 省略、空字符串、`.`、`./` 表示 workspace root。 |
 | `workspace.read_file` | `workspace_read_file` | read-only | 读取 UTF-8 文本文件并返回行号；完整读取会记录 read-state。 |
 | `workspace.write_file` | `workspace_write_file` | mutating | 写完整 UTF-8 文件；成功后记录 read-state 并创建 checkpoint。 |
 | `workspace.apply_patch` | `workspace_apply_patch` | mutating | 单文件 `old_string` / `new_string` 精确替换；要求已完整读取或由本 run 创建/修改。 |
 | `workspace.finish` | `workspace_finish` | control | 结束工具循环；默认 final artifact 是 `output/main.md`。 |
 
-当前没有 `skill.list`、`skill.read`、MCP 工具、shell 工具、外部 extension tools、tool approval 或 profile routing。
+当前没有 MCP 工具、shell 工具、外部 extension tools、tool approval 或 profile routing。
 
 ## Model Gateway 当前事实
 
@@ -271,6 +287,14 @@ _tauritavern/agent-workspaces/
             <checkpoint-id>/
               checkpoint.json
               <snapshotted files...>
+_tauritavern/skills/
+  installed/
+    <skill-name>/
+      SKILL.md
+      <skill files...>
+  index/
+    skills.json
+  .staging/
 ```
 
 Workspace path 必须是相对路径。绝对路径、Windows drive prefix、NUL、`..` 会被拒绝。工具参数层可修正的问题返回 recoverable tool error；repository 内部 IO、journal、checkpoint、chat JSONL 损坏、序列化、取消和模型响应结构错误是 fatal runtime error。
@@ -298,13 +322,11 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 
 最近一次 Rust 侧验证基线：
 
-- `cargo check`
-- `cargo test agent_model_gateway`
-- `cargo test agent_loop`
-- `cargo test openai_responses_payload`
-- `cargo test claude_native_content_blocks_are_replayed`
-- `cargo test normalize_`
-- `cargo test`：470 passed
+- `cargo fmt --manifest-path src-tauri/Cargo.toml`
+- `cargo check --manifest-path src-tauri/Cargo.toml`
+- `cargo test --manifest-path src-tauri/Cargo.toml skill --lib`：9 passed
+- `cargo test --manifest-path src-tauri/Cargo.toml agent_tools --lib`：5 passed
+- `cargo test --manifest-path src-tauri/Cargo.toml agent --lib`：31 passed
 - `git diff --check`
 
 前端 ABI 本次未修改，未重新运行前端检查。
@@ -317,7 +339,7 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - 将 `PromptSnapshot` 过渡输入逐步替换为 `GenerationIntent + ContextFrame`。
 - 把 `AgentModelGateway` 进一步拆成明确的 provider adapter 模块，减少单文件体积。
 - 完成 profile policy：allowed tools、tool budget、tool call mode、provider switch policy。
-- 实现 `skill.list` / `skill.read`。
+- 将 Skill 可见性、deny policy 与 read budget 接入 profile / preset / character resolver。
 - 实现 readDiff、rollback、listRuns、resume-run、autoCommit/streaming 的明确策略。
 
 ## 每次 Agent 相关变更必须更新
@@ -329,9 +351,10 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - `docs/AgentImplementPlan.md`
 - `docs/Agent/LlmGateway.md`
 - `docs/Agent/ToolSystem.md`
+- `docs/Agent/Skill.md`
 - `docs/Agent/RunEventJournal.md`
 - `docs/Agent/TestingStrategy.md`
-- 涉及 Host ABI 时同步 `docs/API/Agent.md`、`docs/FrontendHostContract.md`、`src/types.d.ts`
+- 涉及 Host ABI 时同步 `docs/API/Agent.md`、`docs/API/Skill.md`、`docs/FrontendHostContract.md`、`src/types.d.ts`
 
 ## 守护契约
 

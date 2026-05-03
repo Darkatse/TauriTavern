@@ -4761,6 +4761,15 @@ async function onPresetImportFileChange(e) {
         option.innerText = data.name;
         $('#settings_preset_openai').append(option).trigger('change');
     }
+
+    try {
+        const { maybePromptForPresetEmbeddedSkills } = await import('./tauri/agent-skills/embedded-import.js');
+        await maybePromptForPresetEmbeddedSkills({ apiId: 'openai', name: data.name, preset: presetBody });
+    } catch (error) {
+        console.error('Failed to start Agent Skill import prompt for OpenAI preset', error);
+        const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
+        toastr.error(message, t`Agent Skill import failed`);
+    }
 }
 
 async function onExportPresetClick() {
@@ -4889,6 +4898,8 @@ async function onDeletePresetClick() {
         toastr.warning(t`Preset was not deleted from server`);
     } else {
         toastr.success(t`Preset deleted`);
+        const { clearPresetSkillImportReminders } = await import('./tauri/agent-skills/reminders.js');
+        clearPresetSkillImportReminders('openai', nameToDelete);
         await eventSource.emit(event_types.PRESET_DELETED, { apiId: 'openai', name: nameToDelete });
     }
 

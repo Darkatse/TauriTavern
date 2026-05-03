@@ -1,8 +1,8 @@
 # `window.__TAURITAVERN__.api.agent` — Agent API
 
-本文档是 Agent Host ABI 草案。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
+本文档是 Agent Host ABI 当前参考。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
 
-状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、workspace 读改工具循环与前端 dryRun adapter。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来草案。
+状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环与前端 dryRun adapter。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来设计。
 
 `provider_state` 是 Rust 后端内部 continuation contract，不是 Host ABI。前端/扩展不应读写 `_tauritavern_provider_state`；需要诊断时通过 run events、`modelResponsePath` 与 LLM API log 观察。
 
@@ -136,7 +136,7 @@ Public Host ABI 可以允许调用方省略 `stableChatId`，但 `api.agent.star
 - 如果调用方希望 `worldinfo_read_activated` 返回非错误结果，必须在 prompt snapshot 中提供本次 run 的 `worldInfoActivation`。
 - 当前拒绝已有 `tools`、`tool_choice`、`role: "tool"` 或已有 `tool_calls` 的外部 tool turns。
 - 当前拒绝 `stream: true` 与 `autoCommit: true`。
-- `workspaceMode` / `resumeRunId` 当前只是后续阶段字段，不应作为当前行为依赖。
+- `workspaceMode` / `resumeRunId` 当前只是后续字段，不应作为当前行为依赖。
 - 参数无效必须 reject，不静默回退 Legacy Generate。
 
 ## 5. subscribe
@@ -375,7 +375,7 @@ commit.cursor_integrity
 commit.save_failed
 ```
 
-## 15. Rust Command 草案
+## 15. Rust Command
 
 ```text
 start_agent_run(dto)
@@ -388,7 +388,7 @@ finalize_agent_run_commit(dto)
 
 Command 层必须是薄封装。Agent loop 不写在 command 内。
 
-后续草案命令：
+后续命令：
 
 ```text
 approve_agent_tool_call(dto)
@@ -414,20 +414,22 @@ Agent Mode on：
 
 ## 17. 当前工具与手动验证
 
-当前开放八个内建工具：
+当前开放十个内建工具：
 
 | Canonical name | Model-facing alias | 说明 |
 | --- | --- | --- |
 | `chat.search` | `chat_search` | 搜索当前 run 绑定的聊天。只有 `query` 必填；可选 `limit`、`role`、`start_message`、`end_message`、`scan_limit`。返回 message index、snippet 与 ref。 |
 | `chat.read_messages` | `chat_read_messages` | 按 0-based message index 读取当前聊天消息；每项可选 `start_char`、`max_chars` 读取长消息片段。 |
 | `worldinfo.read_activated` | `worldinfo_read_activated` | 读取本次 run 的最终激活世界书条目；模型可读文本只包含条目名、世界书名、条目内容。 |
+| `skill.list` | `skill_list` | 列出已安装 Skill 的索引摘要；当前尚未接入 profile visible/deny policy。 |
+| `skill.read` | `skill_read` | 读取已安装 Skill 内的 UTF-8 文本文件；默认 `SKILL.md`，支持 `path` 与 `max_chars`。 |
 | `workspace.list_files` | `workspace_list_files` | 列出模型可见 workspace 文件；`path` 省略、空字符串、`.`、`./` 表示 workspace root |
 | `workspace.read_file` | `workspace_read_file` | 读取 UTF-8 文本文件并返回行号；完整读取记录 read-state |
 | `workspace.write_file` | `workspace_write_file` | 写 UTF-8 文本到 manifest 可写 roots，当前为 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/` |
 | `workspace.apply_patch` | `workspace_apply_patch` | 单文件 `old_string` / `new_string` 精确替换，要求已完整读取或由本 run 创建/修改 |
 | `workspace.finish` | `workspace_finish` | 结束工具循环，默认 final artifact 为 `output/main.md` |
 
-当前不存在 `skill.list`、`skill.read`、MCP、shell 或 extension bridge 工具。
+当前不存在 MCP、shell 或 extension bridge 工具。
 
 模型可修正的工具错误会作为 `is_error = true` tool result 回填下一轮。宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍然让 run failed。
 
@@ -446,4 +448,4 @@ const run = await agent.startRunFromLegacyGenerate({
 const stop = agent.subscribe(run.runId, event => console.log(event));
 ```
 
-更完整的多阶段工具循环 smoke 见 `docs/CurrentState/AgentFramework.md`。
+更完整的多轮工具循环 smoke 见 `docs/CurrentState/AgentFramework.md`。

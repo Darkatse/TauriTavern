@@ -3,6 +3,7 @@ mod common;
 mod dispatcher;
 mod registry;
 mod session;
+mod skill;
 mod workspace;
 mod world_info;
 

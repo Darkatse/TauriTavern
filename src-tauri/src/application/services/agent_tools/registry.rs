@@ -1,4 +1,5 @@
 use super::chat::{chat_read_messages_spec, chat_search_spec};
+use super::skill::{skill_list_spec, skill_read_spec};
 use super::workspace::{
     workspace_apply_patch_spec, workspace_finish_spec, workspace_list_files_spec,
     workspace_read_file_spec, workspace_write_file_spec,
@@ -18,6 +19,8 @@ impl BuiltinAgentToolRegistry {
                 chat_search_spec(),
                 chat_read_messages_spec(),
                 worldinfo_read_activated_spec(),
+                skill_list_spec(),
+                skill_read_spec(),
                 workspace_list_files_spec(),
                 workspace_read_file_spec(),
                 workspace_write_file_spec(),
@@ -43,6 +46,13 @@ mod tests {
         let tools = registry.specs();
 
         assert_eq!(tools[0].model_name, "chat_search");
+        assert_eq!(
+            tools
+                .iter()
+                .find(|spec| spec.model_name == "skill_read")
+                .map(|spec| spec.name.as_str()),
+            Some("skill.read")
+        );
         assert_eq!(
             tools
                 .iter()

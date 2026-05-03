@@ -1,6 +1,6 @@
 # TauriTavern Agent Implementation Plan
 
-本文档记录当前可继续开发的实施基线与后续顺序。旧阶段性施工计划已经收敛为当前架构、测试与契约；后续开发不应再从旧阶段文档倒推当前行为。
+本文档记录当前可继续开发的实施基线与后续顺序。历史施工计划已经收敛为当前架构、测试与契约；后续开发不应再从旧计划倒推当前行为。
 
 当前事实以 `docs/CurrentState/AgentFramework.md` 为准，架构边界以 `docs/AgentArchitecture.md` 与 `docs/AgentContract.md` 为准。
 
@@ -16,8 +16,9 @@
 - Tool loop 由 Rust runtime 独占推进，不递归调用前端 `Generate()`。
 - Agent runtime 已使用 canonical model IR，不再把 OpenAI-compatible raw JSON 当作运行时事实。
 - `provider_state` 已用于 run-scoped continuation。OpenAI Responses 通过它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
+- Agent Skill repository/service、导入导出、embedded skill 导入确认、`api.skill`、`skill.list` / `skill.read` 已落地。
 
-旧阶段只保留为这些不变量：
+历史计划只保留为这些不变量：
 
 - Agent Mode off 时，上游 SillyTavern `Generate()`、ToolManager、事件顺序与 chat 保存语义不变。
 - `stableChatId` 是长期聊天身份；`workspaceId` 由 `kind + stableChatId` 派生；`runId` 表示单次执行。
@@ -128,6 +129,8 @@ Tool registry 只产 canonical `AgentToolSpec`，不再暴露 OpenAI-shaped `ope
 | `chat.search` | `chat_search` | read-only |
 | `chat.read_messages` | `chat_read_messages` | read-only |
 | `worldinfo.read_activated` | `worldinfo_read_activated` | read-only |
+| `skill.list` | `skill_list` | read-only |
+| `skill.read` | `skill_read` | read-only |
 | `workspace.list_files` | `workspace_list_files` | read-only |
 | `workspace.read_file` | `workspace_read_file` | read-only |
 | `workspace.write_file` | `workspace_write_file` | mutating |
@@ -136,7 +139,7 @@ Tool registry 只产 canonical `AgentToolSpec`，不再暴露 OpenAI-shaped `ope
 
 当前尚未落地：
 
-- `skill.list` / `skill.read`
+- Skill profile visible / deny / read budget policy
 - MCP 工具
 - shell 工具
 - 外部 extension tools
@@ -174,7 +177,7 @@ initialize_run 写 manifest / prompt snapshot / workspace root
   ↓
 prepare_agent_tool_request 生成 AgentModelRequest
   ↓
-model -> read-only context tools / workspace tools -> model -> ... -> workspace.finish
+model -> read-only context tools / skill tools / workspace tools -> model -> ... -> workspace.finish
   ↓
 工具调用参数与结果写入 workspace refs
   ↓
@@ -224,15 +227,17 @@ prepareCommit / saveReply / finalizeCommit
 - profile 显式声明 ContextFrame 资源预算。
 - Plan node 若锁定 profile，runtime 必须拒绝模型自行切换。
 
-### 8.3 剩余只读上下文资源
+### 8.3 Skill Policy 与创作者资源合流
 
-目标：在不膨胀 prompt snapshot 的前提下，把创作者资源变成按需读取的工具/virtual resource。
+目标：在不膨胀 prompt snapshot 的前提下，把已安装 Skill 与创作者资源变成可审计、可预算的按需读取资源。
 
-优先级：
+内容：
 
-- `skill.list` / `skill.read`
-- preset / character author resources 的统一 Skill-like 入口
-- 可审计的 context budget 与 resource refs
+- profile / preset / character 声明 visible skills、deny skills 与 read budget。
+- `skill.list` 根据 policy 只返回当前 run 可见 Skill。
+- `skill.read` 对不可见 Skill、超预算读取和非法资源返回 recoverable tool error。
+- preset / character author resources 复用 Skill-like 索引与 source ref 语义，不另建平行资源系统。
+- journal 记录 Skill read 的 tool args、resource refs 与失败原因。
 
 ### 8.4 Timeline UI 与人工控制
 
@@ -276,6 +281,8 @@ Agent 相关 Rust 变更至少运行：
 cargo fmt --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml agent --lib
+cargo test --manifest-path src-tauri/Cargo.toml skill --lib
+cargo test --manifest-path src-tauri/Cargo.toml agent_tools --lib
 git diff --check
 ```
 
@@ -304,6 +311,7 @@ pnpm run check:contracts
 - LLM gateway：`docs/Agent/LlmGateway.md`
 - 工具语义：`docs/Agent/ToolSystem.md`
 - workspace 语义：`docs/Agent/Workspace.md`
+- Skill 语义：`docs/Agent/Skill.md`
 - 事件语义：`docs/Agent/RunEventJournal.md`
 - 测试矩阵：`docs/Agent/TestingStrategy.md`
-- Host ABI：`docs/API/Agent.md`、`docs/FrontendHostContract.md`、`src/types.d.ts`
+- Host ABI：`docs/API/Agent.md`、`docs/API/Skill.md`、`docs/FrontendHostContract.md`、`src/types.d.ts`

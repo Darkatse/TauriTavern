@@ -241,6 +241,12 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::agent_commands::read_agent_workspace_file,
         super::agent_commands::prepare_agent_run_commit,
         super::agent_commands::finalize_agent_run_commit,
+        // Agent Skill commands
+        super::skill_commands::list_skills,
+        super::skill_commands::preview_skill_import,
+        super::skill_commands::install_skill_import,
+        super::skill_commands::read_skill_file,
+        super::skill_commands::export_skill,
         // Chat completion commands
         super::chat_completion_commands::get_chat_completions_status,
         super::chat_completion_commands::generate_chat_completion,

@@ -11,6 +11,7 @@ pub mod preset;
 pub mod quick_reply;
 pub mod secret;
 pub mod settings;
+pub mod skill;
 pub mod theme;
 pub mod tt_sync;
 pub mod update;
