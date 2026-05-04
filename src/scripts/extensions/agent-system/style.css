@@ -33,6 +33,80 @@
     min-width: 0;
 }
 
+.ttas-agent-send-toggle {
+    position: relative;
+    order: 2;
+    width: var(--bottomFormBlockSize);
+    height: var(--bottomFormBlockSize);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    color: var(--SmartThemeBodyColor);
+    background: transparent;
+    cursor: pointer;
+    opacity: 0.62;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color var(--animation-duration-2x), opacity var(--animation-duration-2x), transform var(--animation-duration-2x);
+}
+
+.ttas-agent-send-toggle::before {
+    content: '';
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    border: 1px solid transparent;
+    border-radius: 50%;
+    background-color: transparent;
+    opacity: 0;
+    transform: scale(0.82);
+    transition: background-color var(--animation-duration-2x), border-color var(--animation-duration-2x), opacity var(--animation-duration-2x), transform var(--animation-duration-2x);
+}
+
+.ttas-agent-send-toggle-icon {
+    position: relative;
+    z-index: 1;
+    width: 14px;
+    height: 14px;
+}
+
+.ttas-agent-send-toggle:hover {
+    opacity: 1;
+    transform: translateY(-1px);
+}
+
+.ttas-agent-send-toggle.active {
+    color: var(--ttas-accent);
+    opacity: 1;
+}
+
+.ttas-agent-send-toggle.active::before {
+    border-color: color-mix(in srgb, var(--ttas-accent) 72%, transparent);
+    background-color: var(--ttas-accent-soft);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--ttas-accent) 36%, transparent);
+    opacity: 1;
+    transform: scale(1);
+}
+
+.ttas-agent-send-toggle.running > .ttas-agent-send-toggle-icon {
+    animation: ttas-agent-pulse 1.1s ease-in-out infinite;
+}
+
+body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle {
+    display: none;
+}
+
+@keyframes ttas-agent-pulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.14);
+    }
+}
+
 .ttas-root .menu_button.active,
 #agent_system_settings .menu_button.active {
     border-color: color-mix(in srgb, var(--ttas-accent) 64%, var(--ttas-border));

@@ -2,14 +2,16 @@ import { createApp } from 'vue/dist/vue.esm-bundler.js';
 
 import { errorText, waitForHostReady } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
+import { mountChatInputAgentToggle } from './chat-input-toggle.js';
 import { openAgentSystemPanel } from './panel-popup.js';
-import { loadSettings, patchSettings } from './settings-store.js';
+import { loadSettings, patchSettings, subscribeSettings } from './settings-store.js';
 
 function createAgentSystemEntryApp() {
     return createApp({
         data() {
             return {
                 loading: false,
+                unsubscribeSettings: null,
                 settings: {
                     agentModeEnabled: false,
                 },
@@ -19,12 +21,18 @@ function createAgentSystemEntryApp() {
             this.loading = true;
             try {
                 this.settings = await loadSettings();
+                this.unsubscribeSettings = subscribeSettings((settings) => {
+                    this.settings = settings;
+                });
             } catch (error) {
                 this.reportError(error);
                 throw error;
             } finally {
                 this.loading = false;
             }
+        },
+        unmounted() {
+            this.unsubscribeSettings?.();
         },
         methods: {
             async toggleAgentMode() {
@@ -88,6 +96,7 @@ async function mountAgentSystem() {
     mount.id = 'agent_system_mount';
     container.appendChild(mount);
     createAgentSystemEntryApp().mount(mount);
+    await mountChatInputAgentToggle();
 }
 
 void mountAgentSystem();

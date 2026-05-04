@@ -47,6 +47,12 @@ import {
 } from './scripts/chat-input-focus.js';
 import { getActiveIosPolicyCapabilities } from './scripts/tauritavern/ios-policy.js';
 import { applyIosPolicyUiProjection } from './scripts/tauritavern/ios-policy-ui.js';
+import { loadAgentSystemSettings } from './scripts/tauritavern/agent/agent-system-settings.js';
+import {
+    cancelActiveAgentRun,
+    hasActiveAgentRun,
+    startAndWaitForAgentRun,
+} from './scripts/tauritavern/agent/agent-run-controller.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -147,6 +153,7 @@ import {
     openai_messages_count,
     chat_completion_sources,
     getChatCompletionModel,
+    createGenerationParameters,
     proxies,
     loadProxyPresets,
     selected_proxy,
@@ -2128,29 +2135,59 @@ export async function sendTextareaMessage() {
 
     hideSwipeButtons(); //Swipe buttons must be hidden now, otherwise concurrent generations are possible.
 
-    let generateType = 'normal';
-    // "Continue on send" is activated when the user hits "send" (or presses enter) on an empty chat box, and the last
-    // message was sent from a character (not the user or the system).
-    const textareaText = String($('#send_textarea').val());
-    const lastMessage = chat[chat.length - 1];
-    if (power_user.continue_on_send &&
-        !hasPendingFileAttachment() &&
-        !textareaText &&
-        !selected_group &&
-        chat.length &&
-        !lastMessage.is_user &&
-        !lastMessage.is_system
-    ) {
-        generateType = 'continue';
-    }
+    let routeToAgentMode = false;
+    try {
+        const agentSettings = await loadAgentSystemSettings();
+        let generateType = 'normal';
+        // "Continue on send" is activated when the user hits "send" (or presses enter) on an empty chat box, and the last
+        // message was sent from a character (not the user or the system).
+        const textareaText = String($('#send_textarea').val());
+        const isSlashCommand = textareaText.trim().startsWith('/');
+        const lastMessage = chat[chat.length - 1];
+        if (power_user.continue_on_send &&
+            !hasPendingFileAttachment() &&
+            !textareaText &&
+            !selected_group &&
+            chat.length &&
+            !lastMessage.is_user &&
+            !lastMessage.is_system
+        ) {
+            generateType = 'continue';
+        }
 
-    if (textareaText && !selected_group && this_chid === undefined && name2 !== neutralCharacterName) {
-        await newAssistantChat({ temporary: false });
-    }
+        routeToAgentMode = Boolean(agentSettings.agentModeEnabled) && !isSlashCommand;
+        if (routeToAgentMode) {
+            assertAgentSendSupported(generateType);
+        }
 
-    let generation = await Generate(generateType);
-    showSwipeButtons();
-    return generation;
+        if (textareaText && !selected_group && this_chid === undefined && name2 !== neutralCharacterName) {
+            await newAssistantChat({ temporary: false });
+        }
+
+        return await Generate(generateType, routeToAgentMode ? {
+            agentMode: true,
+            agentProfileId: agentSettings.selectedProfileId,
+        } : {});
+    } catch (error) {
+        if (routeToAgentMode) {
+            toastr.error(String(error?.message || error), t`Agent Mode`);
+        }
+        throw error;
+    } finally {
+        showSwipeButtons();
+    }
+}
+
+function assertAgentSendSupported(generateType) {
+    if (selected_group) {
+        throw new Error('agent.group_chat_unsupported: Agent Mode does not support group chats yet');
+    }
+    if (main_api !== 'openai') {
+        throw new Error('agent.chat_completion_required: Agent Mode currently requires the OpenAI/chat-completion path');
+    }
+    if (generateType !== 'normal') {
+        throw new Error(`agent.generation_type_unsupported: Agent Mode currently supports normal sends only, got ${generateType}`);
+    }
 }
 
 /**
@@ -4623,6 +4660,7 @@ function removeLastMessage() {
  * @property {number} [depth] Recursion depth for the generation. Used to prevent infinite loops in tool calls.
  * @property {JsonSchema} [jsonSchema] JSON schema to use for the structured generation. Usually requires a special instruction.
  * @property {boolean} [agentMode] Internal TauriTavern Agent prompt snapshot mode.
+ * @property {string|null} [agentProfileId] Agent profile to use when agentMode is active.
  */
 
 const generationIdleGate = createGenerationIdleGate();
@@ -4667,7 +4705,7 @@ export async function Generate(type, options = {}, dryRun = false) {
     }
 }
 
-async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, agentMode = false } = {}, dryRun = false) {
+async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, agentMode = false, agentProfileId = null } = {}, dryRun = false) {
     console.log('Generate entered');
     setGenerationProgress(0);
     generation_started = new Date();
@@ -5056,7 +5094,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         creatorNotes: creatorNotes,
         trigger: GENERATION_TYPE_TRIGGERS.includes(type) ? type : 'normal',
     };
-    const { worldInfoString, worldInfoBefore, worldInfoAfter, worldInfoExamples, worldInfoDepth, outletEntries } = await getWorldInfoPrompt(chatForWI, this_max_context, dryRun, globalScanData);
+    const { worldInfoString, worldInfoBefore, worldInfoAfter, worldInfoExamples, worldInfoDepth, outletEntries, worldInfoActivation } = await getWorldInfoPrompt(chatForWI, this_max_context, dryRun, globalScanData);
     setExtensionPrompt(inject_ids.QUIET_PROMPT, '', extension_prompt_types.IN_PROMPT, 0, true);
 
     // Add message example WI
@@ -5748,6 +5786,20 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         return Promise.resolve();
     }
 
+    if (agentMode) {
+        try {
+            return await startAgentRunFromGeneratedPrompt({
+                type,
+                generateData: generate_data,
+                jsonSchema,
+                profileId: agentProfileId,
+                worldInfoActivation,
+            });
+        } finally {
+            unblockGeneration(type);
+        }
+    }
+
     /**
      * Saves itemized prompt bits and calls streaming or non-streaming generation API.
      * @returns {Promise<void|*|Awaited<*>|String|{fromStream}|string|undefined|Object>}
@@ -6022,11 +6074,87 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 }
 //MARK: Generate() ends
 
+async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema, profileId, worldInfoActivation }) {
+    if (main_api !== 'openai') {
+        throw new Error('agent.chat_completion_required: Agent Mode currently requires the OpenAI/chat-completion path');
+    }
+
+    const messages = generateData?.prompt;
+    if (!Array.isArray(messages)) {
+        throw new Error('agent.prompt_snapshot_messages_required: Generate did not produce chat-completion messages');
+    }
+
+    const model = getChatCompletionModel(oai_settings);
+    if (!model) {
+        throw new Error('agent.model_required: current chat-completion source did not resolve a model');
+    }
+
+    const { generate_data: chatCompletionPayload } = await createGenerationParameters(
+        oai_settings,
+        model,
+        type,
+        structuredClone(messages),
+        { jsonSchema, agentMode: true },
+    );
+
+    assertAgentPromptSnapshotHasNoExternalTools(chatCompletionPayload);
+    await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, chatCompletionPayload);
+
+    return startAndWaitForAgentRun({
+        generationType: type,
+        profileId,
+        promptSnapshot: {
+            chatCompletionPayload,
+            ...(worldInfoActivation ? { worldInfoActivation } : {}),
+        },
+        generationIntent: {
+            source: 'legacy-generate-live-handoff',
+            generationType: type,
+            chatCompletionSource: chatCompletionPayload.chat_completion_source,
+            model: chatCompletionPayload.model,
+        },
+        options: { stream: false, presentation: 'foreground' },
+    });
+}
+
+function assertAgentPromptSnapshotHasNoExternalTools(payload) {
+    const tools = payload?.tools;
+    if (Array.isArray(tools) && tools.length > 0) {
+        throw new Error('agent.external_tools_unsupported: Agent runtime owns the tool registry');
+    }
+    if (Object.hasOwn(payload || {}, 'tool_choice')) {
+        throw new Error('agent.external_tool_choice_unsupported: Agent runtime owns tool choice');
+    }
+
+    const messages = payload?.messages;
+    if (!Array.isArray(messages)) {
+        throw new Error('agent.prompt_snapshot_messages_required: chat-completion payload missing messages');
+    }
+    const hasToolTurn = messages.some((message) => {
+        const role = String(message?.role || '').toLowerCase();
+        return role === 'tool'
+            || (Array.isArray(message?.tool_calls) && message.tool_calls.length > 0);
+    });
+    if (hasToolTurn) {
+        throw new Error('agent.external_tool_turns_unsupported: prompt snapshot already contains tool turns');
+    }
+}
+
 /**
  * Stops the generation and any streaming if it is currently running.
  */
 export function stopGeneration() {
     let stopped = false;
+    if (hasActiveAgentRun()) {
+        void cancelActiveAgentRun().catch((error) => {
+            toastr.error(String(error?.message || error), t`Agent Mode`);
+            queueMicrotask(() => {
+                throw error;
+            });
+        });
+        hideStopButton();
+        stopped = true;
+    }
     if (streamingProcessor) {
         streamingProcessor.onStopStreaming();
         stopped = true;

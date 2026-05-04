@@ -1,6 +1,6 @@
-export const MODULE_NAME = 'agent-system';
-export const SETTINGS_KEY = 'settings';
-export const DEFAULT_PROFILE_ID = 'default-writer';
+import { DEFAULT_AGENT_PROFILE_ID } from '../../../tauritavern/agent/agent-system-settings.js';
+
+export const DEFAULT_PROFILE_ID = DEFAULT_AGENT_PROFILE_ID;
 
 export const KNOWN_TOOLS = Object.freeze([
     'chat.search',
@@ -19,9 +19,3 @@ export const KNOWN_TOOLS = Object.freeze([
 ]);
 
 export const WORKSPACE_ROOTS = Object.freeze(['output', 'scratch', 'plan', 'summaries', 'persist']);
-
-export const DEFAULT_SETTINGS = Object.freeze({
-    agentModeEnabled: false,
-    selectedProfileId: DEFAULT_PROFILE_ID,
-    activeTab: 'profiles',
-});

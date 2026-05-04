@@ -24,6 +24,7 @@ import { renderTemplateAsync } from './templates.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
+import { normalizeWorldInfoActivationBatch } from './tauritavern/agent/world-info-activation.js';
 
 export const world_info_insertion_strategy = {
     evenly: 0,
@@ -990,6 +991,10 @@ export async function getWorldInfoPrompt(chat, maxContext, isDryRun, globalScanD
         anBefore: activatedWorldInfo.ANBeforeEntries ?? [],
         anAfter: activatedWorldInfo.ANAfterEntries ?? [],
         outletEntries: activatedWorldInfo.outletEntries ?? {},
+        worldInfoActivation: normalizeWorldInfoActivationBatch({
+            trigger: globalScanData.trigger,
+            activated: { entries: activatedWorldInfo.allActivatedEntries },
+        }),
     };
 }
 

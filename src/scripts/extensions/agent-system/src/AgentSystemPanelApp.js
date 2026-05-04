@@ -472,7 +472,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
 
                                 <label class="ttas-field">
                                     <span>{{ tr('agentSystemPrompt') }}</span>
-                                    <textarea class="text_pole textarea_compact" rows="5" v-model="draft.instructions.agentSystemPrompt" :disabled="isBuiltinProfile"></textarea>
+                                    <textarea class="text_pole textarea_compact" rows="12" v-model="draft.instructions.agentSystemPrompt" :disabled="isBuiltinProfile"></textarea>
                                 </label>
 
                                 <div class="ttas-section">
