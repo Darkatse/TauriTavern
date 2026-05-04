@@ -2,7 +2,7 @@
 
 本文档是 Agent Host ABI 当前参考。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
 
-状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环与前端 dryRun adapter。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来设计。
+状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环与前端 dryRun adapter。Agent System 扩展开关开启时，普通发送、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来设计。
 
 `provider_state` 是 Rust 后端内部 continuation contract，不是 Host ABI。前端/扩展不应读写 `_tauritavern_provider_state`；需要诊断时通过 run events、`modelResponsePath` 与 LLM API log 观察。
 

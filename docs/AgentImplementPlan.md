@@ -11,6 +11,7 @@
 - Rust 后端拥有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 聊天删除会清理对应 Agent chat workspace；active run 存在时删除 fail-fast。
 - 前端 Host ABI 已挂载 `window.__TAURITAVERN__.api.agent`。
+- Agent System 扩展开关开启时，前端将普通发送、regenerate 与 overswipe 新候选生成接入 Agent；普通切换已有 swipe 候选仍保持 Legacy swipe 行为。
 - Agent 启动仍通过 `PromptSnapshot` 兼容桥进入；`GenerationIntent + ContextFrame` 尚未接管 context assembly。
 - `startRunFromLegacyGenerate()` 使用 Legacy dryRun 捕获 `chatCompletionPayload` 与本轮最终 `worldInfoActivation`。
 - LLM 调用复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 和取消链路。Responses WebSocket 建连已收敛到 `HttpClientPool` 的 ChatCompletion WebSocket profile。
@@ -300,7 +301,7 @@ Phase 3 基线已在 Agent tool 层接入 Skill 可见性、deny policy 与 read
 
 内容：
 
-- Agent Mode toggle 与主发送按钮分流。
+- Agent run 控制入口与状态摘要。
 - 最小 timeline/event viewer。
 - workspace artifact viewer。
 - tool error / recovery 状态展示。

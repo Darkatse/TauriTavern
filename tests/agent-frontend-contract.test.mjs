@@ -79,6 +79,68 @@ test('Agent System settings use the extension store and publish changes', async 
     assert.deepEqual(emitted, saved);
 });
 
+test('Agent generation router uses the global toggle for normal regenerate and swipe', async () => {
+    let stored = {
+        agentModeEnabled: false,
+        selectedProfileId: 'default-writer',
+        activeTab: 'profiles',
+    };
+    installWindow({
+        extension: {
+            store: {
+                async getJson() {
+                    return stored;
+                },
+                async setJson(request) {
+                    stored = request.value;
+                },
+            },
+        },
+    });
+
+    const router = await importFresh('src/scripts/tauritavern/agent/agent-generation-router.js');
+
+    assert.deepEqual(await router.getAgentGenerationOptions({
+        generationType: 'normal',
+        mainApi: 'openai',
+    }), {});
+
+    stored = {
+        ...stored,
+        agentModeEnabled: true,
+        selectedProfileId: 'writer',
+    };
+
+    for (const generationType of ['normal', 'regenerate', 'swipe']) {
+        assert.deepEqual(await router.getAgentGenerationOptions({
+            generationType,
+            mainApi: 'openai',
+        }), {
+            agentMode: true,
+            agentProfileId: 'writer',
+        });
+    }
+
+    assert.deepEqual(await router.getAgentGenerationOptions({
+        generationType: 'normal',
+        isSlashCommand: true,
+        mainApi: 'openai',
+    }), {});
+
+    await assert.rejects(
+        () => router.getAgentGenerationOptions({ generationType: 'continue', mainApi: 'openai' }),
+        /agent\.generation_type_unsupported/,
+    );
+    await assert.rejects(
+        () => router.getAgentGenerationOptions({ generationType: 'normal', mainApi: 'kobold' }),
+        /agent\.chat_completion_required/,
+    );
+    await assert.rejects(
+        () => router.getAgentGenerationOptions({ generationType: 'normal', mainApi: 'openai', selectedGroup: 'group-1' }),
+        /agent\.group_chat_unsupported/,
+    );
+});
+
 test('Agent System confirmations use SillyTavern Popup instead of window.confirm', async () => {
     const calls = [];
     installWindow({});

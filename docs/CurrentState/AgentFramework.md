@@ -19,7 +19,7 @@
 - Phase 3 Agent Profile 基线已落地：`profileId` 会解析为 `ResolvedAgentProfile`，驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds 与 model-facing prompt/tool descriptions。
 - Profile 仍不接管 provider/model 切换；`preset.ref` 目前只做校验/记录，不改写 prompt snapshot 或 model。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
-- Legacy Generate 尚未默认切到 Agent；Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
+- Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
 
 ## 当前 Host ABI
 
@@ -347,7 +347,9 @@ Workspace path 必须是相对路径。绝对路径、Windows drive prefix、NUL
 
 ## 当前手动测试入口
 
-目前没有 UI toggle。前端控制台入口：
+Agent System 扩展已在输入栏提供 Agent Mode toggle。开启后，普通发送、regenerate 菜单与右划 overswipe 生成新候选会走 Agent；普通切换已有 swipe 候选仍保持 Legacy swipe 行为。
+
+前端控制台入口：
 
 ```js
 await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
@@ -376,12 +378,16 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - `cargo test --manifest-path src-tauri/Cargo.toml file_agent_profile_repository`：1 passed
 - `git diff --check`
 
-前端 wrapper/types 本次未修改，未重新运行前端检查。
+最近一次前端侧验证：
+
+- `pnpm run check:frontend`
+- `pnpm run check:types`
+- `pnpm run check:contracts`：218 passed
+- `git diff --check`
 
 ## 已知待办
 
 - 将 Agent run 接入可控 UI，而不是只靠控制台调用。
-- 设计 Agent Mode toggle 与 Legacy Generate 的清晰分流，不改变 Agent Mode off 语义。
 - 建立最小 timeline/event viewer。
 - 将 `PromptSnapshot` 过渡输入逐步替换为 `GenerationIntent + ContextFrame`。
 - 将后端 Profile 管理 commands 封装到前端 Host ABI 与类型。

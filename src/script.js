@@ -47,7 +47,7 @@ import {
 } from './scripts/chat-input-focus.js';
 import { getActiveIosPolicyCapabilities } from './scripts/tauritavern/ios-policy.js';
 import { applyIosPolicyUiProjection } from './scripts/tauritavern/ios-policy-ui.js';
-import { loadAgentSystemSettings } from './scripts/tauritavern/agent/agent-system-settings.js';
+import { getAgentGenerationOptions } from './scripts/tauritavern/agent/agent-generation-router.js';
 import {
     cancelActiveAgentRun,
     hasActiveAgentRun,
@@ -2137,7 +2137,6 @@ export async function sendTextareaMessage() {
 
     let routeToAgentMode = false;
     try {
-        const agentSettings = await loadAgentSystemSettings();
         let generateType = 'normal';
         // "Continue on send" is activated when the user hits "send" (or presses enter) on an empty chat box, and the last
         // message was sent from a character (not the user or the system).
@@ -2155,38 +2154,27 @@ export async function sendTextareaMessage() {
             generateType = 'continue';
         }
 
-        routeToAgentMode = Boolean(agentSettings.agentModeEnabled) && !isSlashCommand;
-        if (routeToAgentMode) {
-            assertAgentSendSupported(generateType);
-        }
+        const agentOptions = await getAgentGenerationOptions({
+            generationType: generateType,
+            isSlashCommand,
+            mainApi: main_api,
+            selectedGroup: selected_group,
+        });
+        routeToAgentMode = Boolean(agentOptions.agentMode);
 
         if (textareaText && !selected_group && this_chid === undefined && name2 !== neutralCharacterName) {
             await newAssistantChat({ temporary: false });
         }
 
-        return await Generate(generateType, routeToAgentMode ? {
-            agentMode: true,
-            agentProfileId: agentSettings.selectedProfileId,
-        } : {});
+        return await Generate(generateType, agentOptions);
     } catch (error) {
-        if (routeToAgentMode) {
-            toastr.error(String(error?.message || error), t`Agent Mode`);
+        const message = String(error?.message || error);
+        if (routeToAgentMode || message.startsWith('agent.')) {
+            toastr.error(message, t`Agent Mode`);
         }
         throw error;
     } finally {
         showSwipeButtons();
-    }
-}
-
-function assertAgentSendSupported(generateType) {
-    if (selected_group) {
-        throw new Error('agent.group_chat_unsupported: Agent Mode does not support group chats yet');
-    }
-    if (main_api !== 'openai') {
-        throw new Error('agent.chat_completion_required: Agent Mode currently requires the OpenAI/chat-completion path');
-    }
-    if (generateType !== 'normal') {
-        throw new Error(`agent.generation_type_unsupported: Agent Mode currently supports normal sends only, got ${generateType}`);
     }
 }
 
@@ -11045,8 +11033,15 @@ export async function swipe(event, direction, { source, repeated, message = chat
         await eventSource.emit(event_types.MESSAGE_SWIPED, (mesId));
 
         if (run_generate && !is_send_press) {
-            is_send_press = true;
-            generation = Generate('swipe');
+            generation = (async () => {
+                const agentOptions = await getAgentGenerationOptions({
+                    generationType: 'swipe',
+                    mainApi: main_api,
+                    selectedGroup: selected_group,
+                });
+                is_send_press = true;
+                return Generate('swipe', agentOptions);
+            })();
         }
 
         //Swipe in from the opposite side.
@@ -12438,12 +12433,18 @@ jQuery(async function () {
                 return;
             }
             if (is_send_press == false) {
+                const agentOptions = await getAgentGenerationOptions({
+                    generationType: 'regenerate',
+                    mainApi: main_api,
+                    selectedGroup: selected_group,
+                });
                 if (selected_group) {
                     regenerateGroup();
                 }
                 else {
+                    const generateOptions = buildOrFillAdditionalArgs(agentOptions);
                     is_send_press = true;
-                    Generate('regenerate', buildOrFillAdditionalArgs());
+                    Generate('regenerate', generateOptions);
                 }
             }
         }
