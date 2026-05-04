@@ -109,9 +109,15 @@ fn build_agent_system_prompt(tools: &[AgentToolSpec], profile: &ResolvedAgentPro
             model_name(tools, "skill.list")
         ));
     }
+    if has_tool(tools, "skill.search") {
+        lines.push(format!(
+            "Use {} to locate relevant text inside large visible Skill files before reading exact ranges.",
+            model_name(tools, "skill.search")
+        ));
+    }
     if has_tool(tools, "skill.read") {
         lines.push(format!(
-            "Use {} to read SKILL.md first, then read referenced Skill files only when needed.",
+            "Use {} to read SKILL.md first, then read referenced Skill files or ranges only when needed.",
             model_name(tools, "skill.read")
         ));
     }
@@ -119,6 +125,12 @@ fn build_agent_system_prompt(tools: &[AgentToolSpec], profile: &ResolvedAgentPro
         lines.push(format!(
             "Use {} to inspect visible workspace files.",
             model_name(tools, "workspace.list_files")
+        ));
+    }
+    if has_tool(tools, "workspace.search_files") {
+        lines.push(format!(
+            "Use {} to find relevant text in visible workspace files such as persist/ memory before reading exact ranges.",
+            model_name(tools, "workspace.search_files")
         ));
     }
     if has_tool(tools, "workspace.read_file") {

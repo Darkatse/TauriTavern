@@ -23,6 +23,9 @@ type TauriTavernSkillApi = {
   readFile(options: {
     name: string;
     path: string;
+    startLine?: number;
+    lineCount?: number;
+    startChar?: number;
     maxChars?: number;
   }): Promise<TauriTavernSkillReadResult>;
   export(options: { name: string }): Promise<TauriTavernSkillExportPayload>;
@@ -86,6 +89,7 @@ type action = 'installed' | 'replaced' | 'already_installed' | 'skipped';
 
 - 只能读取已安装 Skill 内的 UTF-8 文本文件。
 - `path` 必须是 Skill 相对路径。
+- 支持 `startLine` / `lineCount` 行范围，或 `startChar` / `maxChars` 字符范围；两种范围不能混用。
 - `maxChars` 省略时默认 20000，后端最大 80000。
 - 二进制文件、非法路径、symlink escape、缺失文件都会 reject。
 

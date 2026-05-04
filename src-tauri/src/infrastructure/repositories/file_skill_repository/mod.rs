@@ -21,7 +21,7 @@ use tokio::sync::Mutex;
 use crate::domain::errors::DomainError;
 use crate::domain::models::skill::{
     SkillExportResult, SkillImportInput, SkillImportPreview, SkillIndexEntry, SkillInstallRequest,
-    SkillInstallResult, SkillReadResult,
+    SkillInstallResult, SkillReadRequest, SkillReadResult, SkillSearchRequest, SkillSearchResult,
 };
 use crate::domain::repositories::skill_repository::SkillRepository;
 
@@ -87,11 +87,16 @@ impl SkillRepository for FileSkillRepository {
 
     async fn read_skill_file(
         &self,
-        name: &str,
-        path: &str,
-        max_chars: Option<usize>,
+        request: SkillReadRequest,
     ) -> Result<SkillReadResult, DomainError> {
-        read::read_skill_file(self, name, path, max_chars).await
+        read::read_skill_file(self, request).await
+    }
+
+    async fn search_skill_files(
+        &self,
+        request: SkillSearchRequest,
+    ) -> Result<SkillSearchResult, DomainError> {
+        read::search_skill_files(self, request).await
     }
 
     async fn export_skill(&self, name: &str) -> Result<SkillExportResult, DomainError> {

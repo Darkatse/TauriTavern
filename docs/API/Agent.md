@@ -382,17 +382,19 @@ Agent Mode on：
 
 ## 17. 当前工具与手动验证
 
-当前开放十个内建工具：
+当前开放十三个内建工具：
 
 | Canonical name | Model-facing alias | 说明 |
 | --- | --- | --- |
 | `chat.search` | `chat_search` | 搜索当前 run 绑定的聊天。只有 `query` 必填；可选 `limit`、`role`、`start_message`、`end_message`、`scan_limit`。返回 message index、snippet 与 ref。 |
 | `chat.read_messages` | `chat_read_messages` | 按 0-based message index 读取当前聊天消息；每项可选 `start_char`、`max_chars` 读取长消息片段。 |
 | `worldinfo.read_activated` | `worldinfo_read_activated` | 读取本次 run 的最终激活世界书条目；模型可读文本只包含条目名、世界书名、条目内容。 |
-| `skill.list` | `skill_list` | 列出已安装 Skill 的索引摘要；当前尚未接入 profile visible/deny policy。 |
-| `skill.read` | `skill_read` | 读取已安装 Skill 内的 UTF-8 文本文件；默认 `SKILL.md`，支持 `path` 与 `max_chars`。 |
+| `skill.list` | `skill_list` | 列出当前 Profile 可见的已安装 Skill 索引摘要。 |
+| `skill.search` | `skill_search` | 搜索当前 Profile 可见的单个 Skill 内 UTF-8 文本文件，返回 snippet/ref。 |
+| `skill.read` | `skill_read` | 读取已安装 Skill 内的 UTF-8 文本文件或范围；默认 `SKILL.md`，支持 `path`、行范围、字符范围与 `max_chars`。 |
 | `workspace.list_files` | `workspace_list_files` | 列出模型可见 workspace 文件；`path` 省略、空字符串、`.`、`./` 表示 workspace root |
-| `workspace.read_file` | `workspace_read_file` | 读取 UTF-8 文本文件并返回行号；完整读取记录 read-state |
+| `workspace.search_files` | `workspace_search_files` | 搜索模型可见 workspace UTF-8 文本文件，返回 snippet/ref |
+| `workspace.read_file` | `workspace_read_file` | 读取 UTF-8 文本文件并返回行号；支持行范围和字符范围；完整读取记录 read-state |
 | `workspace.write_file` | `workspace_write_file` | 写 UTF-8 文本到 manifest 可写 roots，当前为 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/` |
 | `workspace.apply_patch` | `workspace_apply_patch` | 单文件 `old_string` / `new_string` 精确替换，要求已完整读取或由本 run 创建/修改 |
 | `workspace.commit` | `workspace_commit` | 提交可见 workspace 文件到当前聊天；无参数默认 replace `output/main.md`；append 首次创建、后续追加同一消息 |

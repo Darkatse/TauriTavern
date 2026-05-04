@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::domain::errors::DomainError;
 use crate::domain::models::skill::{
     SkillExportResult, SkillImportInput, SkillImportPreview, SkillIndexEntry, SkillInstallRequest,
-    SkillInstallResult, SkillReadResult,
+    SkillInstallResult, SkillReadRequest, SkillReadResult, SkillSearchRequest, SkillSearchResult,
 };
 
 #[async_trait]
@@ -22,10 +22,13 @@ pub trait SkillRepository: Send + Sync {
 
     async fn read_skill_file(
         &self,
-        name: &str,
-        path: &str,
-        max_chars: Option<usize>,
+        request: SkillReadRequest,
     ) -> Result<SkillReadResult, DomainError>;
+
+    async fn search_skill_files(
+        &self,
+        request: SkillSearchRequest,
+    ) -> Result<SkillSearchResult, DomainError>;
 
     async fn export_skill(&self, name: &str) -> Result<SkillExportResult, DomainError>;
 

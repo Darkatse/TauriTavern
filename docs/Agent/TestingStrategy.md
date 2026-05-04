@@ -143,8 +143,12 @@ workspace.commit append without prior commit creates the run message
 subscribe polling can read events in seq order
 readWorkspaceFile returns UTF-8 text, bytes, sha256
 workspace_list_files accepts omitted/empty/dot path as workspace root
+workspace_search_files searches only visible roots and returns snippets
 workspace_read_file full read records read-state
+workspace_read_file character range does not unlock patch state unless it covers the full file
 workspace_apply_patch requires full read-state and checkpoints on success
+skill_search respects visible/deny policy and read budget
+skill_read supports line and character ranges
 recoverable tool errors are returned to the model instead of failing the run
 future APIs approveToolCall/listRuns/readDiff/rollback throw explicitly
 ```

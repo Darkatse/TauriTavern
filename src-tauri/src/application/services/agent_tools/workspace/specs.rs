@@ -2,11 +2,12 @@ use serde_json::json;
 
 use super::{
     MODEL_WORKSPACE_ROOTS_FOR_MODEL, WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH,
-    WORKSPACE_LIST_FILES, WORKSPACE_READ_FILE, WORKSPACE_WRITE_FILE,
+    WORKSPACE_LIST_FILES, WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_WRITE_FILE,
 };
 use crate::domain::models::agent::AgentToolSpec;
 
 const MODEL_WORKSPACE_LIST_FILES: &str = "workspace_list_files";
+const MODEL_WORKSPACE_SEARCH_FILES: &str = "workspace_search_files";
 const MODEL_WORKSPACE_READ_FILE: &str = "workspace_read_file";
 const MODEL_WORKSPACE_WRITE_FILE: &str = "workspace_write_file";
 const MODEL_WORKSPACE_APPLY_PATCH: &str = "workspace_apply_patch";
@@ -62,9 +63,55 @@ pub(in crate::application::services::agent_tools) fn workspace_read_file_spec() 
                 "line_count": {
                     "type": "integer",
                     "description": "Number of lines to read. Omit for a full read."
+                },
+                "start_char": {
+                    "type": "integer",
+                    "description": "Optional 0-based character offset for character-range reads. Do not combine with start_line or line_count."
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Optional maximum characters for character-range reads. Maximum is 80000."
                 }
             },
             "required": ["path"]
+        }),
+        output_schema: None,
+        annotations: json!({ "readOnly": true }),
+        source: "builtin".to_string(),
+    }
+}
+
+pub(in crate::application::services::agent_tools) fn workspace_search_files_spec() -> AgentToolSpec
+{
+    AgentToolSpec {
+        name: WORKSPACE_SEARCH_FILES.to_string(),
+        model_name: MODEL_WORKSPACE_SEARCH_FILES.to_string(),
+        title: "Workspace Search Files".to_string(),
+        description: format!(
+            "Search visible UTF-8 Agent workspace files under {MODEL_WORKSPACE_ROOTS_FOR_MODEL}. Results return snippets and refs; use workspace_read_file to read exact ranges."
+        ),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Plain text to search for in visible workspace files."
+                },
+                "path": {
+                    "type": "string",
+                    "description": format!("Optional visible workspace file or directory path under {MODEL_WORKSPACE_ROOTS_FOR_MODEL}. Omit to search all visible roots.")
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum hits to return. Defaults to 20; maximum is 50."
+                },
+                "context_lines": {
+                    "type": "integer",
+                    "description": "Context lines before and after each match. Defaults to 2; maximum is 5."
+                }
+            },
+            "required": ["query"]
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true }),

@@ -8,7 +8,7 @@ use tauri::State;
 use crate::app::AppState;
 use crate::domain::models::skill::{
     SkillImportInput, SkillImportPreview, SkillIndexEntry, SkillInstallRequest, SkillInstallResult,
-    SkillReadResult,
+    SkillReadRequest, SkillReadResult,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -67,13 +67,23 @@ pub async fn read_skill_file(
     name: String,
     path: String,
     max_chars: Option<usize>,
+    start_line: Option<usize>,
+    line_count: Option<usize>,
+    start_char: Option<usize>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<SkillReadResult, CommandError> {
     log_command(format!("read_skill_file {}/{}", name, path));
 
     app_state
         .skill_service
-        .read_skill_file(&name, &path, max_chars)
+        .read_skill_file(SkillReadRequest {
+            name,
+            path,
+            start_line,
+            line_count,
+            start_char,
+            max_chars,
+        })
         .await
         .map_err(map_command_error("Failed to read Agent Skill file"))
 }

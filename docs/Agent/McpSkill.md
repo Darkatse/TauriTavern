@@ -8,7 +8,7 @@
 - Skill 是渐进披露的文本/资源包，不是自动吞入 prompt 的大文件。
 - Agent 可以消费 MCP 和 Skill，但必须经过 ToolRegistry、Policy 与 Journal；不得由 prompt 直接打开旁路。
 
-当前状态（2026-05-02）：尚未实现 `window.__TAURITAVERN__.api.mcp`，MCP 也未接入 Agent tool registry。Skill 已落地 `window.__TAURITAVERN__.api.skill`，并已通过 `skill.list` / `skill.read` 接入 Agent tool registry。当前 Skill 细节以 `docs/Agent/Skill.md` 与 `docs/API/Skill.md` 为准。
+当前状态（2026-05-02）：尚未实现 `window.__TAURITAVERN__.api.mcp`，MCP 也未接入 Agent tool registry。Skill 已落地 `window.__TAURITAVERN__.api.skill`，并已通过 `skill.list` / `skill.search` / `skill.read` 接入 Agent tool registry。当前 Skill 细节以 `docs/Agent/Skill.md` 与 `docs/API/Skill.md` 为准。
 
 ## 1. MCP 边界
 
@@ -143,10 +143,11 @@ description
 读取全文必须通过：
 
 ```text
-skill.read(name, path?, max_chars?)
+skill.search(name, query, path?, limit?, context_lines?)
+skill.read(name, path?, start_line?, line_count?, start_char?, max_chars?)
 ```
 
-`skill.read` 是 tool call，必须写 journal。当前默认读取 `SKILL.md`，只支持 UTF-8 文本文件；profile/preset/character 的 visible、deny 与 read budget policy 仍是后续工作。
+`skill.search` / `skill.read` 是 tool call，必须写 journal。当前 `skill.read` 默认读取 `SKILL.md`，只支持 UTF-8 文本文件，并支持行/字符范围；`skill.search` 搜索单个可见 Skill 内的 UTF-8 文本文件并返回 snippet/ref。
 
 ## 9. Skill 来源
 
@@ -176,7 +177,7 @@ skills/<name>/examples/foo.md
 Skill 进入模型上下文的当前路径：
 
 ```text
-skill.list / skill.read
+skill.list / skill.search / skill.read
   -> SkillService
   -> Agent tool result
   -> ModelRequest next turn

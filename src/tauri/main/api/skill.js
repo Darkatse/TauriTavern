@@ -188,7 +188,17 @@ function createSkillApi({ safeInvoke }) {
         const name = requireNonEmptyString(options?.name, 'skill name');
         const path = requireNonEmptyString(options?.path, 'skill file path');
         const maxChars = normalizeOptionalNonNegativeInteger(options?.maxChars, 'maxChars');
-        return safeInvoke('read_skill_file', { name, path, maxChars });
+        const startLine = normalizeOptionalNonNegativeInteger(options?.startLine, 'startLine');
+        const lineCount = normalizeOptionalNonNegativeInteger(options?.lineCount, 'lineCount');
+        const startChar = normalizeOptionalNonNegativeInteger(options?.startChar, 'startChar');
+        return safeInvoke('read_skill_file', {
+            name,
+            path,
+            maxChars,
+            startLine,
+            lineCount,
+            startChar,
+        });
     }
 
     async function exportSkill(options) {

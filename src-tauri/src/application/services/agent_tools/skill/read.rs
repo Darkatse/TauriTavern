@@ -10,6 +10,7 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::skill_service::SkillService;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
+use crate::domain::models::skill::SkillReadRequest;
 
 pub(in crate::application::services::agent_tools) async fn read(
     skill_service: &SkillService,
@@ -40,6 +41,33 @@ pub(in crate::application::services::agent_tools) async fn read(
         .filter(|value| !value.is_empty())
         .unwrap_or("SKILL.md");
     let max_chars = match optional_usize_arg(args, "max_chars") {
+        Ok(value) => value,
+        Err(message) => {
+            return Ok((
+                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolEffect::None,
+            ));
+        }
+    };
+    let start_line = match optional_usize_arg(args, "start_line") {
+        Ok(value) => value,
+        Err(message) => {
+            return Ok((
+                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolEffect::None,
+            ));
+        }
+    };
+    let line_count = match optional_usize_arg(args, "line_count") {
+        Ok(value) => value,
+        Err(message) => {
+            return Ok((
+                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolEffect::None,
+            ));
+        }
+    };
+    let start_char = match optional_usize_arg(args, "start_char") {
         Ok(value) => value,
         Err(message) => {
             return Ok((
@@ -101,7 +129,14 @@ pub(in crate::application::services::agent_tools) async fn read(
     };
 
     let read = match skill_service
-        .read_skill_file(name, path, Some(effective_max_chars))
+        .read_skill_file(SkillReadRequest {
+            name: name.to_string(),
+            path: path.to_string(),
+            start_line,
+            line_count,
+            start_char,
+            max_chars: Some(effective_max_chars),
+        })
         .await
     {
         Ok(read) => read,
@@ -122,11 +157,22 @@ pub(in crate::application::services::agent_tools) async fn read(
     session.remember_skill_read_chars(read.chars);
 
     let content = format!(
-        "{} chars from {}, sha256 {}{}\n{}",
+        "{} chars from {}, sha256 {}{}{}\n{}",
         read.chars,
-        read.resource_ref,
-        read.sha256,
+        read.resource_ref.as_str(),
+        read.sha256.as_str(),
         if read.truncated { " (truncated)" } else { "" },
+        if read.start_line > 0 {
+            format!(
+                ", lines {}-{} of {}",
+                read.start_line, read.end_line, read.total_lines
+            )
+        } else {
+            format!(
+                ", chars {}-{} of {}",
+                read.start_char, read.end_char, read.total_chars
+            )
+        },
         read.content
     );
     Ok((
@@ -135,13 +181,19 @@ pub(in crate::application::services::agent_tools) async fn read(
             name: call.name.clone(),
             content,
             structured: json!({
-                "name": read.name,
-                "path": read.path,
+                "name": read.name.as_str(),
+                "path": read.path.as_str(),
                 "bytes": read.bytes,
-                "sha256": read.sha256,
+                "sha256": read.sha256.as_str(),
                 "chars": read.chars,
+                "totalChars": read.total_chars,
+                "startChar": read.start_char,
+                "endChar": read.end_char,
+                "totalLines": read.total_lines,
+                "startLine": read.start_line,
+                "endLine": read.end_line,
                 "truncated": read.truncated,
-                "resourceRef": read.resource_ref,
+                "resourceRef": read.resource_ref.as_str(),
             }),
             is_error: false,
             error_code: None,

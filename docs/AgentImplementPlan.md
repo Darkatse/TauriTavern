@@ -16,7 +16,7 @@
 - Tool loop 由 Rust runtime 独占推进，不递归调用前端 `Generate()`。
 - Agent runtime 已使用 canonical model IR，不再把 OpenAI-compatible raw JSON 当作运行时事实。
 - `provider_state` 已用于 run-scoped continuation。OpenAI Responses 通过它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
-- Agent Skill repository/service、导入导出、embedded skill 导入确认、`api.skill`、`skill.list` / `skill.read` 已落地。
+- Agent Skill repository/service、导入导出、embedded skill 导入确认、`api.skill`、`skill.list` / `skill.search` / `skill.read` 已落地。
 - Phase 3 Agent Profile 基线已落地：built-in `default-writer`、file repository、resolver、run snapshot、tool/skill/workspace/output policy、tool budget 与 max rounds。
 - Profile `run.modelRetry` 已落地，默认对单次模型调用的 rate limit / transient transport-provider 错误重试 3 次，间隔 3000ms；非瞬时契约错误继续 fail-fast。
 - `instructions.agentSystemPrompt` 可完整替换默认 Agent system prompt；缺省时使用 runtime 默认 prompt。`tools.toolDescriptions` 可替换 model-facing tool/property descriptions；缺省时使用默认描述。
@@ -133,8 +133,10 @@ Tool registry 只产 canonical `AgentToolSpec`，不再暴露 OpenAI-shaped `ope
 | `chat.read_messages` | `chat_read_messages` | read-only |
 | `worldinfo.read_activated` | `worldinfo_read_activated` | read-only |
 | `skill.list` | `skill_list` | read-only |
+| `skill.search` | `skill_search` | read-only |
 | `skill.read` | `skill_read` | read-only |
 | `workspace.list_files` | `workspace_list_files` | read-only |
+| `workspace.search_files` | `workspace_search_files` | read-only |
 | `workspace.read_file` | `workspace_read_file` | read-only |
 | `workspace.write_file` | `workspace_write_file` | mutating |
 | `workspace.apply_patch` | `workspace_apply_patch` | mutating |
@@ -231,7 +233,7 @@ workspace.finish 收尾并提交 persist projection
 
 已完成：
 
-- `workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.commit`、`workspace.finish` 已落地。
+- `workspace.list_files`、`workspace.search_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.commit`、`workspace.finish` 已落地。
 - workspace mutation 后创建 checkpoint；完整读取 / 写入 read-state 约束已接入。
 - `output/`、`scratch/`、`plan/`、`summaries/`、`persist/` 是当前模型可见 root。
 
@@ -266,7 +268,7 @@ workspace.finish 收尾并提交 persist projection
 已完成：
 
 - Agent Skill repository/service、导入导出、embedded skill 导入确认、`api.skill` 已落地。
-- `skill.list` / `skill.read` 已接入 Agent tool registry。
+- `skill.list` / `skill.search` / `skill.read` 已接入 Agent tool registry。
 - Preset / Character embedded source refs 与删除清理语义已落地。
 
 Phase 3 基线已在 Agent tool 层接入 Skill 可见性、deny policy 与 read budget；Phase 2E 不再扩展 Skill 运行权限。
@@ -281,7 +283,7 @@ Phase 3 基线已在 Agent tool 层接入 Skill 可见性、deny policy 与 read
 - 缺省 built-in `default-writer`；非缺省 profile 缺失 fail-fast。
 - run workspace 写入 `input/resolved_profile.json`。
 - Profile 控制 tool allow/deny、`toolDescriptions`、tool budget、`maxRounds`。
-- Profile 控制 `skill.list` / `skill.read` 可见性与 read budget。
+- Profile 控制 `skill.list` / `skill.search` / `skill.read` 可见性与 read budget。
 - Profile 控制 workspace roots 与 messageBody artifact。
 - `agentSystemPrompt` 可完整替换默认 Agent system prompt。
 

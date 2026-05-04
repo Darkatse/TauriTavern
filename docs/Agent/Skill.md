@@ -34,7 +34,7 @@ my-skill/
 - Repository：`SkillRepository` trait 与文件实现 `FileSkillRepository`。
 - Service：`SkillService`。
 - Host ABI：`window.__TAURITAVERN__.api.skill`。
-- Agent tools：`skill.list` / `skill.read`，模型侧 alias 为 `skill_list` / `skill_read`。
+- Agent tools：`skill.list` / `skill.search` / `skill.read`，模型侧 alias 为 `skill_list` / `skill_search` / `skill_read`。
 - Preset / Character embedded skill 扫描与导入确认 UI。
 - Preset / Character 删除时，删除仅由该来源引用的已安装 Skill。
 
@@ -90,12 +90,21 @@ materialize input into .staging
 `skill.read`：
 
 - 只读。
-- 参数：`name`、可选 `path`、可选 `max_chars`。
+- 参数：`name`、可选 `path`、`start_line`、`line_count`、`start_char`、`max_chars`。
 - `path` 默认 `SKILL.md`。
 - 只能读取当前 Profile 可见且未 deny 的 Skill。
+- 支持行范围和字符范围；两种范围不能混用。
 - 只能读取 UTF-8 文本文件；二进制文件返回可恢复 tool error。
 - `max_chars` 受 `maxReadCharsPerCall` 与 `maxReadCharsPerRun` 控制；超预算返回可恢复 tool error。
 - 结果写入 Agent journal / tool result，并作为后续模型上下文的一部分回填。
+
+`skill.search`：
+
+- 只读。
+- 参数：`name`、`query`、可选 `path`、`limit`、`context_lines`。
+- 只搜索当前 Profile 可见且未 deny 的单个 Skill。
+- 返回 snippet 与 `skills/<name>/<path>#Lx-Ly` ref，不返回完整文件。
+- snippet 字符数计入同一个 Skill run read budget。
 
 Skill 文件对 Agent 是只读 virtual resource。Agent 不能修改 installed Skill；需要摘录、总结或改写时写入 workspace 的 `scratch/`、`summaries/` 或 `output/`。
 

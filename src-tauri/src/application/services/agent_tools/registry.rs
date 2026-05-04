@@ -1,10 +1,10 @@
 use super::chat::{chat_read_messages_spec, chat_search_spec};
-use super::skill::{skill_list_spec, skill_read_spec};
+use super::skill::{skill_list_spec, skill_read_spec, skill_search_spec};
 use super::workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
-    WORKSPACE_READ_FILE, WORKSPACE_WRITE_FILE, workspace_apply_patch_spec, workspace_commit_spec,
-    workspace_finish_spec, workspace_list_files_spec, workspace_read_file_spec,
-    workspace_write_file_spec,
+    WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_WRITE_FILE, workspace_apply_patch_spec,
+    workspace_commit_spec, workspace_finish_spec, workspace_list_files_spec,
+    workspace_read_file_spec, workspace_search_files_spec, workspace_write_file_spec,
 };
 use super::world_info::worldinfo_read_activated_spec;
 use crate::application::errors::ApplicationError;
@@ -24,8 +24,10 @@ impl BuiltinAgentToolRegistry {
                 chat_read_messages_spec(),
                 worldinfo_read_activated_spec(),
                 skill_list_spec(),
+                skill_search_spec(),
                 skill_read_spec(),
                 workspace_list_files_spec(),
+                workspace_search_files_spec(),
                 workspace_read_file_spec(),
                 workspace_write_file_spec(),
                 workspace_apply_patch_spec(),
@@ -103,6 +105,18 @@ fn apply_profile_context(
                 spec,
                 "path",
                 &format!("Relative workspace file path under {visible_roots}."),
+            )?;
+        }
+        WORKSPACE_SEARCH_FILES => {
+            spec.description = format!(
+                "Search visible UTF-8 Agent workspace files under {visible_roots}. Results return snippets and refs; use workspace_read_file to read exact ranges."
+            );
+            set_property_description(
+                spec,
+                "path",
+                &format!(
+                    "Optional visible workspace file or directory path under {visible_roots}. Omit to search all visible roots."
+                ),
             )?;
         }
         WORKSPACE_WRITE_FILE => {

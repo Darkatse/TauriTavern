@@ -418,6 +418,7 @@ profile_switch_denied
   "tools": {
     "allow": [
       "workspace.list_files",
+      "workspace.search_files",
       "workspace.read_file",
       "workspace.write_file",
       "workspace.apply_patch",
@@ -426,6 +427,7 @@ profile_switch_denied
       "chat.read_messages",
       "worldinfo.read_activated",
       "skill.list",
+      "skill.search",
       "skill.read"
     ],
     "deny": [],

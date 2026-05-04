@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::*;
 use crate::domain::models::skill::{
     SkillImportConflictKind, SkillImportInput, SkillInlineFile, SkillInstallAction,
-    SkillInstallConflictStrategy, SkillInstallRequest,
+    SkillInstallConflictStrategy, SkillInstallRequest, SkillReadRequest, SkillSearchRequest,
 };
 use crate::domain::repositories::skill_repository::SkillRepository;
 
@@ -70,11 +70,100 @@ async fn installs_inline_skill_and_reads_file() {
     assert_eq!(listed[0].tags, vec!["tests"]);
 
     let read = repository
-        .read_skill_file("test-skill", "references/a.md", None)
+        .read_skill_file(SkillReadRequest {
+            name: "test-skill".to_string(),
+            path: "references/a.md".to_string(),
+            start_line: None,
+            line_count: None,
+            start_char: None,
+            max_chars: None,
+        })
         .await
         .expect("read skill file");
     assert_eq!(read.content, "hello");
     assert_eq!(read.resource_ref, "skills/test-skill/references/a.md");
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn reads_skill_file_ranges() {
+    let root = temp_root("read-ranges");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            input: inline_skill(
+                "test-skill",
+                vec![("references/a.md", "alpha\nblue lantern\nomega")],
+            ),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+
+    let line = repository
+        .read_skill_file(SkillReadRequest {
+            name: "test-skill".to_string(),
+            path: "references/a.md".to_string(),
+            start_line: Some(2),
+            line_count: Some(1),
+            start_char: None,
+            max_chars: Some(80),
+        })
+        .await
+        .expect("read line range");
+    assert_eq!(line.content, "blue lantern");
+    assert_eq!(line.start_line, 2);
+    assert_eq!(line.end_line, 2);
+    assert!(line.truncated);
+
+    let chars = repository
+        .read_skill_file(SkillReadRequest {
+            name: "test-skill".to_string(),
+            path: "references/a.md".to_string(),
+            start_line: None,
+            line_count: None,
+            start_char: Some(6),
+            max_chars: Some(4),
+        })
+        .await
+        .expect("read char range");
+    assert_eq!(chars.content, "blue");
+    assert_eq!(chars.start_char, 6);
+    assert_eq!(chars.end_char, 10);
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn searches_installed_skill_text_files() {
+    let root = temp_root("search");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            input: inline_skill(
+                "test-skill",
+                vec![("references/a.md", "alpha\nblue lantern\nomega")],
+            ),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+
+    let search = repository
+        .search_skill_files(SkillSearchRequest {
+            name: "test-skill".to_string(),
+            query: "blue lantern".to_string(),
+            path: Some("references".to_string()),
+            limit: 5,
+            context_lines: 0,
+        })
+        .await
+        .expect("search skill");
+    assert_eq!(search.searched_files, 1);
+    assert_eq!(search.hits[0].path, "references/a.md");
+    assert_eq!(search.hits[0].start_line, 2);
+    assert!(search.hits[0].snippet.contains("blue lantern"));
 
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -355,7 +444,14 @@ async fn read_rejects_symlink_escape_inside_installed_skill() {
     symlink(&outside, skill_root.join("references")).expect("create symlink");
 
     let error = repository
-        .read_skill_file("test-skill", "references/a.md", None)
+        .read_skill_file(SkillReadRequest {
+            name: "test-skill".to_string(),
+            path: "references/a.md".to_string(),
+            start_line: None,
+            line_count: None,
+            start_char: None,
+            max_chars: None,
+        })
         .await
         .expect_err("symlink escape should fail");
     assert!(error.to_string().contains("escapes installed directory"));

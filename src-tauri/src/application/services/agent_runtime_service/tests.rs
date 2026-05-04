@@ -32,11 +32,13 @@ use crate::domain::models::agent::{
     AgentRunEventLevel, AgentRunPresentation, AgentRunStatus, AgentToolCall, WorkspacePath,
 };
 use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
+use crate::domain::models::skill::{SkillImportInput, SkillInlineFile, SkillInstallRequest};
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunRepository,
 };
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
+use crate::domain::repositories::skill_repository::SkillRepository;
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
@@ -1419,6 +1421,182 @@ async fn dispatcher_searches_and_reads_current_chat_messages() {
         "blue lantern"
     );
     assert_eq!(read.result.resource_refs[0], "chat:current#1:chars=4..16");
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn dispatcher_searches_visible_workspace_files_and_reads_char_ranges() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-workspace-search-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let chat_repository = test_chat_repository(&root);
+    let run = AgentRun {
+        id: "run_workspace_search_test".to_string(),
+        workspace_id: "workspace_search_test".to_string(),
+        stable_chat_id: "stable_workspace_search_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "alice".to_string(),
+            file_name: "session".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    let profile = test_resolved_profile(&root).await;
+    repository
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &profile),
+            &json!({"messages": []}),
+            &profile,
+        )
+        .await
+        .expect("initialize workspace");
+    repository
+        .write_text(
+            &run.id,
+            &WorkspacePath::parse("persist/memory.md").unwrap(),
+            "alpha\nblue lantern under the bridge\nomega",
+        )
+        .await
+        .expect("seed persist");
+
+    let dispatcher = AgentToolDispatcher::new(
+        repository.clone(),
+        chat_repository.clone(),
+        chat_repository,
+        repository.clone(),
+        test_skill_service(&root),
+    );
+    let mut session = AgentToolSession::default();
+    let search_call = AgentToolCall {
+        id: "call_workspace_search".to_string(),
+        name: "workspace.search_files".to_string(),
+        arguments: json!({ "query": "blue lantern", "path": "persist/", "context_lines": 0 }),
+        provider_metadata: Value::Null,
+    };
+    let searched = dispatcher
+        .dispatch(&run.id, &search_call, &mut session, &profile)
+        .await
+        .expect("dispatch workspace search");
+    assert!(!searched.result.is_error);
+    assert_eq!(
+        searched.result.structured["hits"][0]["path"],
+        "persist/memory.md"
+    );
+    assert_eq!(searched.result.structured["hits"][0]["startLine"], 2);
+
+    let char_read_call = AgentToolCall {
+        id: "call_workspace_char_read".to_string(),
+        name: "workspace.read_file".to_string(),
+        arguments: json!({ "path": "persist/memory.md", "start_char": 6, "max_chars": 12 }),
+        provider_metadata: Value::Null,
+    };
+    let read = dispatcher
+        .dispatch(&run.id, &char_read_call, &mut session, &profile)
+        .await
+        .expect("dispatch char read");
+    assert!(!read.result.is_error);
+    assert!(read.result.content.contains("blue lantern"));
+    assert_eq!(read.result.structured["startChar"], 6);
+    assert_eq!(read.result.structured["endChar"], 18);
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn dispatcher_searches_skills_and_reads_skill_ranges() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-skill-search-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let chat_repository = test_chat_repository(&root);
+    let skill_repository = Arc::new(FileSkillRepository::new(root.join("skills")));
+    skill_repository
+        .install_import(SkillInstallRequest {
+            input: SkillImportInput::InlineFiles {
+                files: vec![
+                    SkillInlineFile {
+                        path: "SKILL.md".to_string(),
+                        encoding: "utf8".to_string(),
+                        content: "---\nname: test-skill\ndescription: Skill for search tests.\n---\n\n# Test\n".to_string(),
+                        media_type: None,
+                        size_bytes: None,
+                        sha256: None,
+                    },
+                    SkillInlineFile {
+                        path: "references/guide.md".to_string(),
+                        encoding: "utf8".to_string(),
+                        content: "alpha\nblue lantern under the bridge\nomega".to_string(),
+                        media_type: None,
+                        size_bytes: None,
+                        sha256: None,
+                    },
+                ],
+                source: json!({ "kind": "test" }),
+            },
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+    let skill_service = Arc::new(SkillService::new(skill_repository));
+    let profile = test_resolved_profile(&root).await;
+    let dispatcher = AgentToolDispatcher::new(
+        repository.clone(),
+        chat_repository.clone(),
+        chat_repository,
+        repository,
+        skill_service,
+    );
+    let mut session = AgentToolSession::default();
+
+    let search_call = AgentToolCall {
+        id: "call_skill_search".to_string(),
+        name: "skill.search".to_string(),
+        arguments: json!({ "name": "test-skill", "query": "blue lantern", "path": "references", "context_lines": 0 }),
+        provider_metadata: Value::Null,
+    };
+    let searched = dispatcher
+        .dispatch("unused", &search_call, &mut session, &profile)
+        .await
+        .expect("dispatch skill search");
+    assert!(!searched.result.is_error);
+    assert_eq!(
+        searched.result.structured["hits"][0]["path"],
+        "references/guide.md"
+    );
+
+    let read_call = AgentToolCall {
+        id: "call_skill_read_range".to_string(),
+        name: "skill.read".to_string(),
+        arguments: json!({
+            "name": "test-skill",
+            "path": "references/guide.md",
+            "start_line": 2,
+            "line_count": 1
+        }),
+        provider_metadata: Value::Null,
+    };
+    let read = dispatcher
+        .dispatch("unused", &read_call, &mut session, &profile)
+        .await
+        .expect("dispatch skill read");
+    assert!(!read.result.is_error);
+    assert!(
+        read.result
+            .content
+            .contains("blue lantern under the bridge")
+    );
+    assert_eq!(read.result.structured["startLine"], 2);
+    assert_eq!(read.result.structured["endLine"], 2);
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }

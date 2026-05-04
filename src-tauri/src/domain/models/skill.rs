@@ -153,15 +153,72 @@ pub struct SkillInlineFile {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct SkillReadRequest {
+    pub name: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_char: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_chars: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillReadResult {
     pub name: String,
     pub path: String,
     pub content: String,
     pub chars: usize,
+    pub total_chars: usize,
+    pub start_char: usize,
+    pub end_char: usize,
+    pub total_lines: usize,
+    pub start_line: usize,
+    pub end_line: usize,
     pub bytes: u64,
     pub sha256: String,
     pub truncated: bool,
     pub resource_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSearchRequest {
+    pub name: String,
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    pub limit: usize,
+    pub context_lines: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSearchHit {
+    pub path: String,
+    pub score: f32,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub snippet: String,
+    pub bytes: u64,
+    pub sha256: String,
+    pub resource_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSearchResult {
+    pub name: String,
+    pub query: String,
+    pub hits: Vec<SkillSearchHit>,
+    pub searched_files: usize,
+    pub skipped_files: usize,
+    pub truncated: bool,
+    pub returned_chars: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

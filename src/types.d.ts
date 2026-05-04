@@ -258,6 +258,12 @@ type TauriTavernSkillReadResult = {
     path: string;
     content: string;
     chars: number;
+    totalChars: number;
+    startChar: number;
+    endChar: number;
+    totalLines: number;
+    startLine: number;
+    endLine: number;
     bytes: number;
     sha256: string;
     truncated: boolean;
@@ -277,7 +283,14 @@ type TauriTavernSkillApi = {
         input: TauriTavernSkillImportInput;
         conflictStrategy?: TauriTavernSkillInstallConflictStrategy;
     }) => Promise<TauriTavernSkillInstallResult>;
-    readFile: (options: { name: string; path: string; maxChars?: number }) => Promise<TauriTavernSkillReadResult>;
+    readFile: (options: {
+        name: string;
+        path: string;
+        maxChars?: number;
+        startLine?: number;
+        lineCount?: number;
+        startChar?: number;
+    }) => Promise<TauriTavernSkillReadResult>;
     export: (options: { name: string }) => Promise<TauriTavernSkillExportPayload>;
     exportSkill: (options: { name: string }) => Promise<TauriTavernSkillExportPayload>;
 };
