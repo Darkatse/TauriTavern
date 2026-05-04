@@ -7,8 +7,8 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::domain::models::skill::{
-    SkillImportInput, SkillImportPreview, SkillIndexEntry, SkillInstallRequest, SkillInstallResult,
-    SkillReadRequest, SkillReadResult,
+    SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry, SkillInstallRequest,
+    SkillInstallResult, SkillReadRequest, SkillReadResult,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -32,6 +32,20 @@ pub async fn list_skills(
         .list_skills()
         .await
         .map_err(map_command_error("Failed to list Agent Skills"))
+}
+
+#[tauri::command]
+pub async fn list_skill_files(
+    name: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<SkillFileRef>, CommandError> {
+    log_command(format!("list_skill_files {}", name));
+
+    app_state
+        .skill_service
+        .list_skill_files(&name)
+        .await
+        .map_err(map_command_error("Failed to list Agent Skill files"))
 }
 
 #[tauri::command]

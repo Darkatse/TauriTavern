@@ -125,6 +125,28 @@ function createAgentApi({ safeInvoke }) {
         };
     }
 
+    async function listProfiles() {
+        return safeInvoke('list_agent_profiles');
+    }
+
+    async function loadProfile(input) {
+        const profileId = requireProfileId(input?.profileId ?? input?.profile_id ?? input);
+        return safeInvoke('load_agent_profile', { dto: { profileId } });
+    }
+
+    async function saveProfile(input) {
+        const profile = input?.profile ?? input;
+        if (!isPlainObject(profile)) {
+            throw new Error('agent.profile_required: profile must be an object');
+        }
+        return safeInvoke('save_agent_profile', { dto: { profile } });
+    }
+
+    async function deleteProfile(input) {
+        const profileId = requireProfileId(input?.profileId ?? input?.profile_id ?? input);
+        return safeInvoke('delete_agent_profile', { dto: { profileId } });
+    }
+
     return {
         startRunWithPromptSnapshot,
         startRunFromLegacyGenerate,
@@ -132,6 +154,12 @@ function createAgentApi({ safeInvoke }) {
         readEvents,
         readWorkspaceFile,
         subscribe,
+        profiles: {
+            list: listProfiles,
+            load: loadProfile,
+            save: saveProfile,
+            delete: deleteProfile,
+        },
         approveToolCall() {
             throw new Error('approveToolCall is not implemented in Agent Phase 2B');
         },
@@ -226,6 +254,14 @@ function requireRunId(value) {
         throw new Error('runId is required');
     }
     return runId;
+}
+
+function requireProfileId(value) {
+    const profileId = String(value || '').trim();
+    if (!profileId) {
+        throw new Error('profileId is required');
+    }
+    return profileId;
 }
 
 function normalizePollInterval(value) {

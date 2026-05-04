@@ -86,7 +86,7 @@ pub(super) async fn search_skill_files(
         ));
     }
 
-    let skill_root = installed_skill_root(repository, &name).await?;
+    let skill_root = repository.installed_skill_root(&name).await?;
     let files = collect_skill_files(&skill_root)?;
     let path_filter = request
         .path
@@ -171,7 +171,7 @@ async fn read_skill_text_file(
 ) -> Result<SkillTextFile, DomainError> {
     let name = validate_skill_name(name)?;
     let path = normalize_skill_path(path)?;
-    let skill_root = installed_skill_root(repository, &name).await?;
+    let skill_root = repository.installed_skill_root(&name).await?;
     let file_ref = SkillFileRef {
         path,
         kind: SkillFileKind::Text,
@@ -180,40 +180,6 @@ async fn read_skill_text_file(
         sha256: String::new(),
     };
     read_text_file_at(&skill_root, &name, &file_ref)
-}
-
-async fn installed_skill_root(
-    repository: &FileSkillRepository,
-    name: &str,
-) -> Result<PathBuf, DomainError> {
-    let index = repository.load_index().await?;
-    if !index.skills.iter().any(|skill| skill.name == name) {
-        return Err(DomainError::NotFound(format!("Skill not found: {name}")));
-    }
-
-    let skill_root = repository.installed_root().join(name);
-    let root_metadata = fs::symlink_metadata(&skill_root).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            DomainError::NotFound(format!("Skill directory not found: {name}"))
-        } else {
-            DomainError::InternalError(format!(
-                "Failed to read Skill directory metadata '{}': {}",
-                skill_root.display(),
-                error
-            ))
-        }
-    })?;
-    if root_metadata.file_type().is_symlink() {
-        return Err(DomainError::InvalidData(format!(
-            "Skill directory cannot be a symlink: {name}"
-        )));
-    }
-    if !root_metadata.is_dir() {
-        return Err(DomainError::InvalidData(format!(
-            "Skill installed path is not a directory: {name}"
-        )));
-    }
-    Ok(skill_root)
 }
 
 fn read_text_file_at(

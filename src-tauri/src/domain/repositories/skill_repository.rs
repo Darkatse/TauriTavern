@@ -2,13 +2,16 @@ use async_trait::async_trait;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::skill::{
-    SkillExportResult, SkillImportInput, SkillImportPreview, SkillIndexEntry, SkillInstallRequest,
-    SkillInstallResult, SkillReadRequest, SkillReadResult, SkillSearchRequest, SkillSearchResult,
+    SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
+    SkillInstallRequest, SkillInstallResult, SkillReadRequest, SkillReadResult, SkillSearchRequest,
+    SkillSearchResult,
 };
 
 #[async_trait]
 pub trait SkillRepository: Send + Sync {
     async fn list_skills(&self) -> Result<Vec<SkillIndexEntry>, DomainError>;
+
+    async fn list_skill_files(&self, name: &str) -> Result<Vec<SkillFileRef>, DomainError>;
 
     async fn preview_import(
         &self,

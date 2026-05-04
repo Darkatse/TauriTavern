@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use super::*;
 use crate::domain::models::skill::{
-    SkillImportConflictKind, SkillImportInput, SkillInlineFile, SkillInstallAction,
+    SkillFileKind, SkillImportConflictKind, SkillImportInput, SkillInlineFile, SkillInstallAction,
     SkillInstallConflictStrategy, SkillInstallRequest, SkillReadRequest, SkillSearchRequest,
 };
 use crate::domain::repositories::skill_repository::SkillRepository;
@@ -68,6 +68,18 @@ async fn installs_inline_skill_and_reads_file() {
     let listed = repository.list_skills().await.expect("list skills");
     assert_eq!(listed[0].name, "test-skill");
     assert_eq!(listed[0].tags, vec!["tests"]);
+    let files = repository
+        .list_skill_files("test-skill")
+        .await
+        .expect("list skill files");
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["SKILL.md", "references/a.md"]
+    );
+    assert_eq!(files[1].kind, SkillFileKind::Text);
 
     let read = repository
         .read_skill_file(SkillReadRequest {

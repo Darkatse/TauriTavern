@@ -13,6 +13,7 @@ mod source_refs;
 #[cfg(test)]
 mod tests;
 
+use std::fs;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
@@ -20,8 +21,9 @@ use tokio::sync::Mutex;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::skill::{
-    SkillExportResult, SkillImportInput, SkillImportPreview, SkillIndexEntry, SkillInstallRequest,
-    SkillInstallResult, SkillReadRequest, SkillReadResult, SkillSearchRequest, SkillSearchResult,
+    SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
+    SkillInstallRequest, SkillInstallResult, SkillReadRequest, SkillReadResult, SkillSearchRequest,
+    SkillSearchResult,
 };
 use crate::domain::repositories::skill_repository::SkillRepository;
 
@@ -47,12 +49,49 @@ impl FileSkillRepository {
             mutation_lock: Mutex::new(()),
         }
     }
+
+    pub(super) async fn installed_skill_root(&self, name: &str) -> Result<PathBuf, DomainError> {
+        let name = paths::validate_skill_name(name)?;
+        let index = self.load_index().await?;
+        if !index.skills.iter().any(|skill| skill.name == name) {
+            return Err(DomainError::NotFound(format!("Skill not found: {name}")));
+        }
+
+        let skill_root = self.installed_root().join(&name);
+        let root_metadata = fs::symlink_metadata(&skill_root).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                DomainError::NotFound(format!("Skill directory not found: {name}"))
+            } else {
+                DomainError::InternalError(format!(
+                    "Failed to read Skill directory metadata '{}': {}",
+                    skill_root.display(),
+                    error
+                ))
+            }
+        })?;
+        if root_metadata.file_type().is_symlink() {
+            return Err(DomainError::InvalidData(format!(
+                "Skill directory cannot be a symlink: {name}"
+            )));
+        }
+        if !root_metadata.is_dir() {
+            return Err(DomainError::InvalidData(format!(
+                "Skill installed path is not a directory: {name}"
+            )));
+        }
+        Ok(skill_root)
+    }
 }
 
 #[async_trait]
 impl SkillRepository for FileSkillRepository {
     async fn list_skills(&self) -> Result<Vec<SkillIndexEntry>, DomainError> {
         Ok(self.load_index().await?.skills)
+    }
+
+    async fn list_skill_files(&self, name: &str) -> Result<Vec<SkillFileRef>, DomainError> {
+        let skill_root = self.installed_skill_root(name).await?;
+        package::collect_skill_files(&skill_root)
     }
 
     async fn preview_import(

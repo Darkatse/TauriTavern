@@ -172,6 +172,11 @@ function createSkillApi({ safeInvoke }) {
         return safeInvoke('list_skills');
     }
 
+    async function listFiles(options) {
+        const name = requireNonEmptyString(options?.name, 'skill name');
+        return safeInvoke('list_skill_files', { name });
+    }
+
     async function previewImport(input) {
         return safeInvoke('preview_skill_import', {
             input: normalizeSkillImportInput(input),
@@ -208,6 +213,7 @@ function createSkillApi({ safeInvoke }) {
 
     return {
         list,
+        listFiles,
         previewImport,
         installImport,
         readFile,

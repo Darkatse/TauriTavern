@@ -246,6 +246,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::agent_commands::resolve_agent_chat_commit,
         // Agent Skill commands
         super::skill_commands::list_skills,
+        super::skill_commands::list_skill_files,
         super::skill_commands::preview_skill_import,
         super::skill_commands::install_skill_import,
         super::skill_commands::read_skill_file,

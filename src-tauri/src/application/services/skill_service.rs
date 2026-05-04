@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use crate::application::errors::ApplicationError;
 use crate::domain::models::skill::{
-    SkillExportResult, SkillImportInput, SkillImportPreview, SkillIndexEntry, SkillInstallRequest,
-    SkillInstallResult, SkillReadRequest, SkillReadResult, SkillSearchRequest, SkillSearchResult,
+    SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
+    SkillInstallRequest, SkillInstallResult, SkillReadRequest, SkillReadResult, SkillSearchRequest,
+    SkillSearchResult,
 };
 use crate::domain::repositories::skill_repository::SkillRepository;
 
@@ -18,6 +19,13 @@ impl SkillService {
 
     pub async fn list_skills(&self) -> Result<Vec<SkillIndexEntry>, ApplicationError> {
         Ok(self.repository.list_skills().await?)
+    }
+
+    pub async fn list_skill_files(
+        &self,
+        name: &str,
+    ) -> Result<Vec<SkillFileRef>, ApplicationError> {
+        Ok(self.repository.list_skill_files(name).await?)
     }
 
     pub async fn preview_import(

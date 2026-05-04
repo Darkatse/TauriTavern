@@ -74,6 +74,15 @@ test('api.skill forwards install conflict strategy without implicit replace', as
     assert.equal(calls[1].args.request.conflictStrategy, 'replace');
 });
 
+test('api.skill lists installed skill files by skill name', async () => {
+    const { calls, skill } = await installHarness();
+
+    await skill.listFiles({ name: 'test-skill' });
+
+    assert.equal(calls[0].command, 'list_skill_files');
+    assert.deepEqual(calls[0].args, { name: 'test-skill' });
+});
+
 test('api.skill fails fast on unsupported import shapes', async () => {
     const { skill } = await installHarness();
 
@@ -88,5 +97,9 @@ test('api.skill fails fast on unsupported import shapes', async () => {
     await assert.rejects(
         () => skill.installImport({ input: { kind: 'directory', path: '/tmp/skill' }, conflictStrategy: 'merge' }),
         /Unsupported skill conflict strategy/,
+    );
+    await assert.rejects(
+        () => skill.listFiles({ name: '' }),
+        /skill name is required/,
     );
 });
