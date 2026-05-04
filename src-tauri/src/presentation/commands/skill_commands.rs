@@ -121,3 +121,17 @@ pub async fn export_skill(
         sha256: exported.sha256,
     })
 }
+
+#[tauri::command]
+pub async fn delete_skill(
+    name: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command(format!("delete_skill {}", name));
+
+    app_state
+        .skill_service
+        .delete_skill(&name)
+        .await
+        .map_err(map_command_error("Failed to delete Agent Skill"))
+}

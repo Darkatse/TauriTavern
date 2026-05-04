@@ -83,6 +83,38 @@ test('api.skill lists installed skill files by skill name', async () => {
     assert.deepEqual(calls[0].args, { name: 'test-skill' });
 });
 
+test('api.skill deletes installed skills by skill name', async () => {
+    const { calls, skill } = await installHarness();
+
+    await skill.deleteSkill({ name: 'test-skill' });
+
+    assert.equal(calls[0].command, 'delete_skill');
+    assert.deepEqual(calls[0].args, { name: 'test-skill' });
+});
+
+test('api.skill picks import archives through the host dialog', async () => {
+    const calls = [];
+    globalThis.window = {
+        __TAURITAVERN__: { api: {} },
+    };
+
+    const { installSkillApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/skill.js')));
+    installSkillApi({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            return '/tmp/test-skill.ttskill';
+        },
+    });
+
+    const input = await globalThis.window.__TAURITAVERN__.api.skill.pickImportArchive();
+
+    assert.deepEqual(input, { kind: 'archiveFile', path: '/tmp/test-skill.ttskill' });
+    assert.equal(calls[0].command, 'plugin:dialog|open');
+    assert.deepEqual(calls[0].args.options.filters, [
+        { name: 'Agent Skill Archive', extensions: ['ttskill', 'zip'] },
+    ]);
+});
+
 test('api.skill fails fast on unsupported import shapes', async () => {
     const { skill } = await installHarness();
 
@@ -100,6 +132,10 @@ test('api.skill fails fast on unsupported import shapes', async () => {
     );
     await assert.rejects(
         () => skill.listFiles({ name: '' }),
+        /skill name is required/,
+    );
+    await assert.rejects(
+        () => skill.deleteSkill({ name: '' }),
         /skill name is required/,
     );
 });

@@ -34,6 +34,17 @@ export function requireExtensionStore() {
     return store;
 }
 
+export async function confirmAction(message) {
+    const context = window.SillyTavern?.getContext?.();
+    const Popup = context?.Popup;
+    const POPUP_RESULT = context?.POPUP_RESULT;
+    if (!Popup?.show?.confirm || !POPUP_RESULT) {
+        throw new Error(tr('hostPopupApiUnavailable'));
+    }
+
+    return await Popup.show.confirm(null, message) === POPUP_RESULT.AFFIRMATIVE;
+}
+
 export function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }

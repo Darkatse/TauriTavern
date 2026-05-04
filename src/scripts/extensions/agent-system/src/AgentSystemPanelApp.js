@@ -1,5 +1,5 @@
 import { DEFAULT_PROFILE_ID, KNOWN_TOOLS, WORKSPACE_ROOTS } from './constants.js';
-import { errorText, prettyJson, requireAgentApi, requireSkillApi } from './host-api.js';
+import { confirmAction, errorText, prettyJson, requireAgentApi, requireSkillApi } from './host-api.js';
 import { translateAgentSystem as tr, translateSkillInstallAction } from './i18n.js';
 import { defaultProfile, normalizeProfileForSave, normalizeProfileId, profileForEdit } from './profile-model.js';
 import { loadSettings, patchSettings } from './settings-store.js';
@@ -94,8 +94,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 skillFiles: [],
                 loadingSkillFiles: false,
                 expandedSkillFolders: {},
-                skillImportKind: 'archiveFile',
-                skillImportPath: '',
+                skillImportInput: null,
                 skillImportConflictStrategy: 'skip',
                 skillImportPreview: null,
                 tabs: [
@@ -122,6 +121,12 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 }
 
                 return buildSkillFileTree(this.skillFiles);
+            },
+            skillImportPath() {
+                return this.skillImportInput?.path || '';
+            },
+            skillImportHasConflict() {
+                return this.skillImportPreview?.conflict?.kind === 'different';
             },
         },
         async mounted() {
@@ -246,7 +251,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     throw new Error(tr('agentProfileBuiltInDelete'));
                 }
                 const id = this.draft.id;
-                if (!window.confirm(tr('deleteAgentProfileConfirm', { id }))) {
+                if (!await confirmAction(tr('deleteAgentProfileConfirm', { id }))) {
                     return;
                 }
                 await requireAgentApi().profiles.delete({ profileId: id });
@@ -322,26 +327,39 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     throw error;
                 }
             },
-            async previewSkillImport() {
-                const input = {
-                    kind: this.skillImportKind,
-                    path: this.skillImportPath.trim(),
-                };
-                this.skillImportPreview = await requireSkillApi().previewImport(input);
+            async pickAndPreviewSkillImport() {
+                this.skillImportInput = null;
+                this.skillImportPreview = null;
+
+                const input = await requireSkillApi().pickImportArchive();
+                if (!input) {
+                    return;
+                }
+
+                this.skillImportInput = input;
+                this.skillImportConflictStrategy = 'skip';
+                try {
+                    this.skillImportPreview = await requireSkillApi().previewImport(input);
+                } catch (error) {
+                    this.reportError(error);
+                    throw error;
+                }
             },
             async installSkillImport() {
-                const input = {
-                    kind: this.skillImportKind,
-                    path: this.skillImportPath.trim(),
-                };
-                const request = { input };
-                if (this.skillImportPreview?.conflict?.kind === 'different') {
+                if (!this.skillImportInput || !this.skillImportPreview) {
+                    throw new Error(tr('previewSkillImportFirst'));
+                }
+
+                const request = { input: this.skillImportInput };
+                if (this.skillImportHasConflict) {
                     request.conflictStrategy = this.skillImportConflictStrategy;
                 }
                 const result = await requireSkillApi().installImport(request);
                 this.skills = await requireSkillApi().list();
                 this.selectedSkillName = result.name;
                 this.expandedSkillFolders = {};
+                this.skillImportInput = null;
+                this.skillImportPreview = null;
                 await this.loadSelectedSkillFiles();
                 this.toast(tr('skillInstallToast', {
                     action: translateSkillInstallAction(result.action),
@@ -359,6 +377,23 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 document.body.appendChild(anchor);
                 anchor.click();
                 anchor.remove();
+            },
+            async deleteSelectedSkill() {
+                if (!this.selectedSkillName) {
+                    throw new Error(tr('selectSkillFirst'));
+                }
+                const name = this.selectedSkillName;
+                if (!await confirmAction(tr('deleteSkillConfirm', { name }))) {
+                    return;
+                }
+
+                await requireSkillApi().deleteSkill({ name });
+                this.expandedSkillFolders = {};
+                this.skillFiles = [];
+                this.skillImportInput = null;
+                this.skillImportPreview = null;
+                await this.refreshSkills();
+                this.toast(tr('deletedSkill', { name }));
             },
             prettyJson(value) {
                 return prettyJson(value);
@@ -562,6 +597,10 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                 <i class="fa-solid fa-file-export"></i>
                                 <span>{{ tr('export') }}</span>
                             </button>
+                            <button type="button" class="menu_button menu_button_icon ttas-danger-button" @click="deleteSelectedSkill" :disabled="!selectedSkillName">
+                                <i class="fa-solid fa-trash-can"></i>
+                                <span>{{ tr('delete') }}</span>
+                            </button>
                         </div>
 
                         <div class="ttas-grid">
@@ -601,19 +640,24 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                         </div>
 
                         <div class="ttas-section">
-                            <h4>{{ tr('installSkillFromPath') }}</h4>
+                            <h4>{{ tr('importSkillArchive') }}</h4>
                             <div class="ttas-toolbar">
-                                <select v-model="skillImportKind">
-                                    <option value="archiveFile">{{ tr('archiveFile') }}</option>
-                                    <option value="directory">{{ tr('directory') }}</option>
-                                </select>
-                                <input class="text_pole" v-model="skillImportPath" />
-                                <select v-model="skillImportConflictStrategy">
+                                <button type="button" class="menu_button menu_button_icon" @click="pickAndPreviewSkillImport">
+                                    <i class="fa-solid fa-file-import"></i>
+                                    <span>{{ tr('import') }}</span>
+                                </button>
+                                <button type="button" class="menu_button menu_button_icon" @click="installSkillImport" :disabled="!skillImportPreview">
+                                    <i class="fa-solid fa-box-archive"></i>
+                                    <span>{{ tr('install') }}</span>
+                                </button>
+                                <select v-if="skillImportHasConflict" v-model="skillImportConflictStrategy">
                                     <option value="skip">{{ tr('skipConflict') }}</option>
                                     <option value="replace">{{ tr('replaceConflict') }}</option>
                                 </select>
-                                <button type="button" class="menu_button" @click="previewSkillImport">{{ tr('preview') }}</button>
-                                <button type="button" class="menu_button" @click="installSkillImport">{{ tr('install') }}</button>
+                            </div>
+                            <div v-if="skillImportPath" class="ttas-import-path">
+                                <i class="fa-solid fa-file-zipper"></i>
+                                <span>{{ skillImportPath }}</span>
                             </div>
                             <pre v-if="skillImportPreview" class="ttas-json">{{ prettyJson(skillImportPreview) }}</pre>
                         </div>

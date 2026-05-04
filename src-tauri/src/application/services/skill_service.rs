@@ -60,6 +60,10 @@ impl SkillService {
         Ok(self.repository.export_skill(name).await?)
     }
 
+    pub async fn delete_skill(&self, name: &str) -> Result<(), ApplicationError> {
+        Ok(self.repository.delete_skill(name).await?)
+    }
+
     pub async fn delete_skills_for_source(
         &self,
         source_kind: &str,

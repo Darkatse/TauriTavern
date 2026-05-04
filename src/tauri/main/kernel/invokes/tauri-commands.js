@@ -40,6 +40,7 @@ export {};
  *   | 'delete_preset'
  *   | 'delete_quick_reply_set'
  *   | 'delete_secret'
+ *   | 'delete_skill'
  *   | 'delete_theme'
  *   | 'delete_user_image'
  *   | 'delete_user_file'

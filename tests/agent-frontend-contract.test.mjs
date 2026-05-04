@@ -79,6 +79,34 @@ test('Agent System settings use the extension store and publish changes', async 
     assert.deepEqual(emitted, saved);
 });
 
+test('Agent System confirmations use SillyTavern Popup instead of window.confirm', async () => {
+    const calls = [];
+    installWindow({});
+    globalThis.window.confirm = () => {
+        throw new Error('window.confirm must not be used');
+    };
+    globalThis.window.SillyTavern = {
+        getContext() {
+            return {
+                POPUP_RESULT: { AFFIRMATIVE: 1 },
+                Popup: {
+                    show: {
+                        async confirm(header, message) {
+                            calls.push({ header, message });
+                            return 1;
+                        },
+                    },
+                },
+            };
+        },
+    };
+
+    const { confirmAction } = await importFresh('src/scripts/extensions/agent-system/src/host-api.js');
+
+    assert.equal(await confirmAction('Delete Skill "test-skill"?'), true);
+    assert.deepEqual(calls, [{ header: null, message: 'Delete Skill "test-skill"?' }]);
+});
+
 test('default Agent profile exposes the effective default system prompt in frontend drafts', async () => {
     const {
         DEFAULT_PROFILE_ID,

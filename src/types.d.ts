@@ -362,6 +362,7 @@ type TauriTavernSkillExportPayload = {
 type TauriTavernSkillApi = {
     list: () => Promise<TauriTavernSkillIndexEntry[]>;
     listFiles: (options: { name: string }) => Promise<TauriTavernSkillFileRef[]>;
+    pickImportArchive: () => Promise<TauriTavernSkillImportInput | null>;
     previewImport: (input: TauriTavernSkillImportInput) => Promise<TauriTavernSkillImportPreview>;
     installImport: (request: {
         input: TauriTavernSkillImportInput;
@@ -377,6 +378,8 @@ type TauriTavernSkillApi = {
     }) => Promise<TauriTavernSkillReadResult>;
     export: (options: { name: string }) => Promise<TauriTavernSkillExportPayload>;
     exportSkill: (options: { name: string }) => Promise<TauriTavernSkillExportPayload>;
+    delete: (options: { name: string }) => Promise<void>;
+    deleteSkill: (options: { name: string }) => Promise<void>;
 };
 
 type TauriTavernFrontendLogsApi = {

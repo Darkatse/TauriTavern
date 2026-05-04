@@ -113,6 +113,15 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     background-color: var(--ttas-accent-soft);
 }
 
+.ttas-root .menu_button.ttas-danger-button:not(:disabled) {
+    color: color-mix(in srgb, var(--ttas-danger) 72%, var(--SmartThemeBodyColor));
+}
+
+.ttas-root .menu_button.ttas-danger-button:not(:disabled):hover {
+    border-color: color-mix(in srgb, var(--ttas-danger) 58%, var(--ttas-border));
+    background-color: color-mix(in srgb, var(--ttas-danger) 14%, transparent);
+}
+
 .ttas-dialog {
     width: min(1180px, calc(100vw - 36px));
     max-width: calc(100vw - 36px);
@@ -477,6 +486,30 @@ textarea.ttas-json {
     border-radius: 999px;
     background-color: var(--ttas-surface-soft);
     font-size: 0.78rem;
+}
+
+.ttas-import-path {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--ttas-border);
+    border-radius: 8px;
+    background-color: var(--ttas-surface-soft);
+}
+
+.ttas-import-path i {
+    color: var(--ttas-accent);
+    text-align: center;
+}
+
+.ttas-import-path span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .ttas-file-tree {

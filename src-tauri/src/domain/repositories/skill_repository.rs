@@ -35,6 +35,8 @@ pub trait SkillRepository: Send + Sync {
 
     async fn export_skill(&self, name: &str) -> Result<SkillExportResult, DomainError>;
 
+    async fn delete_skill(&self, name: &str) -> Result<(), DomainError>;
+
     async fn delete_skills_for_source(
         &self,
         source_kind: &str,

@@ -1,4 +1,5 @@
 mod archive;
+mod delete;
 mod fs_ops;
 mod index;
 mod install;
@@ -153,6 +154,11 @@ impl SkillRepository for FileSkillRepository {
             bytes,
             sha256,
         })
+    }
+
+    async fn delete_skill(&self, name: &str) -> Result<(), DomainError> {
+        let _guard = self.mutation_lock.lock().await;
+        delete::delete_skill(self, name).await
     }
 
     async fn delete_skills_for_source(

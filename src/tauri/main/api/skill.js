@@ -164,6 +164,19 @@ function normalizeSkillInstallRequest(value) {
     return output;
 }
 
+function normalizePickedImportArchivePath(value) {
+    if (value === null || value === undefined) {
+        return null;
+    }
+
+    const path = String(value).trim();
+    if (!path) {
+        return null;
+    }
+
+    return path;
+}
+
 /**
  * @param {{ safeInvoke: (command: string, args?: any) => Promise<any> }} deps
  */
@@ -175,6 +188,24 @@ function createSkillApi({ safeInvoke }) {
     async function listFiles(options) {
         const name = requireNonEmptyString(options?.name, 'skill name');
         return safeInvoke('list_skill_files', { name });
+    }
+
+    async function pickImportArchive() {
+        const path = normalizePickedImportArchivePath(await safeInvoke('plugin:dialog|open', {
+            options: {
+                title: 'Import Agent Skill',
+                multiple: false,
+                directory: false,
+                filters: [
+                    {
+                        name: 'Agent Skill Archive',
+                        extensions: ['ttskill', 'zip'],
+                    },
+                ],
+            },
+        }));
+
+        return path ? { kind: 'archiveFile', path } : null;
     }
 
     async function previewImport(input) {
@@ -211,14 +242,22 @@ function createSkillApi({ safeInvoke }) {
         return safeInvoke('export_skill', { name });
     }
 
+    async function deleteSkill(options) {
+        const name = requireNonEmptyString(options?.name, 'skill name');
+        return safeInvoke('delete_skill', { name });
+    }
+
     return {
         list,
         listFiles,
+        pickImportArchive,
         previewImport,
         installImport,
         readFile,
         export: exportSkill,
         exportSkill,
+        delete: deleteSkill,
+        deleteSkill,
     };
 }
 

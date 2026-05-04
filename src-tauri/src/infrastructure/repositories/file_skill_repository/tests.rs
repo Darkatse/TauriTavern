@@ -241,6 +241,34 @@ async fn deletes_skill_when_last_linked_source_is_deleted() {
 }
 
 #[tokio::test]
+async fn deletes_selected_skill() {
+    let root = temp_root("delete-selected");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            input: inline_skill("test-skill", vec![("references/a.md", "hello")]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+
+    repository
+        .delete_skill("test-skill")
+        .await
+        .expect("delete selected skill");
+
+    assert!(repository.list_skills().await.expect("list").is_empty());
+    assert!(!root.join("installed").join("test-skill").exists());
+    let error = repository
+        .delete_skill("test-skill")
+        .await
+        .expect_err("missing skill should fail");
+    assert!(error.to_string().contains("Skill not found: test-skill"));
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn keeps_skill_until_all_linked_sources_are_deleted() {
     let root = temp_root("delete-source-shared");
     let repository = FileSkillRepository::new(root.clone());

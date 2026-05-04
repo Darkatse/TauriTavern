@@ -15,6 +15,8 @@ const skill = window.__TAURITAVERN__.api.skill;
 ```ts
 type TauriTavernSkillApi = {
   list(): Promise<TauriTavernSkillIndexEntry[]>;
+  listFiles(options: { name: string }): Promise<TauriTavernSkillFileRef[]>;
+  pickImportArchive(): Promise<TauriTavernSkillImportInput | null>;
   previewImport(input: TauriTavernSkillImportInput): Promise<TauriTavernSkillImportPreview>;
   installImport(request: {
     input: TauriTavernSkillImportInput;
@@ -30,10 +32,20 @@ type TauriTavernSkillApi = {
   }): Promise<TauriTavernSkillReadResult>;
   export(options: { name: string }): Promise<TauriTavernSkillExportPayload>;
   exportSkill(options: { name: string }): Promise<TauriTavernSkillExportPayload>;
+  delete(options: { name: string }): Promise<void>;
+  deleteSkill(options: { name: string }): Promise<void>;
 };
 ```
 
 ## 导入输入
+
+用户从本机选择 `.ttskill` / `.zip` 时应优先调用 `pickImportArchive()`。它只负责唤起系统文件选择器并返回：
+
+```ts
+{ kind: 'archiveFile', path: string }
+```
+
+用户取消选择时返回 `null`。实际解包、校验、hash、冲突判断与安装仍必须走 `previewImport()` / `installImport()`。
 
 ```ts
 type TauriTavernSkillImportInput =
@@ -97,6 +109,11 @@ type action = 'installed' | 'replaced' | 'already_installed' | 'skipped';
 
 - 返回 base64 编码的 `.ttskill` zip。
 - `.ttskill` 只包含 Skill 文件本身；不会写入会改变内容 hash 的导出诊断文件。
+
+`delete()` / `deleteSkill()`：
+
+- 删除一个已安装 Skill 的索引记录与文件目录。
+- 不会触发 source-ref 的增量解绑；这是用户显式删除 Skill 的管理动作。
 
 ## 兼容边界
 
