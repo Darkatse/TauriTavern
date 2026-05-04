@@ -84,16 +84,17 @@ materialize input into .staging
 `skill.list`：
 
 - 只读。
-- 返回已安装 Skill 的索引摘要。
-- 当前尚未接入 profile visible/deny policy，因此列出全局已安装 Skill。
+- 返回当前 Profile 可见的已安装 Skill 索引摘要。
+- `skills.visible` 支持具体 Skill name 或 `"*"`；`skills.deny` 优先。
 
 `skill.read`：
 
 - 只读。
 - 参数：`name`、可选 `path`、可选 `max_chars`。
 - `path` 默认 `SKILL.md`。
+- 只能读取当前 Profile 可见且未 deny 的 Skill。
 - 只能读取 UTF-8 文本文件；二进制文件返回可恢复 tool error。
-- `max_chars` 默认 20000，最大 80000。
+- `max_chars` 受 `maxReadCharsPerCall` 与 `maxReadCharsPerRun` 控制；超预算返回可恢复 tool error。
 - 结果写入 Agent journal / tool result，并作为后续模型上下文的一部分回填。
 
 Skill 文件对 Agent 是只读 virtual resource。Agent 不能修改 installed Skill；需要摘录、总结或改写时写入 workspace 的 `scratch/`、`summaries/` 或 `output/`。
@@ -121,11 +122,9 @@ Agent tool 层的模型可修正读取错误，例如缺失文件、二进制文
 
 ## 后续开发
 
-下一步只做必要能力：
+下一步只保留必要能力：
 
-- profile/preset/character 的最小 visible / deny / read budget policy。
-- `skill.list` 按 visible policy 收窄结果。
-- `skill.read` 按 policy 与 budget 拒绝不可见或过量读取。
-- 明确 recommended skill 与 embedded skill 在 profile resolver 中的合流规则。
+- 明确 recommended skill 与 embedded skill 在 profile / preset / character resolver 中的合流规则。
+- 将 Profile 管理 UI 暴露给创作者后，同步补齐 Skill 可见性配置入口。
 
 不要把 Skill 扩展成脚本执行、权限授予或 MCP 配置入口；这些能力必须走独立的 tool/policy/approval 体系。

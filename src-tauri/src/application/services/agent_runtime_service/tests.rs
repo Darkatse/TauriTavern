@@ -18,19 +18,27 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::agent_model_gateway::{
     AgentModelExchange, AgentModelGateway, decode_chat_completion_response,
 };
+use crate::application::services::agent_profile_service::{
+    AgentProfileResolveInput, AgentProfileService,
+};
 use crate::application::services::agent_tools::{
-    AgentToolDispatcher, AgentToolEffect, AgentToolSession,
+    AgentToolDispatcher, AgentToolEffect, AgentToolSession, BuiltinAgentToolRegistry,
 };
 use crate::application::services::skill_service::SkillService;
+use crate::domain::errors::DomainError;
+use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
     AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentModelRole, AgentRun,
     AgentRunEventLevel, AgentRunStatus, AgentToolCall, WorkspacePath,
 };
+use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunRepository,
 };
 use crate::domain::repositories::chat_repository::ChatRepository;
+use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
+use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
 use crate::infrastructure::repositories::file_skill_repository::FileSkillRepository;
@@ -119,6 +127,7 @@ async fn agent_loop_writes_artifact_and_reaches_awaiting_commit() {
         test_chat_repository(&root),
         test_skill_service(&root),
         model_gateway,
+        test_profile_service(&root),
     );
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -132,9 +141,16 @@ async fn agent_loop_writes_artifact_and_reaches_awaiting_commit() {
     };
     let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
     let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let profile = test_resolved_profile(&root).await;
 
     service
-        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, request, &mut cancel_receiver)
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
         .await
         .expect("agent loop");
 
@@ -302,6 +318,7 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
         test_chat_repository(&root),
         test_skill_service(&root),
         model_gateway,
+        test_profile_service(&root),
     );
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -315,9 +332,16 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
     };
     let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
     let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let profile = test_resolved_profile(&root).await;
 
     service
-        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, request, &mut cancel_receiver)
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
         .await
         .expect("agent loop");
 
@@ -426,6 +450,7 @@ async fn finalize_commit_promotes_persistent_workspace_projection() {
         test_chat_repository(&root),
         test_skill_service(&root),
         model_gateway,
+        test_profile_service(&root),
     );
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -439,9 +464,16 @@ async fn finalize_commit_promotes_persistent_workspace_projection() {
     };
     let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
     let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let profile = test_resolved_profile(&root).await;
 
     service
-        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, request, &mut cancel_receiver)
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile.clone(),
+            &mut cancel_receiver,
+        )
         .await
         .expect("agent loop");
     service
@@ -472,8 +504,9 @@ async fn finalize_commit_promotes_persistent_workspace_projection() {
     repository
         .initialize_run(
             &next_run,
-            &build_agent_manifest(&next_run),
+            &build_agent_manifest(&next_run, &profile),
             &json!({"messages": []}),
+            &profile,
         )
         .await
         .expect("initialize next run");
@@ -588,6 +621,7 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
         test_chat_repository(&root),
         test_skill_service(&root),
         model_gateway,
+        test_profile_service(&root),
     );
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -601,9 +635,16 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
     };
     let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
     let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let profile = test_resolved_profile(&root).await;
 
     service
-        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, request, &mut cancel_receiver)
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
         .await
         .expect("agent loop");
 
@@ -667,8 +708,14 @@ async fn workspace_patch_requires_full_read_state() {
         updated_at: Utc::now(),
     };
     repository.create_run(&run).await.expect("create run");
+    let profile = test_resolved_profile(&root).await;
     repository
-        .initialize_run(&run, &build_agent_manifest(&run), &json!({"messages": []}))
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &profile),
+            &json!({"messages": []}),
+            &profile,
+        )
         .await
         .expect("initialize workspace");
     repository
@@ -701,7 +748,7 @@ async fn workspace_patch_requires_full_read_state() {
     };
 
     let first = dispatcher
-        .dispatch(&run.id, &patch_call, &mut session)
+        .dispatch(&run.id, &patch_call, &mut session, &profile)
         .await
         .expect("dispatch patch");
     assert!(first.result.is_error);
@@ -717,12 +764,12 @@ async fn workspace_patch_requires_full_read_state() {
         provider_metadata: Value::Null,
     };
     dispatcher
-        .dispatch(&run.id, &read_call, &mut session)
+        .dispatch(&run.id, &read_call, &mut session, &profile)
         .await
         .expect("dispatch read");
 
     let patched = dispatcher
-        .dispatch(&run.id, &patch_call, &mut session)
+        .dispatch(&run.id, &patch_call, &mut session, &profile)
         .await
         .expect("dispatch patch after read");
     assert!(!patched.result.is_error);
@@ -766,8 +813,14 @@ async fn dispatcher_searches_and_reads_current_chat_messages() {
         updated_at: Utc::now(),
     };
     repository.create_run(&run).await.expect("create run");
+    let profile = test_resolved_profile(&root).await;
     repository
-        .initialize_run(&run, &build_agent_manifest(&run), &json!({"messages": []}))
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &profile),
+            &json!({"messages": []}),
+            &profile,
+        )
         .await
         .expect("initialize workspace");
     save_character_payload(
@@ -816,7 +869,7 @@ async fn dispatcher_searches_and_reads_current_chat_messages() {
         provider_metadata: Value::Null,
     };
     let searched = dispatcher
-        .dispatch(&run.id, &search_call, &mut session)
+        .dispatch(&run.id, &search_call, &mut session, &profile)
         .await
         .expect("dispatch search");
     assert!(!searched.result.is_error);
@@ -832,7 +885,7 @@ async fn dispatcher_searches_and_reads_current_chat_messages() {
         provider_metadata: Value::Null,
     };
     let read = dispatcher
-        .dispatch(&run.id, &read_call, &mut session)
+        .dispatch(&run.id, &read_call, &mut session, &profile)
         .await
         .expect("dispatch read messages");
     assert!(!read.result.is_error);
@@ -868,10 +921,11 @@ async fn dispatcher_reads_worldinfo_activation_from_run_snapshot() {
         updated_at: Utc::now(),
     };
     repository.create_run(&run).await.expect("create run");
+    let profile = test_resolved_profile(&root).await;
     repository
         .initialize_run(
             &run,
-            &build_agent_manifest(&run),
+            &build_agent_manifest(&run, &profile),
             &json!({
                 "chatCompletionPayload": {
                     "messages": [{ "role": "user", "content": "hello" }]
@@ -889,6 +943,7 @@ async fn dispatcher_reads_worldinfo_activation_from_run_snapshot() {
                     }]
                 }
             }),
+            &profile,
         )
         .await
         .expect("initialize workspace");
@@ -908,7 +963,7 @@ async fn dispatcher_reads_worldinfo_activation_from_run_snapshot() {
         provider_metadata: Value::Null,
     };
     let result = dispatcher
-        .dispatch(&run.id, &call, &mut session)
+        .dispatch(&run.id, &call, &mut session, &profile)
         .await
         .expect("dispatch worldinfo");
 
@@ -938,6 +993,24 @@ fn test_skill_service(root: &Path) -> Arc<SkillService> {
     Arc::new(SkillService::new(Arc::new(FileSkillRepository::new(
         root.join("skills"),
     ))))
+}
+
+fn test_profile_service(root: &Path) -> Arc<AgentProfileService> {
+    Arc::new(AgentProfileService::new(
+        Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles"))),
+        Arc::new(NullPresetRepository),
+    ))
+}
+
+async fn test_resolved_profile(root: &Path) -> ResolvedAgentProfile {
+    let registry = BuiltinAgentToolRegistry::phase2c();
+    test_profile_service(root)
+        .resolve_profile(AgentProfileResolveInput {
+            profile_id: None,
+            known_tools: registry.specs(),
+        })
+        .await
+        .expect("resolve default profile")
 }
 
 async fn save_character_payload(
@@ -981,6 +1054,51 @@ impl MockAgentModelGateway {
 
     async fn closed_sessions(&self) -> Vec<String> {
         self.closed_sessions.lock().await.clone()
+    }
+}
+
+struct NullPresetRepository;
+
+#[async_trait]
+impl PresetRepository for NullPresetRepository {
+    async fn save_preset(&self, _preset: &Preset) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn delete_preset(
+        &self,
+        _name: &str,
+        _preset_type: &PresetType,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn preset_exists(
+        &self,
+        _name: &str,
+        _preset_type: &PresetType,
+    ) -> Result<bool, DomainError> {
+        Ok(false)
+    }
+
+    async fn get_preset(
+        &self,
+        _name: &str,
+        _preset_type: &PresetType,
+    ) -> Result<Option<Preset>, DomainError> {
+        Ok(None)
+    }
+
+    async fn list_presets(&self, _preset_type: &PresetType) -> Result<Vec<String>, DomainError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_default_preset(
+        &self,
+        _name: &str,
+        _preset_type: &PresetType,
+    ) -> Result<Option<DefaultPreset>, DomainError> {
+        Ok(None)
     }
 }
 

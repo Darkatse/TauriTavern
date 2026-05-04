@@ -1,5 +1,6 @@
 // Application services
 pub mod agent_model_gateway;
+pub mod agent_profile_service;
 pub mod agent_runtime_service;
 pub mod agent_tools;
 pub mod avatar_service;

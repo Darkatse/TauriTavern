@@ -6,6 +6,7 @@ use super::FileAgentRepository;
 use super::fs_tree::{workspace_file_from_text, workspace_path_from_run_dir};
 use super::paths::validate_workspace_root_path;
 use crate::domain::errors::DomainError;
+use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
     AgentRun, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
 };
@@ -24,6 +25,7 @@ impl WorkspaceRepository for FileAgentRepository {
         run: &AgentRun,
         manifest: &WorkspaceManifest,
         prompt_snapshot: &Value,
+        resolved_profile: &ResolvedAgentProfile,
     ) -> Result<(), DomainError> {
         let run_dir = self.run_dir(run)?;
         fs::create_dir_all(run_dir.join("input"))
@@ -57,6 +59,11 @@ impl WorkspaceRepository for FileAgentRepository {
         Self::write_json_atomic(
             &run_dir.join("input").join("prompt_snapshot.json"),
             prompt_snapshot,
+        )
+        .await?;
+        Self::write_json_atomic(
+            &run_dir.join("input").join("resolved_profile.json"),
+            resolved_profile,
         )
         .await?;
         Self::write_json_atomic(

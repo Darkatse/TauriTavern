@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::domain::models::agent::profile::{AgentProfileDefinition, AgentProfileSummary};
 use crate::domain::models::agent::{AgentChatRef, AgentRunEvent, AgentRunStatus, Checkpoint};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -19,6 +20,30 @@ pub struct AgentStartRunDto {
     pub generation_intent: Option<Value>,
     #[serde(default)]
     pub options: AgentStartRunOptionsDto,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfileIdDto {
+    pub profile_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSaveProfileDto {
+    pub profile: AgentProfileDefinition,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentListProfilesResultDto {
+    pub profiles: Vec<AgentProfileSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentLoadProfileResultDto {
+    pub profile: Option<AgentProfileDefinition>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

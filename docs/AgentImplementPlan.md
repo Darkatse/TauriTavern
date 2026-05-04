@@ -6,7 +6,7 @@
 
 ## 1. 当前基线
 
-截至 2026-05-02，Agent 当前核心已经落地：
+截至 2026-05-04，Agent 当前核心已经落地：
 
 - Rust 后端拥有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 前端 Host ABI 已挂载 `window.__TAURITAVERN__.api.agent`。
@@ -17,6 +17,8 @@
 - Agent runtime 已使用 canonical model IR，不再把 OpenAI-compatible raw JSON 当作运行时事实。
 - `provider_state` 已用于 run-scoped continuation。OpenAI Responses 通过它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
 - Agent Skill repository/service、导入导出、embedded skill 导入确认、`api.skill`、`skill.list` / `skill.read` 已落地。
+- Phase 3 Agent Profile 基线已落地：built-in `default-writer`、file repository、resolver、run snapshot、tool/skill/workspace/output policy、tool budget 与 max rounds。
+- `instructions.agentSystemPrompt` 可完整替换默认 Agent system prompt；缺省时使用 runtime 默认 prompt。`tools.toolDescriptions` 可替换 model-facing tool/property descriptions；缺省时使用默认描述。
 
 历史计划只保留为这些不变量：
 
@@ -42,6 +44,8 @@ api.agent.prepareCommit(input)
 api.agent.commit(input)
 api.agent.finalizeCommit(input)
 ```
+
+启动输入支持可选 `profileId`。后端 Profile 管理 Tauri commands 已注册，但尚未封装到 `window.__TAURITAVERN__.api.agent`。
 
 明确不存在公共 `api.agent.startRun()` alias。
 
@@ -139,11 +143,12 @@ Tool registry 只产 canonical `AgentToolSpec`，不再暴露 OpenAI-shaped `ope
 
 当前尚未落地：
 
-- Skill profile visible / deny / read budget policy
 - MCP 工具
 - shell 工具
 - 外部 extension tools
 - tool approval / policy routing
+- provider/model switch policy
+- Plan Mode runtime 节点推进
 
 ## 6. 工具结果语义
 
@@ -171,11 +176,13 @@ start_agent_run(dto)
   ↓
 AgentRuntimeService::start_run()
   ↓
+resolve Profile
+  ↓
 创建 AgentRun / workspaceId / run workspace
   ↓
-initialize_run 写 manifest / prompt snapshot / workspace root
+initialize_run 写 manifest / prompt snapshot / resolved profile / workspace root
   ↓
-prepare_agent_tool_request 生成 AgentModelRequest
+prepare_agent_tool_request 按 Profile 生成 AgentModelRequest 与 visible tool specs
   ↓
 model -> read-only context tools / skill tools / workspace tools -> model -> ... -> workspace.finish
   ↓
@@ -183,14 +190,14 @@ model -> read-only context tools / skill tools / workspace tools -> model -> ...
   ↓
 workspace mutation 成功后 checkpoint
   ↓
-validate_final_artifact(output/main.md)
+validate_final_artifact(profile messageBody artifact)
   ↓
 状态进入 awaiting_commit
   ↓
 prepareCommit / saveReply / finalizeCommit
 ```
 
-工具循环最多 80 轮。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会以 `model.tool_call_required` 失败。
+工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会以 `model.tool_call_required` 失败。
 
 ## 8. 后续实施顺序
 
@@ -265,21 +272,25 @@ prepareCommit / saveReply / finalizeCommit
 - `skill.list` / `skill.read` 已接入 Agent tool registry。
 - Preset / Character embedded source refs 与删除清理语义已落地。
 
-后续归属：
+Phase 3 基线已在 Agent tool 层接入 Skill 可见性、deny policy 与 read budget；Phase 2E 不再扩展 Skill 运行权限。
 
-- Skill 可见性、deny policy、read budget 不属于 Phase 2E 基础能力；合并到 Phase 3 policy 工作。
-
-### Phase 3：Profile / Context / Skill Policy（下一步）
+### Phase 3：Profile / Context / Skill Policy（进行中）
 
 目标：让创作者控制模型、工具、预算和上下文，而不是写死在 runtime。
 
-内容：
+已完成基线：
 
-- profile 显式声明 allowed tools、tool budget、tool call mode。
-- profile 显式声明 provider switch policy 与 ContextFrame 资源预算。
-- profile / preset / character 声明 visible skills、deny skills 与 read budget。
-- `skill.list` 根据 policy 只返回当前 run 可见 Skill。
-- `skill.read` 对不可见 Skill、超预算读取和非法资源返回 recoverable tool error。
+- Profile JSON / `AgentProfileRepository` / `AgentProfileService`。
+- 缺省 built-in `default-writer`；非缺省 profile 缺失 fail-fast。
+- run workspace 写入 `input/resolved_profile.json`。
+- Profile 控制 tool allow/deny、`toolDescriptions`、tool budget、`maxRounds`。
+- Profile 控制 `skill.list` / `skill.read` 可见性与 read budget。
+- Profile 控制 workspace roots 与 messageBody artifact。
+- `agentSystemPrompt` 可完整替换默认 Agent system prompt。
+
+仍待：
+
+- provider switch policy 与 ContextFrame 资源预算。
 - preset / character author resources 复用 Skill-like 索引与 source ref 语义，不另建平行资源系统。
 - Plan node 若锁定 profile，runtime 必须拒绝模型自行切换。
 

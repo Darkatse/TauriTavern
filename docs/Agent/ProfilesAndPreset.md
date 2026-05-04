@@ -391,18 +391,24 @@ profile_switch_denied
 
 ## 12. MVP Profile
 
-当前状态（2026-05-02）：尚未实现 profile resolution / profile routing。`profileId` 可以随 run 记录，但不会驱动模型、工具或 context policy。当前工具 registry 固定为内建 Agent 工具集，输出 artifact 固定为 `output/main.md`；模型请求已经走 canonical `AgentModelRequest` 与 provider_state continuation，但 profile 还不能控制 provider switch、allowed tools 或 context budget。
+当前状态（2026-05-04）：Phase 3 Profile 基线已实现 profile resolution，但尚未实现 profile routing、Plan Mode runtime、provider/model switch 或 ContextFrame 预算。`profileId` 会驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds 与 model-facing prompt/tool descriptions。`preset.ref` 目前只做校验/记录，不隐式切换 model。
 
-当前最小 profile 可以理解为硬编码：
+当前最小 built-in profile 是 `default-writer`，缺省 `profileId` 时使用它：
 
 ```json
 {
   "id": "default-writer",
-  "modelRef": { "source": "openai", "model": "current" },
-  "contextPolicy": {
-    "mode": "prompt_snapshot"
+  "preset": {
+    "mode": "currentPromptSnapshot",
+    "required": false
   },
-  "toolPolicy": {
+  "model": {
+    "mode": "currentPromptSnapshot"
+  },
+  "instructions": {
+    "agentSystemPrompt": null
+  },
+  "tools": {
     "allow": [
       "workspace.list_files",
       "workspace.read_file",
@@ -415,14 +421,32 @@ profile_switch_denied
       "skill.list",
       "skill.read"
     ],
-    "deny": ["*"]
+    "deny": [],
+    "toolDescriptions": {},
+    "maxRounds": 80,
+    "maxCallsPerRun": 80
   },
-  "outputPolicy": {
+  "skills": {
+    "visible": ["*"],
+    "deny": [],
+    "maxReadCharsPerCall": 20000,
+    "maxReadCharsPerRun": 80000
+  },
+  "workspace": {
+    "visibleRoots": ["output", "scratch", "plan", "summaries", "persist"],
+    "writableRoots": ["output", "scratch", "plan", "summaries", "persist"]
+  },
+  "plan": {
+    "mode": "none",
+    "beta": true,
+    "nodes": []
+  },
+  "output": {
     "artifacts": [
-      { "id": "main", "path": "output/main.md", "target": "message_body", "required": true }
+      { "id": "main", "path": "output/main.md", "kind": "markdown", "target": "messageBody", "required": true }
     ]
   }
 }
 ```
 
-这个 profile 足以支撑当前上下文只读工具、Skill 读取与 workspace 读改工具循环。后续 profile routing 应在此基础上收窄 Skill 可见性、deny policy 与 read budget，而不是新增平行工具入口。
+Profile 文件存储在 `_tauritavern/agent-profiles/profiles/<id>.json`。每个 run 会固化 `input/resolved_profile.json`，运行时只消费 resolved profile。后续 profile routing 应在此基础上扩展，而不是绕过现有 resolver、registry 与 dispatcher。

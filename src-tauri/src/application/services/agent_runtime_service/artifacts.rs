@@ -2,14 +2,19 @@ use chrono::Utc;
 
 use super::AgentRuntimeService;
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_profile_service::{
+    commit_policy_from_profile, workspace_roots_from_profile,
+};
+use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
-    AgentRun, ArtifactSpec, ArtifactTarget, CommitPolicy, WorkspaceInputManifest,
-    WorkspaceManifest, WorkspacePath, WorkspaceRootCommit, WorkspaceRootLifecycle,
-    WorkspaceRootMount, WorkspaceRootScope, WorkspaceRootSpec,
+    AgentRun, ArtifactTarget, WorkspaceInputManifest, WorkspaceManifest, WorkspacePath,
 };
 use crate::domain::repositories::workspace_repository::WorkspaceFile;
 
-pub(super) fn build_agent_manifest(run: &AgentRun) -> WorkspaceManifest {
+pub(super) fn build_agent_manifest(
+    run: &AgentRun,
+    profile: &ResolvedAgentProfile,
+) -> WorkspaceManifest {
     WorkspaceManifest {
         workspace_version: 1,
         run_id: run.id.clone(),
@@ -19,51 +24,11 @@ pub(super) fn build_agent_manifest(run: &AgentRun) -> WorkspaceManifest {
         input: WorkspaceInputManifest {
             mode: "prompt_snapshot".to_string(),
             prompt_snapshot_path: "input/prompt_snapshot.json".to_string(),
+            resolved_profile_path: "input/resolved_profile.json".to_string(),
         },
-        roots: default_workspace_roots(),
-        artifacts: vec![ArtifactSpec {
-            id: "main".to_string(),
-            path: "output/main.md".to_string(),
-            kind: "markdown".to_string(),
-            target: ArtifactTarget::MessageBody,
-            required: true,
-            assembly_order: 0,
-        }],
-        commit_policy: CommitPolicy {
-            default_target: ArtifactTarget::MessageBody,
-            combine_template: None,
-            store_artifacts_in_extra: true,
-        },
-    }
-}
-
-fn default_workspace_roots() -> Vec<WorkspaceRootSpec> {
-    vec![
-        run_root("output"),
-        run_root("scratch"),
-        run_root("plan"),
-        run_root("summaries"),
-        WorkspaceRootSpec {
-            path: "persist".to_string(),
-            lifecycle: WorkspaceRootLifecycle::Persistent,
-            scope: WorkspaceRootScope::Chat,
-            mount: WorkspaceRootMount::ProjectedOverlay,
-            visible: true,
-            writable: true,
-            commit: WorkspaceRootCommit::OnRunCompleted,
-        },
-    ]
-}
-
-fn run_root(path: &str) -> WorkspaceRootSpec {
-    WorkspaceRootSpec {
-        path: path.to_string(),
-        lifecycle: WorkspaceRootLifecycle::Run,
-        scope: WorkspaceRootScope::Run,
-        mount: WorkspaceRootMount::Materialized,
-        visible: true,
-        writable: true,
-        commit: WorkspaceRootCommit::Never,
+        roots: workspace_roots_from_profile(profile),
+        artifacts: profile.output.artifacts.clone(),
+        commit_policy: commit_policy_from_profile(profile),
     }
 }
 
@@ -98,9 +63,10 @@ impl AgentRuntimeService {
             .read_text(run_id, final_path)
             .await?;
         if message_artifact.required && file.text.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "workspace.required_artifact_empty: output/main.md is empty".to_string(),
-            ));
+            return Err(ApplicationError::ValidationError(format!(
+                "workspace.required_artifact_empty: {} is empty",
+                final_path.as_str()
+            )));
         }
 
         Ok(file)

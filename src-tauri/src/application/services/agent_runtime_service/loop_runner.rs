@@ -4,9 +4,10 @@ use super::model_turn::{
     append_tool_turn_to_request, assistant_message_for_next_turn, extract_response_text,
 };
 use super::prompt_snapshot::request_summary;
-use super::{AgentCancelReceiver, AgentRuntimeService, MAX_AGENT_TOOL_ROUNDS};
+use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{AgentToolEffect, AgentToolSession};
+use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
     AgentModelRequest, AgentRunEventLevel, AgentRunStatus, AgentToolResult, WorkspacePath,
 };
@@ -16,10 +17,11 @@ impl AgentRuntimeService {
         &self,
         run_id: &str,
         mut request: AgentModelRequest,
+        profile: &ResolvedAgentProfile,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<Option<WorkspacePath>, ApplicationError> {
         let mut tool_session = AgentToolSession::default();
-        for round in 1..=MAX_AGENT_TOOL_ROUNDS {
+        for round in 1..=profile.tools.max_rounds {
             self.transition_status(run_id, AgentRunStatus::CallingModel)
                 .await?;
             self.event(
@@ -85,7 +87,7 @@ impl AgentRuntimeService {
                 }
 
                 let outcome = self
-                    .dispatch_tool_call(run_id, &call, &mut tool_session)
+                    .dispatch_tool_call(run_id, &call, &mut tool_session, profile)
                     .await?;
                 match &outcome.effect {
                     AgentToolEffect::WorkspaceFileWritten { file } => {

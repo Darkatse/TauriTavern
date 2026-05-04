@@ -6,6 +6,13 @@ use tokio::fs;
 use uuid::Uuid;
 
 use super::FileAgentRepository;
+use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
+use crate::domain::models::agent::profile::{
+    AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentModelBinding, AgentModelBindingMode,
+    AgentPresetBinding, AgentPresetBindingMode, AgentProfileId, AgentProfileInstructions,
+    AgentProfileSourceTrace, AgentSkillPolicy, AgentToolPolicy, AgentWorkspacePolicy,
+    ResolvedAgentOutputPolicy, ResolvedAgentProfile,
+};
 use crate::domain::models::agent::{
     AgentChatRef, AgentRun, AgentRunEventLevel, AgentRunStatus, ArtifactSpec, ArtifactTarget,
     CommitPolicy, WorkspaceInputManifest, WorkspaceManifest, WorkspacePath, WorkspaceRootCommit,
@@ -51,6 +58,7 @@ fn sample_manifest(run: &AgentRun) -> WorkspaceManifest {
         input: WorkspaceInputManifest {
             mode: "prompt_snapshot".to_string(),
             prompt_snapshot_path: "input/prompt_snapshot.json".to_string(),
+            resolved_profile_path: "input/resolved_profile.json".to_string(),
         },
         roots: vec![
             WorkspaceRootSpec {
@@ -88,16 +96,83 @@ fn sample_manifest(run: &AgentRun) -> WorkspaceManifest {
     }
 }
 
+fn sample_resolved_profile(manifest: &WorkspaceManifest) -> ResolvedAgentProfile {
+    ResolvedAgentProfile {
+        schema_version: AGENT_PROFILE_SCHEMA_VERSION,
+        kind: AGENT_PROFILE_KIND.to_string(),
+        id: AgentProfileId::parse("test-profile").expect("profile id"),
+        display_name: "Test Profile".to_string(),
+        description: None,
+        preset: AgentPresetBinding {
+            mode: AgentPresetBindingMode::CurrentPromptSnapshot,
+            ref_: None,
+            required: false,
+        },
+        model: AgentModelBinding {
+            mode: AgentModelBindingMode::CurrentPromptSnapshot,
+        },
+        instructions: AgentProfileInstructions {
+            agent_system_prompt: None,
+        },
+        tools: AgentToolPolicy {
+            allow: Vec::new(),
+            deny: Vec::new(),
+            tool_descriptions: Default::default(),
+            max_rounds: 1,
+            max_calls_per_run: 1,
+            max_calls_per_tool: Default::default(),
+        },
+        skills: AgentSkillPolicy {
+            visible: vec!["*".to_string()],
+            deny: Vec::new(),
+            max_read_chars_per_call: 1,
+            max_read_chars_per_run: 1,
+        },
+        workspace: AgentWorkspacePolicy {
+            visible_roots: manifest
+                .roots
+                .iter()
+                .map(|root| root.path.clone())
+                .collect(),
+            writable_roots: manifest
+                .roots
+                .iter()
+                .filter(|root| root.writable)
+                .map(|root| root.path.clone())
+                .collect(),
+        },
+        plan: AgentPlanPolicy {
+            mode: AgentPlanMode::None,
+            beta: true,
+            nodes: Vec::new(),
+        },
+        output: ResolvedAgentOutputPolicy {
+            artifacts: manifest.artifacts.clone(),
+            message_body_artifact_id: "main".to_string(),
+            message_body_path: "output/main.md".to_string(),
+        },
+        source_trace: AgentProfileSourceTrace {
+            profile_source: "test".to_string(),
+        },
+    }
+}
+
 #[tokio::test]
 async fn repository_round_trips_run_workspace_event_and_checkpoint() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
     let run = sample_run();
     let manifest = sample_manifest(&run);
+    let profile = sample_resolved_profile(&manifest);
 
     repository.create_run(&run).await.expect("create run");
     repository
-        .initialize_run(&run, &manifest, &serde_json::json!({"messages": []}))
+        .initialize_run(
+            &run,
+            &manifest,
+            &serde_json::json!({"messages": []}),
+            &profile,
+        )
         .await
         .expect("initialize workspace");
 
@@ -147,10 +222,16 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
     let repository = FileAgentRepository::new(root.clone());
     let run = sample_run_with_id("run_persist_a");
     let manifest = sample_manifest(&run);
+    let profile = sample_resolved_profile(&manifest);
 
     repository.create_run(&run).await.expect("create run");
     repository
-        .initialize_run(&run, &manifest, &serde_json::json!({"messages": []}))
+        .initialize_run(
+            &run,
+            &manifest,
+            &serde_json::json!({"messages": []}),
+            &profile,
+        )
         .await
         .expect("initialize workspace");
 
@@ -177,6 +258,7 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
             &pre_commit_run,
             &sample_manifest(&pre_commit_run),
             &serde_json::json!({"messages": []}),
+            &profile,
         )
         .await
         .expect("initialize pre-commit run");
@@ -203,6 +285,7 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
             &next_run,
             &sample_manifest(&next_run),
             &serde_json::json!({"messages": []}),
+            &profile,
         )
         .await
         .expect("initialize next run");
@@ -225,11 +308,14 @@ async fn persistent_workspace_detects_conflicting_parallel_runs() {
 
     for run in [&first, &second] {
         repository.create_run(run).await.expect("create run");
+        let manifest = sample_manifest(run);
+        let profile = sample_resolved_profile(&manifest);
         repository
             .initialize_run(
                 run,
-                &sample_manifest(run),
+                &manifest,
                 &serde_json::json!({"messages": []}),
+                &profile,
             )
             .await
             .expect("initialize run");

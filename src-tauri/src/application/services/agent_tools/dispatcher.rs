@@ -10,6 +10,7 @@ use super::workspace;
 use super::world_info;
 use crate::application::errors::ApplicationError;
 use crate::application::services::skill_service::SkillService;
+use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult, WorkspacePath};
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::chat_repository::ChatRepository;
@@ -69,6 +70,7 @@ impl AgentToolDispatcher {
         run_id: &str,
         call: &AgentToolCall,
         session: &mut AgentToolSession,
+        profile: &ResolvedAgentProfile,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
         let outcome = match call.name.as_str() {
@@ -95,8 +97,10 @@ impl AgentToolDispatcher {
             world_info::WORLDINFO_READ_ACTIVATED => {
                 world_info::read_activated(self.workspace_repository.as_ref(), run_id, call).await?
             }
-            skill::SKILL_LIST => skill::list(self.skill_service.as_ref(), call).await?,
-            skill::SKILL_READ => skill::read(self.skill_service.as_ref(), call).await?,
+            skill::SKILL_LIST => skill::list(self.skill_service.as_ref(), call, profile).await?,
+            skill::SKILL_READ => {
+                skill::read(self.skill_service.as_ref(), call, session, profile).await?
+            }
             workspace::WORKSPACE_LIST_FILES => {
                 workspace::list_files(self.workspace_repository.as_ref(), run_id, call).await?
             }
@@ -112,7 +116,7 @@ impl AgentToolDispatcher {
                 workspace::apply_patch(self.workspace_repository.as_ref(), run_id, call, session)
                     .await?
             }
-            workspace::WORKSPACE_FINISH => workspace::finish(call)?,
+            workspace::WORKSPACE_FINISH => workspace::finish(call, profile)?,
             other => (
                 AgentToolResult {
                     call_id: call.id.clone(),

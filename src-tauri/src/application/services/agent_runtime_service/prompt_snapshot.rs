@@ -2,9 +2,9 @@ use serde_json::{Map, Value, json};
 
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
-use crate::application::services::agent_tools::BuiltinAgentToolRegistry;
+use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolSpec,
 };
 
 pub(super) fn request_from_prompt_snapshot(
@@ -36,30 +36,14 @@ pub(super) fn request_from_prompt_snapshot(
 
 pub(super) fn prepare_agent_tool_request(
     mut request: ChatCompletionGenerateRequestDto,
-    registry: &BuiltinAgentToolRegistry,
+    tools: &[AgentToolSpec],
+    profile: &ResolvedAgentProfile,
     run_id: &str,
 ) -> Result<AgentModelRequest, ApplicationError> {
     reject_external_tool_request(&request.payload)?;
 
     let mut messages = messages_from_payload(&mut request.payload)?;
-    let agent_system_prompt = [
-        "TauriTavern Agent Mode is active.",
-        "Work through Agent tools. Tool results are private run state, not chat messages.",
-        "Use chat_search to find relevant prior messages when you need more context. Only query is required.",
-        "Use chat_read_messages with message indexes from chat_search, or exact indexes you already know. For long messages, read smaller ranges with start_char and max_chars.",
-        "Use worldinfo_read_activated when active lore for this run matters.",
-        "Use skill_list to discover installed Agent Skills when reusable writing, editing, planning, style, or character guidance may help.",
-        "Use skill_read to read SKILL.md first, then read referenced Skill files only when needed.",
-        "Use workspace_list_files to inspect visible workspace files.",
-        "Use workspace_read_file before modifying an existing file. Read output has line numbers; never include line number prefixes in old_string or new_string.",
-        "Use workspace_apply_patch for precise edits to existing files. The old_string must match exactly and uniquely unless replace_all is true.",
-        "Use workspace_write_file for new files or complete rewrites.",
-        "Use persist/ for concise information that should carry into later runs of this same chat, such as durable plot facts, unresolved threads, relationship state, and user style preferences.",
-        "Do not copy full chat history, final replies, tool results, or temporary reasoning into persist/.",
-        "Write the final chat message body to output/main.md, then call workspace_finish.",
-        "Do not answer directly without finishing through workspace_finish.",
-    ]
-    .join("\n");
+    let agent_system_prompt = build_agent_system_prompt(tools, profile);
     messages.insert(0, text_message(AgentModelRole::System, agent_system_prompt));
 
     request.payload.remove("tools");
@@ -71,10 +55,139 @@ pub(super) fn prepare_agent_tool_request(
     Ok(AgentModelRequest {
         payload: request.payload,
         messages,
-        tools: registry.specs().to_vec(),
+        tools: tools.to_vec(),
         tool_choice: Value::String("auto".to_string()),
         provider_state: json!({ "sessionId": run_id }),
     })
+}
+
+fn build_agent_system_prompt(tools: &[AgentToolSpec], profile: &ResolvedAgentProfile) -> String {
+    if let Some(prompt) = profile.instructions.agent_system_prompt.as_ref() {
+        return prompt.clone();
+    }
+
+    let mut lines = vec![
+        "TauriTavern Agent Mode is active.".to_string(),
+        "Work through the available Agent tools. Tool results are private run state, not chat messages.".to_string(),
+        format!(
+            "Available tool function names: {}.",
+            tools
+                .iter()
+                .map(|tool| tool.model_name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    ];
+
+    if has_tool(tools, "chat.search") {
+        lines.push(format!(
+            "Use {} to find relevant prior messages when you need more context. Only query is required.",
+            model_name(tools, "chat.search")
+        ));
+    }
+    if has_tool(tools, "chat.read_messages") {
+        let source_hint = if has_tool(tools, "chat.search") {
+            format!("message indexes from {}", model_name(tools, "chat.search"))
+        } else {
+            "exact indexes you already know".to_string()
+        };
+        lines.push(format!(
+            "Use {} with {source_hint}. For long messages, read smaller ranges with start_char and max_chars.",
+            model_name(tools, "chat.read_messages")
+        ));
+    }
+    if has_tool(tools, "worldinfo.read_activated") {
+        lines.push(format!(
+            "Use {} when active lore for this run matters.",
+            model_name(tools, "worldinfo.read_activated")
+        ));
+    }
+    if has_tool(tools, "skill.list") {
+        lines.push(format!(
+            "Use {} to discover visible Agent Skills when reusable writing, editing, planning, style, or character guidance may help.",
+            model_name(tools, "skill.list")
+        ));
+    }
+    if has_tool(tools, "skill.read") {
+        lines.push(format!(
+            "Use {} to read SKILL.md first, then read referenced Skill files only when needed.",
+            model_name(tools, "skill.read")
+        ));
+    }
+    if has_tool(tools, "workspace.list_files") {
+        lines.push(format!(
+            "Use {} to inspect visible workspace files.",
+            model_name(tools, "workspace.list_files")
+        ));
+    }
+    if has_tool(tools, "workspace.read_file") {
+        lines.push(format!(
+            "Use {} before modifying an existing file. Read output has line numbers; never include line number prefixes in old_string or new_string.",
+            model_name(tools, "workspace.read_file")
+        ));
+    }
+    if has_tool(tools, "workspace.apply_patch") {
+        lines.push(format!(
+            "Use {} for precise edits to existing files. The old_string must match exactly and uniquely unless replace_all is true.",
+            model_name(tools, "workspace.apply_patch")
+        ));
+    }
+    if has_tool(tools, "workspace.write_file") {
+        lines.push(format!(
+            "Use {} for new files or complete rewrites.",
+            model_name(tools, "workspace.write_file")
+        ));
+    }
+
+    if profile
+        .workspace
+        .visible_roots
+        .iter()
+        .any(|root| root == "persist")
+        && profile
+            .workspace
+            .writable_roots
+            .iter()
+            .any(|root| root == "persist")
+    {
+        lines.push("Use persist/ for concise information that should carry into later runs of this same chat, such as durable plot facts, unresolved threads, relationship state, and user style preferences.".to_string());
+        lines.push(
+            "Do not copy full chat history, final replies, tool results, or temporary reasoning into persist/."
+                .to_string(),
+        );
+    }
+
+    lines.push(format!(
+        "Visible workspace roots: {}.",
+        profile.workspace.visible_roots.join(", ")
+    ));
+    lines.push(format!(
+        "Writable workspace roots: {}.",
+        profile.workspace.writable_roots.join(", ")
+    ));
+    lines.push(format!(
+        "Write the final chat message body to {}, then call {}.",
+        profile.output.message_body_path,
+        model_name(tools, "workspace.finish")
+    ));
+    lines.push(format!(
+        "Do not answer directly without finishing through {}.",
+        model_name(tools, "workspace.finish")
+    ));
+
+    lines.join("\n")
+}
+
+fn has_tool(tools: &[AgentToolSpec], name: &str) -> bool {
+    tools.iter().any(|tool| tool.name == name)
+}
+
+fn model_name<'a>(tools: &'a [AgentToolSpec], name: &'a str) -> &'a str {
+    tools
+        .iter()
+        .find(|tool| tool.name == name)
+        .map(|tool| tool.model_name.as_str())
+        .unwrap_or(name)
 }
 
 pub(super) fn reject_external_tool_request(
@@ -269,7 +382,11 @@ fn text_message(role: AgentModelRole, text: String) -> AgentModelMessage {
 mod tests {
     use serde_json::json;
 
-    use super::{reject_external_tool_request, request_from_prompt_snapshot};
+    use super::{
+        prepare_agent_tool_request, reject_external_tool_request, request_from_prompt_snapshot,
+    };
+    use crate::domain::models::agent::profile::ResolvedAgentProfile;
+    use crate::domain::models::agent::{AgentModelContentPart, AgentModelRequest, AgentModelRole};
 
     #[test]
     fn rejects_external_tool_choice_even_when_null() {
@@ -287,5 +404,111 @@ mod tests {
                 .to_string()
                 .contains("agent.external_tool_choice_unsupported_phase2b")
         );
+    }
+
+    #[test]
+    fn agent_system_prompt_replaces_default_when_profile_sets_it() {
+        let request = request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": {
+                "messages": [{ "role": "user", "content": "hello" }]
+            }
+        }))
+        .expect("request");
+        let profile = test_profile(Some(
+            "Custom Agent System Prompt.\nUse the creator contract.",
+        ));
+
+        let request =
+            prepare_agent_tool_request(request, &[], &profile, "run_test").expect("agent request");
+
+        assert_eq!(
+            first_system_text(&request),
+            "Custom Agent System Prompt.\nUse the creator contract."
+        );
+    }
+
+    #[test]
+    fn agent_system_prompt_defaults_when_profile_omits_it() {
+        let request = request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": {
+                "messages": [{ "role": "user", "content": "hello" }]
+            }
+        }))
+        .expect("request");
+        let profile = test_profile(None);
+
+        let request =
+            prepare_agent_tool_request(request, &[], &profile, "run_test").expect("agent request");
+
+        assert!(first_system_text(&request).contains("TauriTavern Agent Mode is active."));
+    }
+
+    fn first_system_text(request: &AgentModelRequest) -> &str {
+        assert_eq!(request.messages[0].role, AgentModelRole::System);
+        match &request.messages[0].parts[0] {
+            AgentModelContentPart::Text { text } => text.as_str(),
+            _ => panic!("expected text system message"),
+        }
+    }
+
+    fn test_profile(agent_system_prompt: Option<&str>) -> ResolvedAgentProfile {
+        let instructions = match agent_system_prompt {
+            Some(prompt) => json!({ "agentSystemPrompt": prompt }),
+            None => json!({}),
+        };
+
+        serde_json::from_value(json!({
+            "schemaVersion": 1,
+            "kind": "tauritavern.agentProfile",
+            "id": "test",
+            "displayName": "Test",
+            "preset": {
+                "mode": "none",
+                "required": false
+            },
+            "model": {
+                "mode": "currentPromptSnapshot"
+            },
+            "instructions": instructions,
+            "tools": {
+                "allow": ["workspace.write_file", "workspace.finish"],
+                "deny": [],
+                "toolDescriptions": {},
+                "maxRounds": 1,
+                "maxCallsPerRun": 1,
+                "maxCallsPerTool": {}
+            },
+            "skills": {
+                "visible": ["*"],
+                "deny": [],
+                "maxReadCharsPerCall": 1,
+                "maxReadCharsPerRun": 1
+            },
+            "workspace": {
+                "visibleRoots": ["output"],
+                "writableRoots": ["output"]
+            },
+            "plan": {
+                "mode": "none",
+                "beta": true,
+                "nodes": []
+            },
+            "output": {
+                "artifacts": [{
+                    "id": "main",
+                    "path": "output/main.md",
+                    "kind": "markdown",
+                    "target": "message_body",
+                    "required": true,
+                    "assemblyOrder": 0
+                }],
+                "messageBodyArtifactId": "main",
+                "messageBodyPath": "output/main.md"
+            },
+            "sourceTrace": {
+                "profileSource": "test"
+            }
+        }))
+        .expect("test profile")
     }
 }

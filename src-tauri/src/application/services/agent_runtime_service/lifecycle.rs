@@ -13,6 +13,7 @@ use crate::application::dto::agent_dto::{
     AgentRunHandleDto, AgentStartRunDto, AgentWorkspaceFileDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_profile_service::AgentProfileResolveInput;
 use crate::domain::models::agent::{AgentRun, AgentRunEventLevel, AgentRunStatus, WorkspacePath};
 use crate::domain::repositories::agent_run_repository::AgentRunEventReadQuery;
 
@@ -49,6 +50,13 @@ impl AgentRuntimeService {
             ));
         }
 
+        let resolved_profile = self
+            .profile_service
+            .resolve_profile(AgentProfileResolveInput {
+                profile_id: dto.profile_id.as_deref(),
+                known_tools: self.tool_registry.specs(),
+            })
+            .await?;
         let stable_chat_id = validate_stable_chat_id(&dto.stable_chat_id)?;
         let run_id = format!("run_{}", Uuid::new_v4().simple());
         let workspace_id = workspace_id_for_stable_chat_id(&dto.chat_ref, &stable_chat_id)?;
@@ -59,7 +67,7 @@ impl AgentRuntimeService {
             stable_chat_id: stable_chat_id.clone(),
             chat_ref: dto.chat_ref,
             generation_type: dto.generation_type,
-            profile_id: dto.profile_id,
+            profile_id: Some(resolved_profile.id.as_str().to_string()),
             status: AgentRunStatus::Created,
             created_at: now,
             updated_at: now,
@@ -73,6 +81,16 @@ impl AgentRuntimeService {
             json!({
                 "workspaceId": workspace_id.clone(),
                 "stableChatId": stable_chat_id.clone(),
+            }),
+        )
+        .await?;
+        self.event(
+            &run_id,
+            AgentRunEventLevel::Info,
+            "profile_resolved",
+            json!({
+                "profileId": resolved_profile.id.as_str(),
+                "source": resolved_profile.source_trace.profile_source.as_str(),
             }),
         )
         .await?;
@@ -100,6 +118,7 @@ impl AgentRuntimeService {
                     background_run_id,
                     prompt_snapshot,
                     request,
+                    resolved_profile,
                     cancel_receiver,
                 )
                 .await;

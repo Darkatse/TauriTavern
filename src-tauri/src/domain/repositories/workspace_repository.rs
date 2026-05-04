@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::domain::errors::DomainError;
+use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
     AgentRun, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
 };
@@ -40,6 +41,7 @@ pub trait WorkspaceRepository: Send + Sync {
         run: &AgentRun,
         manifest: &WorkspaceManifest,
         prompt_snapshot: &Value,
+        resolved_profile: &ResolvedAgentProfile,
     ) -> Result<(), DomainError>;
 
     async fn read_manifest(&self, run_id: &str) -> Result<WorkspaceManifest, DomainError>;

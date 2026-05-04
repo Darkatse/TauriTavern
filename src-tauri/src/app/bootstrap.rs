@@ -5,6 +5,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::Semaphore;
 
 use crate::application::services::agent_model_gateway::ChatCompletionAgentModelGateway;
+use crate::application::services::agent_profile_service::AgentProfileService;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
@@ -33,6 +34,7 @@ use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
+use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::avatar_repository::AvatarRepository;
 use crate::domain::repositories::background_repository::BackgroundRepository;
@@ -72,6 +74,7 @@ use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
 use crate::infrastructure::persistence::file_system::DataDirectory;
+use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
 use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
@@ -110,6 +113,7 @@ pub(super) struct AppServices {
     pub theme_service: Arc<ThemeService>,
     pub preset_service: Arc<PresetService>,
     pub quick_reply_service: Arc<QuickReplyService>,
+    pub agent_profile_service: Arc<AgentProfileService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub tokenization_service: Arc<TokenizationService>,
@@ -142,6 +146,7 @@ struct AppRepositories {
     theme_repository: Arc<dyn ThemeRepository>,
     preset_repository: Arc<dyn PresetRepository>,
     quick_reply_repository: Arc<dyn QuickReplyRepository>,
+    agent_profile_repository: Arc<dyn AgentProfileRepository>,
     agent_run_repository: Arc<dyn AgentRunRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
     checkpoint_repository: Arc<dyn CheckpointRepository>,
@@ -207,6 +212,10 @@ pub(super) async fn build_services(
         repositories.quick_reply_repository.clone(),
     ));
     let skill_service = Arc::new(SkillService::new(repositories.skill_repository.clone()));
+    let agent_profile_service = Arc::new(AgentProfileService::new(
+        repositories.agent_profile_repository.clone(),
+        repositories.preset_repository.clone(),
+    ));
     let chat_completion_service = Arc::new(ChatCompletionService::new(
         repositories.chat_completion_repository,
         repositories.secret_repository.clone(),
@@ -224,6 +233,7 @@ pub(super) async fn build_services(
         Arc::new(ChatCompletionAgentModelGateway::new(
             chat_completion_service.clone(),
         )),
+        agent_profile_service.clone(),
     ));
     let tokenization_service =
         Arc::new(TokenizationService::new(repositories.tokenizer_repository));
@@ -297,6 +307,7 @@ pub(super) async fn build_services(
         theme_service,
         preset_service,
         quick_reply_service,
+        agent_profile_service,
         agent_runtime_service,
         chat_completion_service,
         tokenization_service,
@@ -400,6 +411,9 @@ fn build_repositories(
     let quick_reply_repository: Arc<dyn QuickReplyRepository> = Arc::new(
         FileQuickReplyRepository::new(data_directory.default_user().join("QuickReplies")),
     );
+    let agent_profile_repository: Arc<dyn AgentProfileRepository> = Arc::new(
+        FileAgentProfileRepository::new(data_root.join("_tauritavern").join("agent-profiles")),
+    );
 
     let file_agent_repository = Arc::new(FileAgentRepository::new(
         data_root.join("_tauritavern").join("agent-workspaces"),
@@ -456,6 +470,7 @@ fn build_repositories(
         theme_repository,
         preset_repository,
         quick_reply_repository,
+        agent_profile_repository,
         agent_run_repository,
         workspace_repository,
         checkpoint_repository,

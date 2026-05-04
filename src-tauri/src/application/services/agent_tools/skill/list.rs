@@ -3,15 +3,22 @@ use serde_json::json;
 use super::super::dispatcher::AgentToolEffect;
 use crate::application::errors::ApplicationError;
 use crate::application::services::skill_service::SkillService;
+use crate::domain::models::agent::profile::{AgentSkillPolicy, ResolvedAgentProfile};
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 
 pub(in crate::application::services::agent_tools) async fn list(
     skill_service: &SkillService,
     call: &AgentToolCall,
+    profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let skills = skill_service.list_skills().await?;
+    let skills = skill_service
+        .list_skills()
+        .await?
+        .into_iter()
+        .filter(|skill| skill_is_visible(&profile.skills, skill.name.as_str()))
+        .collect::<Vec<_>>();
     let content = if skills.is_empty() {
-        "No Agent Skills are installed.".to_string()
+        "No Agent Skills are visible in the current profile.".to_string()
     } else {
         skills
             .iter()
@@ -48,4 +55,37 @@ pub(in crate::application::services::agent_tools) async fn list(
         },
         AgentToolEffect::None,
     ))
+}
+
+pub(super) fn skill_is_visible(policy: &AgentSkillPolicy, name: &str) -> bool {
+    if policy
+        .deny
+        .iter()
+        .any(|denied| denied == "*" || denied == name)
+    {
+        return false;
+    }
+    policy
+        .visible
+        .iter()
+        .any(|visible| visible == "*" || visible == name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::skill_is_visible;
+    use crate::domain::models::agent::profile::AgentSkillPolicy;
+
+    #[test]
+    fn wildcard_deny_hides_skills_even_when_visible_allows_all() {
+        let policy = AgentSkillPolicy {
+            visible: vec!["*".to_string()],
+            deny: vec!["*".to_string()],
+            max_read_chars_per_call: 1,
+            max_read_chars_per_run: 1,
+        };
+
+        assert!(!skill_is_visible(&policy, "writer"));
+        assert!(!skill_is_visible(&policy, "editor"));
+    }
 }

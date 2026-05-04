@@ -1,4 +1,5 @@
 // Repository interfaces
+pub mod agent_profile_repository;
 pub mod agent_run_repository;
 pub mod avatar_repository;
 pub mod background_repository;

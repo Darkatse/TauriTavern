@@ -4,13 +4,18 @@ use super::super::common::{
     object_args, optional_usize_arg, required_trimmed_string_arg, tool_error,
 };
 use super::super::dispatcher::AgentToolEffect;
+use super::super::session::AgentToolSession;
+use super::list::skill_is_visible;
 use crate::application::errors::ApplicationError;
 use crate::application::services::skill_service::SkillService;
+use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 
 pub(in crate::application::services::agent_tools) async fn read(
     skill_service: &SkillService,
     call: &AgentToolCall,
+    session: &mut AgentToolSession,
+    profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let Some(args) = object_args(call) else {
         return Ok((
@@ -43,8 +48,62 @@ pub(in crate::application::services::agent_tools) async fn read(
             ));
         }
     };
+    if !skill_is_visible(&profile.skills, name) {
+        return Ok((
+            tool_error(
+                call,
+                "skill.policy_denied",
+                &format!("Skill `{name}` is not visible in the current profile."),
+            ),
+            AgentToolEffect::None,
+        ));
+    }
+    let remaining = profile
+        .skills
+        .max_read_chars_per_run
+        .saturating_sub(session.skill_read_chars());
+    if remaining == 0 {
+        return Ok((
+            tool_error(
+                call,
+                "skill.read_budget_exhausted",
+                "Skill read budget is exhausted for this run.",
+            ),
+            AgentToolEffect::None,
+        ));
+    }
+    let effective_max_chars = match max_chars {
+        Some(requested) if requested > profile.skills.max_read_chars_per_call => {
+            return Ok((
+                tool_error(
+                    call,
+                    "skill.read_budget_exceeded",
+                    &format!(
+                        "max_chars exceeds profile per-call skill read budget of {}.",
+                        profile.skills.max_read_chars_per_call
+                    ),
+                ),
+                AgentToolEffect::None,
+            ));
+        }
+        Some(requested) if requested > remaining => {
+            return Ok((
+                tool_error(
+                    call,
+                    "skill.read_budget_exhausted",
+                    &format!("max_chars exceeds remaining run skill read budget of {remaining}."),
+                ),
+                AgentToolEffect::None,
+            ));
+        }
+        Some(requested) => requested,
+        None => profile.skills.max_read_chars_per_call.min(remaining),
+    };
 
-    let read = match skill_service.read_skill_file(name, path, max_chars).await {
+    let read = match skill_service
+        .read_skill_file(name, path, Some(effective_max_chars))
+        .await
+    {
         Ok(read) => read,
         Err(ApplicationError::ValidationError(message)) => {
             return Ok((
@@ -60,6 +119,7 @@ pub(in crate::application::services::agent_tools) async fn read(
         }
         Err(error) => return Err(error),
     };
+    session.remember_skill_read_chars(read.chars);
 
     let content = format!(
         "{} chars from {}, sha256 {}{}\n{}",

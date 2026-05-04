@@ -4,8 +4,10 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, watch};
 
 use crate::application::services::agent_model_gateway::AgentModelGateway;
+use crate::application::services::agent_profile_service::AgentProfileService;
 use crate::application::services::agent_tools::{AgentToolDispatcher, BuiltinAgentToolRegistry};
 use crate::application::services::skill_service::SkillService;
+use crate::domain::models::agent::AgentToolSpec;
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
@@ -28,13 +30,13 @@ mod tool_execution;
 mod tests;
 
 pub(super) type AgentCancelReceiver = watch::Receiver<bool>;
-pub(super) const MAX_AGENT_TOOL_ROUNDS: usize = 80;
 
 pub struct AgentRuntimeService {
     run_repository: Arc<dyn AgentRunRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
     checkpoint_repository: Arc<dyn CheckpointRepository>,
     model_gateway: Arc<dyn AgentModelGateway>,
+    profile_service: Arc<AgentProfileService>,
     tool_registry: BuiltinAgentToolRegistry,
     tool_dispatcher: AgentToolDispatcher,
     active_runs: RwLock<HashMap<String, watch::Sender<bool>>>,
@@ -49,6 +51,7 @@ impl AgentRuntimeService {
         group_chat_repository: Arc<dyn GroupChatRepository>,
         skill_service: Arc<SkillService>,
         model_gateway: Arc<dyn AgentModelGateway>,
+        profile_service: Arc<AgentProfileService>,
     ) -> Self {
         let tool_registry = BuiltinAgentToolRegistry::phase2c();
         let tool_dispatcher = AgentToolDispatcher::new(
@@ -63,9 +66,14 @@ impl AgentRuntimeService {
             workspace_repository,
             checkpoint_repository,
             model_gateway,
+            profile_service,
             tool_registry,
             tool_dispatcher,
             active_runs: RwLock::new(HashMap::new()),
         }
+    }
+
+    pub fn tool_specs(&self) -> &[AgentToolSpec] {
+        self.tool_registry.specs()
     }
 }

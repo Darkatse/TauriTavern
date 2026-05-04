@@ -6,7 +6,7 @@
 
 ## 当前基线
 
-截至 2026-05-02，Agent 当前基线：
+截至 2026-05-04，Agent 当前基线：
 
 - Rust 后端已有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 前端已挂载 `window.__TAURITAVERN__.api.agent` 最小 Host ABI。
@@ -16,6 +16,8 @@
 - `AgentModelGateway` 在 Agent canonical IR 与现有 `ChatCompletionGenerateRequestDto` 之间转换；provider-native metadata 作为 opaque `Native` part 保留。
 - `provider_state` 已是 run-scoped continuation contract；OpenAI Responses 使用它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
 - Agent Skill 管理、导入导出、embedded skill 提示导入、`skill.list` / `skill.read` 已落地。
+- Phase 3 Agent Profile 基线已落地：`profileId` 会解析为 `ResolvedAgentProfile`，驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds 与 model-facing prompt/tool descriptions。
+- Profile 仍不接管 provider/model 切换；`preset.ref` 目前只做校验/记录，不改写 prompt snapshot 或 model。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Legacy Generate 尚未默认切到 Agent；Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
 
@@ -34,6 +36,8 @@ api.agent.prepareCommit(input)
 api.agent.commit(input)
 api.agent.finalizeCommit(input)
 ```
+
+`startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` 支持可选 `profileId`。后端已注册 Profile 管理 Tauri commands（`list_agent_profiles` / `load_agent_profile` / `save_agent_profile` / `delete_agent_profile`），但尚未封装到 `window.__TAURITAVERN__.api.agent` 与 `src/types.d.ts`；正式 UI 属于后续阶段。
 
 Skill 管理 API 已落地：
 
@@ -61,6 +65,29 @@ api.skill.exportSkill(input)
 - external `tool_choice`
 - 已有 `role: "tool"` 或 assistant `tool_calls`
 
+## Agent Profile 当前事实
+
+Profile 使用 JSON 文件，存储于：
+
+```text
+_tauritavern/agent-profiles/
+  profiles/<profile-id>.json
+  .staging/
+```
+
+当前实现边界：
+
+- 缺省 `profileId` 使用 built-in `default-writer`。
+- 非缺省 `profileId` 不存在时 fail-fast，不创建 run。
+- `instructions.agentSystemPrompt` 省略或为 `null` 时使用 runtime 默认 Agent system prompt；设置为非空字符串时完整替换默认 prompt；空白字符串 fail-fast。
+- `tools.allow` / `tools.deny` 决定模型可见工具，dispatcher 会二次拦截不可见工具。
+- `tools.toolDescriptions` 省略或为空时使用默认工具 description；设置时只替换 model-facing ToolSpec copy 的工具总 description 与参数 description。
+- `skills.visible` / `skills.deny` 控制 `skill.list` 与 `skill.read`，`maxReadCharsPerCall` / `maxReadCharsPerRun` 控制 Skill 读取预算。
+- `workspace.visibleRoots` / `workspace.writableRoots` 只能收窄 root universe：`output`、`scratch`、`plan`、`summaries`、`persist`。
+- `output.artifacts` 当前必须包含且只能包含一个 `messageBody` artifact；`workspace.finish.final_path` 必须与它一致。
+- Plan Mode schema 已存在，但当前只支持 `plan.mode = "none"`；其他 mode fail-fast。
+- 每个 run 会在 `input/resolved_profile.json` 固化解析结果。
+
 ## 当前工具集
 
 Tool registry 只产 canonical `AgentToolSpec`。Provider-facing alias 由 gateway/payload adapter 渲染，不再由 registry 暴露 OpenAI-shaped tools。
@@ -70,13 +97,13 @@ Tool registry 只产 canonical `AgentToolSpec`。Provider-facing alias 由 gatew
 | `chat.search` | `chat_search` | read-only | 搜索当前 run 绑定的聊天。只有 `query` 必填；可选 `limit`、`role`、`start_message`、`end_message`、`scan_limit`。 |
 | `chat.read_messages` | `chat_read_messages` | read-only | 按 0-based message index 读取当前聊天消息；每项可选 `start_char`、`max_chars`。JSONL header 不计入 index。 |
 | `worldinfo.read_activated` | `worldinfo_read_activated` | read-only | 读取本次 Agent run 捕获的最终激活世界书条目，不读取全局 last activation。 |
-| `skill.list` | `skill_list` | read-only | 列出当前已安装 Skill 的索引摘要。profile visible/deny policy 尚未接入，因此目前是全局安装索引。 |
-| `skill.read` | `skill_read` | read-only | 读取已安装 Skill 内的 UTF-8 文本文件；默认 `SKILL.md`，支持 `path` 与 `max_chars`。 |
+| `skill.list` | `skill_list` | read-only | 列出当前 Profile 可见的已安装 Skill 索引摘要。 |
+| `skill.read` | `skill_read` | read-only | 读取当前 Profile 可见 Skill 内的 UTF-8 文本文件；默认 `SKILL.md`，支持 `path` 与 `max_chars`，受 Profile read budget 控制。 |
 | `workspace.list_files` | `workspace_list_files` | read-only | 列出模型可见 workspace 文件。`path` 省略、空字符串、`.`、`./` 表示 workspace root。 |
 | `workspace.read_file` | `workspace_read_file` | read-only | 读取 UTF-8 文本文件并返回行号；完整读取会记录 read-state。 |
 | `workspace.write_file` | `workspace_write_file` | mutating | 写完整 UTF-8 文件；成功后记录 read-state 并创建 checkpoint。 |
 | `workspace.apply_patch` | `workspace_apply_patch` | mutating | 单文件 `old_string` / `new_string` 精确替换；要求已完整读取或由本 run 创建/修改。 |
-| `workspace.finish` | `workspace_finish` | control | 结束工具循环；默认 final artifact 是 `output/main.md`。 |
+| `workspace.finish` | `workspace_finish` | control | 结束工具循环；final artifact path 来自 resolved Profile 的 `messageBody` artifact。 |
 
 当前没有 MCP 工具、shell 工具、外部 extension tools、tool approval 或 profile routing。
 
@@ -159,7 +186,7 @@ AgentModelContentPart {
 
 ## Workspace 与 Commit
 
-当前模型可见 / 可写 roots：
+默认模型可见 / 可写 roots：
 
 ```text
 output/
@@ -169,7 +196,7 @@ summaries/
 persist/
 ```
 
-`persist/` 是 chat workspace 级持久 root 的 run projection。run 中修改 `persist/` 只影响本 run；`prepareCommit()` 会预检 persistent changes 与并发冲突，`finalizeCommit()` 成功后才 promote 回 `chats/<workspace-id>/persist/`。
+实际 roots 由 resolved Profile 收窄后写入 run manifest。`persist/` 是 chat workspace 级持久 root 的 run projection。run 中修改 `persist/` 只影响本 run；`prepareCommit()` 会预检 persistent changes 与并发冲突，`finalizeCommit()` 成功后才 promote 回 `chats/<workspace-id>/persist/`。
 
 Agent commit 当前由前端桥接：
 
@@ -197,24 +224,26 @@ start_agent_run(dto)
   ↓
 AgentRuntimeService::start_run()
   ↓
+resolve Profile
+  ↓
 创建 AgentRun / workspaceId / run workspace
   ↓
-initialize_run 写 manifest / prompt snapshot / persist projection
+initialize_run 写 manifest / prompt snapshot / resolved profile / persist projection
   ↓
-prepare_agent_tool_request 生成 AgentModelRequest
+prepare_agent_tool_request 按 Profile 生成 AgentModelRequest 与 model-facing tool specs
   ↓
 model -> tool -> model -> ... -> workspace.finish
   ↓
 workspace mutation 成功后 checkpoint
   ↓
-validate_final_artifact(output/main.md)
+validate_final_artifact(profile messageBody artifact)
   ↓
 状态进入 awaiting_commit
   ↓
 prepareCommit / saveReply / finalizeCommit
 ```
 
-工具循环最多 80 轮。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会以 `model.tool_call_required` 失败。
+工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会以 `model.tool_call_required` 失败。
 
 ## 当前 Run Events
 
@@ -222,6 +251,7 @@ prepareCommit / saveReply / finalizeCommit
 
 ```text
 run_created
+profile_resolved
 generation_intent_recorded
 status_changed
 workspace_initialized
@@ -271,6 +301,7 @@ _tauritavern/agent-workspaces/
           events.jsonl
           input/
             prompt_snapshot.json
+            resolved_profile.json
             persist_snapshot.json
           tool-args/
             <tool-call-id>.json
@@ -296,6 +327,10 @@ _tauritavern/skills/
   index/
     skills.json
   .staging/
+_tauritavern/agent-profiles/
+  profiles/
+    <profile-id>.json
+  .staging/
 ```
 
 Workspace path 必须是相对路径。绝对路径、Windows drive prefix、NUL、`..` 会被拒绝。工具参数层可修正的问题返回 recoverable tool error；repository 内部 IO、journal、checkpoint、chat JSONL 损坏、序列化、取消和模型响应结构错误是 fatal runtime error。
@@ -311,6 +346,7 @@ const agent = window.__TAURITAVERN__.api.agent;
 
 const run = await agent.startRunFromLegacyGenerate({
   generationType: 'normal',
+  // profileId: 'default-writer',
   options: { stream: false, autoCommit: false },
 });
 
@@ -325,12 +361,12 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 
 - `cargo fmt --manifest-path src-tauri/Cargo.toml`
 - `cargo check --manifest-path src-tauri/Cargo.toml`
-- `cargo test --manifest-path src-tauri/Cargo.toml skill --lib`：9 passed
-- `cargo test --manifest-path src-tauri/Cargo.toml agent_tools --lib`：5 passed
-- `cargo test --manifest-path src-tauri/Cargo.toml agent --lib`：31 passed
+- `cargo test --manifest-path src-tauri/Cargo.toml agent_runtime_service`：11 passed
+- `cargo test --manifest-path src-tauri/Cargo.toml file_agent_repository`：3 passed
+- `cargo test --manifest-path src-tauri/Cargo.toml file_agent_profile_repository`：1 passed
 - `git diff --check`
 
-前端 ABI 本次未修改，未重新运行前端检查。
+前端 wrapper/types 本次未修改，未重新运行前端检查。
 
 ## 已知待办
 
@@ -338,8 +374,9 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - 设计 Agent Mode toggle 与 Legacy Generate 的清晰分流，不改变 Agent Mode off 语义。
 - 建立最小 timeline/event viewer。
 - 将 `PromptSnapshot` 过渡输入逐步替换为 `GenerationIntent + ContextFrame`。
-- 完成 profile policy：allowed tools、tool budget、tool call mode、provider switch policy。
-- 将 Skill 可见性、deny policy 与 read budget 接入 profile / preset / character resolver。
+- 将后端 Profile 管理 commands 封装到前端 Host ABI 与类型。
+- 将 Profile overlay 扩展到 preset / character resolver。
+- 明确 provider/model switch policy；当前 Profile 不切换模型。
 - 实现 readDiff、rollback、listRuns、resume-run、autoCommit/streaming 的明确策略。
 
 ## 每次 Agent 相关变更必须更新

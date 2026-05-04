@@ -5,8 +5,9 @@ use tauri::State;
 use crate::app::AppState;
 use crate::application::dto::agent_dto::{
     AgentCancelRunDto, AgentCommitDraftDto, AgentCommitResultDto, AgentFinalizeCommitDto,
-    AgentPrepareCommitDto, AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
-    AgentRunHandleDto, AgentStartRunDto, AgentWorkspaceFileDto,
+    AgentListProfilesResultDto, AgentLoadProfileResultDto, AgentPrepareCommitDto,
+    AgentProfileIdDto, AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
+    AgentRunHandleDto, AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -23,6 +24,64 @@ pub async fn start_agent_run(
         .start_run(dto)
         .await
         .map_err(map_command_error("Failed to start agent run"))
+}
+
+#[tauri::command]
+pub async fn list_agent_profiles(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentListProfilesResultDto, CommandError> {
+    log_command("list_agent_profiles");
+
+    app_state
+        .agent_profile_service
+        .list_profiles()
+        .await
+        .map(|profiles| AgentListProfilesResultDto { profiles })
+        .map_err(map_command_error("Failed to list agent profiles"))
+}
+
+#[tauri::command]
+pub async fn load_agent_profile(
+    dto: AgentProfileIdDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentLoadProfileResultDto, CommandError> {
+    log_command("load_agent_profile");
+
+    app_state
+        .agent_profile_service
+        .load_profile(&dto.profile_id)
+        .await
+        .map(|profile| AgentLoadProfileResultDto { profile })
+        .map_err(map_command_error("Failed to load agent profile"))
+}
+
+#[tauri::command]
+pub async fn save_agent_profile(
+    dto: AgentSaveProfileDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("save_agent_profile");
+
+    let known_tools = app_state.agent_runtime_service.tool_specs().to_vec();
+    app_state
+        .agent_profile_service
+        .save_profile(dto.profile, &known_tools)
+        .await
+        .map_err(map_command_error("Failed to save agent profile"))
+}
+
+#[tauri::command]
+pub async fn delete_agent_profile(
+    dto: AgentProfileIdDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("delete_agent_profile");
+
+    app_state
+        .agent_profile_service
+        .delete_profile(&dto.profile_id)
+        .await
+        .map_err(map_command_error("Failed to delete agent profile"))
 }
 
 #[tauri::command]

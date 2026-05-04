@@ -6,6 +6,9 @@ use serde_json::{Map, Value};
 
 use crate::domain::errors::DomainError;
 
+pub mod plan;
+pub mod profile;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(
     rename_all = "camelCase",
@@ -280,6 +283,7 @@ pub struct WorkspaceManifest {
 pub struct WorkspaceInputManifest {
     pub mode: String,
     pub prompt_snapshot_path: String,
+    pub resolved_profile_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

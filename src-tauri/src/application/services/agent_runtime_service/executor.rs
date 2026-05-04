@@ -4,9 +4,10 @@ use serde_json::{Value, json};
 
 use super::artifacts::build_agent_manifest;
 use super::prompt_snapshot::{prepare_agent_tool_request, request_summary};
-use super::{AgentCancelReceiver, AgentRuntimeService, MAX_AGENT_TOOL_ROUNDS};
+use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
+use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{AgentRunEventLevel, AgentRunStatus};
 
 impl AgentRuntimeService {
@@ -15,10 +16,17 @@ impl AgentRuntimeService {
         run_id: String,
         prompt_snapshot: Value,
         request: ChatCompletionGenerateRequestDto,
+        resolved_profile: ResolvedAgentProfile,
         mut cancel: AgentCancelReceiver,
     ) {
         let result = self
-            .execute_agent_loop_run_body(&run_id, prompt_snapshot, request, &mut cancel)
+            .execute_agent_loop_run_body(
+                &run_id,
+                prompt_snapshot,
+                request,
+                resolved_profile,
+                &mut cancel,
+            )
             .await;
 
         match result {
@@ -62,10 +70,11 @@ impl AgentRuntimeService {
         run_id: &str,
         prompt_snapshot: Value,
         request: ChatCompletionGenerateRequestDto,
+        resolved_profile: ResolvedAgentProfile,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
         let result = self
-            .execute_agent_loop_run_body(run_id, prompt_snapshot, request, cancel)
+            .execute_agent_loop_run_body(run_id, prompt_snapshot, request, resolved_profile, cancel)
             .await;
         self.close_model_session_after_run(run_id.to_string());
         result
@@ -83,14 +92,15 @@ impl AgentRuntimeService {
         run_id: &str,
         prompt_snapshot: Value,
         request: ChatCompletionGenerateRequestDto,
+        resolved_profile: ResolvedAgentProfile,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
         let run = self
             .transition_status(run_id, AgentRunStatus::InitializingWorkspace)
             .await?;
-        let manifest = build_agent_manifest(&run);
+        let manifest = build_agent_manifest(&run, &resolved_profile);
         self.workspace_repository
-            .initialize_run(&run, &manifest, &prompt_snapshot)
+            .initialize_run(&run, &manifest, &prompt_snapshot, &resolved_profile)
             .await?;
         self.event(
             run_id,
@@ -123,7 +133,9 @@ impl AgentRuntimeService {
         }
         self.ensure_not_cancelled(cancel)?;
 
-        let request = prepare_agent_tool_request(request, &self.tool_registry, run_id)?;
+        let visible_tools = self.tool_registry.visible_specs(&resolved_profile)?;
+        let request =
+            prepare_agent_tool_request(request, &visible_tools, &resolved_profile, run_id)?;
         self.transition_status(run_id, AgentRunStatus::AssemblingContext)
             .await?;
         self.event(
@@ -132,19 +144,20 @@ impl AgentRuntimeService {
             "context_assembled",
             json!({
                 "request": request_summary(&request),
-                "tools": self.tool_registry.specs(),
-                "maxRounds": MAX_AGENT_TOOL_ROUNDS,
+                "tools": &visible_tools,
+                "maxRounds": resolved_profile.tools.max_rounds,
             }),
         )
         .await?;
         self.ensure_not_cancelled(cancel)?;
 
         let final_path = self
-            .run_tool_loop(run_id, request, cancel)
+            .run_tool_loop(run_id, request, &resolved_profile, cancel)
             .await?
             .ok_or_else(|| {
                 ApplicationError::ValidationError(format!(
-                    "agent.max_tool_rounds_exceeded: workspace.finish was not called within {MAX_AGENT_TOOL_ROUNDS} rounds"
+                    "agent.max_tool_rounds_exceeded: workspace.finish was not called within {} rounds",
+                    resolved_profile.tools.max_rounds
                 ))
             })?;
 
@@ -158,7 +171,7 @@ impl AgentRuntimeService {
             AgentRunEventLevel::Info,
             "artifact_assembled",
             json!({
-                "id": "main",
+                "id": resolved_profile.output.message_body_artifact_id.as_str(),
                 "path": artifact.path.as_str(),
                 "bytes": artifact.bytes,
                 "sha256": artifact.sha256,

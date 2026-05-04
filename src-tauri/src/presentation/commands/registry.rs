@@ -236,6 +236,10 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::quick_reply_commands::delete_quick_reply_set,
         // Agent runtime commands
         super::agent_commands::start_agent_run,
+        super::agent_commands::list_agent_profiles,
+        super::agent_commands::load_agent_profile,
+        super::agent_commands::save_agent_profile,
+        super::agent_commands::delete_agent_profile,
         super::agent_commands::cancel_agent_run,
         super::agent_commands::read_agent_run_events,
         super::agent_commands::read_agent_workspace_file,
