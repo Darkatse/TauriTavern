@@ -388,7 +388,15 @@ rollbackCommittedMessage(runId, checkpointId)
 - Completed run 可以保留完整 workspace。
 - Failed/Cancelled run 默认保留，便于 debug。
 - 移动端可以限制 checkpoint 数量或总大小，但删除必须明确记录。
-- 用户删除聊天时，关联 workspace 的清理策略需要独立设计，不能静默泄漏大量文件。
+- 用户删除聊天时，关联 chat workspace 必须随聊天生命周期清理，避免静默泄漏大量文件。
+
+当前实现：
+
+- 单个角色聊天删除清理由 `chat_metadata.integrity` 派生的 Agent chat workspace。
+- 单个群聊聊天删除清理由 group chat id 派生的 Agent chat workspace。
+- 删除角色且级联删除聊天、删除群组时，会批量清理对应聊天 workspace。
+- 若 workspace 仍有关联 active run，删除必须 fail-fast；用户应先取消 run 再删除聊天。
+- 旧聊天缺少稳定 `integrity` 时，不存在可可靠定位的 Agent workspace，保持普通聊天删除语义。
 
 建议后续提供设置：
 

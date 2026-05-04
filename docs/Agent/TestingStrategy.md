@@ -147,6 +147,8 @@ workspace_search_files searches only visible roots and returns snippets
 workspace_read_file full read records read-state
 workspace_read_file character range does not unlock patch state unless it covers the full file
 workspace_apply_patch requires full read-state and checkpoints on success
+chat deletion removes the corresponding Agent chat workspace and run index
+chat deletion fails clearly while the corresponding Agent workspace has an active run
 skill_search respects visible/deny policy and read budget
 skill_read supports line and character ranges
 recoverable tool errors are returned to the model instead of failing the run

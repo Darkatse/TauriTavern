@@ -8,11 +8,15 @@ use crate::application::dto::character_dto::{
     UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto, merge_character_extensions,
 };
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_workspace_lifecycle_service::{
+    AgentChatWorkspaceTarget, AgentWorkspaceLifecycleService,
+};
 use crate::domain::errors::DomainError;
 use crate::domain::json_merge::merge_json_value;
 use crate::domain::models::character::Character;
 use crate::domain::models::world_info::sanitize_world_info_name;
 use crate::domain::repositories::character_repository::{CharacterRepository, ImageCrop};
+use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::logging::logger;
 use serde_json::Value;
@@ -25,7 +29,9 @@ use self::lorebook_codec::{character_book_to_world_info, world_info_to_character
 /// Service for character management
 pub struct CharacterService {
     repository: Arc<dyn CharacterRepository>,
+    chat_repository: Arc<dyn ChatRepository>,
     world_info_repository: Arc<dyn WorldInfoRepository>,
+    agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,11 +50,15 @@ impl CharacterService {
     /// Create a new CharacterService
     pub fn new(
         repository: Arc<dyn CharacterRepository>,
+        chat_repository: Arc<dyn ChatRepository>,
         world_info_repository: Arc<dyn WorldInfoRepository>,
+        agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
     ) -> Self {
         Self {
             repository,
+            chat_repository,
             world_info_repository,
+            agent_workspace_lifecycle_service,
         }
     }
 
@@ -328,8 +338,45 @@ impl CharacterService {
     /// Delete a character
     pub async fn delete_character(&self, dto: DeleteCharacterDto) -> Result<(), ApplicationError> {
         logger::debug(&format!("Deleting character: {}", dto.name));
+        let workspace_targets = if dto.delete_chats {
+            self.agent_workspace_targets_for_character_chats(&dto.name)
+                .await?
+        } else {
+            Vec::new()
+        };
+        self.agent_workspace_lifecycle_service
+            .ensure_chat_workspaces_inactive(&workspace_targets)
+            .await?;
+
         self.repository.delete(&dto.name, dto.delete_chats).await?;
+        self.agent_workspace_lifecycle_service
+            .delete_chat_workspaces(&workspace_targets)
+            .await?;
         Ok(())
+    }
+
+    async fn agent_workspace_targets_for_character_chats(
+        &self,
+        character_name: &str,
+    ) -> Result<Vec<AgentChatWorkspaceTarget>, ApplicationError> {
+        let summaries = self
+            .chat_repository
+            .list_chat_summaries(Some(character_name), true)
+            .await?;
+        let mut targets = Vec::new();
+        for summary in summaries {
+            let Some(metadata) = summary.chat_metadata.as_ref() else {
+                continue;
+            };
+            if let Some(target) = AgentWorkspaceLifecycleService::character_target_from_metadata(
+                character_name,
+                &summary.file_name,
+                metadata,
+            )? {
+                targets.push(target);
+            }
+        }
+        Ok(targets)
     }
 
     /// Rename a character

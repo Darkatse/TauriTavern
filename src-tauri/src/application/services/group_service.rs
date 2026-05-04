@@ -2,6 +2,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::application::dto::group_dto::{CreateGroupDto, DeleteGroupDto, UpdateGroupDto};
+use crate::application::errors::ApplicationError;
+use crate::application::services::agent_workspace_lifecycle_service::AgentWorkspaceLifecycleService;
 use crate::domain::errors::DomainError;
 use crate::domain::models::group::Group;
 use crate::domain::repositories::group_repository::GroupRepository;
@@ -11,12 +13,19 @@ use crate::infrastructure::logging::logger;
 pub struct GroupService {
     /// Repository for group data
     repository: Arc<dyn GroupRepository>,
+    agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
 }
 
 impl GroupService {
     /// Create a new GroupService
-    pub fn new(repository: Arc<dyn GroupRepository>) -> Self {
-        Self { repository }
+    pub fn new(
+        repository: Arc<dyn GroupRepository>,
+        agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
+    ) -> Self {
+        Self {
+            repository,
+            agent_workspace_lifecycle_service,
+        }
     }
 
     /// Get all groups
@@ -89,9 +98,26 @@ impl GroupService {
     }
 
     /// Delete a group
-    pub async fn delete_group(&self, dto: DeleteGroupDto) -> Result<(), DomainError> {
+    pub async fn delete_group(&self, dto: DeleteGroupDto) -> Result<(), ApplicationError> {
         logger::debug(&format!("GroupService: Deleting group {}", dto.id));
-        self.repository.delete_group(&dto.id).await
+        let group =
+            self.repository.get_group(&dto.id).await?.ok_or_else(|| {
+                ApplicationError::NotFound(format!("Group not found: {}", dto.id))
+            })?;
+        let targets = group
+            .chats
+            .iter()
+            .map(|chat_id| AgentWorkspaceLifecycleService::group_target(chat_id))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.agent_workspace_lifecycle_service
+            .ensure_chat_workspaces_inactive(&targets)
+            .await?;
+
+        self.repository.delete_group(&dto.id).await?;
+        self.agent_workspace_lifecycle_service
+            .delete_chat_workspaces(&targets)
+            .await?;
+        Ok(())
     }
 
     /// Get all group chat paths

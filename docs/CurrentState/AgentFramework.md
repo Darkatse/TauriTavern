@@ -211,6 +211,14 @@ workspace.commit(path?, mode?)
 
 `mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。Commit 必须遵守 SillyTavern/windowed payload 保存契约，不能直接写 chat JSONL。
 
+聊天删除现在会联动清理对应的 Agent chat workspace：
+
+- 单个角色聊天删除会按 `chat_metadata.integrity` 派生 workspace id 并删除 `_tauritavern/agent-workspaces/chats/<workspace-id>/`。
+- 单个群聊聊天删除会按 group chat id 派生 workspace id 并删除对应 workspace。
+- 删除角色且选择删除聊天、删除群组时，会批量清理被删除聊天对应的 Agent workspace。
+- 若目标 workspace 仍有当前进程中的 active Agent run，删除会 fail-fast，要求先取消 run；不会先删聊天再留下运行中的 workspace。
+- 非 Agent / 旧聊天没有稳定 `integrity` 时不产生 Agent workspace 清理目标，以保持 SillyTavern 删除语义。
+
 ## 当前 Run Flow
 
 ```text

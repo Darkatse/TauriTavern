@@ -11,10 +11,10 @@ use uuid::Uuid;
 
 use super::AgentRuntimeService;
 use super::artifacts::build_agent_manifest;
-use super::ids::workspace_id_for_stable_chat_id;
 use crate::application::dto::agent_dto::AgentResolveChatCommitDto;
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_identity::workspace_id_for_stable_chat_id;
 use crate::application::services::agent_model_gateway::{
     AgentModelExchange, AgentModelGateway, decode_chat_completion_response,
 };

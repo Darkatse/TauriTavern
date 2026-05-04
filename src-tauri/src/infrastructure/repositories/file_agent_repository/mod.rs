@@ -1,6 +1,7 @@
 mod checkpoint_store;
 mod event_journal;
 mod fs_tree;
+mod lifecycle_store;
 mod paths;
 mod persistent_store;
 mod run_store;

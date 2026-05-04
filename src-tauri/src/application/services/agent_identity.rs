@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::AgentChatRef;
 
-pub(super) fn workspace_id_for_stable_chat_id(
+pub(crate) fn workspace_id_for_stable_chat_id(
     chat_ref: &AgentChatRef,
     stable_chat_id: &str,
 ) -> Result<String, ApplicationError> {
@@ -27,7 +27,7 @@ pub(super) fn workspace_id_for_stable_chat_id(
     Ok(format!("chat_{suffix}"))
 }
 
-pub(super) fn validate_stable_chat_id(raw: &str) -> Result<String, ApplicationError> {
+pub(crate) fn validate_stable_chat_id(raw: &str) -> Result<String, ApplicationError> {
     let value = raw.trim();
     if value.is_empty() {
         return Err(ApplicationError::ValidationError(
@@ -40,20 +40,4 @@ pub(super) fn validate_stable_chat_id(raw: &str) -> Result<String, ApplicationEr
         ));
     }
     Ok(value.to_string())
-}
-
-pub(super) fn safe_workspace_file_stem(value: &str) -> String {
-    let mut output = String::with_capacity(value.len().max(1));
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-' {
-            output.push(byte as char);
-        } else {
-            output.push('_');
-        }
-    }
-    if output.is_empty() {
-        "tool_call".to_string()
-    } else {
-        output
-    }
 }

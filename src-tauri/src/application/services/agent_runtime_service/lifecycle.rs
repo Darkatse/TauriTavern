@@ -6,14 +6,17 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use super::AgentRuntimeService;
-use super::ids::{validate_stable_chat_id, workspace_id_for_stable_chat_id};
 use super::prompt_snapshot::{reject_external_tool_request, request_from_prompt_snapshot};
 use crate::application::dto::agent_dto::{
     AgentCancelRunDto, AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
     AgentRunHandleDto, AgentStartRunDto, AgentWorkspaceFileDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_identity::{
+    validate_stable_chat_id, workspace_id_for_stable_chat_id,
+};
 use crate::application::services::agent_profile_service::AgentProfileResolveInput;
+use crate::application::services::agent_workspace_lifecycle_service::AgentRunActivity;
 use crate::domain::models::agent::{AgentRun, AgentRunEventLevel, AgentRunStatus, WorkspacePath};
 use crate::domain::repositories::agent_run_repository::AgentRunEventReadQuery;
 
@@ -237,5 +240,30 @@ impl AgentRuntimeService {
             bytes: file.bytes,
             sha256: file.sha256,
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentRunActivity for AgentRuntimeService {
+    async fn active_run_ids_for_workspace(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<String>, ApplicationError> {
+        let run_ids = self
+            .active_runs
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut active = Vec::new();
+        for run_id in run_ids {
+            let run = self.run_repository.load_run(&run_id).await?;
+            if run.workspace_id == workspace_id {
+                active.push(run_id);
+            }
+        }
+        active.sort();
+        Ok(active)
     }
 }

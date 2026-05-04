@@ -8,6 +8,7 @@ use crate::application::dto::chat_dto::{
     ImportCharacterChatsDto, ImportChatDto, RenameChatDto, SaveChatFromFileDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_workspace_lifecycle_service::AgentWorkspaceLifecycleService;
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use crate::domain::repositories::character_repository::CharacterRepository;
@@ -24,6 +25,7 @@ use crate::domain::repositories::chat_types::{
 pub struct ChatService {
     chat_repository: Arc<dyn ChatRepository>,
     character_repository: Arc<dyn CharacterRepository>,
+    agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
 }
 
 impl ChatService {
@@ -31,10 +33,12 @@ impl ChatService {
     pub fn new(
         chat_repository: Arc<dyn ChatRepository>,
         character_repository: Arc<dyn CharacterRepository>,
+        agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
     ) -> Self {
         Self {
             chat_repository,
             character_repository,
+            agent_workspace_lifecycle_service,
         }
     }
 
@@ -171,9 +175,33 @@ impl ChatService {
     ) -> Result<(), ApplicationError> {
         tracing::info!("Deleting chat: {}/{}", character_name, file_name);
 
+        let summary = self
+            .chat_repository
+            .get_character_chat_summary(character_name, file_name, true)
+            .await?;
+        let target = match summary.chat_metadata.as_ref() {
+            Some(metadata) => AgentWorkspaceLifecycleService::character_target_from_metadata(
+                character_name,
+                file_name,
+                metadata,
+            )?,
+            None => None,
+        };
+        if let Some(target) = target.as_ref() {
+            self.agent_workspace_lifecycle_service
+                .ensure_chat_workspace_inactive(target)
+                .await?;
+        }
+
         self.chat_repository
             .delete_chat(character_name, file_name)
             .await?;
+
+        if let Some(target) = target {
+            self.agent_workspace_lifecycle_service
+                .delete_chat_workspace(&target)
+                .await?;
+        }
 
         Ok(())
     }

@@ -17,7 +17,6 @@ use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 mod artifacts;
 mod commit;
 mod executor;
-mod ids;
 mod journal;
 mod lifecycle;
 mod loop_runner;

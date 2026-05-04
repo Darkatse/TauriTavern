@@ -8,6 +8,7 @@ use crate::application::dto::chat_dto::{
     SaveGroupChatFromFileDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_workspace_lifecycle_service::AgentWorkspaceLifecycleService;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
@@ -18,12 +19,17 @@ use crate::domain::repositories::group_chat_repository::GroupChatRepository;
 /// Service for managing group chats (JSONL payloads).
 pub struct GroupChatService {
     group_chat_repository: Arc<dyn GroupChatRepository>,
+    agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
 }
 
 impl GroupChatService {
-    pub fn new(group_chat_repository: Arc<dyn GroupChatRepository>) -> Self {
+    pub fn new(
+        group_chat_repository: Arc<dyn GroupChatRepository>,
+        agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
+    ) -> Self {
         Self {
             group_chat_repository,
+            agent_workspace_lifecycle_service,
         }
     }
 
@@ -344,8 +350,16 @@ impl GroupChatService {
             ));
         }
 
+        let target = AgentWorkspaceLifecycleService::group_target(&dto.id)?;
+        self.agent_workspace_lifecycle_service
+            .ensure_chat_workspace_inactive(&target)
+            .await?;
+
         self.group_chat_repository
             .delete_group_chat_payload(&dto.id)
+            .await?;
+        self.agent_workspace_lifecycle_service
+            .delete_chat_workspace(&target)
             .await?;
         Ok(())
     }

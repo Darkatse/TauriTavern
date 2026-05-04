@@ -7,6 +7,9 @@ use tokio::sync::Semaphore;
 use crate::application::services::agent_model_gateway::ChatCompletionAgentModelGateway;
 use crate::application::services::agent_profile_service::AgentProfileService;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
+use crate::application::services::agent_workspace_lifecycle_service::{
+    AgentRunActivity, AgentWorkspaceLifecycleService,
+};
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
 use crate::application::services::character_service::CharacterService;
@@ -36,6 +39,7 @@ use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
+use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
 use crate::domain::repositories::avatar_repository::AvatarRepository;
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::domain::repositories::character_repository::CharacterRepository;
@@ -148,6 +152,7 @@ struct AppRepositories {
     quick_reply_repository: Arc<dyn QuickReplyRepository>,
     agent_profile_repository: Arc<dyn AgentProfileRepository>,
     agent_run_repository: Arc<dyn AgentRunRepository>,
+    agent_workspace_lifecycle_repository: Arc<dyn AgentWorkspaceLifecycleRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
     checkpoint_repository: Arc<dyn CheckpointRepository>,
     chat_completion_repository: Arc<dyn ChatCompletionRepository>,
@@ -202,7 +207,6 @@ pub(super) async fn build_services(
         repositories.extension_store_repository.clone(),
     ));
     let avatar_service = Arc::new(AvatarService::new(repositories.avatar_repository.clone()));
-    let group_service = Arc::new(GroupService::new(repositories.group_repository.clone()));
     let background_service = Arc::new(BackgroundService::new(
         repositories.background_repository.clone(),
     ));
@@ -235,6 +239,10 @@ pub(super) async fn build_services(
         )),
         agent_profile_service.clone(),
     ));
+    let agent_workspace_lifecycle_service = Arc::new(AgentWorkspaceLifecycleService::new(
+        repositories.agent_workspace_lifecycle_repository.clone(),
+        agent_runtime_service.clone() as Arc<dyn AgentRunActivity>,
+    ));
     let tokenization_service =
         Arc::new(TokenizationService::new(repositories.tokenizer_repository));
     let stable_diffusion_service = Arc::new(StableDiffusionService::new(
@@ -254,15 +262,25 @@ pub(super) async fn build_services(
 
     let update_service = Arc::new(UpdateService::new(repositories.update_repository));
 
+    let group_service = Arc::new(GroupService::new(
+        repositories.group_repository.clone(),
+        agent_workspace_lifecycle_service.clone(),
+    ));
     let character_service = Arc::new(CharacterService::new(
         repositories.character_repository.clone(),
+        repositories.chat_repository.clone(),
         repositories.world_info_repository.clone(),
+        agent_workspace_lifecycle_service.clone(),
     ));
     let chat_service = Arc::new(ChatService::new(
         repositories.chat_repository,
         repositories.character_repository.clone(),
+        agent_workspace_lifecycle_service.clone(),
     ));
-    let group_chat_service = Arc::new(GroupChatService::new(repositories.group_chat_repository));
+    let group_chat_service = Arc::new(GroupChatService::new(
+        repositories.group_chat_repository,
+        agent_workspace_lifecycle_service,
+    ));
     let user_service = Arc::new(UserService::new(repositories.user_repository));
     let settings_service = Arc::new(SettingsService::new(repositories.settings_repository));
     let user_directory_service = Arc::new(UserDirectoryService::new(
@@ -420,7 +438,9 @@ fn build_repositories(
     ));
     let agent_run_repository: Arc<dyn AgentRunRepository> = file_agent_repository.clone();
     let workspace_repository: Arc<dyn WorkspaceRepository> = file_agent_repository.clone();
-    let checkpoint_repository: Arc<dyn CheckpointRepository> = file_agent_repository;
+    let checkpoint_repository: Arc<dyn CheckpointRepository> = file_agent_repository.clone();
+    let agent_workspace_lifecycle_repository: Arc<dyn AgentWorkspaceLifecycleRepository> =
+        file_agent_repository;
 
     let llm_api_log_store = app_handle.state::<Arc<LlmApiLogStore>>().inner().clone();
     let chat_completion_repository: Arc<dyn ChatCompletionRepository> =
@@ -472,6 +492,7 @@ fn build_repositories(
         quick_reply_repository,
         agent_profile_repository,
         agent_run_repository,
+        agent_workspace_lifecycle_repository,
         workspace_repository,
         checkpoint_repository,
         chat_completion_repository,

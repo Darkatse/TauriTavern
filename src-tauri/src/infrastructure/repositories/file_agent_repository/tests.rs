@@ -22,6 +22,7 @@ use crate::domain::models::agent::{
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunRepository,
 };
+use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
 use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 fn temp_root() -> PathBuf {
@@ -220,6 +221,55 @@ async fn repository_round_trips_run_workspace_event_and_checkpoint() {
     assert_eq!(checkpoint.files[0].bytes, 5);
 
     fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn delete_chat_workspace_removes_runs_and_indexes() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let first = sample_run_with_id("run_delete_a");
+    let second = sample_run_with_id("run_delete_b");
+
+    repository
+        .create_run(&first)
+        .await
+        .expect("create first run");
+    repository
+        .create_run(&second)
+        .await
+        .expect("create second run");
+
+    let deletion = repository
+        .delete_chat_workspace(&first.workspace_id)
+        .await
+        .expect("delete chat workspace");
+
+    assert!(deletion.removed);
+    assert_eq!(
+        deletion.run_ids,
+        vec!["run_delete_a".to_string(), "run_delete_b".to_string()]
+    );
+    assert!(!root.join("chats").join(&first.workspace_id).exists());
+    assert!(!root.join("index/runs/run_delete_a.json").exists());
+    assert!(!root.join("index/runs/run_delete_b.json").exists());
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn delete_missing_chat_workspace_is_idempotent() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+
+    let deletion = repository
+        .delete_chat_workspace("chat_missing")
+        .await
+        .expect("delete missing chat workspace");
+
+    assert!(!deletion.removed);
+    assert!(deletion.run_ids.is_empty());
+
+    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]

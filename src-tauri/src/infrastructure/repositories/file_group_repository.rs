@@ -284,12 +284,16 @@ impl GroupRepository for FileGroupRepository {
             for chat_id in group.chats {
                 let chat_file_path = self.group_chats_dir.join(format!("{}.jsonl", chat_id));
                 if chat_file_path.exists() {
-                    if let Err(e) = fs::remove_file(&chat_file_path).await {
+                    fs::remove_file(&chat_file_path).await.map_err(|e| {
                         logger::error(&format!(
                             "Failed to delete group chat file {:?}: {}",
                             chat_file_path, e
                         ));
-                    }
+                        DomainError::InternalError(format!(
+                            "Failed to delete group chat file: {}",
+                            e
+                        ))
+                    })?;
                 }
             }
         }

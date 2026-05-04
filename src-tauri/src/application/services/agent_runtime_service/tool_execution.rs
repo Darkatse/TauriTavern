@@ -3,7 +3,6 @@ use std::time::Instant;
 use serde_json::json;
 
 use super::AgentRuntimeService;
-use super::ids::safe_workspace_file_stem;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{
     AgentToolDispatchOutcome, AgentToolEffect, AgentToolSession,
@@ -248,6 +247,22 @@ impl AgentRuntimeService {
             .write_text(run_id, &path, &text)
             .await?;
         Ok(path)
+    }
+}
+
+fn safe_workspace_file_stem(value: &str) -> String {
+    let mut output = String::with_capacity(value.len().max(1));
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-' {
+            output.push(byte as char);
+        } else {
+            output.push('_');
+        }
+    }
+    if output.is_empty() {
+        "tool_call".to_string()
+    } else {
+        output
     }
 }
 

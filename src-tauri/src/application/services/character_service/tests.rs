@@ -4,14 +4,20 @@ use crate::application::dto::character_dto::{
     UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_workspace_lifecycle_service::{
+    AgentRunActivity, AgentWorkspaceLifecycleService,
+};
 use crate::domain::models::character::Character;
 use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
+use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
+use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
 use crate::infrastructure::repositories::file_world_info_repository::FileWorldInfoRepository;
+use async_trait::async_trait;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use rand::random;
 use serde_json::json;
@@ -19,6 +25,18 @@ use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
+
+struct NoActiveAgentRuns;
+
+#[async_trait]
+impl AgentRunActivity for NoActiveAgentRuns {
+    async fn active_run_ids_for_workspace(
+        &self,
+        _workspace_id: &str,
+    ) -> Result<Vec<String>, ApplicationError> {
+        Ok(Vec::new())
+    }
+}
 
 async fn write_character_png(root: &PathBuf, file_stem: &str, payload: &serde_json::Value) {
     let png_bytes = write_character_data_to_png(
@@ -104,7 +122,19 @@ async fn setup_service() -> (
             root.join("chats"),
             root.join("default.png"),
         )),
+        Arc::new(FileChatRepository::new(
+            root.join("characters"),
+            root.join("chats"),
+            root.join("group_chats"),
+            root.join("backups"),
+        )),
         Arc::new(FileWorldInfoRepository::new(root.join("worlds"))),
+        Arc::new(AgentWorkspaceLifecycleService::new(
+            Arc::new(FileAgentRepository::new(
+                root.join("_tauritavern/agent-workspaces"),
+            )),
+            Arc::new(NoActiveAgentRuns),
+        )),
     );
 
     (service, character_repository, world_info_repository, root)

@@ -9,6 +9,7 @@
 截至 2026-05-04，Agent 当前核心已经落地：
 
 - Rust 后端拥有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
+- 聊天删除会清理对应 Agent chat workspace；active run 存在时删除 fail-fast。
 - 前端 Host ABI 已挂载 `window.__TAURITAVERN__.api.agent`。
 - Agent 启动仍通过 `PromptSnapshot` 兼容桥进入；`GenerationIntent + ContextFrame` 尚未接管 context assembly。
 - `startRunFromLegacyGenerate()` 使用 Legacy dryRun 捕获 `chatCompletionPayload` 与本轮最终 `worldInfoActivation`。
