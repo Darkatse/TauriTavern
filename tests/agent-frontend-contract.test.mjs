@@ -39,11 +39,11 @@ test('Agent System settings use the extension store and publish changes', async 
     installWindow({
         extension: {
             store: {
-                async getJson() {
+                async tryGetJson() {
                     if (stored === null) {
-                        throw new Error('not found');
+                        return { found: false };
                     }
-                    return stored;
+                    return { found: true, value: stored };
                 },
                 async setJson(request) {
                     writes.push(request);
@@ -60,7 +60,7 @@ test('Agent System settings use the extension store and publish changes', async 
         selectedProfileId: 'default-writer',
         activeTab: 'profiles',
     });
-    assert.equal(writes.length, 1);
+    assert.equal(writes.length, 0);
 
     let emitted = null;
     const unsubscribe = settings.subscribeAgentSystemSettings((next) => {
@@ -89,8 +89,8 @@ test('Agent generation router uses the global toggle for normal regenerate and s
     installWindow({
         extension: {
             store: {
-                async getJson() {
-                    return stored;
+                async tryGetJson() {
+                    return { found: true, value: stored };
                 },
                 async setJson(request) {
                     stored = request.value;

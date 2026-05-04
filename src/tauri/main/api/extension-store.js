@@ -34,6 +34,13 @@ function createExtensionStoreApi({ safeInvoke }) {
         return safeInvoke('get_extension_store_json', { namespace, key, table });
     }
 
+    async function tryGetJson(options) {
+        const namespace = requireNonEmptyString(options?.namespace, 'namespace');
+        const key = requireNonEmptyString(options?.key, 'key');
+        const table = normalizeOptionalName(options?.table);
+        return safeInvoke('try_get_extension_store_json', { namespace, key, table });
+    }
+
     async function setJson(options) {
         const namespace = requireNonEmptyString(options?.namespace, 'namespace');
         const key = requireNonEmptyString(options?.key, 'key');
@@ -138,6 +145,7 @@ function createExtensionStoreApi({ safeInvoke }) {
 
     return {
         getJson,
+        tryGetJson,
         setJson,
         updateJson,
         updateJSON: updateJson,

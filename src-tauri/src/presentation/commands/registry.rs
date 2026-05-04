@@ -82,6 +82,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::group_chat_api_commands::search_group_chat_messages,
         // Extension store commands (global extension persistence)
         super::extension_store_commands::get_extension_store_json,
+        super::extension_store_commands::try_get_extension_store_json,
         super::extension_store_commands::set_extension_store_json,
         super::extension_store_commands::update_extension_store_json,
         super::extension_store_commands::rename_extension_store_key,

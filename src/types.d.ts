@@ -425,6 +425,7 @@ type TauriTavernWorldInfoApi = {
 
 type TauriTavernExtensionStoreApi = {
     getJson: (options: { namespace: string; key: string; table?: string }) => Promise<any>;
+    tryGetJson: (options: { namespace: string; key: string; table?: string }) => Promise<{ found: boolean; value?: any }>;
     setJson: (options: { namespace: string; key: string; value: any; table?: string }) => Promise<void>;
     updateJson: (options: { namespace: string; key: string; value: any; table?: string }) => Promise<void>;
     updateJSON: (options: { namespace: string; key: string; value: any; table?: string }) => Promise<void>;

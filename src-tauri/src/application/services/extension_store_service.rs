@@ -33,6 +33,16 @@ impl ExtensionStoreService {
         Ok(self.repository.get_json(namespace, table, key).await?)
     }
 
+    pub async fn try_get_json(
+        &self,
+        namespace: &str,
+        table: Option<&str>,
+        key: &str,
+    ) -> Result<Option<Value>, ApplicationError> {
+        let table = self.resolve_table(table);
+        Ok(self.repository.try_get_json(namespace, table, key).await?)
+    }
+
     pub async fn set_json(
         &self,
         namespace: &str,

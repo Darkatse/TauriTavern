@@ -17,14 +17,6 @@ function requireExtensionStore() {
     return store;
 }
 
-function isMissingStoreValue(error) {
-    const message = String(error?.message || error || '').toLowerCase();
-    return message.includes('not found')
-        || message.includes('no such file')
-        || message.includes('enoent')
-        || message.includes('os error 2');
-}
-
 function mergeSettings(value) {
     return {
         ...DEFAULT_AGENT_SYSTEM_SETTINGS,
@@ -40,22 +32,24 @@ function emitSettingsChanged(settings) {
 
 export async function loadAgentSystemSettings() {
     const store = requireExtensionStore();
-    try {
-        return mergeSettings(await store.getJson({
-            namespace: AGENT_SYSTEM_MODULE_NAME,
-            key: AGENT_SYSTEM_SETTINGS_KEY,
-        }));
-    } catch (error) {
-        if (!isMissingStoreValue(error)) {
-            throw error;
-        }
-        await store.setJson({
-            namespace: AGENT_SYSTEM_MODULE_NAME,
-            key: AGENT_SYSTEM_SETTINGS_KEY,
-            value: DEFAULT_AGENT_SYSTEM_SETTINGS,
-        });
+    if (typeof store.tryGetJson !== 'function') {
+        throw new Error('TauriTavern extension store tryGetJson API is unavailable');
+    }
+
+    const result = await store.tryGetJson({
+        namespace: AGENT_SYSTEM_MODULE_NAME,
+        key: AGENT_SYSTEM_SETTINGS_KEY,
+    });
+
+    if (typeof result?.found !== 'boolean') {
+        throw new Error('TauriTavern extension store tryGetJson returned an invalid response');
+    }
+
+    if (!result.found) {
         return { ...DEFAULT_AGENT_SYSTEM_SETTINGS };
     }
+
+    return mergeSettings(result.value);
 }
 
 export async function saveAgentSystemSettings(settings) {

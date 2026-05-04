@@ -136,6 +136,7 @@ export {};
  *   | 'delete_character_chat_store_json'
  *   | 'delete_group_chat_store_json'
  *   | 'get_extension_store_json'
+ *   | 'try_get_extension_store_json'
  *   | 'set_extension_store_json'
  *   | 'update_extension_store_json'
  *   | 'rename_extension_store_key'

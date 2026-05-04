@@ -8,6 +8,13 @@ pub trait ExtensionStoreRepository: Send + Sync {
     async fn get_json(&self, namespace: &str, table: &str, key: &str)
     -> Result<Value, DomainError>;
 
+    async fn try_get_json(
+        &self,
+        namespace: &str,
+        table: &str,
+        key: &str,
+    ) -> Result<Option<Value>, DomainError>;
+
     async fn set_json(
         &self,
         namespace: &str,
