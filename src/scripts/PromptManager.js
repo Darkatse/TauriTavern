@@ -310,6 +310,7 @@ class PromptManager {
 
     constructor() {
         this.systemPrompts = [
+            'agentSystemPrompt',
             'main',
             'nsfw',
             'jailbreak',
@@ -338,6 +339,7 @@ class PromptManager {
             warningTokenThreshold: 1500,
             dangerTokenThreshold: 500,
             defaultPrompts: {
+                agentSystemPrompt: '',
                 main: '',
                 nsfw: '',
                 jailbreak: '',
@@ -523,6 +525,10 @@ class PromptManager {
             const isPulledPrompt = Object.keys(this.promptSources).includes(promptId);
 
             switch (promptId) {
+                case 'agentSystemPrompt':
+                    prompt.name = 'Agent System Prompt';
+                    prompt.content = this.configuration.defaultPrompts.agentSystemPrompt;
+                    break;
                 case 'main':
                     prompt.name = 'Main Prompt';
                     prompt.content = this.configuration.defaultPrompts.main;
@@ -1036,7 +1042,7 @@ class PromptManager {
 
         // Add identifiers if there are none assigned to a prompt
         this.serviceSettings.prompts.forEach(prompt => prompt && (prompt.identifier = prompt.identifier ?? this.getUuidv4()));
-        this.ensureAgentResultsPromptOrder();
+        this.ensureAgentPromptOrderReferences();
 
         if (this.activeCharacter) {
             const promptReferences = this.getPromptOrderForCharacter(this.activeCharacter);
@@ -1073,21 +1079,38 @@ class PromptManager {
     }
 
     /**
-     * Ensure old presets expose the Agent Results marker to preset authors.
+     * Ensure old presets expose Agent-only prompt references to preset authors.
      *
      * @returns {void}
      */
-    ensureAgentResultsPromptOrder() {
-        for (const promptOrder of this.serviceSettings.prompt_order) {
-            if (promptOrder.order.some(reference => reference.identifier === 'agentResults')) {
-                continue;
-            }
+    ensureAgentPromptOrderReferences() {
+        const agentReferences = [
+            { identifier: AGENT_SYSTEM_PROMPT_IDENTIFIER, before: 'main' },
+            { identifier: AGENT_RESULTS_PROMPT_IDENTIFIER },
+        ];
 
-            promptOrder.order.push({
-                identifier: 'agentResults',
-                enabled: true,
-            });
-            this.log('Missing prompt order reference: agentResults. Added at the end.');
+        for (const promptOrder of this.serviceSettings.prompt_order) {
+            for (const reference of agentReferences) {
+                if (promptOrder.order.some(entry => entry.identifier === reference.identifier)) {
+                    continue;
+                }
+
+                const entry = {
+                    identifier: reference.identifier,
+                    enabled: true,
+                };
+                const beforeIndex = reference.before
+                    ? promptOrder.order.findIndex(entry => entry.identifier === reference.before)
+                    : -1;
+
+                if (beforeIndex === -1) {
+                    promptOrder.order.push(entry);
+                    this.log(`Missing prompt order reference: ${reference.identifier}. Added at the end.`);
+                } else {
+                    promptOrder.order.splice(beforeIndex, 0, entry);
+                    this.log(`Missing prompt order reference: ${reference.identifier}. Added before ${reference.before}.`);
+                }
+            }
         }
     }
 
@@ -1933,7 +1956,7 @@ class PromptManager {
             throw new Error('Prompt order strategy not supported.');
         }
 
-        this.ensureAgentResultsPromptOrder();
+        this.ensureAgentPromptOrderReferences();
         toastr.success(t`Prompt import complete.`);
         this.saveServiceSettings().then(() => this.render());
     }
@@ -2069,8 +2092,18 @@ class PromptManager {
     }
 }
 
+const AGENT_SYSTEM_PROMPT_IDENTIFIER = 'agentSystemPrompt';
+const AGENT_RESULTS_PROMPT_IDENTIFIER = 'agentResults';
+
 const chatCompletionDefaultPrompts = {
     'prompts': [
+        {
+            'name': 'Agent System Prompt',
+            'system_prompt': true,
+            'role': 'system',
+            'content': '',
+            'identifier': AGENT_SYSTEM_PROMPT_IDENTIFIER,
+        },
         {
             'name': 'Main Prompt',
             'system_prompt': true,
@@ -2105,7 +2138,7 @@ const chatCompletionDefaultPrompts = {
             'marker': true,
         },
         {
-            'identifier': 'agentResults',
+            'identifier': AGENT_RESULTS_PROMPT_IDENTIFIER,
             'name': 'Agent Results',
             'system_prompt': true,
             'marker': true,
@@ -2163,6 +2196,10 @@ const promptManagerDefaultPromptOrders = {
 
 const promptManagerDefaultPromptOrder = [
     {
+        'identifier': AGENT_SYSTEM_PROMPT_IDENTIFIER,
+        'enabled': true,
+    },
+    {
         'identifier': 'main',
         'enabled': true,
     },
@@ -2211,7 +2248,7 @@ const promptManagerDefaultPromptOrder = [
         'enabled': true,
     },
     {
-        'identifier': 'agentResults',
+        'identifier': AGENT_RESULTS_PROMPT_IDENTIFIER,
         'enabled': true,
     },
 ];

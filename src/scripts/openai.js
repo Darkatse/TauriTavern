@@ -117,7 +117,9 @@ const default_bias = 'Default (none)';
 const default_personality_format = '{{personality}}';
 const default_scenario_format = '{{scenario}}';
 const default_group_nudge_prompt = '[Write the next reply only as {{char}}.]';
+const AGENT_SYSTEM_PROMPT_IDENTIFIER = 'agentSystemPrompt';
 const AGENT_RESULTS_PROMPT_IDENTIFIER = 'agentResults';
+const AGENT_ONLY_PROMPT_IDENTIFIERS = new Set([AGENT_SYSTEM_PROMPT_IDENTIFIER, AGENT_RESULTS_PROMPT_IDENTIFIER]);
 const default_bias_presets = {
     [default_bias]: [],
     'Anti-bond': [
@@ -685,6 +687,7 @@ function setupChatCompletionPromptManager(openAiSettings) {
             main: default_main_prompt,
             nsfw: default_nsfw_prompt,
             jailbreak: default_jailbreak_prompt,
+            agentSystemPrompt: '',
             enhanceDefinitions: default_enhance_definitions_prompt,
         },
         promptOrder: {
@@ -1285,6 +1288,15 @@ async function populateDialogueExamples(prompts, chatCompletion, messageExamples
 }
 
 /**
+ * Remove Agent-only PromptManager entries from Legacy generation assembly.
+ *
+ * @param {import('./PromptManager.js').PromptCollection} prompts - Prompt collection to mutate.
+ */
+function removeAgentOnlyPrompts(prompts) {
+    prompts.collection = prompts.collection.filter(prompt => !AGENT_ONLY_PROMPT_IDENTIFIERS.has(prompt.identifier));
+}
+
+/**
  * @param {number} position - Prompt position in the extensions object.
  * @returns {string|false} - The prompt position for prompt collection.
  */
@@ -1336,6 +1348,10 @@ export function getPromptRole(role) {
  * @returns {Promise<void>}
  */
 async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning, agentMode = false }) {
+    if (!agentMode) {
+        removeAgentOnlyPrompts(prompts);
+    }
+
     // Helper function for preparing a prompt, that already exists within the prompt collection, for completion
     const addToChatCompletion = async (source, target = null) => {
         // We need the prompts array to determine a position for the source.
@@ -1393,7 +1409,9 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     chatCompletion.reserveBudget(controlPrompts);
 
     // Add ordered system and user prompts
-    const systemPrompts = ['nsfw', 'jailbreak'];
+    const systemPrompts = agentMode
+        ? [AGENT_SYSTEM_PROMPT_IDENTIFIER, 'nsfw', 'jailbreak']
+        : ['nsfw', 'jailbreak'];
     const { userRelativePromptIds, absolutePrompts, attachedPrompts } = getPromptInjectionGroups(prompts);
 
     for (const identifier of [...systemPrompts, ...userRelativePromptIds]) {
