@@ -1036,6 +1036,7 @@ class PromptManager {
 
         // Add identifiers if there are none assigned to a prompt
         this.serviceSettings.prompts.forEach(prompt => prompt && (prompt.identifier = prompt.identifier ?? this.getUuidv4()));
+        this.ensureAgentResultsPromptOrder();
 
         if (this.activeCharacter) {
             const promptReferences = this.getPromptOrderForCharacter(this.activeCharacter);
@@ -1069,6 +1070,25 @@ class PromptManager {
                 this.log(`Missing system prompt: ${defaultPrompt.identifier}. Added default.`);
             }
         });
+    }
+
+    /**
+     * Ensure old presets expose the Agent Results marker to preset authors.
+     *
+     * @returns {void}
+     */
+    ensureAgentResultsPromptOrder() {
+        for (const promptOrder of this.serviceSettings.prompt_order) {
+            if (promptOrder.order.some(reference => reference.identifier === 'agentResults')) {
+                continue;
+            }
+
+            promptOrder.order.push({
+                identifier: 'agentResults',
+                enabled: true,
+            });
+            this.log('Missing prompt order reference: agentResults. Added at the end.');
+        }
     }
 
     /**
@@ -1122,6 +1142,7 @@ class PromptManager {
             'main',
             'chatHistory',
             'dialogueExamples',
+            'agentResults',
         ];
         return prompt.marker && !forceTogglePrompts.includes(prompt.identifier) ? false : !this.configuration.toggleDisabled.includes(prompt.identifier);
     }
@@ -1912,6 +1933,7 @@ class PromptManager {
             throw new Error('Prompt order strategy not supported.');
         }
 
+        this.ensureAgentResultsPromptOrder();
         toastr.success(t`Prompt import complete.`);
         this.saveServiceSettings().then(() => this.render());
     }
@@ -2083,6 +2105,12 @@ const chatCompletionDefaultPrompts = {
             'marker': true,
         },
         {
+            'identifier': 'agentResults',
+            'name': 'Agent Results',
+            'system_prompt': true,
+            'marker': true,
+        },
+        {
             'identifier': 'worldInfoAfter',
             'name': 'World Info (after)',
             'system_prompt': true,
@@ -2180,6 +2208,10 @@ const promptManagerDefaultPromptOrder = [
     },
     {
         'identifier': 'jailbreak',
+        'enabled': true,
+    },
+    {
+        'identifier': 'agentResults',
         'enabled': true,
     },
 ];
