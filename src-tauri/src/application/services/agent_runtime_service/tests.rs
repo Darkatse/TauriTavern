@@ -222,6 +222,235 @@ async fn agent_loop_writes_artifact_and_completes() {
 }
 
 #[tokio::test]
+async fn agent_loop_retries_retryable_model_errors() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-retry-loop-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_retry_loop_test".to_string(),
+        workspace_id: "chat_retry_loop_test".to_string(),
+        stable_chat_id: "stable_retry_loop_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let model_gateway = Arc::new(MockAgentModelGateway::with_results(vec![
+        Err(ApplicationError::Transient(
+            "temporary transport failure".to_string(),
+        )),
+        Err(ApplicationError::RateLimited(
+            "provider rate limit".to_string(),
+        )),
+        Ok(json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_write",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"retry succeeded\"}"
+                        }
+                    }]
+                }
+            }]
+        })),
+        Ok(json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_finish",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_finish",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        })),
+    ]));
+    let model_gateway_probe = model_gateway.clone();
+
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        test_profile_service(&root),
+    );
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": [{ "role": "user", "content": "write a message" }]
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.run.model_retry.max_retries = 3;
+    profile.run.model_retry.interval_ms = 1;
+
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("agent loop");
+
+    let model_requests = model_gateway_probe.requests().await;
+    assert_eq!(model_requests.len(), 4);
+
+    let artifact = repository
+        .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+        .await
+        .expect("read artifact");
+    assert_eq!(artifact.text, "retry succeeded");
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 200,
+            },
+        )
+        .await
+        .expect("read events");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == "model_call_retry_scheduled")
+            .count(),
+        2
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == "model_call_attempt_failed")
+            .count(),
+        2
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn agent_loop_does_not_retry_non_retryable_model_errors() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-no-retry-loop-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_no_retry_loop_test".to_string(),
+        workspace_id: "chat_no_retry_loop_test".to_string(),
+        stable_chat_id: "stable_no_retry_loop_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let model_gateway = Arc::new(MockAgentModelGateway::with_results(vec![Err(
+        ApplicationError::ValidationError("model.invalid_tool_call: missing id".to_string()),
+    )]));
+    let model_gateway_probe = model_gateway.clone();
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        test_profile_service(&root),
+    );
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": [{ "role": "user", "content": "write a message" }]
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.run.model_retry.max_retries = 3;
+    profile.run.model_retry.interval_ms = 1;
+
+    let error = service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect_err("non-retryable model error");
+
+    assert!(error.to_string().contains("missing id"));
+    assert_eq!(model_gateway_probe.requests().await.len(), 1);
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 100,
+            },
+        )
+        .await
+        .expect("read events");
+    assert!(
+        events
+            .iter()
+            .all(|event| event.event_type != "model_call_retry_scheduled")
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn agent_loop_reads_and_patches_workspace_artifact() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-patch-loop-{}",
@@ -1272,7 +1501,7 @@ async fn dispatcher_reads_worldinfo_activation_from_run_snapshot() {
 }
 
 struct MockAgentModelGateway {
-    responses: Mutex<VecDeque<Value>>,
+    responses: Mutex<VecDeque<Result<Value, ApplicationError>>>,
     requests: Mutex<Vec<AgentModelRequest>>,
     closed_sessions: Mutex<Vec<String>>,
 }
@@ -1383,6 +1612,10 @@ fn payload_to_jsonl(payload: &[Value]) -> String {
 
 impl MockAgentModelGateway {
     fn new(responses: Vec<Value>) -> Self {
+        Self::with_results(responses.into_iter().map(Ok).collect())
+    }
+
+    fn with_results(responses: Vec<Result<Value, ApplicationError>>) -> Self {
         Self {
             responses: Mutex::new(responses.into()),
             requests: Mutex::new(Vec::new()),
@@ -1469,7 +1702,7 @@ impl AgentModelGateway for MockAgentModelGateway {
             ApplicationError::ValidationError(
                 "mock_model.empty_responses: no response left".to_string(),
             )
-        })?;
+        })??;
         let response = decode_chat_completion_response(response, &request.tools)?;
         Ok(AgentModelExchange {
             response,

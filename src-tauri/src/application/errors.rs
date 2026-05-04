@@ -8,6 +8,9 @@ pub enum ApplicationError {
     RateLimited(String),
 
     #[error("{0}")]
+    Transient(String),
+
+    #[error("{0}")]
     Cancelled(String),
 
     #[error("Internal error: {0}")]
@@ -35,6 +38,7 @@ impl From<DomainError> for ApplicationError {
             DomainError::Cancelled(msg) => ApplicationError::Cancelled(msg),
             DomainError::InternalError(msg) => ApplicationError::InternalError(msg),
             DomainError::RateLimited { message } => ApplicationError::RateLimited(message),
+            DomainError::Transient(msg) => ApplicationError::Transient(msg),
         }
     }
 }

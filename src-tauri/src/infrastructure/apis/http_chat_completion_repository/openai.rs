@@ -29,10 +29,9 @@ pub(super) async fn list_models_with_path(
     let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 
-    let response = request
-        .send()
-        .await
-        .map_err(|error| DomainError::InternalError(format!("Status request failed: {error}")))?;
+    let response = request.send().await.map_err(|error| {
+        HttpChatCompletionRepository::map_transport_error("Status request failed", error)
+    })?;
 
     if !response.status().is_success() {
         return Err(HttpChatCompletionRepository::map_error_response(
@@ -68,7 +67,7 @@ pub(super) async fn generate(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {
@@ -114,7 +113,7 @@ pub(super) async fn generate_stream(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {

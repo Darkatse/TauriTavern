@@ -231,6 +231,7 @@ mod tests {
             },
             run: AgentRunPolicy {
                 presentation: AgentRunPresentation::Background,
+                model_retry: Default::default(),
             },
             instructions: AgentProfileInstructions {
                 agent_system_prompt: None,

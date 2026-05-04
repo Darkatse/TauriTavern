@@ -21,6 +21,9 @@ pub enum DomainError {
 
     #[error("{message}")]
     RateLimited { message: String },
+
+    #[error("{0}")]
+    Transient(String),
 }
 
 impl DomainError {
@@ -36,6 +39,10 @@ impl DomainError {
         Self::RateLimited {
             message: message.into(),
         }
+    }
+
+    pub fn transient(message: impl Into<String>) -> Self {
+        Self::Transient(message.into())
     }
 }
 

@@ -256,6 +256,8 @@ model.cancelled
 model.native_metadata_lost
 ```
 
+Agent runtime 会按 Profile `run.modelRetry` 重试 `429` rate limit 与 transient transport/provider availability 错误；payload build、policy denied、response decode、tool call id、native metadata 等契约错误不重试。
+
 `model.native_metadata_lost` 不应静默降级。
 
 ## 12. Tests
@@ -275,6 +277,7 @@ model.native_metadata_lost
 - LLM API log 剥离 `_tauritavern_provider_state`。
 - Claude native content blocks 回放。
 - normalizer 保留 Claude/Gemini/OpenAI Responses/Gemini Interactions native metadata。
+- Agent model retry 只覆盖 rate limit / transient transport-provider 错误，非瞬时契约错误不重试。
 
 后续最低补齐：
 

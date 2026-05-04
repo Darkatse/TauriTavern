@@ -194,6 +194,7 @@ fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> 
         },
         run: AgentRunPolicy {
             presentation: AgentRunPresentation::Foreground,
+            model_retry: Default::default(),
         },
         instructions: AgentProfileInstructions {
             agent_system_prompt: None,
@@ -442,6 +443,12 @@ fn validate_run_policy(
     run: &AgentRunPolicy,
     tools: &AgentToolPolicy,
 ) -> Result<(), ApplicationError> {
+    if run.model_retry.max_retries > 0 && run.model_retry.interval_ms == 0 {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_model_retry_invalid: run.modelRetry.intervalMs must be > 0 when retries are enabled"
+                .to_string(),
+        ));
+    }
     if run.presentation == AgentRunPresentation::Foreground
         && (!tools.allow.iter().any(|name| name == "workspace.commit")
             || tools.deny.iter().any(|name| name == "workspace.commit"))

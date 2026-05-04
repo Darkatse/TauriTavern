@@ -451,7 +451,7 @@ async fn generate_http(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {
@@ -535,7 +535,7 @@ async fn generate_stream_http(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {
@@ -613,21 +613,17 @@ impl ResponsesWsSession {
             .send(Message::Text(event.to_string().into()))
             .await
             .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "OpenAI Responses WebSocket send failed: {error}"
-                ))
+                DomainError::transient(format!("OpenAI Responses WebSocket send failed: {error}"))
             })?;
 
         loop {
             let Some(message) = self.socket.next().await else {
-                return Err(DomainError::InternalError(
+                return Err(DomainError::transient(
                     "OpenAI Responses WebSocket closed before response.completed".to_string(),
                 ));
             };
             let message = message.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "OpenAI Responses WebSocket read failed: {error}"
-                ))
+                DomainError::transient(format!("OpenAI Responses WebSocket read failed: {error}"))
             })?;
 
             match message {
@@ -646,13 +642,13 @@ impl ResponsesWsSession {
                         .send(Message::Pong(bytes))
                         .await
                         .map_err(|error| {
-                            DomainError::InternalError(format!(
+                            DomainError::transient(format!(
                                 "OpenAI Responses WebSocket pong failed: {error}"
                             ))
                         })?;
                 }
                 Message::Close(frame) => {
-                    return Err(DomainError::InternalError(format!(
+                    return Err(DomainError::transient(format!(
                         "OpenAI Responses WebSocket closed before response.completed: {frame:?}"
                     )));
                 }
@@ -675,17 +671,17 @@ async fn generate_ws(
         .send(Message::Text(event.to_string().into()))
         .await
         .map_err(|error| {
-            DomainError::InternalError(format!("OpenAI Responses WebSocket send failed: {error}"))
+            DomainError::transient(format!("OpenAI Responses WebSocket send failed: {error}"))
         })?;
 
     loop {
         let Some(message) = socket.next().await else {
-            return Err(DomainError::InternalError(
+            return Err(DomainError::transient(
                 "OpenAI Responses WebSocket closed before response.completed".to_string(),
             ));
         };
         let message = message.map_err(|error| {
-            DomainError::InternalError(format!("OpenAI Responses WebSocket read failed: {error}"))
+            DomainError::transient(format!("OpenAI Responses WebSocket read failed: {error}"))
         })?;
 
         match message {
@@ -701,13 +697,13 @@ async fn generate_ws(
             }
             Message::Ping(bytes) => {
                 socket.send(Message::Pong(bytes)).await.map_err(|error| {
-                    DomainError::InternalError(format!(
+                    DomainError::transient(format!(
                         "OpenAI Responses WebSocket pong failed: {error}"
                     ))
                 })?;
             }
             Message::Close(frame) => {
-                return Err(DomainError::InternalError(format!(
+                return Err(DomainError::transient(format!(
                     "OpenAI Responses WebSocket closed before response.completed: {frame:?}"
                 )));
             }
@@ -745,7 +741,7 @@ async fn generate_stream_ws(
         .send(Message::Text(event.to_string().into()))
         .await
         .map_err(|error| ResponsesWsStreamError {
-            error: DomainError::InternalError(format!(
+            error: DomainError::transient(format!(
                 "OpenAI Responses WebSocket send failed: {error}"
             )),
             emitted: false,
@@ -775,14 +771,14 @@ async fn generate_stream_ws(
 
         let Some(message) = message else {
             return Err(ResponsesWsStreamError {
-                error: DomainError::InternalError(
+                error: DomainError::transient(
                     "OpenAI Responses WebSocket closed before response.completed".to_string(),
                 ),
                 emitted: state.has_emitted(),
             });
         };
         let message = message.map_err(|error| ResponsesWsStreamError {
-            error: DomainError::InternalError(format!(
+            error: DomainError::transient(format!(
                 "OpenAI Responses WebSocket stream read failed: {error}"
             )),
             emitted: state.has_emitted(),
@@ -798,7 +794,7 @@ async fn generate_stream_ws(
             Message::Ping(bytes) => {
                 socket.send(Message::Pong(bytes)).await.map_err(|error| {
                     ResponsesWsStreamError {
-                        error: DomainError::InternalError(format!(
+                        error: DomainError::transient(format!(
                             "OpenAI Responses WebSocket pong failed: {error}"
                         )),
                         emitted: state.has_emitted(),
@@ -807,7 +803,7 @@ async fn generate_stream_ws(
             }
             Message::Close(frame) => {
                 return Err(ResponsesWsStreamError {
-                    error: DomainError::InternalError(format!(
+                    error: DomainError::transient(format!(
                         "OpenAI Responses WebSocket closed before response.completed: {frame:?}"
                     )),
                     emitted: state.has_emitted(),
@@ -860,7 +856,7 @@ async fn connect_responses_ws(
     let key = generate_key();
     let request = build_ws_upgrade_request(&client, config, endpoint_path, &key)?;
     let response = client.execute(request).await.map_err(|error| {
-        DomainError::InternalError(format!(
+        DomainError::transient(format!(
             "OpenAI Responses WebSocket upgrade request failed: {error}"
         ))
     })?;
@@ -876,7 +872,7 @@ async fn connect_responses_ws(
     verify_ws_upgrade_response(&response, &key)?;
 
     let upgraded = response.upgrade().await.map_err(|error| {
-        DomainError::InternalError(format!(
+        DomainError::transient(format!(
             "OpenAI Responses WebSocket upgrade failed: {error}"
         ))
     })?;

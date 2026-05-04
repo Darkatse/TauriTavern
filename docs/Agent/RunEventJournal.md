@@ -113,6 +113,9 @@ workspace_initialized
 persistent_projection_initialized
 context_assembled
 model_request_created
+model_call_attempt_started
+model_call_attempt_failed
+model_call_retry_scheduled
 model_response_stored
 provider_state_updated
 model_completed

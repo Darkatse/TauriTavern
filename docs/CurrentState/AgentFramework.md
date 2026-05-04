@@ -81,6 +81,7 @@ _tauritavern/agent-profiles/
 - `skills.visible` / `skills.deny` 控制 `skill.list` 与 `skill.read`，`maxReadCharsPerCall` / `maxReadCharsPerRun` 控制 Skill 读取预算。
 - `workspace.visibleRoots` / `workspace.writableRoots` 只能收窄 root universe：`output`、`scratch`、`plan`、`summaries`、`persist`。
 - `run.presentation` 区分 `foreground` / `background`，默认 built-in profile 为前台；前台 Profile 必须暴露 `workspace.commit`。
+- `run.modelRetry` 控制单次模型调用的瞬时错误重试；默认 `maxRetries = 3`、`intervalMs = 3000`。当前只重试 rate limit / transient transport-provider 错误，不重试 prompt/schema/native metadata/tool id 等契约错误。
 - `output.artifacts` 当前必须包含且只能包含一个 `messageBody` artifact；`workspace.commit` 默认发布该 artifact 的 path。
 - Plan Mode schema 已存在，但当前只支持 `plan.mode = "none"`；其他 mode fail-fast。
 - 每个 run 会在 `input/resolved_profile.json` 固化解析结果。
@@ -255,6 +256,9 @@ workspace_initialized
 persistent_projection_initialized
 context_assembled
 model_request_created
+model_call_attempt_started
+model_call_attempt_failed
+model_call_retry_scheduled
 model_completed
 tool_call_requested
 tool_call_started

@@ -18,6 +18,7 @@
 - `provider_state` 已用于 run-scoped continuation。OpenAI Responses 通过它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
 - Agent Skill repository/service、导入导出、embedded skill 导入确认、`api.skill`、`skill.list` / `skill.read` 已落地。
 - Phase 3 Agent Profile 基线已落地：built-in `default-writer`、file repository、resolver、run snapshot、tool/skill/workspace/output policy、tool budget 与 max rounds。
+- Profile `run.modelRetry` 已落地，默认对单次模型调用的 rate limit / transient transport-provider 错误重试 3 次，间隔 3000ms；非瞬时契约错误继续 fail-fast。
 - `instructions.agentSystemPrompt` 可完整替换默认 Agent system prompt；缺省时使用 runtime 默认 prompt。`tools.toolDescriptions` 可替换 model-facing tool/property descriptions；缺省时使用默认描述。
 
 历史计划只保留为这些不变量：
@@ -61,7 +62,8 @@ rollback()
 
 ```text
 AgentRuntimeService
-  -> AgentModelGateway.generate_with_cancel(AgentModelRequest)
+  -> generate_model_with_retry(AgentModelRequest, profile.run.modelRetry)
+    -> AgentModelGateway.generate_with_cancel(AgentModelRequest)
     -> encode_chat_completion_request()
       -> ChatCompletionService.generate_exchange_with_cancel(ChatCompletionGenerateRequestDto)
     -> decode_chat_completion_response()

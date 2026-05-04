@@ -22,6 +22,7 @@ mod journal;
 mod lifecycle;
 mod loop_runner;
 mod model_response_store;
+mod model_retry;
 mod model_turn;
 mod prompt_snapshot;
 mod tool_execution;

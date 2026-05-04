@@ -207,18 +207,39 @@ impl HttpChatCompletionRepository {
     ) -> DomainError {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        let message = extract_error_message(&body, default_message);
+        Self::map_error_status(provider_name, status, &body, default_message)
+    }
+
+    fn map_error_status(
+        provider_name: &str,
+        status: StatusCode,
+        body: &str,
+        default_message: &str,
+    ) -> DomainError {
+        let message = extract_error_message(body, default_message);
 
         match status {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                 DomainError::AuthenticationError(message)
             }
             StatusCode::BAD_REQUEST => DomainError::InvalidData(message),
+            StatusCode::TOO_MANY_REQUESTS => DomainError::rate_limited(format!(
+                "{provider_name} endpoint failed with status {}: {message}",
+                status.as_u16()
+            )),
+            status if is_retryable_status(status) => DomainError::transient(format!(
+                "{provider_name} endpoint failed with status {}: {message}",
+                status.as_u16()
+            )),
             _ => DomainError::InternalError(format!(
                 "{provider_name} endpoint failed with status {}: {message}",
                 status.as_u16()
             )),
         }
+    }
+
+    fn map_transport_error(label: &str, error: reqwest::Error) -> DomainError {
+        DomainError::transient(format!("{label}: {error}"))
     }
 
     async fn stream_sse_response(
@@ -256,7 +277,7 @@ impl HttpChatCompletionRepository {
                     continue;
                 }
                 chunk = response.chunk() => {
-                    chunk.map_err(|error| DomainError::InternalError(format!(
+                    chunk.map_err(|error| DomainError::transient(format!(
                         "{provider_name} stream read failed: {error}"
                     )))?
                 }
@@ -335,6 +356,10 @@ fn payload_contains_cache_control(value: &Value) -> bool {
         Value::Array(array) => array.iter().any(payload_contains_cache_control),
         _ => false,
     }
+}
+
+fn is_retryable_status(status: StatusCode) -> bool {
+    matches!(status.as_u16(), 408 | 425 | 429 | 500 | 502 | 503 | 504)
 }
 
 fn log_prompt_cache_performance_if_present(
@@ -670,6 +695,7 @@ mod tests {
     use reqwest::header::AUTHORIZATION;
     use tokio::sync::mpsc;
 
+    use crate::domain::errors::DomainError;
     use crate::domain::repositories::chat_completion_repository::ChatCompletionApiConfig;
 
     use super::HttpChatCompletionRepository;
@@ -743,6 +769,33 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(values, vec!["Bearer override"]);
+    }
+
+    #[test]
+    fn error_status_classification_marks_retryable_provider_failures() {
+        let rate_limited = HttpChatCompletionRepository::map_error_status(
+            "OpenAI",
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            r#"{"error":{"message":"slow down"}}"#,
+            "Generation request failed",
+        );
+        assert!(matches!(rate_limited, DomainError::RateLimited { .. }));
+
+        let gateway_timeout = HttpChatCompletionRepository::map_error_status(
+            "OpenAI",
+            reqwest::StatusCode::BAD_GATEWAY,
+            "upstream unavailable",
+            "Generation request failed",
+        );
+        assert!(matches!(gateway_timeout, DomainError::Transient(_)));
+
+        let bad_request = HttpChatCompletionRepository::map_error_status(
+            "OpenAI",
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"bad payload"}}"#,
+            "Generation request failed",
+        );
+        assert!(matches!(bad_request, DomainError::InvalidData(_)));
     }
 
     #[test]

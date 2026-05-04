@@ -11,6 +11,8 @@ pub const DEFAULT_AGENT_TOOL_MAX_ROUNDS: usize = 80;
 pub const DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN: usize = 80;
 pub const DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL: usize = 20_000;
 pub const DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN: usize = 80_000;
+pub const DEFAULT_AGENT_MODEL_MAX_RETRIES: usize = 3;
+pub const DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS: u64 = 3_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AgentProfileId(String);
@@ -158,6 +160,17 @@ pub enum AgentModelBindingMode {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentRunPolicy {
     pub presentation: AgentRunPresentation,
+    #[serde(default)]
+    pub model_retry: AgentModelRetryPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentModelRetryPolicy {
+    #[serde(default = "default_agent_model_max_retries")]
+    pub max_retries: usize,
+    #[serde(default = "default_agent_model_retry_interval_ms")]
+    pub interval_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -265,12 +278,30 @@ fn default_agent_skill_max_read_chars_per_run() -> usize {
     DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN
 }
 
+fn default_agent_model_max_retries() -> usize {
+    DEFAULT_AGENT_MODEL_MAX_RETRIES
+}
+
+fn default_agent_model_retry_interval_ms() -> u64 {
+    DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS
+}
+
+impl Default for AgentModelRetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_retries: DEFAULT_AGENT_MODEL_MAX_RETRIES,
+            interval_ms: DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{
-        AgentProfileDefinition, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL,
+        AgentProfileDefinition, DEFAULT_AGENT_MODEL_MAX_RETRIES,
+        DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL,
         DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
     };
     use crate::domain::models::agent::plan::DEFAULT_AGENT_PLAN_BETA;
@@ -317,6 +348,14 @@ mod tests {
         .expect("profile with optional fields omitted");
 
         assert!(!profile.preset.required);
+        assert_eq!(
+            profile.run.model_retry.max_retries,
+            DEFAULT_AGENT_MODEL_MAX_RETRIES
+        );
+        assert_eq!(
+            profile.run.model_retry.interval_ms,
+            DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS
+        );
         assert!(profile.instructions.agent_system_prompt.is_none());
         assert!(profile.tools.deny.is_empty());
         assert!(profile.tools.tool_descriptions.is_empty());

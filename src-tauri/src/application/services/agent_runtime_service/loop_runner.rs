@@ -37,8 +37,13 @@ impl AgentRuntimeService {
             .await?;
 
             let exchange = self
-                .model_gateway
-                .generate_with_cancel(request.clone(), cancel.clone())
+                .generate_model_with_retry(
+                    run_id,
+                    round,
+                    &request,
+                    &profile.run.model_retry,
+                    cancel,
+                )
                 .await?;
             self.ensure_not_cancelled(cancel)?;
             let response = exchange.response;
