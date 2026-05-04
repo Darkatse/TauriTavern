@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::domain::models::agent::profile::{AgentProfileDefinition, AgentProfileSummary};
-use crate::domain::models::agent::{AgentChatRef, AgentRunEvent, AgentRunStatus, Checkpoint};
+use crate::domain::models::agent::{
+    AgentChatRef, AgentRunEvent, AgentRunPresentation, AgentRunStatus,
+};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,9 +52,9 @@ pub struct AgentLoadProfileResultDto {
 #[serde(rename_all = "camelCase")]
 pub struct AgentStartRunOptionsDto {
     #[serde(default)]
-    pub auto_commit: bool,
-    #[serde(default)]
     pub stream: bool,
+    #[serde(default)]
+    pub presentation: Option<AgentRunPresentation>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -106,42 +108,11 @@ pub struct AgentWorkspaceFileDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentPrepareCommitDto {
+pub struct AgentResolveChatCommitDto {
     pub run_id: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentCommitDraftDto {
-    pub run_id: String,
-    pub stable_chat_id: String,
-    pub chat_ref: AgentChatRef,
-    pub generation_type: String,
-    pub checkpoint: Checkpoint,
-    pub message: AgentCommitMessageDto,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentCommitMessageDto {
-    pub mes: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extra: Option<Value>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentFinalizeCommitDto {
-    pub run_id: String,
-    #[serde(default)]
+    pub commit_id: String,
     pub message_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentCommitResultDto {
-    pub run_id: String,
-    pub status: AgentRunStatus,
+    pub error: Option<String>,
 }
 
 fn default_generation_type() -> String {

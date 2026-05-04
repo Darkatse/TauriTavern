@@ -1,9 +1,10 @@
 use super::chat::{chat_read_messages_spec, chat_search_spec};
 use super::skill::{skill_list_spec, skill_read_spec};
 use super::workspace::{
-    WORKSPACE_APPLY_PATCH, WORKSPACE_FINISH, WORKSPACE_LIST_FILES, WORKSPACE_READ_FILE,
-    WORKSPACE_WRITE_FILE, workspace_apply_patch_spec, workspace_finish_spec,
-    workspace_list_files_spec, workspace_read_file_spec, workspace_write_file_spec,
+    WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
+    WORKSPACE_READ_FILE, WORKSPACE_WRITE_FILE, workspace_apply_patch_spec, workspace_commit_spec,
+    workspace_finish_spec, workspace_list_files_spec, workspace_read_file_spec,
+    workspace_write_file_spec,
 };
 use super::world_info::worldinfo_read_activated_spec;
 use crate::application::errors::ApplicationError;
@@ -28,6 +29,7 @@ impl BuiltinAgentToolRegistry {
                 workspace_read_file_spec(),
                 workspace_write_file_spec(),
                 workspace_apply_patch_spec(),
+                workspace_commit_spec(),
                 workspace_finish_spec(),
             ],
         }
@@ -105,7 +107,7 @@ fn apply_profile_context(
         }
         WORKSPACE_WRITE_FILE => {
             spec.description = format!(
-                "Write complete UTF-8 text to a writable Agent workspace file. Use {final_path} for the final chat message body, then call workspace_finish."
+                "Write complete UTF-8 text to a writable Agent workspace file. Use {final_path} for the default chat message body."
             );
             set_property_description(
                 spec,
@@ -121,17 +123,22 @@ fn apply_profile_context(
                 &format!("Relative writable workspace file path under {writable_roots}."),
             )?;
         }
-        WORKSPACE_FINISH => {
+        WORKSPACE_COMMIT => {
             spec.description = format!(
-                "Finish the Agent loop after the final artifact has been written. The default final_path is {final_path}."
+                "Commit a workspace text file to this run's single chat message. With no arguments, replace the current run message with {final_path}. mode append appends the file text to the same message, creating it when this run has not committed yet."
             );
             set_property_description(
                 spec,
-                "final_path",
+                "path",
                 &format!(
-                    "Relative workspace path for the final artifact. Defaults to {final_path}."
+                    "Relative visible workspace file path to publish. Defaults to {final_path}."
                 ),
             )?;
+        }
+        WORKSPACE_FINISH => {
+            spec.description =
+                "Finish the Agent run after required chat commits and workspace changes are complete."
+                    .to_string();
         }
         _ => {}
     }

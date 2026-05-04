@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::ArtifactSpec;
+use super::{AgentRunPresentation, ArtifactSpec};
 
 pub const AGENT_PROFILE_SCHEMA_VERSION: u32 = 1;
 pub const AGENT_PROFILE_KIND: &str = "tauritavern.agentProfile";
@@ -79,6 +79,7 @@ pub struct AgentProfileDefinition {
     pub description: Option<String>,
     pub preset: AgentPresetBinding,
     pub model: AgentModelBinding,
+    pub run: AgentRunPolicy,
     #[serde(default)]
     pub instructions: AgentProfileInstructions,
     pub tools: AgentToolPolicy,
@@ -99,6 +100,7 @@ pub struct ResolvedAgentProfile {
     pub description: Option<String>,
     pub preset: AgentPresetBinding,
     pub model: AgentModelBinding,
+    pub run: AgentRunPolicy,
     pub instructions: AgentProfileInstructions,
     pub tools: AgentToolPolicy,
     pub skills: AgentSkillPolicy,
@@ -150,6 +152,12 @@ pub struct AgentModelBinding {
 #[serde(rename_all = "camelCase")]
 pub enum AgentModelBindingMode {
     CurrentPromptSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentRunPolicy {
+    pub presentation: AgentRunPresentation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -280,8 +288,11 @@ mod tests {
             "model": {
                 "mode": "currentPromptSnapshot"
             },
+            "run": {
+                "presentation": "foreground"
+            },
             "tools": {
-                "allow": ["workspace.write_file", "workspace.finish"],
+                "allow": ["workspace.write_file", "workspace.commit", "workspace.finish"],
                 "maxRounds": 80
             },
             "skills": {

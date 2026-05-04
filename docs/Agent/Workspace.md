@@ -464,7 +464,7 @@ chats/<workspace-id>/persist/                # 稳定持久层
 chats/<workspace-id>/runs/<run-id>/persist/  # 本 run 投影
 ```
 
-run 初始化时，稳定 `persist/` 会复制到本次 run 的 `persist/`，并在 `input/persist_snapshot.json` 中记录 base sha。模型在 run 中通过普通 workspace 工具读写 `persist/`；这些写入在 `finalizeCommit()` 成功前不会写回稳定层。`prepareCommit()` 会计算 persistent changes 并检查并发冲突，`finalizeCommit()` 成功后才 promote 回 `chats/<workspace-id>/persist/`。Failed、Cancelled 或未 finalize 的 run 不会污染后续 run。
+run 初始化时，稳定 `persist/` 会复制到本次 run 的 `persist/`，并在 `input/persist_snapshot.json` 中记录 base sha。模型在 run 中通过普通 workspace 工具读写 `persist/`；这些写入在 `workspace.finish` 收尾成功前不会写回稳定层。finish 阶段会计算 persistent changes、检查并发冲突，并 promote 回 `chats/<workspace-id>/persist/`。Failed、Cancelled 或未 finish 的 run 不会污染后续 run。
 
 早期设计中的最小概念结构仍可作为抽象理解：
 

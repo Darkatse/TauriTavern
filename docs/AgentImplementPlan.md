@@ -40,9 +40,6 @@ api.agent.subscribe(runId, handler, options?)
 api.agent.cancel(runId)
 api.agent.readEvents(input)
 api.agent.readWorkspaceFile(input)
-api.agent.prepareCommit(input)
-api.agent.commit(input)
-api.agent.finalizeCommit(input)
 ```
 
 启动输入支持可选 `profileId`。后端 Profile 管理 Tauri commands 已注册，但尚未封装到 `window.__TAURITAVERN__.api.agent`。
@@ -184,20 +181,18 @@ initialize_run 写 manifest / prompt snapshot / resolved profile / workspace roo
   ↓
 prepare_agent_tool_request 按 Profile 生成 AgentModelRequest 与 visible tool specs
   ↓
-model -> read-only context tools / skill tools / workspace tools -> model -> ... -> workspace.finish
+model -> read-only context tools / skill tools / workspace tools -> model -> ... -> workspace.commit? -> workspace.finish
   ↓
 工具调用参数与结果写入 workspace refs
   ↓
 workspace mutation 成功后 checkpoint
   ↓
-validate_final_artifact(profile messageBody artifact)
+workspace.commit 触发 host bridge 写入同一 chat message
   ↓
-状态进入 awaiting_commit
-  ↓
-prepareCommit / saveReply / finalizeCommit
+workspace.finish 收尾并提交 persist projection
 ```
 
-工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会以 `model.tool_call_required` 失败。
+工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会以 `model.tool_call_required` 失败。前台 run 必须在 finish 前至少成功 commit 一次；后台 run 可以无 commit 完成。
 
 ## 8. 后续实施顺序
 
@@ -234,7 +229,7 @@ prepareCommit / saveReply / finalizeCommit
 
 已完成：
 
-- `workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish` 已落地。
+- `workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.commit`、`workspace.finish` 已落地。
 - workspace mutation 后创建 checkpoint；完整读取 / 写入 read-state 约束已接入。
 - `output/`、`scratch/`、`plan/`、`summaries/`、`persist/` 是当前模型可见 root。
 

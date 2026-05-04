@@ -1,6 +1,7 @@
 // @ts-check
 
 import { buildAgentPromptSnapshot } from './agent-prompt-snapshot.js';
+import { attachHostCommitBridge } from './agent-chat-commit-bridge.js';
 
 const DEFAULT_EVENT_POLL_MS = 500;
 
@@ -16,7 +17,9 @@ const DEFAULT_EVENT_POLL_MS = 500;
 function createAgentApi({ safeInvoke }) {
     async function startRunWithPromptSnapshot(input) {
         const dto = await normalizePromptSnapshotRunInput(input);
-        return safeInvoke('start_agent_run', { dto });
+        const handle = await safeInvoke('start_agent_run', { dto });
+        attachHostCommitBridge({ runId: handle?.runId, safeInvoke, readWorkspaceFile, subscribe });
+        return handle;
     }
 
     async function startRunFromLegacyGenerate(input = {}) {
@@ -25,7 +28,7 @@ function createAgentApi({ safeInvoke }) {
         }
 
         const generationType = normalizeGenerationType(input.generationType);
-        const agentOptions = normalizePhase2bAgentOptions(input.options);
+        const agentOptions = normalizeAgentRunOptions(input.options, input.presentation);
         const snapshot = await buildAgentPromptSnapshot({
             generationType,
             generateOptions: input.generateOptions,
@@ -122,32 +125,6 @@ function createAgentApi({ safeInvoke }) {
         };
     }
 
-    async function commit(input) {
-        const runId = requireRunId(input?.runId);
-        const draft = await safeInvoke('prepare_agent_run_commit', { dto: { runId } });
-        await assertCurrentChat(draft?.chatRef, draft?.stableChatId);
-
-        const script = await import('../../../script.js');
-        if (typeof script.saveReply !== 'function') {
-            throw new Error('saveReply is not available');
-        }
-
-        await script.saveReply({
-            type: draft?.generationType || 'normal',
-            getMessage: String(draft?.message?.mes ?? ''),
-        });
-
-        const messageId = mergeAgentExtraIntoActiveMessage(script.chat, draft?.message?.extra);
-        await persistActiveChat(script);
-
-        return safeInvoke('finalize_agent_run_commit', {
-            dto: {
-                runId,
-                messageId: String(input?.messageId ?? messageId),
-            },
-        });
-    }
-
     return {
         startRunWithPromptSnapshot,
         startRunFromLegacyGenerate,
@@ -155,20 +132,6 @@ function createAgentApi({ safeInvoke }) {
         readEvents,
         readWorkspaceFile,
         subscribe,
-        commit,
-        prepareCommit(input) {
-            const runId = requireRunId(input?.runId);
-            return safeInvoke('prepare_agent_run_commit', { dto: { runId } });
-        },
-        finalizeCommit(input) {
-            const runId = requireRunId(input?.runId);
-            return safeInvoke('finalize_agent_run_commit', {
-                dto: {
-                    runId,
-                    messageId: input?.messageId,
-                },
-            });
-        },
         approveToolCall() {
             throw new Error('approveToolCall is not implemented in Agent Phase 2B');
         },
@@ -188,7 +151,7 @@ function normalizeGenerationType(value) {
     return String(value || 'normal').trim() || 'normal';
 }
 
-function normalizePhase2bAgentOptions(value) {
+function normalizeAgentRunOptions(value, presentationOverride = undefined) {
     if (value != null && !isPlainObject(value)) {
         throw new Error('agent.options_invalid: options must be an object');
     }
@@ -197,15 +160,27 @@ function normalizePhase2bAgentOptions(value) {
     if (options.stream === true) {
         throw new Error('agent.phase2b_stream_unsupported: Agent Phase 2B only supports non-streaming model calls');
     }
-    if (options.autoCommit === true) {
-        throw new Error('agent.phase2b_auto_commit_unsupported: commit is owned by the frontend adapter in Agent Phase 2B');
+    if (Object.prototype.hasOwnProperty.call(options, 'autoCommit')) {
+        throw new Error('agent.auto_commit_removed: Agent chat commits are driven by workspace.commit');
     }
+    const presentation = normalizeAgentRunPresentation(presentationOverride ?? options.presentation);
 
     return {
         ...options,
         stream: false,
-        autoCommit: false,
+        ...(presentation ? { presentation } : {}),
     };
+}
+
+function normalizeAgentRunPresentation(value) {
+    if (value == null || value === '') {
+        return undefined;
+    }
+    const presentation = String(value).trim();
+    if (presentation !== 'foreground' && presentation !== 'background') {
+        throw new Error('agent.presentation_invalid: presentation must be foreground or background');
+    }
+    return presentation;
 }
 
 async function normalizePromptSnapshotRunInput(input) {
@@ -227,6 +202,7 @@ async function normalizePromptSnapshotRunInput(input) {
         ...input,
         chatRef,
         stableChatId,
+        options: normalizeAgentRunOptions(input.options, input.presentation),
     };
 }
 
@@ -260,57 +236,6 @@ function normalizePollInterval(value) {
     return intervalMs;
 }
 
-async function assertCurrentChat(expectedRef, expectedStableChatId = null) {
-    const currentRef = window.__TAURITAVERN__?.api?.chat?.current?.ref?.();
-    if (!sameChatRef(currentRef, expectedRef)) {
-        const expectedStable = String(expectedStableChatId || '').trim();
-        if (expectedStable) {
-            const currentStable = await resolveStableChatId(currentRef);
-            if (currentStable === expectedStable) {
-                return;
-            }
-        }
-
-        throw new Error('agent.commit_chat_mismatch: active chat changed before commit');
-    }
-}
-
-/**
- * @param {ChatRef | null | undefined} a
- * @param {ChatRef | null | undefined} b
- */
-function sameChatRef(a, b) {
-    if (!a || !b || a.kind !== b.kind) {
-        return false;
-    }
-    if (a.kind === 'character') {
-        return String(a.characterId || '') === String(b.characterId || '')
-            && String(a.fileName || '') === String(b.fileName || '');
-    }
-    return String(a.chatId || '') === String(b.chatId || '');
-}
-
-function mergeAgentExtraIntoActiveMessage(chat, extra) {
-    if (!Array.isArray(chat) || chat.length === 0) {
-        throw new Error('Cannot commit agent output because the active chat is empty');
-    }
-
-    const messageId = chat.length - 1;
-    const message = chat[messageId];
-    if (!message || typeof message !== 'object') {
-        throw new Error('Cannot commit agent output because the active message is invalid');
-    }
-
-    message.extra = mergePlainObject(message.extra, extra);
-
-    const swipeId = Number(message.swipe_id);
-    if (Array.isArray(message.swipe_info) && Number.isInteger(swipeId) && message.swipe_info[swipeId]) {
-        message.swipe_info[swipeId].extra = structuredClone(message.extra);
-    }
-
-    return messageId;
-}
-
 function mergePlainObject(base, patch) {
     const output = isPlainObject(base) ? { ...base } : {};
     if (!isPlainObject(patch)) {
@@ -330,22 +255,6 @@ function mergePlainObject(base, patch) {
 
 function isPlainObject(value) {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-async function persistActiveChat(script) {
-    const groupChats = await import('../../../scripts/group-chats.js');
-    if (groupChats.selected_group) {
-        if (typeof groupChats.saveGroupChat !== 'function') {
-            throw new Error('saveGroupChat is not available');
-        }
-        await groupChats.saveGroupChat(groupChats.selected_group, true);
-        return;
-    }
-
-    if (typeof script.saveChat !== 'function') {
-        throw new Error('saveChat is not available');
-    }
-    await script.saveChat();
 }
 
 /**

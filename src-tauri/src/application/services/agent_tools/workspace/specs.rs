@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use super::{
-    MODEL_WORKSPACE_ROOTS_FOR_MODEL, WORKSPACE_APPLY_PATCH, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
-    WORKSPACE_READ_FILE, WORKSPACE_WRITE_FILE,
+    MODEL_WORKSPACE_ROOTS_FOR_MODEL, WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH,
+    WORKSPACE_LIST_FILES, WORKSPACE_READ_FILE, WORKSPACE_WRITE_FILE,
 };
 use crate::domain::models::agent::AgentToolSpec;
 
@@ -10,6 +10,7 @@ const MODEL_WORKSPACE_LIST_FILES: &str = "workspace_list_files";
 const MODEL_WORKSPACE_READ_FILE: &str = "workspace_read_file";
 const MODEL_WORKSPACE_WRITE_FILE: &str = "workspace_write_file";
 const MODEL_WORKSPACE_APPLY_PATCH: &str = "workspace_apply_patch";
+const MODEL_WORKSPACE_COMMIT: &str = "workspace_commit";
 const MODEL_WORKSPACE_FINISH: &str = "workspace_finish";
 
 pub(in crate::application::services::agent_tools) fn workspace_list_files_spec() -> AgentToolSpec {
@@ -76,7 +77,7 @@ pub(in crate::application::services::agent_tools) fn workspace_write_file_spec()
         name: WORKSPACE_WRITE_FILE.to_string(),
         model_name: MODEL_WORKSPACE_WRITE_FILE.to_string(),
         title: "Workspace Write File".to_string(),
-        description: "Write complete UTF-8 text to a writable Agent workspace file. Use output/main.md for the final chat message body, then call workspace_finish.".to_string(),
+        description: "Write complete UTF-8 text to a writable Agent workspace file.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -138,15 +139,11 @@ pub(in crate::application::services::agent_tools) fn workspace_finish_spec() -> 
         name: WORKSPACE_FINISH.to_string(),
         model_name: MODEL_WORKSPACE_FINISH.to_string(),
         title: "Workspace Finish".to_string(),
-        description: "Finish the Agent loop after the final artifact has been written. The default final_path is output/main.md.".to_string(),
+        description: "Finish the Agent run after required foreground chat commits and workspace changes are complete.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
-                "final_path": {
-                    "type": "string",
-                    "description": "Relative workspace path for the final artifact. Defaults to output/main.md."
-                },
                 "reason": {
                     "type": "string",
                     "description": "Short completion reason."
@@ -155,6 +152,37 @@ pub(in crate::application::services::agent_tools) fn workspace_finish_spec() -> 
         }),
         output_schema: None,
         annotations: json!({ "control": true }),
+        source: "builtin".to_string(),
+    }
+}
+
+pub(in crate::application::services::agent_tools) fn workspace_commit_spec() -> AgentToolSpec {
+    AgentToolSpec {
+        name: WORKSPACE_COMMIT.to_string(),
+        model_name: MODEL_WORKSPACE_COMMIT.to_string(),
+        title: "Workspace Commit".to_string(),
+        description: "Commit a workspace text file to the current chat message. With no arguments, replace the current run message with output/main.md. append adds the file text to the same message, creating it when this run has not committed yet.".to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative visible workspace file path to publish. Defaults to output/main.md."
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["replace", "append"],
+                    "description": "replace overwrites this run's chat message; append appends to the same message. Defaults to replace."
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Short commit reason."
+                }
+            }
+        }),
+        output_schema: None,
+        annotations: json!({ "control": true, "mutating": true }),
         source: "builtin".to_string(),
     }
 }

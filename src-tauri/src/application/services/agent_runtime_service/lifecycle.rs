@@ -28,13 +28,6 @@ impl AgentRuntimeService {
                     .to_string(),
             ));
         }
-        if dto.options.auto_commit {
-            return Err(ApplicationError::ValidationError(
-                "agent.phase2b_auto_commit_unsupported: commit is owned by the frontend adapter in Agent Phase 2B"
-                    .to_string(),
-            ));
-        }
-
         let Some(prompt_snapshot) = dto.prompt_snapshot else {
             return Err(ApplicationError::ValidationError(
                 "agent.prompt_snapshot_required: Agent tool loop requires a concrete prompt snapshot"
@@ -50,13 +43,35 @@ impl AgentRuntimeService {
             ));
         }
 
-        let resolved_profile = self
+        let mut resolved_profile = self
             .profile_service
             .resolve_profile(AgentProfileResolveInput {
                 profile_id: dto.profile_id.as_deref(),
                 known_tools: self.tool_registry.specs(),
             })
             .await?;
+        let presentation = dto
+            .options
+            .presentation
+            .unwrap_or(resolved_profile.run.presentation);
+        if presentation == crate::domain::models::agent::AgentRunPresentation::Foreground
+            && (!resolved_profile
+                .tools
+                .allow
+                .iter()
+                .any(|name| name == "workspace.commit")
+                || resolved_profile
+                    .tools
+                    .deny
+                    .iter()
+                    .any(|name| name == "workspace.commit"))
+        {
+            return Err(ApplicationError::ValidationError(
+                "agent.foreground_commit_unavailable: foreground runs require workspace.commit"
+                    .to_string(),
+            ));
+        }
+        resolved_profile.run.presentation = presentation;
         let stable_chat_id = validate_stable_chat_id(&dto.stable_chat_id)?;
         let run_id = format!("run_{}", Uuid::new_v4().simple());
         let workspace_id = workspace_id_for_stable_chat_id(&dto.chat_ref, &stable_chat_id)?;
@@ -68,6 +83,7 @@ impl AgentRuntimeService {
             chat_ref: dto.chat_ref,
             generation_type: dto.generation_type,
             profile_id: Some(resolved_profile.id.as_str().to_string()),
+            presentation,
             status: AgentRunStatus::Created,
             created_at: now,
             updated_at: now,
@@ -81,6 +97,7 @@ impl AgentRuntimeService {
             json!({
                 "workspaceId": workspace_id.clone(),
                 "stableChatId": stable_chat_id.clone(),
+                "presentation": presentation,
             }),
         )
         .await?;
@@ -159,40 +176,22 @@ impl AgentRuntimeService {
 
         let sender = self.active_runs.read().await.get(&dto.run_id).cloned();
 
-        let next = match run.status {
-            AgentRunStatus::AwaitingCommit | AgentRunStatus::Committing => {
-                self.active_runs.write().await.remove(&dto.run_id);
-                let cancelled = self
-                    .transition_status(&dto.run_id, AgentRunStatus::Cancelled)
-                    .await?;
-                self.event(
-                    &dto.run_id,
-                    AgentRunEventLevel::Info,
-                    "run_cancelled",
-                    Value::Null,
-                )
+        let next = if let Some(sender) = sender {
+            let _ = sender.send(true);
+            self.transition_status(&dto.run_id, AgentRunStatus::Cancelling)
+                .await?
+        } else {
+            let cancelled = self
+                .transition_status(&dto.run_id, AgentRunStatus::Cancelled)
                 .await?;
-                cancelled
-            }
-            _ => {
-                if let Some(sender) = sender {
-                    let _ = sender.send(true);
-                    self.transition_status(&dto.run_id, AgentRunStatus::Cancelling)
-                        .await?
-                } else {
-                    let cancelled = self
-                        .transition_status(&dto.run_id, AgentRunStatus::Cancelled)
-                        .await?;
-                    self.event(
-                        &dto.run_id,
-                        AgentRunEventLevel::Info,
-                        "run_cancelled",
-                        Value::Null,
-                    )
-                    .await?;
-                    cancelled
-                }
-            }
+            self.event(
+                &dto.run_id,
+                AgentRunEventLevel::Info,
+                "run_cancelled",
+                Value::Null,
+            )
+            .await?;
+            cancelled
         };
 
         Ok(AgentRunHandleDto {

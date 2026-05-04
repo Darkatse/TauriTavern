@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::{RwLock, watch};
+use tokio::sync::{RwLock, oneshot, watch};
 
 use crate::application::services::agent_model_gateway::AgentModelGateway;
 use crate::application::services::agent_profile_service::AgentProfileService;
@@ -31,6 +31,15 @@ mod tests;
 
 pub(super) type AgentCancelReceiver = watch::Receiver<bool>;
 
+pub(super) struct PendingHostChatCommit {
+    pub(super) run_id: String,
+    pub(super) sender: oneshot::Sender<Result<HostChatCommitResult, String>>,
+}
+
+pub(super) struct HostChatCommitResult {
+    pub(super) message_id: Option<String>,
+}
+
 pub struct AgentRuntimeService {
     run_repository: Arc<dyn AgentRunRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
@@ -40,6 +49,7 @@ pub struct AgentRuntimeService {
     tool_registry: BuiltinAgentToolRegistry,
     tool_dispatcher: AgentToolDispatcher,
     active_runs: RwLock<HashMap<String, watch::Sender<bool>>>,
+    active_chat_commits: RwLock<HashMap<String, PendingHostChatCommit>>,
 }
 
 impl AgentRuntimeService {
@@ -70,6 +80,7 @@ impl AgentRuntimeService {
             tool_registry,
             tool_dispatcher,
             active_runs: RwLock::new(HashMap::new()),
+            active_chat_commits: RwLock::new(HashMap::new()),
         }
     }
 

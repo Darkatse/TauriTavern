@@ -4,7 +4,8 @@ use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestD
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolSpec,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole,
+    AgentRunPresentation, AgentToolSpec,
 };
 
 pub(super) fn request_from_prompt_snapshot(
@@ -138,6 +139,13 @@ fn build_agent_system_prompt(tools: &[AgentToolSpec], profile: &ResolvedAgentPro
             model_name(tools, "workspace.write_file")
         ));
     }
+    if has_tool(tools, "workspace.commit") {
+        lines.push(format!(
+            "Use {} to publish a visible workspace file to the current chat message. With no arguments it replaces the run's chat message with {}; mode append appends to the same message and creates it if this run has not committed yet.",
+            model_name(tools, "workspace.commit"),
+            profile.output.message_body_path
+        ));
+    }
 
     if profile
         .workspace
@@ -165,11 +173,17 @@ fn build_agent_system_prompt(tools: &[AgentToolSpec], profile: &ResolvedAgentPro
         "Writable workspace roots: {}.",
         profile.workspace.writable_roots.join(", ")
     ));
-    lines.push(format!(
-        "Write the final chat message body to {}, then call {}.",
-        profile.output.message_body_path,
-        model_name(tools, "workspace.finish")
-    ));
+    match profile.run.presentation {
+        AgentRunPresentation::Foreground => lines.push(format!(
+            "Before calling {}, make at least one successful {} call so the user can see the final chat message.",
+            model_name(tools, "workspace.finish"),
+            model_name(tools, "workspace.commit")
+        )),
+        AgentRunPresentation::Background => lines.push(format!(
+            "Background runs may call {} without committing a chat message.",
+            model_name(tools, "workspace.finish")
+        )),
+    }
     lines.push(format!(
         "Do not answer directly without finishing through {}.",
         model_name(tools, "workspace.finish")
@@ -469,9 +483,12 @@ mod tests {
             "model": {
                 "mode": "currentPromptSnapshot"
             },
+            "run": {
+                "presentation": "background"
+            },
             "instructions": instructions,
             "tools": {
-                "allow": ["workspace.write_file", "workspace.finish"],
+                "allow": ["workspace.write_file", "workspace.commit", "workspace.finish"],
                 "deny": [],
                 "toolDescriptions": {},
                 "maxRounds": 1,

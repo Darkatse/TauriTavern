@@ -10,14 +10,16 @@ use crate::domain::models::agent::profile::{
     AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentModelBinding, AgentModelBindingMode,
     AgentOutputArtifactTarget, AgentOutputPolicy, AgentPresetBinding, AgentPresetBindingMode,
     AgentProfileDefinition, AgentProfileId, AgentProfileInstructions, AgentProfileSourceTrace,
-    AgentProfileSummary, AgentSkillPolicy, AgentToolDescriptionOverride, AgentToolPolicy,
-    AgentWorkspacePolicy, DEFAULT_AGENT_PROFILE_ID, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL,
-    DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
-    DEFAULT_AGENT_TOOL_MAX_ROUNDS, ResolvedAgentOutputPolicy, ResolvedAgentProfile,
+    AgentProfileSummary, AgentRunPolicy, AgentSkillPolicy, AgentToolDescriptionOverride,
+    AgentToolPolicy, AgentWorkspacePolicy, DEFAULT_AGENT_PROFILE_ID,
+    DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN,
+    DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_ROUNDS, ResolvedAgentOutputPolicy,
+    ResolvedAgentProfile,
 };
 use crate::domain::models::agent::{
-    ArtifactSpec, ArtifactTarget, CommitPolicy, WorkspacePath, WorkspaceRootCommit,
-    WorkspaceRootLifecycle, WorkspaceRootMount, WorkspaceRootScope, WorkspaceRootSpec,
+    AgentRunPresentation, ArtifactSpec, ArtifactTarget, CommitPolicy, WorkspacePath,
+    WorkspaceRootCommit, WorkspaceRootLifecycle, WorkspaceRootMount, WorkspaceRootScope,
+    WorkspaceRootSpec,
 };
 use crate::domain::models::preset::PresetType;
 use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
@@ -147,6 +149,7 @@ impl AgentProfileService {
         validate_instructions(&definition.instructions)?;
         validate_plan_policy(&definition.plan)?;
         validate_tool_policy(&definition.tools, known_tools)?;
+        validate_run_policy(&definition.run, &definition.tools)?;
         validate_skill_policy(&definition.skills)?;
         validate_workspace_policy(&definition.workspace)?;
         let output = resolve_output_policy(&definition.output, &definition.workspace)?;
@@ -159,6 +162,7 @@ impl AgentProfileService {
             description: definition.description,
             preset: definition.preset,
             model: definition.model,
+            run: definition.run,
             instructions: definition.instructions,
             tools: definition.tools,
             skills: definition.skills,
@@ -188,6 +192,9 @@ fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> 
         model: AgentModelBinding {
             mode: AgentModelBindingMode::CurrentPromptSnapshot,
         },
+        run: AgentRunPolicy {
+            presentation: AgentRunPresentation::Foreground,
+        },
         instructions: AgentProfileInstructions {
             agent_system_prompt: None,
         },
@@ -202,6 +209,7 @@ fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> 
                 "workspace.read_file".to_string(),
                 "workspace.write_file".to_string(),
                 "workspace.apply_patch".to_string(),
+                "workspace.commit".to_string(),
                 "workspace.finish".to_string(),
             ],
             deny: Vec::new(),
@@ -425,6 +433,23 @@ fn validate_tool_policy(
                 "agent.profile_tool_budget_invalid: maxCallsPerTool.{name} must be > 0"
             )));
         }
+    }
+
+    Ok(())
+}
+
+fn validate_run_policy(
+    run: &AgentRunPolicy,
+    tools: &AgentToolPolicy,
+) -> Result<(), ApplicationError> {
+    if run.presentation == AgentRunPresentation::Foreground
+        && (!tools.allow.iter().any(|name| name == "workspace.commit")
+            || tools.deny.iter().any(|name| name == "workspace.commit"))
+    {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_commit_required: foreground profiles must expose workspace.commit"
+                .to_string(),
+        ));
     }
 
     Ok(())

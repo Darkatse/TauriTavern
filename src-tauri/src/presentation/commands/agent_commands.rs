@@ -4,10 +4,10 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::agent_dto::{
-    AgentCancelRunDto, AgentCommitDraftDto, AgentCommitResultDto, AgentFinalizeCommitDto,
-    AgentListProfilesResultDto, AgentLoadProfileResultDto, AgentPrepareCommitDto,
-    AgentProfileIdDto, AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
-    AgentRunHandleDto, AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
+    AgentCancelRunDto, AgentListProfilesResultDto, AgentLoadProfileResultDto, AgentProfileIdDto,
+    AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
+    AgentResolveChatCommitDto, AgentRunHandleDto, AgentSaveProfileDto, AgentStartRunDto,
+    AgentWorkspaceFileDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -127,29 +127,15 @@ pub async fn read_agent_workspace_file(
 }
 
 #[tauri::command]
-pub async fn prepare_agent_run_commit(
-    dto: AgentPrepareCommitDto,
+pub async fn resolve_agent_chat_commit(
+    dto: AgentResolveChatCommitDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<AgentCommitDraftDto, CommandError> {
-    log_command("prepare_agent_run_commit");
+) -> Result<(), CommandError> {
+    log_command("resolve_agent_chat_commit");
 
     app_state
         .agent_runtime_service
-        .prepare_commit(dto)
+        .resolve_chat_commit(dto)
         .await
-        .map_err(map_command_error("Failed to prepare agent run commit"))
-}
-
-#[tauri::command]
-pub async fn finalize_agent_run_commit(
-    dto: AgentFinalizeCommitDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<AgentCommitResultDto, CommandError> {
-    log_command("finalize_agent_run_commit");
-
-    app_state
-        .agent_runtime_service
-        .finalize_commit(dto)
-        .await
-        .map_err(map_command_error("Failed to finalize agent run commit"))
+        .map_err(map_command_error("Failed to resolve agent chat commit"))
 }

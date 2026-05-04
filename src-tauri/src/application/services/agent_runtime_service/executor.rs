@@ -32,6 +32,7 @@ impl AgentRuntimeService {
         match result {
             Ok(()) => {}
             Err(ApplicationError::Cancelled(message)) => {
+                self.clear_pending_chat_commits_for_run(&run_id).await;
                 let _ = self
                     .transition_status(&run_id, AgentRunStatus::Cancelled)
                     .await;
@@ -46,6 +47,7 @@ impl AgentRuntimeService {
                 self.active_runs.write().await.remove(&run_id);
             }
             Err(error) => {
+                self.clear_pending_chat_commits_for_run(&run_id).await;
                 let _ = self
                     .transition_status(&run_id, AgentRunStatus::Failed)
                     .await;
@@ -151,7 +153,7 @@ impl AgentRuntimeService {
         .await?;
         self.ensure_not_cancelled(cancel)?;
 
-        let final_path = self
+        self
             .run_tool_loop(run_id, request, &resolved_profile, cancel)
             .await?
             .ok_or_else(|| {
@@ -160,28 +162,9 @@ impl AgentRuntimeService {
                     resolved_profile.tools.max_rounds
                 ))
             })?;
-
-        self.transition_status(run_id, AgentRunStatus::AssemblingArtifacts)
-            .await?;
-        let artifact = self
-            .validate_final_artifact(run_id, &manifest, &final_path)
-            .await?;
-        self.event(
-            run_id,
-            AgentRunEventLevel::Info,
-            "artifact_assembled",
-            json!({
-                "id": resolved_profile.output.message_body_artifact_id.as_str(),
-                "path": artifact.path.as_str(),
-                "bytes": artifact.bytes,
-                "sha256": artifact.sha256,
-            }),
-        )
-        .await?;
         self.ensure_not_cancelled(cancel)?;
 
-        self.transition_status(run_id, AgentRunStatus::AwaitingCommit)
-            .await?;
+        self.finish_run(run_id).await?;
         Ok(())
     }
 }

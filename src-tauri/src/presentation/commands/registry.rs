@@ -243,8 +243,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::agent_commands::cancel_agent_run,
         super::agent_commands::read_agent_run_events,
         super::agent_commands::read_agent_workspace_file,
-        super::agent_commands::prepare_agent_run_commit,
-        super::agent_commands::finalize_agent_run_commit,
+        super::agent_commands::resolve_agent_chat_commit,
         // Agent Skill commands
         super::skill_commands::list_skills,
         super::skill_commands::preview_skill_import,

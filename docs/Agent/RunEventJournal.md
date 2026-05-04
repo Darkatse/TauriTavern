@@ -58,9 +58,8 @@ CallingModel
 DispatchingTool
 ApplyingWorkspacePatch
 CreatingCheckpoint
-AssemblingArtifacts
-AwaitingCommit
-Committing
+AwaitingHostCommit
+Finishing
 Completed
 Cancelling
 Cancelled
@@ -80,8 +79,8 @@ AwaitingApproval
 DispatchingTool
 ApplyingWorkspacePatch
 CreatingCheckpoint
-AssemblingArtifacts
-Committing
+AwaitingHostCommit
+Finishing
 Completed
 Cancelling
 Cancelled

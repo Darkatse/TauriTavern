@@ -137,7 +137,9 @@ Generate(..., dryRun = true) resolves undefined and emits GENERATE_AFTER_DATA
 startRunFromLegacyGenerate captures dryRun payload through event listener
 agentMode disables Legacy ToolManager tools in prompt snapshot
 external tools/tool_choice/tool turns are rejected
-stream true and autoCommit true are rejected
+stream true is rejected
+foreground finish before workspace.commit returns recoverable tool error
+workspace.commit append without prior commit creates the run message
 subscribe polling can read events in seq order
 readWorkspaceFile returns UTF-8 text, bytes, sha256
 workspace_list_files accepts omitted/empty/dot path as workspace root

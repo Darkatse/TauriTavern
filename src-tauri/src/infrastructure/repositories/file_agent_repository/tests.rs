@@ -10,13 +10,14 @@ use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
 use crate::domain::models::agent::profile::{
     AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentModelBinding, AgentModelBindingMode,
     AgentPresetBinding, AgentPresetBindingMode, AgentProfileId, AgentProfileInstructions,
-    AgentProfileSourceTrace, AgentSkillPolicy, AgentToolPolicy, AgentWorkspacePolicy,
-    ResolvedAgentOutputPolicy, ResolvedAgentProfile,
+    AgentProfileSourceTrace, AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy,
+    AgentWorkspacePolicy, ResolvedAgentOutputPolicy, ResolvedAgentProfile,
 };
 use crate::domain::models::agent::{
-    AgentChatRef, AgentRun, AgentRunEventLevel, AgentRunStatus, ArtifactSpec, ArtifactTarget,
-    CommitPolicy, WorkspaceInputManifest, WorkspaceManifest, WorkspacePath, WorkspaceRootCommit,
-    WorkspaceRootLifecycle, WorkspaceRootMount, WorkspaceRootScope, WorkspaceRootSpec,
+    AgentChatRef, AgentRun, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus, ArtifactSpec,
+    ArtifactTarget, CommitPolicy, WorkspaceInputManifest, WorkspaceManifest, WorkspacePath,
+    WorkspaceRootCommit, WorkspaceRootLifecycle, WorkspaceRootMount, WorkspaceRootScope,
+    WorkspaceRootSpec,
 };
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunRepository,
@@ -42,6 +43,7 @@ fn sample_run_with_id(id: &str) -> AgentRun {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -110,6 +112,9 @@ fn sample_resolved_profile(manifest: &WorkspaceManifest) -> ResolvedAgentProfile
         },
         model: AgentModelBinding {
             mode: AgentModelBindingMode::CurrentPromptSnapshot,
+        },
+        run: AgentRunPolicy {
+            presentation: AgentRunPresentation::Background,
         },
         instructions: AgentProfileInstructions {
             agent_system_prompt: None,

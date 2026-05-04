@@ -296,7 +296,7 @@ dryRun 不能被视为纯函数。它仍会触发上游事件、prompt 组合、
 - 公共 Agent 启动入口只有 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`；不保留职责不清的 `startRun()` alias。
 - `startRunFromLegacyGenerate()` 内部可以调用 Legacy dryRun，但工具循环必须在 Rust runtime 中推进，不得递归调用 `Generate()`。
 - 工具注册由 Rust runtime 独占；prompt snapshot 中不得携带 external `tools`、`tool_choice`、`role: "tool"` 或已有 `tool_calls`。
-- 当前只支持非 streaming、非 autoCommit；请求 `stream: true` 或 `autoCommit: true` 必须 fail-fast。
+- 当前只支持非 streaming；请求 `stream: true` 必须 fail-fast。Chat commit 只能由 `workspace.commit` 触发并通过 host bridge 写入。
 - 模型可修正的工具参数错误必须作为 `is_error = true` tool result 回填模型；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误必须 fail-fast。
 
 Agent run/timeline/tool event 不得伪装成上游 `GENERATION_*` 或 `TOOL_CALLS_*` 事件。上游事件属于 Legacy Generate 兼容面。

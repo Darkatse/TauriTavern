@@ -95,13 +95,14 @@ type TauriTavernAgentRunStatus =
     | 'dispatching_tool'
     | 'applying_workspace_patch'
     | 'creating_checkpoint'
-    | 'assembling_artifacts'
-    | 'awaiting_commit'
-    | 'committing'
+    | 'awaiting_host_commit'
+    | 'finishing'
     | 'completed'
     | 'cancelling'
     | 'cancelled'
     | 'failed';
+
+type TauriTavernAgentRunPresentation = 'foreground' | 'background';
 
 type TauriTavernAgentRunEvent = {
     seq: number;
@@ -128,7 +129,8 @@ type TauriTavernAgentApi = {
         profileId?: string | null;
         promptSnapshot: any;
         generationIntent?: any;
-        options?: { autoCommit?: boolean; stream?: boolean };
+        presentation?: TauriTavernAgentRunPresentation;
+        options?: { presentation?: TauriTavernAgentRunPresentation; stream?: boolean };
     }) => Promise<TauriTavernAgentRunHandle>;
     startRunFromLegacyGenerate: (input?: {
         chatRef?: TauriTavernChatRef;
@@ -137,7 +139,8 @@ type TauriTavernAgentApi = {
         generateOptions?: Record<string, any>;
         profileId?: string | null;
         generationIntent?: any;
-        options?: { autoCommit?: false; stream?: false };
+        presentation?: TauriTavernAgentRunPresentation;
+        options?: { presentation?: TauriTavernAgentRunPresentation; stream?: false };
     }) => Promise<TauriTavernAgentRunHandle>;
     cancel: (runId: string) => Promise<{
         runId: string;
@@ -160,12 +163,6 @@ type TauriTavernAgentApi = {
         handler: (event: TauriTavernAgentRunEvent) => void,
         options?: { afterSeq?: number; limit?: number; intervalMs?: number; onError?: (error: unknown) => void },
     ) => TauriTavernHostUnsubscribe;
-    commit: (input: { runId: string; messageId?: string | number }) => Promise<{
-        runId: string;
-        status: TauriTavernAgentRunStatus;
-    }>;
-    prepareCommit: (input: { runId: string }) => Promise<any>;
-    finalizeCommit: (input: { runId: string; messageId?: string | number }) => Promise<any>;
     approveToolCall: () => never;
     listRuns: () => never;
     readDiff: () => never;

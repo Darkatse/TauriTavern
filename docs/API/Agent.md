@@ -26,9 +26,6 @@ type TauriTavernAgentApi = {
   cancel(runId: string): Promise<AgentRunHandle>;
   readEvents(input: AgentReadEventsInput): Promise<AgentReadEventsResult>;
   readWorkspaceFile(input: AgentReadWorkspaceFileInput): Promise<AgentWorkspaceFile>;
-  commit(input: AgentCommitInput): Promise<AgentCommitResult>;
-  prepareCommit(input: AgentPrepareCommitInput): Promise<AgentCommitDraft>;
-  finalizeCommit(input: AgentFinalizeCommitInput): Promise<AgentCommitResult>;
 
   approveToolCall(): never;
   listRuns(): never;
@@ -56,8 +53,9 @@ type AgentStartRunFromLegacyGenerateInput = {
   generateOptions?: unknown;
   profileId?: string;
   generationIntent?: AgentGenerationIntent;
+  presentation?: 'foreground' | 'background';
   options?: {
-    autoCommit?: false;
+    presentation?: 'foreground' | 'background';
     stream?: false;
   };
 };
@@ -71,7 +69,7 @@ type AgentStartRunFromLegacyGenerateInput = {
 - 当前只支持 `main_api = openai` 的 chat-completion 路径。
 - 必须禁用 Legacy ToolManager tools；Agent tools 只能由 Rust runtime 注册。
 - `worldInfoActivation` 必须来自本次 dryRun 的最终 `WORLDINFO_SCAN_DONE`，不能读取全局 last activation 当作 run 真相。
-- `stream` 与 `autoCommit` 必须为 `false` 或省略。
+- `stream` 必须为 `false` 或省略；`presentation` 可显式覆盖 profile 默认前台/后台语义。
 - dryRun 没有产出 messages、已有 tool turns、已有 external tools 都必须 reject，不回退 Legacy Generate。
 
 注意：`Generate(..., dryRun = true)` 不返回 payload。它只 emit `GENERATE_AFTER_DATA`，然后 resolve `undefined`。调用方不应写 `const payload = await Generate(..., true)`；捕获逻辑由 `startRunFromLegacyGenerate()` 内部 adapter 负责。
@@ -88,8 +86,9 @@ type AgentStartRunWithPromptSnapshotInput = {
   generationIntent?: AgentGenerationIntent;
   workspaceMode?: 'new-run' | 'resume-run';
   resumeRunId?: string;
+  presentation?: 'foreground' | 'background';
   options?: {
-    autoCommit?: boolean;
+    presentation?: 'foreground' | 'background';
     stream?: boolean;
   };
 };
@@ -135,7 +134,7 @@ Public Host ABI 可以允许调用方省略 `stableChatId`，但 `api.agent.star
 - `promptSnapshot.chatCompletionPayload` 必须包含 chat-completion payload object。
 - 如果调用方希望 `worldinfo_read_activated` 返回非错误结果，必须在 prompt snapshot 中提供本次 run 的 `worldInfoActivation`。
 - 当前拒绝已有 `tools`、`tool_choice`、`role: "tool"` 或已有 `tool_calls` 的外部 tool turns。
-- 当前拒绝 `stream: true` 与 `autoCommit: true`。
+- 当前拒绝 `stream: true`。
 - `workspaceMode` / `resumeRunId` 当前只是后续字段，不应作为当前行为依赖。
 - 参数无效必须 reject，不静默回退 Legacy Generate。
 
@@ -287,45 +286,15 @@ type AgentCommitResult = {
 };
 ```
 
-Commit 必须：
+Chat commit 不是公开 Host API 方法，而是 Agent tool 与 host bridge 的内部握手：
 
-- 读取 manifest。
-- 校验 required artifact。
-- 校验当前 active chat 与 run 的 `stableChatId` 一致。
-- 通过既有 chat 保存契约写入。
-- 写 agent metadata。
-- 追加 `run_committed` event。
-
-当前 `commit()` 是前端桥接 helper：先调用 `prepareCommit()`，校验当前 active chat 与 run 的 `chatRef/stableChatId` 一致，调用上游 `saveReply()` 写入聊天，再调用 `finalizeCommit()`。
-
-`prepareCommit()` 返回 draft：
-
-```ts
-type AgentPrepareCommitInput = {
-  runId: string;
-};
-
-type AgentCommitDraft = {
-  runId: string;
-  stableChatId: string;
-  chatRef: AgentChatRef;
-  generationType: string;
-  checkpoint: unknown;
-  message: {
-    mes: string;
-    extra?: unknown;
-  };
-};
-```
-
-`finalizeCommit()` 只允许在 backend run 状态为 `committing` 时调用：
-
-```ts
-type AgentFinalizeCommitInput = {
-  runId: string;
-  messageId?: string | number;
-};
-```
+- 模型调用 `workspace.commit`，无参数时默认 `replace output/main.md`。
+- Rust runtime 读取 workspace 文件、校验 required message body、创建 checkpoint，并写 `chat_commit_requested` event。
+- 前端 host bridge 校验当前 active chat 与 run 的 `chatRef/stableChatId` 一致。
+- bridge 通过上游 `saveReply()` 写入聊天，再调用 `resolve_agent_chat_commit`。
+- `replace` 后续使用 `appendFinal` 覆盖同一消息；`append` 后续使用 `append` 追加同一消息。
+- `append` 在本 run 尚无 commit 时不会报错，会创建本 run 的消息楼层。
+- 前台 run 在 `workspace.finish` 前必须至少成功 commit 一次；后台 run 可无 chat commit 完成。
 
 ## 13. Event Envelope
 
@@ -382,8 +351,7 @@ start_agent_run(dto)
 cancel_agent_run(dto)
 read_agent_run_events(dto)
 read_agent_workspace_file(dto)
-prepare_agent_run_commit(dto)
-finalize_agent_run_commit(dto)
+resolve_agent_chat_commit(dto)
 ```
 
 Command 层必须是薄封装。Agent loop 不写在 command 内。
@@ -427,7 +395,8 @@ Agent Mode on：
 | `workspace.read_file` | `workspace_read_file` | 读取 UTF-8 文本文件并返回行号；完整读取记录 read-state |
 | `workspace.write_file` | `workspace_write_file` | 写 UTF-8 文本到 manifest 可写 roots，当前为 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/` |
 | `workspace.apply_patch` | `workspace_apply_patch` | 单文件 `old_string` / `new_string` 精确替换，要求已完整读取或由本 run 创建/修改 |
-| `workspace.finish` | `workspace_finish` | 结束工具循环，默认 final artifact 为 `output/main.md` |
+| `workspace.commit` | `workspace_commit` | 提交可见 workspace 文件到当前聊天；无参数默认 replace `output/main.md`；append 首次创建、后续追加同一消息 |
+| `workspace.finish` | `workspace_finish` | 结束工具循环；前台 run 要求已有成功 commit，后台 run 可直接结束 |
 
 当前不存在 MCP、shell 或 extension bridge 工具。
 
@@ -442,7 +411,7 @@ const agent = window.__TAURITAVERN__.api.agent;
 
 const run = await agent.startRunFromLegacyGenerate({
   generationType: 'normal',
-  options: { stream: false, autoCommit: false },
+  options: { stream: false, presentation: 'foreground' },
 });
 
 const stop = agent.subscribe(run.runId, event => console.log(event));

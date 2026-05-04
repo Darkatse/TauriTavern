@@ -19,8 +19,9 @@ impl AgentRuntimeService {
         mut request: AgentModelRequest,
         profile: &ResolvedAgentProfile,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<Option<WorkspacePath>, ApplicationError> {
+    ) -> Result<Option<usize>, ApplicationError> {
         let mut tool_session = AgentToolSession::default();
+        let mut commit_count = 0_usize;
         for round in 1..=profile.tools.max_rounds {
             self.transition_status(run_id, AgentRunStatus::CallingModel)
                 .await?;
@@ -77,17 +78,24 @@ impl AgentRuntimeService {
 
             let assistant_message = assistant_message_for_next_turn(&response)?;
             let mut tool_results = Vec::with_capacity(tool_calls.len());
-            let mut final_path = None;
+            let mut finished = false;
 
             for call in tool_calls {
-                if final_path.is_some() {
+                if finished {
                     return Err(ApplicationError::ValidationError(
                         "agent.tool_after_finish: model requested additional tools after workspace.finish".to_string(),
                     ));
                 }
 
                 let outcome = self
-                    .dispatch_tool_call(run_id, &call, &mut tool_session, profile)
+                    .dispatch_tool_call(
+                        run_id,
+                        &call,
+                        &mut tool_session,
+                        profile,
+                        commit_count,
+                        cancel,
+                    )
                     .await?;
                 match &outcome.effect {
                     AgentToolEffect::WorkspaceFileWritten { file } => {
@@ -126,8 +134,28 @@ impl AgentRuntimeService {
                         )
                         .await?;
                     }
-                    AgentToolEffect::Finish { final_path: path } => {
-                        final_path = Some(path.clone());
+                    AgentToolEffect::ChatCommitRequested { .. } => {}
+                    AgentToolEffect::ChatCommitted {
+                        path,
+                        mode,
+                        message_id,
+                    } => {
+                        commit_count += 1;
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Info,
+                            "chat_commit_recorded",
+                            json!({
+                                "commitCount": commit_count,
+                                "path": path.as_str(),
+                                "mode": mode,
+                                "messageId": message_id.as_deref(),
+                            }),
+                        )
+                        .await?;
+                    }
+                    AgentToolEffect::Finish => {
+                        finished = true;
                     }
                     AgentToolEffect::None => {}
                 }
@@ -136,15 +164,15 @@ impl AgentRuntimeService {
                 self.ensure_not_cancelled(cancel)?;
             }
 
-            if let Some(final_path) = final_path {
+            if finished {
                 self.event(
                     run_id,
                     AgentRunEventLevel::Info,
                     "agent_loop_finished",
-                    json!({ "finalPath": final_path.as_str(), "round": round }),
+                    json!({ "commitCount": commit_count, "round": round }),
                 )
                 .await?;
-                return Ok(Some(final_path));
+                return Ok(Some(commit_count));
             }
 
             let tool_results = self

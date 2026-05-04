@@ -32,9 +32,6 @@ api.agent.subscribe(runId, handler, options?)
 api.agent.cancel(runId)
 api.agent.readEvents(input)
 api.agent.readWorkspaceFile(input)
-api.agent.prepareCommit(input)
-api.agent.commit(input)
-api.agent.finalizeCommit(input)
 ```
 
 `startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` 支持可选 `profileId`。后端已注册 Profile 管理 Tauri commands（`list_agent_profiles` / `load_agent_profile` / `save_agent_profile` / `delete_agent_profile`），但尚未封装到 `window.__TAURITAVERN__.api.agent` 与 `src/types.d.ts`；正式 UI 属于后续阶段。
@@ -60,7 +57,6 @@ api.skill.exportSkill(input)
 当前显式拒绝：
 
 - `stream: true`
-- `autoCommit: true`
 - prompt snapshot 中已有 external `tools`
 - external `tool_choice`
 - 已有 `role: "tool"` 或 assistant `tool_calls`
@@ -84,7 +80,8 @@ _tauritavern/agent-profiles/
 - `tools.toolDescriptions` 省略或为空时使用默认工具 description；设置时只替换 model-facing ToolSpec copy 的工具总 description 与参数 description。
 - `skills.visible` / `skills.deny` 控制 `skill.list` 与 `skill.read`，`maxReadCharsPerCall` / `maxReadCharsPerRun` 控制 Skill 读取预算。
 - `workspace.visibleRoots` / `workspace.writableRoots` 只能收窄 root universe：`output`、`scratch`、`plan`、`summaries`、`persist`。
-- `output.artifacts` 当前必须包含且只能包含一个 `messageBody` artifact；`workspace.finish.final_path` 必须与它一致。
+- `run.presentation` 区分 `foreground` / `background`，默认 built-in profile 为前台；前台 Profile 必须暴露 `workspace.commit`。
+- `output.artifacts` 当前必须包含且只能包含一个 `messageBody` artifact；`workspace.commit` 默认发布该 artifact 的 path。
 - Plan Mode schema 已存在，但当前只支持 `plan.mode = "none"`；其他 mode fail-fast。
 - 每个 run 会在 `input/resolved_profile.json` 固化解析结果。
 
@@ -103,7 +100,8 @@ Tool registry 只产 canonical `AgentToolSpec`。Provider-facing alias 由 gatew
 | `workspace.read_file` | `workspace_read_file` | read-only | 读取 UTF-8 文本文件并返回行号；完整读取会记录 read-state。 |
 | `workspace.write_file` | `workspace_write_file` | mutating | 写完整 UTF-8 文件；成功后记录 read-state 并创建 checkpoint。 |
 | `workspace.apply_patch` | `workspace_apply_patch` | mutating | 单文件 `old_string` / `new_string` 精确替换；要求已完整读取或由本 run 创建/修改。 |
-| `workspace.finish` | `workspace_finish` | control | 结束工具循环；final artifact path 来自 resolved Profile 的 `messageBody` artifact。 |
+| `workspace.commit` | `workspace_commit` | control/mutating | 将可见 workspace 文件提交到当前聊天；无参数等价于 `replace output/main.md`，`append` 首次创建消息、后续追加同一消息。 |
+| `workspace.finish` | `workspace_finish` | control | 结束工具循环；前台 run 必须已成功 commit，后台 run 可无 commit。 |
 
 当前没有 MCP 工具、shell 工具、外部 extension tools、tool approval 或 profile routing。
 
@@ -196,18 +194,19 @@ summaries/
 persist/
 ```
 
-实际 roots 由 resolved Profile 收窄后写入 run manifest。`persist/` 是 chat workspace 级持久 root 的 run projection。run 中修改 `persist/` 只影响本 run；`prepareCommit()` 会预检 persistent changes 与并发冲突，`finalizeCommit()` 成功后才 promote 回 `chats/<workspace-id>/persist/`。
+实际 roots 由 resolved Profile 收窄后写入 run manifest。`persist/` 是 chat workspace 级持久 root 的 run projection。run 中修改 `persist/` 只影响本 run；`workspace.finish` 收尾成功时 promote 回 `chats/<workspace-id>/persist/`。
 
-Agent commit 当前由前端桥接：
+Chat commit 当前由模型显式调用 `workspace.commit` 触发，并由前端 host bridge 执行：
 
 ```text
-prepareCommit()
-  -> 前端 saveReply()
-  -> finalizeCommit()
-  -> promote persist/
+workspace.commit(path?, mode?)
+  -> backend 读取 workspace file / checkpoint
+  -> chat_commit_requested event
+  -> 前端 saveReply(normal | append | appendFinal)
+  -> resolve_agent_chat_commit
 ```
 
-Commit 必须遵守 SillyTavern/windowed payload 保存契约，不能直接写 chat JSONL。
+`mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。Commit 必须遵守 SillyTavern/windowed payload 保存契约，不能直接写 chat JSONL。
 
 ## 当前 Run Flow
 
@@ -232,18 +231,16 @@ initialize_run 写 manifest / prompt snapshot / resolved profile / persist proje
   ↓
 prepare_agent_tool_request 按 Profile 生成 AgentModelRequest 与 model-facing tool specs
   ↓
-model -> tool -> model -> ... -> workspace.finish
+model -> tool -> model -> ... -> workspace.commit? -> workspace.finish
   ↓
 workspace mutation 成功后 checkpoint
   ↓
-validate_final_artifact(profile messageBody artifact)
+workspace.commit 成功后 host 写入同一条 chat message
   ↓
-状态进入 awaiting_commit
-  ↓
-prepareCommit / saveReply / finalizeCommit
+workspace.finish 结束 run，并提交 persist projection
 ```
 
-工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会以 `model.tool_call_required` 失败。
+工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会以 `model.tool_call_required` 失败。前台 run 在 `workspace.finish` 前必须至少成功 `workspace.commit` 一次；后台 run 可以无 chat commit 结束。
 
 ## 当前 Run Events
 
@@ -270,12 +267,11 @@ context_tool_result_hydrated
 provider_state_updated
 model_response_stored
 agent_loop_finished
-artifact_assembled
-commit_started
-persistent_changes_prepared / persistent_changes_prepare_failed
-commit_draft_created
+chat_commit_started
+chat_commit_requested
+chat_commit_completed / chat_commit_failed
+chat_commit_recorded
 persistent_changes_committed / persistent_changes_commit_failed
-run_committed
 run_completed
 run_cancel_requested
 run_cancelled
@@ -347,7 +343,7 @@ const agent = window.__TAURITAVERN__.api.agent;
 const run = await agent.startRunFromLegacyGenerate({
   generationType: 'normal',
   // profileId: 'default-writer',
-  options: { stream: false, autoCommit: false },
+  options: { stream: false, presentation: 'foreground' },
 });
 
 const stop = agent.subscribe(run.runId, event => console.log(event));
@@ -377,7 +373,7 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - 将后端 Profile 管理 commands 封装到前端 Host ABI 与类型。
 - 将 Profile overlay 扩展到 preset / character resolver。
 - 明确 provider/model switch policy；当前 Profile 不切换模型。
-- 实现 readDiff、rollback、listRuns、resume-run、autoCommit/streaming 的明确策略。
+- 实现 readDiff、rollback、listRuns、resume-run、streaming 的明确策略。
 
 ## 每次 Agent 相关变更必须更新
 

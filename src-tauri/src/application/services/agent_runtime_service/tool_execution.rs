@@ -10,7 +10,8 @@ use crate::application::services::agent_tools::{
 };
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
-    AgentRunEventLevel, AgentRunStatus, AgentToolCall, AgentToolResult, WorkspacePath,
+    AgentRunEventLevel, AgentRunPresentation, AgentRunStatus, AgentToolCall, AgentToolResult,
+    WorkspacePath,
 };
 
 impl AgentRuntimeService {
@@ -20,6 +21,8 @@ impl AgentRuntimeService {
         call: &AgentToolCall,
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
+        commit_count: usize,
+        cancel: &mut super::AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let arguments_ref = self.store_tool_arguments(run_id, call).await?;
         self.event(
@@ -119,6 +122,32 @@ impl AgentRuntimeService {
             .await
         {
             Ok(outcome) => {
+                let outcome = match outcome.effect.clone() {
+                    AgentToolEffect::Finish
+                        if profile.run.presentation == AgentRunPresentation::Foreground
+                            && commit_count == 0 =>
+                    {
+                        recoverable_tool_error(
+                            call,
+                            "agent.foreground_commit_required",
+                            "Foreground Agent runs must call workspace.commit successfully before workspace.finish.",
+                            outcome.elapsed_ms,
+                        )
+                    }
+                    AgentToolEffect::ChatCommitRequested { path, mode, reason } => {
+                        self.perform_host_chat_commit(
+                            run_id,
+                            call,
+                            path,
+                            mode,
+                            reason,
+                            outcome.elapsed_ms,
+                            cancel,
+                        )
+                        .await?
+                    }
+                    _ => outcome,
+                };
                 self.record_tool_outcome(run_id, &outcome).await?;
                 Ok(outcome)
             }

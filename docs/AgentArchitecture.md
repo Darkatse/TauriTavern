@@ -147,7 +147,7 @@ LLM Gateway / provider adapter
 - Public Host ABI 入口为 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`，没有 `startRun()` alias。
 - `startRunFromLegacyGenerate()` 是当前推荐的兼容桥；它捕获 Legacy prompt 语义与本轮最终 `worldInfoActivation`，同时禁用 Legacy ToolManager tools。
 - `startRunWithPromptSnapshot()` 是低层测试/集成入口；调用方必须提供不含 external tools/tool turns 的 chat completion payload。
-- 后端当前开放 `chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`skill.list`、`skill.read`、`workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish` 十个内建工具，对模型暴露为 provider-safe alias。
+- 后端当前开放 `chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`skill.list`、`skill.read`、`workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.commit`、`workspace.finish` 十一个内建工具，对模型暴露为 provider-safe alias。
 - Agent runtime 当前使用 `AgentModelRequest` / `AgentModelResponse` / `AgentModelContentPart` 作为内部模型语义，不再直接读写 OpenAI-compatible raw JSON。
 - `AgentModelGateway` 仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，在 canonical IR 与现有 provider payload pipeline 之间转换。
 - Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native metadata 以 opaque `Native` part 保存和回放；tool call id 缺失会 fail-fast。
@@ -155,8 +155,8 @@ LLM Gateway / provider adapter
 - 前 5 轮 `workspace.write_file` / `workspace.apply_patch` 成功结果会把完整文件内容 hydrate 到下一轮模型上下文。
 - `chat.search` 与 `chat.read_messages` 只读取当前 run 绑定的聊天，不允许模型指定任意 chat target；message index 从 0 开始，JSONL header 不计入消息。
 - `worldinfo.read_activated` 只读取本次 run prompt snapshot 中 materialized 的激活结果，不把全局 last activation 当作运行时真相。
-- 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，只有 `finalizeCommit()` 成功后才 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`model-responses/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
-- 工具循环最多 80 轮，必须以 `workspace.finish` 结束；模型直接输出文本会 fail-fast。
+- 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，`workspace.finish` 收尾成功后 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`model-responses/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
+- 工具循环最多 80 轮，必须以 `workspace.finish` 结束；前台 run 在 finish 前必须至少成功 `workspace.commit` 一次，后台 run 可无 chat commit；模型直接输出文本会 fail-fast。
 - 模型可修正的工具错误以 `is_error = true` tool result 回填下一轮；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
 - Skill profile policy、readDiff、rollback、resume-run、tool approval、profile routing、MCP、timeline UI、streaming Agent loop、主发送按钮 Agent toggle 仍未实现。
 
@@ -364,10 +364,8 @@ Running
   ├─ CreatingCheckpoint
   ├─ Summarizing?
   └─ SwitchingProfile?
-  ↓
-AssemblingArtifacts
-  ↓
-Committing
+  ├─ AwaitingHostCommit
+  └─ Finishing
   ↓
 Completed
 ```

@@ -35,13 +35,26 @@ pub enum AgentRunStatus {
     DispatchingTool,
     ApplyingWorkspacePatch,
     CreatingCheckpoint,
-    AssemblingArtifacts,
-    AwaitingCommit,
-    Committing,
+    AwaitingHostCommit,
+    Finishing,
     Completed,
     Cancelling,
     Cancelled,
     Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunPresentation {
+    Foreground,
+    Background,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentChatCommitMode {
+    Replace,
+    Append,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +66,7 @@ pub struct AgentRun {
     pub chat_ref: AgentChatRef,
     pub generation_type: String,
     pub profile_id: Option<String>,
+    pub presentation: AgentRunPresentation,
     pub status: AgentRunStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

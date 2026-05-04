@@ -11,7 +11,9 @@ use super::world_info;
 use crate::application::errors::ApplicationError;
 use crate::application::services::skill_service::SkillService;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
-use crate::domain::models::agent::{AgentToolCall, AgentToolResult, WorkspacePath};
+use crate::domain::models::agent::{
+    AgentChatCommitMode, AgentToolCall, AgentToolResult, WorkspacePath,
+};
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::group_chat_repository::GroupChatRepository;
@@ -35,9 +37,17 @@ pub enum AgentToolEffect {
         replacements: usize,
         old_sha256: String,
     },
-    Finish {
-        final_path: WorkspacePath,
+    ChatCommitRequested {
+        path: WorkspacePath,
+        mode: AgentChatCommitMode,
+        reason: Option<String>,
     },
+    ChatCommitted {
+        path: WorkspacePath,
+        mode: AgentChatCommitMode,
+        message_id: Option<String>,
+    },
+    Finish,
 }
 
 pub struct AgentToolDispatcher {
@@ -116,7 +126,10 @@ impl AgentToolDispatcher {
                 workspace::apply_patch(self.workspace_repository.as_ref(), run_id, call, session)
                     .await?
             }
-            workspace::WORKSPACE_FINISH => workspace::finish(call, profile)?,
+            workspace::WORKSPACE_COMMIT => {
+                workspace::commit(self.workspace_repository.as_ref(), run_id, call, profile).await?
+            }
+            workspace::WORKSPACE_FINISH => workspace::finish(call)?,
             other => (
                 AgentToolResult {
                     call_id: call.id.clone(),

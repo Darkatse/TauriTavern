@@ -150,15 +150,16 @@
 - 不把扫描循环控制、预算内部状态、可变中间态对象直接升格为 Public Contract。
 - `openEntry()` 必须复用上游 World Info 模块自身的导航能力；宿主 ABI 层不得直接依赖 `#WorldInfo`、`#world_editor_select`、`[uid=\"...\"]` 等 DOM 细节。
 
-- `api.agent`：TauriTavern Agent Run API。用于启动 Agent Run、订阅 run event、取消、审批工具、读取 workspace 文件/diff、rollback/commit。
+- `api.agent`：TauriTavern Agent Run API。用于启动 Agent Run、订阅 run event、取消、审批工具、读取 workspace 文件/diff、rollback。
   - 详细参考见：`docs/API/Agent.md`。
-  - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`subscribe()`、`prepareCommit()`、`finalizeCommit()`、`commit()`。
+  - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`subscribe()`。
+  - Chat commit 由模型调用 `workspace.commit` 触发；前端内部 host bridge 响应 `chat_commit_requested`，通过上游 `saveReply()` 写同一消息楼层，再调用 `resolve_agent_chat_commit`。
   - `startRunFromLegacyGenerate()` 是当前兼容入口：使用 Legacy dryRun 生成 `promptSnapshot`，再进入 Rust-owned Agent loop。
   - `startRunWithPromptSnapshot()` 必须在调用 backend 前解析 `stableChatId`；`workspaceId` 由 `kind + stableChatId` 派生，`runId` 仍表示单次执行。
   - 不存在公共 `startRun()` alias；启动入口必须通过名称表达来源和职责。
   - Legacy `Generate(..., dryRun = true)` 不返回 payload；Agent adapter 必须通过 `GENERATE_AFTER_DATA` 事件捕获 `generate_data`。
-  - 当前模型可见工具为 `chat_search`、`chat_read_messages`、`worldinfo_read_activated`、`skill_list`、`skill_read`、`workspace_list_files`、`workspace_read_file`、`workspace_write_file`、`workspace_apply_patch`、`workspace_finish`；工具注册由 Rust runtime 独占，前端 Legacy ToolManager tools 必须禁用。
-  - 当前显式拒绝 `stream: true`、`autoCommit: true`、external tools、external tool choice 和已有 tool turns。
+  - 当前模型可见工具为 `chat_search`、`chat_read_messages`、`worldinfo_read_activated`、`skill_list`、`skill_read`、`workspace_list_files`、`workspace_read_file`、`workspace_write_file`、`workspace_apply_patch`、`workspace_commit`、`workspace_finish`；工具注册由 Rust runtime 独占，前端 Legacy ToolManager tools 必须禁用。
+  - 当前显式拒绝 `stream: true`、external tools、external tool choice 和已有 tool turns。
   - 可恢复工具错误会写入 Agent journal 并回填下一轮模型；宿主级错误仍让 run failed。
   - Agent event 属于 Agent Run journal/timeline 投影，不得伪装成上游 SillyTavern `GENERATION_*` / `TOOL_CALLS_*` 事件。
   - `subscribe()` 当前是 polling wrapper，必须返回幂等 `unsubscribe`；底层 Tauri 事件名与 Rust command 名属于 Internal，不是第三方 Public Contract。

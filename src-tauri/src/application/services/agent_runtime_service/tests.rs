@@ -12,7 +12,7 @@ use uuid::Uuid;
 use super::AgentRuntimeService;
 use super::artifacts::build_agent_manifest;
 use super::ids::workspace_id_for_stable_chat_id;
-use crate::application::dto::agent_dto::{AgentFinalizeCommitDto, AgentPrepareCommitDto};
+use crate::application::dto::agent_dto::AgentResolveChatCommitDto;
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_model_gateway::{
@@ -29,7 +29,7 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
     AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentModelRole, AgentRun,
-    AgentRunEventLevel, AgentRunStatus, AgentToolCall, WorkspacePath,
+    AgentRunEventLevel, AgentRunPresentation, AgentRunStatus, AgentToolCall, WorkspacePath,
 };
 use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use crate::domain::repositories::agent_run_repository::{
@@ -61,7 +61,7 @@ fn workspace_id_uses_stable_chat_id_not_character_chat_file_name() {
 }
 
 #[tokio::test]
-async fn agent_loop_writes_artifact_and_reaches_awaiting_commit() {
+async fn agent_loop_writes_artifact_and_completes() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-loop-{}",
         Uuid::new_v4().simple()
@@ -77,6 +77,7 @@ async fn agent_loop_writes_artifact_and_reaches_awaiting_commit() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -155,7 +156,7 @@ async fn agent_loop_writes_artifact_and_reaches_awaiting_commit() {
         .expect("agent loop");
 
     let saved = repository.load_run(&run.id).await.expect("load run");
-    assert_eq!(saved.status, AgentRunStatus::AwaitingCommit);
+    assert_eq!(saved.status, AgentRunStatus::Completed);
 
     let artifact = repository
         .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
@@ -237,6 +238,7 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -346,7 +348,7 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
         .expect("agent loop");
 
     let saved = repository.load_run(&run.id).await.expect("load run");
-    assert_eq!(saved.status, AgentRunStatus::AwaitingCommit);
+    assert_eq!(saved.status, AgentRunStatus::Completed);
 
     let artifact = repository
         .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
@@ -375,7 +377,7 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
 }
 
 #[tokio::test]
-async fn finalize_commit_promotes_persistent_workspace_projection() {
+async fn finish_promotes_persistent_workspace_projection() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-persist-loop-{}",
         Uuid::new_v4().simple()
@@ -391,6 +393,7 @@ async fn finalize_commit_promotes_persistent_workspace_projection() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -476,19 +479,6 @@ async fn finalize_commit_promotes_persistent_workspace_projection() {
         )
         .await
         .expect("agent loop");
-    service
-        .prepare_commit(AgentPrepareCommitDto {
-            run_id: run.id.clone(),
-        })
-        .await
-        .expect("prepare commit");
-    service
-        .finalize_commit(AgentFinalizeCommitDto {
-            run_id: run.id.clone(),
-            message_id: Some("message_1".to_string()),
-        })
-        .await
-        .expect("finalize commit");
 
     let next_run = AgentRun {
         id: "run_persist_loop_next".to_string(),
@@ -540,6 +530,309 @@ async fn finalize_commit_promotes_persistent_workspace_projection() {
 }
 
 #[tokio::test]
+async fn foreground_run_commits_chat_message_before_finish() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-foreground-commit-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_foreground_commit_test".to_string(),
+        workspace_id: "chat_foreground_commit_test".to_string(),
+        stable_chat_id: "stable_foreground_commit_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        presentation: AgentRunPresentation::Foreground,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_write",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"foreground answer\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_commit",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_commit",
+                                "arguments": "{}"
+                            }
+                        },
+                        {
+                            "id": "call_finish",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_finish",
+                                "arguments": "{}"
+                            }
+                        }
+                    ]
+                }
+            }]
+        }),
+    ]));
+
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        test_profile_service(&root),
+    ));
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": [{ "role": "user", "content": "write visibly" }]
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.run.presentation = AgentRunPresentation::Foreground;
+
+    let resolver = tokio::spawn(resolve_next_chat_commit(
+        service.clone(),
+        repository.clone(),
+        run.id.clone(),
+        "message_1",
+    ));
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("agent loop");
+    resolver.await.expect("resolver task");
+
+    let saved = repository.load_run(&run.id).await.expect("load run");
+    assert_eq!(saved.status, AgentRunStatus::Completed);
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 100,
+            },
+        )
+        .await
+        .expect("read events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "chat_commit_requested")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "chat_commit_completed")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "run_completed")
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn foreground_finish_before_commit_returns_recoverable_error() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-foreground-finish-guard-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_foreground_finish_guard_test".to_string(),
+        workspace_id: "chat_foreground_finish_guard_test".to_string(),
+        stable_chat_id: "stable_foreground_finish_guard_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        presentation: AgentRunPresentation::Foreground,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_finish_too_early",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_finish",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_write_after_guard",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_write_file",
+                                "arguments": "{\"path\":\"output/main.md\",\"content\":\"guarded answer\"}"
+                            }
+                        },
+                        {
+                            "id": "call_commit_after_guard",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_commit",
+                                "arguments": "{\"mode\":\"append\"}"
+                            }
+                        }
+                    ]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_finish_after_commit",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_finish",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }),
+    ]));
+
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        test_profile_service(&root),
+    ));
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": [{ "role": "user", "content": "finish too early then recover" }]
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.run.presentation = AgentRunPresentation::Foreground;
+
+    let resolver = tokio::spawn(resolve_next_chat_commit(
+        service.clone(),
+        repository.clone(),
+        run.id.clone(),
+        "message_1",
+    ));
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("agent loop");
+    resolver.await.expect("resolver task");
+
+    let saved = repository.load_run(&run.id).await.expect("load run");
+    assert_eq!(saved.status, AgentRunStatus::Completed);
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 100,
+            },
+        )
+        .await
+        .expect("read events");
+    let guard_failure = events
+        .iter()
+        .find(|event| {
+            event.event_type == "tool_call_failed"
+                && event.payload["callId"] == "call_finish_too_early"
+        })
+        .expect("foreground finish guard failure");
+    assert_eq!(guard_failure.level, AgentRunEventLevel::Warn);
+    assert_eq!(
+        guard_failure.payload["errorCode"],
+        "agent.foreground_commit_required"
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn agent_loop_returns_recoverable_tool_errors_to_model() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-tool-error-loop-{}",
@@ -556,6 +849,7 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -649,7 +943,7 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
         .expect("agent loop");
 
     let saved = repository.load_run(&run.id).await.expect("load run");
-    assert_eq!(saved.status, AgentRunStatus::AwaitingCommit);
+    assert_eq!(saved.status, AgentRunStatus::Completed);
 
     let artifact = repository
         .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
@@ -703,6 +997,7 @@ async fn workspace_patch_requires_full_read_state() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -808,6 +1103,7 @@ async fn dispatcher_searches_and_reads_current_chat_messages() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -916,6 +1212,7 @@ async fn dispatcher_reads_worldinfo_activation_from_run_snapshot() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -1004,13 +1301,58 @@ fn test_profile_service(root: &Path) -> Arc<AgentProfileService> {
 
 async fn test_resolved_profile(root: &Path) -> ResolvedAgentProfile {
     let registry = BuiltinAgentToolRegistry::phase2c();
-    test_profile_service(root)
+    let mut profile = test_profile_service(root)
         .resolve_profile(AgentProfileResolveInput {
             profile_id: None,
             known_tools: registry.specs(),
         })
         .await
-        .expect("resolve default profile")
+        .expect("resolve default profile");
+    profile.run.presentation = AgentRunPresentation::Background;
+    profile
+}
+
+async fn resolve_next_chat_commit(
+    service: Arc<AgentRuntimeService>,
+    repository: Arc<FileAgentRepository>,
+    run_id: String,
+    message_id: &'static str,
+) {
+    let commit_id = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let events = repository
+                .read_events(
+                    &run_id,
+                    AgentRunEventReadQuery {
+                        after_seq: Some(0),
+                        before_seq: None,
+                        limit: 100,
+                    },
+                )
+                .await
+                .expect("read events");
+            if let Some(commit_id) = events
+                .iter()
+                .find(|event| event.event_type == "chat_commit_requested")
+                .and_then(|event| event.payload["commitId"].as_str())
+            {
+                return commit_id.to_string();
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("chat commit request");
+
+    service
+        .resolve_chat_commit(AgentResolveChatCommitDto {
+            run_id,
+            commit_id,
+            message_id: Some(message_id.to_string()),
+            error: None,
+        })
+        .await
+        .expect("resolve chat commit");
 }
 
 async fn save_character_payload(
