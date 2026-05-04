@@ -558,6 +558,130 @@ async fn update_character_card_data_preserves_unknown_fields() {
 }
 
 #[tokio::test]
+async fn update_character_card_data_returns_v2_data_metadata_when_top_level_is_stale() {
+    let (service, character_repository, _world_info_repository, root) = setup_service().await;
+
+    let source_payload = json!({
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "name": "Metadata Update",
+        "description": "",
+        "personality": "",
+        "scenario": "",
+        "first_mes": "Hello",
+        "mes_example": "",
+        "creator": "root creator old",
+        "creator_notes": "root notes old",
+        "character_version": "1.0-root",
+        "data": {
+            "name": "Metadata Update",
+            "description": "",
+            "personality": "",
+            "scenario": "",
+            "first_mes": "Hello",
+            "mes_example": "",
+            "creator_notes": "data notes old",
+            "system_prompt": "",
+            "post_history_instructions": "",
+            "tags": [],
+            "creator": "data creator old",
+            "character_version": "1.0-data",
+            "alternate_greetings": [],
+            "extensions": {
+                "talkativeness": 0.5,
+                "fav": false,
+                "world": "",
+                "depth_prompt": {
+                    "prompt": "",
+                    "depth": 4,
+                    "role": "system"
+                }
+            }
+        }
+    });
+    write_character_png(&root, "Metadata Update", &source_payload).await;
+
+    let update_payload = json!({
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "name": "Metadata Update",
+        "description": "",
+        "personality": "",
+        "scenario": "",
+        "first_mes": "Hello",
+        "mes_example": "",
+        "creator": "root creator old",
+        "creator_notes": "root notes old",
+        "character_version": "1.0-root",
+        "data": {
+            "name": "Metadata Update",
+            "description": "",
+            "personality": "",
+            "scenario": "",
+            "first_mes": "Hello",
+            "mes_example": "",
+            "creator_notes": "data notes new",
+            "system_prompt": "",
+            "post_history_instructions": "",
+            "tags": [],
+            "creator": "data creator new",
+            "character_version": "1.1-data",
+            "alternate_greetings": [],
+            "extensions": {
+                "talkativeness": 0.5,
+                "fav": false,
+                "world": "",
+                "depth_prompt": {
+                    "prompt": "",
+                    "depth": 4,
+                    "role": "system"
+                }
+            }
+        }
+    });
+
+    let updated = service
+        .update_character_card_data(
+            "Metadata Update",
+            UpdateCharacterCardDataDto {
+                card_json: serde_json::to_string(&update_payload).expect("serialize update"),
+                avatar_path: None,
+                crop: None,
+            },
+        )
+        .await
+        .expect("update character metadata");
+
+    assert_eq!(updated.creator, "data creator new");
+    assert_eq!(updated.creator_notes, "data notes new");
+    assert_eq!(updated.character_version, "1.1-data");
+
+    let shallow = service
+        .get_all_characters(true)
+        .await
+        .expect("load shallow character list");
+    assert_eq!(shallow.len(), 1);
+    assert_eq!(shallow[0].creator, "data creator new");
+    assert_eq!(shallow[0].creator_notes, "data notes new");
+    assert_eq!(shallow[0].character_version, "1.1-data");
+
+    let stored_json = character_repository
+        .read_character_card_json("Metadata Update")
+        .await
+        .expect("read updated character");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse updated character");
+    assert_eq!(
+        stored_value
+            .pointer("/data/character_version")
+            .and_then(serde_json::Value::as_str),
+        Some("1.1-data")
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn update_character_preserves_unknown_fields() {
     let (service, character_repository, _world_info_repository, root) = setup_service().await;
 

@@ -136,6 +136,31 @@ impl FileCharacterRepository {
         }
     }
 
+    fn has_canonical_data_payload(raw_value: &Value) -> bool {
+        matches!(
+            raw_value.get("spec").and_then(Value::as_str),
+            Some("chara_card_v2" | "chara_card_v3")
+        ) && raw_value.get("data").is_some_and(Value::is_object)
+    }
+
+    pub(crate) fn sync_canonical_metadata_fields(character: &mut Character, raw_value: &Value) {
+        if !Self::has_canonical_data_payload(raw_value) {
+            return;
+        }
+
+        if raw_value.pointer("/data/creator").is_some() {
+            character.creator = character.data.creator.clone();
+        }
+
+        if raw_value.pointer("/data/creator_notes").is_some() {
+            character.creator_notes = character.data.creator_notes.clone();
+        }
+
+        if raw_value.pointer("/data/character_version").is_some() {
+            character.character_version = character.data.character_version.clone();
+        }
+    }
+
     pub(crate) fn parse_imported_character_json(
         &self,
         json_data: &str,
@@ -155,6 +180,7 @@ impl FileCharacterRepository {
         })?;
 
         self.apply_legacy_aliases(&mut character, &raw_value);
+        Self::sync_canonical_metadata_fields(&mut character, &raw_value);
         self.normalize_imported_character(&mut character)?;
         if !has_talkativeness
             && character.talkativeness == 0.0
@@ -243,14 +269,6 @@ impl FileCharacterRepository {
         character: &mut Character,
     ) -> Result<(), DomainError> {
         Self::sync_string_field(&mut character.name, &mut character.data.name);
-        character.name = character.name.trim().to_string();
-        if character.name.is_empty() {
-            return Err(DomainError::InvalidData(
-                "Character name is missing".to_string(),
-            ));
-        }
-        character.data.name = character.name.clone();
-
         Self::sync_string_field(&mut character.description, &mut character.data.description);
         Self::sync_string_field(&mut character.personality, &mut character.data.personality);
         Self::sync_string_field(&mut character.scenario, &mut character.data.scenario);
@@ -265,6 +283,13 @@ impl FileCharacterRepository {
             &mut character.character_version,
             &mut character.data.character_version,
         );
+        character.name = character.name.trim().to_string();
+        if character.name.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Character name is missing".to_string(),
+            ));
+        }
+        character.data.name = character.name.clone();
 
         if character.tags.is_empty() && !character.data.tags.is_empty() {
             character.tags = character.data.tags.clone();

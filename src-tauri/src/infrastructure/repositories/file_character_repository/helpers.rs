@@ -238,10 +238,15 @@ impl FileCharacterRepository {
 
         let mut json_data = read_character_data_from_png(&file_data)?;
 
-        let mut character: Character = serde_json::from_str(&json_data).map_err(|e| {
+        let raw_value: Value = serde_json::from_str(&json_data).map_err(|e| {
             logger::error(&format!("Failed to parse character data: {}", e));
             DomainError::InvalidData(format!("Failed to parse character data: {}", e))
         })?;
+        let mut character: Character = serde_json::from_value(raw_value.clone()).map_err(|e| {
+            logger::error(&format!("Failed to decode character data: {}", e));
+            DomainError::InvalidData(format!("Failed to decode character data: {}", e))
+        })?;
+        Self::sync_canonical_metadata_fields(&mut character, &raw_value);
         self.normalize_imported_character(&mut character)?;
         character.shallow = false;
 

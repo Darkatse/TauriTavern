@@ -645,6 +645,87 @@ async fn find_all_shallow_preserves_runtime_fields_and_omits_character_book() {
 }
 
 #[tokio::test]
+async fn v2_data_metadata_is_canonical_for_full_and_shallow_reads() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "name": "Metadata Target",
+        "description": "root desc",
+        "personality": "root persona",
+        "scenario": "root scenario",
+        "first_mes": "root hello",
+        "mes_example": "root example",
+        "creator": "root creator",
+        "creator_notes": "root notes",
+        "character_version": "1.0-root",
+        "tags": ["root-tag"],
+        "talkativeness": 0.1,
+        "fav": true,
+        "data": {
+            "name": "Metadata Target",
+            "description": "data desc",
+            "personality": "data persona",
+            "scenario": "data scenario",
+            "first_mes": "data hello",
+            "mes_example": "data example",
+            "creator_notes": "data notes",
+            "system_prompt": "",
+            "post_history_instructions": "",
+            "tags": ["data-tag"],
+            "creator": "data creator",
+            "character_version": "1.1-data",
+            "alternate_greetings": [],
+            "extensions": {
+                "talkativeness": 0.8,
+                "fav": false,
+                "world": "",
+                "depth_prompt": {
+                    "prompt": "",
+                    "depth": 4,
+                    "role": "system"
+                }
+            }
+        }
+    });
+
+    let source_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+    fs::write(
+        root.join("characters").join("MetadataTarget.png"),
+        source_png,
+    )
+    .await
+    .expect("write character png");
+
+    let full = repository
+        .find_by_name("MetadataTarget")
+        .await
+        .expect("load full character");
+    assert_eq!(full.creator, "data creator");
+    assert_eq!(full.creator_notes, "data notes");
+    assert_eq!(full.character_version, "1.1-data");
+
+    let shallow = repository
+        .find_all(true)
+        .await
+        .expect("load shallow character list");
+    assert_eq!(shallow.len(), 1);
+    assert_eq!(shallow[0].creator, "data creator");
+    assert_eq!(shallow[0].data.creator, "data creator");
+    assert_eq!(shallow[0].creator_notes, "data notes");
+    assert_eq!(shallow[0].data.creator_notes, "data notes");
+    assert_eq!(shallow[0].character_version, "1.1-data");
+    assert_eq!(shallow[0].data.character_version, "1.1-data");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn find_by_name_promotes_cached_shallow_character_to_full() {
     let (repository, root) = setup_repository().await;
 

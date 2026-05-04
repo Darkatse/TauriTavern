@@ -343,22 +343,25 @@ impl Character {
         let mut character = self.clone();
         character.spec = "chara_card_v2".to_string();
         character.spec_version = "2.0".to_string();
-
-        // Ensure data fields are synchronized with top-level fields
-        character.data.name = character.name.clone();
-        character.data.description = character.description.clone();
-        character.data.personality = character.personality.clone();
-        character.data.scenario = character.scenario.clone();
-        character.data.first_mes = character.first_mes.clone();
-        character.data.mes_example = character.mes_example.clone();
-        character.data.creator_notes = character.creator_notes.clone();
-        character.data.creator = character.creator.clone();
-        character.data.character_version = character.character_version.clone();
-        character.data.tags = character.tags.clone();
-        character.data.extensions.talkativeness = character.talkativeness;
-        character.data.extensions.fav = character.fav;
+        character.sync_top_level_fields_to_v2_data();
 
         character
+    }
+
+    /// Synchronize legacy top-level fields into the V2 `data` object before persisting.
+    pub(crate) fn sync_top_level_fields_to_v2_data(&mut self) {
+        self.data.name = self.name.clone();
+        self.data.description = self.description.clone();
+        self.data.personality = self.personality.clone();
+        self.data.scenario = self.scenario.clone();
+        self.data.first_mes = self.first_mes.clone();
+        self.data.mes_example = self.mes_example.clone();
+        self.data.creator_notes = self.creator_notes.clone();
+        self.data.creator = self.creator.clone();
+        self.data.character_version = self.character_version.clone();
+        self.data.tags = self.tags.clone();
+        self.data.extensions.talkativeness = self.talkativeness;
+        self.data.extensions.fav = self.fav;
     }
 
     /// Get the file name for this character
