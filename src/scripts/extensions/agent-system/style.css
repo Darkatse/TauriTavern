@@ -286,8 +286,8 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     resize: vertical;
 }
 
-.textarea_compact {
-    min-height: 96px;
+.ttas-root textarea.ttas-system-prompt-textarea {
+    min-height: 220px;
 }
 
 .ttas-form-grid {

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -167,6 +168,34 @@ test('Agent System confirmations use SillyTavern Popup instead of window.confirm
 
     assert.equal(await confirmAction('Delete Skill "test-skill"?'), true);
     assert.deepEqual(calls, [{ header: null, message: 'Delete Skill "test-skill"?' }]);
+});
+
+test('Agent System CSS does not globally override upstream utility classes', async () => {
+    const css = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/style.css',
+    ), 'utf8');
+    const leakedSelectors = [];
+    const rulePattern = /([^{}]+)\{/g;
+    let match;
+
+    while ((match = rulePattern.exec(css)) !== null) {
+        const selectorGroup = match[1].trim();
+        if (!selectorGroup || selectorGroup.startsWith('@')) {
+            continue;
+        }
+
+        for (const rawSelector of selectorGroup.split(',')) {
+            const selector = rawSelector.trim();
+            const scopedToAgent = selector.includes('.ttas-') || selector.includes('#agent_system_settings');
+            const touchesUpstreamUtility = /(?:^|[\s>+~])\.(?:textarea_compact|text_pole|menu_button)\b/.test(selector);
+            if (!scopedToAgent && touchesUpstreamUtility) {
+                leakedSelectors.push(selector);
+            }
+        }
+    }
+
+    assert.deepEqual(leakedSelectors, []);
 });
 
 test('default Agent profile exposes the effective default system prompt in frontend drafts', async () => {
