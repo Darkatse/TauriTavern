@@ -56,6 +56,7 @@ export function openSkillFileViewer(file) {
     }
 
     dialog.className = 'ttas-file-dialog';
+    dialog.setAttribute('data-tt-mobile-surface', 'fullscreen-window');
     const mount = document.createElement('div');
     mount.className = 'ttas-file-viewer-mount';
     dialog.appendChild(mount);

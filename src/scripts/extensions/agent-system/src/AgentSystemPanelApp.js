@@ -8,6 +8,47 @@ import { openSkillFileViewer } from './skill-file-viewer.js';
 
 const SKILL_FILE_VIEW_MAX_CHARS = 80000;
 
+const TOOL_GROUPS = Object.freeze([
+    {
+        id: 'context',
+        labelKey: 'contextTools',
+        icon: 'fa-comments',
+        tools: ['chat.search', 'chat.read_messages', 'worldinfo.read_activated'],
+    },
+    {
+        id: 'skills',
+        labelKey: 'skillTools',
+        icon: 'fa-book-open',
+        tools: ['skill.list', 'skill.search', 'skill.read'],
+    },
+    {
+        id: 'workspace-read',
+        labelKey: 'workspaceReadTools',
+        icon: 'fa-folder-tree',
+        tools: ['workspace.list_files', 'workspace.search_files', 'workspace.read_file'],
+    },
+    {
+        id: 'workspace-write',
+        labelKey: 'workspaceWriteTools',
+        icon: 'fa-pen-to-square',
+        tools: ['workspace.write_file', 'workspace.apply_patch'],
+    },
+    {
+        id: 'control',
+        labelKey: 'controlTools',
+        icon: 'fa-flag-checkered',
+        tools: ['workspace.commit', 'workspace.finish'],
+    },
+]);
+
+const WORKSPACE_ROOT_ICONS = Object.freeze({
+    output: 'fa-message',
+    scratch: 'fa-note-sticky',
+    plan: 'fa-list-check',
+    summaries: 'fa-layer-group',
+    persist: 'fa-database',
+});
+
 const SkillFileTreeNode = {
     name: 'SkillFileTreeNode',
     props: {
@@ -92,14 +133,15 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 skills: [],
                 selectedSkillName: '',
                 skillFiles: [],
+                skillFilesRequestId: 0,
                 loadingSkillFiles: false,
                 expandedSkillFolders: {},
                 skillImportInput: null,
                 skillImportConflictStrategy: 'skip',
                 skillImportPreview: null,
                 tabs: [
-                    { id: 'profiles', labelKey: 'profiles' },
-                    { id: 'skills', labelKey: 'skills' },
+                    { id: 'profiles', labelKey: 'profiles', icon: 'fa-id-card-clip' },
+                    { id: 'skills', labelKey: 'skills', icon: 'fa-book-bookmark' },
                 ],
                 toolNames: KNOWN_TOOLS,
                 workspaceRoots: WORKSPACE_ROOTS,
@@ -112,8 +154,82 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             isBuiltinProfile() {
                 return this.draft.id === DEFAULT_PROFILE_ID;
             },
+            profileStats() {
+                const allowedTools = new Set(Array.isArray(this.draft?.tools?.allow) ? this.draft.tools.allow : []);
+                const enabledToolCount = this.toolNames.filter((tool) => allowedTools.has(tool)).length;
+                const visibleRootCount = Array.isArray(this.draft?.workspace?.visibleRoots)
+                    ? this.draft.workspace.visibleRoots.length
+                    : 0;
+                const writableRootCount = Array.isArray(this.draft?.workspace?.writableRoots)
+                    ? this.draft.workspace.writableRoots.length
+                    : 0;
+                return [
+                    {
+                        icon: 'fa-layer-group',
+                        label: tr('presentation'),
+                        value: tr(this.draft.run.presentation || 'foreground'),
+                    },
+                    {
+                        icon: 'fa-repeat',
+                        label: tr('maxRounds'),
+                        value: this.draft.tools.maxRounds,
+                    },
+                    {
+                        icon: 'fa-screwdriver-wrench',
+                        label: tr('tools'),
+                        value: `${enabledToolCount}/${this.toolNames.length}`,
+                    },
+                    {
+                        icon: 'fa-folder-tree',
+                        label: tr('workspaceRoots'),
+                        value: `${writableRootCount}/${visibleRootCount}`,
+                    },
+                ];
+            },
+            toolGroupsWithTools() {
+                const groupedTools = new Set();
+                const groups = TOOL_GROUPS
+                    .map((group) => {
+                        const tools = group.tools.filter((tool) => this.toolNames.includes(tool));
+                        tools.forEach((tool) => groupedTools.add(tool));
+                        return { ...group, tools };
+                    })
+                    .filter((group) => group.tools.length > 0);
+                const extraTools = this.toolNames.filter((tool) => !groupedTools.has(tool));
+                if (extraTools.length > 0) {
+                    groups.push({
+                        id: 'other',
+                        labelKey: 'otherTools',
+                        icon: 'fa-ellipsis',
+                        tools: extraTools,
+                    });
+                }
+                return groups;
+            },
             selectedSkill() {
                 return this.skills.find((skill) => skill.name === this.selectedSkillName) || null;
+            },
+            selectedSkillTags() {
+                if (!this.selectedSkill) {
+                    return [];
+                }
+                const tags = [
+                    tr('fileCount', { count: this.selectedSkill.fileCount }),
+                    tr('byteCount', { count: this.selectedSkill.totalBytes }),
+                ];
+                if (this.selectedSkill.version) {
+                    tags.push(this.selectedSkill.version);
+                }
+                if (this.selectedSkill.sourceKind) {
+                    tags.push(this.selectedSkill.sourceKind);
+                }
+                if (this.selectedSkill.hasScripts) {
+                    tags.push(tr('scriptsIncluded'));
+                }
+                if (this.selectedSkill.hasBinary) {
+                    tags.push(tr('binaryFiles'));
+                }
+                return tags;
             },
             selectedSkillFileTree() {
                 if (!this.selectedSkill) {
@@ -122,11 +238,30 @@ export function createAgentSystemPanelRoot({ requestClose }) {
 
                 return buildSkillFileTree(this.skillFiles);
             },
+            skillImportPreviewSkill() {
+                return this.skillImportPreview?.skill || null;
+            },
             skillImportPath() {
                 return this.skillImportInput?.path || '';
             },
             skillImportHasConflict() {
                 return this.skillImportPreview?.conflict?.kind === 'different';
+            },
+            skillImportConflictText() {
+                const kind = this.skillImportPreview?.conflict?.kind;
+                if (kind === 'new') {
+                    return tr('conflictNew');
+                }
+                if (kind === 'same') {
+                    return tr('conflictSame');
+                }
+                if (kind === 'different') {
+                    return tr('conflictDifferent');
+                }
+                return '';
+            },
+            skillImportWarnings() {
+                return Array.isArray(this.skillImportPreview?.warnings) ? this.skillImportPreview.warnings : [];
             },
         },
         async mounted() {
@@ -226,6 +361,13 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 const visible = new Set(this.draft.workspace.visibleRoots);
                 this.draft.workspace.writableRoots = this.draft.workspace.writableRoots.filter((root) => visible.has(root));
             },
+            enabledToolCount(tools) {
+                const allow = new Set(Array.isArray(this.draft.tools.allow) ? this.draft.tools.allow : []);
+                return tools.filter((tool) => allow.has(tool)).length;
+            },
+            workspaceRootIcon(root) {
+                return WORKSPACE_ROOT_ICONS[root] || 'fa-folder';
+            },
             async saveProfile() {
                 if (this.isBuiltinProfile) {
                     throw new Error(tr('agentProfileBuiltInEdit'));
@@ -264,32 +406,51 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 if (this.skills.length === 0) {
                     this.selectedSkillName = '';
                     this.skillFiles = [];
+                    this.skillFilesRequestId += 1;
+                    this.loadingSkillFiles = false;
+                    this.expandedSkillFolders = {};
                     return;
                 }
                 if (!this.skills.some((skill) => skill.name === this.selectedSkillName)) {
                     this.selectedSkillName = this.skills[0].name;
+                    this.expandedSkillFolders = {};
                 }
                 await this.loadSelectedSkillFiles();
             },
             async selectSkill(skillName) {
+                if (!skillName || skillName === this.selectedSkillName) {
+                    return;
+                }
                 this.selectedSkillName = skillName;
                 this.expandedSkillFolders = {};
                 await this.loadSelectedSkillFiles();
             },
             async loadSelectedSkillFiles() {
-                if (!this.selectedSkillName) {
+                const skillName = this.selectedSkillName;
+                const requestId = ++this.skillFilesRequestId;
+                if (!skillName) {
                     this.skillFiles = [];
+                    this.loadingSkillFiles = false;
                     return;
                 }
                 this.skillFiles = [];
                 this.loadingSkillFiles = true;
                 try {
-                    this.skillFiles = await requireSkillApi().listFiles({ name: this.selectedSkillName });
+                    const files = await requireSkillApi().listFiles({ name: skillName });
+                    if (requestId !== this.skillFilesRequestId || skillName !== this.selectedSkillName) {
+                        return;
+                    }
+                    this.skillFiles = files;
                 } catch (error) {
+                    if (requestId !== this.skillFilesRequestId || skillName !== this.selectedSkillName) {
+                        return;
+                    }
                     this.reportError(error);
                     throw error;
                 } finally {
-                    this.loadingSkillFiles = false;
+                    if (requestId === this.skillFilesRequestId && skillName === this.selectedSkillName) {
+                        this.loadingSkillFiles = false;
+                    }
                 }
             },
             folderKey(node) {
@@ -411,9 +572,14 @@ export function createAgentSystemPanelRoot({ requestClose }) {
         template: `
             <div class="ttas-root ttas-panel-root">
                 <header class="ttas-titlebar">
-                    <div>
-                        <div class="ttas-eyebrow">{{ tr('tauriTavernAgent') }}</div>
-                        <h3>{{ tr('agentSystem') }}</h3>
+                    <div class="ttas-titlebar-main">
+                        <div class="ttas-title-icon" aria-hidden="true">
+                            <i class="fa-solid fa-atom"></i>
+                        </div>
+                        <div class="ttas-title-copy">
+                            <div class="ttas-eyebrow">{{ tr('tauriTavernAgent') }}</div>
+                            <h3>{{ tr('agentSystem') }}</h3>
+                        </div>
                     </div>
                     <button type="button" class="menu_button menu_button_icon ttas-close-button" :title="tr('close')" @click="closePanel">
                         <i class="fa-solid fa-xmark"></i>
@@ -429,99 +595,163 @@ export function createAgentSystemPanelRoot({ requestClose }) {
 
                     <nav class="ttas-tabs">
                         <button v-for="tab in tabs" :key="tab.id" type="button" class="menu_button" :class="{ active: activeTab === tab.id }" @click="setTab(tab.id)">
-                            {{ tr(tab.labelKey) }}
+                            <i class="fa-solid" :class="tab.icon"></i>
+                            <span>{{ tr(tab.labelKey) }}</span>
                         </button>
                     </nav>
 
-                    <section v-if="activeTab === 'profiles'" class="ttas-panel">
+                    <transition name="ttas-panel-fade" mode="out-in">
+                    <section v-if="activeTab === 'profiles'" key="profiles" class="ttas-panel">
                         <div class="ttas-profile-layout">
-                            <aside class="ttas-list">
+                            <aside class="ttas-list ttas-side-list">
+                                <div class="ttas-list-header">
+                                    <h4>{{ tr('profiles') }}</h4>
+                                    <span>{{ tr('profileCount', { count: profiles.length }) }}</span>
+                                </div>
                                 <button v-for="profile in profiles" :key="profile.id" type="button" :class="{ active: selectedProfileId === profile.id }" @click="selectProfile(profile.id)">
                                     <strong>{{ profile.displayName }}</strong>
                                     <span>{{ profile.id }}</span>
+                                    <small v-if="profile.description">{{ profile.description }}</small>
                                 </button>
                             </aside>
                             <div class="ttas-editor">
-                                <div class="ttas-toolbar">
-                                    <button type="button" class="menu_button menu_button_icon" @click="newProfile">
-                                        <i class="fa-solid fa-plus"></i>
-                                        <span>{{ tr('new') }}</span>
-                                    </button>
-                                    <button type="button" class="menu_button menu_button_icon" @click="copyProfile">
-                                        <i class="fa-solid fa-copy"></i>
-                                        <span>{{ tr('copy') }}</span>
-                                    </button>
-                                    <button type="button" class="menu_button menu_button_icon" @click="saveProfile" :disabled="saving || isBuiltinProfile">
-                                        <i class="fa-solid fa-floppy-disk"></i>
-                                        <span>{{ tr('save') }}</span>
-                                    </button>
-                                    <button type="button" class="menu_button menu_button_icon" @click="deleteProfile" :disabled="isBuiltinProfile">
-                                        <i class="fa-solid fa-trash-can"></i>
-                                        <span>{{ tr('delete') }}</span>
-                                    </button>
-                                </div>
-
-                                <div class="ttas-form-grid">
-                                    <label class="ttas-field">
-                                        <span>{{ tr('profileId') }}</span>
-                                        <input class="text_pole" v-model="draft.id" :disabled="isBuiltinProfile" />
-                                    </label>
-                                    <label class="ttas-field">
-                                        <span>{{ tr('displayName') }}</span>
-                                        <input class="text_pole" v-model="draft.displayName" :disabled="isBuiltinProfile" />
-                                    </label>
-                                    <label class="ttas-field ttas-span-2">
-                                        <span>{{ tr('description') }}</span>
-                                        <input class="text_pole" v-model="draft.description" :disabled="isBuiltinProfile" />
-                                    </label>
-                                    <label class="ttas-field">
-                                        <span>{{ tr('presentation') }}</span>
-                                        <select v-model="draft.run.presentation" :disabled="isBuiltinProfile">
-                                            <option value="foreground">{{ tr('foreground') }}</option>
-                                            <option value="background">{{ tr('background') }}</option>
-                                        </select>
-                                    </label>
-                                    <label class="ttas-field">
-                                        <span>{{ tr('planMode') }}</span>
-                                        <select v-model="draft.plan.mode" :disabled="isBuiltinProfile">
-                                            <option value="none">{{ tr('none') }}</option>
-                                        </select>
-                                    </label>
-                                    <label class="ttas-field">
-                                        <span>{{ tr('maxRounds') }}</span>
-                                        <input class="text_pole" type="number" min="1" v-model.number="draft.tools.maxRounds" :disabled="isBuiltinProfile" />
-                                    </label>
-                                    <label class="ttas-field">
-                                        <span>{{ tr('maxToolCalls') }}</span>
-                                        <input class="text_pole" type="number" min="1" v-model.number="draft.tools.maxCallsPerRun" :disabled="isBuiltinProfile" />
-                                    </label>
-                                    <label class="ttas-field">
-                                        <span>{{ tr('modelRetries') }}</span>
-                                        <input class="text_pole" type="number" min="0" v-model.number="draft.run.modelRetry.maxRetries" :disabled="isBuiltinProfile" />
-                                    </label>
-                                    <label class="ttas-field">
-                                        <span>{{ tr('retryIntervalMs') }}</span>
-                                        <input class="text_pole" type="number" min="1" v-model.number="draft.run.modelRetry.intervalMs" :disabled="isBuiltinProfile" />
-                                    </label>
-                                </div>
-
-                                <label class="ttas-field">
-                                    <span>{{ tr('agentSystemPrompt') }}</span>
-                                    <textarea class="text_pole textarea_compact ttas-system-prompt-textarea" rows="12" v-model="draft.instructions.agentSystemPrompt" :disabled="isBuiltinProfile"></textarea>
+                                <label class="ttas-mobile-select ttas-field">
+                                    <span>{{ tr('profiles') }}</span>
+                                    <select :value="selectedProfileId" @change="selectProfile($event.target.value)">
+                                        <option v-for="profile in profiles" :key="profile.id" :value="profile.id">{{ profile.displayName }}</option>
+                                    </select>
                                 </label>
 
+                                <div class="ttas-editor-hero">
+                                    <div class="ttas-hero-copy">
+                                        <div class="ttas-eyebrow">{{ tr('profileSummary') }}</div>
+                                        <h4>{{ draft.displayName || draft.id }}</h4>
+                                        <p>{{ draft.id }}</p>
+                                    </div>
+                                    <div class="ttas-editor-actions">
+                                        <button type="button" class="menu_button menu_button_icon" @click="newProfile">
+                                            <i class="fa-solid fa-plus"></i>
+                                            <span>{{ tr('new') }}</span>
+                                        </button>
+                                        <button type="button" class="menu_button menu_button_icon" @click="copyProfile">
+                                            <i class="fa-solid fa-copy"></i>
+                                            <span>{{ tr('copy') }}</span>
+                                        </button>
+                                        <button type="button" class="menu_button menu_button_icon ttas-primary-button" @click="saveProfile" :disabled="saving || isBuiltinProfile">
+                                            <i class="fa-solid" :class="saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'"></i>
+                                            <span>{{ tr('save') }}</span>
+                                        </button>
+                                        <button type="button" class="menu_button menu_button_icon ttas-danger-button" @click="deleteProfile" :disabled="isBuiltinProfile">
+                                            <i class="fa-solid fa-trash-can"></i>
+                                            <span>{{ tr('delete') }}</span>
+                                        </button>
+                                    </div>
+                                    <div class="ttas-stat-grid">
+                                        <div v-for="stat in profileStats" :key="stat.label" class="ttas-stat">
+                                            <i class="fa-solid" :class="stat.icon"></i>
+                                            <span>{{ stat.label }}</span>
+                                            <strong>{{ stat.value }}</strong>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div class="ttas-section">
-                                    <h4>{{ tr('tools') }}</h4>
-                                    <div class="ttas-check-grid">
-                                        <label v-for="tool in toolNames" :key="tool" class="checkbox_label">
-                                            <input type="checkbox" :value="tool" v-model="draft.tools.allow" :disabled="isBuiltinProfile" />
-                                            <span>{{ tool }}</span>
+                                    <div class="ttas-section-title">
+                                        <i class="fa-solid fa-fingerprint"></i>
+                                        <h4>{{ tr('identity') }}</h4>
+                                    </div>
+                                    <div class="ttas-form-grid">
+                                        <label class="ttas-field">
+                                            <span>{{ tr('profileId') }}</span>
+                                            <input class="text_pole" v-model="draft.id" :disabled="isBuiltinProfile" />
+                                        </label>
+                                        <label class="ttas-field">
+                                            <span>{{ tr('displayName') }}</span>
+                                            <input class="text_pole" v-model="draft.displayName" :disabled="isBuiltinProfile" />
+                                        </label>
+                                        <label class="ttas-field ttas-span-2">
+                                            <span>{{ tr('description') }}</span>
+                                            <input class="text_pole" v-model="draft.description" :disabled="isBuiltinProfile" />
                                         </label>
                                     </div>
                                 </div>
 
                                 <div class="ttas-section">
-                                    <h4>{{ tr('skills') }}</h4>
+                                    <div class="ttas-section-title">
+                                        <i class="fa-solid fa-gauge-high"></i>
+                                        <h4>{{ tr('runPolicy') }}</h4>
+                                    </div>
+                                    <div class="ttas-form-grid">
+                                        <label class="ttas-field">
+                                            <span>{{ tr('presentation') }}</span>
+                                            <select v-model="draft.run.presentation" :disabled="isBuiltinProfile">
+                                                <option value="foreground">{{ tr('foreground') }}</option>
+                                                <option value="background">{{ tr('background') }}</option>
+                                            </select>
+                                        </label>
+                                        <label class="ttas-field">
+                                            <span>{{ tr('planMode') }}</span>
+                                            <select v-model="draft.plan.mode" :disabled="isBuiltinProfile">
+                                                <option value="none">{{ tr('none') }}</option>
+                                            </select>
+                                        </label>
+                                        <label class="ttas-field">
+                                            <span>{{ tr('maxRounds') }}</span>
+                                            <input class="text_pole" type="number" min="1" v-model.number="draft.tools.maxRounds" :disabled="isBuiltinProfile" />
+                                        </label>
+                                        <label class="ttas-field">
+                                            <span>{{ tr('maxToolCalls') }}</span>
+                                            <input class="text_pole" type="number" min="1" v-model.number="draft.tools.maxCallsPerRun" :disabled="isBuiltinProfile" />
+                                        </label>
+                                        <label class="ttas-field">
+                                            <span>{{ tr('modelRetries') }}</span>
+                                            <input class="text_pole" type="number" min="0" v-model.number="draft.run.modelRetry.maxRetries" :disabled="isBuiltinProfile" />
+                                        </label>
+                                        <label class="ttas-field">
+                                            <span>{{ tr('retryIntervalMs') }}</span>
+                                            <input class="text_pole" type="number" min="1" v-model.number="draft.run.modelRetry.intervalMs" :disabled="isBuiltinProfile" />
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="ttas-section">
+                                    <div class="ttas-section-title">
+                                        <i class="fa-solid fa-terminal"></i>
+                                        <h4>{{ tr('prompt') }}</h4>
+                                    </div>
+                                    <label class="ttas-field">
+                                        <span>{{ tr('agentSystemPrompt') }}</span>
+                                        <textarea class="text_pole textarea_compact ttas-system-prompt-textarea" rows="12" v-model="draft.instructions.agentSystemPrompt" :disabled="isBuiltinProfile"></textarea>
+                                    </label>
+                                </div>
+
+                                <div class="ttas-section">
+                                    <div class="ttas-section-title">
+                                        <i class="fa-solid fa-screwdriver-wrench"></i>
+                                        <h4>{{ tr('capabilityMatrix') }}</h4>
+                                    </div>
+                                    <div class="ttas-tool-groups">
+                                        <div v-for="group in toolGroupsWithTools" :key="group.id" class="ttas-tool-group">
+                                            <header>
+                                                <i class="fa-solid" :class="group.icon"></i>
+                                                <strong>{{ tr(group.labelKey) }}</strong>
+                                                <span>{{ enabledToolCount(group.tools) }}/{{ group.tools.length }}</span>
+                                            </header>
+                                            <div class="ttas-tool-chip-grid">
+                                                <label v-for="tool in group.tools" :key="tool" class="ttas-tool-chip" :class="{ active: draft.tools.allow.includes(tool) }">
+                                                    <input type="checkbox" :value="tool" v-model="draft.tools.allow" :disabled="isBuiltinProfile" />
+                                                    <span>{{ tool }}</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="ttas-section">
+                                    <div class="ttas-section-title">
+                                        <i class="fa-solid fa-book"></i>
+                                        <h4>{{ tr('skillAccess') }}</h4>
+                                    </div>
                                     <div class="ttas-form-grid">
                                         <label class="ttas-field">
                                             <span>{{ tr('visibleSkills') }}</span>
@@ -543,10 +773,16 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                 </div>
 
                                 <div class="ttas-section">
-                                    <h4>{{ tr('workspaceRoots') }}</h4>
+                                    <div class="ttas-section-title">
+                                        <i class="fa-solid fa-folder-tree"></i>
+                                        <h4>{{ tr('workspaceAccess') }}</h4>
+                                    </div>
                                     <div class="ttas-root-grid">
                                         <div v-for="root in workspaceRoots" :key="root" class="ttas-root-row">
-                                            <strong>{{ root }}</strong>
+                                            <div class="ttas-root-name">
+                                                <i class="fa-solid" :class="workspaceRootIcon(root)"></i>
+                                                <strong>{{ root }}</strong>
+                                            </div>
                                             <label class="checkbox_label">
                                                 <input type="checkbox" :value="root" v-model="draft.workspace.visibleRoots" @change="syncWritableRoots" :disabled="isBuiltinProfile" />
                                                 <span>{{ tr('visible') }}</span>
@@ -560,7 +796,10 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                 </div>
 
                                 <div class="ttas-section">
-                                    <h4>{{ tr('outputArtifact') }}</h4>
+                                    <div class="ttas-section-title">
+                                        <i class="fa-solid fa-file-lines"></i>
+                                        <h4>{{ tr('outputArtifact') }}</h4>
+                                    </div>
                                     <div class="ttas-form-grid">
                                         <label class="ttas-field">
                                             <span>{{ tr('messageBodyPath') }}</span>
@@ -573,9 +812,12 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </div>
                                 </div>
 
-                                <div class="ttas-section">
+                                <div class="ttas-section ttas-json-section">
                                     <div class="ttas-pane-header">
-                                        <h4>{{ tr('advancedJson') }}</h4>
+                                        <div class="ttas-section-title">
+                                            <i class="fa-solid fa-code"></i>
+                                            <h4>{{ tr('advancedJson') }}</h4>
+                                        </div>
                                         <div class="ttas-toolbar">
                                             <button type="button" class="menu_button" @click="refreshDraftJson">{{ tr('refreshJson') }}</button>
                                             <button type="button" class="menu_button" @click="applyDraftJson" :disabled="isBuiltinProfile">{{ tr('applyJson') }}</button>
@@ -587,60 +829,88 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                         </div>
                     </section>
 
-                    <section v-if="activeTab === 'skills'" class="ttas-panel">
-                        <div class="ttas-toolbar">
-                            <button type="button" class="menu_button menu_button_icon" @click="refreshSkills">
-                                <i class="fa-solid fa-rotate"></i>
-                                <span>{{ tr('refresh') }}</span>
-                            </button>
-                            <button type="button" class="menu_button menu_button_icon" @click="exportSelectedSkill" :disabled="!selectedSkillName">
-                                <i class="fa-solid fa-file-export"></i>
-                                <span>{{ tr('export') }}</span>
-                            </button>
-                            <button type="button" class="menu_button menu_button_icon ttas-danger-button" @click="deleteSelectedSkill" :disabled="!selectedSkillName">
-                                <i class="fa-solid fa-trash-can"></i>
-                                <span>{{ tr('delete') }}</span>
-                            </button>
-                        </div>
-
+                    <section v-else-if="activeTab === 'skills'" key="skills" class="ttas-panel">
                         <div class="ttas-grid">
-                            <aside class="ttas-list">
+                            <aside class="ttas-list ttas-side-list">
+                                <div class="ttas-list-header">
+                                    <h4>{{ tr('skills') }}</h4>
+                                    <span>{{ tr('skillCount', { count: skills.length }) }}</span>
+                                </div>
                                 <button v-for="skill in skills" :key="skill.name" type="button" :class="{ active: selectedSkillName === skill.name }" @click="selectSkill(skill.name)">
                                     <strong>{{ skill.displayName || skill.name }}</strong>
                                     <span>{{ skill.name }}</span>
+                                    <small>{{ skill.description }}</small>
                                 </button>
                                 <p v-if="skills.length === 0" class="ttas-empty">{{ tr('noSkillsInstalled') }}</p>
                             </aside>
 
-                            <div class="ttas-pane">
-                                <div v-if="selectedSkill" class="ttas-skill-meta">
-                                    <h4>{{ selectedSkill.displayName || selectedSkill.name }}</h4>
-                                    <p>{{ selectedSkill.description }}</p>
-                                    <div class="ttas-tags">
-                                        <span>{{ tr('fileCount', { count: selectedSkill.fileCount }) }}</span>
-                                        <span>{{ tr('byteCount', { count: selectedSkill.totalBytes }) }}</span>
-                                        <span v-if="selectedSkill.hasScripts">{{ tr('scriptsIncluded') }}</span>
-                                        <span v-if="selectedSkill.hasBinary">{{ tr('binaryFiles') }}</span>
+                            <div class="ttas-pane ttas-skill-pane">
+                                <label class="ttas-mobile-select ttas-field">
+                                    <span>{{ tr('skills') }}</span>
+                                    <select :value="selectedSkillName" @change="selectSkill($event.target.value)" :disabled="skills.length === 0">
+                                        <option v-for="skill in skills" :key="skill.name" :value="skill.name">{{ skill.displayName || skill.name }}</option>
+                                    </select>
+                                </label>
+
+                                <div class="ttas-skill-hero">
+                                    <div v-if="selectedSkill" class="ttas-skill-meta">
+                                        <div class="ttas-eyebrow">{{ selectedSkill.name }}</div>
+                                        <h4>{{ selectedSkill.displayName || selectedSkill.name }}</h4>
+                                        <p>{{ selectedSkill.description }}</p>
+                                        <div class="ttas-tags">
+                                            <span v-for="tag in selectedSkillTags" :key="tag">{{ tag }}</span>
+                                        </div>
+                                    </div>
+                                    <div class="ttas-editor-actions">
+                                        <button type="button" class="menu_button menu_button_icon" @click="refreshSkills">
+                                            <i class="fa-solid fa-rotate"></i>
+                                            <span>{{ tr('refresh') }}</span>
+                                        </button>
+                                        <button type="button" class="menu_button menu_button_icon" @click="exportSelectedSkill" :disabled="!selectedSkillName">
+                                            <i class="fa-solid fa-file-export"></i>
+                                            <span>{{ tr('export') }}</span>
+                                        </button>
+                                        <button type="button" class="menu_button menu_button_icon ttas-danger-button" @click="deleteSelectedSkill" :disabled="!selectedSkillName">
+                                            <i class="fa-solid fa-trash-can"></i>
+                                            <span>{{ tr('delete') }}</span>
+                                        </button>
                                     </div>
                                 </div>
-                                <div v-if="loadingSkillFiles" class="ttas-loading">{{ tr('loadingSkillFiles') }}</div>
-                                <ul v-else-if="selectedSkillFileTree.length > 0" class="ttas-file-tree ttas-file-tree-root">
-                                    <SkillFileTreeNode
-                                        v-for="node in selectedSkillFileTree"
-                                        :key="node.path"
-                                        :node="node"
-                                        :depth="0"
-                                        :is-folder-open="isFolderOpen"
-                                        @toggle-folder="toggleSkillFolder"
-                                        @open-file="openSkillFile"
-                                    />
-                                </ul>
-                                <p v-else class="ttas-empty">{{ tr('noFilesFoundForSkill') }}</p>
+
+                                <div class="ttas-section ttas-files-section">
+                                    <div class="ttas-section-title">
+                                        <i class="fa-solid fa-folder-open"></i>
+                                        <h4>{{ tr('files') }}</h4>
+                                    </div>
+                                    <div class="ttas-file-viewport" :class="{ loading: loadingSkillFiles }">
+                                        <div v-if="loadingSkillFiles" class="ttas-file-loading" role="status" aria-live="polite">
+                                            <span>{{ tr('loadingSkillFiles') }}</span>
+                                            <div class="ttas-file-loading-lines" aria-hidden="true">
+                                                <i v-for="index in 5" :key="index"></i>
+                                            </div>
+                                        </div>
+                                        <ul v-else-if="selectedSkillFileTree.length > 0" class="ttas-file-tree ttas-file-tree-root">
+                                            <SkillFileTreeNode
+                                                v-for="node in selectedSkillFileTree"
+                                                :key="node.path"
+                                                :node="node"
+                                                :depth="0"
+                                                :is-folder-open="isFolderOpen"
+                                                @toggle-folder="toggleSkillFolder"
+                                                @open-file="openSkillFile"
+                                            />
+                                        </ul>
+                                        <p v-else class="ttas-empty ttas-file-empty">{{ tr('noFilesFoundForSkill') }}</p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
                         <div class="ttas-section">
-                            <h4>{{ tr('importSkillArchive') }}</h4>
+                            <div class="ttas-section-title">
+                                <i class="fa-solid fa-box-archive"></i>
+                                <h4>{{ tr('importSkillArchive') }}</h4>
+                            </div>
                             <div class="ttas-toolbar">
                                 <button type="button" class="menu_button menu_button_icon" @click="pickAndPreviewSkillImport">
                                     <i class="fa-solid fa-file-import"></i>
@@ -659,9 +929,39 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                 <i class="fa-solid fa-file-zipper"></i>
                                 <span>{{ skillImportPath }}</span>
                             </div>
-                            <pre v-if="skillImportPreview" class="ttas-json">{{ prettyJson(skillImportPreview) }}</pre>
+                            <div v-if="skillImportPreview" class="ttas-import-preview">
+                                <div class="ttas-import-summary">
+                                    <div>
+                                        <span>{{ tr('name') }}</span>
+                                        <strong>{{ skillImportPreviewSkill.name }}</strong>
+                                    </div>
+                                    <div>
+                                        <span>{{ tr('conflict') }}</span>
+                                        <strong>{{ skillImportConflictText }}</strong>
+                                    </div>
+                                    <div>
+                                        <span>{{ tr('files') }}</span>
+                                        <strong>{{ tr('fileCount', { count: skillImportPreviewSkill.fileCount }) }}</strong>
+                                    </div>
+                                    <div>
+                                        <span>{{ tr('size') }}</span>
+                                        <strong>{{ tr('byteCount', { count: skillImportPreviewSkill.totalBytes }) }}</strong>
+                                    </div>
+                                </div>
+                                <div v-if="skillImportWarnings.length > 0" class="ttas-warning-list">
+                                    <strong>{{ tr('importWarnings', { count: skillImportWarnings.length }) }}</strong>
+                                    <ul>
+                                        <li v-for="warning in skillImportWarnings" :key="warning">{{ warning }}</li>
+                                    </ul>
+                                </div>
+                                <details class="ttas-details">
+                                    <summary>{{ tr('importDetails') }}</summary>
+                                    <pre class="ttas-json">{{ prettyJson(skillImportPreview) }}</pre>
+                                </details>
+                            </div>
                         </div>
                     </section>
+                    </transition>
                 </div>
             </div>
         `,

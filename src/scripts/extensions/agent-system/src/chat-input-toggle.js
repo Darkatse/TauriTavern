@@ -23,7 +23,7 @@ export async function mountChatInputAgentToggle() {
     button.id = BUTTON_ID;
     button.type = 'button';
     button.className = 'ttas-agent-send-toggle interactable displayNone';
-    button.innerHTML = AGENT_TOGGLE_ICON;
+    button.innerHTML = `${AGENT_TOGGLE_ICON}<span class="ttas-agent-send-toggle-status" aria-hidden="true"></span>`;
     rightSendForm.insertBefore(button, sendButton);
 
     const syncVisibility = () => {
@@ -34,12 +34,16 @@ export async function mountChatInputAgentToggle() {
 
     const render = () => {
         const enabled = Boolean(settings?.agentModeEnabled);
+        const label = activeRun
+            ? tr('agentRunActive')
+            : (enabled ? tr('agentModeOn') : tr('agentModeOff'));
         button.classList.toggle('active', enabled);
         button.classList.toggle('running', Boolean(activeRun));
         button.setAttribute('aria-pressed', String(enabled));
-        button.title = activeRun
-            ? tr('agentRunActive')
-            : (enabled ? tr('agentModeOn') : tr('agentModeOff'));
+        button.setAttribute('aria-label', label);
+        button.dataset.ttasState = activeRun ? 'running' : (enabled ? 'on' : 'off');
+        button.dataset.ttasLabel = label;
+        button.title = label;
     };
 
     button.addEventListener('click', async () => {
