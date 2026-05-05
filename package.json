@@ -1,7 +1,7 @@
 {
   "name": "tauritavern",
   "private": true,
-  "version": "1.6.5",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "tauri": "tauri",
