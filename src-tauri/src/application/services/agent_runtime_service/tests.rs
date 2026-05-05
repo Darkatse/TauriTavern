@@ -1602,7 +1602,7 @@ async fn dispatcher_searches_skills_and_reads_skill_ranges() {
 }
 
 #[tokio::test]
-async fn dispatcher_reads_worldinfo_activation_from_run_snapshot() {
+async fn dispatcher_progressively_reads_worldinfo_activation_from_run_snapshot() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-worldinfo-tool-{}",
         Uuid::new_v4().simple()
@@ -1637,14 +1637,24 @@ async fn dispatcher_reads_worldinfo_activation_from_run_snapshot() {
                 "worldInfoActivation": {
                     "timestampMs": 1,
                     "trigger": "normal",
-                    "entries": [{
-                        "world": "lorebook",
-                        "uid": 7,
-                        "displayName": "Hidden bridge",
-                        "constant": false,
-                        "position": "before",
-                        "content": "The bridge has a hidden blue lantern."
-                    }]
+                    "entries": [
+                        {
+                            "world": "lorebook",
+                            "uid": 7,
+                            "displayName": "Hidden bridge",
+                            "constant": false,
+                            "position": "before",
+                            "content": "The bridge has a hidden blue lantern."
+                        },
+                        {
+                            "world": "lorebook",
+                            "uid": 8,
+                            "displayName": "Clock tower",
+                            "constant": true,
+                            "position": "after",
+                            "content": "The clock tower bell rings only for agents."
+                        }
+                    ]
                 }
             }),
             &profile,
@@ -1660,20 +1670,97 @@ async fn dispatcher_reads_worldinfo_activation_from_run_snapshot() {
         test_skill_service(&root),
     );
     let mut session = AgentToolSession::default();
-    let call = AgentToolCall {
-        id: "call_worldinfo".to_string(),
+    let index_call = AgentToolCall {
+        id: "call_worldinfo_index".to_string(),
         name: "worldinfo.read_activated".to_string(),
         arguments: json!({}),
         provider_metadata: Value::Null,
     };
-    let result = dispatcher
-        .dispatch(&run.id, &call, &mut session, &profile)
+    let index = dispatcher
+        .dispatch(&run.id, &index_call, &mut session, &profile)
         .await
-        .expect("dispatch worldinfo");
+        .expect("dispatch worldinfo index");
 
-    assert!(!result.result.is_error);
-    assert!(result.result.content.contains("hidden blue lantern"));
-    assert_eq!(result.result.resource_refs[0], "worldinfo:lorebook#7");
+    assert!(!index.result.is_error);
+    assert_eq!(index.result.structured["mode"], "index");
+    assert_eq!(index.result.structured["totalEntries"], 2);
+    assert_eq!(
+        index.result.structured["entries"][0]["ref"],
+        "worldinfo:lorebook#7"
+    );
+    assert_eq!(
+        index.result.structured["entries"][0]["totalChars"],
+        "The bridge has a hidden blue lantern.".chars().count()
+    );
+    assert!(
+        index.result.structured["entries"][0]
+            .get("content")
+            .is_none()
+    );
+    assert!(index.result.content.contains("Content is omitted"));
+    assert!(index.result.content.contains("worldinfo:lorebook#7"));
+    assert!(!index.result.content.contains("hidden blue lantern"));
+    assert_eq!(index.result.resource_refs[0], "worldinfo:lorebook#7");
+    assert_eq!(index.result.resource_refs[1], "worldinfo:lorebook#8");
+
+    let read_call = AgentToolCall {
+        id: "call_worldinfo_read".to_string(),
+        name: "worldinfo.read_activated".to_string(),
+        arguments: json!({
+            "entries": [{
+                "ref": "worldinfo:lorebook#7",
+                "start_char": 4,
+                "max_chars": 6
+            }]
+        }),
+        provider_metadata: Value::Null,
+    };
+    let read = dispatcher
+        .dispatch(&run.id, &read_call, &mut session, &profile)
+        .await
+        .expect("dispatch worldinfo read");
+
+    assert!(!read.result.is_error);
+    assert_eq!(read.result.structured["mode"], "content");
+    assert_eq!(read.result.structured["entries"][0]["content"], "bridge");
+    assert_eq!(read.result.structured["entries"][0]["startChar"], 4);
+    assert_eq!(read.result.structured["entries"][0]["endChar"], 10);
+    assert_eq!(read.result.structured["entries"][0]["truncated"], true);
+    assert_eq!(read.result.resource_refs[0], "worldinfo:lorebook#7");
+
+    let missing_ref_call = AgentToolCall {
+        id: "call_worldinfo_missing".to_string(),
+        name: "worldinfo.read_activated".to_string(),
+        arguments: json!({
+            "entries": [{ "ref": "worldinfo:lorebook#404" }]
+        }),
+        provider_metadata: Value::Null,
+    };
+    let missing_ref = dispatcher
+        .dispatch(&run.id, &missing_ref_call, &mut session, &profile)
+        .await
+        .expect("dispatch missing worldinfo ref");
+    assert!(missing_ref.result.is_error);
+    assert_eq!(
+        missing_ref.result.error_code.as_deref(),
+        Some("worldinfo.entry_not_found")
+    );
+
+    let old_max_chars_call = AgentToolCall {
+        id: "call_worldinfo_old_arg".to_string(),
+        name: "worldinfo.read_activated".to_string(),
+        arguments: json!({ "max_chars": 20000 }),
+        provider_metadata: Value::Null,
+    };
+    let old_max_chars = dispatcher
+        .dispatch(&run.id, &old_max_chars_call, &mut session, &profile)
+        .await
+        .expect("dispatch obsolete worldinfo arg");
+    assert!(old_max_chars.result.is_error);
+    assert_eq!(
+        old_max_chars.result.error_code.as_deref(),
+        Some("tool.invalid_arguments")
+    );
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }

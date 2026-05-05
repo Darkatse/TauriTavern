@@ -317,7 +317,9 @@ workspace.create_checkpoint
 - Read-only。
 - 读取本次 run materialized 的 `promptSnapshot.worldInfoActivation`。
 - `startRunFromLegacyGenerate()` 从本轮 dryRun 的最终 `WORLDINFO_SCAN_DONE` 捕获该快照。
-- 模型可读 `content` 保持简洁：条目名、世界书名、条目内容。
+- 无参数调用只返回本轮激活条目的索引：`ref`、条目名、世界书名、位置与正文字符数，不返回正文。
+- 读取正文必须传入 `entries: [{ ref, start_char?, max_chars? }]`，其中 `ref` 来自无参数索引结果；长正文使用 `start_char` / `max_chars` 分段读取。
+- 模型可读 `content` 保持简洁：索引模式给条目列表，正文模式只给被明确请求的条目内容。
 - 结构化结果可以保留 `uid`、`position`、`ref`、`timestampMs` 等 audit 字段，但不要把这些作为模型阅读主内容。
 - 不暴露 world info 扫描中间循环状态为 Public Contract。
 

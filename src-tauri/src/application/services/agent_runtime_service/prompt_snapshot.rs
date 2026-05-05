@@ -99,7 +99,7 @@ fn build_agent_system_prompt(tools: &[AgentToolSpec], profile: &ResolvedAgentPro
     }
     if has_tool(tools, "worldinfo.read_activated") {
         lines.push(format!(
-            "Use {} when active lore for this run matters.",
+            "Use {} when active lore for this run matters. Call it with no arguments to list active refs, then pass entries with ref and optional start_char/max_chars to read only needed content.",
             model_name(tools, "worldinfo.read_activated")
         ));
     }
