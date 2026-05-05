@@ -11,7 +11,7 @@ use crate::application::dto::native_regex_dto::{
 };
 use crate::application::errors::ApplicationError;
 
-const CACHE_LIMIT: usize = 512;
+const CACHE_LIMIT: usize = 1024;
 const MAX_CONCURRENT_JOBS: usize = 2;
 
 type RegexCacheHandle = Arc<Mutex<RegexCache>>;
@@ -250,8 +250,9 @@ impl RegexCache {
 
     fn get_or_compile(&mut self, pattern: &str, flags: &str) -> Result<Regex, regress::Error> {
         let key = cache_key(pattern, flags);
-        if let Some(regex) = self.entries.get(&key) {
-            return Ok(regex.clone());
+        if let Some(regex) = self.entries.get(&key).cloned() {
+            self.touch(&key);
+            return Ok(regex);
         }
 
         let regex = Regex::with_flags(pattern, flags)?;
@@ -272,6 +273,14 @@ impl RegexCache {
 
         self.order.push_back(key.clone());
         self.entries.insert(key, regex);
+    }
+
+    fn touch(&mut self, key: &str) {
+        if let Some(index) = self.order.iter().position(|candidate| candidate == key) {
+            if let Some(key) = self.order.remove(index) {
+                self.order.push_back(key);
+            }
+        }
     }
 }
 
@@ -349,5 +358,19 @@ mod tests {
         let result = apply("a <x>keep remove</x> z", regex);
 
         assert_eq!(result, "a keep  z");
+    }
+
+    #[test]
+    fn cache_keeps_recently_used_entries() {
+        let mut cache = RegexCache::new(2);
+
+        cache.get_or_compile("a", "").expect("compile a");
+        cache.get_or_compile("b", "").expect("compile b");
+        cache.get_or_compile("a", "").expect("reuse a");
+        cache.get_or_compile("c", "").expect("compile c");
+
+        assert!(cache.entries.contains_key(&cache_key("a", "")));
+        assert!(!cache.entries.contains_key(&cache_key("b", "")));
+        assert!(cache.entries.contains_key(&cache_key("c", "")));
     }
 }
