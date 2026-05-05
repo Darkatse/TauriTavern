@@ -5,8 +5,10 @@ import { defaultProfile, normalizeProfileForSave, normalizeProfileId, profileFor
 import { loadSettings, patchSettings } from './settings-store.js';
 import { buildSkillFileTree } from './skill-file-tree.js';
 import { openSkillFileViewer } from './skill-file-viewer.js';
+import { downloadBlobWithRuntime } from '../../../file-export.js';
 
 const SKILL_FILE_VIEW_MAX_CHARS = 80000;
+const PROFILE_EXPORT_CONTENT_TYPE = 'application/json';
 
 const TOOL_GROUPS = Object.freeze([
     {
@@ -388,6 +390,28 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     this.saving = false;
                 }
             },
+            profileDraftHasUnsavedChanges(savedProfile) {
+                return prettyJson(normalizeProfileForSave(this.draft)) !== prettyJson(savedProfile);
+            },
+            async exportSelectedProfile() {
+                const profileId = this.selectedProfileId || DEFAULT_PROFILE_ID;
+                const result = await requireAgentApi().profiles.load({ profileId });
+                const profile = result?.profile;
+                if (!profile) {
+                    throw new Error(tr('agentProfileNotFound', { id: profileId }));
+                }
+                if (profileId !== DEFAULT_PROFILE_ID && this.profileDraftHasUnsavedChanges(profile)) {
+                    throw new Error(tr('agentProfileExportSaveFirst'));
+                }
+
+                const blob = new Blob([`${prettyJson(profile)}\n`], { type: PROFILE_EXPORT_CONTENT_TYPE });
+                const downloadResult = await downloadBlobWithRuntime(blob, `${profile.id}.agent-profile.json`, {
+                    fallbackName: 'agent-profile.json',
+                });
+                if (downloadResult?.mode !== 'ios-native-share' || downloadResult.completed === true) {
+                    this.toast(tr('exportedProfile', { id: profile.id }));
+                }
+            },
             async deleteProfile() {
                 if (this.isBuiltinProfile) {
                     throw new Error(tr('agentProfileBuiltInDelete'));
@@ -538,6 +562,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 document.body.appendChild(anchor);
                 anchor.click();
                 anchor.remove();
+                this.toast(tr('exportedSkill', { name: this.selectedSkillName }));
             },
             async deleteSelectedSkill() {
                 if (!this.selectedSkillName) {
@@ -563,10 +588,10 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 const message = errorText(error);
                 this.error = message;
                 console.error('[AgentSystem]', error);
-                window.toastr?.error?.(message);
+                toastr.error(message);
             },
             toast(message) {
-                window.toastr?.success?.(message);
+                toastr.success(message);
             },
         },
         template: `
@@ -636,6 +661,10 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                         <button type="button" class="menu_button menu_button_icon" @click="copyProfile">
                                             <i class="fa-solid fa-copy"></i>
                                             <span>{{ tr('copy') }}</span>
+                                        </button>
+                                        <button type="button" class="menu_button menu_button_icon" @click="exportSelectedProfile" :disabled="saving">
+                                            <i class="fa-solid fa-file-export"></i>
+                                            <span>{{ tr('export') }}</span>
                                         </button>
                                         <button type="button" class="menu_button menu_button_icon ttas-primary-button" @click="saveProfile" :disabled="saving || isBuiltinProfile">
                                             <i class="fa-solid" :class="saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'"></i>
