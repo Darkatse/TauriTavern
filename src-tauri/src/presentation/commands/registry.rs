@@ -272,6 +272,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::tokenizer_commands::encode_openai_tokens,
         super::tokenizer_commands::decode_openai_tokens,
         super::tokenizer_commands::build_openai_logit_bias,
+        // Native regex commands
+        super::native_regex_commands::apply_native_regex_batch,
         // Update commands
         super::update_commands::check_for_update,
         // Bridge commands

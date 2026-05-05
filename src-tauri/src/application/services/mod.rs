@@ -16,6 +16,7 @@ pub mod extension_store_service;
 pub mod group_chat_service;
 pub mod group_service;
 pub mod lan_sync_service;
+pub mod native_regex_service;
 pub mod preset_service;
 pub mod quick_reply_service;
 pub mod secret_service;

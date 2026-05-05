@@ -21,6 +21,7 @@ use crate::application::services::extension_store_service::ExtensionStoreService
 use crate::application::services::group_chat_service::GroupChatService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::lan_sync_service::LanSyncService;
+use crate::application::services::native_regex_service::NativeRegexService;
 use crate::application::services::preset_service::PresetService;
 use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
@@ -128,6 +129,7 @@ pub(super) struct AppServices {
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
     pub update_service: Arc<UpdateService>,
+    pub native_regex_service: Arc<NativeRegexService>,
     pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
 }
 
@@ -245,6 +247,7 @@ pub(super) async fn build_services(
     ));
     let tokenization_service =
         Arc::new(TokenizationService::new(repositories.tokenizer_repository));
+    let native_regex_service = Arc::new(NativeRegexService::new());
     let stable_diffusion_service = Arc::new(StableDiffusionService::new(
         repositories.stable_diffusion_repository,
     ));
@@ -336,6 +339,7 @@ pub(super) async fn build_services(
         lan_sync_service,
         tt_sync_service,
         update_service,
+        native_regex_service,
         ios_policy,
     })
 }

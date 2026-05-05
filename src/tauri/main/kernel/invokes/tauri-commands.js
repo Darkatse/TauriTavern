@@ -10,6 +10,7 @@ export {};
  * kernel (`src/tauri/main/**`).
  *
  * @typedef {(
+ *   | 'apply_native_regex_batch'
  *   | 'build_openai_logit_bias'
  *   | 'cancel_chat_completion_generation'
  *   | 'cancel_chat_completion_stream'

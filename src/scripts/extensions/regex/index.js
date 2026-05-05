@@ -13,6 +13,11 @@ import { allowPresetScripts, allowScopedScripts, disallowPresetScripts, disallow
 import { t } from '../../i18n.js';
 import { accountStorage } from '../../util/AccountStorage.js';
 import { getPresetManager } from '../../preset-manager.js';
+import {
+    isNativeRegexBackendEnabled,
+    NATIVE_REGEX_BACKEND_SETTING_CHANGED_EVENT,
+    persistNativeRegexBackendEnabled,
+} from '../../tauri/regex/native-regex-settings.js';
 
 // Re-exports for legacy extensions
 export { getRegexScripts };
@@ -1752,6 +1757,18 @@ jQuery(async () => {
         onRegexEditorOpenClick(false, SCRIPT_TYPES.GLOBAL);
     });
     $('#open_regex_debugger').on('click', onRegexDebuggerOpenClick);
+    const nativeRegexBackendToggle = $('#regex_native_backend_toggle');
+    nativeRegexBackendToggle.prop('checked', isNativeRegexBackendEnabled());
+    nativeRegexBackendToggle.on('input', function () {
+        const enabled = Boolean($(this).prop('checked'));
+        void persistNativeRegexBackendEnabled(enabled).then(() => {
+            nativeRegexBackendToggle.prop('checked', isNativeRegexBackendEnabled());
+        });
+    });
+    window.addEventListener(NATIVE_REGEX_BACKEND_SETTING_CHANGED_EVENT, () => {
+        nativeRegexBackendToggle.prop('checked', isNativeRegexBackendEnabled());
+        requestRegexChatRefresh();
+    });
     $('#open_scoped_editor').on('click', function () {
         if (this_chid === undefined) {
             toastr.error(t`No character selected.`);

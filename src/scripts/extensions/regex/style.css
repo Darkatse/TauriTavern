@@ -121,6 +121,10 @@ input.enable_scoped {
     color: var(--golden);
 }
 
+.regex_settings #regex_native_backend_toggle_button:has(#regex_native_backend_toggle:checked) {
+    color: var(--golden);
+}
+
 .regex_settings .regex-script-container .regex-script-label .regex_bulk_checkbox {
     margin-left: 5px;
     margin-right: 5px;

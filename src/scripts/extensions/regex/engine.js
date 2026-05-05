@@ -3,6 +3,8 @@ import { extension_settings, writeExtensionField } from '../../extensions.js';
 import { getPresetManager } from '../../preset-manager.js';
 import { regexFromString } from '../../utils.js';
 import { lodash } from '../../../lib.js';
+import { applyNativeRegexBatch, isNativeRegexBackendAvailable } from '../../tauri/regex/native-regex-transform.js';
+import { isNativeRegexBackendEnabled } from '../../tauri/regex/native-regex-settings.js';
 
 /**
  * @readonly
@@ -33,6 +35,9 @@ export const SCRIPT_TYPE_UNKNOWN = -1;
  * @type {Readonly<GetRegexScriptsOptions>}
  */
 const DEFAULT_GET_REGEX_SCRIPTS_OPTIONS = Object.freeze({ allowedOnly: false });
+const NATIVE_REGEX_SUPPORTED_FLAGS = new Set(['g', 'i', 'm', 's', 'u', 'v']);
+const SUBSTITUTE_PARAM_TOKEN_REGEX = /{{|<(?:USER|BOT|CHAR|CHARIFNOTGROUP|GROUP)>/i;
+const REPLACEMENT_CAPTURE_REF_REGEX = /\$(?:\d+|<[^>]+>)/;
 
 /**
  * Manages the compiled regex cache with LRU eviction.
@@ -323,6 +328,119 @@ function sanitizeRegexMacro(x) {
         }) : x;
 }
 
+function resolveRegexString(regexScript) {
+    switch (Number(regexScript.substituteRegex)) {
+        case substitute_find_regex.NONE:
+            return regexScript.findRegex;
+        case substitute_find_regex.RAW:
+            return substituteParamsExtended(regexScript.findRegex);
+        case substitute_find_regex.ESCAPED:
+            return substituteParamsExtended(regexScript.findRegex, {}, sanitizeRegexMacro);
+        default:
+            console.warn(`runRegexScript: Unknown substituteRegex value ${regexScript.substituteRegex}. Using raw regex.`);
+            return regexScript.findRegex;
+    }
+}
+
+function isRegexScriptActiveForParams(script, { placement, isMarkdown, isPrompt, isEdit, depth }) {
+    const isScopeMatch =
+        (script.markdownOnly && isMarkdown) ||
+        (script.promptOnly && isPrompt) ||
+        (!script.markdownOnly && !script.promptOnly && !isMarkdown && !isPrompt);
+
+    if (!isScopeMatch) {
+        return false;
+    }
+
+    if (isEdit && !script.runOnEdit) {
+        console.debug(`getRegexedString: Skipping script ${script.scriptName} because it does not run on edit`);
+        return false;
+    }
+
+    if (typeof depth === 'number') {
+        if (!isNaN(script.minDepth) && script.minDepth !== null && script.minDepth >= -1 && depth < script.minDepth) {
+            console.debug(`getRegexedString: Skipping script ${script.scriptName} because depth ${depth} is less than minDepth ${script.minDepth}`);
+            return false;
+        }
+
+        if (!isNaN(script.maxDepth) && script.maxDepth !== null && script.maxDepth >= 0 && depth > script.maxDepth) {
+            console.debug(`getRegexedString: Skipping script ${script.scriptName} because depth ${depth} is greater than maxDepth ${script.maxDepth}`);
+            return false;
+        }
+    }
+
+    return Array.isArray(script.placement) && script.placement.includes(placement);
+}
+
+function getApplicableRegexScripts(placement, { isMarkdown, isPrompt, isEdit, depth } = {}) {
+    if (extension_settings.disabledExtensions.includes('regex') || placement === undefined) {
+        return [];
+    }
+
+    return getRegexScripts({ allowedOnly: true })
+        .filter(script => isRegexScriptActiveForParams(script, { placement, isMarkdown, isPrompt, isEdit, depth }));
+}
+
+function hasSubstituteParamToken(value) {
+    return SUBSTITUTE_PARAM_TOKEN_REGEX.test(String(value ?? ''));
+}
+
+function containsAstralCodePoint(value) {
+    return /[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(value);
+}
+
+function canApplyNativeUnicodeSemantics(nativeScripts, rawString) {
+    if (!containsAstralCodePoint(rawString)) {
+        return true;
+    }
+
+    return nativeScripts.every(script => script.flags.includes('u') || script.flags.includes('v'));
+}
+
+function toNativeRegexScript(regexScript, rawString) {
+    const regexString = resolveRegexString(regexScript);
+    const findRegex = regexFromString(regexString);
+
+    if (!findRegex) {
+        return null;
+    }
+
+    if ([...findRegex.flags].some(flag => !NATIVE_REGEX_SUPPORTED_FLAGS.has(flag))) {
+        return null;
+    }
+
+    const replacement = regexScript.replaceString.replace(/{{match}}/gi, '$0');
+    if (hasSubstituteParamToken(replacement)) {
+        return null;
+    }
+
+    if (hasSubstituteParamToken(rawString) && REPLACEMENT_CAPTURE_REF_REGEX.test(replacement)) {
+        return null;
+    }
+
+    const trimStrings = regexScript.trimStrings ?? [];
+    if (trimStrings.some(hasSubstituteParamToken)) {
+        return null;
+    }
+
+    return {
+        scriptName: String(regexScript.scriptName || ''),
+        pattern: findRegex.source,
+        flags: findRegex.flags,
+        global: findRegex.global,
+        replacement,
+        trimStrings,
+    };
+}
+
+function runRegexScripts(scripts, rawString, { characterOverride } = {}) {
+    let finalString = rawString;
+    for (const script of scripts) {
+        finalString = runRegexScript(script, finalString, { characterOverride });
+    }
+    return finalString;
+}
+
 /**
  * Parent function to fetch a regexed version of a raw string
  * @param {string} rawString The raw string to be regexed
@@ -343,41 +461,84 @@ export function getRegexedString(rawString, placement, { characterOverride, isMa
         return finalString;
     }
 
-    const allRegex = getRegexScripts({ allowedOnly: true });
-    allRegex.forEach((script) => {
-        if (
-            // Script applies to Markdown and input is Markdown
-            (script.markdownOnly && isMarkdown) ||
-            // Script applies to Generate and input is Generate
-            (script.promptOnly && isPrompt) ||
-            // Script applies to all cases when neither "only"s are true, but there's no need to do it when `isMarkdown`, the as source (chat history) should already be changed beforehand
-            (!script.markdownOnly && !script.promptOnly && !isMarkdown && !isPrompt)
-        ) {
-            if (isEdit && !script.runOnEdit) {
-                console.debug(`getRegexedString: Skipping script ${script.scriptName} because it does not run on edit`);
-                return;
-            }
-
-            // Check if the depth is within the min/max depth
-            if (typeof depth === 'number') {
-                if (!isNaN(script.minDepth) && script.minDepth !== null && script.minDepth >= -1 && depth < script.minDepth) {
-                    console.debug(`getRegexedString: Skipping script ${script.scriptName} because depth ${depth} is less than minDepth ${script.minDepth}`);
-                    return;
-                }
-
-                if (!isNaN(script.maxDepth) && script.maxDepth !== null && script.maxDepth >= 0 && depth > script.maxDepth) {
-                    console.debug(`getRegexedString: Skipping script ${script.scriptName} because depth ${depth} is greater than maxDepth ${script.maxDepth}`);
-                    return;
-                }
-            }
-
-            if (script.placement.includes(placement)) {
-                finalString = runRegexScript(script, finalString, { characterOverride });
-            }
-        }
-    });
+    const scripts = getApplicableRegexScripts(placement, { isMarkdown, isPrompt, isEdit, depth });
+    finalString = runRegexScripts(scripts, finalString, { characterOverride });
 
     return finalString;
+}
+
+/**
+ * Native-accelerated batch version of getRegexedString.
+ * Existing SillyTavern-facing APIs remain synchronous; this is only for Tauri-owned async paths.
+ * @param {{ rawString: string, placement: regex_placement, params?: RegexParams }[]} items Inputs to transform
+ * @returns {Promise<string[]>} Transformed strings in the same order
+ */
+export async function getRegexedStringBatchAsync(items) {
+    const results = new Array(items.length);
+    const nativeTasks = [];
+    const nativeIndexes = [];
+    const nativeBackendAvailable = isNativeRegexBackendAvailable() && isNativeRegexBackendEnabled();
+
+    for (const [index, item] of items.entries()) {
+        const rawString = item?.rawString;
+        const placement = item?.placement;
+        const params = item?.params ?? {};
+
+        if (typeof rawString !== 'string') {
+            console.warn('getRegexedStringBatchAsync: rawString is not a string. Returning empty string.');
+            results[index] = '';
+            continue;
+        }
+
+        if (!rawString || extension_settings.disabledExtensions.includes('regex') || placement === undefined) {
+            results[index] = rawString;
+            continue;
+        }
+
+        const scripts = getApplicableRegexScripts(placement, params);
+        if (scripts.length === 0) {
+            results[index] = rawString;
+            continue;
+        }
+
+        if (!nativeBackendAvailable) {
+            results[index] = runRegexScripts(scripts, rawString, params);
+            continue;
+        }
+
+        const nativeScripts = scripts.map(script => toNativeRegexScript(script, rawString));
+        if (nativeScripts.every(Boolean) && canApplyNativeUnicodeSemantics(nativeScripts, rawString)) {
+            nativeIndexes.push(index);
+            nativeTasks.push({ text: rawString, scripts: nativeScripts });
+        } else {
+            results[index] = runRegexScripts(scripts, rawString, params);
+        }
+    }
+
+    if (nativeTasks.length > 0) {
+        const response = await applyNativeRegexBatch({ tasks: nativeTasks });
+        if (!Array.isArray(response?.tasks) || response.tasks.length !== nativeTasks.length) {
+            throw new Error('Native regex backend returned an invalid batch response');
+        }
+
+        response.tasks.forEach((task, offset) => {
+            results[nativeIndexes[offset]] = String(task?.text ?? '');
+        });
+    }
+
+    return results;
+}
+
+/**
+ * Async single-input convenience wrapper for Tauri-owned call sites.
+ * @param {string} rawString The raw string to be regexed
+ * @param {regex_placement} placement The placement of the string
+ * @param {RegexParams} params The parameters to use for the regex script
+ * @returns {Promise<string>} The regexed string
+ */
+export async function getRegexedStringAsync(rawString, placement, params = {}) {
+    const [result] = await getRegexedStringBatchAsync([{ rawString, placement, params }]);
+    return result;
 }
 
 /**
@@ -394,20 +555,7 @@ export function runRegexScript(regexScript, rawString, { characterOverride } = {
         return newString;
     }
 
-    const getRegexString = () => {
-        switch (Number(regexScript.substituteRegex)) {
-            case substitute_find_regex.NONE:
-                return regexScript.findRegex;
-            case substitute_find_regex.RAW:
-                return substituteParamsExtended(regexScript.findRegex);
-            case substitute_find_regex.ESCAPED:
-                return substituteParamsExtended(regexScript.findRegex, {}, sanitizeRegexMacro);
-            default:
-                console.warn(`runRegexScript: Unknown substituteRegex value ${regexScript.substituteRegex}. Using raw regex.`);
-                return regexScript.findRegex;
-        }
-    };
-    const regexString = getRegexString();
+    const regexString = resolveRegexString(regexScript);
     const findRegex = RegexProvider.instance.get(regexString);
 
     // The user skill issued. Return with nothing.

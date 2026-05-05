@@ -266,7 +266,7 @@ import { markdownExclusionExt } from './scripts/showdown-exclusion.js';
 import { markdownUnderscoreExt } from './scripts/showdown-underscore.js';
 import { NOTE_MODULE_NAME, initAuthorsNote, metadata_keys, setFloatingPrompt, shouldWIAddPrompt } from './scripts/authors-note.js';
 import { registerPromptManagerMigration } from './scripts/PromptManager.js';
-import { getRegexedString, regex_placement } from './scripts/extensions/regex/engine.js';
+import { getRegexedString, getRegexedStringBatchAsync, regex_placement } from './scripts/extensions/regex/engine.js';
 import { initLogprobs, saveLogprobsForActiveMessage } from './scripts/logprobs.js';
 import { FILTER_STATES, FILTER_TYPES, FilterHelper, isFilterState } from './scripts/filters.js';
 import { getCfgPrompt, getGuidanceScale, initCfg } from './scripts/cfg-scale.js';
@@ -2219,7 +2219,23 @@ function getNonSystemDepth(messageId) {
     return depth >= 0 ? depth : undefined;
 }
 
-export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides = {}, isReasoning = false) {
+export function getMessageFormattingRegexContext(isUser, messageId, isReasoning = false) {
+    const numericMessageId = Number(messageId);
+    const placement = isReasoning
+        ? regex_placement.REASONING
+        : (isUser
+            ? regex_placement.USER_INPUT
+            : (chat[numericMessageId]?.extra?.type === 'narrator'
+                ? regex_placement.SLASH_COMMAND
+                : regex_placement.AI_OUTPUT));
+
+    return {
+        placement,
+        depth: getNonSystemDepth(numericMessageId),
+    };
+}
+
+export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides = {}, isReasoning = false, formattingOptions = {}) {
     if (!mes) {
         return '';
     }
@@ -2251,16 +2267,8 @@ export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, san
         mes = mes.slice(replacedPromptBias.length);
     }
 
-    if (!isSystem) {
-        const numericMessageId = Number(messageId);
-        const regexPlacement = isReasoning
-            ? regex_placement.REASONING
-            : (isUser
-                ? regex_placement.USER_INPUT
-                : (chat[numericMessageId]?.extra?.type === 'narrator'
-                    ? regex_placement.SLASH_COMMAND
-                    : regex_placement.AI_OUTPUT));
-        const depth = getNonSystemDepth(numericMessageId);
+    if (!isSystem && !formattingOptions?.skipRegex) {
+        const { placement: regexPlacement, depth } = getMessageFormattingRegexContext(isUser, messageId, isReasoning);
 
         // Always override the character name
         mes = getRegexedString(mes, regexPlacement, {
@@ -4956,12 +4964,14 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         coreChat.pop();
     }
 
-    coreChat = await Promise.all(coreChat.map(async (/** @type {ChatMessage} */ chatItem, index) => {
-        let message = chatItem.mes;
-        let regexType = chatItem.is_user ? regex_placement.USER_INPUT : regex_placement.AI_OUTPUT;
-        let options = { isPrompt: true, depth: (coreChat.length - index - (isContinue ? 2 : 1)) };
+    const coreChatRegexedMessages = await getRegexedStringBatchAsync(coreChat.map((/** @type {ChatMessage} */ chatItem, index) => ({
+        rawString: chatItem.mes,
+        placement: chatItem.is_user ? regex_placement.USER_INPUT : regex_placement.AI_OUTPUT,
+        params: { isPrompt: true, depth: (coreChat.length - index - (isContinue ? 2 : 1)) },
+    })));
 
-        let regexedMessage = getRegexedString(message, regexType, options);
+    coreChat = await Promise.all(coreChat.map(async (/** @type {ChatMessage} */ chatItem, index) => {
+        let regexedMessage = coreChatRegexedMessages[index];
         regexedMessage = await appendFileContent(chatItem, regexedMessage);
 
         const titles = [];
@@ -4987,18 +4997,19 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }));
 
     const promptReasoning = new PromptReasoning();
+    const regexedReasoning = await getRegexedStringBatchAsync(coreChat.map((chatItem, index) => ({
+        rawString: String(chatItem.extra?.reasoning ?? ''),
+        placement: regex_placement.REASONING,
+        params: { isPrompt: true, depth: coreChat.length - index - (isContinue ? 2 : 1) },
+    })));
+
     for (let i = coreChat.length - 1; i >= 0; i--) {
-        const depth = coreChat.length - i - (isContinue ? 2 : 1);
         const isPrefix = isContinue && i === coreChat.length - 1;
         coreChat[i] = {
             ...coreChat[i],
             mes: promptReasoning.addToMessage(
                 coreChat[i].mes,
-                getRegexedString(
-                    String(coreChat[i].extra?.reasoning ?? ''),
-                    regex_placement.REASONING,
-                    { isPrompt: true, depth: depth },
-                ),
+                regexedReasoning[i],
                 isPrefix,
                 coreChat[i].extra?.reasoning_duration,
             ),
