@@ -5,6 +5,7 @@
 状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环与前端 dryRun adapter。Agent System 扩展开关开启时，普通发送、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来设计。
 
 `provider_state` 是 Rust 后端内部 continuation contract，不是 Host ABI。前端/扩展不应读写 `_tauritavern_provider_state`；需要诊断时通过 run events、`modelResponsePath` 与 LLM API log 观察。
+模型回合详情必须通过 `readModelTurn()` 读取后端投影 DTO；前端不解析 `model-responses/` raw JSON。
 
 ## 1. 入口
 
@@ -26,6 +27,7 @@ type TauriTavernAgentApi = {
   cancel(runId: string): Promise<AgentRunHandle>;
   readEvents(input: AgentReadEventsInput): Promise<AgentReadEventsResult>;
   readWorkspaceFile(input: AgentReadWorkspaceFileInput): Promise<AgentWorkspaceFile>;
+  readModelTurn(input: AgentReadModelTurnInput): Promise<AgentModelTurn>;
 
   approveToolCall(): never;
   listRuns(): never;
@@ -229,7 +231,50 @@ type AgentWorkspaceFile = {
 路径必须是 workspace relative path。非法路径直接 reject。
 当前 Host ABI 只读当前 run workspace 的 UTF-8 文本文件，不支持 `checkpointId` 参数。模型侧读取应使用 `workspace_read_file` 工具，前端/扩展侧读取应使用本方法。
 
-## 10. readDiff
+## 10. readModelTurn
+
+```ts
+type AgentReadModelTurnInput = {
+  runId: string;
+  round: number;
+  maxChars?: number;
+};
+
+type AgentModelTurn = {
+  runId: string;
+  round: number;
+  modelResponsePath: string;
+  provider: {
+    source?: string;
+    format?: string;
+    model?: string;
+    responseId?: string;
+    usage?: unknown;
+  };
+  assistant: {
+    text: string;
+    bytes: number;
+    truncated: boolean;
+  };
+  reasoning: Array<{
+    source: string;
+    text: string;
+    bytes: number;
+    truncated: boolean;
+  }>;
+  toolCalls: Array<{
+    callId: string;
+    name: string;
+    modelName?: string;
+  }>;
+};
+```
+
+`round` 必须大于 0。`maxChars` 省略时由后端使用默认上限；传入时必须大于 0。
+
+该方法返回面向 UI 的白名单投影：assistant 输出、可见/摘要化 reasoning、工具调用摘要与 provider 摘要。它不会暴露完整 raw response、provider-private native continuation、签名或 encrypted reasoning。需要完整诊断时仍使用 run workspace 中的 `modelResponsePath` 与 LLM API log。
+
+## 11. readDiff
 
 当前未实现 diff；`readDiff()` 会显式 throw。
 
@@ -255,7 +300,7 @@ type AgentDiff = {
 
 第一期可以只支持文本 artifact 的 diff。
 
-## 11. rollback
+## 12. rollback
 
 当前未实现 rollback；`rollback()` 会显式 throw。
 
@@ -272,7 +317,7 @@ type AgentRollbackInput = {
 - `workspace`：只恢复 run workspace，不修改 chat。
 - `committed-message`：重组 artifact 并修改已提交聊天消息，必须走 chat 保存契约。
 
-## 12. commit
+## 13. commit
 
 ```ts
 type AgentCommitInput = {
@@ -296,7 +341,7 @@ Chat commit 不是公开 Host API 方法，而是 Agent tool 与 host bridge 的
 - `append` 在本 run 尚无 commit 时不会报错，会创建本 run 的消息楼层。
 - 前台 run 在 `workspace.finish` 前必须至少成功 commit 一次；后台 run 可无 chat commit 完成。
 
-## 13. Event Envelope
+## 14. Event Envelope
 
 ```ts
 type AgentRunEvent = {
@@ -314,7 +359,7 @@ type AgentRunEvent = {
 
 Agent event 不等同 SillyTavern `eventSource` 事件，不得伪装成 `GENERATION_*` 或 `TOOL_CALLS_*`。
 
-## 14. Errors
+## 15. Errors
 
 错误建议结构：
 

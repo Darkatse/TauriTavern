@@ -97,6 +97,15 @@ pub struct AgentReadWorkspaceFileDto {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentReadModelTurnDto {
+    pub run_id: String,
+    pub round: usize,
+    #[serde(default = "default_model_turn_text_limit")]
+    pub max_chars: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentWorkspaceFileDto {
@@ -104,6 +113,53 @@ pub struct AgentWorkspaceFileDto {
     pub text: String,
     pub bytes: u64,
     pub sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelTurnDisplayDto {
+    pub run_id: String,
+    pub round: usize,
+    pub model_response_path: String,
+    pub provider: AgentModelTurnProviderDto,
+    pub assistant: AgentModelTurnTextDto,
+    pub reasoning: Vec<AgentModelTurnReasoningDto>,
+    pub tool_calls: Vec<AgentModelTurnToolCallDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelTurnProviderDto {
+    pub source: Option<String>,
+    pub format: Option<String>,
+    pub model: Option<String>,
+    pub response_id: Option<String>,
+    pub usage: Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelTurnTextDto {
+    pub text: String,
+    pub bytes: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelTurnReasoningDto {
+    pub source: String,
+    pub text: String,
+    pub bytes: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelTurnToolCallDto {
+    pub call_id: String,
+    pub name: String,
+    pub model_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -121,4 +177,8 @@ fn default_generation_type() -> String {
 
 fn default_event_limit() -> usize {
     100
+}
+
+fn default_model_turn_text_limit() -> usize {
+    40_000
 }

@@ -105,6 +105,7 @@ export {};
  *   | 'read_secret_state'
  *   | 'read_agent_run_events'
  *   | 'read_agent_workspace_file'
+ *   | 'read_agent_model_turn'
  *   | 'read_skill_file'
  *   | 'read_thumbnail_asset'
  *   | 'read_user_avatar_asset'

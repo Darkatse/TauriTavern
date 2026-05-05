@@ -408,6 +408,47 @@ test('Agent run event presenter derives lazy detail targets from journal refs', 
     ]);
 });
 
+test('Agent run event presenter keeps model turns out of timeline and exposes reasoning lazily', async () => {
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const modelEvent = {
+        seq: 4,
+        id: 'evt-model',
+        runId: 'run-1',
+        type: 'model_completed',
+        timestamp: '2026-05-04T12:00:00Z',
+        level: 'info',
+        payload: {
+            round: 2,
+            modelResponsePath: 'model-responses/round-002.json',
+            toolCallCount: 1,
+            hasReasoning: true,
+            reasoningBytes: 30,
+        },
+    };
+    const toolEvent = {
+        seq: 5,
+        id: 'evt-tool',
+        runId: 'run-1',
+        type: 'tool_call_completed',
+        payload: {
+            round: 2,
+            callId: 'call-1',
+            name: 'workspace.read_file',
+        },
+    };
+
+    assert.equal(presenter.isDisplayableRunEvent(modelEvent), false);
+    assert.deepEqual(presenter.timelineItemsFromEvents([modelEvent]).map(item => item.type), []);
+
+    const targets = presenter.buildEventDetailTargets(
+        presenter.presentRunEvent(toolEvent),
+        [modelEvent, toolEvent],
+    );
+    assert.deepEqual(targets, [
+        { type: 'modelReasoning', labelKey: 'timelineReasoning', round: 2 },
+    ]);
+});
+
 test('Agent run detail formatter renders tool result details without raw JSON shell', async () => {
     const { formatDetailFile } = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
     const section = formatDetailFile(
@@ -443,4 +484,53 @@ test('Agent run detail formatter renders tool result details without raw JSON sh
         { label: 'Target', value: 'output/main.md' },
         { label: 'Range', value: 'full file' },
     ]);
+});
+
+test('Agent run detail formatter renders model turn display DTO', async () => {
+    const { formatModelTurnDetail } = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
+    const section = formatModelTurnDetail(
+        { type: 'modelReasoning', labelKey: 'timelineReasoning', round: 2 },
+        {
+            runId: 'run-1',
+            round: 2,
+            modelResponsePath: 'model-responses/round-002.json',
+            provider: {
+                source: 'openai',
+                format: 'responses',
+                model: 'gpt-5',
+                responseId: 'resp_1',
+            },
+            assistant: {
+                text: 'I will inspect the workspace.',
+                bytes: 29,
+                truncated: false,
+            },
+            reasoning: [{
+                source: 'reasoning_content',
+                text: 'Need to inspect the workspace.',
+                bytes: 30,
+                truncated: true,
+            }],
+            toolCalls: [{
+                callId: 'call-1',
+                name: 'workspace.read_file',
+            }],
+        },
+    );
+
+    assert.equal(section.labelKey, 'timelineReasoning');
+    assert.equal(section.path, '');
+    assert.deepEqual(section.fields, [
+        { label: 'Round', value: '2' },
+        { label: 'Provider', value: 'openai / responses' },
+        { label: 'Model', value: 'gpt-5' },
+    ]);
+    assert.deepEqual(section.blocks.map(block => block.labelKey), [
+        'timelineReasoning',
+    ]);
+    assert.equal(section.blocks[0].truncated, true);
+    assert.equal(section.blocks[0].kind, 'reasoning');
+    assert.equal(section.blocks[0].defaultOpen, false);
+    assert.equal(section.blocks[0].meta, 'reasoning_content · 30 bytes');
+    assert.match(section.blocks[0].text, /Need to inspect/);
 });

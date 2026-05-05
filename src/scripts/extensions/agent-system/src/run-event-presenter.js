@@ -107,9 +107,19 @@ export function buildEventDetailTargets(item, allEvents) {
         seenPaths.add(normalized);
         targets.push({ type: 'file', labelKey, path: normalized });
     };
+    const addModelReasoning = (round) => {
+        const normalized = Number(round);
+        if (!Number.isInteger(normalized) || normalized <= 0) {
+            return;
+        }
+        if (!modelTurnHasReasoning(allEvents, normalized)) {
+            return;
+        }
+        targets.push({ type: 'modelReasoning', labelKey: 'timelineReasoning', round: normalized });
+    };
 
+    addModelReasoning(payload.round);
     addFile('timelineArguments', payload.argumentsRef);
-    addFile('timelineModelResponse', payload.modelResponsePath);
 
     if (event?.type === 'tool_call_completed' || event?.type === 'tool_call_failed') {
         const resultPath = findToolResultPath(allEvents, payload.callId);
@@ -157,6 +167,17 @@ function findToolResultPath(events, callId) {
         .find((event) => event?.type === 'tool_result_stored'
             && String(event?.payload?.callId || '') === normalized);
     return resultEvent?.payload?.path || '';
+}
+
+function modelTurnHasReasoning(events, round) {
+    return events.some((event) => {
+        if (event?.type !== 'model_completed') {
+            return false;
+        }
+        const payload = plainObject(event?.payload) ? event.payload : {};
+        return Number(payload.round) === round
+            && (payload.hasReasoning === true || Number(payload.reasoningBytes) > 0);
+    });
 }
 
 function eventTitleParams(type, payload) {

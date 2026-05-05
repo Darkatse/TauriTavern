@@ -23,6 +23,7 @@ mod loop_runner;
 mod model_response_store;
 mod model_retry;
 mod model_turn;
+mod model_turn_display;
 mod prompt_snapshot;
 mod tool_execution;
 

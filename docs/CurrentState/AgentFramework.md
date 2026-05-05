@@ -33,6 +33,7 @@ api.agent.subscribe(runId, handler, options?)
 api.agent.cancel(runId)
 api.agent.readEvents(input)
 api.agent.readWorkspaceFile(input)
+api.agent.readModelTurn(input)
 ```
 
 `startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` 支持可选 `profileId`。后端已注册 Profile 管理 Tauri commands（`list_agent_profiles` / `load_agent_profile` / `save_agent_profile` / `delete_agent_profile`），但尚未封装到 `window.__TAURITAVERN__.api.agent` 与 `src/types.d.ts`；正式 UI 属于后续阶段。
@@ -49,6 +50,8 @@ api.skill.exportSkill(input)
 ```
 
 `api.skill` 是用户/UI/扩展侧的 Skill 管理入口；Agent run 内只通过 `skill.list` / `skill.search` / `skill.read` 工具消费已安装 Skill。
+
+`readModelTurn()` 读取指定 run/round 的模型回合显示 DTO：assistant 输出、可见/摘要化 reasoning、工具调用摘要与 provider 摘要。前端 Timeline 不直接解析 `model-responses/` raw 文件。
 
 明确不存在公共 `api.agent.startRun()` alias。启动入口必须表达 prompt 来源：
 
@@ -294,6 +297,8 @@ run_failed
 ```
 
 Provider stream chunk 不是 Agent run event。Agent UI 必须订阅 `api.agent.subscribe(runId, handler)` 的 run event。
+
+`model_completed` payload 当前包含 `round`、`modelResponsePath`、`toolCallCount`、assistant/reasoning 字节摘要与 `hasAssistantText` / `hasReasoning`。工具相关事件携带同一 `round`，便于 UI 从任意工具事件跳回本轮模型回合。
 
 ## 当前文件布局
 

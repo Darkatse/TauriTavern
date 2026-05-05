@@ -139,9 +139,9 @@ Agent run event 当前会记录：
 
 - `provider_state_updated`：只记录摘要字段，便于诊断 continuation。
 - `model_response_stored`：保存完整 `AgentModelResponse` 到 `model-responses/round-XXX.json`。
-- `model_completed`：包含 `modelResponsePath`，指向本轮模型响应文件。
+- `model_completed`：包含 `round`、`modelResponsePath`、工具调用数与 assistant/reasoning 字节摘要。
 
-`model-responses/` 是 run workspace 内部诊断目录，不属于模型工具可见 roots。
+`model-responses/` 是 run workspace 内部诊断目录，不属于模型工具可见 roots。前端 Timeline 通过 `api.agent.readModelTurn({ runId, round })` 获取显示 DTO，不直接解析该目录中的 raw 文件。
 
 LLM API log 当前记录剥离内部 provider state 后的 request raw/readable。日志表示“实际 provider payload 视角”，不暴露 `_tauritavern_provider_state`。
 

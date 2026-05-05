@@ -18,6 +18,7 @@ impl AgentRuntimeService {
     pub(super) async fn dispatch_tool_call(
         &self,
         run_id: &str,
+        round: usize,
         call: &AgentToolCall,
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
@@ -30,6 +31,7 @@ impl AgentRuntimeService {
             AgentRunEventLevel::Info,
             "tool_call_requested",
             json!({
+                "round": round,
                 "callId": call.id.as_str(),
                 "name": call.name.as_str(),
                 "argumentsRef": arguments_ref.as_str(),
@@ -49,6 +51,7 @@ impl AgentRuntimeService {
                 AgentRunEventLevel::Error,
                 "tool_call_failed",
                 json!({
+                    "round": round,
                     "callId": call.id.as_str(),
                     "name": call.name.as_str(),
                     "message": error.to_string(),
@@ -68,7 +71,7 @@ impl AgentRuntimeService {
                 ),
                 started.elapsed().as_millis(),
             );
-            self.record_tool_outcome(run_id, &outcome).await?;
+            self.record_tool_outcome(run_id, round, &outcome).await?;
             return Ok(outcome);
         }
 
@@ -82,7 +85,7 @@ impl AgentRuntimeService {
                 ),
                 started.elapsed().as_millis(),
             );
-            self.record_tool_outcome(run_id, &outcome).await?;
+            self.record_tool_outcome(run_id, round, &outcome).await?;
             return Ok(outcome);
         }
 
@@ -97,7 +100,7 @@ impl AgentRuntimeService {
                     ),
                     started.elapsed().as_millis(),
                 );
-                self.record_tool_outcome(run_id, &outcome).await?;
+                self.record_tool_outcome(run_id, round, &outcome).await?;
                 return Ok(outcome);
             }
         }
@@ -110,6 +113,7 @@ impl AgentRuntimeService {
             AgentRunEventLevel::Info,
             "tool_call_started",
             json!({
+                "round": round,
                 "callId": call.id.as_str(),
                 "name": call.name.as_str(),
             }),
@@ -148,7 +152,7 @@ impl AgentRuntimeService {
                     }
                     _ => outcome,
                 };
-                self.record_tool_outcome(run_id, &outcome).await?;
+                self.record_tool_outcome(run_id, round, &outcome).await?;
                 Ok(outcome)
             }
             Err(error) => {
@@ -157,9 +161,10 @@ impl AgentRuntimeService {
                     AgentRunEventLevel::Error,
                     "tool_call_failed",
                     json!({
-                        "callId": call.id.as_str(),
-                        "name": call.name.as_str(),
-                        "message": error.to_string(),
+                    "round": round,
+                    "callId": call.id.as_str(),
+                    "name": call.name.as_str(),
+                    "message": error.to_string(),
                     }),
                 )
                 .await?;
@@ -171,9 +176,11 @@ impl AgentRuntimeService {
     async fn record_tool_outcome(
         &self,
         run_id: &str,
+        round: usize,
         outcome: &AgentToolDispatchOutcome,
     ) -> Result<(), ApplicationError> {
-        self.store_tool_result(run_id, &outcome.result).await?;
+        self.store_tool_result(run_id, round, &outcome.result)
+            .await?;
         self.event(
             run_id,
             if outcome.result.is_error {
@@ -187,6 +194,7 @@ impl AgentRuntimeService {
                 "tool_call_completed"
             },
             json!({
+                "round": round,
                 "callId": outcome.result.call_id.as_str(),
                 "name": outcome.result.name.as_str(),
                 "isError": outcome.result.is_error,
@@ -203,6 +211,7 @@ impl AgentRuntimeService {
     async fn store_tool_result(
         &self,
         run_id: &str,
+        round: usize,
         result: &AgentToolResult,
     ) -> Result<(), ApplicationError> {
         let path = WorkspacePath::parse(format!(
@@ -222,6 +231,7 @@ impl AgentRuntimeService {
             AgentRunEventLevel::Debug,
             "tool_result_stored",
             json!({
+                "round": round,
                 "callId": result.call_id.as_str(),
                 "path": path.as_str(),
             }),

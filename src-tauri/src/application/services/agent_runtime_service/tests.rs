@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use super::AgentRuntimeService;
 use super::artifacts::build_agent_manifest;
-use crate::application::dto::agent_dto::AgentResolveChatCommitDto;
+use crate::application::dto::agent_dto::{AgentReadModelTurnDto, AgentResolveChatCommitDto};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_identity::workspace_id_for_stable_chat_id;
@@ -91,7 +91,8 @@ async fn agent_loop_writes_artifact_and_completes() {
             "choices": [{
                 "message": {
                     "role": "assistant",
-                    "content": null,
+                    "content": "I will write the artifact.",
+                    "reasoning_content": "Need to create output/main.md.",
                     "tool_calls": [{
                         "id": "call_write",
                         "type": "function",
@@ -178,6 +179,27 @@ async fn agent_loop_writes_artifact_and_completes() {
     assert_eq!(stored_response["round"], json!(1));
     assert!(stored_response["response"]["rawResponse"]["choices"].is_array());
 
+    let model_turn = service
+        .read_model_turn(AgentReadModelTurnDto {
+            run_id: run.id.clone(),
+            round: 1,
+            max_chars: 40_000,
+        })
+        .await
+        .expect("read model turn");
+    assert_eq!(model_turn.assistant.text, "I will write the artifact.");
+    assert_eq!(model_turn.assistant.bytes, 26);
+    assert!(!model_turn.assistant.truncated);
+    assert_eq!(model_turn.reasoning.len(), 1);
+    assert_eq!(
+        model_turn.reasoning[0].text,
+        "Need to create output/main.md."
+    );
+    assert_eq!(model_turn.reasoning[0].source, "reasoning_content");
+    assert_eq!(model_turn.tool_calls.len(), 1);
+    assert_eq!(model_turn.tool_calls[0].call_id, "call_write");
+    assert_eq!(model_turn.tool_calls[0].name, "workspace.write_file");
+
     let model_requests = model_gateway_probe.requests().await;
     let second_request = model_requests.get(1).expect("second model request");
     let hydrated_tool_result = second_request
@@ -219,6 +241,22 @@ async fn agent_loop_writes_artifact_and_completes() {
             .iter()
             .any(|event| event.event_type == "model_response_stored")
     );
+    let model_completed = events
+        .iter()
+        .find(|event| event.event_type == "model_completed" && event.payload["round"] == json!(1))
+        .expect("model completed event");
+    assert_eq!(model_completed.payload["hasAssistantText"], json!(true));
+    assert_eq!(model_completed.payload["hasReasoning"], json!(true));
+    assert_eq!(model_completed.payload["assistantTextBytes"], json!(26));
+
+    let tool_requested = events
+        .iter()
+        .find(|event| {
+            event.event_type == "tool_call_requested"
+                && event.payload["callId"].as_str() == Some("call_write")
+        })
+        .expect("tool call requested");
+    assert_eq!(tool_requested.payload["round"], json!(1));
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }

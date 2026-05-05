@@ -3,7 +3,7 @@ import { createApp } from 'vue/dist/vue.esm-bundler.js';
 import { errorText, requireHostApi } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 import { loadSettings, subscribeSettings } from './settings-store.js';
-import { formatDetailFile } from './run-detail-format.js';
+import { formatDetailFile, formatModelTurnDetail } from './run-detail-format.js';
 import {
     getActiveAgentRun,
     subscribeAgentRunEvents,
@@ -422,6 +422,13 @@ function createAgentRunTimelineApp() {
                 }
             },
             async readDetailFile(target) {
+                if (target.type === 'modelTurn' || target.type === 'modelReasoning') {
+                    const turn = await requireHostApi('agent').readModelTurn({
+                        runId: this.currentRun.runId,
+                        round: target.round,
+                    });
+                    return formatModelTurnDetail(target, turn);
+                }
                 const file = await requireHostApi('agent').readWorkspaceFile({
                     runId: this.currentRun.runId,
                     path: target.path,
@@ -591,13 +598,24 @@ function createAgentRunTimelineApp() {
                                         </span>
                                     </div>
                                     <div v-if="section.blocks && section.blocks.length" class="ttas-run-detail-blocks">
-                                        <section v-for="(block, blockIndex) in section.blocks" :key="blockIndex" class="ttas-run-detail-block">
-                                            <div class="ttas-run-detail-block-head">
+                                        <details
+                                            v-for="(block, blockIndex) in section.blocks"
+                                            :key="blockIndex"
+                                            class="ttas-run-detail-block"
+                                            :class="'kind-' + (block.kind || 'text')"
+                                            :data-ttas-block-kind="block.kind || 'text'"
+                                            :open="block.defaultOpen !== false"
+                                        >
+                                            <summary class="ttas-run-detail-block-head">
                                                 <strong>{{ block.labelKey ? tr(block.labelKey) : block.label }}</strong>
-                                                <small v-if="block.truncated">{{ tr('timelineTruncated') }}</small>
-                                            </div>
+                                                <span class="ttas-run-detail-block-badges">
+                                                    <small v-if="block.meta">{{ block.meta }}</small>
+                                                    <small v-if="block.truncated">{{ tr('timelineTruncated') }}</small>
+                                                    <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                                                </span>
+                                            </summary>
                                             <pre>{{ block.text }}</pre>
-                                        </section>
+                                        </details>
                                     </div>
                                 </article>
                             </div>

@@ -4,10 +4,10 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::agent_dto::{
-    AgentCancelRunDto, AgentListProfilesResultDto, AgentLoadProfileResultDto, AgentProfileIdDto,
-    AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
-    AgentResolveChatCommitDto, AgentRunHandleDto, AgentSaveProfileDto, AgentStartRunDto,
-    AgentWorkspaceFileDto,
+    AgentCancelRunDto, AgentListProfilesResultDto, AgentLoadProfileResultDto,
+    AgentModelTurnDisplayDto, AgentProfileIdDto, AgentReadEventsDto, AgentReadEventsResultDto,
+    AgentReadModelTurnDto, AgentReadWorkspaceFileDto, AgentResolveChatCommitDto, AgentRunHandleDto,
+    AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -124,6 +124,20 @@ pub async fn read_agent_workspace_file(
         .read_workspace_file(dto)
         .await
         .map_err(map_command_error("Failed to read agent workspace file"))
+}
+
+#[tauri::command]
+pub async fn read_agent_model_turn(
+    dto: AgentReadModelTurnDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentModelTurnDisplayDto, CommandError> {
+    log_command("read_agent_model_turn");
+
+    app_state
+        .agent_runtime_service
+        .read_model_turn(dto)
+        .await
+        .map_err(map_command_error("Failed to read agent model turn"))
 }
 
 #[tauri::command]

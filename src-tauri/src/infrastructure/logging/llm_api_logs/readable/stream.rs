@@ -2,9 +2,12 @@ use serde_json::Value;
 
 use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
 
+use super::reasoning::collect_visible_reasoning_texts;
+
 pub(in crate::infrastructure::logging::llm_api_logs) struct StreamReadableCollector {
     source: ChatCompletionSource,
-    buffer: String,
+    text_buffer: String,
+    reasoning_buffer: String,
 }
 
 impl StreamReadableCollector {
@@ -13,7 +16,8 @@ impl StreamReadableCollector {
     ) -> Self {
         Self {
             source,
-            buffer: String::new(),
+            text_buffer: String::new(),
+            reasoning_buffer: String::new(),
         }
     }
 
@@ -49,8 +53,18 @@ impl StreamReadableCollector {
                 continue;
             };
 
+            if let Some(text) = delta.get("reasoning_content").and_then(Value::as_str) {
+                self.reasoning_buffer.push_str(text);
+            }
+            if let Some(text) = delta
+                .get("thought_summary")
+                .or_else(|| delta.get("thinking"))
+                .and_then(Value::as_str)
+            {
+                self.reasoning_buffer.push_str(text);
+            }
             if let Some(text) = delta.get("content").and_then(Value::as_str) {
-                self.buffer.push_str(text);
+                self.text_buffer.push_str(text);
             }
         }
     }
@@ -75,12 +89,12 @@ impl StreamReadableCollector {
             .and_then(|content| content.get("text"))
             .and_then(Value::as_str)
         {
-            self.buffer.push_str(text);
+            self.text_buffer.push_str(text);
             return;
         }
 
         if let Some(tool_plan) = message.get("tool_plan").and_then(Value::as_str) {
-            self.buffer.push_str(tool_plan);
+            self.text_buffer.push_str(tool_plan);
         }
     }
 
@@ -104,12 +118,22 @@ impl StreamReadableCollector {
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if delta_type != "text_delta" {
-            return;
-        }
-
-        if let Some(text) = delta.get("text").and_then(Value::as_str) {
-            self.buffer.push_str(text);
+        match delta_type {
+            "text_delta" => {
+                if let Some(text) = delta.get("text").and_then(Value::as_str) {
+                    self.text_buffer.push_str(text);
+                }
+            }
+            "thinking_delta" => {
+                if let Some(text) = delta
+                    .get("thinking")
+                    .or_else(|| delta.get("text"))
+                    .and_then(Value::as_str)
+                {
+                    self.reasoning_buffer.push_str(text);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -131,13 +155,44 @@ impl StreamReadableCollector {
             return;
         };
         for part in parts {
+            let Some(part_object) = part.as_object() else {
+                continue;
+            };
             if let Some(text) = part.get("text").and_then(Value::as_str) {
-                self.buffer.push_str(text);
+                if part_object
+                    .get("thought")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    self.reasoning_buffer.push_str(text);
+                } else {
+                    self.text_buffer.push_str(text);
+                }
+                continue;
+            }
+            if part_object
+                .get("thought")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                for text in collect_visible_reasoning_texts(part_object) {
+                    self.reasoning_buffer.push_str(&text);
+                }
             }
         }
     }
 
     pub(in crate::infrastructure::logging::llm_api_logs) fn into_string(self) -> String {
-        self.buffer
+        let reasoning_is_empty = self.reasoning_buffer.trim().is_empty();
+        let text_is_empty = self.text_buffer.trim().is_empty();
+        match (reasoning_is_empty, text_is_empty) {
+            (true, true) => String::new(),
+            (true, false) => self.text_buffer,
+            (false, true) => format!("[reasoning]\n{}", self.reasoning_buffer),
+            (false, false) => format!(
+                "[reasoning]\n{}\n\n[assistant]\n{}",
+                self.reasoning_buffer, self.text_buffer
+            ),
+        }
     }
 }

@@ -212,6 +212,23 @@ model_failed
 
 当前 `model_response_stored` 会把完整 `AgentModelResponse` 写入 `model-responses/round-XXX.json`，event 只记录路径与摘要。`provider_state_updated` 只记录 `provider_state` 摘要字段，不记录完整内部 payload。
 
+`model_completed` 是 UI timeline 的模型回合入口：
+
+```json
+{
+  "round": 1,
+  "modelResponsePath": "model-responses/round-001.json",
+  "toolCallCount": 1,
+  "textBytes": 26,
+  "hasAssistantText": true,
+  "assistantTextBytes": 26,
+  "hasReasoning": true,
+  "reasoningBytes": 30
+}
+```
+
+前端读取详情时使用 Host ABI `readModelTurn({ runId, round })`，不直接解析 `modelResponsePath` 指向的 raw 文件。
+
 ### 4.5 Tool
 
 ```text
@@ -229,15 +246,11 @@ context_tool_result_hydrated
 
 ```json
 {
+  "round": 1,
   "callId": "call_...",
-  "toolName": "workspace.apply_patch",
-  "displayName": "Apply patch",
-  "argumentsRef": "events/blobs/call_..._args.json",
-  "approvalRequired": false,
-  "policy": {
-    "source": "plan_node",
-    "allowed": true
-  }
+  "name": "workspace.apply_patch",
+  "argumentsRef": "tool-args/call_....json",
+  "providerMetadata": {}
 }
 ```
 
@@ -245,14 +258,18 @@ context_tool_result_hydrated
 
 ```json
 {
+  "round": 1,
   "callId": "call_...",
-  "toolName": "workspace.apply_patch",
-  "resultRef": "tool-results/call_....json",
+  "name": "workspace.apply_patch",
   "isError": false,
-  "durationMs": 120,
-  "usage": {}
+  "errorCode": null,
+  "message": null,
+  "elapsedMs": 120,
+  "resourceRefs": ["output/main.md"]
 }
 ```
+
+`tool_result_stored` 会携带同一 `round` 与 `path`，用于 UI 读取工具结果详情。
 
 ### 4.6 Checkpoint / Diff
 

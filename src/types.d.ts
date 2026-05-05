@@ -121,6 +121,35 @@ type TauriTavernAgentRunHandle = {
     status: TauriTavernAgentRunStatus;
 };
 
+type TauriTavernAgentModelTurn = {
+    runId: string;
+    round: number;
+    modelResponsePath: string;
+    provider: {
+        source?: string;
+        format?: string;
+        model?: string;
+        responseId?: string;
+        usage?: any;
+    };
+    assistant: {
+        text: string;
+        bytes: number;
+        truncated: boolean;
+    };
+    reasoning: Array<{
+        source: string;
+        text: string;
+        bytes: number;
+        truncated: boolean;
+    }>;
+    toolCalls: Array<{
+        callId: string;
+        name: string;
+        modelName?: string;
+    }>;
+};
+
 type TauriTavernAgentProfileSummary = {
     id: string;
     displayName: string;
@@ -240,6 +269,11 @@ type TauriTavernAgentApi = {
         runId: string;
         path: string;
     }) => Promise<{ path: string; text: string; bytes: number; sha256: string }>;
+    readModelTurn: (input: {
+        runId: string;
+        round: number;
+        maxChars?: number;
+    }) => Promise<TauriTavernAgentModelTurn>;
     subscribe: (
         runId: string,
         handler: (event: TauriTavernAgentRunEvent) => void,

@@ -1,6 +1,7 @@
 use serde_json::json;
 
 use super::AgentRuntimeService;
+use super::model_turn_display::model_response_path;
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::{AgentModelResponse, AgentRunEventLevel, WorkspacePath};
 
@@ -11,7 +12,7 @@ impl AgentRuntimeService {
         round: usize,
         response: &AgentModelResponse,
     ) -> Result<WorkspacePath, ApplicationError> {
-        let path = WorkspacePath::parse(format!("model-responses/round-{round:03}.json"))?;
+        let path = model_response_path(round)?;
         let document = json!({
             "round": round,
             "response": response,

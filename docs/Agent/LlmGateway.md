@@ -81,7 +81,7 @@ Native
 设计原则：
 
 - `Text` / `ToolCall` / `ToolResult` 是可迁移语义。
-- `Reasoning` 可以保存 provider 返回的可见/摘要化 reasoning，但不要求所有 provider 都有。
+- `Reasoning` 保存 provider 返回的可见/摘要化 reasoning；没有公开 reasoning 文本的 provider 可以为空。
 - `Native` 保存 provider-private blocks，不解析、不清洗、不改写。
 - `payload` 仍承载现有 ChatCompletionService 需要的 source/model/settings 字段。
 - `provider_state` 是当前已落地的 run-scoped continuation state，详见 `docs/CurrentState/AgentProviderState.md`。
@@ -138,6 +138,12 @@ Provider native metadata 必须当作 opaque continuation state。
 - 把 OpenAI encrypted reasoning 当作可解释内容。
 
 同 provider continuation 所需 native state 丢失时，应 fail-fast 或测试失败。跨 provider switch 只能迁移 canonical 语义，不能伪装 provider-private state 已迁移。
+
+UI 展示契约：
+
+- Provider normalizer 只把可见文本或 provider 明确给出的摘要提升为 normalized `message.reasoning_content`。
+- Claude / Gemini 的 signature、Gemini thoughtSignature、OpenAI encrypted reasoning 与 Responses continuation item 仍留在 `Native` / `provider_state`，不进入显示 DTO。
+- Agent timeline 读取模型回合详情时使用 `api.agent.readModelTurn({ runId, round })`；该 DTO 是 `AgentModelResponse` 的白名单投影，不是 raw LLM API log。
 
 ## 5.1 Provider State Contract
 

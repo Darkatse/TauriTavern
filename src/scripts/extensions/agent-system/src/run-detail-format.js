@@ -27,6 +27,35 @@ export function formatDetailFile(target, file) {
     return formatTextFileSection(target, file, text);
 }
 
+export function formatModelTurnDetail(target, turn) {
+    const fields = [
+        field(tr('timelineDetailFieldRound'), turn?.round ?? target.round),
+    ];
+    const provider = turn?.provider || {};
+    if (provider.source || provider.format) {
+        fields.push(field(tr('timelineDetailFieldProvider'), [provider.source, provider.format].filter(Boolean).join(' / ')));
+    }
+    if (provider.model) {
+        fields.push(field(tr('timelineDetailFieldModel'), provider.model));
+    }
+
+    const blocks = [];
+    for (const item of Array.isArray(turn?.reasoning) ? turn.reasoning : []) {
+        addBlock(blocks, 'timelineReasoning', item.text, DETAIL_TEXT_LIMIT, item.truncated === true, {
+            kind: 'reasoning',
+            defaultOpen: false,
+            meta: reasoningMeta(item),
+        });
+    }
+
+    return {
+        labelKey: target.labelKey,
+        path: target.showPath ? turn?.modelResponsePath || '' : '',
+        fields,
+        blocks,
+    };
+}
+
 function formatArgumentsSection(target, file, args) {
     const fields = [];
     const blocks = [];
@@ -170,19 +199,20 @@ function renderHits(hits) {
     }).join('\n\n');
 }
 
-function addBlock(blocks, label, value, limit = DETAIL_TEXT_LIMIT) {
+function addBlock(blocks, label, value, limit = DETAIL_TEXT_LIMIT, alreadyTruncated = false, options = {}) {
     const text = typeof value === 'string' ? value : describeNestedValue(value);
     if (!text.trim()) {
         return;
     }
-    blocks.push(textBlock(label, text, limit));
+    blocks.push(textBlock(label, text, limit, alreadyTruncated, options));
 }
 
-function textBlock(label, value, limit = DETAIL_TEXT_LIMIT) {
+function textBlock(label, value, limit = DETAIL_TEXT_LIMIT, alreadyTruncated = false, options = {}) {
     const truncated = truncateText(String(value || ''), limit);
     const block = {
         text: truncated.text,
-        truncated: truncated.truncated,
+        truncated: alreadyTruncated || truncated.truncated,
+        ...options,
     };
     if (label.startsWith('timeline')) {
         block.labelKey = label;
@@ -190,6 +220,17 @@ function textBlock(label, value, limit = DETAIL_TEXT_LIMIT) {
         block.label = label;
     }
     return block;
+}
+
+function reasoningMeta(item) {
+    const parts = [];
+    if (typeof item?.source === 'string' && item.source.trim()) {
+        parts.push(item.source.trim());
+    }
+    if (Number.isFinite(Number(item?.bytes)) && Number(item.bytes) > 0) {
+        parts.push(tr('timelineBytes', { count: Number(item.bytes) }));
+    }
+    return parts.join(' · ');
 }
 
 function truncateText(text, limit) {

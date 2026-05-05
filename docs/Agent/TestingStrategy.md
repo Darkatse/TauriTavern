@@ -91,6 +91,7 @@ source denied by iOS policy
 endpoint override denied
 prompt cache hints preserved
 LLM API log wrapper remains in path
+LLM API log readable output separates visible reasoning from assistant text
 stream chunk becomes model_delta event
 cancel propagates
 tool_call_id opaque round-trip
@@ -143,6 +144,7 @@ foreground finish before workspace.commit returns recoverable tool error
 workspace.commit append without prior commit creates the run message
 subscribe polling can read events in seq order
 readWorkspaceFile returns UTF-8 text, bytes, sha256
+readModelTurn returns assistant text, visible reasoning, tool calls, provider summary
 workspace_list_files accepts omitted/empty/dot path as workspace root
 workspace_search_files searches only visible roots and returns snippets
 workspace_read_file full read records read-state
@@ -155,6 +157,8 @@ skill_read supports line and character ranges
 recoverable tool errors are returned to the model instead of failing the run
 future APIs approveToolCall/listRuns/readDiff/rollback throw explicitly
 ```
+
+Provider normalizer tests 必须覆盖可见 reasoning 提取：Claude `thinking`、Gemini `thought` 文本、OpenAI Responses reasoning summary 进入 `reasoning_content`；signature / encrypted continuation 仍作为 native/provider state 保留，不能作为可展示文本。
 
 ## 7. Windowed Payload Integration Tests
 

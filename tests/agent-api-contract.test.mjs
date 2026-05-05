@@ -63,3 +63,34 @@ test('api.agent.profiles fails fast on invalid profile inputs', async () => {
         /profile must be an object/,
     );
 });
+
+test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid input', async () => {
+    const { calls, agent } = await installHarness();
+
+    await agent.readModelTurn({ runId: 'run-1', round: 2, maxChars: 12000 });
+    await agent.readModelTurn({ runId: 'run-1', round: 3 });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'read_agent_model_turn',
+            args: { dto: { runId: 'run-1', round: 2, maxChars: 12000 } },
+        },
+        {
+            command: 'read_agent_model_turn',
+            args: { dto: { runId: 'run-1', round: 3 } },
+        },
+    ]);
+
+    await assert.rejects(
+        () => agent.readModelTurn({ runId: '', round: 1 }),
+        /runId is required/,
+    );
+    await assert.rejects(
+        () => agent.readModelTurn({ runId: 'run-1', round: 0 }),
+        /round must be a positive integer/,
+    );
+    await assert.rejects(
+        () => agent.readModelTurn({ runId: 'run-1', round: 1, maxChars: 0 }),
+        /maxChars must be a positive integer/,
+    );
+});

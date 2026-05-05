@@ -72,6 +72,26 @@ function createAgentApi({ safeInvoke }) {
         return safeInvoke('read_agent_workspace_file', { dto: { runId, path } });
     }
 
+    async function readModelTurn(input) {
+        const runId = requireRunId(input?.runId);
+        const round = Number(input?.round);
+        if (!Number.isInteger(round) || round <= 0) {
+            throw new Error('round must be a positive integer');
+        }
+        const maxChars = input?.maxChars == null ? undefined : Number(input.maxChars);
+        if (maxChars != null && (!Number.isInteger(maxChars) || maxChars <= 0)) {
+            throw new Error('maxChars must be a positive integer');
+        }
+
+        return safeInvoke('read_agent_model_turn', {
+            dto: {
+                runId,
+                round,
+                ...(maxChars == null ? {} : { maxChars }),
+            },
+        });
+    }
+
     function subscribe(runId, handler, options = {}) {
         const normalizedRunId = requireRunId(runId);
         if (typeof handler !== 'function') {
@@ -153,6 +173,7 @@ function createAgentApi({ safeInvoke }) {
         cancel,
         readEvents,
         readWorkspaceFile,
+        readModelTurn,
         subscribe,
         profiles: {
             list: listProfiles,

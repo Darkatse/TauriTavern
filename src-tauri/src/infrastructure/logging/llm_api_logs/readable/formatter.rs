@@ -2,6 +2,10 @@ use serde_json::Value;
 
 use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
 
+use super::reasoning::{
+    collect_visible_reasoning_texts, collect_visible_reasoning_value, has_reasoning_native_state,
+};
+
 pub(in crate::infrastructure::logging::llm_api_logs) fn format_request_readable(
     source: ChatCompletionSource,
     payload: &Value,
@@ -239,8 +243,27 @@ fn message_header(message: &serde_json::Map<String, Value>) -> String {
 fn append_message(out: &mut String, message: &serde_json::Map<String, Value>) {
     out.push_str(&message_header(message));
     out.push('\n');
+    let has_reasoning =
+        append_reasoning_value(out, "reasoning", message.get("reasoning_content"), false);
+    if has_reasoning && content_has_displayable_value(message.get("content")) {
+        begin_block(out);
+        out.push_str("[content]\n");
+    }
     append_message_content(out, message.get("content"));
     append_openai_tool_calls(out, message.get("tool_calls"));
+}
+
+fn content_has_displayable_value(content: Option<&Value>) -> bool {
+    let Some(content) = content else {
+        return false;
+    };
+    match content {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(object) => !object.is_empty(),
+        _ => true,
+    }
 }
 
 fn append_message_content(out: &mut String, content: Option<&Value>) {
@@ -311,25 +334,49 @@ fn append_reasoning_part(
     item_type: &str,
     object: &serde_json::Map<String, Value>,
 ) {
+    append_reasoning_texts(
+        out,
+        item_type,
+        collect_visible_reasoning_texts(object),
+        has_reasoning_native_state(object),
+    );
+}
+
+fn append_reasoning_value(
+    out: &mut String,
+    item_type: &str,
+    value: Option<&Value>,
+    native_state: bool,
+) -> bool {
+    let texts = value
+        .map(collect_visible_reasoning_value)
+        .unwrap_or_default();
+    append_reasoning_texts(out, item_type, texts, native_state)
+}
+
+fn append_reasoning_texts(
+    out: &mut String,
+    item_type: &str,
+    texts: Vec<String>,
+    native_state: bool,
+) -> bool {
+    if texts.is_empty() && !native_state {
+        return false;
+    }
+
     begin_block(out);
     out.push('[');
     out.push_str(item_type);
-    if object.get("signature").is_some() || object.get("encrypted_content").is_some() {
+    if native_state {
         out.push_str(" native_state=present");
     }
     out.push(']');
 
-    if let Some(text) = object
-        .get("text")
-        .or_else(|| object.get("summary_text"))
-        .or_else(|| object.get("content"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    if !texts.is_empty() {
         out.push('\n');
-        out.push_str(text);
+        out.push_str(&texts.join("\n\n"));
     }
+    true
 }
 
 fn append_claude_tool_use(out: &mut String, object: &serde_json::Map<String, Value>) {
@@ -491,11 +538,8 @@ fn format_input_items(payload: &Value) -> String {
                     continue;
                 };
 
-                if let Some(role) = object.get("role").and_then(Value::as_str) {
-                    out.push('[');
-                    out.push_str(role);
-                    out.push_str("]\n");
-                    append_message_content(&mut out, object.get("content"));
+                if object.get("role").and_then(Value::as_str).is_some() {
+                    append_message(&mut out, object);
                     out.push_str("\n\n");
                     continue;
                 }
@@ -566,7 +610,17 @@ fn append_gemini_part(out: &mut String, part: &Value) {
         return;
     };
 
+    let is_thought = object
+        .get("thought")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if is_thought {
+        append_reasoning_part(out, "thought", object);
+        return;
+    }
+
     if let Some(text) = object.get("text").and_then(Value::as_str) {
+        begin_block(out);
         out.push_str(text);
         return;
     }
@@ -600,7 +654,7 @@ fn append_gemini_part(out: &mut String, part: &Value) {
     }
 
     if object.get("thoughtSignature").is_some() {
-        append_marker(out, "thoughtSignature present");
+        append_reasoning_part(out, "thought", object);
         return;
     }
 
@@ -669,6 +723,16 @@ fn format_responses_output(response: &Value) -> String {
                 append_header_attr(&mut out, "id", object.get("id"));
                 append_header_attr(&mut out, "status", object.get("status"));
                 out.push_str("]\n");
+                let has_reasoning = append_reasoning_value(
+                    &mut out,
+                    "reasoning",
+                    object.get("reasoning_content"),
+                    false,
+                );
+                if has_reasoning && content_has_displayable_value(object.get("content")) {
+                    begin_block(&mut out);
+                    out.push_str("[content]\n");
+                }
                 append_message_content(&mut out, object.get("content"));
             }
             Some("function_call") => append_function_call_item(&mut out, object),

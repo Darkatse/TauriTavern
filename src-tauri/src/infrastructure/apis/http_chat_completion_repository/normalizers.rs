@@ -17,6 +17,7 @@ pub(super) fn normalize_claude_response(
         .unwrap_or_default();
 
     let mut text_parts = Vec::new();
+    let mut reasoning_parts = Vec::new();
     let mut tool_calls = Vec::new();
 
     for (index, block) in content_blocks.iter().enumerate() {
@@ -38,6 +39,9 @@ pub(super) fn normalize_claude_response(
                 {
                     text_parts.push(text.to_string());
                 }
+            }
+            "thinking" | "reasoning" => {
+                reasoning_parts.extend(extract_reasoning_texts(block_object));
             }
             "tool_use" => {
                 let name = as_non_empty_str(block_object.get("name")).unwrap_or("tool");
@@ -69,6 +73,12 @@ pub(super) fn normalize_claude_response(
         "content".to_string(),
         Value::String(text_parts.join("\n\n")),
     );
+    if !reasoning_parts.is_empty() {
+        message.insert(
+            "reasoning_content".to_string(),
+            Value::String(reasoning_parts.join("\n\n")),
+        );
+    }
     if !tool_calls.is_empty() {
         message.insert("tool_calls".to_string(), Value::Array(tool_calls));
     }
@@ -164,6 +174,7 @@ pub(super) fn normalize_gemini_response(
         .unwrap_or_default();
 
     let mut text_parts = Vec::new();
+    let mut reasoning_parts = Vec::new();
     let mut tool_calls = Vec::new();
 
     for (index, part) in parts.iter().enumerate() {
@@ -192,6 +203,7 @@ pub(super) fn normalize_gemini_response(
             .and_then(Value::as_bool)
             .unwrap_or(false);
         if is_thought {
+            reasoning_parts.extend(extract_reasoning_texts(part_object));
             continue;
         }
 
@@ -211,6 +223,12 @@ pub(super) fn normalize_gemini_response(
         "content".to_string(),
         Value::String(text_parts.join("\n\n")),
     );
+    if !reasoning_parts.is_empty() {
+        message.insert(
+            "reasoning_content".to_string(),
+            Value::String(reasoning_parts.join("\n\n")),
+        );
+    }
     if !tool_calls.is_empty() {
         message.insert("tool_calls".to_string(), Value::Array(tool_calls));
     }
@@ -288,6 +306,7 @@ pub(super) fn normalize_openai_responses_response(
         .unwrap_or_default();
 
     let mut text_parts = Vec::new();
+    let mut reasoning_parts = Vec::new();
     let mut tool_calls = Vec::new();
 
     for (index, item) in output_items.iter().enumerate() {
@@ -351,6 +370,9 @@ pub(super) fn normalize_openai_responses_response(
                     signature.as_deref(),
                 ));
             }
+            "reasoning" | "thinking" => {
+                reasoning_parts.extend(extract_reasoning_texts(item_object));
+            }
             _ => {}
         }
     }
@@ -370,6 +392,12 @@ pub(super) fn normalize_openai_responses_response(
     let mut message = Map::new();
     message.insert("role".to_string(), Value::String("assistant".to_string()));
     message.insert("content".to_string(), Value::String(content));
+    if !reasoning_parts.is_empty() {
+        message.insert(
+            "reasoning_content".to_string(),
+            Value::String(reasoning_parts.join("\n\n")),
+        );
+    }
     if !tool_calls.is_empty() {
         message.insert("tool_calls".to_string(), Value::Array(tool_calls));
     }
@@ -469,14 +497,7 @@ pub(super) fn normalize_gemini_interactions_response(
                 }
             }
             "thought" => {
-                if let Some(summary) = output_object
-                    .get("summary")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    reasoning_parts.push(summary.to_string());
-                }
+                reasoning_parts.extend(extract_reasoning_texts(output_object));
             }
             "function_call" => {
                 let name = as_non_empty_str(output_object.get("name")).unwrap_or("tool");
@@ -751,6 +772,42 @@ fn to_openai_arguments(value: Value) -> String {
     serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string())
 }
 
+fn extract_reasoning_texts(object: &Map<String, Value>) -> Vec<String> {
+    let mut texts = Vec::new();
+    for key in ["text", "thinking", "summary_text", "content", "summary"] {
+        if let Some(value) = object.get(key) {
+            push_reasoning_texts(&mut texts, value);
+        }
+    }
+    texts
+}
+
+fn push_reasoning_texts(texts: &mut Vec<String>, value: &Value) {
+    match value {
+        Value::String(text) => push_reasoning_text(texts, text),
+        Value::Array(items) => {
+            for item in items {
+                push_reasoning_texts(texts, item);
+            }
+        }
+        Value::Object(object) => {
+            for key in ["text", "thinking", "summary_text", "content"] {
+                if let Some(value) = object.get(key) {
+                    push_reasoning_texts(texts, value);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_reasoning_text(texts: &mut Vec<String>, text: &str) {
+    let text = text.trim();
+    if !text.is_empty() {
+        texts.push(text.to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
@@ -809,6 +866,40 @@ mod tests {
             .and_then(Value::as_array)
             .expect("claude native content should be preserved");
         assert_eq!(native_content[0]["type"], "tool_use");
+    }
+
+    #[test]
+    fn normalize_claude_visible_thinking_becomes_reasoning_content() {
+        let response = json!({
+            "id": "claude-response",
+            "model": "claude-3-5-sonnet-latest",
+            "content": [
+                { "type": "thinking", "thinking": "Need to inspect the workspace." },
+                { "type": "text", "text": "I will inspect the workspace." }
+            ],
+            "stop_reason": "end_turn"
+        });
+
+        let normalized = normalize_claude_response(response).body;
+        let message = normalized
+            .pointer("/choices/0/message")
+            .and_then(Value::as_object)
+            .expect("message should exist");
+
+        assert_eq!(
+            message.get("reasoning_content").and_then(Value::as_str),
+            Some("Need to inspect the workspace.")
+        );
+        assert_eq!(
+            message.get("content").and_then(Value::as_str),
+            Some("I will inspect the workspace.")
+        );
+        assert_eq!(
+            normalized
+                .pointer("/choices/0/message/native/claude/content/0/type")
+                .and_then(Value::as_str),
+            Some("thinking")
+        );
     }
 
     #[test]
@@ -889,6 +980,43 @@ mod tests {
     }
 
     #[test]
+    fn normalize_gemini_thought_text_becomes_reasoning_content() {
+        let response = json!({
+            "modelVersion": "gemini-2.5-flash",
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [
+                        { "thought": true, "text": "Need to inspect the workspace." },
+                        { "text": "I will inspect the workspace." }
+                    ]
+                }
+            }]
+        });
+
+        let normalized = normalize_gemini_response(response).body;
+        let message = normalized
+            .pointer("/choices/0/message")
+            .and_then(Value::as_object)
+            .expect("message should exist");
+
+        assert_eq!(
+            message.get("reasoning_content").and_then(Value::as_str),
+            Some("Need to inspect the workspace.")
+        );
+        assert_eq!(
+            message.get("content").and_then(Value::as_str),
+            Some("I will inspect the workspace.")
+        );
+        assert_eq!(
+            normalized
+                .pointer("/choices/0/message/native/gemini/content/parts/0/thought")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
     fn normalize_openai_responses_function_call_returns_openai_tool_calls() {
         let response = json!({
             "id": "resp_1",
@@ -961,6 +1089,52 @@ mod tests {
                 .and_then(|item| item.get("call_id"))
                 .and_then(Value::as_str),
             Some("call_weather")
+        );
+    }
+
+    #[test]
+    fn normalize_openai_responses_reasoning_summary_becomes_reasoning_content() {
+        let response = json!({
+            "id": "resp_1",
+            "model": "gpt-5",
+            "output": [
+                {
+                    "id": "rs_1",
+                    "type": "reasoning",
+                    "summary": [
+                        { "type": "summary_text", "text": "Need to inspect the workspace." }
+                    ]
+                },
+                {
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "I will inspect the workspace." }
+                    ]
+                }
+            ]
+        });
+
+        let normalized = normalize_openai_responses_response(response).body;
+        let message = normalized
+            .pointer("/choices/0/message")
+            .and_then(Value::as_object)
+            .expect("message should exist");
+
+        assert_eq!(
+            message.get("reasoning_content").and_then(Value::as_str),
+            Some("Need to inspect the workspace.")
+        );
+        assert_eq!(
+            message.get("content").and_then(Value::as_str),
+            Some("I will inspect the workspace.")
+        );
+        assert_eq!(
+            normalized
+                .pointer("/choices/0/message/native/openai_responses/output/0/type")
+                .and_then(Value::as_str),
+            Some("reasoning")
         );
     }
 

@@ -81,6 +81,25 @@ fn format_request_readable_shows_tools_tool_calls_and_results() {
 }
 
 #[test]
+fn format_request_readable_shows_message_reasoning_content() {
+    let payload = json!({
+        "model": "gpt-5",
+        "messages": [{
+            "role": "assistant",
+            "reasoning_content": "Need to inspect the workspace.",
+            "content": "I will inspect the workspace."
+        }]
+    });
+
+    let readable = format_request_readable(ChatCompletionSource::Custom, &payload);
+
+    assert_eq!(
+        readable,
+        "[assistant]\n[reasoning]\nNeed to inspect the workspace.\n[content]\nI will inspect the workspace."
+    );
+}
+
+#[test]
 fn format_response_readable_shows_openai_tool_calls() {
     let response = json!({
         "choices": [{
@@ -104,6 +123,26 @@ fn format_response_readable_shows_openai_tool_calls() {
     assert_eq!(
         readable,
         "[assistant]\n[tool_call id=call_1 name=workspace_commit]\n{\"path\":\"output/main.md\"}"
+    );
+}
+
+#[test]
+fn format_response_readable_shows_openai_reasoning_content() {
+    let response = json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "reasoning_content": "Need to inspect the workspace.",
+                "content": "I will inspect the workspace."
+            }
+        }]
+    });
+
+    let readable = format_response_readable(&response);
+
+    assert_eq!(
+        readable,
+        "[assistant]\n[reasoning]\nNeed to inspect the workspace.\n[content]\nI will inspect the workspace."
     );
 }
 
@@ -211,7 +250,12 @@ fn format_response_readable_supports_openai_responses_output() {
     let response = json!({
         "id": "resp_1",
         "output": [
-            { "type": "reasoning", "id": "rs_1", "encrypted_content": "opaque" },
+            {
+                "type": "reasoning",
+                "id": "rs_1",
+                "encrypted_content": "opaque",
+                "summary": [{ "type": "summary_text", "text": "Need to finish." }]
+            },
             {
                 "type": "function_call",
                 "id": "fc_1",
@@ -226,7 +270,7 @@ fn format_response_readable_supports_openai_responses_output() {
 
     assert_eq!(
         readable,
-        "[reasoning native_state=present]\n\n[function_call id=fc_1 call_id=call_1 name=workspace_finish]\n{}"
+        "[reasoning native_state=present]\nNeed to finish.\n\n[function_call id=fc_1 call_id=call_1 name=workspace_finish]\n{}"
     );
 }
 
@@ -293,6 +337,31 @@ fn format_response_readable_supports_gemini_function_call() {
 }
 
 #[test]
+fn format_response_readable_shows_gemini_thought_text() {
+    let response = json!({
+        "candidates": [{
+            "content": {
+                "parts": [
+                    {
+                        "thought": true,
+                        "text": "Need to inspect the workspace.",
+                        "thoughtSignature": "opaque"
+                    },
+                    { "text": "I will inspect the workspace." }
+                ]
+            }
+        }]
+    });
+
+    let readable = format_response_readable(&response);
+
+    assert_eq!(
+        readable,
+        "[candidate 0]\n[thought native_state=present]\nNeed to inspect the workspace.\nI will inspect the workspace."
+    );
+}
+
+#[test]
 fn stream_readable_source_maps_custom_messages_to_claude() {
     assert!(matches!(
         stream_readable_source(ChatCompletionSource::Custom, "/messages"),
@@ -311,4 +380,49 @@ fn stream_readable_collector_collects_custom_claude_text_deltas() {
         .push(r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}"#);
 
     assert_eq!(collector.into_string(), "Hello world");
+}
+
+#[test]
+fn stream_readable_collector_separates_openai_reasoning_delta() {
+    let mut collector = StreamReadableCollector::new(ChatCompletionSource::OpenAi);
+
+    collector.push(r#"{"choices":[{"delta":{"reasoning_content":"Need "}}]}"#);
+    collector.push(r#"{"choices":[{"delta":{"reasoning_content":"file."}}]}"#);
+    collector.push(r#"{"choices":[{"delta":{"content":"Done."}}]}"#);
+
+    assert_eq!(
+        collector.into_string(),
+        "[reasoning]\nNeed file.\n\n[assistant]\nDone."
+    );
+}
+
+#[test]
+fn stream_readable_collector_separates_claude_thinking_delta() {
+    let readable_source = stream_readable_source(ChatCompletionSource::Custom, "/messages");
+    let mut collector = StreamReadableCollector::new(readable_source);
+
+    collector.push(
+        r#"{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"Need file."}}"#,
+    );
+    collector
+        .push(r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"Done."}}"#);
+
+    assert_eq!(
+        collector.into_string(),
+        "[reasoning]\nNeed file.\n\n[assistant]\nDone."
+    );
+}
+
+#[test]
+fn stream_readable_collector_separates_gemini_thought_parts() {
+    let mut collector = StreamReadableCollector::new(ChatCompletionSource::Makersuite);
+
+    collector
+        .push(r#"{"candidates":[{"content":{"parts":[{"thought":true,"text":"Need file."}]}}]}"#);
+    collector.push(r#"{"candidates":[{"content":{"parts":[{"text":"Done."}]}}]}"#);
+
+    assert_eq!(
+        collector.into_string(),
+        "[reasoning]\nNeed file.\n\n[assistant]\nDone."
+    );
 }

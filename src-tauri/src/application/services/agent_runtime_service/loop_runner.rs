@@ -3,6 +3,7 @@ use serde_json::json;
 use super::model_turn::{
     append_tool_turn_to_request, assistant_message_for_next_turn, extract_response_text,
 };
+use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::errors::ApplicationError;
@@ -61,17 +62,23 @@ impl AgentRuntimeService {
             .await?;
 
             let tool_calls = response.tool_calls.clone();
-            self.event(
-                run_id,
-                AgentRunEventLevel::Info,
-                "model_completed",
-                json!({
-                    "round": round,
-                    "modelResponsePath": model_response_path.as_str(),
-                    "toolCallCount": tool_calls.len(),
-                    "textBytes": extract_response_text(&response).as_bytes().len(),
-                }),
-            )
+            self.event(run_id, AgentRunEventLevel::Info, "model_completed", {
+                let mut payload = model_turn_event_summary(&response);
+                let object = payload
+                    .as_object_mut()
+                    .expect("model turn event summary must be a JSON object");
+                object.insert("round".to_string(), json!(round));
+                object.insert(
+                    "modelResponsePath".to_string(),
+                    json!(model_response_path.as_str()),
+                );
+                object.insert("toolCallCount".to_string(), json!(tool_calls.len()));
+                object.insert(
+                    "textBytes".to_string(),
+                    json!(extract_response_text(&response).as_bytes().len()),
+                );
+                payload
+            })
             .await?;
 
             if tool_calls.is_empty() {
@@ -95,6 +102,7 @@ impl AgentRuntimeService {
                 let outcome = self
                     .dispatch_tool_call(
                         run_id,
+                        round,
                         &call,
                         &mut tool_session,
                         profile,
