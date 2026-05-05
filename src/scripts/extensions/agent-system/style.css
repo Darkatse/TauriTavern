@@ -30,12 +30,6 @@
     outline-offset: 2px;
 }
 
-#agent_system_settings .inline-drawer-content {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
 #agent_system_settings .ttas-entry {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
