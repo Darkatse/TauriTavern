@@ -1,8 +1,13 @@
 import { loadSettings, patchSettings, subscribeSettings } from './settings-store.js';
 import { subscribeAgentRunState } from '../../../tauritavern/agent/agent-run-controller.js';
+import { errorText } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
+import { openAgentSystemPanel } from './panel-popup.js';
 
 const BUTTON_ID = 'ttas_agent_send_toggle';
+const LONG_PRESS_MS = 550;
+const LONG_PRESS_MOVE_TOLERANCE_PX = 10;
+const LONG_PRESS_CLICK_SUPPRESS_MS = 800;
 const AGENT_TOGGLE_ICON = `
 <svg class="ttas-agent-send-toggle-icon" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
     <path d="M7.06431 5.93342C7.68763 5.93342 8.19307 6.43904 8.19322 7.06233C8.19322 7.68573 7.68772 8.19123 7.06431 8.19123C6.44099 8.19113 5.9354 7.68567 5.9354 7.06233C5.93555 6.43911 6.44108 5.93353 7.06431 5.93342Z" fill="currentColor"></path>
@@ -11,6 +16,11 @@ const AGENT_TOGGLE_ICON = `
 
 let settings = null;
 let activeRun = null;
+
+function reportInteractionError(error) {
+    console.error('[AgentSystem]', error);
+    window.toastr?.error?.(errorText(error));
+}
 
 export async function mountChatInputAgentToggle() {
     const rightSendForm = document.getElementById('rightSendForm');
@@ -25,6 +35,32 @@ export async function mountChatInputAgentToggle() {
     button.className = 'ttas-agent-send-toggle interactable displayNone';
     button.innerHTML = `${AGENT_TOGGLE_ICON}<span class="ttas-agent-send-toggle-status" aria-hidden="true"></span>`;
     rightSendForm.insertBefore(button, sendButton);
+
+    let longPressTimer = null;
+    let longPressPointerId = null;
+    let longPressStartX = 0;
+    let longPressStartY = 0;
+    let suppressClickUntil = 0;
+
+    const clearLongPress = () => {
+        if (longPressTimer !== null) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+        }
+        if (longPressPointerId !== null && button.hasPointerCapture?.(longPressPointerId)) {
+            button.releasePointerCapture(longPressPointerId);
+        }
+        longPressPointerId = null;
+    };
+
+    const openPanel = () => {
+        try {
+            const result = openAgentSystemPanel();
+            result?.catch?.(reportInteractionError);
+        } catch (error) {
+            reportInteractionError(error);
+        }
+    };
 
     const syncVisibility = () => {
         button.classList.toggle('displayNone', sendButton.classList.contains('displayNone'));
@@ -46,11 +82,56 @@ export async function mountChatInputAgentToggle() {
         button.title = label;
     };
 
-    button.addEventListener('click', async () => {
-        settings = await patchSettings(settings || await loadSettings(), {
-            agentModeEnabled: !settings?.agentModeEnabled,
-        });
-        render();
+    button.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) {
+            return;
+        }
+
+        clearLongPress();
+        longPressPointerId = event.pointerId;
+        longPressStartX = event.clientX;
+        longPressStartY = event.clientY;
+        button.setPointerCapture?.(event.pointerId);
+        longPressTimer = setTimeout(() => {
+            longPressTimer = null;
+            suppressClickUntil = Date.now() + LONG_PRESS_CLICK_SUPPRESS_MS;
+            openPanel();
+        }, LONG_PRESS_MS);
+    });
+
+    button.addEventListener('pointermove', (event) => {
+        if (longPressPointerId !== event.pointerId || longPressTimer === null) {
+            return;
+        }
+
+        const deltaX = event.clientX - longPressStartX;
+        const deltaY = event.clientY - longPressStartY;
+        if (Math.hypot(deltaX, deltaY) > LONG_PRESS_MOVE_TOLERANCE_PX) {
+            clearLongPress();
+        }
+    });
+
+    button.addEventListener('pointerup', clearLongPress);
+    button.addEventListener('pointercancel', clearLongPress);
+    button.addEventListener('lostpointercapture', clearLongPress);
+
+    button.addEventListener('click', async (event) => {
+        if (Date.now() < suppressClickUntil) {
+            suppressClickUntil = 0;
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
+
+        try {
+            settings = await patchSettings(settings || await loadSettings(), {
+                agentModeEnabled: !settings?.agentModeEnabled,
+            });
+            render();
+        } catch (error) {
+            reportInteractionError(error);
+            throw error;
+        }
     });
 
     subscribeSettings((next) => {

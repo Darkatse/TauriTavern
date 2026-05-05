@@ -285,3 +285,148 @@ test('Agent run controller clears active state when subscription setup fails', a
     );
     assert.equal(controller.hasActiveAgentRun(), false);
 });
+
+test('Agent run event presenter keeps timeline projection focused', async () => {
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+
+    const debugEvent = {
+        seq: 1,
+        id: 'evt-debug',
+        runId: 'run-1',
+        type: 'tool_result_stored',
+        payload: { callId: 'call-1', path: 'tool-results/call-1.json' },
+    };
+    const toolEvent = {
+        seq: 2,
+        id: 'evt-tool',
+        runId: 'run-1',
+        type: 'tool_call_requested',
+        timestamp: '2026-05-04T12:00:00Z',
+        level: 'info',
+        payload: {
+            callId: 'call-1',
+            name: 'workspace.write_file',
+            argumentsRef: 'tool-args/call-1.json',
+        },
+    };
+
+    assert.equal(presenter.isDisplayableRunEvent(debugEvent), false);
+    assert.equal(presenter.isDisplayableRunEvent(toolEvent), true);
+
+    const item = presenter.presentRunEvent(toolEvent);
+    assert.equal(item.titleKey, 'timelineEventToolRequested');
+    assert.deepEqual(item.titleParams, { tool: 'writing a file' });
+    assert.equal(item.summary, 'call-1');
+
+    const projected = presenter.timelineItemsFromEvents([
+        debugEvent,
+        toolEvent,
+        {
+            seq: 3,
+            id: 'evt-completed',
+            runId: 'run-1',
+            type: 'tool_call_completed',
+            payload: { callId: 'call-1', name: 'workspace.write_file' },
+        },
+        {
+            seq: 4,
+            id: 'evt-write',
+            runId: 'run-1',
+            type: 'workspace_file_written',
+            payload: { path: 'output/main.md', bytes: 12 },
+        },
+    ]);
+    assert.deepEqual(projected.map(event => event.type), ['workspace_file_written']);
+});
+
+test('Agent run tool labels stay user-facing in timeline projection', async () => {
+    const { displayToolName } = await importFresh('src/scripts/extensions/agent-system/src/run-tool-labels.js');
+
+    assert.equal(displayToolName('skill.read'), 'reading a skill');
+    assert.equal(displayToolName('workspace.write_file'), 'writing a file');
+    assert.equal(displayToolName('vendor.custom_action'), 'custom action');
+});
+
+test('Agent run event presenter derives lazy detail targets from journal refs', async () => {
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const resultEvent = {
+        seq: 1,
+        id: 'evt-result',
+        runId: 'run-1',
+        type: 'tool_result_stored',
+        payload: { callId: 'call-1', path: 'tool-results/call-1.json' },
+    };
+    const completed = {
+        seq: 2,
+        id: 'evt-completed',
+        runId: 'run-1',
+        type: 'tool_call_completed',
+        payload: {
+            callId: 'call-1',
+            name: 'workspace.write_file',
+            resourceRefs: ['output/main.md'],
+        },
+    };
+
+    const targets = presenter.buildEventDetailTargets(
+        presenter.presentRunEvent(completed),
+        [resultEvent, completed],
+    );
+
+    assert.deepEqual(targets.map(target => [target.type, target.labelKey, target.path || '']), [
+        ['file', 'timelineToolResult', 'tool-results/call-1.json'],
+    ]);
+
+    const writeEvent = {
+        seq: 3,
+        id: 'evt-write',
+        runId: 'run-1',
+        type: 'workspace_file_written',
+        payload: { path: 'output/main.md', bytes: 12 },
+    };
+    const writeTargets = presenter.buildEventDetailTargets(
+        presenter.presentRunEvent(writeEvent),
+        [resultEvent, completed, writeEvent],
+    );
+
+    assert.deepEqual(writeTargets.map(target => [target.type, target.labelKey, target.path || '']), [
+        ['file', 'timelineWorkspaceFile', 'output/main.md'],
+    ]);
+});
+
+test('Agent run detail formatter renders tool result details without raw JSON shell', async () => {
+    const { formatDetailFile } = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
+    const section = formatDetailFile(
+        { labelKey: 'timelineToolResult', path: 'tool-results/call-1.json' },
+        {
+            path: 'tool-results/call-1.json',
+            bytes: 248,
+            sha256: '0123456789abcdef0123456789abcdef',
+            text: JSON.stringify({
+                callId: 'call-1',
+                name: 'workspace.read_file',
+                content: 'output/main.md lines 1-2 of 2, sha256 abc\n1 hello\n2 world',
+                structured: {
+                    path: 'output/main.md',
+                    totalLines: 2,
+                    startLine: 1,
+                    endLine: 2,
+                    fullRead: true,
+                },
+                isError: false,
+                resourceRefs: ['output/main.md'],
+            }, null, 2),
+        },
+    );
+
+    assert.equal(section.labelKey, 'timelineToolResult');
+    assert.equal(section.blocks[0].labelKey, 'timelineResultText');
+    assert.match(section.blocks[0].text, /1 hello/);
+    assert.doesNotMatch(section.blocks[0].text, /sha256/);
+    assert.doesNotMatch(section.blocks[0].text, /"callId"/);
+    assert.deepEqual(section.fields, [
+        { label: 'Operation', value: 'reading a file' },
+        { label: 'Target', value: 'output/main.md' },
+        { label: 'Range', value: 'full file' },
+    ]);
+});

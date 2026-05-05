@@ -3,6 +3,7 @@ import { createApp } from 'vue/dist/vue.esm-bundler.js';
 import { errorText, waitForHostReady } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 import { mountChatInputAgentToggle } from './chat-input-toggle.js';
+import { mountAgentRunTimelinePanel } from './run-timeline-panel.js';
 import { openAgentSystemPanel } from './panel-popup.js';
 import { loadSettings, patchSettings, subscribeSettings } from './settings-store.js';
 
@@ -97,6 +98,7 @@ async function mountAgentSystem() {
     container.appendChild(mount);
     createAgentSystemEntryApp().mount(mount);
     await mountChatInputAgentToggle();
+    await mountAgentRunTimelinePanel();
 }
 
 void mountAgentSystem();
