@@ -1989,10 +1989,16 @@ fn prompt_messages(user_content: &str) -> Value {
 }
 
 fn assert_hashed_tool_audit_path(path: &str, root: &str) {
+    const TOOL_CALL_AUDIT_DIGEST_HEX_CHARS: usize = 16;
+
     let prefix = format!("{root}/call_");
     assert!(path.starts_with(&prefix), "{path}");
     assert!(path.ends_with(".json"), "{path}");
-    assert_eq!(path.len(), prefix.len() + 64 + ".json".len(), "{path}");
+    assert_eq!(
+        path.len(),
+        prefix.len() + TOOL_CALL_AUDIT_DIGEST_HEX_CHARS + ".json".len(),
+        "{path}"
+    );
     let digest = &path[prefix.len()..path.len() - ".json".len()];
     assert!(
         digest.bytes().all(|byte| byte.is_ascii_hexdigit()),

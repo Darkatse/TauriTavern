@@ -188,7 +188,7 @@ persist/
 
 这些前缀由 resolved Profile 写入 run manifest，Profile 只能收窄 root universe。`persist/` 是 chat workspace 级持久 root 的 run projection：模型在 run 中通过普通 workspace 工具写入，`workspace.finish` 收尾成功后才 promote 回稳定 chat workspace；失败或取消的 run 不会写回。
 
-工具参数会写入 `tool-args/call_<sha256(call-id)>.json`，工具结果会写入 `tool-results/call_<sha256(call-id)>.json`；provider 返回的原始 `call_id` 只作为不透明业务 ID 保存在 JSON 内容、journal payload 与下一轮 canonical `ToolResult` part 中，不作为本地文件名。Gateway 会在 provider 边界把它转换为对应 provider 格式。工具结果不会写入 SillyTavern chat 楼层。
+工具参数会写入 `tool-args/call_<sha256_8byte_hex(call-id)>.json`，工具结果会写入 `tool-results/call_<sha256_8byte_hex(call-id)>.json`；本地文件名只使用 SHA-256 前 8 字节 hex。provider 返回的原始 `call_id` 只作为不透明业务 ID 保存在 JSON 内容、journal payload 与下一轮 canonical `ToolResult` part 中，不作为本地文件名。Gateway 会在 provider 边界把它转换为对应 provider 格式。工具结果不会写入 SillyTavern chat 楼层。
 
 `workspace.apply_patch` 使用 Claude Code 风格的 `old_string` / `new_string` 单文件精确替换。未完整读取、版本变化、匹配 0 次或多次会作为 recoverable tool error 返回模型。模型传入的非法 path、空 path、不可见/不可写 path 也作为可恢复工具错误回填；repository 内部 escape/symlink/IO、journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
 

@@ -14,6 +14,8 @@ use crate::domain::models::agent::{
     WorkspacePath,
 };
 
+const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
+
 impl AgentRuntimeService {
     pub(super) async fn dispatch_tool_call(
         &self,
@@ -263,7 +265,10 @@ impl AgentRuntimeService {
 
 fn tool_call_audit_file_stem(call_id: &str) -> String {
     let digest = Sha256::digest(call_id.as_bytes());
-    format!("call_{}", hex_encode(digest.as_ref()))
+    format!(
+        "call_{}",
+        hex_encode(&digest[..TOOL_CALL_AUDIT_DIGEST_BYTES])
+    )
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

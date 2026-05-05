@@ -98,7 +98,7 @@ tool_call_id opaque round-trip
 native metadata round-trip
 canonical AgentModelRequest/AgentModelResponse encode-decode
 recent workspace write/patch tool result hydration
-tool args/results use hashed local audit file names while preserving opaque provider tool_call_id
+tool args/results use short hashed local audit file names while preserving opaque provider tool_call_id
 ```
 
 特别要覆盖 `docs/CurrentState/NativeApiFormats.md` 中的契约：
