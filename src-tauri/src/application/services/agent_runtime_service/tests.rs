@@ -224,6 +224,181 @@ async fn agent_loop_writes_artifact_and_completes() {
 }
 
 #[tokio::test]
+async fn agent_loop_stores_tool_audit_files_with_hashed_call_id_paths() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-tool-audit-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_tool_audit_test".to_string(),
+        workspace_id: "chat_tool_audit_test".to_string(),
+        stable_chat_id: "stable_tool_audit_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let opaque_call_id = format!(
+        "call_{}___thought__{}/{}\\{} {}",
+        "A".repeat(240),
+        "B".repeat(240),
+        "C".repeat(240),
+        "思考".repeat(80),
+        "D".repeat(240)
+    );
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": opaque_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"opaque call id survived\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_finish_after_opaque_id",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_finish",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }),
+    ]));
+    let model_gateway_probe = model_gateway.clone();
+
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        test_profile_service(&root),
+    );
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("write a message")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let profile = test_resolved_profile(&root).await;
+
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("agent loop");
+
+    let saved = repository.load_run(&run.id).await.expect("load run");
+    assert_eq!(saved.status, AgentRunStatus::Completed);
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 100,
+            },
+        )
+        .await
+        .expect("read events");
+
+    let arguments_ref = events
+        .iter()
+        .find(|event| {
+            event.event_type == "tool_call_requested"
+                && event.payload["callId"].as_str() == Some(opaque_call_id.as_str())
+        })
+        .and_then(|event| event.payload["argumentsRef"].as_str())
+        .expect("arguments ref");
+    assert_hashed_tool_audit_path(arguments_ref, "tool-args");
+
+    let arguments_file = repository
+        .read_text(&run.id, &WorkspacePath::parse(arguments_ref).unwrap())
+        .await
+        .expect("read arguments file");
+    let arguments: Value = serde_json::from_str(&arguments_file.text).expect("arguments JSON");
+    assert_eq!(arguments["path"], "output/main.md");
+
+    let result_ref = events
+        .iter()
+        .find(|event| {
+            event.event_type == "tool_result_stored"
+                && event.payload["callId"].as_str() == Some(opaque_call_id.as_str())
+        })
+        .and_then(|event| event.payload["path"].as_str())
+        .expect("result ref");
+    assert_hashed_tool_audit_path(result_ref, "tool-results");
+
+    let result_file = repository
+        .read_text(&run.id, &WorkspacePath::parse(result_ref).unwrap())
+        .await
+        .expect("read result file");
+    let result: Value = serde_json::from_str(&result_file.text).expect("result JSON");
+    assert_eq!(result["callId"].as_str(), Some(opaque_call_id.as_str()));
+    assert_eq!(result["structured"]["path"], "output/main.md");
+
+    let model_requests = model_gateway_probe.requests().await;
+    let second_request = model_requests.get(1).expect("second model request");
+    let echoed_tool_result = second_request
+        .messages
+        .iter()
+        .find(|message| message.role == AgentModelRole::Tool)
+        .and_then(|message| message.parts.first())
+        .and_then(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some(result),
+            _ => None,
+        })
+        .expect("tool result");
+    assert_eq!(echoed_tool_result.call_id, opaque_call_id);
+    wait_for_closed_sessions(
+        &model_gateway_probe,
+        vec!["run_tool_audit_test".to_string()],
+    )
+    .await;
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn agent_loop_retries_retryable_model_errors() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-retry-loop-{}",
@@ -1773,6 +1948,18 @@ fn prompt_messages(user_content: &str) -> Value {
             "content": user_content,
         }
     ])
+}
+
+fn assert_hashed_tool_audit_path(path: &str, root: &str) {
+    let prefix = format!("{root}/call_");
+    assert!(path.starts_with(&prefix), "{path}");
+    assert!(path.ends_with(".json"), "{path}");
+    assert_eq!(path.len(), prefix.len() + 64 + ".json".len(), "{path}");
+    let digest = &path[prefix.len()..path.len() - ".json".len()];
+    assert!(
+        digest.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "{path}"
+    );
 }
 
 fn agent_system_marker() -> Value {

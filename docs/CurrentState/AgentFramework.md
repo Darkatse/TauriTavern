@@ -315,9 +315,9 @@ _tauritavern/agent-workspaces/
             resolved_profile.json
             persist_snapshot.json
           tool-args/
-            <tool-call-id>.json
+            call_<sha256(tool-call-id)>.json
           tool-results/
-            <tool-call-id>.json
+            call_<sha256(tool-call-id)>.json
           model-responses/
             round-XXX.json
           output/
@@ -345,6 +345,8 @@ _tauritavern/agent-profiles/
 ```
 
 Workspace path 必须是相对路径。绝对路径、Windows drive prefix、NUL、`..` 会被拒绝。工具参数层可修正的问题返回 recoverable tool error；repository 内部 IO、journal、checkpoint、chat JSONL 损坏、序列化、取消和模型响应结构错误是 fatal runtime error。
+
+工具参数与结果的审计文件名使用 provider `tool_call_id` 的 SHA-256 派生；原始 `tool_call_id` 仍保存在 event payload、审计 JSON 内容与下一轮模型 tool result 中，不能被截断、清洗或替换。
 
 ## 当前手动测试入口
 

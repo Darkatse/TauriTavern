@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 use super::AgentRuntimeService;
 use crate::application::errors::ApplicationError;
@@ -206,7 +207,7 @@ impl AgentRuntimeService {
     ) -> Result<(), ApplicationError> {
         let path = WorkspacePath::parse(format!(
             "tool-results/{}.json",
-            safe_workspace_file_stem(&result.call_id)
+            tool_call_audit_file_stem(&result.call_id)
         ))?;
         let text = serde_json::to_string_pretty(result).map_err(|error| {
             ApplicationError::ValidationError(format!(
@@ -236,7 +237,7 @@ impl AgentRuntimeService {
     ) -> Result<WorkspacePath, ApplicationError> {
         let path = WorkspacePath::parse(format!(
             "tool-args/{}.json",
-            safe_workspace_file_stem(&call.id)
+            tool_call_audit_file_stem(&call.id)
         ))?;
         let text = serde_json::to_string_pretty(&call.arguments).map_err(|error| {
             ApplicationError::ValidationError(format!(
@@ -250,20 +251,19 @@ impl AgentRuntimeService {
     }
 }
 
-fn safe_workspace_file_stem(value: &str) -> String {
-    let mut output = String::with_capacity(value.len().max(1));
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-' {
-            output.push(byte as char);
-        } else {
-            output.push('_');
-        }
+fn tool_call_audit_file_stem(call_id: &str) -> String {
+    let digest = Sha256::digest(call_id.as_bytes());
+    format!("call_{}", hex_encode(digest.as_ref()))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
     }
-    if output.is_empty() {
-        "tool_call".to_string()
-    } else {
-        output
-    }
+    output
 }
 
 fn tool_is_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
