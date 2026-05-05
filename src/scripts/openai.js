@@ -119,6 +119,8 @@ const default_scenario_format = '{{scenario}}';
 const default_group_nudge_prompt = '[Write the next reply only as {{char}}.]';
 const AGENT_SYSTEM_PROMPT_IDENTIFIER = 'agentSystemPrompt';
 const AGENT_RESULTS_PROMPT_IDENTIFIER = 'agentResults';
+const AGENT_PROMPT_MARKER_FIELD = '_tauritavern_agent_prompt_marker';
+const AGENT_SYSTEM_PROMPT_MARKER_CONTENT = '[TauriTavern Agent System Prompt is resolved by the Agent runtime.]';
 const AGENT_ONLY_PROMPT_IDENTIFIERS = new Set([AGENT_SYSTEM_PROMPT_IDENTIFIER, AGENT_RESULTS_PROMPT_IDENTIFIER]);
 const default_bias_presets = {
     [default_bias]: [],
@@ -687,7 +689,6 @@ function setupChatCompletionPromptManager(openAiSettings) {
             main: default_main_prompt,
             nsfw: default_nsfw_prompt,
             jailbreak: default_jailbreak_prompt,
-            agentSystemPrompt: '',
             enhanceDefinitions: default_enhance_definitions_prompt,
         },
         promptOrder: {
@@ -1297,6 +1298,27 @@ function removeAgentOnlyPrompts(prompts) {
 }
 
 /**
+ * Populates the Agent System Prompt marker at the PromptManager-controlled position.
+ *
+ * @param {import('./PromptManager.js').PromptCollection} prompts - PromptCollection containing all prompts.
+ * @param {ChatCompletion} chatCompletion - An instance of ChatCompletion class that will be populated with the prompts.
+ * @param {boolean} agentMode - Whether this prompt snapshot is owned by the Agent runtime.
+ */
+async function populateAgentSystemPromptMarker(prompts, chatCompletion, agentMode) {
+    if (!agentMode) {
+        return;
+    }
+    if (!prompts.has(AGENT_SYSTEM_PROMPT_IDENTIFIER)) {
+        throw new Error('agent.system_prompt_marker_missing: PromptManager must include agentSystemPrompt in Agent Mode');
+    }
+
+    chatCompletion.add(new MessageCollection(AGENT_SYSTEM_PROMPT_IDENTIFIER), prompts.index(AGENT_SYSTEM_PROMPT_IDENTIFIER));
+    const message = await Message.createAsync('system', AGENT_SYSTEM_PROMPT_MARKER_CONTENT, AGENT_SYSTEM_PROMPT_IDENTIFIER);
+    message.agentPromptMarker = AGENT_SYSTEM_PROMPT_IDENTIFIER;
+    chatCompletion.insertAtEnd(message, AGENT_SYSTEM_PROMPT_IDENTIFIER);
+}
+
+/**
  * @param {number} position - Prompt position in the extensions object.
  * @returns {string|false} - The prompt position for prompt collection.
  */
@@ -1377,6 +1399,8 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     };
 
     chatCompletion.reserveBudget(3); // every reply is primed with <|start|>assistant<|message|>
+    await populateAgentSystemPromptMarker(prompts, chatCompletion, agentMode);
+
     // Character and world information
     await addToChatCompletion('worldInfoBefore');
     await addToChatCompletion('main');
@@ -1409,9 +1433,7 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     chatCompletion.reserveBudget(controlPrompts);
 
     // Add ordered system and user prompts
-    const systemPrompts = agentMode
-        ? [AGENT_SYSTEM_PROMPT_IDENTIFIER, 'nsfw', 'jailbreak']
-        : ['nsfw', 'jailbreak'];
+    const systemPrompts = ['nsfw', 'jailbreak'];
     const { userRelativePromptIds, absolutePrompts, attachedPrompts } = getPromptInjectionGroups(prompts);
 
     for (const identifier of [...systemPrompts, ...userRelativePromptIds]) {
@@ -3497,6 +3519,8 @@ class Message {
     native = null;
     /** @type {string?} */
     reasoningContent = null;
+    /** @type {string?} */
+    agentPromptMarker = null;
 
     /**
      * @constructor
@@ -3804,6 +3828,7 @@ class MessageCollection {
                     ...(message.signature && { signature: message.signature }),
                     ...(message.native && { native: message.native }),
                     ...(message.reasoningContent && { reasoning_content: message.reasoningContent }),
+                    ...(message.agentPromptMarker && { [AGENT_PROMPT_MARKER_FIELD]: message.agentPromptMarker }),
                 });
             }
             return acc;
@@ -3884,7 +3909,7 @@ export class ChatCompletion {
      * @returns {Promise<void>}
      */
     async squashSystemMessages() {
-        const excludeList = ['newMainChat', 'newChat', 'groupNudge'];
+        const excludeList = ['newMainChat', 'newChat', 'groupNudge', AGENT_SYSTEM_PROMPT_IDENTIFIER];
         this.messages.collection = this.messages.flatten();
 
         let lastMessage = null;
@@ -4098,6 +4123,7 @@ export class ChatCompletion {
                     ...(item.signature ? { signature: item.signature } : {}),
                     ...(item.native ? { native: item.native } : {}),
                     ...(item.reasoningContent ? { reasoning_content: item.reasoningContent } : {}),
+                    ...(item.agentPromptMarker ? { [AGENT_PROMPT_MARKER_FIELD]: item.agentPromptMarker } : {}),
                 };
                 chat.push(message);
             } else {

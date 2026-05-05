@@ -6,7 +6,7 @@
 
 ## 当前基线
 
-截至 2026-05-04，Agent 当前基线：
+截至 2026-05-05，Agent 当前基线：
 
 - Rust 后端已有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 前端已挂载 `window.__TAURITAVERN__.api.agent` 最小 Host ABI。
@@ -17,6 +17,7 @@
 - `provider_state` 已是 run-scoped continuation contract；OpenAI Responses 使用它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
 - Agent Skill 管理、导入导出、embedded skill 提示导入、`skill.list` / `skill.search` / `skill.read` 已落地。
 - Phase 3 Agent Profile 基线已落地：`profileId` 会解析为 `ResolvedAgentProfile`，驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds 与 model-facing prompt/tool descriptions。
+- PromptManager 已为 Agent Mode 提供 `agentSystemPrompt` 位置锚点与 `agentResults` 历史组件；`agentSystemPrompt` 内容只由 Agent Profile 提供，runtime 在 snapshot marker 原位置替换。
 - Profile 仍不接管 provider/model 切换；`preset.ref` 目前只做校验/记录，不改写 prompt snapshot 或 model。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
@@ -75,7 +76,7 @@ _tauritavern/agent-profiles/
 
 - 缺省 `profileId` 使用 built-in `default-writer`。
 - 非缺省 `profileId` 不存在时 fail-fast，不创建 run。
-- `instructions.agentSystemPrompt` 省略或为 `null` 时使用 runtime 默认 Agent system prompt；设置为非空字符串时完整替换默认 prompt；空白字符串 fail-fast。
+- `instructions.agentSystemPrompt` 省略或为 `null` 时使用 runtime 默认 Agent system prompt；设置为非空字符串时完整替换默认 prompt；空白字符串 fail-fast。Preset 只能控制 `agentSystemPrompt` 的位置，不能编辑其内容。
 - `tools.allow` / `tools.deny` 决定模型可见工具，dispatcher 会二次拦截不可见工具。
 - `tools.toolDescriptions` 省略或为空时使用默认工具 description；设置时只替换 model-facing ToolSpec copy 的工具总 description 与参数 description。
 - `skills.visible` / `skills.deny` 控制 `skill.list`、`skill.search` 与 `skill.read`，`maxReadCharsPerCall` / `maxReadCharsPerRun` 控制 Skill 读取预算。

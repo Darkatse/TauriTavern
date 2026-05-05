@@ -136,7 +136,7 @@ async fn agent_loop_writes_artifact_and_completes() {
         payload: json!({
             "chat_completion_source": "openai",
             "model": "test-model",
-            "messages": [{ "role": "user", "content": "write a message" }]
+            "messages": prompt_messages("write a message")
         })
         .as_object()
         .cloned()
@@ -303,7 +303,7 @@ async fn agent_loop_retries_retryable_model_errors() {
         payload: json!({
             "chat_completion_source": "openai",
             "model": "test-model",
-            "messages": [{ "role": "user", "content": "write a message" }]
+            "messages": prompt_messages("write a message")
         })
         .as_object()
         .cloned()
@@ -406,7 +406,7 @@ async fn agent_loop_does_not_retry_non_retryable_model_errors() {
         payload: json!({
             "chat_completion_source": "openai",
             "model": "test-model",
-            "messages": [{ "role": "user", "content": "write a message" }]
+            "messages": prompt_messages("write a message")
         })
         .as_object()
         .cloned()
@@ -557,7 +557,7 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
         payload: json!({
             "chat_completion_source": "openai",
             "model": "test-model",
-            "messages": [{ "role": "user", "content": "revise a message" }]
+            "messages": prompt_messages("revise a message")
         })
         .as_object()
         .cloned()
@@ -690,7 +690,7 @@ async fn finish_promotes_persistent_workspace_projection() {
         payload: json!({
             "chat_completion_source": "openai",
             "model": "test-model",
-            "messages": [{ "role": "user", "content": "write and remember" }]
+            "messages": prompt_messages("write and remember")
         })
         .as_object()
         .cloned()
@@ -843,7 +843,7 @@ async fn foreground_run_commits_chat_message_before_finish() {
         payload: json!({
             "chat_completion_source": "openai",
             "model": "test-model",
-            "messages": [{ "role": "user", "content": "write visibly" }]
+            "messages": prompt_messages("write visibly")
         })
         .as_object()
         .cloned()
@@ -1004,7 +1004,7 @@ async fn foreground_finish_before_commit_returns_recoverable_error() {
         payload: json!({
             "chat_completion_source": "openai",
             "model": "test-model",
-            "messages": [{ "role": "user", "content": "finish too early then recover" }]
+            "messages": prompt_messages("finish too early then recover")
         })
         .as_object()
         .cloned()
@@ -1152,7 +1152,7 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
         payload: json!({
             "chat_completion_source": "openai",
             "model": "test-model",
-            "messages": [{ "role": "user", "content": "recover from tool error" }]
+            "messages": prompt_messages("recover from tool error")
         })
         .as_object()
         .cloned()
@@ -1632,7 +1632,7 @@ async fn dispatcher_progressively_reads_worldinfo_activation_from_run_snapshot()
             &build_agent_manifest(&run, &profile),
             &json!({
                 "chatCompletionPayload": {
-                    "messages": [{ "role": "user", "content": "hello" }]
+                    "messages": prompt_messages("hello")
                 },
                 "worldInfoActivation": {
                     "timestampMs": 1,
@@ -1763,6 +1763,24 @@ async fn dispatcher_progressively_reads_worldinfo_activation_from_run_snapshot()
     );
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+fn prompt_messages(user_content: &str) -> Value {
+    json!([
+        agent_system_marker(),
+        {
+            "role": "user",
+            "content": user_content,
+        }
+    ])
+}
+
+fn agent_system_marker() -> Value {
+    json!({
+        "role": "system",
+        "content": "[marker]",
+        "_tauritavern_agent_prompt_marker": "agentSystemPrompt"
+    })
 }
 
 struct MockAgentModelGateway {

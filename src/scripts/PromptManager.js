@@ -310,7 +310,6 @@ class PromptManager {
 
     constructor() {
         this.systemPrompts = [
-            'agentSystemPrompt',
             'main',
             'nsfw',
             'jailbreak',
@@ -339,7 +338,6 @@ class PromptManager {
             warningTokenThreshold: 1500,
             dangerTokenThreshold: 500,
             defaultPrompts: {
-                agentSystemPrompt: '',
                 main: '',
                 nsfw: '',
                 jailbreak: '',
@@ -525,10 +523,6 @@ class PromptManager {
             const isPulledPrompt = Object.keys(this.promptSources).includes(promptId);
 
             switch (promptId) {
-                case 'agentSystemPrompt':
-                    prompt.name = 'Agent System Prompt';
-                    prompt.content = this.configuration.defaultPrompts.agentSystemPrompt;
-                    break;
                 case 'main':
                     prompt.name = 'Main Prompt';
                     prompt.content = this.configuration.defaultPrompts.main;
@@ -1042,6 +1036,7 @@ class PromptManager {
 
         // Add identifiers if there are none assigned to a prompt
         this.serviceSettings.prompts.forEach(prompt => prompt && (prompt.identifier = prompt.identifier ?? this.getUuidv4()));
+        this.normalizeAgentSystemPromptDefinition();
         this.ensureAgentPromptOrderReferences();
 
         if (this.activeCharacter) {
@@ -1079,19 +1074,52 @@ class PromptManager {
     }
 
     /**
+     * Keep Agent System Prompt as a PromptManager position marker only.
+     *
+     * @returns {void}
+     */
+    normalizeAgentSystemPromptDefinition() {
+        const prompt = this.getPromptById(AGENT_SYSTEM_PROMPT_IDENTIFIER);
+        if (!prompt) {
+            throw new Error('agent.system_prompt_definition_missing: Agent System Prompt marker is missing');
+        }
+
+        Object.assign(prompt, {
+            identifier: AGENT_SYSTEM_PROMPT_IDENTIFIER,
+            name: 'Agent System Prompt',
+            role: 'system',
+            content: '',
+            system_prompt: true,
+            marker: true,
+        });
+        delete prompt.forbid_overrides;
+        delete prompt.injection_position;
+        delete prompt.injection_depth;
+        delete prompt.injection_order;
+        delete prompt.injection_trigger;
+        delete prompt.attach_role;
+        delete prompt.attach_index;
+        delete prompt.attach_side;
+    }
+
+    /**
      * Ensure old presets expose Agent-only prompt references to preset authors.
      *
      * @returns {void}
      */
     ensureAgentPromptOrderReferences() {
         const agentReferences = [
-            { identifier: AGENT_SYSTEM_PROMPT_IDENTIFIER, before: 'main' },
+            { identifier: AGENT_SYSTEM_PROMPT_IDENTIFIER, before: 'main', required: true },
             { identifier: AGENT_RESULTS_PROMPT_IDENTIFIER },
         ];
 
         for (const promptOrder of this.serviceSettings.prompt_order) {
             for (const reference of agentReferences) {
-                if (promptOrder.order.some(entry => entry.identifier === reference.identifier)) {
+                const existing = promptOrder.order.find(entry => entry.identifier === reference.identifier);
+                if (existing) {
+                    if (reference.required) {
+                        existing.enabled = true;
+                    }
                     continue;
                 }
 
@@ -2103,6 +2131,7 @@ const chatCompletionDefaultPrompts = {
             'role': 'system',
             'content': '',
             'identifier': AGENT_SYSTEM_PROMPT_IDENTIFIER,
+            'marker': true,
         },
         {
             'name': 'Main Prompt',

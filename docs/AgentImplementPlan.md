@@ -6,7 +6,7 @@
 
 ## 1. 当前基线
 
-截至 2026-05-04，Agent 当前核心已经落地：
+截至 2026-05-05，Agent 当前核心已经落地：
 
 - Rust 后端拥有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 聊天删除会清理对应 Agent chat workspace；active run 存在时删除 fail-fast。
@@ -21,7 +21,7 @@
 - Agent Skill repository/service、导入导出、embedded skill 导入确认、`api.skill`、`skill.list` / `skill.search` / `skill.read` 已落地。
 - Phase 3 Agent Profile 基线已落地：built-in `default-writer`、file repository、resolver、run snapshot、tool/skill/workspace/output policy、tool budget 与 max rounds。
 - Profile `run.modelRetry` 已落地，默认对单次模型调用的 rate limit / transient transport-provider 错误重试 3 次，间隔 3000ms；非瞬时契约错误继续 fail-fast。
-- `instructions.agentSystemPrompt` 可完整替换默认 Agent system prompt；缺省时使用 runtime 默认 prompt。`tools.toolDescriptions` 可替换 model-facing tool/property descriptions；缺省时使用默认描述。
+- `instructions.agentSystemPrompt` 可完整替换默认 Agent system prompt；缺省时使用 runtime 默认 prompt。Preset / PromptManager 只控制其位置锚点，runtime 在该位置替换 Profile 内容。`tools.toolDescriptions` 可替换 model-facing tool/property descriptions；缺省时使用默认描述。
 
 历史计划只保留为这些不变量：
 
@@ -287,7 +287,7 @@ Phase 3 基线已在 Agent tool 层接入 Skill 可见性、deny policy 与 read
 - Profile 控制 tool allow/deny、`toolDescriptions`、tool budget、`maxRounds`。
 - Profile 控制 `skill.list` / `skill.search` / `skill.read` 可见性与 read budget。
 - Profile 控制 workspace roots 与 messageBody artifact。
-- `agentSystemPrompt` 可完整替换默认 Agent system prompt。
+- `agentSystemPrompt` 内容由 Profile 独占；Preset 只控制 PromptManager 中的位置锚点。
 
 仍待：
 

@@ -8,6 +8,9 @@ use crate::domain::models::agent::{
     AgentRunPresentation, AgentToolSpec,
 };
 
+const AGENT_PROMPT_MARKER_FIELD: &str = "_tauritavern_agent_prompt_marker";
+const AGENT_SYSTEM_PROMPT_MARKER: &str = "agentSystemPrompt";
+
 pub(super) fn request_from_prompt_snapshot(
     prompt_snapshot: &Value,
 ) -> Result<ChatCompletionGenerateRequestDto, ApplicationError> {
@@ -43,9 +46,8 @@ pub(super) fn prepare_agent_tool_request(
 ) -> Result<AgentModelRequest, ApplicationError> {
     reject_external_tool_request(&request.payload)?;
 
-    let mut messages = messages_from_payload(&mut request.payload)?;
     let agent_system_prompt = build_agent_system_prompt(tools, profile);
-    messages.insert(0, text_message(AgentModelRole::System, agent_system_prompt));
+    let messages = messages_from_payload(&mut request.payload, &agent_system_prompt)?;
 
     request.payload.remove("tools");
     request.payload.remove("tool_choice");
@@ -295,6 +297,7 @@ fn find_payload_object(value: &Value) -> Option<Map<String, Value>> {
 
 fn messages_from_payload(
     payload: &mut Map<String, Value>,
+    agent_system_prompt: &str,
 ) -> Result<Vec<AgentModelMessage>, ApplicationError> {
     let messages = match payload.remove("messages") {
         Some(Value::Array(messages)) => messages,
@@ -325,10 +328,63 @@ fn messages_from_payload(
     };
     payload.remove("prompt");
 
+    let mut marker_count = 0_usize;
+    for message in &messages {
+        if agent_prompt_marker(message)?.is_some() {
+            marker_count += 1;
+        }
+    }
+
+    match marker_count {
+        0 => {
+            return Err(ApplicationError::ValidationError(
+                "agent.system_prompt_marker_missing: prompt snapshot must include exactly one agentSystemPrompt marker".to_string(),
+            ));
+        }
+        1 => {}
+        _ => {
+            return Err(ApplicationError::ValidationError(
+                "agent.system_prompt_marker_duplicate: prompt snapshot must include exactly one agentSystemPrompt marker".to_string(),
+            ));
+        }
+    }
+
     messages
         .iter()
-        .map(message_from_openai_value)
+        .map(|message| {
+            if agent_prompt_marker(message)?.is_some() {
+                Ok(text_message(
+                    AgentModelRole::System,
+                    agent_system_prompt.to_string(),
+                ))
+            } else {
+                message_from_openai_value(message)
+            }
+        })
         .collect::<Result<Vec<_>, _>>()
+}
+
+fn agent_prompt_marker(value: &Value) -> Result<Option<&str>, ApplicationError> {
+    let Some(marker) = value
+        .as_object()
+        .and_then(|object| object.get(AGENT_PROMPT_MARKER_FIELD))
+    else {
+        return Ok(None);
+    };
+
+    let marker = marker.as_str().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "agent.invalid_prompt_marker: prompt marker must be a string".to_string(),
+        )
+    })?;
+
+    if marker != AGENT_SYSTEM_PROMPT_MARKER {
+        return Err(ApplicationError::ValidationError(format!(
+            "agent.unknown_prompt_marker: unsupported prompt marker {marker}"
+        )));
+    }
+
+    Ok(Some(marker))
 }
 
 fn message_from_openai_value(value: &Value) -> Result<AgentModelMessage, ApplicationError> {
@@ -433,10 +489,14 @@ mod tests {
     }
 
     #[test]
-    fn agent_system_prompt_replaces_default_when_profile_sets_it() {
+    fn agent_system_prompt_replaces_marker_at_prompt_manager_position() {
         let request = request_from_prompt_snapshot(&json!({
             "chatCompletionPayload": {
-                "messages": [{ "role": "user", "content": "hello" }]
+                "messages": [
+                    { "role": "system", "content": "Before marker." },
+                    agent_system_marker(),
+                    { "role": "user", "content": "hello" }
+                ]
             }
         }))
         .expect("request");
@@ -447,17 +507,22 @@ mod tests {
         let request =
             prepare_agent_tool_request(request, &[], &profile, "run_test").expect("agent request");
 
+        assert_eq!(message_text(&request, 0), "Before marker.");
         assert_eq!(
-            first_system_text(&request),
+            message_text(&request, 1),
             "Custom Agent System Prompt.\nUse the creator contract."
         );
+        assert_eq!(message_text(&request, 2), "hello");
     }
 
     #[test]
     fn agent_system_prompt_defaults_when_profile_omits_it() {
         let request = request_from_prompt_snapshot(&json!({
             "chatCompletionPayload": {
-                "messages": [{ "role": "user", "content": "hello" }]
+                "messages": [
+                    agent_system_marker(),
+                    { "role": "user", "content": "hello" }
+                ]
             }
         }))
         .expect("request");
@@ -466,15 +531,69 @@ mod tests {
         let request =
             prepare_agent_tool_request(request, &[], &profile, "run_test").expect("agent request");
 
-        assert!(first_system_text(&request).contains("TauriTavern Agent Mode is active."));
+        assert!(message_text(&request, 0).contains("TauriTavern Agent Mode is active."));
     }
 
-    fn first_system_text(request: &AgentModelRequest) -> &str {
-        assert_eq!(request.messages[0].role, AgentModelRole::System);
-        match &request.messages[0].parts[0] {
-            AgentModelContentPart::Text { text } => text.as_str(),
-            _ => panic!("expected text system message"),
+    #[test]
+    fn agent_system_prompt_marker_is_required() {
+        let request = request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": {
+                "messages": [{ "role": "user", "content": "hello" }]
+            }
+        }))
+        .expect("request");
+        let profile = test_profile(None);
+
+        let error = prepare_agent_tool_request(request, &[], &profile, "run_test")
+            .expect_err("marker fails");
+
+        assert!(
+            error
+                .to_string()
+                .contains("agent.system_prompt_marker_missing")
+        );
+    }
+
+    #[test]
+    fn agent_system_prompt_marker_must_be_unique() {
+        let request = request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": {
+                "messages": [
+                    agent_system_marker(),
+                    { "role": "user", "content": "hello" },
+                    agent_system_marker()
+                ]
+            }
+        }))
+        .expect("request");
+        let profile = test_profile(None);
+
+        let error = prepare_agent_tool_request(request, &[], &profile, "run_test")
+            .expect_err("marker fails");
+
+        assert!(
+            error
+                .to_string()
+                .contains("agent.system_prompt_marker_duplicate")
+        );
+    }
+
+    fn message_text(request: &AgentModelRequest, index: usize) -> &str {
+        if index == 1 {
+            assert_eq!(request.messages[index].role, AgentModelRole::System);
         }
+        match &request.messages[index].parts[0] {
+            AgentModelContentPart::Text { text } => text.as_str(),
+            _ => panic!("expected text message"),
+        }
+    }
+
+    fn agent_system_marker() -> serde_json::Value {
+        json!({
+            "role": "system",
+            "content": "[marker]",
+            "_tauritavern_agent_prompt_marker": "agentSystemPrompt"
+        })
     }
 
     fn test_profile(agent_system_prompt: Option<&str>) -> ResolvedAgentProfile {

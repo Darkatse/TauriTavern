@@ -63,6 +63,12 @@ Built-in defaults
 - user explicit deny 优先级最高。
 - missing required field fail-fast。
 
+### 1.3 Agent System Prompt Ownership
+
+`instructions.agentSystemPrompt` 只属于 Agent Profile：`null` 使用 runtime 默认值，非空字符串完整替换默认值。
+
+Preset / PromptManager 中的 `agentSystemPrompt` 不是内容源，只是 Agent Mode 的位置锚点。前端 snapshot 必须在该位置放入一个内部 marker；Rust runtime 必须要求 marker 恰好出现一次，并在原位置替换为已解析的 Profile system prompt。Legacy Generation 必须移除 Agent-only 组件，不能看到 marker 或 Agent system prompt 内容。
+
 ## 2. Preset Agent Schema
 
 第一版可以使用 JSON-compatible schema，不必立刻引入 YAML。
