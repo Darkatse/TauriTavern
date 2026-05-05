@@ -699,6 +699,87 @@ async fn list_chat_summaries_returns_streamed_metadata() {
 }
 
 #[tokio::test]
+async fn list_chat_summaries_counts_large_crlf_jsonl_without_fingerprint() {
+    let (repository, root) = setup_repository().await;
+
+    let chat_dir = root.join("chats").join("alice");
+    fs::create_dir_all(&chat_dir)
+        .await
+        .expect("create character chat dir");
+
+    let header = json!({
+        "chat_metadata": {
+            "integrity": "large-summary",
+            "chat_id_hash": 77,
+        },
+        "user_name": "unused",
+        "character_name": "unused",
+    });
+    let large_middle_message = json!({
+        "name": "User",
+        "is_user": true,
+        "send_date": "2026-01-01T00:00:00.000Z",
+        "mes": "x".repeat(70_000),
+        "extra": {},
+    });
+    let tail_message = json!({
+        "name": "Alice",
+        "is_user": false,
+        "send_date": "2026-01-02T00:00:00.000Z",
+        "mes": "tail response",
+        "extra": {},
+    });
+
+    let raw_jsonl = [
+        serde_json::to_string(&header).expect("serialize header"),
+        String::new(),
+        serde_json::to_string(&large_middle_message).expect("serialize large message"),
+        "   \t".to_string(),
+        serde_json::to_string(&tail_message).expect("serialize tail message"),
+    ]
+    .join("\r\n");
+    fs::write(chat_dir.join("session.jsonl"), raw_jsonl)
+        .await
+        .expect("write raw crlf jsonl");
+
+    let summaries = repository
+        .list_chat_summaries(Some("alice"), true)
+        .await
+        .expect("list chat summaries");
+
+    assert_eq!(summaries.len(), 1);
+    let summary = &summaries[0];
+    assert_eq!(summary.character_name, "alice");
+    assert_eq!(summary.file_name, "session.jsonl");
+    assert_eq!(summary.message_count, 2);
+    assert_eq!(summary.preview, "tail response");
+    assert_eq!(summary.chat_id.as_deref(), Some("77"));
+
+    let index_path = root
+        .join("user")
+        .join("cache")
+        .join("chat_summary_index_v1.json");
+    let index_after_summary = fs::read_to_string(&index_path)
+        .await
+        .expect("read summary index after summary list");
+    let parsed: Value = serde_json::from_str(&index_after_summary).expect("parse summary index");
+    let entries = parsed
+        .get("entries")
+        .and_then(Value::as_array)
+        .expect("entries should exist");
+    assert_eq!(entries.len(), 1);
+    assert!(
+        entries[0]
+            .get("fingerprint")
+            .map(Value::is_null)
+            .unwrap_or(true),
+        "summary listing should not materialize fingerprint"
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn search_group_chats_respects_query_and_chat_filter() {
     let (repository, root) = setup_repository().await;
 
