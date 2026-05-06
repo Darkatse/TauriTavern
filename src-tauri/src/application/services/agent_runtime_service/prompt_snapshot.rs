@@ -2,7 +2,7 @@ use serde_json::{Map, Value, json};
 
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
-use crate::domain::models::agent::profile::ResolvedAgentProfile;
+use crate::domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use crate::domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole,
     AgentRunPresentation, AgentToolSpec,
@@ -62,6 +62,38 @@ pub(super) fn prepare_agent_tool_request(
         tool_choice: Value::String("auto".to_string()),
         provider_state: json!({ "sessionId": run_id }),
     })
+}
+
+pub(super) fn validate_prompt_snapshot_context_policy(
+    prompt_snapshot: &Value,
+    profile: &ResolvedAgentProfile,
+) -> Result<(), ApplicationError> {
+    let snapshot_policy_value = prompt_snapshot
+        .as_object()
+        .and_then(|object| object.get("contextPolicy"))
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.context_policy_required: prompt snapshot must include contextPolicy"
+                    .to_string(),
+            )
+        })?;
+    let snapshot_policy = serde_json::from_value::<AgentContextPolicy>(
+        snapshot_policy_value.clone(),
+    )
+    .map_err(|error| {
+        ApplicationError::ValidationError(format!(
+            "agent.invalid_context_policy_snapshot: contextPolicy is invalid: {error}"
+        ))
+    })?;
+
+    if snapshot_policy != profile.context {
+        return Err(ApplicationError::ValidationError(
+            "agent.context_policy_mismatch: prompt snapshot contextPolicy does not match resolved Agent profile"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 fn build_agent_system_prompt(tools: &[AgentToolSpec], profile: &ResolvedAgentProfile) -> String {
@@ -466,6 +498,7 @@ mod tests {
 
     use super::{
         prepare_agent_tool_request, reject_external_tool_request, request_from_prompt_snapshot,
+        validate_prompt_snapshot_context_policy,
     };
     use crate::domain::models::agent::profile::ResolvedAgentProfile;
     use crate::domain::models::agent::{AgentModelContentPart, AgentModelRequest, AgentModelRole};
@@ -576,6 +609,58 @@ mod tests {
                 .to_string()
                 .contains("agent.system_prompt_marker_duplicate")
         );
+    }
+
+    #[test]
+    fn context_policy_must_match_resolved_profile() {
+        let profile = test_profile(None);
+        let prompt_snapshot = json!({
+            "contextPolicy": {
+                "initialChatHistoryMessages": 8,
+                "includeActivatedWorldInfo": true
+            },
+            "chatCompletionPayload": {
+                "messages": [agent_system_marker()]
+            }
+        });
+
+        let error = validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
+            .expect_err("context policy mismatch fails");
+
+        assert!(error.to_string().contains("agent.context_policy_mismatch"));
+    }
+
+    #[test]
+    fn context_policy_is_required_for_agent_run_start() {
+        let profile = test_profile(None);
+        let prompt_snapshot = json!({
+            "chatCompletionPayload": {
+                "messages": [agent_system_marker()]
+            }
+        });
+
+        let error = validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
+            .expect_err("missing context policy fails");
+
+        assert!(error.to_string().contains("agent.context_policy_required"));
+    }
+
+    #[test]
+    fn truncated_context_policy_does_not_change_tool_history_source() {
+        let mut profile = test_profile(None);
+        profile.context.initial_chat_history_messages = 8;
+        let prompt_snapshot = json!({
+            "contextPolicy": {
+                "initialChatHistoryMessages": 8,
+                "includeActivatedWorldInfo": true
+            },
+            "chatCompletionPayload": {
+                "messages": [agent_system_marker()]
+            }
+        });
+
+        validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
+            .expect("matching truncated context policy should pass");
     }
 
     fn message_text(request: &AgentModelRequest, index: usize) -> &str {

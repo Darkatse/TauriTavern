@@ -918,6 +918,27 @@ export function createAgentSystemPanelRoot({ requestClose }) {
 
                                 <div class="ttas-section">
                                     <div class="ttas-section-title">
+                                        <i class="fa-solid fa-layer-group"></i>
+                                        <h4>{{ tr('initialContext') }}</h4>
+                                    </div>
+                                    <div class="ttas-form-grid">
+                                        <label class="ttas-field">
+                                            <span>{{ tr('initialChatHistoryMessages') }}</span>
+                                            <input class="text_pole" type="number" step="1" v-model.number="draft.context.initialChatHistoryMessages" :disabled="isBuiltinProfile" />
+                                            <small class="ttas-field-hint">
+                                                <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                                                <span>{{ tr('initialChatHistoryMessagesHint') }}</span>
+                                            </small>
+                                        </label>
+                                        <label class="checkbox_label ttas-field">
+                                            <span>{{ tr('includeActivatedWorldInfo') }}</span>
+                                            <input type="checkbox" v-model="draft.context.includeActivatedWorldInfo" :disabled="isBuiltinProfile" />
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="ttas-section">
+                                    <div class="ttas-section-title">
                                         <i class="fa-solid fa-terminal"></i>
                                         <h4>{{ tr('prompt') }}</h4>
                                     </div>

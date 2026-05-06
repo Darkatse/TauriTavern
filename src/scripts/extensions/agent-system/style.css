@@ -1927,6 +1927,23 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     line-height: 1.25;
 }
 
+.ttas-field-hint {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 6px;
+    margin: 0;
+    color: var(--ttas-muted);
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+
+.ttas-field-hint i {
+    margin-top: 0.15em;
+    color: var(--ttas-accent);
+    opacity: 0.84;
+}
+
 .ttas-root input.text_pole,
 .ttas-root textarea.text_pole,
 .ttas-root select {

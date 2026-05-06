@@ -13,6 +13,7 @@ pub const DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL: usize = 20_000;
 pub const DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN: usize = 80_000;
 pub const DEFAULT_AGENT_MODEL_MAX_RETRIES: usize = 3;
 pub const DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS: u64 = 3_000;
+pub const DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES: i64 = -1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AgentProfileId(String);
@@ -83,6 +84,8 @@ pub struct AgentProfileDefinition {
     pub model: AgentModelBinding,
     pub run: AgentRunPolicy,
     #[serde(default)]
+    pub context: AgentContextPolicy,
+    #[serde(default)]
     pub instructions: AgentProfileInstructions,
     pub tools: AgentToolPolicy,
     pub skills: AgentSkillPolicy,
@@ -103,6 +106,8 @@ pub struct ResolvedAgentProfile {
     pub preset: AgentPresetBinding,
     pub model: AgentModelBinding,
     pub run: AgentRunPolicy,
+    #[serde(default)]
+    pub context: AgentContextPolicy,
     pub instructions: AgentProfileInstructions,
     pub tools: AgentToolPolicy,
     pub skills: AgentSkillPolicy,
@@ -162,6 +167,15 @@ pub struct AgentRunPolicy {
     pub presentation: AgentRunPresentation,
     #[serde(default)]
     pub model_retry: AgentModelRetryPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentContextPolicy {
+    #[serde(default = "default_agent_initial_chat_history_messages")]
+    pub initial_chat_history_messages: i64,
+    #[serde(default = "default_agent_include_activated_world_info")]
+    pub include_activated_world_info: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -286,6 +300,14 @@ fn default_agent_model_retry_interval_ms() -> u64 {
     DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS
 }
 
+fn default_agent_initial_chat_history_messages() -> i64 {
+    DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES
+}
+
+fn default_agent_include_activated_world_info() -> bool {
+    true
+}
+
 impl Default for AgentModelRetryPolicy {
     fn default() -> Self {
         Self {
@@ -295,14 +317,24 @@ impl Default for AgentModelRetryPolicy {
     }
 }
 
+impl Default for AgentContextPolicy {
+    fn default() -> Self {
+        Self {
+            initial_chat_history_messages: DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES,
+            include_activated_world_info: true,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{
-        AgentProfileDefinition, DEFAULT_AGENT_MODEL_MAX_RETRIES,
-        DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL,
-        DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
+        AgentProfileDefinition, DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES,
+        DEFAULT_AGENT_MODEL_MAX_RETRIES, DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS,
+        DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN,
+        DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
     };
     use crate::domain::models::agent::plan::DEFAULT_AGENT_PLAN_BETA;
 
@@ -356,6 +388,11 @@ mod tests {
             profile.run.model_retry.interval_ms,
             DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS
         );
+        assert_eq!(
+            profile.context.initial_chat_history_messages,
+            DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES
+        );
+        assert!(profile.context.include_activated_world_info);
         assert!(profile.instructions.agent_system_prompt.is_none());
         assert!(profile.tools.deny.is_empty());
         assert!(profile.tools.tool_descriptions.is_empty());

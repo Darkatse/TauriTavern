@@ -6,7 +6,10 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use super::AgentRuntimeService;
-use super::prompt_snapshot::{reject_external_tool_request, request_from_prompt_snapshot};
+use super::prompt_snapshot::{
+    reject_external_tool_request, request_from_prompt_snapshot,
+    validate_prompt_snapshot_context_policy,
+};
 use crate::application::dto::agent_dto::{
     AgentCancelRunDto, AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
     AgentRunHandleDto, AgentStartRunDto, AgentWorkspaceFileDto,
@@ -53,6 +56,7 @@ impl AgentRuntimeService {
                 known_tools: self.tool_registry.specs(),
             })
             .await?;
+        validate_prompt_snapshot_context_policy(&prompt_snapshot, &resolved_profile)?;
         let presentation = dto
             .options
             .presentation

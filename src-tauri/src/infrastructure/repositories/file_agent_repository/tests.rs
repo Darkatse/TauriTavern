@@ -8,10 +8,10 @@ use uuid::Uuid;
 use super::FileAgentRepository;
 use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
 use crate::domain::models::agent::profile::{
-    AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentModelBinding, AgentModelBindingMode,
-    AgentPresetBinding, AgentPresetBindingMode, AgentProfileId, AgentProfileInstructions,
-    AgentProfileSourceTrace, AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy,
-    AgentWorkspacePolicy, ResolvedAgentOutputPolicy, ResolvedAgentProfile,
+    AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentModelBinding,
+    AgentModelBindingMode, AgentPresetBinding, AgentPresetBindingMode, AgentProfileId,
+    AgentProfileInstructions, AgentProfileSourceTrace, AgentRunPolicy, AgentSkillPolicy,
+    AgentToolPolicy, AgentWorkspacePolicy, ResolvedAgentOutputPolicy, ResolvedAgentProfile,
 };
 use crate::domain::models::agent::{
     AgentChatRef, AgentRun, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus, ArtifactSpec,
@@ -119,6 +119,7 @@ fn sample_resolved_profile(manifest: &WorkspaceManifest) -> ResolvedAgentProfile
             presentation: AgentRunPresentation::Background,
             model_retry: Default::default(),
         },
+        context: AgentContextPolicy::default(),
         instructions: AgentProfileInstructions {
             agent_system_prompt: None,
         },

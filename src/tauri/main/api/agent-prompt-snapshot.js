@@ -1,16 +1,23 @@
 // @ts-check
 
 import { normalizeWorldInfoActivationBatch } from '../../../scripts/tauritavern/agent/world-info-activation.js';
+import {
+    loadAgentContextPolicy,
+    normalizeAgentContextPolicy,
+} from '../../../scripts/tauritavern/agent/agent-context-policy.js';
 
 const LEGACY_DRY_RUN_SOURCE = 'legacy-generate-dry-run';
 
 /**
- * @param {{ generationType?: string; generateOptions?: Record<string, any> }} input
- * @returns {Promise<{ promptSnapshot: { chatCompletionPayload: any; worldInfoActivation?: any }; generationIntent: any }>}
+ * @param {{ generationType?: string; generateOptions?: Record<string, any>; profileId?: string; agentContextPolicy?: Record<string, any> }} input
+ * @returns {Promise<{ promptSnapshot: { contextPolicy: any; chatCompletionPayload: any; worldInfoActivation?: any }; generationIntent: any }>}
  */
 export async function buildAgentPromptSnapshot(input = {}) {
     const generationType = normalizeGenerationType(input.generationType);
     const generateOptions = normalizeGenerateOptions(input.generateOptions);
+    const agentContextPolicy = input.agentContextPolicy
+        ? normalizeAgentContextPolicy(input.agentContextPolicy)
+        : await loadAgentContextPolicy(input.profileId);
     const script = await import('../../../script.js');
 
     if (script.main_api !== 'openai') {
@@ -20,6 +27,7 @@ export async function buildAgentPromptSnapshot(input = {}) {
     const { generateData, worldInfoActivation } = await captureAgentDryRun(script, generationType, {
         ...generateOptions,
         agentMode: true,
+        agentContextPolicy,
     });
     const messages = generateData?.prompt;
     assertMessagesReady(messages);
@@ -47,6 +55,7 @@ export async function buildAgentPromptSnapshot(input = {}) {
 
     return {
         promptSnapshot: {
+            contextPolicy: agentContextPolicy,
             chatCompletionPayload: payload,
             ...(worldInfoActivation ? { worldInfoActivation } : {}),
         },

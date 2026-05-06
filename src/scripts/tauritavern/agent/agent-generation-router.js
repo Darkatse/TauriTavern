@@ -1,4 +1,5 @@
 import { loadAgentSystemSettings } from './agent-system-settings.js';
+import { loadAgentContextPolicy } from './agent-context-policy.js';
 
 const AGENT_GENERATION_TYPES = new Set(['normal', 'regenerate', 'swipe']);
 
@@ -20,9 +21,12 @@ export async function getAgentGenerationOptions({
         selectedGroup,
     });
 
+    const agentContextPolicy = await loadAgentContextPolicy(settings.selectedProfileId);
+
     return {
         agentMode: true,
         agentProfileId: settings.selectedProfileId,
+        agentContextPolicy,
     };
 }
 

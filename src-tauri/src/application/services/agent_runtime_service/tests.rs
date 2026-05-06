@@ -1477,14 +1477,7 @@ async fn workspace_patch_requires_full_read_state() {
         .await
         .expect("seed artifact");
 
-    let chat_repository = test_chat_repository(&root);
-    let dispatcher = AgentToolDispatcher::new(
-        repository.clone(),
-        chat_repository.clone(),
-        chat_repository,
-        repository.clone(),
-        test_skill_service(&root),
-    );
+    let dispatcher = test_dispatcher(repository.clone(), &root);
     let mut session = AgentToolSession::default();
     let patch_call = AgentToolCall {
         id: "call_patch".to_string(),
@@ -1657,7 +1650,6 @@ async fn dispatcher_searches_visible_workspace_files_and_reads_char_ranges() {
         Uuid::new_v4().simple()
     ));
     let repository = Arc::new(FileAgentRepository::new(root.clone()));
-    let chat_repository = test_chat_repository(&root);
     let run = AgentRun {
         id: "run_workspace_search_test".to_string(),
         workspace_id: "workspace_search_test".to_string(),
@@ -1694,13 +1686,7 @@ async fn dispatcher_searches_visible_workspace_files_and_reads_char_ranges() {
         .await
         .expect("seed persist");
 
-    let dispatcher = AgentToolDispatcher::new(
-        repository.clone(),
-        chat_repository.clone(),
-        chat_repository,
-        repository.clone(),
-        test_skill_service(&root),
-    );
+    let dispatcher = test_dispatcher(repository.clone(), &root);
     let mut session = AgentToolSession::default();
     let search_call = AgentToolCall {
         id: "call_workspace_search".to_string(),
@@ -1744,7 +1730,6 @@ async fn dispatcher_searches_skills_and_reads_skill_ranges() {
         Uuid::new_v4().simple()
     ));
     let repository = Arc::new(FileAgentRepository::new(root.clone()));
-    let chat_repository = test_chat_repository(&root);
     let skill_repository = Arc::new(FileSkillRepository::new(root.join("skills")));
     skill_repository
         .install_import(SkillInstallRequest {
@@ -1777,8 +1762,8 @@ async fn dispatcher_searches_skills_and_reads_skill_ranges() {
     let profile = test_resolved_profile(&root).await;
     let dispatcher = AgentToolDispatcher::new(
         repository.clone(),
-        chat_repository.clone(),
-        chat_repository,
+        test_chat_repository(&root),
+        test_chat_repository(&root),
         repository,
         skill_service,
     );
@@ -1834,7 +1819,6 @@ async fn dispatcher_progressively_reads_worldinfo_activation_from_run_snapshot()
         Uuid::new_v4().simple()
     ));
     let repository = Arc::new(FileAgentRepository::new(root.clone()));
-    let chat_repository = test_chat_repository(&root);
     let run = AgentRun {
         id: "run_worldinfo_tool_test".to_string(),
         workspace_id: "worldinfo_tool_test".to_string(),
@@ -1889,13 +1873,7 @@ async fn dispatcher_progressively_reads_worldinfo_activation_from_run_snapshot()
         .await
         .expect("initialize workspace");
 
-    let dispatcher = AgentToolDispatcher::new(
-        repository.clone(),
-        chat_repository.clone(),
-        chat_repository,
-        repository.clone(),
-        test_skill_service(&root),
-    );
+    let dispatcher = test_dispatcher(repository.clone(), &root);
     let mut session = AgentToolSession::default();
     let index_call = AgentToolCall {
         id: "call_worldinfo_index".to_string(),
@@ -2034,6 +2012,12 @@ struct MockAgentModelGateway {
     closed_sessions: Mutex<Vec<String>>,
 }
 
+fn test_skill_service(root: &Path) -> Arc<SkillService> {
+    Arc::new(SkillService::new(Arc::new(FileSkillRepository::new(
+        root.join("skills"),
+    ))))
+}
+
 fn test_chat_repository(root: &Path) -> Arc<FileChatRepository> {
     Arc::new(FileChatRepository::new(
         root.join("characters"),
@@ -2043,10 +2027,15 @@ fn test_chat_repository(root: &Path) -> Arc<FileChatRepository> {
     ))
 }
 
-fn test_skill_service(root: &Path) -> Arc<SkillService> {
-    Arc::new(SkillService::new(Arc::new(FileSkillRepository::new(
-        root.join("skills"),
-    ))))
+fn test_dispatcher(repository: Arc<FileAgentRepository>, root: &Path) -> AgentToolDispatcher {
+    let chat_repository = test_chat_repository(root);
+    AgentToolDispatcher::new(
+        repository.clone(),
+        chat_repository.clone(),
+        chat_repository,
+        repository,
+        test_skill_service(root),
+    )
 }
 
 fn test_profile_service(root: &Path) -> Arc<AgentProfileService> {

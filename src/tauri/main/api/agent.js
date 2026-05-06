@@ -32,6 +32,7 @@ function createAgentApi({ safeInvoke }) {
         const snapshot = await buildAgentPromptSnapshot({
             generationType,
             generateOptions: input.generateOptions,
+            profileId: input.profileId,
         });
 
         return startRunWithPromptSnapshot({

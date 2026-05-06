@@ -7,11 +7,11 @@ use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::AgentToolSpec;
 use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy, DEFAULT_AGENT_PLAN_BETA};
 use crate::domain::models::agent::profile::{
-    AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentModelBinding, AgentModelBindingMode,
-    AgentOutputArtifactTarget, AgentOutputPolicy, AgentPresetBinding, AgentPresetBindingMode,
-    AgentProfileDefinition, AgentProfileId, AgentProfileInstructions, AgentProfileSourceTrace,
-    AgentProfileSummary, AgentRunPolicy, AgentSkillPolicy, AgentToolDescriptionOverride,
-    AgentToolPolicy, AgentWorkspacePolicy, DEFAULT_AGENT_PROFILE_ID,
+    AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentModelBinding,
+    AgentModelBindingMode, AgentOutputArtifactTarget, AgentOutputPolicy, AgentPresetBinding,
+    AgentPresetBindingMode, AgentProfileDefinition, AgentProfileId, AgentProfileInstructions,
+    AgentProfileSourceTrace, AgentProfileSummary, AgentRunPolicy, AgentSkillPolicy,
+    AgentToolDescriptionOverride, AgentToolPolicy, AgentWorkspacePolicy, DEFAULT_AGENT_PROFILE_ID,
     DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN,
     DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_ROUNDS, ResolvedAgentOutputPolicy,
     ResolvedAgentProfile,
@@ -114,9 +114,10 @@ impl AgentProfileService {
 
     pub async fn save_profile(
         &self,
-        profile: AgentProfileDefinition,
+        mut profile: AgentProfileDefinition,
         known_tools: &[AgentToolSpec],
     ) -> Result<(), ApplicationError> {
+        normalize_context_policy(&mut profile.context)?;
         self.resolve_definition(
             profile.clone(),
             format!("file:{}", profile.id.as_str()),
@@ -139,13 +140,14 @@ impl AgentProfileService {
 
     async fn resolve_definition(
         &self,
-        definition: AgentProfileDefinition,
+        mut definition: AgentProfileDefinition,
         source: String,
         known_tools: &[AgentToolSpec],
     ) -> Result<ResolvedAgentProfile, ApplicationError> {
         validate_profile_header(&definition)?;
         validate_preset_binding(&definition.preset, self.preset_repository.as_ref()).await?;
         validate_model_binding(&definition.model)?;
+        normalize_context_policy(&mut definition.context)?;
         validate_instructions(&definition.instructions)?;
         validate_plan_policy(&definition.plan)?;
         validate_tool_policy(&definition.tools, known_tools)?;
@@ -163,6 +165,7 @@ impl AgentProfileService {
             preset: definition.preset,
             model: definition.model,
             run: definition.run,
+            context: definition.context,
             instructions: definition.instructions,
             tools: definition.tools,
             skills: definition.skills,
@@ -196,6 +199,7 @@ fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> 
             presentation: AgentRunPresentation::Foreground,
             model_retry: Default::default(),
         },
+        context: AgentContextPolicy::default(),
         instructions: AgentProfileInstructions {
             agent_system_prompt: None,
         },
@@ -325,6 +329,19 @@ fn validate_model_binding(binding: &AgentModelBinding) -> Result<(), Application
     match binding.mode {
         AgentModelBindingMode::CurrentPromptSnapshot => Ok(()),
     }
+}
+
+fn normalize_context_policy(policy: &mut AgentContextPolicy) -> Result<(), ApplicationError> {
+    if policy.initial_chat_history_messages == 0 {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_context_history_invalid: context.initialChatHistoryMessages must be negative for full history or positive for a recent-message window"
+                .to_string(),
+        ));
+    }
+    if policy.initial_chat_history_messages < 0 {
+        policy.initial_chat_history_messages = -1;
+    }
+    Ok(())
 }
 
 fn validate_instructions(instructions: &AgentProfileInstructions) -> Result<(), ApplicationError> {

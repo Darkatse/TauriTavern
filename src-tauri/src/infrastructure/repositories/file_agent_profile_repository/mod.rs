@@ -168,10 +168,11 @@ mod tests {
     use crate::domain::models::agent::AgentRunPresentation;
     use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
     use crate::domain::models::agent::profile::{
-        AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentModelBinding, AgentModelBindingMode,
-        AgentOutputArtifact, AgentOutputArtifactTarget, AgentOutputPolicy, AgentPresetBinding,
-        AgentPresetBindingMode, AgentProfileDefinition, AgentProfileId, AgentProfileInstructions,
-        AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy, AgentWorkspacePolicy,
+        AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentModelBinding,
+        AgentModelBindingMode, AgentOutputArtifact, AgentOutputArtifactTarget, AgentOutputPolicy,
+        AgentPresetBinding, AgentPresetBindingMode, AgentProfileDefinition, AgentProfileId,
+        AgentProfileInstructions, AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy,
+        AgentWorkspacePolicy,
     };
     use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
 
@@ -233,6 +234,7 @@ mod tests {
                 presentation: AgentRunPresentation::Background,
                 model_retry: Default::default(),
             },
+            context: AgentContextPolicy::default(),
             instructions: AgentProfileInstructions {
                 agent_system_prompt: None,
             },

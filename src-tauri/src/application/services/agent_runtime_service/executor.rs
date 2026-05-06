@@ -148,6 +148,7 @@ impl AgentRuntimeService {
                 "request": request_summary(&request),
                 "tools": &visible_tools,
                 "maxRounds": resolved_profile.tools.max_rounds,
+                "contextPolicy": &resolved_profile.context,
                 "modelRetry": {
                     "maxRetries": resolved_profile.run.model_retry.max_retries,
                     "intervalMs": resolved_profile.run.model_retry.interval_ms,

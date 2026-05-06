@@ -1,6 +1,10 @@
 import { DEFAULT_PROFILE_ID, KNOWN_TOOLS, WORKSPACE_ROOTS } from './constants.js';
 import { clone } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
+import {
+    DEFAULT_AGENT_CONTEXT_POLICY,
+    normalizeAgentContextPolicy,
+} from '../../../tauritavern/agent/agent-context-policy.js';
 
 export function normalizeProfileId(value) {
     return String(value || '')
@@ -194,6 +198,9 @@ export function defaultProfile(id = DEFAULT_PROFILE_ID) {
                 intervalMs: 3000,
             },
         },
+        context: {
+            ...DEFAULT_AGENT_CONTEXT_POLICY,
+        },
         instructions: {
             agentSystemPrompt: profileId === DEFAULT_PROFILE_ID ? buildDefaultAgentSystemPrompt() : null,
         },
@@ -252,6 +259,7 @@ export function normalizeProfileForSave(profile) {
     normalized.preset.required = Boolean(normalized.preset.required);
     normalized.run.modelRetry.maxRetries = Number(normalized.run.modelRetry.maxRetries);
     normalized.run.modelRetry.intervalMs = Number(normalized.run.modelRetry.intervalMs);
+    normalized.context = normalizeAgentContextPolicy(normalized.context);
     normalized.tools.maxRounds = Number(normalized.tools.maxRounds);
     normalized.tools.maxCallsPerRun = Number(normalized.tools.maxCallsPerRun);
     normalized.tools.toolDescriptions = normalizeToolDescriptions(normalized.tools.toolDescriptions);
@@ -277,6 +285,7 @@ export function normalizeProfileForSave(profile) {
 export function profileForEdit(profile) {
     const draft = clone(profile);
     materializeDefaultProfilePrompt(draft);
+    draft.context = normalizeAgentContextPolicy(draft.context);
     draft.tools.toolDescriptions = normalizeToolDescriptions(draft.tools.toolDescriptions);
     draft.skills.visibleCsv = joinCsv(draft.skills.visible);
     draft.skills.denyCsv = joinCsv(draft.skills.deny);

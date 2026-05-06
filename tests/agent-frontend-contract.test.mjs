@@ -124,6 +124,21 @@ test('Agent generation router uses the global toggle for normal regenerate and s
                 },
             },
         },
+        agent: {
+            profiles: {
+                async load({ profileId }) {
+                    assert.equal(profileId, stored.selectedProfileId);
+                    return {
+                        profile: {
+                            context: {
+                                initialChatHistoryMessages: 6,
+                                includeActivatedWorldInfo: false,
+                            },
+                        },
+                    };
+                },
+            },
+        },
     });
 
     const router = await importFresh('src/scripts/tauritavern/agent/agent-generation-router.js');
@@ -146,6 +161,10 @@ test('Agent generation router uses the global toggle for normal regenerate and s
         }), {
             agentMode: true,
             agentProfileId: 'writer',
+            agentContextPolicy: {
+                initialChatHistoryMessages: 6,
+                includeActivatedWorldInfo: false,
+            },
         });
     }
 

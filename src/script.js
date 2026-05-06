@@ -53,6 +53,10 @@ import {
     hasActiveAgentRun,
     startAndWaitForAgentRun,
 } from './scripts/tauritavern/agent/agent-run-controller.js';
+import {
+    applyInitialChatHistoryPolicy,
+    normalizeAgentContextPolicy,
+} from './scripts/tauritavern/agent/agent-context-policy.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -4667,6 +4671,7 @@ function removeLastMessage() {
  * @property {JsonSchema} [jsonSchema] JSON schema to use for the structured generation. Usually requires a special instruction.
  * @property {boolean} [agentMode] Internal TauriTavern Agent prompt snapshot mode.
  * @property {string|null} [agentProfileId] Agent profile to use when agentMode is active.
+ * @property {{ initialChatHistoryMessages: number, includeActivatedWorldInfo: boolean }|null} [agentContextPolicy] Agent prompt context policy.
  */
 
 const generationIdleGate = createGenerationIdleGate();
@@ -4711,10 +4716,11 @@ export async function Generate(type, options = {}, dryRun = false) {
     }
 }
 
-async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, agentMode = false, agentProfileId = null } = {}, dryRun = false) {
+async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, agentMode = false, agentProfileId = null, agentContextPolicy = null } = {}, dryRun = false) {
     console.log('Generate entered');
     setGenerationProgress(0);
     generation_started = new Date();
+    const resolvedAgentContextPolicy = agentMode ? normalizeAgentContextPolicy(agentContextPolicy) : null;
 
     // Prevent generation from shallow characters
     await unshallowCharacter(this_chid);
@@ -5047,6 +5053,11 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         console.debug('Skipping extension interceptors for dry run');
     }
 
+    const fullContextCoreChat = coreChat;
+    const promptCoreChat = agentMode
+        ? applyInitialChatHistoryPolicy(fullContextCoreChat, resolvedAgentContextPolicy)
+        : fullContextCoreChat;
+
     // Adjust token limit for Horde
     let adjustedParams;
     if (main_api == 'koboldhorde' && (horde_settings.auto_adjust_context_length || horde_settings.auto_adjust_response_length)) {
@@ -5097,7 +5108,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     // Add WI to prompt (and also inject WI to AN value via hijack)
     // Make quiet prompt available for WIAN
     setExtensionPrompt(inject_ids.QUIET_PROMPT, quiet_prompt || '', extension_prompt_types.IN_PROMPT, 0, true);
-    const chatForWI = coreChat.map(x => world_info_include_names ? `${x.name}: ${x.mes}` : x.mes).reverse();
+    const chatForWI = fullContextCoreChat.map(x => world_info_include_names ? `${x.name}: ${x.mes}` : x.mes).reverse();
     /** @type {import('./scripts/world-info.js').WIGlobalScanData} */
     const globalScanData = {
         personaDescription: persona,
@@ -5110,23 +5121,28 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     };
     const { worldInfoString, worldInfoBefore, worldInfoAfter, worldInfoExamples, worldInfoDepth, outletEntries, worldInfoActivation } = await getWorldInfoPrompt(chatForWI, this_max_context, dryRun, globalScanData);
     setExtensionPrompt(inject_ids.QUIET_PROMPT, '', extension_prompt_types.IN_PROMPT, 0, true);
+    const includeActivatedWorldInfo = !agentMode || resolvedAgentContextPolicy.includeActivatedWorldInfo;
+    const promptWorldInfoBefore = includeActivatedWorldInfo ? worldInfoBefore : '';
+    const promptWorldInfoAfter = includeActivatedWorldInfo ? worldInfoAfter : '';
 
     // Add message example WI
-    for (const example of worldInfoExamples) {
-        const exampleMessage = example.content;
+    if (includeActivatedWorldInfo) {
+        for (const example of worldInfoExamples) {
+            const exampleMessage = example.content;
 
-        if (exampleMessage.length === 0) {
-            continue;
-        }
+            if (exampleMessage.length === 0) {
+                continue;
+            }
 
-        const formattedExample = baseChatReplace(exampleMessage);
-        const cleanedExample = parseMesExamples(formattedExample, isInstruct);
+            const formattedExample = baseChatReplace(exampleMessage);
+            const cleanedExample = parseMesExamples(formattedExample, isInstruct);
 
-        // Insert depending on before or after position
-        if (example.position === wi_anchor_position.before) {
-            mesExamplesArray.unshift(...cleanedExample);
-        } else {
-            mesExamplesArray.push(...cleanedExample);
+            // Insert depending on before or after position
+            if (example.position === wi_anchor_position.before) {
+                mesExamplesArray.unshift(...cleanedExample);
+            } else {
+                mesExamplesArray.push(...cleanedExample);
+            }
         }
     }
 
@@ -5137,7 +5153,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         mesExamplesArray = formatInstructModeExamples(mesExamplesArray, name1, name2);
     }
 
-    if (skipWIAN !== true) {
+    if (includeActivatedWorldInfo && skipWIAN !== true) {
         console.log('skipWIAN not active, adding WIAN');
         // Add all depth WI entries to prompt
         flushWIInjections();
@@ -5153,7 +5169,10 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             });
         }
     } else {
-        console.log('skipping WIAN');
+        if (agentMode && !includeActivatedWorldInfo) {
+            flushWIInjections();
+        }
+        console.log(agentMode && !includeActivatedWorldInfo ? 'skipping WIAN by Agent context policy' : 'skipping WIAN');
     }
 
     // Add persona description to prompt
@@ -5184,10 +5203,10 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         system: system,
         char: name2,
         user: name1,
-        wiBefore: worldInfoBefore,
-        wiAfter: worldInfoAfter,
-        loreBefore: worldInfoBefore,
-        loreAfter: worldInfoAfter,
+        wiBefore: promptWorldInfoBefore,
+        wiAfter: promptWorldInfoAfter,
+        loreBefore: promptWorldInfoBefore,
+        loreAfter: promptWorldInfoAfter,
         anchorBefore: beforeScenarioAnchor.trim(),
         anchorAfter: afterScenarioAnchor.trim(),
         mesExamples: mesExamplesArray.join(''),
@@ -5308,7 +5327,11 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     let oaiMessageExamples = [];
 
     if (main_api === 'openai') {
-        oaiMessages = setOpenAIMessages(coreChat);
+        if (agentMode) {
+            oaiMessages = setOpenAIMessages(promptCoreChat);
+        } else {
+            oaiMessages = setOpenAIMessages(coreChat);
+        }
         oaiMessageExamples = setOpenAIMessageExamples(mesExamplesArray);
     }
 
@@ -5694,8 +5717,8 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             scenario,
             char: name2,
             user: name1,
-            worldInfoBefore,
-            worldInfoAfter,
+            worldInfoBefore: promptWorldInfoBefore,
+            worldInfoAfter: promptWorldInfoAfter,
             beforeScenarioAnchor,
             afterScenarioAnchor,
             storyString,
@@ -5765,8 +5788,8 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 charDescription: description,
                 charPersonality: personality,
                 scenario: scenario,
-                worldInfoBefore: worldInfoBefore,
-                worldInfoAfter: worldInfoAfter,
+                worldInfoBefore: promptWorldInfoBefore,
+                worldInfoAfter: promptWorldInfoAfter,
                 extensionPrompts: extension_prompts,
                 bias: promptBias,
                 type: type,
@@ -5807,6 +5830,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 generateData: generate_data,
                 jsonSchema,
                 profileId: agentProfileId,
+                agentContextPolicy: resolvedAgentContextPolicy,
                 worldInfoActivation,
             });
         } finally {
@@ -6088,7 +6112,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 }
 //MARK: Generate() ends
 
-async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema, profileId, worldInfoActivation }) {
+async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema, profileId, agentContextPolicy, worldInfoActivation }) {
     if (main_api !== 'openai') {
         throw new Error('agent.chat_completion_required: Agent Mode currently requires the OpenAI/chat-completion path');
     }
@@ -6096,6 +6120,9 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
     const messages = generateData?.prompt;
     if (!Array.isArray(messages)) {
         throw new Error('agent.prompt_snapshot_messages_required: Generate did not produce chat-completion messages');
+    }
+    if (!agentContextPolicy) {
+        throw new Error('agent.context_policy_required: Agent Mode did not resolve an Agent context policy');
     }
 
     const model = getChatCompletionModel(oai_settings);
@@ -6119,6 +6146,7 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         profileId,
         persistBaseStateId: resolveAgentPersistBaseStateIdForGeneration(type),
         promptSnapshot: {
+            contextPolicy: agentContextPolicy,
             chatCompletionPayload,
             ...(worldInfoActivation ? { worldInfoActivation } : {}),
         },
@@ -6127,6 +6155,7 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
             generationType: type,
             chatCompletionSource: chatCompletionPayload.chat_completion_source,
             model: chatCompletionPayload.model,
+            contextPolicy: agentContextPolicy,
         },
         options: { stream: false, presentation: 'foreground' },
     });
