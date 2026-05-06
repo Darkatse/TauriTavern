@@ -59,6 +59,7 @@ test('Agent System settings use the extension store and publish changes', async 
         agentModeEnabled: false,
         selectedProfileId: 'default-writer',
         activeTab: 'profiles',
+        runTimelineHeightPx: null,
     });
     assert.equal(writes.length, 0);
 
@@ -76,8 +77,33 @@ test('Agent System settings use the extension store and publish changes', async 
         agentModeEnabled: true,
         selectedProfileId: 'writer',
         activeTab: 'profiles',
+        runTimelineHeightPx: null,
     });
     assert.deepEqual(emitted, saved);
+});
+
+test('Agent run timeline resize geometry is deterministic', async () => {
+    const resize = await importFresh('src/scripts/extensions/agent-system/src/run-timeline-resize.js');
+
+    assert.equal(resize.normalizeRunTimelineHeightPx(null), null);
+    assert.equal(resize.normalizeRunTimelineHeightPx(420.4), 420);
+    assert.throws(() => resize.normalizeRunTimelineHeightPx('420'), /finite number or null/);
+
+    const bounds = resize.runTimelineHeightBounds({
+        panelBottom: 700,
+        topBoundary: 100,
+        chromeHeight: 40,
+    });
+    assert.deepEqual(bounds, { min: 132, max: 548 });
+
+    assert.equal(resize.clampRunTimelineHeightPx(80, bounds), 132);
+    assert.equal(resize.clampRunTimelineHeightPx(900, bounds), 548);
+    assert.equal(resize.heightFromTopEdgeDrag({
+        startHeight: 300,
+        startY: 500,
+        currentY: 420,
+        bounds,
+    }), 380);
 });
 
 test('Agent generation router uses the global toggle for normal regenerate and swipe', async () => {
@@ -85,6 +111,7 @@ test('Agent generation router uses the global toggle for normal regenerate and s
         agentModeEnabled: false,
         selectedProfileId: 'default-writer',
         activeTab: 'profiles',
+        runTimelineHeightPx: null,
     };
     installWindow({
         extension: {
@@ -485,6 +512,140 @@ test('Agent run event presenter keeps model turns out of timeline and exposes re
     );
     assert.deepEqual(targets, [
         { type: 'modelReasoning', labelKey: 'timelineReasoning', round: 2 },
+    ]);
+});
+
+test('Agent run event presenter restores reasoning for collapsed side-effect events', async () => {
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const modelEvent = {
+        seq: 1,
+        id: 'evt-model',
+        runId: 'run-1',
+        type: 'model_completed',
+        payload: {
+            round: 7,
+            hasReasoning: true,
+            reasoningBytes: 48,
+        },
+    };
+    const writeCompleted = {
+        seq: 2,
+        id: 'evt-write-completed',
+        runId: 'run-1',
+        type: 'tool_call_completed',
+        payload: {
+            round: 7,
+            callId: 'call-write',
+            name: 'workspace.write_file',
+            resourceRefs: ['output/main.md'],
+        },
+    };
+    const writeEvent = {
+        seq: 3,
+        id: 'evt-write',
+        runId: 'run-1',
+        type: 'workspace_file_written',
+        payload: { path: 'output/main.md', bytes: 12 },
+    };
+    const commitRequestedTool = {
+        seq: 4,
+        id: 'evt-commit-tool',
+        runId: 'run-1',
+        type: 'tool_call_requested',
+        payload: {
+            round: 7,
+            callId: 'call-commit',
+            name: 'workspace.commit',
+            argumentsRef: 'tool-args/call-commit.json',
+        },
+    };
+    const commitEvent = {
+        seq: 5,
+        id: 'evt-commit',
+        runId: 'run-1',
+        type: 'chat_commit_completed',
+        payload: {
+            callId: 'call-commit',
+            commitId: 'commit-1',
+            path: 'output/main.md',
+            mode: 'replace',
+        },
+    };
+    const patchRequested = {
+        seq: 6,
+        id: 'evt-patch-requested',
+        runId: 'run-1',
+        type: 'tool_call_requested',
+        payload: {
+            round: 7,
+            callId: 'call-patch',
+            name: 'workspace.apply_patch',
+            argumentsRef: 'tool-args/call-patch.json',
+        },
+    };
+    const patchCompleted = {
+        seq: 7,
+        id: 'evt-patch-completed',
+        runId: 'run-1',
+        type: 'tool_call_completed',
+        payload: {
+            round: 7,
+            callId: 'call-patch',
+            name: 'workspace.apply_patch',
+            resourceRefs: ['output/main.md'],
+        },
+    };
+    const patchEvent = {
+        seq: 8,
+        id: 'evt-patch',
+        runId: 'run-1',
+        type: 'workspace_patch_applied',
+        payload: { path: 'output/main.md', bytes: 24, replacements: 1 },
+    };
+    const finishCompleted = {
+        seq: 9,
+        id: 'evt-finish-completed',
+        runId: 'run-1',
+        type: 'tool_call_completed',
+        payload: {
+            round: 7,
+            callId: 'call-finish',
+            name: 'workspace.finish',
+        },
+    };
+    const persistentEvent = {
+        seq: 10,
+        id: 'evt-persistent',
+        runId: 'run-1',
+        type: 'persistent_changes_committed',
+        payload: { changeCount: 0, changes: [] },
+    };
+    const events = [
+        modelEvent,
+        writeCompleted,
+        writeEvent,
+        commitRequestedTool,
+        commitEvent,
+        patchRequested,
+        patchCompleted,
+        patchEvent,
+        finishCompleted,
+        persistentEvent,
+    ];
+
+    const writeTargets = presenter.buildEventDetailTargets(presenter.presentRunEvent(writeEvent), events);
+    assert.deepEqual(writeTargets[0], { type: 'modelReasoning', labelKey: 'timelineReasoning', round: 7 });
+
+    const commitTargets = presenter.buildEventDetailTargets(presenter.presentRunEvent(commitEvent), events);
+    assert.deepEqual(commitTargets[0], { type: 'modelReasoning', labelKey: 'timelineReasoning', round: 7 });
+
+    const patchTargets = presenter.buildEventDetailTargets(presenter.presentRunEvent(patchEvent), events);
+    assert.deepEqual(patchTargets[0], { type: 'modelReasoning', labelKey: 'timelineReasoning', round: 7 });
+    assert.equal(patchTargets[1].type, 'patchDiff');
+
+    const persistentTargets = presenter.buildEventDetailTargets(presenter.presentRunEvent(persistentEvent), events);
+    assert.deepEqual(persistentTargets, [
+        { type: 'modelReasoning', labelKey: 'timelineReasoning', round: 7 },
     ]);
 });
 

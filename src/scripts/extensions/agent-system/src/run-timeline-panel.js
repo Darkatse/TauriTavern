@@ -2,8 +2,16 @@ import { createApp } from 'vue/dist/vue.esm-bundler.js';
 
 import { errorText, requireHostApi } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
-import { loadSettings, subscribeSettings } from './settings-store.js';
+import { loadSettings, patchSettings, subscribeSettings } from './settings-store.js';
 import { formatDetailFile, formatModelTurnDetail, formatPatchDiffDetail } from './run-detail-format.js';
+import {
+    clampRunTimelineHeightPx,
+    heightFromTopEdgeDrag,
+    normalizeRunTimelineHeightPx,
+    RUN_TIMELINE_KEYBOARD_STEP_PX,
+    RUN_TIMELINE_PAGE_STEP_PX,
+    runTimelineHeightBounds,
+} from './run-timeline-resize.js';
 import {
     getActiveAgentRun,
     subscribeAgentRunEvents,
@@ -26,6 +34,7 @@ function createAgentRunTimelineApp() {
             return {
                 settings: {
                     agentModeEnabled: false,
+                    runTimelineHeightPx: null,
                 },
                 currentRun: null,
                 activeRun: null,
@@ -42,6 +51,11 @@ function createAgentRunTimelineApp() {
                 detailError: '',
                 detailSections: [],
                 detailRequestId: 0,
+                panelHeightPx: null,
+                resizing: false,
+                resizeStartY: 0,
+                resizeStartHeightPx: 0,
+                resizeBounds: null,
                 unsubscribeSettings: null,
                 unsubscribeRunState: null,
                 unsubscribeRunEvents: null,
@@ -132,6 +146,14 @@ function createAgentRunTimelineApp() {
             navItems() {
                 return this.displayItems.slice(-24);
             },
+            panelStyle() {
+                if (this.panelHeightPx == null) {
+                    return {};
+                }
+                return {
+                    '--ttas-run-panel-user-height': `${this.panelHeightPx}px`,
+                };
+            },
         },
         watch: {
             selectedSeq() {
@@ -146,9 +168,9 @@ function createAgentRunTimelineApp() {
             },
         },
         async mounted() {
-            this.settings = await loadSettings();
+            this.applySettings(await loadSettings());
             this.unsubscribeSettings = subscribeSettings((settings) => {
-                this.settings = settings;
+                this.applySettings(settings);
             });
             this.unsubscribeRunState = subscribeAgentRunState((state) => {
                 void this.handleRunState(state.activeRun, state.lastEvent);
@@ -159,6 +181,7 @@ function createAgentRunTimelineApp() {
             await this.handleRunState(getActiveAgentRun(), null);
         },
         unmounted() {
+            this.stopResize(false);
             this.unsubscribeSettings?.();
             this.unsubscribeRunState?.();
             this.unsubscribeRunEvents?.();
@@ -166,6 +189,10 @@ function createAgentRunTimelineApp() {
         methods: {
             tr(key, params) {
                 return tr(key, params);
+            },
+            applySettings(settings) {
+                this.settings = settings;
+                this.panelHeightPx = normalizeRunTimelineHeightPx(settings?.runTimelineHeightPx);
             },
             async handleRunState(activeRun, lastEvent) {
                 this.activeRun = activeRun || null;
@@ -445,9 +472,129 @@ function createAgentRunTimelineApp() {
                 });
                 return formatDetailFile(target, file);
             },
+            measureResizeBounds() {
+                const panel = this.$refs.panelRoot;
+                const body = this.$refs.panelBody;
+                const header = this.$refs.panelHeader;
+                if (!(panel instanceof HTMLElement) || !(body instanceof HTMLElement) || !(header instanceof HTMLElement)) {
+                    throw new Error('Agent run timeline resize elements are unavailable.');
+                }
+
+                const topBar = document.getElementById('top-bar');
+                const viewportTop = window.visualViewport?.offsetTop || 0;
+                const topBoundary = Math.max(
+                    viewportTop,
+                    topBar instanceof HTMLElement ? topBar.getBoundingClientRect().bottom : 0,
+                );
+
+                return runTimelineHeightBounds({
+                    panelBottom: panel.getBoundingClientRect().bottom,
+                    topBoundary,
+                    chromeHeight: header.getBoundingClientRect().height,
+                });
+            },
+            currentPanelHeightPx() {
+                const body = this.$refs.panelBody;
+                if (!(body instanceof HTMLElement)) {
+                    throw new Error('Agent run timeline body is unavailable.');
+                }
+                return Math.round(body.getBoundingClientRect().height);
+            },
+            startResize(event) {
+                if (this.collapsed) {
+                    return;
+                }
+
+                event.preventDefault();
+                this.resizeBounds = this.measureResizeBounds();
+                this.resizeStartY = event.clientY;
+                this.resizeStartHeightPx = clampRunTimelineHeightPx(
+                    this.panelHeightPx ?? this.currentPanelHeightPx(),
+                    this.resizeBounds,
+                );
+                this.panelHeightPx = this.resizeStartHeightPx;
+                this.resizing = true;
+                event.currentTarget.setPointerCapture(event.pointerId);
+
+                window.addEventListener('pointermove', this.onResizePointerMove);
+                window.addEventListener('pointerup', this.onResizePointerUp);
+                window.addEventListener('pointercancel', this.onResizePointerCancel);
+            },
+            onResizePointerMove(event) {
+                if (!this.resizing) {
+                    return;
+                }
+                this.panelHeightPx = heightFromTopEdgeDrag({
+                    startHeight: this.resizeStartHeightPx,
+                    startY: this.resizeStartY,
+                    currentY: event.clientY,
+                    bounds: this.resizeBounds,
+                });
+            },
+            onResizePointerUp() {
+                void this.stopResize(true);
+            },
+            onResizePointerCancel() {
+                void this.stopResize(false);
+            },
+            async stopResize(save) {
+                window.removeEventListener('pointermove', this.onResizePointerMove);
+                window.removeEventListener('pointerup', this.onResizePointerUp);
+                window.removeEventListener('pointercancel', this.onResizePointerCancel);
+
+                if (!this.resizing) {
+                    return;
+                }
+
+                this.resizing = false;
+                if (save) {
+                    await this.savePanelHeight(this.panelHeightPx);
+                }
+            },
+            async savePanelHeight(heightPx) {
+                this.applySettings(await patchSettings(this.settings, {
+                    runTimelineHeightPx: normalizeRunTimelineHeightPx(heightPx),
+                }));
+            },
+            async resetPanelHeight() {
+                this.applySettings(await patchSettings(this.settings, {
+                    runTimelineHeightPx: null,
+                }));
+            },
+            async onResizeKeydown(event) {
+                const bounds = this.measureResizeBounds();
+                const current = clampRunTimelineHeightPx(
+                    this.panelHeightPx ?? this.currentPanelHeightPx(),
+                    bounds,
+                );
+                let next = null;
+
+                if (event.key === 'ArrowUp') {
+                    next = current + RUN_TIMELINE_KEYBOARD_STEP_PX;
+                } else if (event.key === 'ArrowDown') {
+                    next = current - RUN_TIMELINE_KEYBOARD_STEP_PX;
+                } else if (event.key === 'PageUp') {
+                    next = current + RUN_TIMELINE_PAGE_STEP_PX;
+                } else if (event.key === 'PageDown') {
+                    next = current - RUN_TIMELINE_PAGE_STEP_PX;
+                } else if (event.key === 'Home') {
+                    next = bounds.min;
+                } else if (event.key === 'End') {
+                    next = bounds.max;
+                }
+
+                if (next == null) {
+                    return;
+                }
+
+                event.preventDefault();
+                this.panelHeightPx = clampRunTimelineHeightPx(next, bounds);
+                await this.savePanelHeight(this.panelHeightPx);
+            },
         },
         template: `
             <section
+                ref="panelRoot"
                 v-show="visible"
                 id="ttas_agent_run_timeline"
                 class="ttas-root ttas-run-panel"
@@ -457,12 +604,26 @@ function createAgentRunTimelineApp() {
                     'is-details-open': detailsOpen,
                     'is-terminal': terminalType,
                     'is-error': terminalType === 'run_failed',
+                    'is-resizing': resizing,
                 }"
                 :data-ttas-status="panelStatus"
                 :data-ttas-view="panelView"
+                :style="panelStyle"
                 aria-live="polite"
             >
-                <header class="ttas-run-header">
+                <button
+                    v-if="!collapsed"
+                    type="button"
+                    class="ttas-run-resize-handle"
+                    :title="tr('resizeTimelineHeight')"
+                    :aria-label="tr('resizeTimelineHeight')"
+                    role="separator"
+                    aria-orientation="horizontal"
+                    @pointerdown="startResize"
+                    @dblclick="resetPanelHeight"
+                    @keydown="onResizeKeydown"
+                ></button>
+                <header ref="panelHeader" class="ttas-run-header">
                     <div class="ttas-run-heading">
                         <span class="ttas-run-orb" aria-hidden="true">
                             <i class="fa-solid fa-wand-magic-sparkles"></i>
@@ -496,7 +657,7 @@ function createAgentRunTimelineApp() {
                     </div>
                 </header>
 
-                <div v-if="!collapsed" class="ttas-run-body">
+                <div v-if="!collapsed" ref="panelBody" class="ttas-run-body">
                     <div ref="pages" class="ttas-run-pages" @scroll.passive="onPagesScroll">
                         <section class="ttas-run-page ttas-run-page-events" :aria-label="tr('agentTimeline')">
                             <div ref="timelineScroller" class="ttas-run-event-scroll" @scroll.passive="onTimelineScroll">

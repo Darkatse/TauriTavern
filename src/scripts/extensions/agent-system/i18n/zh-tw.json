@@ -87,6 +87,7 @@
     "agent_system.refreshJson": "重新整理 JSON",
     "agent_system.replaceConflict": "取代衝突",
     "agent_system.retryIntervalMs": "重試間隔（毫秒）",
+    "agent_system.resizeTimelineHeight": "拖曳以調整時間線高度",
     "agent_system.runPolicy": "執行策略",
     "agent_system.save": "儲存",
     "agent_system.scriptsIncluded": "包含腳本",

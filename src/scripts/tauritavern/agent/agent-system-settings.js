@@ -7,6 +7,7 @@ export const DEFAULT_AGENT_SYSTEM_SETTINGS = Object.freeze({
     agentModeEnabled: false,
     selectedProfileId: DEFAULT_AGENT_PROFILE_ID,
     activeTab: 'profiles',
+    runTimelineHeightPx: null,
 });
 
 function requireExtensionStore() {

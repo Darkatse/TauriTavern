@@ -24,6 +24,16 @@ const SIDE_EFFECT_TOOL_COMPLETIONS = new Set([
     'workspace.finish',
 ]);
 
+const SIDE_EFFECT_TOOL_BY_EVENT_TYPE = Object.freeze({
+    workspace_file_written: 'workspace.write_file',
+    workspace_patch_applied: 'workspace.apply_patch',
+    chat_commit_requested: 'workspace.commit',
+    chat_commit_completed: 'workspace.commit',
+    chat_commit_failed: 'workspace.commit',
+    persistent_changes_committed: 'workspace.finish',
+    run_completed: 'workspace.finish',
+});
+
 const EVENT_META = Object.freeze({
     tool_call_requested: { icon: 'fa-screwdriver-wrench', tone: 'active', kind: 'tool', titleKey: 'timelineEventToolRequested' },
     tool_call_completed: { icon: 'fa-check', tone: 'success', kind: 'tool', titleKey: 'timelineEventToolCompleted' },
@@ -98,6 +108,7 @@ export function buildEventDetailTargets(item, allEvents) {
     const payload = plainObject(event?.payload) ? event.payload : {};
     const targets = [];
     const seenPaths = new Set();
+    const seenReasoningRounds = new Set();
 
     const addFile = (labelKey, path) => {
         const normalized = String(path || '').trim();
@@ -115,10 +126,15 @@ export function buildEventDetailTargets(item, allEvents) {
         if (!modelTurnHasReasoning(allEvents, normalized)) {
             return;
         }
+        if (seenReasoningRounds.has(normalized)) {
+            return;
+        }
+        seenReasoningRounds.add(normalized);
         targets.push({ type: 'modelReasoning', labelKey: 'timelineReasoning', round: normalized });
     };
 
     addModelReasoning(payload.round);
+    addModelReasoning(findAssociatedToolRound(event, allEvents));
     addFile('timelineArguments', payload.argumentsRef);
 
     if (event?.type === 'tool_call_completed' || event?.type === 'tool_call_failed') {
@@ -143,7 +159,7 @@ export function buildEventDetailTargets(item, allEvents) {
 function buildPatchDiffTarget(event, events) {
     const payload = plainObject(event?.payload) ? event.payload : {};
     const path = String(payload.path || '').trim();
-    const completed = findPatchToolCompletion(events, event, path);
+    const completed = findSideEffectToolCompletion(events, event, 'workspace.apply_patch', path);
     const callId = String(completed?.payload?.callId || '').trim();
     const requested = callId ? findToolRequest(events, callId) : null;
     const requestPayload = plainObject(requested?.payload) ? requested.payload : {};
@@ -194,21 +210,50 @@ function findToolResultPath(events, callId) {
     return resultEvent?.payload?.path || '';
 }
 
-function findPatchToolCompletion(events, patchEvent, path) {
-    const patchSeq = Number(patchEvent?.seq || 0);
+function findAssociatedToolRound(event, events) {
+    const payload = plainObject(event?.payload) ? event.payload : {};
+    const callId = String(payload.callId || '').trim();
+    if (callId) {
+        return findToolEventRound(events, callId);
+    }
+
+    const toolName = SIDE_EFFECT_TOOL_BY_EVENT_TYPE[event?.type];
+    if (!toolName) {
+        return null;
+    }
+
+    const path = String(payload.path || '').trim();
+    const completed = findSideEffectToolCompletion(events, event, toolName, path);
+    return completed?.payload?.round ?? null;
+}
+
+function findToolEventRound(events, callId) {
+    const event = events.find((candidate) => {
+        if (candidate?.type !== 'tool_call_requested'
+            && candidate?.type !== 'tool_call_completed'
+            && candidate?.type !== 'tool_call_failed') {
+            return false;
+        }
+        return String(candidate?.payload?.callId || '') === callId;
+    });
+    return event?.payload?.round ?? null;
+}
+
+function findSideEffectToolCompletion(events, sideEffectEvent, toolName, path) {
+    const sideEffectSeq = Number(sideEffectEvent?.seq || 0);
     return [...events]
         .reverse()
         .find((event) => {
-            if (event?.type !== 'tool_call_completed' || Number(event?.seq || 0) >= patchSeq) {
+            if (event?.type !== 'tool_call_completed' || Number(event?.seq || 0) >= sideEffectSeq) {
                 return false;
             }
 
             const payload = plainObject(event?.payload) ? event.payload : {};
-            if (payload.name !== 'workspace.apply_patch') {
+            if (payload.name !== toolName) {
                 return false;
             }
 
-            return Array.isArray(payload.resourceRefs) && payload.resourceRefs.includes(path);
+            return !path || (Array.isArray(payload.resourceRefs) && payload.resourceRefs.includes(path));
         });
 }
 

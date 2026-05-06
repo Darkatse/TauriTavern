@@ -21,6 +21,7 @@
 - Profile 仍不接管 provider/model 切换；`preset.ref` 目前只做校验/记录，不改写 prompt snapshot 或 model。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
+- Agent System 前端已提供 run timeline / detail panel；详情面板顶部可拖动调整高度，高度仅作为扩展 UI 偏好保存，不进入 Agent Host ABI、journal 或 Rust runtime。
 
 ## 当前 Host ABI
 

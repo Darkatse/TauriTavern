@@ -126,6 +126,7 @@ const DEFAULT_MESSAGES = Object.freeze({
     removedEmbeddedProfile: 'Removed embedded profile: {id}',
     removedEmbeddedSkill: 'Removed embedded Skill: {name}',
     retryIntervalMs: 'Retry Interval Ms',
+    resizeTimelineHeight: 'Drag to resize timeline height',
     runPolicy: 'Run Policy',
     save: 'Save',
     scriptsIncluded: 'scripts included',
