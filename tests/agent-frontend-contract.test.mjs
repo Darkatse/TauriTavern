@@ -406,6 +406,45 @@ test('Agent run event presenter derives lazy detail targets from journal refs', 
     assert.deepEqual(writeTargets.map(target => [target.type, target.labelKey, target.path || '']), [
         ['file', 'timelineWorkspaceFile', 'output/main.md'],
     ]);
+
+    const patchRequested = {
+        seq: 4,
+        id: 'evt-patch-requested',
+        runId: 'run-1',
+        type: 'tool_call_requested',
+        payload: {
+            callId: 'call-2',
+            name: 'workspace.apply_patch',
+            argumentsRef: 'tool-args/call-2.json',
+        },
+    };
+    const patchCompleted = {
+        seq: 5,
+        id: 'evt-patch-completed',
+        runId: 'run-1',
+        type: 'tool_call_completed',
+        payload: {
+            callId: 'call-2',
+            name: 'workspace.apply_patch',
+            resourceRefs: ['output/main.md'],
+        },
+    };
+    const patchEvent = {
+        seq: 6,
+        id: 'evt-patch',
+        runId: 'run-1',
+        type: 'workspace_patch_applied',
+        payload: { path: 'output/main.md', bytes: 24, replacements: 1 },
+    };
+    const patchTargets = presenter.buildEventDetailTargets(
+        presenter.presentRunEvent(patchEvent),
+        [patchRequested, patchCompleted, patchEvent],
+    );
+
+    assert.deepEqual(patchTargets.map(target => [target.type, target.labelKey, target.path || '', target.argumentsRef || '']), [
+        ['patchDiff', 'timelinePatchDiff', 'output/main.md', 'tool-args/call-2.json'],
+        ['file', 'timelineWorkspaceFile', 'output/main.md', ''],
+    ]);
 });
 
 test('Agent run event presenter keeps model turns out of timeline and exposes reasoning lazily', async () => {
@@ -484,6 +523,40 @@ test('Agent run detail formatter renders tool result details without raw JSON sh
         { label: 'Target', value: 'output/main.md' },
         { label: 'Range', value: 'full file' },
     ]);
+});
+
+test('Agent run detail formatter renders apply_patch arguments as red green diff rows', async () => {
+    const { formatPatchDiffDetail } = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
+    const section = formatPatchDiffDetail(
+        {
+            type: 'patchDiff',
+            labelKey: 'timelinePatchDiff',
+            path: 'output/main.md',
+            argumentsRef: 'tool-args/call-2.json',
+            replacements: 1,
+        },
+        {
+            path: 'tool-args/call-2.json',
+            text: JSON.stringify({
+                path: 'output/main.md',
+                old_string: 'alpha\nold\nomega',
+                new_string: 'alpha\nnew\nomega',
+            }),
+        },
+    );
+
+    assert.equal(section.labelKey, 'timelinePatchDiff');
+    assert.deepEqual(section.fields, [
+        { label: 'Target', value: 'output/main.md' },
+        { label: 'Replacements', value: '1' },
+    ]);
+    assert.deepEqual(section.blocks[0].rows, [
+        { type: 'context', oldLine: 1, newLine: 1, marker: ' ', text: 'alpha' },
+        { type: 'delete', oldLine: 2, newLine: null, marker: '-', text: 'old' },
+        { type: 'add', oldLine: null, newLine: 2, marker: '+', text: 'new' },
+        { type: 'context', oldLine: 3, newLine: 3, marker: ' ', text: 'omega' },
+    ]);
+    assert.equal(section.blocks[0].meta, '+1 / -1');
 });
 
 test('Agent run detail formatter renders model turn display DTO', async () => {

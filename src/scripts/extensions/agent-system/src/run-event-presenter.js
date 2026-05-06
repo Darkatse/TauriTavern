@@ -126,6 +126,10 @@ export function buildEventDetailTargets(item, allEvents) {
         addFile('timelineToolResult', resultPath);
     }
 
+    if (event?.type === 'workspace_patch_applied') {
+        targets.push(buildPatchDiffTarget(event, allEvents));
+    }
+
     if (event?.type === 'workspace_file_written'
         || event?.type === 'workspace_patch_applied'
         || event?.type === 'chat_commit_requested'
@@ -134,6 +138,27 @@ export function buildEventDetailTargets(item, allEvents) {
     }
 
     return targets;
+}
+
+function buildPatchDiffTarget(event, events) {
+    const payload = plainObject(event?.payload) ? event.payload : {};
+    const path = String(payload.path || '').trim();
+    const completed = findPatchToolCompletion(events, event, path);
+    const callId = String(completed?.payload?.callId || '').trim();
+    const requested = callId ? findToolRequest(events, callId) : null;
+    const requestPayload = plainObject(requested?.payload) ? requested.payload : {};
+    const argumentsRef = String(requestPayload.argumentsRef || '').trim();
+
+    return {
+        type: 'patchDiff',
+        labelKey: 'timelinePatchDiff',
+        path,
+        argumentsRef,
+        replacements: payload.replacements,
+        bytes: payload.bytes,
+        errorKey: path && argumentsRef ? '' : 'timelinePatchDiffSourceMissing',
+        errorParams: { path },
+    };
 }
 
 function shouldShowEvent(event, completedToolCalls, resolvedCommits) {
@@ -167,6 +192,29 @@ function findToolResultPath(events, callId) {
         .find((event) => event?.type === 'tool_result_stored'
             && String(event?.payload?.callId || '') === normalized);
     return resultEvent?.payload?.path || '';
+}
+
+function findPatchToolCompletion(events, patchEvent, path) {
+    const patchSeq = Number(patchEvent?.seq || 0);
+    return [...events]
+        .reverse()
+        .find((event) => {
+            if (event?.type !== 'tool_call_completed' || Number(event?.seq || 0) >= patchSeq) {
+                return false;
+            }
+
+            const payload = plainObject(event?.payload) ? event.payload : {};
+            if (payload.name !== 'workspace.apply_patch') {
+                return false;
+            }
+
+            return Array.isArray(payload.resourceRefs) && payload.resourceRefs.includes(path);
+        });
+}
+
+function findToolRequest(events, callId) {
+    return events.find((event) => event?.type === 'tool_call_requested'
+        && String(event?.payload?.callId || '') === callId);
 }
 
 function modelTurnHasReasoning(events, round) {

@@ -56,6 +56,51 @@ export function formatModelTurnDetail(target, turn) {
     };
 }
 
+export function formatPatchDiffDetail(target, file) {
+    const parsed = parseJson(String(file?.text || ''));
+    if (!parsed.ok || !plainObject(parsed.value)) {
+        throw new Error(tr('timelinePatchDiffInvalidArguments'));
+    }
+
+    const args = parsed.value;
+    const path = requiredString(args, 'path');
+    if (path !== target.path) {
+        throw new Error(tr('timelinePatchDiffPathMismatch', { expected: target.path, actual: path }));
+    }
+
+    const oldString = requiredString(args, 'old_string');
+    const newString = requiredString(args, 'new_string');
+    if (!oldString) {
+        throw new Error(tr('timelinePatchDiffEmptyOldString'));
+    }
+
+    const diff = buildLineDiff(oldString, newString);
+    const fields = [
+        field(tr('timelineDetailFieldTarget'), path),
+    ];
+    if (target.replacements != null) {
+        fields.push(field(tr('timelineDetailFieldReplacements'), target.replacements));
+    }
+    if (args.replace_all === true) {
+        fields.push(field(tr('timelineDetailFieldReplaceAll'), tr('timelineDetailStatusYes')));
+    }
+
+    return {
+        labelKey: target.labelKey,
+        path,
+        fields,
+        blocks: [
+            {
+                kind: 'diff',
+                labelKey: 'timelinePatchDiff',
+                rows: diff.rows,
+                meta: `+${diff.addedLines} / -${diff.deletedLines}`,
+                defaultOpen: true,
+            },
+        ],
+    };
+}
+
 function formatArgumentsSection(target, file, args) {
     const fields = [];
     const blocks = [];
@@ -220,6 +265,79 @@ function textBlock(label, value, limit = DETAIL_TEXT_LIMIT, alreadyTruncated = f
         block.label = label;
     }
     return block;
+}
+
+function requiredString(value, key) {
+    if (!plainObject(value) || typeof value[key] !== 'string') {
+        throw new Error(tr('timelinePatchDiffMissingField', { field: key }));
+    }
+    return value[key];
+}
+
+function buildLineDiff(oldText, newText) {
+    const oldLines = splitDiffLines(oldText);
+    const newLines = splitDiffLines(newText);
+    let prefix = 0;
+    while (prefix < oldLines.length
+        && prefix < newLines.length
+        && oldLines[prefix] === newLines[prefix]) {
+        prefix += 1;
+    }
+
+    let suffix = 0;
+    while (suffix < oldLines.length - prefix
+        && suffix < newLines.length - prefix
+        && oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]) {
+        suffix += 1;
+    }
+
+    const rows = [];
+    for (let index = 0; index < prefix; index += 1) {
+        rows.push(diffRow('context', index + 1, index + 1, ' ', oldLines[index]));
+    }
+
+    const oldChangedEnd = oldLines.length - suffix;
+    const newChangedEnd = newLines.length - suffix;
+    for (let index = prefix; index < oldChangedEnd; index += 1) {
+        rows.push(diffRow('delete', index + 1, null, '-', oldLines[index]));
+    }
+    for (let index = prefix; index < newChangedEnd; index += 1) {
+        rows.push(diffRow('add', null, index + 1, '+', newLines[index]));
+    }
+
+    for (let index = oldChangedEnd; index < oldLines.length; index += 1) {
+        const newIndex = newChangedEnd + index - oldChangedEnd;
+        rows.push(diffRow('context', index + 1, newIndex + 1, ' ', oldLines[index]));
+    }
+
+    return {
+        rows,
+        addedLines: newChangedEnd - prefix,
+        deletedLines: oldChangedEnd - prefix,
+    };
+}
+
+function diffRow(type, oldLine, newLine, marker, text) {
+    return {
+        type,
+        oldLine,
+        newLine,
+        marker,
+        text,
+    };
+}
+
+function splitDiffLines(text) {
+    const value = String(text);
+    if (!value) {
+        return [];
+    }
+
+    const lines = value.split('\n');
+    if (value.endsWith('\n')) {
+        lines.pop();
+    }
+    return lines;
 }
 
 function reasoningMeta(item) {

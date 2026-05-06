@@ -3,7 +3,7 @@ import { createApp } from 'vue/dist/vue.esm-bundler.js';
 import { errorText, requireHostApi } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 import { loadSettings, subscribeSettings } from './settings-store.js';
-import { formatDetailFile, formatModelTurnDetail } from './run-detail-format.js';
+import { formatDetailFile, formatModelTurnDetail, formatPatchDiffDetail } from './run-detail-format.js';
 import {
     getActiveAgentRun,
     subscribeAgentRunEvents,
@@ -429,6 +429,16 @@ function createAgentRunTimelineApp() {
                     });
                     return formatModelTurnDetail(target, turn);
                 }
+                if (target.type === 'patchDiff') {
+                    if (target.errorKey) {
+                        throw new Error(tr(target.errorKey, target.errorParams || {}));
+                    }
+                    const file = await requireHostApi('agent').readWorkspaceFile({
+                        runId: this.currentRun.runId,
+                        path: target.argumentsRef,
+                    });
+                    return formatPatchDiffDetail(target, file);
+                }
                 const file = await requireHostApi('agent').readWorkspaceFile({
                     runId: this.currentRun.runId,
                     path: target.path,
@@ -614,7 +624,21 @@ function createAgentRunTimelineApp() {
                                                     <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
                                                 </span>
                                             </summary>
-                                            <pre>{{ block.text }}</pre>
+                                            <div v-if="block.kind === 'diff'" class="ttas-run-diff" role="table">
+                                                <div
+                                                    v-for="(row, rowIndex) in block.rows"
+                                                    :key="rowIndex"
+                                                    class="ttas-run-diff-row"
+                                                    :data-ttas-diff-row="row.type"
+                                                    role="row"
+                                                >
+                                                    <span class="ttas-run-diff-gutter" role="cell">{{ row.oldLine || '' }}</span>
+                                                    <span class="ttas-run-diff-gutter" role="cell">{{ row.newLine || '' }}</span>
+                                                    <span class="ttas-run-diff-marker" role="cell">{{ row.marker }}</span>
+                                                    <code class="ttas-run-diff-code" role="cell">{{ row.text }}</code>
+                                                </div>
+                                            </div>
+                                            <pre v-else>{{ block.text }}</pre>
                                         </details>
                                     </div>
                                 </article>

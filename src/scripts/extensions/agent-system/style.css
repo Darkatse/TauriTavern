@@ -316,6 +316,12 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     --ttas-run-reasoning-border: color-mix(in srgb, var(--ttas-run-reasoning-color) 52%, var(--ttas-run-panel-border-soft));
     --ttas-run-detail-block-bg: color-mix(in srgb, var(--SmartThemeBodyColor) 3%, transparent);
     --ttas-run-detail-block-bg-open: color-mix(in srgb, var(--SmartThemeBodyColor) 4%, transparent);
+    --ttas-run-diff-add-color: color-mix(in srgb, #5fa66a 82%, var(--SmartThemeBodyColor) 18%);
+    --ttas-run-diff-add-bg: color-mix(in srgb, #5fa66a 16%, transparent);
+    --ttas-run-diff-delete-color: color-mix(in srgb, var(--ttas-run-tone-error-public) 86%, var(--SmartThemeBodyColor) 14%);
+    --ttas-run-diff-delete-bg: color-mix(in srgb, var(--ttas-run-tone-error-public) 16%, transparent);
+    --ttas-run-diff-context-bg: color-mix(in srgb, var(--SmartThemeBodyColor) 2%, transparent);
+    --ttas-run-diff-gutter-color: color-mix(in srgb, var(--SmartThemeBodyColor) 45%, transparent);
 
     position: absolute;
     right: 0;
@@ -1094,6 +1100,82 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     line-height: 1.5;
 }
 
+.ttas-run-detail-block[data-ttas-block-kind="diff"] {
+    border-left-width: 2px;
+    border-left-color: color-mix(in srgb, var(--ttas-run-tone-write) 72%, var(--ttas-run-panel-border-soft));
+    background:
+        linear-gradient(90deg, color-mix(in srgb, var(--ttas-run-tone-write) 8%, transparent), transparent 70%),
+        var(--ttas-run-detail-block-bg-open);
+}
+
+.ttas-run-detail-block[data-ttas-block-kind="diff"] .ttas-run-detail-block-head {
+    color: color-mix(in srgb, var(--ttas-run-tone-write) 74%, var(--SmartThemeBodyColor));
+}
+
+.ttas-run-diff {
+    max-height: 360px;
+    overflow: auto;
+    font-family: var(--ttas-mono);
+    font-size: 0.72rem;
+    line-height: 1.42;
+    background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 58%, transparent);
+    animation: ttas-run-detail-reveal var(--ttas-transition);
+}
+
+.ttas-run-diff-row {
+    display: grid;
+    grid-template-columns: minmax(24px, 4ch) minmax(24px, 4ch) 2ch minmax(0, 1fr);
+    min-width: 0;
+    border-top: 1px solid color-mix(in srgb, var(--ttas-run-panel-border-soft) 26%, transparent);
+    background-color: var(--ttas-run-diff-context-bg);
+}
+
+.ttas-run-diff-row:first-child {
+    border-top: 0;
+}
+
+.ttas-run-diff-row[data-ttas-diff-row="add"] {
+    color: color-mix(in srgb, var(--ttas-run-diff-add-color) 72%, var(--SmartThemeBodyColor));
+    background:
+        linear-gradient(90deg, color-mix(in srgb, var(--ttas-run-diff-add-color) 18%, transparent), transparent 72%),
+        var(--ttas-run-diff-add-bg);
+}
+
+.ttas-run-diff-row[data-ttas-diff-row="delete"] {
+    color: color-mix(in srgb, var(--ttas-run-diff-delete-color) 72%, var(--SmartThemeBodyColor));
+    background:
+        linear-gradient(90deg, color-mix(in srgb, var(--ttas-run-diff-delete-color) 16%, transparent), transparent 72%),
+        var(--ttas-run-diff-delete-bg);
+}
+
+.ttas-run-diff-gutter,
+.ttas-run-diff-marker,
+.ttas-run-diff-code {
+    min-width: 0;
+    padding: 2px 6px;
+}
+
+.ttas-run-diff-gutter {
+    color: var(--ttas-run-diff-gutter-color);
+    text-align: right;
+    user-select: none;
+    border-right: 1px solid color-mix(in srgb, var(--ttas-run-panel-border-soft) 34%, transparent);
+}
+
+.ttas-run-diff-marker {
+    color: currentColor;
+    text-align: center;
+    user-select: none;
+}
+
+.ttas-run-diff-code {
+    display: block;
+    overflow-wrap: anywhere;
+    color: inherit;
+    font-family: inherit;
+    white-space: pre-wrap;
+}
+
 @media screen and (max-width: 1000px) {
     .ttas-run-timeline-mount {
         position: relative;
@@ -1159,6 +1241,21 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     .ttas-run-detail-block pre {
         max-height: 260px;
         font-size: 0.7rem;
+    }
+
+    .ttas-run-diff {
+        max-height: 260px;
+        font-size: 0.68rem;
+    }
+
+    .ttas-run-diff-row {
+        grid-template-columns: minmax(20px, 3ch) minmax(20px, 3ch) 2ch minmax(0, 1fr);
+    }
+
+    .ttas-run-diff-gutter,
+    .ttas-run-diff-marker,
+    .ttas-run-diff-code {
+        padding-inline: 4px;
     }
 
     .ttas-run-detail-block-head {
