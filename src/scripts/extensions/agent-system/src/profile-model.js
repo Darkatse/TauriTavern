@@ -22,6 +22,49 @@ function joinCsv(values) {
     return Array.isArray(values) ? values.join(', ') : '';
 }
 
+function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeToolDescriptions(value) {
+    if (value == null) {
+        return {};
+    }
+    if (!isPlainObject(value)) {
+        throw new Error('tools.toolDescriptions must be an object');
+    }
+
+    const normalized = {};
+    for (const [toolName, override] of Object.entries(value)) {
+        if (!isPlainObject(override)) {
+            throw new Error(`tools.toolDescriptions.${toolName} must be an object`);
+        }
+
+        const description = String(override.description || '').trim();
+        const properties = {};
+        if (override.properties != null) {
+            if (!isPlainObject(override.properties)) {
+                throw new Error(`tools.toolDescriptions.${toolName}.properties must be an object`);
+            }
+            for (const [property, propertyDescription] of Object.entries(override.properties)) {
+                const trimmed = String(propertyDescription || '').trim();
+                if (trimmed) {
+                    properties[property] = trimmed;
+                }
+            }
+        }
+
+        if (description || Object.keys(properties).length > 0) {
+            normalized[toolName] = {
+                ...(description ? { description } : {}),
+                ...(Object.keys(properties).length > 0 ? { properties } : {}),
+            };
+        }
+    }
+
+    return normalized;
+}
+
 function modelToolName(name) {
     return String(name).replace(/\./g, '_');
 }
@@ -211,6 +254,7 @@ export function normalizeProfileForSave(profile) {
     normalized.run.modelRetry.intervalMs = Number(normalized.run.modelRetry.intervalMs);
     normalized.tools.maxRounds = Number(normalized.tools.maxRounds);
     normalized.tools.maxCallsPerRun = Number(normalized.tools.maxCallsPerRun);
+    normalized.tools.toolDescriptions = normalizeToolDescriptions(normalized.tools.toolDescriptions);
     normalized.skills.maxReadCharsPerCall = Number(normalized.skills.maxReadCharsPerCall);
     normalized.skills.maxReadCharsPerRun = Number(normalized.skills.maxReadCharsPerRun);
     normalized.instructions.agentSystemPrompt = String(normalized.instructions.agentSystemPrompt || '').trim() || null;
@@ -233,6 +277,7 @@ export function normalizeProfileForSave(profile) {
 export function profileForEdit(profile) {
     const draft = clone(profile);
     materializeDefaultProfilePrompt(draft);
+    draft.tools.toolDescriptions = normalizeToolDescriptions(draft.tools.toolDescriptions);
     draft.skills.visibleCsv = joinCsv(draft.skills.visible);
     draft.skills.denyCsv = joinCsv(draft.skills.deny);
     return draft;

@@ -28,6 +28,9 @@ type TauriTavernAgentApi = {
   readEvents(input: AgentReadEventsInput): Promise<AgentReadEventsResult>;
   readWorkspaceFile(input: AgentReadWorkspaceFileInput): Promise<AgentWorkspaceFile>;
   readModelTurn(input: AgentReadModelTurnInput): Promise<AgentModelTurn>;
+  tools: {
+    list(): Promise<{ tools: AgentToolSpec[] }>;
+  };
 
   approveToolCall(): never;
   listRuns(): never;
@@ -274,7 +277,24 @@ type AgentModelTurn = {
 
 该方法返回面向 UI 的白名单投影：assistant 输出、可见/摘要化 reasoning、工具调用摘要与 provider 摘要。它不会暴露完整 raw response、provider-private native continuation、签名或 encrypted reasoning。需要完整诊断时仍使用 run workspace 中的 `modelResponsePath` 与 LLM API log。
 
-## 11. readDiff
+## 11. tools.list
+
+```ts
+type AgentToolSpec = {
+  name: string;
+  modelName: string;
+  title: string;
+  description: string;
+  inputSchema: unknown;
+  outputSchema?: unknown;
+  annotations?: unknown;
+  source: string;
+};
+```
+
+`tools.list()` 返回当前后端 Agent Tool Registry 的 canonical specs。Profile 面板可以用它编辑 `tools.toolDescriptions`，但不得把返回值当作可修改的 registry。
+
+## 12. readDiff
 
 当前未实现 diff；`readDiff()` 会显式 throw。
 
@@ -300,7 +320,7 @@ type AgentDiff = {
 
 第一期可以只支持文本 artifact 的 diff。
 
-## 12. rollback
+## 13. rollback
 
 当前未实现 rollback；`rollback()` 会显式 throw。
 
@@ -317,7 +337,7 @@ type AgentRollbackInput = {
 - `workspace`：只恢复 run workspace，不修改 chat。
 - `committed-message`：重组 artifact 并修改已提交聊天消息，必须走 chat 保存契约。
 
-## 13. commit
+## 14. commit
 
 ```ts
 type AgentCommitInput = {
@@ -341,7 +361,7 @@ Chat commit 不是公开 Host API 方法，而是 Agent tool 与 host bridge 的
 - `append` 在本 run 尚无 commit 时不会报错，会创建本 run 的消息楼层。
 - 前台 run 在 `workspace.finish` 前必须至少成功 commit 一次；后台 run 可无 chat commit 完成。
 
-## 14. Event Envelope
+## 15. Event Envelope
 
 ```ts
 type AgentRunEvent = {
@@ -359,7 +379,7 @@ type AgentRunEvent = {
 
 Agent event 不等同 SillyTavern `eventSource` 事件，不得伪装成 `GENERATION_*` 或 `TOOL_CALLS_*`。
 
-## 15. Errors
+## 16. Errors
 
 错误建议结构：
 
@@ -389,10 +409,11 @@ commit.cursor_integrity
 commit.save_failed
 ```
 
-## 15. Rust Command
+## 17. Rust Command
 
 ```text
 start_agent_run(dto)
+list_agent_tool_specs()
 cancel_agent_run(dto)
 read_agent_run_events(dto)
 read_agent_workspace_file(dto)
@@ -410,7 +431,7 @@ read_agent_diff(dto)
 rollback_agent_run(dto)
 ```
 
-## 16. Compatibility
+## 18. Compatibility
 
 Agent Mode off：
 

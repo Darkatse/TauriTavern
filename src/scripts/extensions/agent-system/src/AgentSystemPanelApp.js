@@ -145,7 +145,9 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     { id: 'profiles', labelKey: 'profiles', icon: 'fa-id-card-clip' },
                     { id: 'skills', labelKey: 'skills', icon: 'fa-book-bookmark' },
                 ],
-                toolNames: KNOWN_TOOLS,
+                toolSpecs: [],
+                toolNames: [...KNOWN_TOOLS],
+                selectedToolName: KNOWN_TOOLS[0],
                 workspaceRoots: WORKSPACE_ROOTS,
             };
         },
@@ -207,6 +209,28 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     });
                 }
                 return groups;
+            },
+            toolSpecsByName() {
+                return Object.fromEntries(this.toolSpecs.map((spec) => [spec.name, spec]));
+            },
+            selectedToolSpec() {
+                return this.toolSpecsByName[this.selectedToolName] || null;
+            },
+            selectedToolEnabled() {
+                return Array.isArray(this.draft?.tools?.allow) && this.draft.tools.allow.includes(this.selectedToolName);
+            },
+            selectedToolProperties() {
+                const properties = this.selectedToolSpec?.inputSchema?.properties || {};
+                const required = new Set(Array.isArray(this.selectedToolSpec?.inputSchema?.required)
+                    ? this.selectedToolSpec.inputSchema.required
+                    : []);
+                return Object.entries(properties).map(([name, schema]) => ({
+                    name,
+                    schema,
+                    required: required.has(name),
+                    type: this.schemaType(schema),
+                    description: String(schema?.description || ''),
+                }));
             },
             selectedSkill() {
                 return this.skills.find((skill) => skill.name === this.selectedSkillName) || null;
@@ -277,7 +301,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     if (!this.tabs.some((tab) => tab.id === this.settings.activeTab)) {
                         this.settings = await patchSettings(this.settings, { activeTab: 'profiles' });
                     }
-                    await Promise.all([this.refreshProfiles(), this.refreshSkills()]);
+                    await Promise.all([this.refreshToolSpecs(), this.refreshProfiles(), this.refreshSkills()]);
                     this.selectedProfileId = this.settings.selectedProfileId || DEFAULT_PROFILE_ID;
                     await this.selectProfile(this.selectedProfileId);
                     this.initialized = true;
@@ -310,6 +334,18 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.profiles = Array.isArray(result?.profiles) ? result.profiles : [];
                 if (!this.profiles.some((profile) => profile.id === this.settings.selectedProfileId)) {
                     this.settings.selectedProfileId = DEFAULT_PROFILE_ID;
+                }
+            },
+            async refreshToolSpecs() {
+                const api = requireAgentApi().tools;
+                if (!api?.list) {
+                    throw new Error(tr('hostAgentToolApiUnavailable'));
+                }
+                const result = await api.list();
+                this.toolSpecs = result.tools;
+                this.toolNames = this.toolSpecs.map((tool) => tool.name);
+                if (!this.toolNames.includes(this.selectedToolName)) {
+                    this.selectedToolName = this.toolNames[0];
                 }
             },
             async selectProfile(profileId) {
@@ -366,6 +402,126 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             enabledToolCount(tools) {
                 const allow = new Set(Array.isArray(this.draft.tools.allow) ? this.draft.tools.allow : []);
                 return tools.filter((tool) => allow.has(tool)).length;
+            },
+            selectTool(toolName) {
+                this.selectedToolName = toolName;
+            },
+            toolSpec(toolName) {
+                return this.toolSpecsByName[toolName];
+            },
+            toolTitle(toolName) {
+                return this.toolSpec(toolName)?.title || toolName;
+            },
+            toolModelName(toolName) {
+                return this.toolSpec(toolName)?.modelName || toolName.replace(/\./g, '_');
+            },
+            toolSource(toolName) {
+                return this.toolSpec(toolName)?.source || '';
+            },
+            schemaType(schema) {
+                const type = schema?.type;
+                if (Array.isArray(type)) {
+                    return type.join(' | ');
+                }
+                return String(type || tr('value'));
+            },
+            toolBadges(toolName) {
+                const spec = this.toolSpec(toolName);
+                const annotations = spec?.annotations || {};
+                const badges = [];
+                if (annotations.readOnly) {
+                    badges.push({ key: 'read', label: tr('readOnlyTool') });
+                }
+                if (annotations.mutating) {
+                    badges.push({ key: 'write', label: tr('mutatingTool') });
+                }
+                if (annotations.control) {
+                    badges.push({ key: 'control', label: tr('controlTool') });
+                }
+                if (this.toolHasDescriptionOverride(toolName)) {
+                    badges.push({ key: 'custom', label: tr('customizedTool') });
+                }
+                return badges;
+            },
+            toolHasDescriptionOverride(toolName) {
+                const override = this.draft?.tools?.toolDescriptions?.[toolName];
+                return Boolean(override?.description || Object.keys(override?.properties || {}).length > 0);
+            },
+            getToolDescriptionOverride(toolName) {
+                return this.draft.tools.toolDescriptions?.[toolName]?.description || '';
+            },
+            getToolPropertyDescriptionOverride(toolName, property) {
+                return this.draft.tools.toolDescriptions?.[toolName]?.properties?.[property] || '';
+            },
+            setToolDescriptionOverride(toolName, value) {
+                this.updateToolDescriptionOverride(toolName, (override) => {
+                    const description = String(value || '');
+                    if (description.trim()) {
+                        override.description = description;
+                    } else {
+                        delete override.description;
+                    }
+                });
+            },
+            setToolPropertyDescriptionOverride(toolName, property, value) {
+                this.updateToolDescriptionOverride(toolName, (override) => {
+                    const description = String(value || '');
+                    const properties = { ...(override.properties || {}) };
+                    if (description.trim()) {
+                        properties[property] = description;
+                    } else {
+                        delete properties[property];
+                    }
+                    if (Object.keys(properties).length > 0) {
+                        override.properties = properties;
+                    } else {
+                        delete override.properties;
+                    }
+                });
+            },
+            updateToolDescriptionOverride(toolName, mutate) {
+                const toolDescriptions = { ...(this.draft.tools.toolDescriptions || {}) };
+                const override = { ...(toolDescriptions[toolName] || {}) };
+                mutate(override);
+                if (!override.description && !override.properties) {
+                    delete toolDescriptions[toolName];
+                } else {
+                    toolDescriptions[toolName] = override;
+                }
+                this.draft.tools.toolDescriptions = toolDescriptions;
+            },
+            resetToolDescriptionOverride(toolName) {
+                const toolDescriptions = { ...(this.draft.tools.toolDescriptions || {}) };
+                delete toolDescriptions[toolName];
+                this.draft.tools.toolDescriptions = toolDescriptions;
+            },
+            resetToolPropertyDescriptionOverride(toolName, property) {
+                this.updateToolDescriptionOverride(toolName, (override) => {
+                    const properties = { ...(override.properties || {}) };
+                    delete properties[property];
+                    if (Object.keys(properties).length > 0) {
+                        override.properties = properties;
+                    } else {
+                        delete override.properties;
+                    }
+                });
+            },
+            async toggleToolAllowed(toolName, event) {
+                const enabled = event.target.checked;
+                const allow = new Set(this.draft.tools.allow);
+                if (enabled) {
+                    allow.add(toolName);
+                } else {
+                    if (this.toolHasDescriptionOverride(toolName)) {
+                        if (!await confirmAction(tr('removeToolDescriptionOnDisableConfirm', { tool: toolName }))) {
+                            event.target.checked = true;
+                            return;
+                        }
+                        this.resetToolDescriptionOverride(toolName);
+                    }
+                    allow.delete(toolName);
+                }
+                this.draft.tools.allow = this.toolNames.filter((tool) => allow.has(tool));
             },
             workspaceRootIcon(root) {
                 return WORKSPACE_ROOT_ICONS[root] || 'fa-folder';
@@ -759,20 +915,113 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                         <i class="fa-solid fa-screwdriver-wrench"></i>
                                         <h4>{{ tr('capabilityMatrix') }}</h4>
                                     </div>
-                                    <div class="ttas-tool-groups">
-                                        <div v-for="group in toolGroupsWithTools" :key="group.id" class="ttas-tool-group">
-                                            <header>
-                                                <i class="fa-solid" :class="group.icon"></i>
-                                                <strong>{{ tr(group.labelKey) }}</strong>
-                                                <span>{{ enabledToolCount(group.tools) }}/{{ group.tools.length }}</span>
-                                            </header>
-                                            <div class="ttas-tool-chip-grid">
-                                                <label v-for="tool in group.tools" :key="tool" class="ttas-tool-chip" :class="{ active: draft.tools.allow.includes(tool) }">
-                                                    <input type="checkbox" :value="tool" v-model="draft.tools.allow" :disabled="isBuiltinProfile" />
-                                                    <span>{{ tool }}</span>
-                                                </label>
+                                    <div class="ttas-tool-workbench">
+                                        <div class="ttas-tool-groups">
+                                            <div v-for="group in toolGroupsWithTools" :key="group.id" class="ttas-tool-group">
+                                                <header>
+                                                    <i class="fa-solid" :class="group.icon"></i>
+                                                    <strong>{{ tr(group.labelKey) }}</strong>
+                                                    <span>{{ enabledToolCount(group.tools) }}/{{ group.tools.length }}</span>
+                                                </header>
+                                                <div class="ttas-tool-list">
+                                                    <div
+                                                        v-for="tool in group.tools"
+                                                        :key="tool"
+                                                        class="ttas-tool-row"
+                                                        :class="{ active: selectedToolName === tool, enabled: draft.tools.allow.includes(tool), customized: toolHasDescriptionOverride(tool) }"
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            :checked="draft.tools.allow.includes(tool)"
+                                                            :disabled="isBuiltinProfile"
+                                                            @change="toggleToolAllowed(tool, $event)"
+                                                        />
+                                                        <button type="button" class="ttas-tool-select" @click="selectTool(tool)">
+                                                            <strong>{{ toolTitle(tool) }}</strong>
+                                                            <span>{{ tool }}</span>
+                                                        </button>
+                                                        <i v-if="toolHasDescriptionOverride(tool)" class="fa-solid fa-pen-nib ttas-tool-custom-marker" :title="tr('customizedTool')"></i>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
+
+                                        <aside v-if="selectedToolSpec" class="ttas-tool-editor-panel">
+                                            <header class="ttas-tool-editor-header">
+                                                <div>
+                                                    <div class="ttas-eyebrow">{{ selectedToolName }}</div>
+                                                    <h5>{{ selectedToolSpec.title }}</h5>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    class="menu_button menu_button_icon"
+                                                    :disabled="isBuiltinProfile || !toolHasDescriptionOverride(selectedToolName)"
+                                                    @click="resetToolDescriptionOverride(selectedToolName)"
+                                                >
+                                                    <i class="fa-solid fa-rotate-left"></i>
+                                                    <span>{{ tr('reset') }}</span>
+                                                </button>
+                                            </header>
+
+                                            <div class="ttas-tool-badge-row">
+                                                <span class="ttas-tool-model-name">{{ toolModelName(selectedToolName) }}</span>
+                                                <span v-if="toolSource(selectedToolName)">{{ toolSource(selectedToolName) }}</span>
+                                                <span v-for="badge in toolBadges(selectedToolName)" :key="badge.key" :class="'ttas-tool-badge-' + badge.key">{{ badge.label }}</span>
+                                                <span v-if="!selectedToolEnabled" class="ttas-tool-badge-disabled">{{ tr('disabledTool') }}</span>
+                                            </div>
+
+                                            <div class="ttas-tool-default-description">
+                                                <span>{{ tr('defaultDescription') }}</span>
+                                                <p>{{ selectedToolSpec.description }}</p>
+                                            </div>
+
+                                            <label class="ttas-field">
+                                                <span>{{ tr('customToolDescription') }}</span>
+                                                <textarea
+                                                    class="text_pole textarea_compact ttas-tool-description-textarea"
+                                                    rows="5"
+                                                    :value="getToolDescriptionOverride(selectedToolName)"
+                                                    :placeholder="selectedToolSpec.description"
+                                                    :disabled="isBuiltinProfile || !selectedToolEnabled"
+                                                    @input="setToolDescriptionOverride(selectedToolName, $event.target.value)"
+                                                ></textarea>
+                                            </label>
+
+                                            <div class="ttas-tool-property-list">
+                                                <div class="ttas-tool-property-title">
+                                                    <i class="fa-solid fa-sliders"></i>
+                                                    <strong>{{ tr('toolParameters') }}</strong>
+                                                </div>
+                                                <div v-if="selectedToolProperties.length === 0" class="ttas-empty">{{ tr('noToolParameters') }}</div>
+                                                <div v-for="property in selectedToolProperties" :key="property.name" class="ttas-tool-property-row">
+                                                    <div class="ttas-tool-property-meta">
+                                                        <code>{{ property.name }}</code>
+                                                        <span>{{ property.type }}</span>
+                                                        <em v-if="property.required">{{ tr('required') }}</em>
+                                                    </div>
+                                                    <p v-if="property.description">{{ property.description }}</p>
+                                                    <div class="ttas-tool-property-edit">
+                                                        <textarea
+                                                            class="text_pole textarea_compact"
+                                                            rows="3"
+                                                            :value="getToolPropertyDescriptionOverride(selectedToolName, property.name)"
+                                                            :placeholder="property.description"
+                                                            :disabled="isBuiltinProfile || !selectedToolEnabled"
+                                                            @input="setToolPropertyDescriptionOverride(selectedToolName, property.name, $event.target.value)"
+                                                        ></textarea>
+                                                        <button
+                                                            type="button"
+                                                            class="menu_button menu_button_icon"
+                                                            :disabled="isBuiltinProfile || !getToolPropertyDescriptionOverride(selectedToolName, property.name)"
+                                                            @click="resetToolPropertyDescriptionOverride(selectedToolName, property.name)"
+                                                        >
+                                                            <i class="fa-solid fa-rotate-left"></i>
+                                                            <span>{{ tr('reset') }}</span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </aside>
                                     </div>
                                 </div>
 

@@ -91,6 +91,7 @@ export {};
  *   | 'ios_share_export_data_archive'
  *   | 'list_character_chat_store_keys'
  *   | 'list_agent_profiles'
+ *   | 'list_agent_tool_specs'
  *   | 'list_group_chat_store_keys'
  *   | 'list_chat_backups'
  *   | 'list_recent_chat_summaries'

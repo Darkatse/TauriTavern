@@ -149,6 +149,10 @@ function createAgentApi({ safeInvoke }) {
         return safeInvoke('list_agent_profiles');
     }
 
+    async function listToolSpecs() {
+        return safeInvoke('list_agent_tool_specs');
+    }
+
     async function loadProfile(input) {
         const profileId = requireProfileId(input?.profileId ?? input?.profile_id ?? input);
         return safeInvoke('load_agent_profile', { dto: { profileId } });
@@ -180,6 +184,9 @@ function createAgentApi({ safeInvoke }) {
             load: loadProfile,
             save: saveProfile,
             delete: deleteProfile,
+        },
+        tools: {
+            list: listToolSpecs,
         },
         approveToolCall() {
             throw new Error('approveToolCall is not implemented in Agent Phase 2B');

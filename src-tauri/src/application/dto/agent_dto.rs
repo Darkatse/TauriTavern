@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use crate::domain::models::agent::profile::{AgentProfileDefinition, AgentProfileSummary};
 use crate::domain::models::agent::{
-    AgentChatRef, AgentRunEvent, AgentRunPresentation, AgentRunStatus,
+    AgentChatRef, AgentRunEvent, AgentRunPresentation, AgentRunStatus, AgentToolSpec,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -40,6 +40,12 @@ pub struct AgentSaveProfileDto {
 #[serde(rename_all = "camelCase")]
 pub struct AgentListProfilesResultDto {
     pub profiles: Vec<AgentProfileSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentListToolSpecsResultDto {
+    pub tools: Vec<AgentToolSpec>,
 }
 
 #[derive(Debug, Clone, Serialize)]

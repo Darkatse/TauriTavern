@@ -156,6 +156,17 @@ type TauriTavernAgentProfileSummary = {
     description?: string;
 };
 
+type TauriTavernAgentToolSpec = {
+    name: string;
+    modelName: string;
+    title: string;
+    description: string;
+    inputSchema: any;
+    outputSchema?: any;
+    annotations?: any;
+    source: string;
+};
+
 type TauriTavernAgentProfileDefinition = {
     schemaVersion: number;
     kind: 'tauritavern.agentProfile';
@@ -232,6 +243,10 @@ type TauriTavernAgentProfilesApi = {
     delete: (input: string | { profileId: string }) => Promise<void>;
 };
 
+type TauriTavernAgentToolsApi = {
+    list: () => Promise<{ tools: TauriTavernAgentToolSpec[] }>;
+};
+
 type TauriTavernAgentApi = {
     startRunWithPromptSnapshot: (input: {
         chatRef: TauriTavernChatRef;
@@ -280,6 +295,7 @@ type TauriTavernAgentApi = {
         options?: { afterSeq?: number; limit?: number; intervalMs?: number; onError?: (error: unknown) => void },
     ) => TauriTavernHostUnsubscribe;
     profiles: TauriTavernAgentProfilesApi;
+    tools: TauriTavernAgentToolsApi;
     approveToolCall: () => never;
     listRuns: () => never;
     readDiff: () => never;

@@ -2199,6 +2199,18 @@ textarea.ttas-json {
     gap: 10px;
 }
 
+.ttas-tool-workbench {
+    display: grid;
+    grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
+    gap: 10px;
+    align-items: start;
+    min-width: 0;
+}
+
+.ttas-tool-workbench .ttas-tool-groups {
+    grid-template-columns: 1fr;
+}
+
 .ttas-tool-group {
     display: flex;
     flex-direction: column;
@@ -2234,10 +2246,79 @@ textarea.ttas-json {
     font-size: 0.78rem;
 }
 
+.ttas-tool-list,
 .ttas-tool-chip-grid {
     display: grid;
     grid-template-columns: 1fr;
     gap: 6px;
+}
+
+.ttas-tool-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    padding: 6px;
+    border: 1px solid var(--ttas-border-soft);
+    border-radius: var(--ttas-radius-sm);
+    background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 55%, transparent);
+    transition: background-color var(--ttas-transition), border-color var(--ttas-transition), transform var(--ttas-transition);
+}
+
+.ttas-tool-row:hover,
+.ttas-tool-row.active {
+    border-color: color-mix(in srgb, var(--ttas-accent) 42%, var(--ttas-border));
+    background-color: var(--ttas-surface-strong);
+}
+
+.ttas-tool-row.enabled {
+    background-color: color-mix(in srgb, var(--ttas-accent) 10%, var(--SmartThemeBlurTintColor));
+}
+
+.ttas-tool-row.customized {
+    border-color: color-mix(in srgb, var(--ttas-accent) 50%, var(--ttas-border));
+}
+
+.ttas-tool-row > input {
+    margin: 0;
+}
+
+.ttas-tool-select {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding: 0;
+    color: var(--SmartThemeBodyColor);
+    text-align: left;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+}
+
+.ttas-tool-select strong,
+.ttas-tool-select span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ttas-tool-select strong {
+    font-size: 0.82rem;
+    line-height: 1.2;
+}
+
+.ttas-tool-select span {
+    font-family: var(--ttas-mono);
+    font-size: 0.74rem;
+    opacity: 0.68;
+}
+
+.ttas-tool-custom-marker {
+    color: var(--ttas-accent);
+    font-size: 0.8rem;
 }
 
 .ttas-tool-chip {
@@ -2272,6 +2353,177 @@ textarea.ttas-json {
     overflow-wrap: anywhere;
     font-family: var(--ttas-mono);
     font-size: 0.8rem;
+}
+
+.ttas-tool-editor-panel {
+    position: sticky;
+    top: 58px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--ttas-border-soft);
+    border-radius: var(--ttas-radius);
+    background-color: var(--ttas-surface-soft);
+}
+
+.ttas-tool-editor-header {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+}
+
+.ttas-tool-editor-header > div {
+    min-width: 0;
+}
+
+.ttas-tool-editor-header h5 {
+    min-width: 0;
+    margin: 2px 0 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 1rem;
+    line-height: 1.2;
+}
+
+.ttas-tool-badge-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
+.ttas-tool-badge-row span {
+    max-width: 100%;
+    min-width: 0;
+    padding: 3px 7px;
+    overflow-wrap: anywhere;
+    border: 1px solid var(--ttas-border-soft);
+    border-radius: 999px;
+    background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 58%, transparent);
+    font-size: 0.74rem;
+    line-height: 1.25;
+}
+
+.ttas-tool-badge-row .ttas-tool-model-name {
+    font-family: var(--ttas-mono);
+}
+
+.ttas-tool-badge-custom {
+    color: color-mix(in srgb, var(--ttas-accent) 78%, var(--SmartThemeBodyColor));
+    border-color: color-mix(in srgb, var(--ttas-accent) 50%, var(--ttas-border));
+    background-color: var(--ttas-accent-soft);
+}
+
+.ttas-tool-badge-write {
+    color: color-mix(in srgb, var(--ttas-warning) 78%, var(--SmartThemeBodyColor));
+}
+
+.ttas-tool-badge-disabled {
+    opacity: 0.6;
+}
+
+.ttas-tool-default-description {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid var(--ttas-border-soft);
+    border-radius: var(--ttas-radius-sm);
+    background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 50%, transparent);
+}
+
+.ttas-tool-default-description span,
+.ttas-tool-property-title {
+    font-size: 0.76rem;
+    font-weight: 600;
+    opacity: 0.68;
+}
+
+.ttas-tool-default-description p {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-size: 0.82rem;
+    line-height: 1.45;
+}
+
+.ttas-tool-description-textarea {
+    min-height: 112px;
+    line-height: 1.45;
+}
+
+.ttas-tool-property-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.ttas-tool-property-title {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.ttas-tool-property-title i {
+    color: var(--ttas-accent);
+}
+
+.ttas-tool-property-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid var(--ttas-border-soft);
+    border-radius: var(--ttas-radius-sm);
+    background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 46%, transparent);
+}
+
+.ttas-tool-property-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.ttas-tool-property-meta code {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-family: var(--ttas-mono);
+    font-size: 0.8rem;
+}
+
+.ttas-tool-property-meta span,
+.ttas-tool-property-meta em {
+    padding: 2px 6px;
+    border: 1px solid var(--ttas-border-soft);
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-style: normal;
+    opacity: 0.76;
+}
+
+.ttas-tool-property-row p {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-size: 0.78rem;
+    line-height: 1.42;
+    opacity: 0.76;
+}
+
+.ttas-tool-property-edit {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: start;
+    min-width: 0;
 }
 
 .ttas-root .checkbox_label {
@@ -2675,6 +2927,7 @@ textarea.ttas-json {
     .ttas-grid,
     .ttas-profile-layout,
     .ttas-form-grid,
+    .ttas-tool-workbench,
     .ttas-tool-groups,
     .ttas-import-summary {
         grid-template-columns: 1fr;
@@ -2687,6 +2940,10 @@ textarea.ttas-json {
     .ttas-side-list {
         position: static;
         max-height: 260px;
+    }
+
+    .ttas-tool-editor-panel {
+        position: static;
     }
 
     .ttas-stat-grid {
@@ -2759,6 +3016,13 @@ textarea.ttas-json {
     .ttas-root-row {
         grid-template-columns: 1fr;
         align-items: start;
+    }
+
+    .ttas-tool-editor-header,
+    .ttas-tool-property-edit {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+        flex-direction: column;
     }
 
     .ttas-file-viewport {

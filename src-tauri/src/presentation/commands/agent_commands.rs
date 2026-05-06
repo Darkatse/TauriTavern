@@ -4,10 +4,11 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::agent_dto::{
-    AgentCancelRunDto, AgentListProfilesResultDto, AgentLoadProfileResultDto,
-    AgentModelTurnDisplayDto, AgentProfileIdDto, AgentReadEventsDto, AgentReadEventsResultDto,
-    AgentReadModelTurnDto, AgentReadWorkspaceFileDto, AgentResolveChatCommitDto, AgentRunHandleDto,
-    AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
+    AgentCancelRunDto, AgentListProfilesResultDto, AgentListToolSpecsResultDto,
+    AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentProfileIdDto, AgentReadEventsDto,
+    AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadWorkspaceFileDto,
+    AgentResolveChatCommitDto, AgentRunHandleDto, AgentSaveProfileDto, AgentStartRunDto,
+    AgentWorkspaceFileDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -38,6 +39,17 @@ pub async fn list_agent_profiles(
         .await
         .map(|profiles| AgentListProfilesResultDto { profiles })
         .map_err(map_command_error("Failed to list agent profiles"))
+}
+
+#[tauri::command]
+pub async fn list_agent_tool_specs(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentListToolSpecsResultDto, CommandError> {
+    log_command("list_agent_tool_specs");
+
+    Ok(AgentListToolSpecsResultDto {
+        tools: app_state.agent_runtime_service.tool_specs().to_vec(),
+    })
 }
 
 #[tauri::command]

@@ -64,6 +64,17 @@ test('api.agent.profiles fails fast on invalid profile inputs', async () => {
     );
 });
 
+test('api.agent.tools lists canonical tool specs', async () => {
+    const { calls, agent } = await installHarness();
+
+    assert.ok(agent.tools);
+    await agent.tools.list();
+
+    assert.deepEqual(calls, [
+        { command: 'list_agent_tool_specs', args: undefined },
+    ]);
+});
+
 test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid input', async () => {
     const { calls, agent } = await installHarness();
 
