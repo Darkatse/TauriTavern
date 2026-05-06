@@ -25,6 +25,24 @@ async function installHarness() {
     };
 }
 
+async function withNavigatorUserAgent(userAgent, callback) {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', {
+        value: { userAgent },
+        configurable: true,
+    });
+
+    try {
+        return await callback();
+    } finally {
+        if (descriptor) {
+            Object.defineProperty(globalThis, 'navigator', descriptor);
+        } else {
+            delete globalThis.navigator;
+        }
+    }
+}
+
 test('api.skill installs and forwards normalized import DTOs', async () => {
     const { calls, skill } = await installHarness();
 
@@ -145,6 +163,73 @@ test('api.skill picks import archives through the host dialog', async () => {
     assert.deepEqual(calls[0].args.options.filters, [
         { name: 'Agent Skill Archive', extensions: ['ttskill', 'zip'] },
     ]);
+});
+
+test('api.skill stages Android picked content URIs as archive files', async () => {
+    await withNavigatorUserAgent('Mozilla/5.0 (Linux; Android 15)', async () => {
+        const calls = [];
+        const cleanups = [];
+        globalThis.window = {
+            __TAURITAVERN__: { api: {} },
+        };
+
+        const { installSkillApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/skill.js')));
+        installSkillApi({
+            safeInvoke: async (command, args) => {
+                calls.push({ command, args });
+                return { command, args };
+            },
+            pickAndroidImportArchive: async () => 'content://picked-skill',
+            materializeAndroidSkillImportArchive: async (contentUri) => {
+                assert.equal(contentUri, 'content://picked-skill');
+                return {
+                    filePath: '/cache/tauritavern-skill-import-staging/picked.ttskill',
+                    cleanup: async () => cleanups.push('picked.ttskill'),
+                };
+            },
+        });
+
+        const skill = globalThis.window.__TAURITAVERN__.api.skill;
+        const input = await skill.pickImportArchive();
+        assert.deepEqual(input, {
+            kind: 'archiveFile',
+            path: '/cache/tauritavern-skill-import-staging/picked.ttskill',
+        });
+        assert.deepEqual(calls, []);
+
+        await skill.discardPickedImport(input);
+        assert.deepEqual(cleanups, ['picked.ttskill']);
+    });
+});
+
+test('api.skill stages iOS picked files through the native command', async () => {
+    await withNavigatorUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', async () => {
+        const calls = [];
+        const cleanups = [];
+        globalThis.window = {
+            __TAURITAVERN__: { api: {} },
+        };
+
+        const { installSkillApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/skill.js')));
+        installSkillApi({
+            safeInvoke: async (command, args) => {
+                calls.push({ command, args });
+                return { cancelled: false, filePath: '/cache/tauritavern-skill-import-staging/picked.ttskill' };
+            },
+            removeTemporaryFile: async (filePath) => cleanups.push(filePath),
+        });
+
+        const skill = globalThis.window.__TAURITAVERN__.api.skill;
+        const input = await skill.pickImportArchive();
+        assert.deepEqual(input, {
+            kind: 'archiveFile',
+            path: '/cache/tauritavern-skill-import-staging/picked.ttskill',
+        });
+        assert.equal(calls[0].command, 'ios_pick_skill_import_archive');
+
+        await skill.discardPickedImport(input);
+        assert.deepEqual(cleanups, ['/cache/tauritavern-skill-import-staging/picked.ttskill']);
+    });
 });
 
 test('api.skill fails fast on unsupported import shapes', async () => {

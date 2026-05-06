@@ -83,7 +83,9 @@ export {};
  *   uploadAvatarFromForm: (formData: FormData, requestUrl: URL) => Promise<any>;
  *   materializeUploadFile: (file: Blob, options?: { preferredName?: string; preferredExtension?: string }) => Promise<MaterializedFileInfo | null>;
  *   materializeAndroidContentUriUpload: (contentUri: string) => Promise<MaterializedFileInfo>;
+ *   materializeAndroidSkillImportArchive: (contentUri: string) => Promise<MaterializedFileInfo>;
  *   pickAndroidImportArchive: () => Promise<string>;
+ *   removeTemporaryFile: (filePath: string) => Promise<void>;
  *   saveAndroidExportArchive: (sourcePath: string, preferredName?: string) => Promise<AndroidExportResult>;
  *   toAssetUrl: (path: string) => string | null;
  * }} TauriMainContext

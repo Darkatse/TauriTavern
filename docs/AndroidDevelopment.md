@@ -374,3 +374,25 @@ https://v2.tauri.app/develop/resources/#android
   - body 提供完整文件 bytes，让 WebView 自己在流上执行 Range（skip）
 
 更多细节与全平台媒体契约见：`docs/CurrentState/MediaAssetContract.md`。
+
+---
+
+## 10. Android Skill 导入文件选择
+
+现象：
+
+- 桌面端 Agent System 的 Skill 导入会弹出系统文件选择器；
+- Android 端不能依赖桌面 `dialog.open` 返回普通文件路径，系统选择器返回的是 `content://` URI。
+
+当前契约：
+
+- Kotlin 侧仍复用 `MainActivity` 中的数据归档选择器入口，返回 `content://` 给前端桥；
+- 前端 `android-archive-service.js` 只在 Skill 导入场景把该 URI 物化到 app cache/temp 下的 `tauritavern-skill-import-staging`；
+- `api.skill.pickImportArchive()` 对 UI 返回 `{ kind: 'archiveFile', path }`，保持 Skill 后端只消费普通文件路径；
+- 如果用户放弃本次导入，UI 必须调用 `api.skill.discardPickedImport(input)` 清理 staged 文件；`installImport()` 完成后会自动清理。
+
+维护原则：
+
+- 不把 `content://` 透传到 Rust Skill repository；仓储层只处理真实路径与归档内容。
+- 不使用 base64 作为移动端大文件桥接方案，避免把内存占用放大到 JS heap 与 IPC payload。
+- 选择器取消不是错误；staging、预览、安装、清理失败都应直接暴露，避免静默遗留坏状态。

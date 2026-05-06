@@ -413,6 +413,7 @@ type TauriTavernSkillApi = {
     list: () => Promise<TauriTavernSkillIndexEntry[]>;
     listFiles: (options: { name: string }) => Promise<TauriTavernSkillFileRef[]>;
     pickImportArchive: () => Promise<TauriTavernSkillImportInput | null>;
+    discardPickedImport: (input?: TauriTavernSkillImportInput | null) => Promise<void>;
     previewImport: (input: TauriTavernSkillImportInput) => Promise<TauriTavernSkillImportPreview>;
     installImport: (request: {
         input: TauriTavernSkillImportInput;

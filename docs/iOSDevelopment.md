@@ -151,6 +151,15 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 - 导出反馈：`src/scripts/download-feedback.js`
 - iOS share 命令：`src-tauri/src/presentation/commands/ios_file_bridge_commands.rs`
 
+### 3.6 iOS Skill 导入
+
+Skill 导入使用独立命令 `ios_pick_skill_import_archive`：
+
+- `UIDocumentPickerViewController` 允许选择 zip 或普通 data 文件，避免 `.ttskill` 扩展没有系统 UTI 时不可选；
+- Rust 命令把选中的安全作用域文件复制到 app cache/temp 下的 `tauritavern-skill-import-staging`；
+- 前端仍只收到 `{ kind: 'archiveFile', path }`，后续预览与安装继续走 Skill repository 的真实路径契约；
+- 用户放弃导入时由 `api.skill.discardPickedImport()` 清理 staged 文件，安装完成或失败后由 `installImport()` 自动清理。
+
 ## 4. WKWebView Fullscreen API（iOS 16+）
 
 ### 4.1 现象

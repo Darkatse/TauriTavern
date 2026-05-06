@@ -26,6 +26,8 @@
  * }} deps
  */
 export function createAndroidArchiveService({ safeInvoke, removeTempUploadFile, bridgeName }) {
+    const SKILL_IMPORT_STAGING_ROOT = 'tauritavern-skill-import-staging';
+
     /** @type {{ resolve: (value: string) => void; reject: (reason: unknown) => void } | null} */
     let androidImportArchivePickerPending = null;
     /** @type {{ resolve: (value: string) => void; reject: (reason: unknown) => void } | null} */
@@ -117,6 +119,40 @@ export function createAndroidArchiveService({ safeInvoke, removeTempUploadFile, 
     }
 
     /**
+     * @param {{ appCacheDir?: () => Promise<string>; tempDir?: () => Promise<string>; join: (...paths: string[]) => Promise<string> }} pathApi
+     */
+    async function resolveAndroidSkillImportStagingDirectory(pathApi) {
+        /** @type {Array<() => Promise<string>>} */
+        const candidates = [];
+        const appCacheDir = pathApi?.appCacheDir;
+        if (typeof appCacheDir === 'function') {
+            candidates.push(() => appCacheDir.call(pathApi));
+        }
+        const tempDir = pathApi?.tempDir;
+        if (typeof tempDir === 'function') {
+            candidates.push(() => tempDir.call(pathApi));
+        }
+
+        let lastError = null;
+        for (const candidate of candidates) {
+            try {
+                const directory = await candidate();
+                if (typeof directory === 'string' && directory.trim()) {
+                    return pathApi.join(directory, SKILL_IMPORT_STAGING_ROOT);
+                }
+            } catch (error) {
+                lastError = error;
+            }
+        }
+
+        if (lastError) {
+            throw lastError;
+        }
+
+        throw new Error('No writable Android Skill import staging directory is available');
+    }
+
+    /**
      * @param {string} contentUri
      * @returns {Promise<MaterializedFileInfo>}
      */
@@ -151,6 +187,40 @@ export function createAndroidArchiveService({ safeInvoke, removeTempUploadFile, 
                     }
                 }
                 : undefined,
+        };
+    }
+
+    /**
+     * @param {string} contentUri
+     * @returns {Promise<MaterializedFileInfo>}
+     */
+    async function materializeAndroidSkillImportArchive(contentUri) {
+        const bridge = getAndroidImportArchiveBridge();
+        if (!bridge) {
+            throw new Error('Android archive bridge is unavailable');
+        }
+        const pathApi = window.__TAURI__.path;
+        const invokeApi = window.__TAURI__?.core?.invoke;
+        if (typeof invokeApi !== 'function') {
+            throw new Error('Tauri invoke API is unavailable');
+        }
+
+        const stagingDirectory = await resolveAndroidSkillImportStagingDirectory(pathApi);
+        const targetFileName = `tauritavern-skill-import-${Date.now()}-${Math.random().toString(16).slice(2)}.ttskill`;
+        const targetFilePath = await pathApi.join(stagingDirectory, targetFileName);
+        const filePath = String(
+            bridge.stageContentUriToFile(String(contentUri).trim(), targetFilePath),
+        ).trim();
+        if (!filePath) {
+            throw new Error('Android Skill import bridge did not return a file path');
+        }
+
+        return {
+            filePath,
+            isTemporary: true,
+            cleanup: async () => {
+                await removeTempUploadFile(filePath, invokeApi);
+            },
         };
     }
 
@@ -227,6 +297,7 @@ export function createAndroidArchiveService({ safeInvoke, removeTempUploadFile, 
 
     return {
         materializeAndroidContentUriUpload,
+        materializeAndroidSkillImportArchive,
         pickAndroidImportArchive,
         saveAndroidExportArchive,
     };

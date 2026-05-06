@@ -71,6 +71,16 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         await userDirectoriesService.initialize();
     }
 
+    /** @param {string} filePath */
+    async function removeTemporaryFile(filePath) {
+        const invokeApi = window.__TAURI__?.core?.invoke;
+        if (typeof invokeApi !== 'function') {
+            throw new Error('Tauri invoke API is unavailable');
+        }
+
+        await uploadService.removeTempUploadFile(filePath, invokeApi);
+    }
+
     installAssetPathHelpers({
         assetService,
         thumbnailService,
@@ -111,7 +121,9 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         uploadAvatarFromForm: characterFormService.uploadAvatarFromForm,
         materializeUploadFile: uploadService.materializeUploadFile,
         materializeAndroidContentUriUpload: androidArchiveService.materializeAndroidContentUriUpload,
+        materializeAndroidSkillImportArchive: androidArchiveService.materializeAndroidSkillImportArchive,
         pickAndroidImportArchive: androidArchiveService.pickAndroidImportArchive,
+        removeTemporaryFile,
         saveAndroidExportArchive: androidArchiveService.saveAndroidExportArchive,
         toAssetUrl: assetService.toAssetUrl,
     };

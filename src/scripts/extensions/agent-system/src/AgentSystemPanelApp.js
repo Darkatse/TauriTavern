@@ -312,8 +312,14 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     this.loading = false;
                 }
             },
-            closePanel() {
-                requestClose();
+            async closePanel() {
+                try {
+                    await this.clearSkillImportDraft();
+                    requestClose();
+                } catch (error) {
+                    this.reportError(error);
+                    throw error;
+                }
             },
             tr(key, params) {
                 return tr(key, params);
@@ -668,20 +674,25 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     throw error;
                 }
             },
-            async pickAndPreviewSkillImport() {
+            async clearSkillImportDraft() {
+                await requireSkillApi().discardPickedImport?.(this.skillImportInput);
                 this.skillImportInput = null;
                 this.skillImportPreview = null;
-
-                const input = await requireSkillApi().pickImportArchive();
-                if (!input) {
-                    return;
-                }
-
-                this.skillImportInput = input;
-                this.skillImportConflictStrategy = 'skip';
+            },
+            async pickAndPreviewSkillImport() {
                 try {
+                    await this.clearSkillImportDraft();
+                    const input = await requireSkillApi().pickImportArchive();
+                    if (!input) {
+                        return;
+                    }
+
+                    this.skillImportInput = input;
+                    this.skillImportConflictStrategy = 'skip';
                     this.skillImportPreview = await requireSkillApi().previewImport(input);
                 } catch (error) {
+                    this.skillImportInput = null;
+                    this.skillImportPreview = null;
                     this.reportError(error);
                     throw error;
                 }
@@ -691,21 +702,28 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     throw new Error(tr('previewSkillImportFirst'));
                 }
 
-                const request = { input: this.skillImportInput };
-                if (this.skillImportHasConflict) {
-                    request.conflictStrategy = this.skillImportConflictStrategy;
+                try {
+                    const request = { input: this.skillImportInput };
+                    if (this.skillImportHasConflict) {
+                        request.conflictStrategy = this.skillImportConflictStrategy;
+                    }
+                    const result = await requireSkillApi().installImport(request);
+                    this.skills = await requireSkillApi().list();
+                    this.selectedSkillName = result.name;
+                    this.expandedSkillFolders = {};
+                    this.skillImportInput = null;
+                    this.skillImportPreview = null;
+                    await this.loadSelectedSkillFiles();
+                    this.toast(tr('skillInstallToast', {
+                        action: translateSkillInstallAction(result.action),
+                        name: result.name,
+                    }));
+                } catch (error) {
+                    this.skillImportInput = null;
+                    this.skillImportPreview = null;
+                    this.reportError(error);
+                    throw error;
                 }
-                const result = await requireSkillApi().installImport(request);
-                this.skills = await requireSkillApi().list();
-                this.selectedSkillName = result.name;
-                this.expandedSkillFolders = {};
-                this.skillImportInput = null;
-                this.skillImportPreview = null;
-                await this.loadSelectedSkillFiles();
-                this.toast(tr('skillInstallToast', {
-                    action: translateSkillInstallAction(result.action),
-                    name: result.name,
-                }));
             },
             async exportSelectedSkill() {
                 if (!this.selectedSkillName) {
@@ -729,11 +747,10 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     return;
                 }
 
+                await this.clearSkillImportDraft();
                 await requireSkillApi().deleteSkill({ name });
                 this.expandedSkillFolders = {};
                 this.skillFiles = [];
-                this.skillImportInput = null;
-                this.skillImportPreview = null;
                 await this.refreshSkills();
                 this.toast(tr('deletedSkill', { name }));
             },
