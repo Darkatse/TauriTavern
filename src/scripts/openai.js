@@ -4948,12 +4948,14 @@ async function onPresetImportFileChange(e) {
     }
 
     try {
+        const { maybePromptForPresetEmbeddedProfiles } = await import('./tauri/agent-profiles/embedded-import.js');
+        await maybePromptForPresetEmbeddedProfiles({ apiId: 'openai', name: data.name, preset: presetBody });
         const { maybePromptForPresetEmbeddedSkills } = await import('./tauri/agent-skills/embedded-import.js');
         await maybePromptForPresetEmbeddedSkills({ apiId: 'openai', name: data.name, preset: presetBody });
     } catch (error) {
-        console.error('Failed to start Agent Skill import prompt for OpenAI preset', error);
+        console.error('Failed to start embedded Agent asset import prompt for OpenAI preset', error);
         const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
-        toastr.error(message, t`Agent Skill import failed`);
+        toastr.error(message, t`Agent embedded import failed`);
     }
 }
 

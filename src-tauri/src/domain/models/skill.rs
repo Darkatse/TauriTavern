@@ -134,6 +134,14 @@ pub enum SkillImportInput {
         #[serde(default)]
         source: Value,
     },
+    ArchiveBase64 {
+        file_name: String,
+        content_base64: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
+        #[serde(default)]
+        source: Value,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

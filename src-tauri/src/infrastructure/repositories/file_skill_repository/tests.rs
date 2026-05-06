@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde_json::{Value, json};
 use tokio::fs as tokio_fs;
 use uuid::Uuid;
@@ -404,6 +406,42 @@ async fn exported_skill_archive_can_be_reimported() {
     let preview = second_repository
         .preview_import(SkillImportInput::ArchiveFile {
             path: archive_path.to_string_lossy().to_string(),
+            source: json!({"kind": "test"}),
+        })
+        .await
+        .expect("preview exported archive");
+    assert_eq!(preview.skill.name, "test-skill");
+    assert_eq!(preview.conflict.kind, SkillImportConflictKind::New);
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+    tokio_fs::remove_dir_all(second_root)
+        .await
+        .expect("cleanup");
+}
+
+#[tokio::test]
+async fn exported_skill_archive_base64_can_be_reimported() {
+    let root = temp_root("export-base64");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            input: inline_skill("test-skill", vec![("references/a.md", "hello")]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+
+    let exported = repository
+        .export_skill("test-skill")
+        .await
+        .expect("export skill");
+    let second_root = temp_root("reimport-base64");
+    let second_repository = FileSkillRepository::new(second_root.clone());
+    let preview = second_repository
+        .preview_import(SkillImportInput::ArchiveBase64 {
+            file_name: exported.file_name,
+            content_base64: BASE64_STANDARD.encode(exported.bytes),
+            sha256: Some(exported.sha256),
             source: json!({"kind": "test"}),
         })
         .await

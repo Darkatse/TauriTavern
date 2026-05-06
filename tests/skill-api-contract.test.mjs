@@ -74,6 +74,38 @@ test('api.skill forwards install conflict strategy without implicit replace', as
     assert.equal(calls[1].args.request.conflictStrategy, 'replace');
 });
 
+test('api.skill maps archiveBase64 command fields to Rust DTO names', async () => {
+    const { calls, skill } = await installHarness();
+    const input = {
+        kind: 'archiveBase64',
+        fileName: 'embedded-skill.ttskill',
+        contentBase64: 'UEsDBAo=',
+        sha256: 'abc123',
+        source: { kind: 'preset', id: 'preset:openai:test', label: 'Test preset' },
+    };
+
+    await skill.previewImport(input);
+    await skill.installImport({ input, conflictStrategy: 'replace' });
+
+    assert.deepEqual(calls[0].args.input, {
+        kind: 'archiveBase64',
+        file_name: 'embedded-skill.ttskill',
+        content_base64: 'UEsDBAo=',
+        sha256: 'abc123',
+        source: { kind: 'preset', id: 'preset:openai:test', label: 'Test preset' },
+    });
+    assert.deepEqual(calls[1].args.request, {
+        input: {
+            kind: 'archiveBase64',
+            file_name: 'embedded-skill.ttskill',
+            content_base64: 'UEsDBAo=',
+            sha256: 'abc123',
+            source: { kind: 'preset', id: 'preset:openai:test', label: 'Test preset' },
+        },
+        conflictStrategy: 'replace',
+    });
+});
+
 test('api.skill lists installed skill files by skill name', async () => {
     const { calls, skill } = await installHarness();
 

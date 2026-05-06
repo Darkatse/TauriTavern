@@ -11262,42 +11262,48 @@ function selectImportedChar(charId) {
 /**
  * @param {{ avatarFileName: string; label: string }} options
  */
-async function maybePromptForImportedCharacterSkills({ avatarFileName, label }) {
+async function maybePromptForImportedCharacterAgentAssets({ avatarFileName, label }) {
     const hostAbi = window.__TAURITAVERN__;
     if (!hostAbi) {
         return;
     }
 
     try {
-        if (!hostAbi.api?.skill) {
-            throw new Error('TauriTavern Agent Skill API is not available');
+        if (!hostAbi.api?.agent?.profiles && !hostAbi.api?.skill) {
+            throw new Error('TauriTavern Agent APIs are not available');
         }
 
+        let importedCharacter = null;
+        const loadCharacter = async () => {
+            if (importedCharacter) {
+                return importedCharacter;
+            }
+            const response = await fetch('/api/characters/get', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ avatar_url: avatarFileName }),
+                cache: 'no-cache',
+            });
+
+            if (!response.ok) {
+                const details = String(await response.text()).trim();
+                const reason = details || response.statusText || `HTTP ${response.status}`;
+                throw new Error(`Failed to read imported character for Agent embedded asset scan: ${reason}`);
+            }
+
+            importedCharacter = await response.json();
+            return importedCharacter;
+        };
+
+        const { maybePromptForCharacterEmbeddedProfiles } = await import('./scripts/tauri/agent-profiles/embedded-import.js');
+        await maybePromptForCharacterEmbeddedProfiles({ avatarFileName, label, loadCharacter });
+
         const { maybePromptForCharacterEmbeddedSkills } = await import('./scripts/tauri/agent-skills/embedded-import.js');
-        await maybePromptForCharacterEmbeddedSkills({
-            avatarFileName,
-            label,
-            loadCharacter: async () => {
-                const response = await fetch('/api/characters/get', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({ avatar_url: avatarFileName }),
-                    cache: 'no-cache',
-                });
-
-                if (!response.ok) {
-                    const details = String(await response.text()).trim();
-                    const reason = details || response.statusText || `HTTP ${response.status}`;
-                    throw new Error(`Failed to read imported character for Agent Skill scan: ${reason}`);
-                }
-
-                return response.json();
-            },
-        });
+        await maybePromptForCharacterEmbeddedSkills({ avatarFileName, label, loadCharacter });
     } catch (error) {
-        console.error('Failed to start Agent Skill import prompt for character', error);
+        console.error('Failed to start embedded Agent asset import prompt for character', error);
         const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
-        toastr.error(message, t`Agent Skill import failed`);
+        toastr.error(message, t`Agent embedded import failed`);
     }
 }
 
@@ -11382,7 +11388,7 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
                 await importCharactersTags([avatarFileName]);
                 selectImportedChar(data.file_name);
             }
-            await maybePromptForImportedCharacterSkills({
+            await maybePromptForImportedCharacterAgentAssets({
                 avatarFileName,
                 label: String(data.file_name).replace('.png', ''),
             });

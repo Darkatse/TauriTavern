@@ -127,7 +127,42 @@ function normalizeSkillImportInput(value) {
         };
     }
 
+    if (kind === 'archiveBase64') {
+        const output = {
+            kind,
+            fileName: requireNonEmptyString(input.fileName, 'skill archive file name'),
+            contentBase64: requireNonEmptyString(input.contentBase64, 'skill archive contentBase64'),
+            source: normalizeSource(input.source),
+        };
+        const sha256 = String(input.sha256 || '').trim();
+        if (sha256) {
+            output.sha256 = sha256;
+        }
+        return output;
+    }
+
     throw new Error(`Unsupported skill import kind: ${kind}`);
+}
+
+/**
+ * @param {ReturnType<typeof normalizeSkillImportInput>} input
+ */
+function toSkillImportCommandInput(input) {
+    if (input.kind !== 'archiveBase64') {
+        return input;
+    }
+
+    /** @type {Record<string, any>} */
+    const output = {
+        kind: input.kind,
+        file_name: input.fileName,
+        content_base64: input.contentBase64,
+        source: input.source,
+    };
+    if (input.sha256) {
+        output.sha256 = input.sha256;
+    }
+    return output;
 }
 
 /**
@@ -151,9 +186,10 @@ function normalizeConflictStrategy(value) {
  */
 function normalizeSkillInstallRequest(value) {
     const request = requirePlainObject(value, 'skill install request');
+    const input = normalizeSkillImportInput(request.input);
     /** @type {Record<string, any>} */
     const output = {
-        input: normalizeSkillImportInput(request.input),
+        input: toSkillImportCommandInput(input),
     };
 
     const conflictStrategy = normalizeConflictStrategy(request.conflictStrategy);
@@ -210,7 +246,7 @@ function createSkillApi({ safeInvoke }) {
 
     async function previewImport(input) {
         return safeInvoke('preview_skill_import', {
-            input: normalizeSkillImportInput(input),
+            input: toSkillImportCommandInput(normalizeSkillImportInput(input)),
         });
     }
 

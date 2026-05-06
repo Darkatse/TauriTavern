@@ -1090,6 +1090,13 @@ export async function initPresetManager() {
         const selected = $(presetManager.select).find('option:selected');
         const name = selected.text();
         const preset = presetManager.getPresetSettings(name);
+        const storedPreset = presetManager.getCompletionPresetByName(name);
+        if (storedPreset?.extensions && !preset.extensions) {
+            preset.extensions = structuredClone(storedPreset.extensions);
+        } else if (storedPreset?.extensions?.tauritavern && !preset.extensions?.tauritavern) {
+            preset.extensions = preset.extensions || {};
+            preset.extensions.tauritavern = structuredClone(storedPreset.extensions.tauritavern);
+        }
         const data = JSON.stringify(preset, null, 4);
         download(data, `${name}.json`, 'application/json');
     });
@@ -1123,12 +1130,14 @@ export async function initPresetManager() {
         const successToast = !presetManager.isAdvancedFormatting() ? t`Preset imported` : t`Template imported`;
         toastr.success(successToast);
         try {
+            const { maybePromptForPresetEmbeddedProfiles } = await import('./tauri/agent-profiles/embedded-import.js');
+            await maybePromptForPresetEmbeddedProfiles({ apiId, name, preset: data });
             const { maybePromptForPresetEmbeddedSkills } = await import('./tauri/agent-skills/embedded-import.js');
             await maybePromptForPresetEmbeddedSkills({ apiId, name, preset: data });
         } catch (error) {
-            console.error('Failed to start Agent Skill import prompt for preset', error);
+            console.error('Failed to start embedded Agent asset import prompt for preset', error);
             const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
-            toastr.error(message, t`Agent Skill import failed`);
+            toastr.error(message, t`Agent embedded import failed`);
         } finally {
             e.target.value = null;
         }

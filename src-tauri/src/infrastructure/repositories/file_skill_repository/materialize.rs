@@ -86,6 +86,61 @@ impl FileSkillRepository {
                     source: source.clone(),
                 })
             }
+            SkillImportInput::ArchiveBase64 {
+                file_name,
+                content_base64,
+                sha256,
+                source,
+            } => (|| {
+                let archive_path = staging_dir.join(require_archive_file_name(file_name)?);
+                let bytes = BASE64_STANDARD
+                    .decode(content_base64.as_bytes())
+                    .map_err(|error| {
+                        DomainError::InvalidData(format!(
+                            "Invalid base64 Skill archive '{}': {error}",
+                            file_name
+                        ))
+                    })?;
+                if bytes.len() as u64 > MAX_TOTAL_BYTES {
+                    return Err(DomainError::InvalidData(format!(
+                        "Embedded Skill archive '{}' exceeds {} bytes",
+                        file_name, MAX_TOTAL_BYTES
+                    )));
+                }
+                if let Some(expected_hash) = sha256.as_deref() {
+                    if expected_hash.trim().to_ascii_lowercase() != sha256_hex(&bytes) {
+                        return Err(DomainError::InvalidData(format!(
+                            "Embedded Skill archive '{}' sha256 mismatch",
+                            file_name
+                        )));
+                    }
+                }
+                fs::write(&archive_path, bytes).map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to write embedded Skill archive '{}': {}",
+                        archive_path.display(),
+                        error
+                    ))
+                })?;
+
+                let archive_root = staging_dir.join("archive");
+                fs::create_dir_all(&archive_root).map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to create Skill archive extraction root '{}': {}",
+                        archive_root.display(),
+                        error
+                    ))
+                })?;
+                extract_archive(&archive_path, &archive_root)?;
+                let selected_root = select_skill_root(&archive_root)?;
+                let package_root = staging_dir.join("package");
+                copy_dir_contents(&selected_root, &package_root)?;
+                Ok(PreparedImport {
+                    cleanup_root: staging_dir.clone(),
+                    package_root,
+                    source: source.clone(),
+                })
+            })(),
         };
 
         if result.is_err() {
@@ -93,6 +148,21 @@ impl FileSkillRepository {
         }
         result
     }
+}
+
+fn require_archive_file_name(value: &str) -> Result<&str, DomainError> {
+    let file_name = value.trim();
+    if file_name.is_empty()
+        || file_name.contains('/')
+        || file_name.contains('\\')
+        || file_name == "."
+        || file_name == ".."
+    {
+        return Err(DomainError::InvalidData(format!(
+            "Invalid embedded Skill archive file name: {value}"
+        )));
+    }
+    Ok(file_name)
 }
 
 fn write_inline_files(files: &[SkillInlineFile], root: &Path) -> Result<(), DomainError> {

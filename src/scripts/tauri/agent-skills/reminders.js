@@ -47,6 +47,7 @@ function clearSkillImportReminderPrefix(parts) {
  */
 export function clearPresetSkillImportReminders(apiId, name) {
     clearSkillImportReminderPrefix(['AlertSkillPreset', apiId, name]);
+    clearSkillImportReminderPrefix(['AlertProfilePreset', apiId, name]);
 }
 
 /**
@@ -54,4 +55,5 @@ export function clearPresetSkillImportReminders(apiId, name) {
  */
 export function clearCharacterSkillImportReminders(avatarFileName) {
     clearSkillImportReminderPrefix(['AlertSkillCharacter', avatarFileName]);
+    clearSkillImportReminderPrefix(['AlertProfileCharacter', avatarFileName]);
 }

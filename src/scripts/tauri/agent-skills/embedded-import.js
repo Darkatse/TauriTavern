@@ -7,6 +7,7 @@ import { buildSkillImportReminderKey, hasSkillImportReminder, setSkillImportRemi
 
 const EMBEDDED_SKILLS_VERSION = 1;
 const INLINE_FILES_BUNDLE_FORMAT = 'inline-files-v1';
+const ARCHIVE_BASE64_BUNDLE_FORMAT = 'ttskill-archive-base64-v1';
 
 /**
  * @param {unknown} value
@@ -121,23 +122,39 @@ function normalizeEmbeddedFile(value) {
 function normalizeEmbeddedItem(value, index, fallbackSource) {
     const item = requirePlainObject(value);
     const bundleFormat = requireNonEmptyString(item.bundleFormat, `items[${index}].bundleFormat`);
-    if (bundleFormat !== INLINE_FILES_BUNDLE_FORMAT) {
-        throw new Error(`Unsupported embedded Agent Skill bundle format: ${bundleFormat}`);
-    }
-
-    if (!Array.isArray(item.files) || item.files.length === 0) {
-        throw new Error(`Embedded Agent Skill item ${index + 1} requires at least one file`);
-    }
 
     const source = normalizeEmbeddedSource(item.source, fallbackSource);
-    return {
-        index,
-        input: {
-            kind: 'inlineFiles',
-            files: item.files.map(normalizeEmbeddedFile),
+    if (bundleFormat === INLINE_FILES_BUNDLE_FORMAT) {
+        if (!Array.isArray(item.files) || item.files.length === 0) {
+            throw new Error(`Embedded Agent Skill item ${index + 1} requires at least one file`);
+        }
+
+        return {
+            index,
+            input: {
+                kind: 'inlineFiles',
+                files: item.files.map(normalizeEmbeddedFile),
+                source,
+            },
+        };
+    }
+
+    if (bundleFormat === ARCHIVE_BASE64_BUNDLE_FORMAT) {
+        /** @type {Record<string, any>} */
+        const input = {
+            kind: 'archiveBase64',
+            fileName: requireNonEmptyString(item.fileName, `items[${index}].fileName`),
+            contentBase64: requireNonEmptyString(item.contentBase64, `items[${index}].contentBase64`),
             source,
-        },
-    };
+        };
+        const sha256 = String(item.sha256 || '').trim();
+        if (sha256) {
+            input.sha256 = sha256;
+        }
+        return { index, input };
+    }
+
+    throw new Error(`Unsupported embedded Agent Skill bundle format: ${bundleFormat}`);
 }
 
 /**
