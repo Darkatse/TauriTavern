@@ -1,15 +1,22 @@
 use std::sync::Arc;
 
+use std::collections::BTreeSet;
+
+use serde_json::Value;
 use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::agent_dto::{
     AgentCancelRunDto, AgentListProfilesResultDto, AgentListToolSpecsResultDto,
-    AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentProfileIdDto, AgentReadEventsDto,
+    AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentProfileIdDto,
+    AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
     AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadWorkspaceFileDto,
     AgentResolveChatCommitDto, AgentRunHandleDto, AgentSaveProfileDto, AgentStartRunDto,
     AgentWorkspaceFileDto,
 };
+use crate::application::errors::ApplicationError;
+use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
+use crate::domain::models::agent::AgentChatRef;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -164,4 +171,81 @@ pub async fn resolve_agent_chat_commit(
         .resolve_chat_commit(dto)
         .await
         .map_err(map_command_error("Failed to resolve agent chat commit"))
+}
+
+#[tauri::command]
+pub async fn prune_agent_chat_persistent_states(
+    dto: AgentPruneChatPersistentStatesDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentPruneChatPersistentStatesResultDto, CommandError> {
+    log_command("prune_agent_chat_persistent_states");
+
+    let (character_id, file_name) = match &dto.chat_ref {
+        AgentChatRef::Character {
+            character_id,
+            file_name,
+        } => (character_id.as_str(), file_name.as_str()),
+        AgentChatRef::Group { .. } => {
+            return Err(
+                map_command_error("Failed to prune agent persistent states")(
+                    ApplicationError::ValidationError(
+                        "agent.group_persistent_state_prune_unsupported".to_string(),
+                    ),
+                ),
+            );
+        }
+    };
+
+    let payload = app_state
+        .chat_service
+        .get_chat_payload(character_id, file_name)
+        .await
+        .map_err(map_command_error(
+            "Failed to read chat payload for agent prune",
+        ))?;
+    let retained_state_ids = collect_agent_persistent_state_ids(&payload);
+    let target = AgentChatWorkspaceTarget {
+        chat_ref: dto.chat_ref,
+        stable_chat_id: dto.stable_chat_id,
+    };
+
+    app_state
+        .chat_service
+        .prune_agent_persistent_states(&target, &retained_state_ids)
+        .await
+        .map(|prune| AgentPruneChatPersistentStatesResultDto {
+            workspace_id: prune.workspace_id,
+            removed_state_ids: prune.removed_state_ids,
+        })
+        .map_err(map_command_error("Failed to prune agent persistent states"))
+}
+
+fn collect_agent_persistent_state_ids(payload: &[Value]) -> Vec<String> {
+    let mut retained = BTreeSet::new();
+    for item in payload {
+        collect_agent_persistent_state_id_from_extra(item.get("extra"), &mut retained);
+        if let Some(swipe_info) = item.get("swipe_info").and_then(Value::as_array) {
+            for swipe in swipe_info {
+                collect_agent_persistent_state_id_from_extra(swipe.get("extra"), &mut retained);
+            }
+        }
+    }
+    retained.into_iter().collect()
+}
+
+fn collect_agent_persistent_state_id_from_extra(
+    extra: Option<&Value>,
+    retained: &mut BTreeSet<String>,
+) {
+    let Some(state_id) = extra
+        .and_then(|value| value.get("tauritavern"))
+        .and_then(|value| value.get("agent"))
+        .and_then(|value| value.get("persistStateId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    retained.insert(state_id.to_string());
 }

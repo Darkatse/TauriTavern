@@ -17,6 +17,8 @@ pub struct AgentStartRunDto {
     #[serde(default)]
     pub profile_id: Option<String>,
     #[serde(default)]
+    pub persist_base_state_id: Option<String>,
+    #[serde(default)]
     pub prompt_snapshot: Option<Value>,
     #[serde(default)]
     pub generation_intent: Option<Value>,
@@ -175,6 +177,21 @@ pub struct AgentResolveChatCommitDto {
     pub commit_id: String,
     pub message_id: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPruneChatPersistentStatesDto {
+    pub chat_ref: AgentChatRef,
+    #[serde(default, alias = "stableId")]
+    pub stable_chat_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPruneChatPersistentStatesResultDto {
+    pub workspace_id: String,
+    pub removed_state_ids: Vec<String>,
 }
 
 fn default_generation_type() -> String {

@@ -44,6 +44,7 @@ fn sample_run_with_id(id: &str) -> AgentRun {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        persist_base_state_id: None,
         presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -238,6 +239,15 @@ async fn delete_chat_workspace_removes_runs_and_indexes() {
         .create_run(&second)
         .await
         .expect("create second run");
+    fs::write(
+        root.join("chats")
+            .join(&first.workspace_id)
+            .join("runs")
+            .join(".DS_Store"),
+        b"finder metadata",
+    )
+    .await
+    .expect("write platform metadata");
 
     let deletion = repository
         .delete_chat_workspace(&first.workspace_id)
@@ -252,6 +262,37 @@ async fn delete_chat_workspace_removes_runs_and_indexes() {
     assert!(!root.join("chats").join(&first.workspace_id).exists());
     assert!(!root.join("index/runs/run_delete_a.json").exists());
     assert!(!root.join("index/runs/run_delete_b.json").exists());
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn prune_persistent_states_ignores_platform_metadata_files() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let states_dir = root
+        .join("chats")
+        .join("chat_prune")
+        .join("persistent-states");
+    fs::create_dir_all(states_dir.join("state_keep"))
+        .await
+        .expect("create retained state");
+    fs::create_dir_all(states_dir.join("state_drop"))
+        .await
+        .expect("create removed state");
+    fs::write(states_dir.join(".DS_Store"), b"finder metadata")
+        .await
+        .expect("write platform metadata");
+
+    let prune = repository
+        .prune_persistent_states("chat_prune", &["state_keep".to_string()])
+        .await
+        .expect("prune persistent states");
+
+    assert_eq!(prune.removed_state_ids, vec!["state_drop".to_string()]);
+    assert!(states_dir.join("state_keep").exists());
+    assert!(!states_dir.join("state_drop").exists());
+    assert!(states_dir.join(".DS_Store").exists());
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -296,6 +337,17 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         .write_text(&run.id, &persist_path, "long running thread note")
         .await
         .expect("write persist projection");
+    fs::write(
+        root.join("chats")
+            .join(&run.workspace_id)
+            .join("runs")
+            .join(&run.id)
+            .join("persist")
+            .join(".DS_Store"),
+        b"finder metadata",
+    )
+    .await
+    .expect("write platform metadata");
 
     let changes = repository
         .prepare_persistent_changes(&run.id)
@@ -330,8 +382,42 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         .commit_persistent_changes(&run.id)
         .await
         .expect("commit persist changes");
+    assert!(
+        !root
+            .join("chats")
+            .join(&run.workspace_id)
+            .join("persistent-states")
+            .join(&run.id)
+            .join("persist")
+            .join(".DS_Store")
+            .exists(),
+        "platform metadata must not be committed into persistent state"
+    );
 
-    let next_run = sample_run_with_id("run_persist_next");
+    let empty_next_run = sample_run_with_id("run_persist_empty_next");
+    repository
+        .create_run(&empty_next_run)
+        .await
+        .expect("create empty next run");
+    repository
+        .initialize_run(
+            &empty_next_run,
+            &sample_manifest(&empty_next_run),
+            &serde_json::json!({"messages": []}),
+            &profile,
+        )
+        .await
+        .expect("initialize empty next run");
+    assert!(
+        repository
+            .read_text(&empty_next_run.id, &persist_path)
+            .await
+            .is_err(),
+        "result-scoped persist must not leak into runs without an explicit base state"
+    );
+
+    let mut next_run = sample_run_with_id("run_persist_next");
+    next_run.persist_base_state_id = Some(run.id.clone());
     repository
         .create_run(&next_run)
         .await
@@ -355,7 +441,7 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
 }
 
 #[tokio::test]
-async fn persistent_workspace_detects_conflicting_parallel_runs() {
+async fn persistent_workspace_commits_parallel_branch_states() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
     let first = sample_run_with_id("run_conflict_a");
@@ -390,11 +476,58 @@ async fn persistent_workspace_detects_conflicting_parallel_runs() {
         .write_text(&second.id, &persist_path, "second")
         .await
         .expect("write second projection");
-    let error = repository
-        .prepare_persistent_changes(&second.id)
+    repository
+        .commit_persistent_changes(&second.id)
         .await
-        .expect_err("second run must conflict");
-    assert!(error.to_string().contains("persistent_workspace_conflict"));
+        .expect("commit second projection");
+
+    let mut child_of_first = sample_run_with_id("run_conflict_child_first");
+    child_of_first.persist_base_state_id = Some(first.id.clone());
+    repository
+        .create_run(&child_of_first)
+        .await
+        .expect("create child of first");
+    repository
+        .initialize_run(
+            &child_of_first,
+            &sample_manifest(&child_of_first),
+            &serde_json::json!({"messages": []}),
+            &sample_resolved_profile(&sample_manifest(&child_of_first)),
+        )
+        .await
+        .expect("initialize child of first");
+    assert_eq!(
+        repository
+            .read_text(&child_of_first.id, &persist_path)
+            .await
+            .expect("read first branch state")
+            .text,
+        "first"
+    );
+
+    let mut child_of_second = sample_run_with_id("run_conflict_child_second");
+    child_of_second.persist_base_state_id = Some(second.id.clone());
+    repository
+        .create_run(&child_of_second)
+        .await
+        .expect("create child of second");
+    repository
+        .initialize_run(
+            &child_of_second,
+            &sample_manifest(&child_of_second),
+            &serde_json::json!({"messages": []}),
+            &sample_resolved_profile(&sample_manifest(&child_of_second)),
+        )
+        .await
+        .expect("initialize child of second");
+    assert_eq!(
+        repository
+            .read_text(&child_of_second.id, &persist_path)
+            .await
+            .expect("read second branch state")
+            .text,
+        "second"
+    );
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }

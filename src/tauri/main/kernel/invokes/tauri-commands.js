@@ -161,6 +161,7 @@ export {};
  *   | 'search_group_chats'
  *   | 'show_system_notification'
  *   | 'start_agent_run'
+ *   | 'prune_agent_chat_persistent_states'
  *   | 'start_chat_completion_stream'
  *   | 'start_export_data_archive'
  *   | 'start_import_data_archive'

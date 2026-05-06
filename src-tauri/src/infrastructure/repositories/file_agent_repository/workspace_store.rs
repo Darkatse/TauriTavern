@@ -10,7 +10,6 @@ use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
     AgentRun, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
 };
-use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::workspace_repository::{
     WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
 };
@@ -298,35 +297,6 @@ impl WorkspaceRepository for FileAgentRepository {
     ) -> Result<WorkspacePersistentChangeSet, DomainError> {
         let _guard = self.persist_lock.lock().await;
         let changes = self.compute_persistent_changes(run_id).await?;
-        if changes.changes.is_empty() {
-            return Ok(changes);
-        }
-
-        let run = self.load_run(run_id).await?;
-        for change in &changes.changes {
-            let path = WorkspacePath::parse(&change.path)?;
-            let source = self.safe_workspace_path(run_id, &path, false).await?;
-            let target = self
-                .safe_chat_workspace_path(&run.workspace_id, &path, true)
-                .await?;
-            let bytes = fs::read(&source).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to read persistent projection file {}: {}",
-                    source.display(),
-                    error
-                ))
-            })?;
-            let temp_path = unique_temp_path(&target, "persist.txt");
-            fs::write(&temp_path, &bytes).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to write persistent temp file {}: {}",
-                    temp_path.display(),
-                    error
-                ))
-            })?;
-            replace_file_with_fallback(&temp_path, &target).await?;
-        }
-
-        Ok(changes)
+        self.commit_persistent_state(run_id, changes).await
     }
 }

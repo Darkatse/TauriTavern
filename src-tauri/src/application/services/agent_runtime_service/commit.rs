@@ -157,6 +157,8 @@ impl AgentRuntimeService {
                 "chatRef": &run.chat_ref,
                 "generationType": run.generation_type.as_str(),
                 "profileId": run.profile_id.as_ref(),
+                "persistStateId": run.id.as_str(),
+                "persistBaseStateId": run.persist_base_state_id.as_deref(),
                 "path": file.path.as_str(),
                 "mode": mode,
                 "reason": reason.as_deref(),
@@ -274,6 +276,8 @@ impl AgentRuntimeService {
             AgentRunEventLevel::Info,
             "persistent_changes_committed",
             json!({
+                "stateId": persistent_changes.state_id,
+                "baseStateId": persistent_changes.base_state_id,
                 "changeCount": persistent_changes.changes.len(),
                 "changes": &persistent_changes.changes,
             }),

@@ -86,6 +86,7 @@ impl AgentRuntimeService {
             chat_ref: dto.chat_ref,
             generation_type: dto.generation_type,
             profile_id: Some(resolved_profile.id.as_str().to_string()),
+            persist_base_state_id: dto.persist_base_state_id,
             presentation,
             status: AgentRunStatus::Created,
             created_at: now,
@@ -100,6 +101,7 @@ impl AgentRuntimeService {
             json!({
                 "workspaceId": workspace_id.clone(),
                 "stableChatId": stable_chat_id.clone(),
+                "persistBaseStateId": run.persist_base_state_id.as_deref(),
                 "presentation": presentation,
             }),
         )

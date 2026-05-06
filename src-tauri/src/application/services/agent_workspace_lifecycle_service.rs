@@ -9,7 +9,7 @@ use crate::application::services::agent_identity::{
 };
 use crate::domain::models::agent::AgentChatRef;
 use crate::domain::repositories::agent_workspace_lifecycle_repository::{
-    AgentChatWorkspaceDeletion, AgentWorkspaceLifecycleRepository,
+    AgentChatWorkspaceDeletion, AgentPersistentStatePrune, AgentWorkspaceLifecycleRepository,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +141,19 @@ impl AgentWorkspaceLifecycleService {
         Ok(deletions)
     }
 
+    pub async fn prune_persistent_states(
+        &self,
+        target: &AgentChatWorkspaceTarget,
+        retained_state_ids: &[String],
+    ) -> Result<AgentPersistentStatePrune, ApplicationError> {
+        self.ensure_chat_workspace_inactive(target).await?;
+        let workspace_id = self.workspace_id(target)?;
+        self.repository
+            .prune_persistent_states(&workspace_id, retained_state_ids)
+            .await
+            .map_err(Into::into)
+    }
+
     fn workspace_id(&self, target: &AgentChatWorkspaceTarget) -> Result<String, ApplicationError> {
         workspace_id_for_stable_chat_id(&target.chat_ref, &target.stable_chat_id)
     }
@@ -171,6 +184,17 @@ mod tests {
                 workspace_id: workspace_id.to_string(),
                 removed: true,
                 run_ids: Vec::new(),
+            })
+        }
+
+        async fn prune_persistent_states(
+            &self,
+            workspace_id: &str,
+            _retained_state_ids: &[String],
+        ) -> Result<AgentPersistentStatePrune, DomainError> {
+            Ok(AgentPersistentStatePrune {
+                workspace_id: workspace_id.to_string(),
+                removed_state_ids: Vec::new(),
             })
         }
     }

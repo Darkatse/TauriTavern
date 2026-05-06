@@ -66,6 +66,8 @@ pub struct AgentRun {
     pub chat_ref: AgentChatRef,
     pub generation_type: String,
     pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persist_base_state_id: Option<String>,
     pub presentation: AgentRunPresentation,
     pub status: AgentRunStatus,
     pub created_at: DateTime<Utc>,
@@ -395,6 +397,9 @@ pub struct CheckpointFile {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspacePersistentChangeSet {
+    pub state_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_state_id: Option<String>,
     pub changes: Vec<WorkspacePersistentChange>,
 }
 

@@ -39,6 +39,7 @@ function createAgentApi({ safeInvoke }) {
             stableChatId: input.stableChatId,
             generationType,
             profileId: input.profileId,
+            persistBaseStateId: input.persistBaseStateId,
             promptSnapshot: snapshot.promptSnapshot,
             generationIntent: mergePlainObject(snapshot.generationIntent, input.generationIntent),
             options: agentOptions,
@@ -88,6 +89,27 @@ function createAgentApi({ safeInvoke }) {
                 runId,
                 round,
                 ...(maxChars == null ? {} : { maxChars }),
+            },
+        });
+    }
+
+    async function pruneChatPersistentStates(input = {}) {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+            throw new Error('Agent pruneChatPersistentStates input must be an object');
+        }
+        const chatRef = input.chatRef || window.__TAURITAVERN__?.api?.chat?.current?.ref?.();
+        if (!chatRef || typeof chatRef !== 'object') {
+            throw new Error('chatRef is required');
+        }
+        const stableChatId = String(input.stableChatId || '').trim() || await resolveStableChatId(chatRef);
+        if (!stableChatId) {
+            throw new Error('stableChatId is required');
+        }
+
+        return safeInvoke('prune_agent_chat_persistent_states', {
+            dto: {
+                chatRef,
+                stableChatId,
             },
         });
     }
@@ -178,6 +200,7 @@ function createAgentApi({ safeInvoke }) {
         readEvents,
         readWorkspaceFile,
         readModelTurn,
+        pruneChatPersistentStates,
         subscribe,
         profiles: {
             list: listProfiles,
@@ -258,6 +281,7 @@ async function normalizePromptSnapshotRunInput(input) {
         ...input,
         chatRef,
         stableChatId,
+        persistBaseStateId: normalizeOptionalString(input.persistBaseStateId),
         options: normalizeAgentRunOptions(input.options, input.presentation),
     };
 }
@@ -290,6 +314,14 @@ function requireProfileId(value) {
         throw new Error('profileId is required');
     }
     return profileId;
+}
+
+function normalizeOptionalString(value) {
+    if (value == null || value === '') {
+        return undefined;
+    }
+    const text = String(value).trim();
+    return text || undefined;
 }
 
 function normalizePollInterval(value) {

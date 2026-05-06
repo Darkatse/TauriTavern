@@ -2020,11 +2020,16 @@ export async function clearChat({ clearData = false } = {}) {
 }
 
 export async function deleteLastMessage() {
+    const deletedAgentStateIds = collectAgentPersistStateIdsFromMessage(chat[chat.length - 1]);
     deleteItemizedPromptForMessage(chat.length - 1);
     chat.length = chat.length - 1;
     markWindowedChatDirtyFromIndex(chat.length);
     chatElement.children('.mes').last().remove();
     await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
+    if (deletedAgentStateIds.length > 0) {
+        await saveChatConditional();
+        await pruneAgentPersistentStatesAfterDeletion(deletedAgentStateIds);
+    }
 }
 
 /**
@@ -2071,6 +2076,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
         return;
     }
 
+    const deletedAgentStateIds = collectAgentPersistStateIdsFromMessage(chat[id]);
     chat.splice(id, 1);
     messageElement.remove();
 
@@ -2089,6 +2095,10 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     refreshSwipeButtons();
 
     await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
+    if (deletedAgentStateIds.length > 0) {
+        await saveChatConditional();
+        await pruneAgentPersistentStatesAfterDeletion(deletedAgentStateIds);
+    }
 }
 
 export const reloadChatMutex = new SimpleMutex(reloadCurrentChatUnsafe);
@@ -4820,10 +4830,15 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             //do nothing? why does this check exist?
         }
         else if (type !== 'quiet' && type !== 'swipe' && !isImpersonate && !dryRun && !depth && chat.length) {
+            const deletedAgentStateIds = collectAgentPersistStateIdsFromMessage(chat[chat.length - 1]);
             deleteItemizedPromptForMessage(chat.length - 1);
             chat.length = chat.length - 1;
             await removeLastMessage();
             await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
+            if (deletedAgentStateIds.length > 0) {
+                await saveChatConditional();
+                await pruneAgentPersistentStatesAfterDeletion(deletedAgentStateIds);
+            }
         }
     }
 
@@ -6102,6 +6117,7 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
     return startAndWaitForAgentRun({
         generationType: type,
         profileId,
+        persistBaseStateId: resolveAgentPersistBaseStateIdForGeneration(type),
         promptSnapshot: {
             chatCompletionPayload,
             ...(worldInfoActivation ? { worldInfoActivation } : {}),
@@ -6114,6 +6130,67 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         },
         options: { stream: false, presentation: 'foreground' },
     });
+}
+
+function resolveAgentPersistBaseStateIdForGeneration(type) {
+    const scanStartIndex = type === 'swipe' ? chat.length - 2 : chat.length - 1;
+    for (let i = scanStartIndex; i >= 0; i--) {
+        const message = chat[i];
+        if (!message || message.is_user || message.is_system) {
+            continue;
+        }
+
+        const metadata = message.extra?.tauritavern?.agent;
+        if (!metadata) {
+            continue;
+        }
+
+        if (typeof metadata.persistStateId !== 'string' || !metadata.persistStateId.trim()) {
+            throw new Error(`agent.persist_state_missing: Agent result at chat message ${i} has no persistStateId`);
+        }
+        return metadata.persistStateId.trim();
+    }
+
+    return null;
+}
+
+function collectAgentPersistStateIdsFromMessage(message) {
+    const ids = [];
+    collectAgentPersistStateIdFromExtra(message?.extra, ids);
+    if (Array.isArray(message?.swipe_info)) {
+        for (const swipe of message.swipe_info) {
+            collectAgentPersistStateIdFromExtra(swipe?.extra, ids);
+        }
+    }
+    return ids;
+}
+
+function collectAgentPersistStateIdsFromExtra(extra) {
+    const ids = [];
+    collectAgentPersistStateIdFromExtra(extra, ids);
+    return ids;
+}
+
+function collectAgentPersistStateIdFromExtra(extra, ids) {
+    const stateId = extra?.tauritavern?.agent?.persistStateId;
+    if (typeof stateId === 'string' && stateId.trim()) {
+        ids.push(stateId.trim());
+    }
+}
+
+async function pruneAgentPersistentStatesAfterDeletion(deletedStateIds) {
+    if (!Array.isArray(deletedStateIds) || deletedStateIds.length === 0) {
+        return;
+    }
+    if (selected_group || this_chid === undefined) {
+        return;
+    }
+
+    const agentApi = window.__TAURITAVERN__?.api?.agent;
+    if (!agentApi || typeof agentApi.pruneChatPersistentStates !== 'function') {
+        return;
+    }
+    await agentApi.pruneChatPersistentStates();
 }
 
 function assertAgentPromptSnapshotHasNoExternalTools(payload) {
@@ -10110,6 +10187,7 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
         return;
     }
 
+    const deletedAgentStateIds = collectAgentPersistStateIdsFromExtra(message.swipe_info?.[swipeId]?.extra);
     message.swipes.splice(swipeId, 1);
 
     if (Array.isArray(message.swipe_info) && message.swipe_info.length) {
@@ -10129,6 +10207,7 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
     await swipe(null, direction, { source: SWIPE_SOURCE.DELETE, repeated: false, forceMesId: messageId, forceSwipeId: newSwipeId });
 
     await saveChatConditional();
+    await pruneAgentPersistentStatesAfterDeletion(deletedAgentStateIds);
 
     return newSwipeId;
 }
@@ -12565,6 +12644,9 @@ jQuery(async function () {
         });
 
         if (this_del_mes >= 0) {
+            const deletedAgentStateIds = chat
+                .slice(this_del_mes)
+                .flatMap(collectAgentPersistStateIdsFromMessage);
             for (let i = (chat.length - 1); i >= this_del_mes; i--) {
                 deleteItemizedPromptForMessage(i);
             }
@@ -12575,6 +12657,7 @@ jQuery(async function () {
             await saveChatConditional();
             chatElement.scrollTop(chatElement[0].scrollHeight);
             await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
+            await pruneAgentPersistentStatesAfterDeletion(deletedAgentStateIds);
             chatElement.find('.mes').removeClass('last_mes');
             chatElement.find('.mes').last().addClass('last_mes');
         } else {

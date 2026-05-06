@@ -69,6 +69,7 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
     try {
         await assertCurrentChat(payload.chatRef, payload.stableChatId);
         const path = requireCommitPayloadString(payload, 'path');
+        requireCommitPayloadString(payload, 'persistStateId');
         const mode = normalizeCommitMode(payload.mode);
         const file = await readWorkspaceFile({ runId: state.runId, path });
         const script = await import('../../../script.js');
@@ -199,6 +200,8 @@ function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commit
                 workspaceId: payload.workspaceId,
                 stableChatId: payload.stableChatId,
                 profileId: payload.profileId ?? null,
+                persistStateId: payload.persistStateId,
+                persistBaseStateId: payload.persistBaseStateId ?? null,
                 checkpointId: payload.checkpointId,
                 commitId: payload.commitId,
                 commitSeq,

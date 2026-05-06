@@ -917,11 +917,15 @@ function formatAgentResultPrompt(agentResult, content) {
         `run_id: ${metadata.runId}`,
         `workspace_id: ${metadata.workspaceId}`,
         `stable_chat_id: ${metadata.stableChatId}`,
+        `persist_state_id: ${metadata.persistStateId}`,
         `checkpoint_id: ${metadata.checkpointId}`,
         `commit_id: ${metadata.commitId}`,
         `commit_seq: ${metadata.commitSeq}`,
     ];
 
+    if (metadata.persistBaseStateId) {
+        lines.push(`persist_base_state_id: ${metadata.persistBaseStateId}`);
+    }
     if (metadata.profileId) {
         lines.push(`profile_id: ${metadata.profileId}`);
     }
@@ -952,7 +956,7 @@ function assertAgentResultMetadata(agentResult) {
         throw new Error(`Unsupported AgentResult metadata version at chat message ${messageIndex}: ${metadata.version}`);
     }
 
-    for (const field of ['runId', 'workspaceId', 'stableChatId', 'checkpointId', 'commitId']) {
+    for (const field of ['runId', 'workspaceId', 'stableChatId', 'persistStateId', 'checkpointId', 'commitId']) {
         if (typeof metadata[field] !== 'string' || !metadata[field]) {
             throw new Error(`Invalid AgentResult metadata field "${field}" at chat message ${messageIndex}`);
         }
@@ -963,6 +967,9 @@ function assertAgentResultMetadata(agentResult) {
     }
     if (metadata.profileId !== null && metadata.profileId !== undefined && typeof metadata.profileId !== 'string') {
         throw new Error(`Invalid AgentResult metadata field "profileId" at chat message ${messageIndex}`);
+    }
+    if (metadata.persistBaseStateId !== null && metadata.persistBaseStateId !== undefined && typeof metadata.persistBaseStateId !== 'string') {
+        throw new Error(`Invalid AgentResult metadata field "persistBaseStateId" at chat message ${messageIndex}`);
     }
     if (!Array.isArray(metadata.commits)) {
         throw new Error(`Invalid AgentResult commits at chat message ${messageIndex}`);

@@ -8,9 +8,12 @@ use crate::application::dto::chat_dto::{
     ImportCharacterChatsDto, ImportChatDto, RenameChatDto, SaveChatFromFileDto,
 };
 use crate::application::errors::ApplicationError;
-use crate::application::services::agent_workspace_lifecycle_service::AgentWorkspaceLifecycleService;
+use crate::application::services::agent_workspace_lifecycle_service::{
+    AgentChatWorkspaceTarget, AgentWorkspaceLifecycleService,
+};
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
+use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentPersistentStatePrune;
 use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatRepository,
@@ -518,6 +521,27 @@ impl ChatService {
             .get_chat_payload_path(character_name, file_name)
             .await?;
         Ok(path.to_string_lossy().to_string())
+    }
+
+    pub async fn get_chat_payload(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Vec<Value>, ApplicationError> {
+        self.chat_repository
+            .get_chat_payload(character_name, file_name)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn prune_agent_persistent_states(
+        &self,
+        target: &AgentChatWorkspaceTarget,
+        retained_state_ids: &[String],
+    ) -> Result<AgentPersistentStatePrune, ApplicationError> {
+        self.agent_workspace_lifecycle_service
+            .prune_persistent_states(target, retained_state_ids)
+            .await
     }
 
     /// Get the tail window for a character chat JSONL payload.

@@ -33,6 +33,21 @@ impl FileAgentRepository {
         Ok(self.root.join("chats").join(workspace_id))
     }
 
+    pub(super) fn persistent_state_dir(
+        &self,
+        workspace_id: &str,
+        state_id: &str,
+    ) -> Result<PathBuf, DomainError> {
+        validate_segment(workspace_id, "workspace_id")?;
+        validate_segment(state_id, "persist_state_id")?;
+        Ok(self
+            .root
+            .join("chats")
+            .join(workspace_id)
+            .join("persistent-states")
+            .join(state_id))
+    }
+
     pub(super) async fn load_run_dir(&self, run_id: &str) -> Result<PathBuf, DomainError> {
         let run = self.load_run(run_id).await?;
         self.run_dir(&run)
@@ -100,84 +115,6 @@ impl FileAgentRepository {
             Err(error) => {
                 return Err(DomainError::InternalError(format!(
                     "Failed to inspect workspace path {}: {}",
-                    target.display(),
-                    error
-                )));
-            }
-        }
-
-        Ok(target)
-    }
-
-    pub(super) async fn safe_chat_workspace_path(
-        &self,
-        workspace_id: &str,
-        workspace_path: &WorkspacePath,
-        create_parent: bool,
-    ) -> Result<PathBuf, DomainError> {
-        let chat_dir = self.chat_dir(workspace_id)?;
-        fs::create_dir_all(&chat_dir).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to create agent chat workspace {}: {}",
-                chat_dir.display(),
-                error
-            ))
-        })?;
-        let target = chat_dir.join(workspace_path.as_str());
-
-        let canonical_chat_dir = fs::canonicalize(&chat_dir).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to resolve agent chat workspace {}: {}",
-                chat_dir.display(),
-                error
-            ))
-        })?;
-
-        if let Some(parent) = target.parent() {
-            if create_parent {
-                fs::create_dir_all(parent).await.map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to create persistent workspace parent {}: {}",
-                        parent.display(),
-                        error
-                    ))
-                })?;
-            }
-
-            let canonical_parent = fs::canonicalize(parent).await.map_err(|error| {
-                if error.kind() == std::io::ErrorKind::NotFound {
-                    DomainError::NotFound(format!(
-                        "Persistent workspace path parent not found: {}",
-                        workspace_path.as_str()
-                    ))
-                } else {
-                    DomainError::InternalError(format!(
-                        "Failed to resolve persistent workspace parent {}: {}",
-                        parent.display(),
-                        error
-                    ))
-                }
-            })?;
-            if !canonical_parent.starts_with(&canonical_chat_dir) {
-                return Err(DomainError::InvalidData(format!(
-                    "Persistent workspace path escapes chat workspace: {}",
-                    workspace_path.as_str()
-                )));
-            }
-        }
-
-        match fs::symlink_metadata(&target).await {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(DomainError::InvalidData(format!(
-                    "Persistent workspace path targets a symlink: {}",
-                    workspace_path.as_str()
-                )));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(DomainError::InternalError(format!(
-                    "Failed to inspect persistent workspace path {}: {}",
                     target.display(),
                     error
                 )));

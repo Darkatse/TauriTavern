@@ -9,6 +9,25 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::agent::WorkspacePath;
 use crate::domain::repositories::workspace_repository::WorkspaceFile;
 
+pub(super) fn should_skip_platform_metadata_file(
+    path: &Path,
+    metadata: &std::fs::Metadata,
+) -> Result<bool, DomainError> {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Ok(false);
+    };
+    if file_name != ".DS_Store" {
+        return Ok(false);
+    }
+    if metadata.is_file() {
+        return Ok(true);
+    }
+    Err(DomainError::InvalidData(format!(
+        "Platform metadata entry is not a file: {}",
+        path.display()
+    )))
+}
+
 pub(super) async fn copy_directory_contents(
     source: &Path,
     target: &Path,
@@ -79,6 +98,9 @@ pub(super) async fn copy_directory_contents(
                     "Persistent root entry targets a symlink: {}",
                     child.display()
                 )));
+            }
+            if should_skip_platform_metadata_file(&child, &metadata)? {
+                continue;
             }
             let relative = child.strip_prefix(&source_dir).map_err(|error| {
                 DomainError::InvalidData(format!(
@@ -184,6 +206,9 @@ pub(super) async fn scan_workspace_files(
                     "Workspace root entry targets a symlink: {}",
                     child.display()
                 )));
+            }
+            if should_skip_platform_metadata_file(&child, &metadata)? {
+                continue;
             }
             if metadata.is_dir() {
                 stack.push(child);
