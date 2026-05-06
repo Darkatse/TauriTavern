@@ -12,6 +12,7 @@ const SURFACE_KIND = /** @type {const} */ ({
 const FIXED_SHELL_ROOT_SELECTOR = [
     '#character_popup',
     '#completion_prompt_manager_popup',
+    '#select_chat_popup',
     '#top-settings-holder > .drawer > .drawer-content.openDrawer:not(.fillLeft):not(.fillRight)',
     '.drawer-content.openDrawer',
     '#floatingPrompt',

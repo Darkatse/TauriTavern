@@ -369,6 +369,26 @@ test('geometry firewall enforces safe-area top contract for completion prompt ma
     assert.match(source, /#completion_prompt_manager_popup[\s\S]*height:\s*calc\(var\(--tt-base-viewport-height/);
 });
 
+test('geometry firewall keeps chat manager list as the mobile scroll surface', async () => {
+    const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
+    const source = await readFile(firewallPath, 'utf8');
+
+    assert.match(source, /body\s+#shadow_select_chat_popup\s*\{[\s\S]*position:\s*fixed/);
+    assert.match(source, /body\s+#select_chat_popup\s*\{[\s\S]*align-items:\s*stretch/);
+    assert.match(source, /body\s+#select_chat_popup\s*>\s*#select_chat_div\s*\{[\s\S]*flex:\s*1\s+1\s+auto/);
+    assert.match(source, /body\s+#select_chat_popup\s*>\s*#select_chat_div\s*\{[\s\S]*min-height:\s*0/);
+    assert.match(source, /body\s+#select_chat_popup\s*>\s*#select_chat_div\s*\{[\s\S]*overflow-y:\s*auto/);
+});
+
+test('geometry firewall applies local IME bottom to chat manager popup', async () => {
+    const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
+    const source = await readFile(firewallPath, 'utf8');
+
+    assert.match(source, /body\s+#select_chat_popup\s*\{[\s\S]*bottom:\s*max\(var\(--tt-viewport-bottom-inset/);
+    assert.match(source, /body\s+#select_chat_popup\[data-tt-ime-surface="fixed-shell"\]\[data-tt-ime-active\]\s*\{/);
+    assert.match(source, /#select_chat_popup\[data-tt-ime-surface="fixed-shell"\]\[data-tt-ime-active\][\s\S]*--tt-viewport-bottom-inset-local/);
+});
+
 test('geometry firewall ensures scroll reachability above bottom safe-area', async () => {
     const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
     const source = await readFile(firewallPath, 'utf8');

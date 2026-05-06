@@ -468,6 +468,39 @@ test('focus routing still routes IME-capable text inputs', async () => {
     controller.dispose();
 });
 
+test('focus routing treats chat manager search as a fixed-shell surface', async () => {
+    const dom = createFocusHarness();
+
+    const sheld = new HTMLElementMock('div');
+    sheld.id = 'sheld';
+    dom.body.appendChild(sheld);
+
+    const selectChatPopup = new HTMLElementMock('div');
+    selectChatPopup.id = 'select_chat_popup';
+    dom.body.appendChild(selectChatPopup);
+
+    const searchInput = new HTMLInputElementMock();
+    searchInput.type = 'search';
+    selectChatPopup.appendChild(searchInput);
+
+    const modulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-ime-surface-controller.js',
+    );
+    const { installMobileImeSurfaceController } = await importFresh(modulePath);
+
+    const controller = installMobileImeSurfaceController();
+    assert.ok(controller);
+
+    dom.emit('focusin', { target: searchInput });
+    assert.equal(selectChatPopup.getAttribute('data-tt-ime-surface'), 'fixed-shell');
+    assert.ok(selectChatPopup.hasAttribute('data-tt-ime-active'));
+    assert.equal(dom.calls.length, 1);
+    assert.equal(dom.calls[0], selectChatPopup);
+
+    controller.dispose();
+});
+
 test('focus routing fails fast when bridge is missing (Android only)', async () => {
     const dom = createFocusHarness();
     delete dom.windowMock.__TAURITAVERN_INSETS__;
