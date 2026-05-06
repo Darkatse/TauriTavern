@@ -1,4 +1,7 @@
 {
     "Toggle Fullscreen": "Toggle Fullscreen",
-    "GitHub has rate-limited your requests. Please try again later, or change your network and try again.": "GitHub has rate-limited your requests. Please try again later, or change your network and try again."
+    "GitHub has rate-limited your requests. Please try again later, or change your network and try again.": "GitHub has rate-limited your requests. Please try again later, or change your network and try again.",
+    "agent.error.run_failed": "Agent run failed",
+    "agent.error.model_tool_call_required.message": "The model skipped the Agent tool flow and tried to answer directly. No chat message was committed. Try regenerating; if this keeps happening, reduce the context or use a model with stronger tool calling.",
+    "agent.error.model_tool_call_required.summary": "The model skipped the Agent tool flow; no message was committed."
 }

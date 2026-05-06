@@ -3895,5 +3895,8 @@
     "Skill contains scripts/ files; TauriTavern stores them but does not execute them.": "Skill 包含 scripts/ 文件；TauriTavern 会保存它们，但不会执行。",
     "Skill contains binary files; Agent skill.read can only read UTF-8 text files.": "Skill 包含二进制文件；Agent skill.read 只能读取 UTF-8 文本文件。",
     "Skill has no license field.": "Skill 未声明许可证。",
+    "agent.error.run_failed": "Agent 运行失败",
+    "agent.error.model_tool_call_required.message": "模型这次没有进入 Agent 工具流程，而是直接输出了正文。TauriTavern 已停止本轮，未写入聊天。请重新生成；如果频繁出现，建议缩短上下文或换用工具调用更稳定的模型。",
+    "agent.error.model_tool_call_required.summary": "模型跳过了 Agent 工具流程，未提交消息。",
     "Clear": "清除"
 }

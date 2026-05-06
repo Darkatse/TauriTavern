@@ -1,5 +1,6 @@
 import { displayToolName } from './run-tool-labels.js';
 import { translateAgentSystem as tr } from './i18n.js';
+import { presentAgentRunFailure } from '../../../tauritavern/agent/agent-error-presenter.js';
 
 const DETAIL_TEXT_LIMIT = 40000;
 const NESTED_TEXT_LIMIT = 12000;
@@ -98,6 +99,30 @@ export function formatPatchDiffDetail(target, file) {
                 defaultOpen: true,
             },
         ],
+    };
+}
+
+export function formatRunFailureDetail(target) {
+    const presentation = presentAgentRunFailure(target.event);
+    const fields = [];
+    const blocks = [];
+
+    if (presentation.code) {
+        fields.push(field(tr('timelineDetailFieldErrorCode'), presentation.code));
+    }
+    fields.push(field(tr('timelineDetailFieldRetryable'), String(presentation.retryable)));
+    addBlock(blocks, 'timelineResultText', presentation.message);
+    if (presentation.technicalMessage && presentation.technicalMessage !== presentation.message) {
+        addBlock(blocks, 'timelineTechnicalMessage', presentation.technicalMessage, DETAIL_TEXT_LIMIT, false, {
+            defaultOpen: false,
+        });
+    }
+
+    return {
+        labelKey: target.labelKey,
+        path: '',
+        fields,
+        blocks,
     };
 }
 

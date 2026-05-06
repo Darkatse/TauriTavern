@@ -3,6 +3,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use super::artifacts::build_agent_manifest;
+use super::error_payload::run_failure_payload;
 use super::prompt_snapshot::{prepare_agent_tool_request, request_summary};
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
@@ -56,7 +57,7 @@ impl AgentRuntimeService {
                         &run_id,
                         AgentRunEventLevel::Error,
                         "run_failed",
-                        json!({ "message": error.to_string() }),
+                        run_failure_payload(&error),
                     )
                     .await;
                 self.active_runs.write().await.remove(&run_id);

@@ -1,3 +1,5 @@
+import { presentAgentRunFailure } from './agent-error-presenter.js';
+
 const AGENT_RUN_STATE_CHANGED = 'tauritavern-agent-run-state-changed';
 const AGENT_RUN_EVENT = 'tauritavern-agent-run-event';
 const TERMINAL_EVENTS = new Set(['run_completed', 'run_cancelled', 'run_failed']);
@@ -28,9 +30,14 @@ function emitRunEvent(event) {
 }
 
 function errorFromRunEvent(event) {
-    const message = event?.payload?.message || 'Agent run failed';
-    const error = new Error(message);
+    const presentation = presentAgentRunFailure(event);
+    const error = new Error(presentation.message);
+    error.name = 'AgentRunError';
     error.event = event;
+    error.agentErrorCode = presentation.code;
+    error.userMessage = presentation.message;
+    error.technicalMessage = presentation.technicalMessage;
+    error.retryable = presentation.retryable;
     return error;
 }
 

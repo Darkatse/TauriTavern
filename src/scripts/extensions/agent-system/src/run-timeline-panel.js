@@ -3,7 +3,7 @@ import { createApp } from 'vue/dist/vue.esm-bundler.js';
 import { errorText, requireHostApi } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 import { loadSettings, patchSettings, subscribeSettings } from './settings-store.js';
-import { formatDetailFile, formatModelTurnDetail, formatPatchDiffDetail } from './run-detail-format.js';
+import { formatDetailFile, formatModelTurnDetail, formatPatchDiffDetail, formatRunFailureDetail } from './run-detail-format.js';
 import {
     clampRunTimelineHeightPx,
     heightFromTopEdgeDrag,
@@ -465,6 +465,9 @@ function createAgentRunTimelineApp() {
                         path: target.argumentsRef,
                     });
                     return formatPatchDiffDetail(target, file);
+                }
+                if (target.type === 'runFailure') {
+                    return formatRunFailureDetail(target);
                 }
                 const file = await requireHostApi('agent').readWorkspaceFile({
                     runId: this.currentRun.runId,

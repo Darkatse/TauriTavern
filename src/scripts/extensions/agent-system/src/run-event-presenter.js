@@ -1,4 +1,5 @@
 import { displayToolName } from './run-tool-labels.js';
+import { presentAgentRunFailure } from '../../../tauritavern/agent/agent-error-presenter.js';
 
 const DISPLAY_EVENT_TYPES = new Set([
     'tool_call_requested',
@@ -144,6 +145,10 @@ export function buildEventDetailTargets(item, allEvents) {
 
     if (event?.type === 'workspace_patch_applied') {
         targets.push(buildPatchDiffTarget(event, allEvents));
+    }
+
+    if (event?.type === 'run_failed') {
+        targets.push({ type: 'runFailure', labelKey: 'timelineErrorDetails', event });
     }
 
     if (event?.type === 'workspace_file_written'
@@ -311,8 +316,9 @@ function eventSummary(type, payload) {
         case 'persistent_changes_committed':
             return Array.isArray(payload.changes) ? payload.changes.map((change) => change.path).filter(Boolean).join(', ') : '';
         case 'run_cancelled':
-        case 'run_failed':
             return payload.message || '';
+        case 'run_failed':
+            return presentAgentRunFailure({ payload }).summary;
         default:
             return '';
     }

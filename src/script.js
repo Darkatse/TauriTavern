@@ -53,6 +53,7 @@ import {
     hasActiveAgentRun,
     startAndWaitForAgentRun,
 } from './scripts/tauritavern/agent/agent-run-controller.js';
+import { agentErrorMessage } from './scripts/tauritavern/agent/agent-error-presenter.js';
 import {
     applyInitialChatHistoryPolicy,
     normalizeAgentContextPolicy,
@@ -2182,7 +2183,7 @@ export async function sendTextareaMessage() {
 
         return await Generate(generateType, agentOptions);
     } catch (error) {
-        const message = String(error?.message || error);
+        const message = agentErrorMessage(error);
         if (routeToAgentMode || message.startsWith('agent.')) {
             toastr.error(message, t`Agent Mode`);
         }
@@ -6252,7 +6253,7 @@ export function stopGeneration() {
     let stopped = false;
     if (hasActiveAgentRun()) {
         void cancelActiveAgentRun().catch((error) => {
-            toastr.error(String(error?.message || error), t`Agent Mode`);
+            toastr.error(agentErrorMessage(error), t`Agent Mode`);
             queueMicrotask(() => {
                 throw error;
             });
