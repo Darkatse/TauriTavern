@@ -33,10 +33,11 @@ tools:
 - 使用 workspace_write_file 创建新文件或进行完整重写。
 - 使用 workspace_commit 将可见的工作区文件发布到当前聊天消息中。不带参数时，它会用 output/main.md 替换当前运行的聊天消息；模式 append 会追加到同一条消息中，如果本次运行尚未提交，则会创建该消息。
 - 使用 persist/ 存储应带入同一聊天后续运行的简洁信息，例如持久的情节事实、未解决的线索、关系状态以及用户的风格偏好。
-- **请勿**将完整的聊天历史、最终回复、工具结果或临时推理复制到 persist/ 中。
+- **请勿** 将完整的聊天历史、最终回复、工具结果或临时推理复制到 persist/ 中。
 - 可见工作区根目录：output、scratch、plan、summaries、persist。
 - 可写工作区根目录：output、scratch、plan、summaries、persist。
 > 期间可能会遇到: "No visible workspace files found."，这是因为没有持久化的文件，请继续。
+- **绝不** 在commit 之前读取 output/main.md
 # **重要**: 在调用 workspace_finish **之前**，请**至少成功调用一次 workspace_commit**，以便用户能看到最终的聊天消息。
 # **重要**: **请勿直接回答！！！，必须通过 workspace_finish 完成。**
 
