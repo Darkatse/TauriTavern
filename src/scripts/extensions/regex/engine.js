@@ -342,7 +342,15 @@ function resolveRegexString(regexScript) {
     }
 }
 
+function canRunRegexScript(regexScript) {
+    return !!regexScript && !regexScript.disabled && !!regexScript.findRegex;
+}
+
 function isRegexScriptActiveForParams(script, { placement, isMarkdown, isPrompt, isEdit, depth }) {
+    if (!canRunRegexScript(script)) {
+        return false;
+    }
+
     const isScopeMatch =
         (script.markdownOnly && isMarkdown) ||
         (script.promptOnly && isPrompt) ||
@@ -551,7 +559,7 @@ export async function getRegexedStringAsync(rawString, placement, params = {}) {
  */
 export function runRegexScript(regexScript, rawString, { characterOverride } = {}) {
     let newString = rawString;
-    if (!regexScript || !!(regexScript.disabled) || !regexScript?.findRegex || !rawString) {
+    if (!canRunRegexScript(regexScript) || !rawString) {
         return newString;
     }
 
