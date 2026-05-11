@@ -8,7 +8,7 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::domain::errors::DomainError;
 use crate::infrastructure::ios_document_picker::{
-    PickDocumentResult, copy_picked_url_to_path, pick_skill_import_archive, pick_zip_archive,
+    PickDocumentResult, copy_picked_url_to_path, pick_data_archive, pick_skill_import_archive,
 };
 use crate::infrastructure::ios_share_sheet::share_file;
 use crate::infrastructure::paths::{IOS_EXPORT_STAGING_ROOT_NAME, resolve_runtime_paths};
@@ -57,7 +57,7 @@ pub async fn ios_import_data_archive_from_picker(
 ) -> Result<IosImportArchiveResponse, CommandError> {
     log_command("ios_import_data_archive_from_picker");
 
-    let picked = match pick_zip_archive(&window)
+    let picked = match pick_data_archive(&window)
         .await
         .map_err(map_command_error("Failed to present iOS document picker"))?
     {
@@ -137,7 +137,7 @@ fn prepare_incoming_import_archive_path(app: &AppHandle) -> Result<PathBuf, Doma
     })?;
 
     Ok(incoming_dir.join(format!(
-        "tauritavern-import-{}.zip",
+        "tauritavern-import-{}.archive",
         uuid::Uuid::new_v4().simple()
     )))
 }

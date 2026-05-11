@@ -10,7 +10,7 @@ const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'cancelled']);
 const PREPARING_PROGRESS_INTERVAL_MS = 320;
 const PREPARING_PROGRESS_MAX_BEFORE_JOB = 96;
 
-const SILLYTAVERN_MIGRATION_COPY_KEY = 'Import a SillyTavern data zip archive and migrate it to TauriTavern.';
+const SILLYTAVERN_MIGRATION_COPY_KEY = 'Import a SillyTavern data archive (zip, tar, tar.gz, or tgz) and migrate it to TauriTavern.';
 const TAURITAVERN_MIGRATION_COPY_KEY = 'Import a TauriTavern data zip archive from another device and migrate it to this TauriTavern.';
 
 const jobState = {

@@ -502,7 +502,7 @@ fn prepare_import_archive_path(
         return Ok(source_archive_path.to_path_buf());
     }
 
-    let staged_archive_path = job_root.join("import.zip");
+    let staged_archive_path = job_root.join("import.archive");
     if fs::rename(source_archive_path, &staged_archive_path).is_ok() {
         return Ok(staged_archive_path);
     }

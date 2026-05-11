@@ -71,7 +71,7 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 仅在 iOS 平台启用原生桥接：
 
 1) **Import（Document Picker）**
-   - 使用 `UIDocumentPickerViewController` 选择 `.zip`。
+   - 使用 `UIDocumentPickerViewController` 选择数据归档（当前后端支持 zip / tar / tar.gz / tgz；导出仍保持 zip）。
    - 将选中的 `file://` URL 复制到 app 内部 `archive_imports_root/incoming` staging，再启动现有 import job（job/轮询语义不变）。
 
 2) **Export（Share Sheet）**

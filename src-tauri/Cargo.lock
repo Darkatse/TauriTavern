@@ -5017,6 +5017,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22692a6476a21fa75fdfc11d452fda482af402c008cdbaf3476414e122040973"
+dependencies = [
+ "filetime",
+ "libc",
+]
+
+[[package]]
 name = "target-lexicon"
 version = "0.12.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5419,6 +5429,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "sys-locale",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-barcode-scanner",

@@ -164,7 +164,7 @@ export function createAndroidArchiveService({ safeInvoke, removeTempUploadFile, 
         const pathApi = window.__TAURI__.path;
 
         const stagingDirectory = await resolveAndroidImportStagingDirectory(pathApi);
-        const targetFileName = `tauritavern-import-${Date.now()}-${Math.random().toString(16).slice(2)}.zip`;
+        const targetFileName = `tauritavern-import-${Date.now()}-${Math.random().toString(16).slice(2)}.archive`;
         const targetFilePath = await pathApi.join(stagingDirectory, targetFileName);
         const filePath = String(
             bridge.stageContentUriToFile(String(contentUri).trim(), targetFilePath),

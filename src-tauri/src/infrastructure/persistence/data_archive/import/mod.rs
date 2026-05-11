@@ -1,4 +1,5 @@
 mod apply;
+mod archive;
 mod extract;
 mod layout;
 
@@ -36,7 +37,7 @@ pub fn run_import_data_archive(
     fs::create_dir_all(&normalized_root)
         .map_err(|error| internal_error("Failed to create normalized workspace", error))?;
 
-    let layout = layout::scan_archive_layout(archive_path)?;
+    let layout = layout::scan_archive_layout(archive_path, is_cancelled)?;
     report_progress("scanning", 10.0, "Archive layout detected");
     ensure_not_cancelled(is_cancelled)?;
 
@@ -65,9 +66,13 @@ mod tests {
     use super::*;
 
     use base64::Engine;
+    use flate2::Compression as GzipCompression;
+    use flate2::write::GzEncoder;
     use std::fs;
     use std::io::Cursor;
     use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tar::{Builder as TarBuilder, EntryType, Header};
     use zip::CompressionMethod;
     use zip::ZipWriter;
     use zip::write::SimpleFileOptions as FileOptions;
@@ -90,6 +95,98 @@ mod tests {
             writer.write_all(bytes).expect("write bytes");
         }
         writer.finish().expect("finish zip");
+    }
+
+    fn append_tar_file<W: Write>(builder: &mut TarBuilder<W>, name: &str, bytes: &[u8]) {
+        let mut header = Header::new_gnu();
+        header.set_entry_type(EntryType::Regular);
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, name, Cursor::new(bytes))
+            .expect("append tar file");
+    }
+
+    fn append_tar_symlink<W: Write>(builder: &mut TarBuilder<W>, name: &str, target: &str) {
+        let mut header = Header::new_gnu();
+        header.set_entry_type(EntryType::Symlink);
+        header.set_size(0);
+        header.set_mode(0o777);
+        header.set_link_name(target).expect("set link target");
+        header.set_cksum();
+        builder
+            .append_data(&mut header, name, Cursor::new(Vec::<u8>::new()))
+            .expect("append tar symlink");
+    }
+
+    fn write_tar(path: &Path, entries: &[(&str, &[u8])]) {
+        let file = fs::File::create(path).expect("create tar");
+        let mut builder = TarBuilder::new(file);
+        for (name, bytes) in entries {
+            append_tar_file(&mut builder, name, bytes);
+        }
+        builder.finish().expect("finish tar");
+    }
+
+    fn write_tar_gz(path: &Path, entries: &[(&str, &[u8])]) {
+        let file = fs::File::create(path).expect("create tar.gz");
+        let encoder = GzEncoder::new(file, GzipCompression::default());
+        let mut builder = TarBuilder::new(encoder);
+        for (name, bytes) in entries {
+            append_tar_file(&mut builder, name, bytes);
+        }
+        let encoder = builder.into_inner().expect("finish tar stream");
+        encoder.finish().expect("finish gzip stream");
+    }
+
+    fn write_tar_gz_symlink(path: &Path, name: &str, target: &str) {
+        let file = fs::File::create(path).expect("create tar.gz");
+        let encoder = GzEncoder::new(file, GzipCompression::default());
+        let mut builder = TarBuilder::new(encoder);
+        append_tar_symlink(&mut builder, name, target);
+        let encoder = builder.into_inner().expect("finish tar stream");
+        encoder.finish().expect("finish gzip stream");
+    }
+
+    fn write_raw_tar_file(path: &Path, name: &str, bytes: &[u8]) {
+        let mut header = [0u8; 512];
+        let name_bytes = name.as_bytes();
+        assert!(
+            name_bytes.len() <= 100,
+            "raw tar helper only supports short names"
+        );
+        header[..name_bytes.len()].copy_from_slice(name_bytes);
+        write_tar_octal(&mut header[100..108], 0o644);
+        write_tar_octal(&mut header[108..116], 0);
+        write_tar_octal(&mut header[116..124], 0);
+        write_tar_octal(&mut header[124..136], bytes.len() as u64);
+        write_tar_octal(&mut header[136..148], 0);
+        header[148..156].fill(b' ');
+        header[156] = b'0';
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+
+        let checksum = header.iter().map(|byte| u32::from(*byte)).sum::<u32>();
+        let checksum_text = format!("{:06o}\0 ", checksum);
+        header[148..156].copy_from_slice(checksum_text.as_bytes());
+
+        let mut file = fs::File::create(path).expect("create raw tar");
+        file.write_all(&header).expect("write raw tar header");
+        file.write_all(bytes).expect("write raw tar payload");
+
+        let padding = (512 - (bytes.len() % 512)) % 512;
+        if padding > 0 {
+            file.write_all(&vec![0u8; padding])
+                .expect("write raw tar padding");
+        }
+        file.write_all(&[0u8; 1024])
+            .expect("write raw tar terminator");
+    }
+
+    fn write_tar_octal(field: &mut [u8], value: u64) {
+        let text = format!("{:0width$o}\0", value, width = field.len() - 1);
+        field.copy_from_slice(text.as_bytes());
     }
 
     fn write_zip_bytes(entries: &[(&str, &[u8])], options: FileOptions) -> Vec<u8> {
@@ -321,6 +418,265 @@ mod tests {
     }
 
     #[test]
+    fn import_supports_tar_archives() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-tar-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.tar");
+
+        fs::create_dir_all(&root).expect("create temp root");
+        fs::create_dir_all(&workspace_root).expect("create temp workspace");
+        write_tar(
+            &archive_path,
+            &[(
+                "data/default-user/characters/tar.json",
+                br#"{ "tar": true }"#,
+            )],
+        );
+
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        let is_cancelled = || false;
+
+        run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &is_cancelled,
+        )
+        .expect("import tar archive");
+
+        assert!(
+            data_root
+                .join("default-user")
+                .join("characters")
+                .join("tar.json")
+                .is_file(),
+            "tar file should be imported"
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn import_supports_tar_gz_archives() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-targz-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.tar.gz");
+
+        fs::create_dir_all(&root).expect("create temp root");
+        fs::create_dir_all(&workspace_root).expect("create temp workspace");
+        write_tar_gz(
+            &archive_path,
+            &[(
+                "BackupRoot/data/default-user/chats/targz.jsonl",
+                br#"{ "tar_gz": true }"#,
+            )],
+        );
+
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        let is_cancelled = || false;
+
+        run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &is_cancelled,
+        )
+        .expect("import tar.gz archive");
+
+        assert!(
+            data_root
+                .join("default-user")
+                .join("chats")
+                .join("targz.jsonl")
+                .is_file(),
+            "tar.gz file should be imported"
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn import_detects_tar_gz_by_content_not_extension() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-tgz-magic-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.zip");
+
+        fs::create_dir_all(&root).expect("create temp root");
+        fs::create_dir_all(&workspace_root).expect("create temp workspace");
+        write_tar_gz(
+            &archive_path,
+            &[(
+                "default-user/worlds/content-detected.json",
+                br#"{ "ok": true }"#,
+            )],
+        );
+
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        let is_cancelled = || false;
+
+        run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &is_cancelled,
+        )
+        .expect("import content-detected tar.gz archive");
+
+        assert!(
+            data_root
+                .join("default-user")
+                .join("worlds")
+                .join("content-detected.json")
+                .is_file(),
+            "tar.gz content should import even when staging name is not reliable"
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn tar_import_rejects_path_escape() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-tar-escape-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.tar");
+
+        fs::create_dir_all(&root).expect("create temp root");
+        fs::create_dir_all(&workspace_root).expect("create temp workspace");
+        write_raw_tar_file(&archive_path, "../escape.json", b"bad");
+
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        let is_cancelled = || false;
+
+        let error = run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &is_cancelled,
+        )
+        .expect_err("path escape should be rejected");
+        assert!(matches!(error, DomainError::InvalidData(_)));
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn import_rejects_malformed_archive_as_invalid_data() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-malformed-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.archive");
+
+        fs::create_dir_all(&root).expect("create temp root");
+        fs::create_dir_all(&workspace_root).expect("create temp workspace");
+        fs::write(&archive_path, b"not a zip, tar, or gzip archive").expect("write archive");
+
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        let is_cancelled = || false;
+
+        let error = run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &is_cancelled,
+        )
+        .expect_err("malformed archive should be rejected");
+        assert!(
+            matches!(error, DomainError::InvalidData(_)),
+            "malformed archive should be invalid data, got: {}",
+            error
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn tar_scan_reports_cancelled_errors_as_cancelled() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-tar-cancel-{}",
+            rand::random::<u64>()
+        ));
+        let archive_path = root.join("fixture.tar");
+        let large_payload = vec![0u8; 2 * 1024 * 1024];
+
+        fs::create_dir_all(&root).expect("create temp root");
+        write_tar(
+            &archive_path,
+            &[("data/default-user/chats/large.jsonl", &large_payload)],
+        );
+
+        let checks = AtomicUsize::new(0);
+        let is_cancelled = || checks.fetch_add(1, Ordering::SeqCst) >= 2;
+
+        let error = layout::scan_archive_layout(&archive_path, &is_cancelled)
+            .expect_err("cancelled scan should fail");
+        assert!(
+            matches!(error, DomainError::Cancelled(_)),
+            "cancelled scan should stay cancelled, got: {}",
+            error
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn tar_gz_import_rejects_symlinks() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-targz-symlink-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.tgz");
+
+        fs::create_dir_all(&root).expect("create temp root");
+        fs::create_dir_all(&workspace_root).expect("create temp workspace");
+        write_tar_gz_symlink(
+            &archive_path,
+            "data/default-user/characters/link.json",
+            "target.json",
+        );
+
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        let is_cancelled = || false;
+
+        let error = run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &is_cancelled,
+        )
+        .expect_err("symlink should be rejected");
+        assert!(matches!(error, DomainError::InvalidData(_)));
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
     fn import_supports_user_root_layout() {
         let root = std::env::temp_dir().join(format!(
             "tauritavern-data-archive-user-root-{}",
@@ -460,7 +816,8 @@ mod tests {
         assert!(patched > 0, "should patch zip headers");
         fs::write(&archive_path, bytes).expect("write fixture zip");
 
-        let error = layout::scan_archive_layout(&archive_path).expect_err("scan should fail");
+        let error =
+            layout::scan_archive_layout(&archive_path, &|| false).expect_err("scan should fail");
         assert!(
             error.to_string().contains(entry_name),
             "error should reference utf-8 entry name, got: {}",

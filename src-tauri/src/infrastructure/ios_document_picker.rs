@@ -17,7 +17,14 @@ use tokio::sync::oneshot;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::ios_ui::resolve_presenting_view_controller;
 
-const ZIP_ARCHIVE_CONTENT_TYPES: &[&str] = &["public.zip-archive", "com.pkware.zip-archive"];
+const DATA_ARCHIVE_CONTENT_TYPES: &[&str] = &[
+    "public.zip-archive",
+    "com.pkware.zip-archive",
+    "public.tar-archive",
+    "org.gnu.gnu-zip-archive",
+    "com.tauritavern.client.tar-archive",
+    "com.tauritavern.client.gzip-archive",
+];
 const SKILL_IMPORT_CONTENT_TYPES: &[&str] = &[
     "public.zip-archive",
     "com.pkware.zip-archive",
@@ -247,8 +254,8 @@ async fn pick_archive_with_content_types(
     }
 }
 
-pub async fn pick_zip_archive(window: &WebviewWindow) -> Result<PickDocumentResult, DomainError> {
-    pick_archive_with_content_types(window, ZIP_ARCHIVE_CONTENT_TYPES).await
+pub async fn pick_data_archive(window: &WebviewWindow) -> Result<PickDocumentResult, DomainError> {
+    pick_archive_with_content_types(window, DATA_ARCHIVE_CONTENT_TYPES).await
 }
 
 pub async fn pick_skill_import_archive(

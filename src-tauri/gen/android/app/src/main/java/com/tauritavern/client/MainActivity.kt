@@ -196,7 +196,14 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
       }
 
       importArchivePickerLauncher.launch(
-        arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"),
+        arrayOf(
+          "application/zip",
+          "application/x-zip-compressed",
+          "application/gzip",
+          "application/x-gzip",
+          "application/x-tar",
+          "application/octet-stream",
+        ),
       )
     }
   }
