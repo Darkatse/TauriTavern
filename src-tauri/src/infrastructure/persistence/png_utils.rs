@@ -211,6 +211,29 @@ fn write_text_chunk(output: &mut Vec<u8>, keyword: &str, text: &str) {
     write_chunk(output, CHUNK_TYPE_TEXT, &data);
 }
 
+fn text_chunk_keyword<'a>(
+    chunk_type: [u8; 4],
+    data: &'a [u8],
+) -> Result<Option<&'a [u8]>, DomainError> {
+    let keyword = match chunk_type {
+        CHUNK_TYPE_TEXT => split_keyword(data, "tEXt")?.0,
+        CHUNK_TYPE_ZTXT => split_keyword(data, "zTXt")?.0,
+        CHUNK_TYPE_ITXT => split_keyword(data, "iTXt")?.0,
+        _ => return Ok(None),
+    };
+
+    Ok(Some(keyword))
+}
+
+fn is_character_text_chunk(chunk_type: [u8; 4], data: &[u8]) -> Result<bool, DomainError> {
+    let Some(keyword) = text_chunk_keyword(chunk_type, data)? else {
+        return Ok(false);
+    };
+
+    Ok(keyword.eq_ignore_ascii_case(CHUNK_NAME_V2.as_bytes())
+        || keyword.eq_ignore_ascii_case(CHUNK_NAME_V3.as_bytes()))
+}
+
 /// Reads all text metadata chunks from a PNG image.
 ///
 /// This includes `tEXt`, `zTXt`, and `iTXt` chunks.
@@ -366,13 +389,8 @@ pub fn write_character_data_to_png(
             break;
         }
 
-        if chunk.chunk_type == CHUNK_TYPE_TEXT {
-            let (keyword, _) = split_keyword(chunk.data, "tEXt")?;
-            if keyword.eq_ignore_ascii_case(CHUNK_NAME_V2.as_bytes())
-                || keyword.eq_ignore_ascii_case(CHUNK_NAME_V3.as_bytes())
-            {
-                continue;
-            }
+        if is_character_text_chunk(chunk.chunk_type, chunk.data)? {
+            continue;
         }
 
         output.extend_from_slice(chunk.raw);
@@ -482,13 +500,14 @@ fn build_v3_payload(character_data: &str) -> Result<Option<String>, DomainError>
 #[cfg(test)]
 mod tests {
     use super::{
-        CHUNK_TYPE_IEND, CHUNK_TYPE_ITXT, PNG_SIGNATURE, decode_base64, encode_base64,
-        read_character_data_from_png, read_next_png_chunk, read_text_chunks_from_png,
-        write_character_data_to_png, write_chunk, write_text_chunk,
+        CHUNK_TYPE_IEND, CHUNK_TYPE_ITXT, CHUNK_TYPE_ZTXT, PNG_SIGNATURE, decode_base64,
+        encode_base64, read_character_data_from_png, read_next_png_chunk,
+        read_text_chunks_from_png, write_character_data_to_png, write_chunk, write_text_chunk,
     };
+    use flate2::{Compression, write::ZlibEncoder};
     use image::{DynamicImage, ImageFormat, RgbaImage};
     use serde_json::Value;
-    use std::io::Cursor;
+    use std::io::{Cursor, Write};
 
     fn build_minimal_png() -> Vec<u8> {
         let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 1));
@@ -520,6 +539,39 @@ mod tests {
         output
     }
 
+    fn build_ztxt_chunk(keyword: &str, text: &str) -> Vec<u8> {
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(text.as_bytes())
+            .expect("compress zTXt payload");
+        let compressed = encoder.finish().expect("finish zTXt compression");
+
+        let mut data = Vec::new();
+        data.extend_from_slice(keyword.as_bytes());
+        data.push(0);
+        data.push(0);
+        data.extend_from_slice(&compressed);
+
+        let mut chunk = Vec::new();
+        write_chunk(&mut chunk, CHUNK_TYPE_ZTXT, &data);
+        chunk
+    }
+
+    fn build_itxt_chunk(keyword: &str, text: &str) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(keyword.as_bytes());
+        data.push(0);
+        data.push(0);
+        data.push(0);
+        data.push(0);
+        data.push(0);
+        data.extend_from_slice(text.as_bytes());
+
+        let mut chunk = Vec::new();
+        write_chunk(&mut chunk, CHUNK_TYPE_ITXT, &data);
+        chunk
+    }
+
     #[test]
     fn write_replaces_existing_character_metadata_chunks() {
         let base_png = build_minimal_png();
@@ -548,6 +600,47 @@ mod tests {
         let decoded = read_character_data_from_png(&second_write).expect("read should succeed");
         let parsed: Value = serde_json::from_str(&decoded).expect("valid json");
         assert_eq!(parsed.get("chat").and_then(Value::as_str), Some("new-chat"));
+    }
+
+    #[test]
+    fn write_removes_existing_character_metadata_from_all_text_chunk_types() {
+        let base_png = build_minimal_png();
+        let old_json =
+            r#"{"spec":"chara_card_v3","spec_version":"3.0","name":"Seraphina","chat":"old-chat"}"#;
+        let new_json =
+            r#"{"spec":"chara_card_v3","spec_version":"3.0","name":"Seraphina","chat":"new-chat"}"#;
+        let old_payload = encode_base64(old_json);
+
+        let png_with_old_metadata = inject_raw_chunks_before_iend(
+            &base_png,
+            &[
+                build_ztxt_chunk("chara", &old_payload),
+                build_itxt_chunk("ccv3", &old_payload),
+            ],
+        );
+        let old_decoded =
+            read_character_data_from_png(&png_with_old_metadata).expect("read old metadata");
+        let old_parsed: Value = serde_json::from_str(&old_decoded).expect("valid old json");
+        assert_eq!(
+            old_parsed.get("chat").and_then(Value::as_str),
+            Some("old-chat")
+        );
+
+        let rewritten = write_character_data_to_png(&png_with_old_metadata, new_json)
+            .expect("rewrite metadata");
+        let decoded = read_character_data_from_png(&rewritten).expect("read new metadata");
+        let parsed: Value = serde_json::from_str(&decoded).expect("valid new json");
+        assert_eq!(parsed.get("chat").and_then(Value::as_str), Some("new-chat"));
+
+        let text_chunks = read_text_chunks_from_png(&rewritten).expect("read text metadata");
+        let character_chunks_count = text_chunks
+            .iter()
+            .filter(|chunk| {
+                chunk.keyword.eq_ignore_ascii_case("chara")
+                    || chunk.keyword.eq_ignore_ascii_case("ccv3")
+            })
+            .count();
+        assert_eq!(character_chunks_count, 2);
     }
 
     #[test]
@@ -588,19 +681,8 @@ mod tests {
         let json = r#"{"spec":"chara_card_v2","spec_version":"2.0","name":"Seraphina"}"#;
         let encoded = encode_base64(json);
 
-        let mut itxt_data = Vec::new();
-        itxt_data.extend_from_slice(b"ccv3");
-        itxt_data.push(0);
-        itxt_data.push(0);
-        itxt_data.push(0);
-        itxt_data.push(0);
-        itxt_data.push(0);
-        itxt_data.extend_from_slice(encoded.as_bytes());
-
-        let mut itxt_chunk = Vec::new();
-        write_chunk(&mut itxt_chunk, CHUNK_TYPE_ITXT, &itxt_data);
-
-        let png_with_itxt = inject_raw_chunks_before_iend(&base_png, &[itxt_chunk]);
+        let png_with_itxt =
+            inject_raw_chunks_before_iend(&base_png, &[build_itxt_chunk("ccv3", &encoded)]);
 
         let parsed = read_character_data_from_png(&png_with_itxt).expect("read should succeed");
         let parsed_json: Value = serde_json::from_str(&parsed).expect("valid json");

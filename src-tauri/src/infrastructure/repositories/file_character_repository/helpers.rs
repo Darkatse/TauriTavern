@@ -246,7 +246,7 @@ impl FileCharacterRepository {
             logger::error(&format!("Failed to decode character data: {}", e));
             DomainError::InvalidData(format!("Failed to decode character data: {}", e))
         })?;
-        Self::sync_canonical_metadata_fields(&mut character, &raw_value);
+        Self::sync_canonical_data_fields(&mut character, &raw_value);
         self.normalize_imported_character(&mut character)?;
         character.shallow = false;
 

@@ -1,7 +1,7 @@
 use super::CharacterService;
 use crate::application::dto::character_dto::{
-    CreateCharacterDto, ExportCharacterContentDto, ExportCharacterDto, MergeCharacterCardDataDto,
-    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
+    CreateCharacterDto, ExportCharacterContentDto, ExportCharacterDto, ImportCharacterDto,
+    MergeCharacterCardDataDto, UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::{
@@ -1148,6 +1148,219 @@ async fn merge_character_card_data_rejects_invalid_v2_payloads() {
 }
 
 #[tokio::test]
+async fn import_character_with_embedded_world_preserves_unknown_fields_after_auto_import() {
+    let (service, character_repository, _world_info_repository, root) = setup_service().await;
+
+    let character_book = json!({
+        "name": "Embedded Book",
+        "extensions": {},
+        "entries": [
+            {
+                "id": 1,
+                "keys": ["alpha"],
+                "content": "fresh lore",
+                "enabled": true
+            }
+        ]
+    });
+    let card_payload = json!({
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "name": "Embedded Raw Import",
+        "description": "desc",
+        "first_mes": "hello",
+        "x_custom_root": { "nested": true },
+        "data": {
+            "name": "Embedded Raw Import",
+            "description": "desc",
+            "first_mes": "hello",
+            "character_book": character_book,
+            "extensions": {
+                "talkativeness": 0.5,
+                "fav": false,
+                "world": "",
+                "depth_prompt": {
+                    "prompt": "",
+                    "depth": 4,
+                    "role": "system"
+                },
+                "tavern_helper": {
+                    "scripts": [
+                        { "id": "script-1" }
+                    ]
+                }
+            },
+            "x_data_custom": 123
+        }
+    });
+    let source_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+    let import_path = root.join("embedded-raw-import.png");
+    fs::write(&import_path, source_png)
+        .await
+        .expect("write import png");
+
+    let imported = service
+        .import_character(ImportCharacterDto {
+            file_path: import_path.to_string_lossy().into_owned(),
+            preserve_file_name: None,
+        })
+        .await
+        .expect("import character with embedded world");
+
+    let stored_name = imported.avatar.trim_end_matches(".png");
+    let stored_json = character_repository
+        .read_character_card_json(stored_name)
+        .await
+        .expect("read imported character");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse stored character");
+
+    assert_eq!(
+        stored_value.get("x_custom_root"),
+        Some(&json!({ "nested": true }))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/x_data_custom"),
+        Some(&json!(123))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/extensions/tavern_helper/scripts/0/id"),
+        Some(&json!("script-1"))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/extensions/world"),
+        Some(&json!("Embedded Book"))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/character_book/entries/0/content"),
+        Some(&json!("fresh lore"))
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn export_after_import_preserves_unknown_card_fields() {
+    let (service, _character_repository, _world_info_repository, root) = setup_service().await;
+
+    let card_payload = json!({
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "name": "Roundtrip Import Export",
+        "description": "desc",
+        "first_mes": "hello",
+        "chat": "source-chat",
+        "fav": true,
+        "x_custom_root": { "nested": true },
+        "data": {
+            "name": "Roundtrip Import Export",
+            "description": "desc",
+            "first_mes": "hello",
+            "extensions": {
+                "talkativeness": 0.5,
+                "fav": true,
+                "world": "",
+                "depth_prompt": {
+                    "prompt": "",
+                    "depth": 4,
+                    "role": "system"
+                },
+                "tavern_helper": {
+                    "scripts": [
+                        { "id": "script-1" }
+                    ]
+                }
+            },
+            "x_data_custom": 123
+        }
+    });
+    let source_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+    let import_path = root.join("roundtrip-import-export.png");
+    fs::write(&import_path, source_png)
+        .await
+        .expect("write import png");
+
+    let imported = service
+        .import_character(ImportCharacterDto {
+            file_path: import_path.to_string_lossy().into_owned(),
+            preserve_file_name: None,
+        })
+        .await
+        .expect("import character");
+    let stored_name = imported.avatar.trim_end_matches(".png").to_string();
+
+    let exported_json = service
+        .export_character_content(ExportCharacterContentDto {
+            name: stored_name.clone(),
+            format: "json".to_string(),
+        })
+        .await
+        .expect("export imported character as json");
+    let exported_json_value: serde_json::Value =
+        serde_json::from_slice(&exported_json.data).expect("parse exported json");
+
+    assert_eq!(
+        exported_json_value.get("x_custom_root"),
+        Some(&json!({ "nested": true }))
+    );
+    assert_eq!(
+        exported_json_value.pointer("/data/x_data_custom"),
+        Some(&json!(123))
+    );
+    assert_eq!(
+        exported_json_value.pointer("/data/extensions/tavern_helper/scripts/0/id"),
+        Some(&json!("script-1"))
+    );
+    assert!(exported_json_value.get("chat").is_none());
+    assert_eq!(exported_json_value.get("fav"), Some(&json!(false)));
+    assert_eq!(
+        exported_json_value.pointer("/data/extensions/fav"),
+        Some(&json!(false))
+    );
+
+    let exported_png = service
+        .export_character_content(ExportCharacterContentDto {
+            name: stored_name,
+            format: "png".to_string(),
+        })
+        .await
+        .expect("export imported character as png");
+    let exported_png_json =
+        read_character_data_from_png(&exported_png.data).expect("read exported png metadata");
+    let exported_png_value: serde_json::Value =
+        serde_json::from_str(&exported_png_json).expect("parse exported png json");
+
+    assert_eq!(
+        exported_png_value.get("x_custom_root"),
+        Some(&json!({ "nested": true }))
+    );
+    assert_eq!(
+        exported_png_value.pointer("/data/x_data_custom"),
+        Some(&json!(123))
+    );
+    assert_eq!(
+        exported_png_value.pointer("/data/extensions/tavern_helper/scripts/0/id"),
+        Some(&json!("script-1"))
+    );
+    assert!(exported_png_value.get("chat").is_none());
+    assert_eq!(exported_png_value.get("fav"), Some(&json!(false)));
+    assert_eq!(
+        exported_png_value.pointer("/data/extensions/fav"),
+        Some(&json!(false))
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn merge_character_card_data_succeeds_after_normal_bound_world_edit() {
     let (service, character_repository, world_info_repository, root) = setup_service().await;
     let embedded_book = save_bound_world(&world_info_repository, "bound-book").await;
@@ -1670,17 +1883,38 @@ async fn update_avatar_materializes_bound_lorebook_into_written_card() {
     let (service, character_repository, world_info_repository, root) = setup_service().await;
     save_bound_world(&world_info_repository, "bound-book").await;
 
-    let mut character = Character::new(
-        "Avatar Export".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "hello".to_string(),
-    );
-    character.data.extensions.world = "bound-book".to_string();
-    character_repository
-        .save(&character)
-        .await
-        .expect("save stale character");
+    let card_payload = json!({
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "name": "Avatar Export",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "hello",
+        "x_custom_top": { "nested": true },
+        "data": {
+            "name": "Avatar Export",
+            "description": "desc",
+            "personality": "persona",
+            "first_mes": "hello",
+            "extensions": {
+                "talkativeness": 0.5,
+                "fav": false,
+                "world": "bound-book",
+                "depth_prompt": {
+                    "prompt": "",
+                    "depth": 4,
+                    "role": "system"
+                },
+                "tavern_helper": {
+                    "scripts": [
+                        { "id": "script-1" }
+                    ]
+                }
+            },
+            "x_custom_data": 123
+        }
+    });
+    write_character_png(&root, "Avatar Export", &card_payload).await;
 
     let avatar_path = root.join("replacement.png");
     fs::write(&avatar_path, build_minimal_png())
@@ -1704,6 +1938,24 @@ async fn update_avatar_materializes_bound_lorebook_into_written_card() {
         .find_by_name("Avatar Export")
         .await
         .expect("reload updated character");
+    let stored_json = character_repository
+        .read_character_card_json("Avatar Export")
+        .await
+        .expect("read updated character card");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse updated character card");
+    assert_eq!(
+        stored_value.get("x_custom_top"),
+        Some(&json!({ "nested": true }))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/x_custom_data"),
+        Some(&json!(123))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/extensions/tavern_helper/scripts/0/id"),
+        Some(&json!("script-1"))
+    );
     assert_eq!(
         stored
             .data

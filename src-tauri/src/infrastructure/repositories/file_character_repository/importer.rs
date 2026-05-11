@@ -14,6 +14,11 @@ use crate::infrastructure::persistence::png_utils::{
 
 use super::FileCharacterRepository;
 
+struct ImportedCharacterCard {
+    character: Character,
+    card_value: Value,
+}
+
 impl FileCharacterRepository {
     fn parse_hex_escape(digits: &[u8]) -> Option<u16> {
         if digits.len() != 4 {
@@ -143,10 +148,44 @@ impl FileCharacterRepository {
         ) && raw_value.get("data").is_some_and(Value::is_object)
     }
 
-    pub(crate) fn sync_canonical_metadata_fields(character: &mut Character, raw_value: &Value) {
+    pub(crate) fn sync_canonical_data_fields(character: &mut Character, raw_value: &Value) {
         if !Self::has_canonical_data_payload(raw_value) {
             return;
         }
+
+        if raw_value.pointer("/data/name").is_some() {
+            character.name = character.data.name.clone();
+        }
+        if raw_value.pointer("/data/description").is_some() {
+            character.description = character.data.description.clone();
+        }
+        if raw_value.pointer("/data/personality").is_some() {
+            character.personality = character.data.personality.clone();
+        }
+        if raw_value.pointer("/data/scenario").is_some() {
+            character.scenario = character.data.scenario.clone();
+        }
+        if raw_value.pointer("/data/first_mes").is_some() {
+            character.first_mes = character.data.first_mes.clone();
+        }
+        if raw_value.pointer("/data/mes_example").is_some() {
+            character.mes_example = character.data.mes_example.clone();
+        }
+        if raw_value.pointer("/data/tags").is_some() {
+            character.tags = character.data.tags.clone();
+        }
+
+        character.talkativeness = raw_value
+            .pointer("/data/extensions/talkativeness")
+            .map(|_| character.data.extensions.talkativeness)
+            .unwrap_or(0.5);
+        character.data.extensions.talkativeness = character.talkativeness;
+
+        character.fav = raw_value
+            .pointer("/data/extensions/fav")
+            .map(|_| character.data.extensions.fav)
+            .unwrap_or(false);
+        character.data.extensions.fav = character.fav;
 
         if raw_value.pointer("/data/creator").is_some() {
             character.creator = character.data.creator.clone();
@@ -161,15 +200,13 @@ impl FileCharacterRepository {
         }
     }
 
-    pub(crate) fn parse_imported_character_json(
+    fn parse_imported_character_json(
         &self,
         json_data: &str,
-    ) -> Result<Character, DomainError> {
+    ) -> Result<ImportedCharacterCard, DomainError> {
         let normalized_json = Self::normalize_json_surrogate_escapes(json_data);
 
-        let raw_value: Value = serde_json::from_str(&normalized_json).map_err(|e| {
-            DomainError::InvalidData(format!("Failed to parse character JSON: {}", e))
-        })?;
+        let raw_value = Self::parse_card_json(&normalized_json, "imported character JSON")?;
         let has_talkativeness = raw_value.get("talkativeness").is_some()
             || raw_value
                 .pointer("/data/extensions/talkativeness")
@@ -180,7 +217,7 @@ impl FileCharacterRepository {
         })?;
 
         self.apply_legacy_aliases(&mut character, &raw_value);
-        Self::sync_canonical_metadata_fields(&mut character, &raw_value);
+        Self::sync_canonical_data_fields(&mut character, &raw_value);
         self.normalize_imported_character(&mut character)?;
         if !has_talkativeness
             && character.talkativeness == 0.0
@@ -190,7 +227,10 @@ impl FileCharacterRepository {
             character.data.extensions.talkativeness = 0.5;
         }
 
-        Ok(character)
+        Ok(ImportedCharacterCard {
+            character,
+            card_value: raw_value,
+        })
     }
 
     pub(crate) fn apply_legacy_aliases(&self, character: &mut Character, raw_value: &Value) {
@@ -400,17 +440,23 @@ impl FileCharacterRepository {
         }
     }
 
-    async fn persist_character_card(
+    fn prepare_imported_character_for_storage(character: &mut Character, file_stem: &str) {
+        // Match SillyTavern import semantics: imported cards lose local-only state.
+        character.create_date = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        character.file_name = Some(file_stem.to_string());
+        character.avatar = format!("{}.png", file_stem);
+        character.chat = Self::normalize_chat_file_stem("", &character.name);
+        character.fav = false;
+        character.data.extensions.fav = false;
+    }
+
+    async fn persist_character_card_json(
         &self,
         file_stem: &str,
         base_image_data: &[u8],
-        character: &Character,
+        card_json: &str,
     ) -> Result<PathBuf, DomainError> {
-        let card_json = serde_json::to_string(&character.to_v2()).map_err(|e| {
-            DomainError::InvalidData(format!("Failed to serialize character card: {}", e))
-        })?;
-
-        let image_data = write_character_data_to_png(base_image_data, &card_json)?;
+        let image_data = write_character_data_to_png(base_image_data, card_json)?;
         let target_path = self.get_character_path(file_stem);
 
         fs::write(&target_path, image_data).await.map_err(|e| {
@@ -431,18 +477,19 @@ impl FileCharacterRepository {
         preserve_file_name: Option<&str>,
     ) -> Result<Character, DomainError> {
         let card_json = read_character_data_from_png(file_data)?;
-        let mut character = self.parse_imported_character_json(&card_json)?;
+        let ImportedCharacterCard {
+            mut character,
+            mut card_value,
+        } = self.parse_imported_character_json(&card_json)?;
         let file_stem =
             self.resolve_import_file_stem(&character, source_path, preserve_file_name)?;
 
-        // Match SillyTavern import semantics: create_date represents import time, not the source card timestamp.
-        character.create_date = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
-        character.file_name = Some(file_stem.clone());
-        character.avatar = format!("{}.png", file_stem);
-        character.chat = Self::normalize_chat_file_stem(&character.chat, &character.name);
+        Self::prepare_imported_character_for_storage(&mut character, &file_stem);
+        Self::merge_character_projection_into_card_value(&mut card_value, &character)?;
+        let stored_card_json = Self::serialize_card_value(&card_value, "imported character card")?;
 
         let target_path = self
-            .persist_character_card(&file_stem, file_data, &character)
+            .persist_character_card_json(&file_stem, file_data, &stored_card_json)
             .await?;
 
         self.read_character_from_file(&target_path).await
@@ -457,19 +504,20 @@ impl FileCharacterRepository {
         let card_json = String::from_utf8(file_data).map_err(|e| {
             DomainError::InvalidData(format!("Failed to decode JSON character file: {}", e))
         })?;
-        let mut character = self.parse_imported_character_json(&card_json)?;
+        let ImportedCharacterCard {
+            mut character,
+            mut card_value,
+        } = self.parse_imported_character_json(&card_json)?;
         let file_stem =
             self.resolve_import_file_stem(&character, source_path, preserve_file_name)?;
 
-        // Match SillyTavern import semantics: create_date represents import time, not the source card timestamp.
-        character.create_date = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
-        character.file_name = Some(file_stem.clone());
-        character.avatar = format!("{}.png", file_stem);
-        character.chat = Self::normalize_chat_file_stem(&character.chat, &character.name);
+        Self::prepare_imported_character_for_storage(&mut character, &file_stem);
+        Self::merge_character_projection_into_card_value(&mut card_value, &character)?;
+        let stored_card_json = Self::serialize_card_value(&card_value, "imported character card")?;
 
         let default_avatar = self.read_default_avatar().await?;
         let target_path = self
-            .persist_character_card(&file_stem, &default_avatar, &character)
+            .persist_character_card_json(&file_stem, &default_avatar, &stored_card_json)
             .await?;
 
         self.read_character_from_file(&target_path).await

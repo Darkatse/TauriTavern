@@ -52,7 +52,7 @@ pub struct Character {
 
     // Extensions
     #[serde(default, deserialize_with = "deserialize_string_or_float")]
-    pub talkativeness: f32,
+    pub talkativeness: f64,
     #[serde(default)]
     pub fav: bool,
 
@@ -119,7 +119,7 @@ pub struct CharacterData {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CharacterExtensions {
     #[serde(default, deserialize_with = "deserialize_string_or_float")]
-    pub talkativeness: f32,
+    pub talkativeness: f64,
     #[serde(default)]
     pub fav: bool,
     #[serde(default)]
@@ -167,59 +167,53 @@ fn default_role() -> String {
     "system".to_string()
 }
 
-/// Deserialize a value that can be either a string or a number into an f32
-fn deserialize_string_or_float<'de, D>(deserializer: D) -> Result<f32, D::Error>
+/// Deserialize a value that can be either a string or a number into an f64.
+fn deserialize_string_or_float<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
     D: Deserializer<'de>,
 {
-    // This will handle the deserialization
     struct StringOrFloat;
 
     impl<'de> de::Visitor<'de> for StringOrFloat {
-        type Value = f32;
+        type Value = f64;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("a string or a float")
         }
 
-        // Handle string values
-        fn visit_str<E>(self, value: &str) -> Result<f32, E>
+        fn visit_str<E>(self, value: &str) -> Result<f64, E>
         where
             E: de::Error,
         {
-            f32::from_str(value).map_err(|_| E::custom(format!("invalid float value: {}", value)))
+            f64::from_str(value).map_err(|_| E::custom(format!("invalid float value: {}", value)))
         }
 
-        // Handle float values
-        fn visit_f32<E>(self, value: f32) -> Result<f32, E>
+        fn visit_f32<E>(self, value: f32) -> Result<f64, E>
+        where
+            E: de::Error,
+        {
+            Ok(f64::from(value))
+        }
+
+        fn visit_f64<E>(self, value: f64) -> Result<f64, E>
         where
             E: de::Error,
         {
             Ok(value)
         }
 
-        // Handle float values as f64
-        fn visit_f64<E>(self, value: f64) -> Result<f32, E>
+        fn visit_i64<E>(self, value: i64) -> Result<f64, E>
         where
             E: de::Error,
         {
-            Ok(value as f32)
+            Ok(value as f64)
         }
 
-        // Handle integer values
-        fn visit_i64<E>(self, value: i64) -> Result<f32, E>
+        fn visit_u64<E>(self, value: u64) -> Result<f64, E>
         where
             E: de::Error,
         {
-            Ok(value as f32)
-        }
-
-        // Handle unsigned integer values
-        fn visit_u64<E>(self, value: u64) -> Result<f32, E>
-        where
-            E: de::Error,
-        {
-            Ok(value as f32)
+            Ok(value as f64)
         }
     }
 
@@ -441,6 +435,7 @@ impl Character {
 #[cfg(test)]
 mod tests {
     use super::Character;
+    use serde_json::Value;
 
     #[test]
     fn into_shallow_drops_heavy_character_payload() {
@@ -478,6 +473,26 @@ mod tests {
         assert!(shallow.data.extensions.additional.is_empty());
         assert!(shallow.data.character_book.is_none());
         assert!(shallow.json_data.is_none());
+    }
+
+    #[test]
+    fn talkativeness_serializes_as_clean_json_number() {
+        let mut character = Character::new(
+            "Alice".to_string(),
+            "desc".to_string(),
+            "persona".to_string(),
+            "hello".to_string(),
+        );
+        character.talkativeness = 0.8;
+        character.data.extensions.talkativeness = 0.8;
+
+        let value = serde_json::to_value(character.to_v2()).expect("serialize character");
+
+        assert_eq!(value.get("talkativeness"), Some(&Value::from(0.8)));
+        assert_eq!(
+            value.pointer("/data/extensions/talkativeness"),
+            Some(&Value::from(0.8))
+        );
     }
 }
 

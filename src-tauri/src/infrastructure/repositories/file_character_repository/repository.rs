@@ -1,10 +1,12 @@
 use std::path::Path;
 
 use async_trait::async_trait;
+use serde_json::Value;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::domain::errors::DomainError;
+use crate::domain::json_merge::merge_json_value;
 use crate::domain::models::character::Character;
 use crate::domain::models::chat::parse_message_timestamp_value;
 use crate::domain::repositories::character_repository::{
@@ -30,6 +32,76 @@ impl FileCharacterRepository {
         stored.shallow = false;
         stored
     }
+
+    pub(super) fn parse_card_json(json_data: &str, context: &str) -> Result<Value, DomainError> {
+        let value: Value = serde_json::from_str(json_data)
+            .map_err(|e| DomainError::InvalidData(format!("Failed to parse {}: {}", context, e)))?;
+
+        if !value.is_object() {
+            return Err(DomainError::InvalidData(format!(
+                "{} must be a JSON object",
+                context
+            )));
+        }
+
+        Ok(value)
+    }
+
+    pub(super) fn serialize_card_value(
+        card_value: &Value,
+        context: &str,
+    ) -> Result<String, DomainError> {
+        serde_json::to_string(card_value).map_err(|e| {
+            DomainError::InvalidData(format!("Failed to serialize {}: {}", context, e))
+        })
+    }
+
+    pub(super) fn serialize_character_card(character: &Character) -> Result<String, DomainError> {
+        serde_json::to_string(&character.to_v2()).map_err(|e| {
+            DomainError::InvalidData(format!("Failed to serialize character card: {}", e))
+        })
+    }
+
+    pub(super) fn merge_character_projection_into_card_value(
+        card_value: &mut Value,
+        character: &Character,
+    ) -> Result<(), DomainError> {
+        let preserve_existing_spec = card_value.get("spec").is_some();
+        let mut projection = serde_json::to_value(character.to_v2()).map_err(|e| {
+            DomainError::InvalidData(format!("Failed to serialize character projection: {}", e))
+        })?;
+
+        if preserve_existing_spec {
+            let Some(projection_object) = projection.as_object_mut() else {
+                return Err(DomainError::InvalidData(
+                    "Character projection must be a JSON object".to_string(),
+                ));
+            };
+            projection_object.remove("spec");
+            projection_object.remove("spec_version");
+        }
+
+        merge_json_value(card_value, projection);
+
+        let Some(card_object) = card_value.as_object_mut() else {
+            return Err(DomainError::InvalidData(
+                "Character card payload must be a JSON object".to_string(),
+            ));
+        };
+        card_object.remove("json_data");
+
+        Ok(())
+    }
+
+    pub(super) fn merge_character_projection_into_card_json(
+        json_data: &str,
+        character: &Character,
+        context: &str,
+    ) -> Result<String, DomainError> {
+        let mut card_value = Self::parse_card_json(json_data, context)?;
+        Self::merge_character_projection_into_card_value(&mut card_value, character)?;
+        Self::serialize_card_value(&card_value, context)
+    }
 }
 
 #[async_trait]
@@ -49,12 +121,16 @@ impl CharacterRepository for FileCharacterRepository {
             self.read_default_avatar().await?
         };
 
-        let character_v2 = character.to_v2();
-
-        let json_data = serde_json::to_string(&character_v2).map_err(|e| {
-            logger::error(&format!("Failed to serialize character: {}", e));
-            DomainError::InvalidData(format!("Failed to serialize character: {}", e))
-        })?;
+        let json_data = if file_path.exists() {
+            let raw_json = read_character_data_from_png(&image_data)?;
+            Self::merge_character_projection_into_card_json(
+                &raw_json,
+                character,
+                "stored character card",
+            )?
+        } else {
+            Self::serialize_character_card(character)?
+        };
 
         let new_image_data = write_character_data_to_png(&image_data, &json_data)?;
 
@@ -434,12 +510,7 @@ impl CharacterRepository for FileCharacterRepository {
             self.read_default_avatar().await?
         };
 
-        let character_v2 = character.to_v2();
-
-        let json_data = serde_json::to_string(&character_v2).map_err(|e| {
-            logger::error(&format!("Failed to serialize character: {}", e));
-            DomainError::InvalidData(format!("Failed to serialize character: {}", e))
-        })?;
+        let json_data = Self::serialize_character_card(character)?;
 
         let new_image_data = write_character_data_to_png(&image_data, &json_data)?;
 
@@ -467,24 +538,32 @@ impl CharacterRepository for FileCharacterRepository {
         avatar_path: &Path,
         crop: Option<ImageCrop>,
     ) -> Result<(), DomainError> {
+        let file_name = character.get_file_name();
+        let file_path = self.get_character_path(&file_name);
+        if !file_path.exists() {
+            return Err(DomainError::NotFound(format!(
+                "Character not found: {}",
+                file_name
+            )));
+        }
+
+        let existing_image_data = fs::read(&file_path).await.map_err(|e| {
+            logger::error(&format!("Failed to read character file: {}", e));
+            DomainError::InternalError(format!("Failed to read character file: {}", e))
+        })?;
+        let raw_json = read_character_data_from_png(&existing_image_data)?;
+        let json_data = Self::merge_character_projection_into_card_json(
+            &raw_json,
+            character,
+            "stored character card",
+        )?;
+
         let file_data = fs::read(avatar_path).await.map_err(|e| {
             logger::error(&format!("Failed to read avatar file: {}", e));
             DomainError::InternalError(format!("Failed to read avatar file: {}", e))
         })?;
-
         let image_data = process_avatar_image(&file_data, crop).await?;
-
-        let character_v2 = character.to_v2();
-
-        let json_data = serde_json::to_string(&character_v2).map_err(|e| {
-            logger::error(&format!("Failed to serialize character: {}", e));
-            DomainError::InvalidData(format!("Failed to serialize character: {}", e))
-        })?;
-
         let new_image_data = write_character_data_to_png(&image_data, &json_data)?;
-
-        let file_name = character.get_file_name();
-        let file_path = self.get_character_path(&file_name);
 
         fs::write(&file_path, new_image_data).await.map_err(|e| {
             logger::error(&format!("Failed to write character file: {}", e));
