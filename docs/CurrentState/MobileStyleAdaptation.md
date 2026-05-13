@@ -86,10 +86,10 @@ Android 说明：
 - 为避免主题 `custom_css` 直接覆盖移动端核心几何，宿主会注入一个 **host-last geometry firewall**（永远位于 `#custom-style` 之后）：
   - 实现：`src/tauri/main/compat/mobile/mobile-geometry-firewall.js`
   - 产物：`<style id="tt-mobile-geometry-firewall">`（keep-last，确保始终为 `<head>` 最后一个 element）
-  - 覆盖范围：只收回核心几何属性（`#top-settings-holder/#top-bar/#top-settings-holder > .drawer > .drawer-content:not(.fillLeft):not(.fillRight)/#sheld/#form_sheld`），不干预主题 skin
+  - 覆盖范围：只收回核心几何属性（`#top-settings-holder/#top-bar/#top-settings-holder > .drawer > .drawer-content:not(.fillLeft):not(.fillRight)/#sheld/#form_sheld`），其中 `#sheld` 的 `height/min-height/max-height` 必须同源计算，避免主题用 `min-height` 绕过 safe-area/viewport contract；不干预主题 skin
 - 第一方顶部设置面板（`#top-settings-holder` 下的非侧栏 drawer）不再依赖运行时测量与 inline 回写：
   - 由 geometry firewall 以 CSS contract 直接约束几何（holder-anchored），避免出现第二/第三套几何系统
-- 主容器 `#sheld` 以 `inset-top + topBarBlockSize` 定位，并用 `--tt-base-viewport-height`/`--doc-height` 计算高度。
+- 主容器 `#sheld` 以 `inset-top + topBarBlockSize` 定位，并用 `--tt-base-viewport-height`/`--doc-height` 统一计算 `height/min-height/max-height`。
 - Android 的键盘抬升不再直接绑定在主题可覆写的 `#form_sheld` 上；宿主使用 host-private DOM + contract 承载：
   - `src/tauri/main/compat/mobile/android-ime-layout-host.js` 在 `#form_sheld` 内安装 lift/spacer 节点（仅 composer）。
   - fixed-shell 等非 composer surface 由 geometry firewall 直接消费 `--tt-ime-bottom`（见 §3.6）。

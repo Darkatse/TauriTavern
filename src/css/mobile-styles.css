@@ -323,6 +323,8 @@
         top: calc(var(--topBarBlockSize) + max(var(--tt-inset-top), 0px)) !important;
         height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
         height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
+        min-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
+        min-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
         max-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
         max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
     }

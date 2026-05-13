@@ -73,12 +73,14 @@ const FIREWALL_CSS = `
   body #character_popup {
     top: calc(var(--topBarBlockSize) + max(var(--tt-inset-top), 0px)) !important;
     height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
+    min-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
     max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
   }
 
   body #completion_prompt_manager_popup {
     top: calc(var(--topBarBlockSize) + max(var(--tt-inset-top), 0px)) !important;
     height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
+    min-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
     max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
   }
 
@@ -196,6 +198,7 @@ const FIREWALL_CSS = `
   body #sheld {
     top: calc(var(--topBarBlockSize) + var(--tt-safe-top)) !important;
     height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top) - 1px) !important;
+    min-height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top) - 1px) !important;
     max-height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top) - 1px) !important;
   }
 
@@ -209,6 +212,8 @@ const FIREWALL_CSS = `
   body #completion_prompt_manager_popup {
     top: calc(var(--topBarBlockSize) + var(--tt-safe-top)) !important;
     height: calc(100% - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
+    min-height: calc(100% - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
+    max-height: calc(100% - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
   }
 
   body #top-settings-holder > .drawer > .drawer-content:not(.fillLeft):not(.fillRight) {

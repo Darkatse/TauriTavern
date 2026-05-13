@@ -349,6 +349,26 @@ test('mobile-styles stays upstream-friendly (no Android IME host plumbing duplic
     assert.doesNotMatch(source, /--tt-keyboard-offset/);
 });
 
+test('geometry firewall keeps main shell min-height on the viewport contract', async () => {
+    const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
+    const mobileStylesPath = path.join(REPO_ROOT, 'src/css/mobile-styles.css');
+    const firewallSource = await readFile(firewallPath, 'utf8');
+    const mobileStylesSource = await readFile(mobileStylesPath, 'utf8');
+
+    assert.match(
+        firewallSource,
+        /body\s+#sheld,\s*[\r\n]+\s*body\s+#character_popup\s*\{[\s\S]*height:\s*calc\(var\(--tt-base-viewport-height[\s\S]*min-height:\s*calc\(var\(--tt-base-viewport-height/,
+    );
+    assert.match(
+        firewallSource,
+        /@media screen and \(min-width: 1001px\)[\s\S]*body\s+#sheld\s*\{[\s\S]*height:\s*calc\(var\(--tt-base-viewport-height[\s\S]*min-height:\s*calc\(var\(--tt-base-viewport-height/,
+    );
+    assert.match(
+        mobileStylesSource,
+        /body\s+#sheld\s*\{[\s\S]*height:\s*calc\(var\(--tt-base-viewport-height[\s\S]*min-height:\s*calc\(var\(--tt-base-viewport-height/,
+    );
+});
+
 test('geometry firewall enforces viewport root contract (stable size + no root transform)', async () => {
     const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
     const source = await readFile(firewallPath, 'utf8');
