@@ -334,6 +334,8 @@ function removeBackgroundMetadata() {
  * @param {JQuery.Event} e Event
  */
 function onSelectBackgroundClick(e) {
+    closeMobileBackgroundMenus();
+
     const bgFile = $(this).attr('bgfile');
     const isCustom = $(this).attr('custom') === 'true';
     const backgroundCssUrl = getUrlParameter(this);
@@ -828,13 +830,18 @@ async function setBackground(bg, url) {
 }
 
 async function delBackground(bg) {
-    await fetch('/api/backgrounds/delete', {
+    const response = await fetch('/api/backgrounds/delete', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
             bg: bg,
         }),
     });
+
+    if (!response.ok) {
+        const error = await response.text();
+        throw new Error(error || `Failed to delete background: ${response.status}`);
+    }
 
     await invalidateThumbnailCaches(bg);
 }
@@ -1041,6 +1048,26 @@ function onBackgroundFilterInput() {
 
 const debouncedOnBackgroundFilterInput = debounce(onBackgroundFilterInput, debounce_timeout.standard);
 
+function closeMobileBackgroundMenus() {
+    $('.bg_example.mobile-menu-open').removeClass('mobile-menu-open');
+}
+
+function isInsideOpenMobileBackgroundMenu(target) {
+    return target instanceof Element && Boolean(target.closest('.bg_example.mobile-menu-open'));
+}
+
+function onMobileBackgroundDocumentPointerDown(e) {
+    if (!isInsideOpenMobileBackgroundMenu(e.target)) {
+        closeMobileBackgroundMenus();
+    }
+}
+
+function onMobileBackgroundDocumentFocusIn(e) {
+    if (!isInsideOpenMobileBackgroundMenu(e.target)) {
+        closeMobileBackgroundMenus();
+    }
+}
+
 /**
  * Gets the active background tab source.
  * @returns {BG_SOURCES} Active background tab source
@@ -1054,25 +1081,24 @@ export function initBackgrounds() {
     eventSource.on(event_types.FORCE_SET_BACKGROUND, forceSetBackground);
 
     $(document)
+        .off('pointerdown.backgroundsMobileMenu').on('pointerdown.backgroundsMobileMenu', onMobileBackgroundDocumentPointerDown)
+        .off('focusin.backgroundsMobileMenu').on('focusin.backgroundsMobileMenu', onMobileBackgroundDocumentFocusIn)
         .off('click', '.bg_example').on('click', '.bg_example', onSelectBackgroundClick)
         .off('click', '.bg_example .mobile-only-menu-toggle').on('click', '.bg_example .mobile-only-menu-toggle', function (e) {
             e.stopPropagation();
             const $context = $(this).closest('.bg_example');
             const wasOpen = $context.hasClass('mobile-menu-open');
             // Close all other open menus before opening a new one.
-            $('.bg_example.mobile-menu-open').removeClass('mobile-menu-open');
+            closeMobileBackgroundMenus();
             if (!wasOpen) {
                 $context.addClass('mobile-menu-open');
             }
         })
-        .off('blur', '.bg_example.mobile-menu-open').on('blur', '.bg_example.mobile-menu-open', function () {
-            if (!$(this).is(':focus-within')) {
-                $(this).removeClass('mobile-menu-open');
-            }
-        })
+        .off('focusout', '.bg_example.mobile-menu-open')
         .off('click', '.jg-button').on('click', '.jg-button', function (e) {
             e.stopPropagation();
             const action = $(this).data('action');
+            closeMobileBackgroundMenus();
 
             switch (action) {
                 case 'lock':

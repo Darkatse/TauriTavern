@@ -212,6 +212,7 @@
     padding: 5px;
     font-size: 1.1em;
     border-radius: 5px;
+    cursor: pointer;
     transition: background-color var(--animation-duration) ease;
 }
 
