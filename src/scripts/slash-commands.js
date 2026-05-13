@@ -3238,6 +3238,29 @@ export function initDefaultSlashCommands() {
         `,
     }));
 
+    // 新增 /llmlog 斜杠命令，快捷打开 LLM API 日志窗口（TauriTavern 专有功能）
+    // 无需进入设置面板即可直接打开日志查看器
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'llmlog',
+        aliases: ['apilog'],
+        callback: async () => {
+            // 检查 Tauri 宿主环境是否可用
+            if (!window.__TAURITAVERN__?.api?.dev) {
+                toastr.error(t`LLM API logs are only available in TauriTavern.`);
+                return '';
+            }
+            try {
+                const { openLlmApiLogsPanel } = await import('./tauri/setting/dev-logs.js');
+                await openLlmApiLogsPanel();
+            } catch (error) {
+                toastr.error(t`Failed to open LLM API logs: ${error?.message || error}`);
+            }
+            return '';
+        },
+        helpString: t`Open the LLM API log viewer (TauriTavern only).`,
+    }));
+
+
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'beep',
         aliases: ['ding'],
