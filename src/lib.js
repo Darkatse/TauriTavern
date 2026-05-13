@@ -24,6 +24,9 @@ import libCoreBundle, {
     droll,
     morphdom,
     chevrotain,
+    gzipSync,
+    gzip,
+    sha256,
 } from './dist/lib.core.bundle.js';
 
 let optionalBundlePromise = null;
@@ -177,6 +180,9 @@ export {
     droll,
     morphdom,
     chevrotain,
+    gzipSync,
+    gzip,
+    sha256,
 };
 
 export default libCoreBundle;

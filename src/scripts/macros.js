@@ -1,5 +1,5 @@
 import { Handlebars, moment, seedrandom, droll } from '../lib.js';
-import { chat, chat_metadata, main_api, getMaxContextSize, getCurrentChatId, substituteParams, eventSource, event_types, extension_prompts } from '../script.js';
+import { chat, chat_metadata, main_api, getMaxPromptTokens, getMaxContextTokens, getMaxResponseTokens, getCurrentChatId, substituteParams, eventSource, event_types, extension_prompts } from '../script.js';
 import { timestampToMoment, isDigitsOnly, getStringHash, escapeRegex, uuidv4 } from './utils.js';
 import { textgenerationwebui_banned_in_macros } from './textgen-settings.js';
 import { getInstructMacros } from './instruct-mode.js';
@@ -58,10 +58,11 @@ export class MacrosParser {
      *
      * @param {string} method
      * @param {string} replacement
+     * @param {IArguments} [methodArgs=null]
      * @returns {void}
      */
-    static #logDeprecated(method, replacement) {
-        console.warn(`[DEPRECATED] MacrosParser.${method} is deprecated and will be removed in a future version. Use ${replacement} instead.`);
+    static #logDeprecated(method, replacement, methodArgs = null) {
+        console.warn(`[DEPRECATED] MacrosParser.${method} is deprecated and will be removed in a future version. Use ${replacement} instead. Arguments:`, (methodArgs ?? 'none'));
     }
 
     /**
@@ -155,7 +156,7 @@ export class MacrosParser {
      * @returns {string|MacroFunction|undefined} The macro value
      */
     static get(key) {
-        MacrosParser.#logDeprecated('get', 'macros.registry.getMacro (from scripts/macros/macro-system.js)');
+        MacrosParser.#logDeprecated('get', 'macros.registry.getMacro (from scripts/macros/macro-system.js)', arguments);
         return MacrosParser.#macros.get(key);
     }
 
@@ -165,7 +166,7 @@ export class MacrosParser {
      * @returns {boolean} True if the macro is registered, false otherwise
      */
     static has(key) {
-        MacrosParser.#logDeprecated('has', 'macros.registry.hasMacro (from scripts/macros/macro-system.js)');
+        MacrosParser.#logDeprecated('has', 'macros.registry.hasMacro (from scripts/macros/macro-system.js)', arguments);
         if (power_user.experimental_macro_engine) {
             return macroSystem.registry.hasMacro(key);
         }
@@ -180,7 +181,7 @@ export class MacrosParser {
      * @param {string} [description] Optional description of the macro
      */
     static registerMacro(key, value, description = '') {
-        MacrosParser.#logDeprecated('registerMacro', 'macros.registry.registerMacro (from scripts/macros/macro-system.js) or substituteParams({ dynamicMacros })');
+        MacrosParser.#logDeprecated('registerMacro', 'macros.registry.registerMacro (from scripts/macros/macro-system.js) or substituteParams({ dynamicMacros })', arguments);
         if (typeof key !== 'string') {
             throw new Error('Macro key must be a string');
         }
@@ -223,7 +224,7 @@ export class MacrosParser {
      * @param {string} key Macro name (key)
      */
     static unregisterMacro(key) {
-        MacrosParser.#logDeprecated('unregisterMacro', 'macros.registry.unregisterMacro (from scripts/macros/macro-system.js)');
+        MacrosParser.#logDeprecated('unregisterMacro', 'macros.registry.unregisterMacro (from scripts/macros/macro-system.js)', arguments);
         if (typeof key !== 'string') {
             throw new Error('Macro key must be a string');
         }
@@ -639,7 +640,12 @@ export function evaluateMacros(content, env, postProcessFn) {
      * @type {Macro[]}
     */
     const postEnvMacros = [
-        { regex: /{{maxPrompt}}/gi, replace: () => String(getMaxContextSize()) },
+        { regex: /{{maxPrompt}}/gi, replace: () => String(getMaxPromptTokens()) },
+        { regex: /{{maxPromptTokens}}/gi, replace: () => String(getMaxPromptTokens()) },
+        { regex: /{{maxContext}}/gi, replace: () => String(getMaxContextTokens()) },
+        { regex: /{{maxContextTokens}}/gi, replace: () => String(getMaxContextTokens()) },
+        { regex: /{{maxResponse}}/gi, replace: () => String(getMaxResponseTokens()) },
+        { regex: /{{maxResponseTokens}}/gi, replace: () => String(getMaxResponseTokens()) },
         { regex: /{{lastMessage}}/gi, replace: () => getLastMessage() },
         { regex: /{{lastMessageId}}/gi, replace: () => String(getLastMessageId() ?? '') },
         { regex: /{{lastUserMessage}}/gi, replace: () => getLastUserMessage() },
@@ -648,6 +654,7 @@ export function evaluateMacros(content, env, postProcessFn) {
         { regex: /{{firstDisplayedMessageId}}/gi, replace: () => String(getFirstDisplayedMessageId() ?? '') },
         { regex: /{{lastSwipeId}}/gi, replace: () => String(getLastSwipeId() ?? '') },
         { regex: /{{currentSwipeId}}/gi, replace: () => String(getCurrentSwipeId() ?? '') },
+        { regex: /{{allChatRange}}/gi, replace: () => chat.length === 0 ? '' : `0-${chat.length - 1}` },
         { regex: /{{reverse:(.+?)}}/gi, replace: (_, str) => Array.from(str).reverse().join('') },
         { regex: /\{\{\/\/([\s\S]*?)\}\}/gm, replace: () => '' },
         { regex: /{{time}}/gi, replace: () => moment().format('LT') },

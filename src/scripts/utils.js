@@ -2072,6 +2072,25 @@ export function setValueByPath(obj, path, value) {
 }
 
 /**
+ * Deletes a value from a nested object at the given dot-separated path.
+ * @param {object} obj Object to delete from
+ * @param {string} path Dot-separated key path
+ */
+export function deleteValueByPath(obj, path) {
+    const keyParts = path.split('.');
+    let current = obj;
+
+    for (let i = 0; i < keyParts.length - 1; i++) {
+        if (!current || typeof current !== 'object') return;
+        current = current[keyParts[i]];
+    }
+
+    if (current && typeof current === 'object') {
+        delete current[keyParts[keyParts.length - 1]];
+    }
+}
+
+/**
  * Flashes the given HTML element via CSS flash animation for a defined period
  * @param {JQuery<HTMLElement>} element - The element to flash
  * @param {number} timespan - A number in milliseconds how the flash should last (default is 2000ms.  Multiples of 1000ms work best, as they end with the flash animation being at 100% opacity)
@@ -2960,4 +2979,53 @@ export function createTimeout(ms, errorMessage = '') {
     return new Promise((_, reject) => {
         setTimeout(() => reject(new Error(errorMessage)), ms);
     });
+}
+
+/**
+ * Registers a delegated long-press handler for touch devices.
+ * @param {string} selector CSS selector for target elements.
+ * @param {(e: TouchEvent) => void} callback Callback invoked with `this` bound to the matched element.
+ * @param {number} [delay=500] Long-press duration in milliseconds.
+ */
+export function addLongPressEvent(selector, callback, delay = 500) {
+    let timer = null;
+    let fired = false;
+    let target = null;
+
+    document.addEventListener('touchstart', function (event) {
+        if (!(event.target instanceof Element)) {
+            return;
+        }
+
+        const element = event.target.closest(selector);
+        if (!element) {
+            return;
+        }
+
+        target = element;
+        fired = false;
+        timer = setTimeout(() => {
+            fired = true;
+            event.preventDefault();
+            callback.call(element, event);
+        }, delay);
+    }, { passive: false });
+
+    document.addEventListener('touchend', cancelTimer);
+    document.addEventListener('touchmove', cancelTimer);
+    document.addEventListener('touchcancel', cancelTimer);
+
+    document.addEventListener('click', function (event) {
+        if (fired && target && target.contains(event.target)) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            fired = false;
+            target = null;
+        }
+    }, true);
+
+    function cancelTimer() {
+        clearTimeout(timer);
+        timer = null;
+    }
 }
