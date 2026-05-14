@@ -49,6 +49,7 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
     let root = unique_temp_root();
     let characters_dir = root.join("characters");
     let chats_dir = root.join("chats");
+    let thumbnails_avatar_dir = root.join("thumbnails/avatar");
     let default_avatar = root.join("default.png");
 
     fs::create_dir_all(&characters_dir)
@@ -57,11 +58,19 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
     fs::create_dir_all(&chats_dir)
         .await
         .expect("create chats dir");
+    fs::create_dir_all(&thumbnails_avatar_dir)
+        .await
+        .expect("create avatar thumbnails dir");
     fs::write(&default_avatar, build_minimal_png())
         .await
         .expect("write default avatar");
 
-    let repository = FileCharacterRepository::new(characters_dir, chats_dir, default_avatar);
+    let repository = FileCharacterRepository::new(
+        characters_dir,
+        chats_dir,
+        thumbnails_avatar_dir,
+        default_avatar,
+    );
     (repository, root)
 }
 
@@ -1214,6 +1223,45 @@ async fn rename_preserves_avatar_pixel_data() {
     assert_eq!(old_image.to_rgba8(), new_image.to_rgba8());
 
     assert!(!old_file_path.exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn update_avatar_invalidates_stale_thumbnail() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Avatar Target".to_string(),
+        "desc".to_string(),
+        "personality".to_string(),
+        "hello".to_string(),
+    );
+    let created = repository
+        .create_with_avatar(&character, None, None)
+        .await
+        .expect("create character");
+
+    let thumbnail_path = root.join("thumbnails/avatar").join(&created.avatar);
+    fs::write(&thumbnail_path, b"stale thumbnail")
+        .await
+        .expect("write stale thumbnail");
+
+    let replacement_path = root.join("replacement.png");
+    fs::write(&replacement_path, build_distinct_png())
+        .await
+        .expect("write replacement avatar");
+
+    repository
+        .update_avatar(&created, &replacement_path, None)
+        .await
+        .expect("update avatar");
+
+    assert!(
+        !fs::try_exists(&thumbnail_path)
+            .await
+            .expect("check thumbnail")
+    );
 
     let _ = fs::remove_dir_all(&root).await;
 }

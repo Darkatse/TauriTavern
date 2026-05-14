@@ -20,6 +20,7 @@ pub enum ChatCompletionSource {
     NanoGpt,
     Chutes,
     SiliconFlow,
+    WorkersAi,
     Zai,
 }
 
@@ -39,6 +40,9 @@ impl ChatCompletionSource {
             "nanogpt" | "nano-gpt" | "nano gpt" => Some(Self::NanoGpt),
             "chutes" => Some(Self::Chutes),
             "siliconflow" | "silicon flow" => Some(Self::SiliconFlow),
+            "workers_ai" | "workers-ai" | "workers ai" | "cloudflare workers ai" => {
+                Some(Self::WorkersAi)
+            }
             "zai" | "z.ai" | "glm" => Some(Self::Zai),
             _ => None,
         }
@@ -59,6 +63,7 @@ impl ChatCompletionSource {
             Self::NanoGpt => "nanogpt",
             Self::Chutes => "chutes",
             Self::SiliconFlow => "siliconflow",
+            Self::WorkersAi => "workers_ai",
             Self::Zai => "zai",
         }
     }
@@ -78,6 +83,7 @@ impl ChatCompletionSource {
             Self::NanoGpt => "NanoGPT",
             Self::Chutes => "Chutes",
             Self::SiliconFlow => "SiliconFlow",
+            Self::WorkersAi => "Cloudflare Workers AI",
             Self::Zai => "Z.AI (GLM)",
         }
     }
@@ -204,6 +210,10 @@ mod tests {
         assert_eq!(
             ChatCompletionSource::parse("siliconflow"),
             Some(ChatCompletionSource::SiliconFlow)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("workers_ai"),
+            Some(ChatCompletionSource::WorkersAi)
         );
         assert_eq!(
             ChatCompletionSource::parse("zai"),

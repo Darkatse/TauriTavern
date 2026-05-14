@@ -8,6 +8,7 @@ import { registerCharacterRoutes } from './character-routes.js';
 import { registerChatRoutes } from './chat-routes.js';
 import { registerBackupsRoutes } from './backups-routes.js';
 import { registerAiRoutes } from './ai-routes.js';
+import { registerProviderRoutes } from './provider-routes.js';
 import { registerStatsRoutes } from './stats-routes.js';
 import { registerWorldInfoRoutes } from './worldinfo-routes.js';
 import { registerContentRoutes } from './content-routes.js';
@@ -28,6 +29,7 @@ export function registerRoutes(router, context, responses) {
     registerContentRoutes(router, context, responses);
     registerWorldInfoRoutes(router, context, responses);
     registerAiRoutes(router, context, responses);
+    registerProviderRoutes(router, context, responses);
     registerSdRoutes(router, context, responses);
     registerTranslateRoutes(router, context, responses);
     registerTtsRoutes(router, context, responses);

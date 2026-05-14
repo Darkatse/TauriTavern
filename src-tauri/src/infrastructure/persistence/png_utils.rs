@@ -407,11 +407,22 @@ pub fn write_character_data_to_png(
 
 /// Process an image for use as a character avatar.
 pub async fn process_avatar_image(
-    image_data: &[u8],
+    image_data: Vec<u8>,
     crop: Option<ImageCrop>,
 ) -> Result<Vec<u8>, DomainError> {
     tracing::debug!("Processing avatar image");
 
+    tokio::task::spawn_blocking(move || process_avatar_image_sync(&image_data, crop))
+        .await
+        .map_err(|error| {
+            DomainError::InternalError(format!("Failed to join avatar image processor: {}", error))
+        })?
+}
+
+fn process_avatar_image_sync(
+    image_data: &[u8],
+    crop: Option<ImageCrop>,
+) -> Result<Vec<u8>, DomainError> {
     // Load the image
     let mut img = image::load_from_memory(image_data)
         .map_err(|e| DomainError::InvalidData(format!("Failed to load image: {}", e)))?;

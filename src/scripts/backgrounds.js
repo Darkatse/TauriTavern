@@ -87,11 +87,27 @@ const BG_TABS = Object.freeze({
 let lazyLoadObserver = null;
 
 /**
- * Cache for the current list of system background filenames.
+ * Cache for the current list of system background entries.
  * Used to re-sort backgrounds without refetching from the server.
- * @type {string[]}
+ * @type {Array<{filename: string, isAnimated: boolean}>}
  */
 let cachedSystemBackgrounds = [];
+
+function normalizeSystemBackgroundEntry(entry) {
+    if (typeof entry === 'string') {
+        return { filename: entry, isAnimated: false };
+    }
+
+    if (entry && typeof entry.filename === 'string') {
+        return { filename: entry.filename, isAnimated: Boolean(entry.isAnimated) };
+    }
+
+    throw new Error('Invalid background entry shape');
+}
+
+function getBackgroundFilename(entry) {
+    return typeof entry === 'string' ? entry : entry.filename;
+}
 
 export let background_settings = {
     name: '__transparent.png',
@@ -102,24 +118,26 @@ export let background_settings = {
 };
 
 /**
- * Sorts an array of background filenames based on the current sort order.
- * @param {string[]} backgrounds - Array of background filenames
+ * Sorts an array of background entries based on the current sort order.
+ * @param {Array<string|{filename: string, isAnimated?: boolean}>} backgrounds - Array of background entries
  * @param {boolean} isCustom - Whether these are custom (chat) backgrounds
- * @returns {string[]} Sorted array of background filenames
+ * @returns {Array<string|{filename: string, isAnimated?: boolean}>} Sorted background entries
  */
 function sortBackgrounds(backgrounds, isCustom = false) {
     const sortOrder = background_settings.sortOrder || BG_SORT_OPTIONS.AZ;
 
     return [...backgrounds].sort((a, b) => {
+        const nameA = getBackgroundFilename(a);
+        const nameB = getBackgroundFilename(b);
         switch (sortOrder) {
             case BG_SORT_OPTIONS.AZ:
-                return sortIgnoreCaseAndAccents(a, b);
+                return sortIgnoreCaseAndAccents(nameA, nameB);
             case BG_SORT_OPTIONS.ZA:
-                return sortIgnoreCaseAndAccents(b, a);
+                return sortIgnoreCaseAndAccents(nameB, nameA);
             case BG_SORT_OPTIONS.NEWEST:
             case BG_SORT_OPTIONS.OLDEST: {
-                const keyA = isCustom ? a : `backgrounds/${a}`;
-                const keyB = isCustom ? b : `backgrounds/${b}`;
+                const keyA = isCustom ? nameA : `backgrounds/${nameA}`;
+                const keyB = isCustom ? nameB : `backgrounds/${nameB}`;
                 const metaA = METADATA_CACHE.get(keyA);
                 const metaB = METADATA_CACHE.get(keyB);
                 const timestampA = metaA?.addedTimestamp ?? 0;
@@ -143,6 +161,7 @@ function sortBackgrounds(backgrounds, isCustom = false) {
 function createThumbnailElement(imageData) {
     const bg = imageData.filename;
     const isCustom = imageData.isCustom;
+    const isAnimated = Boolean(imageData.isAnimated);
 
     const thumbnail = $('#background_template .bg_example').clone();
 
@@ -173,6 +192,7 @@ function createThumbnailElement(imageData) {
     thumbnail.attr('title', title);
     thumbnail.attr('bgfile', bg);
     thumbnail.attr('custom', String(isCustom));
+    thumbnail.attr('animated', String(isAnimated));
     thumbnail.data('url', url);
     titleElement.text(friendlyTitle);
 
@@ -451,8 +471,8 @@ async function invalidateThumbnailCaches(bg) {
 
 function pruneServerThumbnailBlobCache(backgrounds) {
     const validKeys = new Set(backgrounds.flatMap((bg) => [
-        getServerThumbnailCacheKey(bg, false),
-        getServerThumbnailCacheKey(bg, true),
+        getServerThumbnailCacheKey(getBackgroundFilename(bg), false),
+        getServerThumbnailCacheKey(getBackgroundFilename(bg), true),
     ]));
 
     for (const key of SERVER_THUMBNAIL_BLOBS.keys()) {
@@ -577,7 +597,7 @@ async function onDeleteBackgroundClick(e) {
         if (!isCustom) {
             await delBackground(bg);
             // Remove from cache to prevent reappearing on sort change
-            const cacheIndex = cachedSystemBackgrounds.indexOf(bg);
+            const cacheIndex = cachedSystemBackgrounds.findIndex(entry => entry.filename === bg);
             if (cacheIndex !== -1) {
                 cachedSystemBackgrounds.splice(cacheIndex, 1);
             }
@@ -660,7 +680,7 @@ async function autoBackgroundCommand() {
 
 /**
  * Renders the system backgrounds gallery.
- * @param {string[]} [backgrounds] - Optional filtered list of backgrounds.
+ * @param {Array<string|{filename: string, isAnimated?: boolean}>} [backgrounds] - Optional filtered list of backgrounds.
  */
 function renderSystemBackgrounds(backgrounds) {
     const sourceList = backgrounds || [];
@@ -671,7 +691,8 @@ function renderSystemBackgrounds(backgrounds) {
 
     const sortedList = sortBackgrounds(sourceList, false);
     sortedList.forEach(bg => {
-        const imageData = { filename: bg, isCustom: false };
+        const entry = normalizeSystemBackgroundEntry(bg);
+        const imageData = { filename: entry.filename, isCustom: false, isAnimated: entry.isAnimated };
         const thumbnail = createThumbnailElement(imageData);
         container.append(thumbnail);
     });
@@ -702,8 +723,6 @@ function renderChatBackgrounds(backgrounds) {
 }
 
 export async function getBackgrounds() {
-    const metadataPromise = preloadImageMetadata();
-
     const response = await fetch('/api/backgrounds/all', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -711,14 +730,19 @@ export async function getBackgrounds() {
     });
     if (response.ok) {
         const { images, config } = await response.json();
+        if (!Array.isArray(images)) {
+            throw new Error('Invalid backgrounds response: images must be an array');
+        }
+
         Object.assign(THUMBNAIL_CONFIG, config);
 
-        cachedSystemBackgrounds = images;
-        pruneServerThumbnailBlobCache(images);
+        const normalizedImages = images.map(normalizeSystemBackgroundEntry);
+        cachedSystemBackgrounds = normalizedImages;
+        pruneServerThumbnailBlobCache(normalizedImages);
 
-        await metadataPromise;
+        await preloadImageMetadata();
 
-        renderSystemBackgrounds(images);
+        renderSystemBackgrounds(normalizedImages);
         highlightSelectedBackground();
     }
 }
@@ -772,7 +796,8 @@ function activateLazyLoader() {
                 if (parentThumbnail) {
                     const bg = parentThumbnail.getAttribute('bgfile');
                     const isCustom = parentThumbnail.getAttribute('custom') === 'true';
-                    resolveImageUrl(bg, isCustom)
+                    const isAnimated = parentThumbnail.getAttribute('animated') === 'true';
+                    resolveImageUrl(bg, isCustom, isAnimated)
                         .then(url => { clipper.style.backgroundImage = url; })
                         .catch(() => { clipper.style.backgroundImage = PLACEHOLDER_IMAGE; });
                 }
@@ -805,16 +830,21 @@ function generateUrlParameter(bg, isCustom) {
  * Resolves the image URL for the background.
  * @param {string} bg Background file name
  * @param {boolean} isCustom Is a custom background
+ * @param {boolean|null} [isAnimated=null] Is the background animated. When null, it is inferred from extension.
  * @returns {Promise<string>} CSS URL of the background
  */
-async function resolveImageUrl(bg, isCustom) {
-    const fileExtension = bg.split('.').pop().toLowerCase();
-    const isAnimated = ['mp4', 'webp'].includes(fileExtension);
-    const thumbnailUrl = isAnimated && !background_settings.animation
+async function resolveImageUrl(bg, isCustom, isAnimated = null) {
+    let animated = isAnimated;
+    if (animated === null) {
+        const fileExtension = bg.split('.').pop().toLowerCase();
+        animated = ['mp4', 'webp'].includes(fileExtension);
+    }
+
+    const thumbnailUrl = animated && !background_settings.animation
         ? await getThumbnailFromStorage(bg, isCustom)
         : isCustom
             ? bg
-            : await getServerThumbnailBlobUrl(bg, isAnimated && background_settings.animation);
+            : await getServerThumbnailBlobUrl(bg, animated && background_settings.animation);
 
     return `url("${thumbnailUrl}")`;
 }

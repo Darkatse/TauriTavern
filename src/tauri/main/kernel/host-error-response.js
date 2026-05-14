@@ -43,10 +43,12 @@ export function resolveHostErrorResponse(message) {
     if (lower.startsWith('unauthorized:') || lower.startsWith('permission denied:')) {
         return { status: 401, body: normalized };
     }
+    if (lower.startsWith('too many requests:')) {
+        return { status: 429, body: normalized };
+    }
     if (lower.startsWith('not found:') || lower.startsWith('entity not found:')) {
         return { status: 404, body: normalized };
     }
 
     return { status: 500, body: normalized };
 }
-

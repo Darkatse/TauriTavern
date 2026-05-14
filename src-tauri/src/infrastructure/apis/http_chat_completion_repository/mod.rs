@@ -21,6 +21,7 @@ mod normalizers;
 mod openai;
 mod openai_responses;
 mod vertexai;
+mod workers_ai;
 
 #[derive(Debug, Clone, Copy)]
 struct PromptCachePerformanceUsage {
@@ -461,8 +462,17 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::Groq
             | ChatCompletionSource::Moonshot
             | ChatCompletionSource::Chutes
-            | ChatCompletionSource::SiliconFlow
             | ChatCompletionSource::Zai => openai::list_models(self, config, source_name).await,
+            ChatCompletionSource::SiliconFlow => {
+                openai::list_models_with_path(
+                    self,
+                    config,
+                    source_name,
+                    "/models?type=text&sub_type=chat",
+                )
+                .await
+            }
+            ChatCompletionSource::WorkersAi => workers_ai::list_models(self, config).await,
             ChatCompletionSource::Cohere => cohere::list_models(self, config).await,
             ChatCompletionSource::NanoGpt => {
                 openai::list_models_with_path(self, config, source_name, "/models?detailed=true")
@@ -492,6 +502,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::NanoGpt
             | ChatCompletionSource::Chutes
             | ChatCompletionSource::SiliconFlow
+            | ChatCompletionSource::WorkersAi
             | ChatCompletionSource::Zai => {
                 openai::generate(self, config, endpoint_path, payload, source_name)
                     .await
@@ -566,6 +577,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::NanoGpt
             | ChatCompletionSource::Chutes
             | ChatCompletionSource::SiliconFlow
+            | ChatCompletionSource::WorkersAi
             | ChatCompletionSource::Zai => {
                 openai::generate_stream(
                     self,

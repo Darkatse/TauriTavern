@@ -619,6 +619,8 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
             proxy_password: String(payload.proxy_password || ''),
             custom_url: String(payload.custom_url || ''),
             custom_include_headers: String(payload.custom_include_headers || ''),
+            siliconflow_endpoint: String(payload.siliconflow_endpoint || ''),
+            workers_ai_account_id: String(payload.workers_ai_account_id || ''),
             bypass_status_check: Boolean(payload.bypass_status_check),
         };
 

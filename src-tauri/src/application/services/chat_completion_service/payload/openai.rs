@@ -86,6 +86,10 @@ pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
         "custom_claude_prompt_caching",
         "custom_url",
         "bypass_status_check",
+        "siliconflow_endpoint",
+        "workers_ai_account_id",
+        "nanogpt_provider",
+        "nanogpt_payg_override",
     ] {
         payload.remove(key);
     }

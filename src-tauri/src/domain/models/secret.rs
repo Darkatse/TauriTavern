@@ -222,6 +222,7 @@ impl SecretKeys {
     pub const COMETAPI: &'static str = "api_key_cometapi";
     pub const ZAI: &'static str = "api_key_zai";
     pub const SILICONFLOW: &'static str = "api_key_siliconflow";
+    pub const WORKERS_AI: &'static str = "api_key_workers_ai";
     pub const ELEVENLABS: &'static str = "api_key_elevenlabs";
     pub const POLLINATIONS: &'static str = "api_key_pollinations";
     pub const VOLCENGINE_APP_ID: &'static str = "volcengine_app_id";
@@ -287,6 +288,7 @@ impl SecretKeys {
             Self::COMETAPI,
             Self::ZAI,
             Self::SILICONFLOW,
+            Self::WORKERS_AI,
             Self::ELEVENLABS,
             Self::POLLINATIONS,
             Self::VOLCENGINE_APP_ID,

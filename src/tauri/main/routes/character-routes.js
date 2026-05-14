@@ -78,6 +78,15 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         return textResponse('ok');
     });
 
+    router.post('/api/characters/edit-avatar', async ({ body, url }) => {
+        if (!(body instanceof FormData)) {
+            return jsonResponse({ error: 'Expected multipart form data' }, 400);
+        }
+
+        await context.editCharacterAvatarFromForm(body, url);
+        return textResponse('OK');
+    });
+
     router.post('/api/characters/delete', async ({ body }) => {
         const avatar = body?.avatar_url;
         const characterId = await context.resolveCharacterId({ avatar, fallbackName: body?.name });

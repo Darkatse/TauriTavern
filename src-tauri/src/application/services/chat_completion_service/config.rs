@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value};
 
 use crate::application::dto::chat_completion_dto::{
@@ -11,6 +12,7 @@ use crate::domain::models::secret::SecretKeys;
 use crate::domain::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
 };
+use crate::domain::repositories::provider_metadata_repository::SiliconFlowEndpoint;
 use crate::domain::repositories::secret_repository::SecretRepository;
 
 use super::custom_parameters;
@@ -30,6 +32,8 @@ const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
 const NANOGPT_API_BASE: &str = "https://nano-gpt.com/api/v1";
 const CHUTES_API_BASE: &str = "https://llm.chutes.ai/v1";
 const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
+const SILICONFLOW_API_BASE_CN: &str = "https://api.siliconflow.cn/v1";
+const WORKERS_AI_API_BASE: &str = "https://api.cloudflare.com/client/v4/accounts";
 const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
 const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
 const OPENROUTER_REFERER: &str = "https://tauritavern.client";
@@ -41,6 +45,15 @@ const ZAI_ENDPOINT_CODING: &str = "coding";
 enum ApiConfigPurpose {
     Status,
     Generate,
+}
+
+#[derive(Default)]
+struct ApiConfigHints<'a> {
+    zai_endpoint: &'a str,
+    siliconflow_endpoint: &'a str,
+    workers_ai_account_id: &'a str,
+    nanogpt_provider: &'a str,
+    nanogpt_payg_override: bool,
 }
 
 pub(super) async fn resolve_status_api_config(
@@ -60,7 +73,11 @@ pub(super) async fn resolve_status_api_config(
         proxy_password,
         custom_url,
         custom_headers_raw,
-        "",
+        ApiConfigHints {
+            siliconflow_endpoint: dto.siliconflow_endpoint.trim(),
+            workers_ai_account_id: dto.workers_ai_account_id.trim(),
+            ..Default::default()
+        },
         ApiConfigPurpose::Status,
         secret_repository,
     )
@@ -78,6 +95,10 @@ pub(super) async fn resolve_generate_api_config(
     let custom_url = custom_url_raw.trim();
     let custom_headers_raw = get_payload_string(&dto.payload, "custom_include_headers");
     let zai_endpoint = get_payload_string(&dto.payload, "zai_endpoint");
+    let siliconflow_endpoint = get_payload_string(&dto.payload, "siliconflow_endpoint");
+    let workers_ai_account_id = get_payload_string(&dto.payload, "workers_ai_account_id");
+    let nanogpt_provider = get_payload_string(&dto.payload, "nanogpt_provider");
+    let nanogpt_payg_override = get_payload_bool(&dto.payload, "nanogpt_payg_override")?;
 
     if source == ChatCompletionSource::VertexAi {
         return resolve_vertexai_generate_api_config(
@@ -95,7 +116,13 @@ pub(super) async fn resolve_generate_api_config(
         proxy_password,
         custom_url,
         &custom_headers_raw,
-        &zai_endpoint,
+        ApiConfigHints {
+            zai_endpoint: &zai_endpoint,
+            siliconflow_endpoint: &siliconflow_endpoint,
+            workers_ai_account_id: &workers_ai_account_id,
+            nanogpt_provider: &nanogpt_provider,
+            nanogpt_payg_override,
+        },
         ApiConfigPurpose::Generate,
         secret_repository,
     )
@@ -109,7 +136,7 @@ async fn resolve_api_config(
     proxy_password: &str,
     custom_url: &str,
     custom_headers_raw: &str,
-    zai_endpoint: &str,
+    hints: ApiConfigHints<'_>,
     purpose: ApiConfigPurpose,
     secret_repository: &Arc<dyn SecretRepository>,
 ) -> Result<ChatCompletionApiConfig, ApplicationError> {
@@ -142,7 +169,7 @@ async fn resolve_api_config(
             let base_url = if supports_reverse_proxy(source) && !reverse_proxy.is_empty() {
                 reverse_proxy.to_string()
             } else {
-                default_base_url(source, purpose, zai_endpoint)
+                default_base_url(source, purpose, &hints)?
             };
 
             let api_key = if supports_reverse_proxy(source) && !reverse_proxy.is_empty() {
@@ -157,11 +184,14 @@ async fn resolve_api_config(
                 read_required_secret(secret_repository, secret_key, source.display_name()).await?
             };
 
+            let mut extra_headers = source_extra_headers(source);
+            apply_dynamic_headers(source, &hints, &mut extra_headers);
+
             Ok(ChatCompletionApiConfig {
                 base_url,
                 api_key,
                 authorization_header: None,
-                extra_headers: source_extra_headers(source),
+                extra_headers,
                 anthropic_beta_header_mode: source_anthropic_beta_header_mode(source),
             })
         }
@@ -230,6 +260,21 @@ fn get_payload_string(payload: &serde_json::Map<String, Value>, key: &str) -> St
         .unwrap_or_default()
 }
 
+fn get_payload_bool(
+    payload: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<bool, ApplicationError> {
+    match payload.get(key) {
+        None => Ok(false),
+        Some(value) => value.as_bool().ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "Chat completion request field must be a boolean: {}",
+                key
+            ))
+        }),
+    }
+}
+
 async fn read_required_secret(
     secret_repository: &Arc<dyn SecretRepository>,
     secret_key: &str,
@@ -260,9 +305,9 @@ async fn read_optional_secret(
 fn default_base_url(
     source: ChatCompletionSource,
     purpose: ApiConfigPurpose,
-    zai_endpoint: &str,
-) -> String {
-    match source {
+    hints: &ApiConfigHints<'_>,
+) -> Result<String, ApplicationError> {
+    let base_url = match source {
         ChatCompletionSource::OpenAi => OPENAI_API_BASE.to_string(),
         ChatCompletionSource::OpenRouter => OPENROUTER_API_BASE.to_string(),
         ChatCompletionSource::Claude => CLAUDE_API_BASE.to_string(),
@@ -280,16 +325,23 @@ fn default_base_url(
         ChatCompletionSource::Moonshot => MOONSHOT_API_BASE.to_string(),
         ChatCompletionSource::NanoGpt => NANOGPT_API_BASE.to_string(),
         ChatCompletionSource::Chutes => CHUTES_API_BASE.to_string(),
-        ChatCompletionSource::SiliconFlow => SILICONFLOW_API_BASE.to_string(),
+        ChatCompletionSource::SiliconFlow => {
+            siliconflow_base_url(hints.siliconflow_endpoint)?.to_string()
+        }
+        ChatCompletionSource::WorkersAi => {
+            workers_ai_base_url(hints.workers_ai_account_id, purpose)?
+        }
         ChatCompletionSource::Zai => {
-            if is_zai_coding_endpoint(zai_endpoint) {
+            if is_zai_coding_endpoint(hints.zai_endpoint) {
                 ZAI_API_BASE_CODING.to_string()
             } else {
                 ZAI_API_BASE_COMMON.to_string()
             }
         }
         ChatCompletionSource::Custom => OPENAI_API_BASE.to_string(),
-    }
+    };
+
+    Ok(base_url)
 }
 
 fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
@@ -306,6 +358,7 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
         ChatCompletionSource::NanoGpt => Some(SecretKeys::NANOGPT),
         ChatCompletionSource::Chutes => Some(SecretKeys::CHUTES),
         ChatCompletionSource::SiliconFlow => Some(SecretKeys::SILICONFLOW),
+        ChatCompletionSource::WorkersAi => Some(SecretKeys::WORKERS_AI),
         ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
         ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
     }
@@ -322,6 +375,34 @@ fn supports_reverse_proxy(source: ChatCompletionSource) -> bool {
             | ChatCompletionSource::Moonshot
             | ChatCompletionSource::Zai
     )
+}
+
+fn siliconflow_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
+    match SiliconFlowEndpoint::parse_frontend(endpoint)
+        .map_err(ApplicationError::ValidationError)?
+    {
+        SiliconFlowEndpoint::Global => Ok(SILICONFLOW_API_BASE),
+        SiliconFlowEndpoint::China => Ok(SILICONFLOW_API_BASE_CN),
+    }
+}
+
+fn workers_ai_base_url(
+    account_id: &str,
+    purpose: ApiConfigPurpose,
+) -> Result<String, ApplicationError> {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return Err(ApplicationError::ValidationError(
+            "workers_ai_account_id is required".to_string(),
+        ));
+    }
+
+    let account_id = utf8_percent_encode(account_id, NON_ALPHANUMERIC).to_string();
+    let suffix = match purpose {
+        ApiConfigPurpose::Status => "ai",
+        ApiConfigPurpose::Generate => "ai/v1",
+    };
+    Ok(format!("{WORKERS_AI_API_BASE}/{account_id}/{suffix}"))
 }
 
 async fn resolve_vertexai_generate_api_config(
@@ -434,6 +515,25 @@ fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String>
     headers
 }
 
+fn apply_dynamic_headers(
+    source: ChatCompletionSource,
+    hints: &ApiConfigHints<'_>,
+    headers: &mut HashMap<String, String>,
+) {
+    if source != ChatCompletionSource::NanoGpt {
+        return;
+    }
+
+    let provider = hints.nanogpt_provider.trim();
+    if !provider.is_empty() {
+        headers.insert("X-Provider".to_string(), provider.to_string());
+    }
+
+    if hints.nanogpt_payg_override {
+        headers.insert("X-Billing-Mode".to_string(), "paygo".to_string());
+    }
+}
+
 fn is_zai_coding_endpoint(value: &str) -> bool {
     value.trim().eq_ignore_ascii_case(ZAI_ENDPOINT_CODING)
 }
@@ -455,9 +555,9 @@ mod tests {
     use crate::domain::repositories::secret_repository::SecretRepository;
 
     use super::{
-        ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, OPENROUTER_API_BASE, ZAI_API_BASE_CODING,
-        default_base_url, resolve_generate_api_config, resolve_status_api_config,
-        source_extra_headers, supports_reverse_proxy, take_header_value,
+        ApiConfigHints, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, OPENROUTER_API_BASE,
+        ZAI_API_BASE_CODING, default_base_url, resolve_generate_api_config,
+        resolve_status_api_config, source_extra_headers, supports_reverse_proxy, take_header_value,
     };
 
     struct TestSecretRepository {
@@ -515,29 +615,42 @@ mod tests {
 
     #[test]
     fn deepseek_status_uses_non_beta_base() {
-        let actual = default_base_url(ChatCompletionSource::DeepSeek, ApiConfigPurpose::Status, "");
+        let hints = ApiConfigHints::default();
+        let actual = default_base_url(
+            ChatCompletionSource::DeepSeek,
+            ApiConfigPurpose::Status,
+            &hints,
+        )
+        .unwrap();
 
         assert_eq!(actual, DEEPSEEK_STATUS_API_BASE);
     }
 
     #[test]
     fn zai_coding_endpoint_resolves_coding_base() {
+        let hints = ApiConfigHints {
+            zai_endpoint: "coding",
+            ..Default::default()
+        };
         let actual = default_base_url(
             ChatCompletionSource::Zai,
             ApiConfigPurpose::Generate,
-            "coding",
-        );
+            &hints,
+        )
+        .unwrap();
 
         assert_eq!(actual, ZAI_API_BASE_CODING);
     }
 
     #[test]
     fn openrouter_uses_default_base_url() {
+        let hints = ApiConfigHints::default();
         let actual = default_base_url(
             ChatCompletionSource::OpenRouter,
             ApiConfigPurpose::Generate,
-            "",
-        );
+            &hints,
+        )
+        .unwrap();
         assert_eq!(actual, OPENROUTER_API_BASE);
     }
 

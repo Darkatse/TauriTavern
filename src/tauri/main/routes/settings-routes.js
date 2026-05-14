@@ -1,3 +1,28 @@
+const PROVIDER_METADATA_SECRET_KEYS = new Set([
+    'api_key_openrouter',
+    'api_key_nanogpt',
+    'api_key_siliconflow',
+    'api_key_workers_ai',
+]);
+
+const SECRET_BACKED_PROVIDER_METADATA_COMMANDS = [
+    'get_openrouter_credits',
+    'get_nanogpt_credits',
+    'get_siliconflow_embedding_models',
+    'get_workers_ai_embedding_models',
+    'get_workers_ai_multimodal_models',
+];
+
+function invalidateSecretBackedProviderMetadata(context, key) {
+    if (!PROVIDER_METADATA_SECRET_KEYS.has(String(key || ''))) {
+        return;
+    }
+
+    for (const command of SECRET_BACKED_PROVIDER_METADATA_COMMANDS) {
+        context.invalidateInvokeAll(command);
+    }
+}
+
 export function registerSettingsRoutes(router, context, { jsonResponse }) {
     router.post('/api/settings/get', async () => {
         const settings = await context.safeInvoke('get_sillytavern_settings');
@@ -41,6 +66,11 @@ export function registerSettingsRoutes(router, context, { jsonResponse }) {
         }
     });
 
+    router.post('/api/secrets/settings', async () => {
+        const settings = await context.safeInvoke('read_secret_settings');
+        return jsonResponse(settings);
+    });
+
     router.post('/api/secrets/find', async ({ body }) => {
         const key = body?.key || '';
         const id = body?.id || null;
@@ -53,6 +83,7 @@ export function registerSettingsRoutes(router, context, { jsonResponse }) {
         const value = body?.value || '';
         const label = body?.label ?? null;
         const id = await context.safeInvoke('write_secret', { dto: { key, value, label } });
+        invalidateSecretBackedProviderMetadata(context, key);
         return jsonResponse({ id });
     });
 
@@ -60,6 +91,7 @@ export function registerSettingsRoutes(router, context, { jsonResponse }) {
         const key = body?.key || '';
         const id = body?.id || null;
         await context.safeInvoke('delete_secret', { dto: { key, id } });
+        invalidateSecretBackedProviderMetadata(context, key);
         return jsonResponse({ ok: true });
     });
 
@@ -67,6 +99,7 @@ export function registerSettingsRoutes(router, context, { jsonResponse }) {
         const key = body?.key || '';
         const id = body?.id || '';
         await context.safeInvoke('rotate_secret', { dto: { key, id } });
+        invalidateSecretBackedProviderMetadata(context, key);
         return jsonResponse({ ok: true });
     });
 

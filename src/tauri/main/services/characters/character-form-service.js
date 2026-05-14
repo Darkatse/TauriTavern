@@ -1,6 +1,6 @@
 // @ts-check
 
-import { lodash as _ } from '../../../../lib.js';
+import { getByPath, mergeObjects, setByPath, unsetByPath } from './form-object-utils.js';
 
 /**
  * @typedef {import('../../context/types.js').MaterializedFileInfo} MaterializedFileInfo
@@ -10,6 +10,7 @@ import { lodash as _ } from '../../../../lib.js';
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand, args?: any) => Promise<any>} SafeInvokeFn
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand) => void} InvalidateInvokeAllFn
  * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveCharacterIdFn
+ * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveExistingCharacterIdFn
  * @typedef {(file: Blob, options?: { preferredName?: string; preferredExtension?: string }) => Promise<MaterializedFileInfo | null>} MaterializeUploadFileFn
  */
 
@@ -18,6 +19,7 @@ import { lodash as _ } from '../../../../lib.js';
  *   safeInvoke: SafeInvokeFn;
  *   invalidateInvokeAll: InvalidateInvokeAllFn;
  *   resolveCharacterId: ResolveCharacterIdFn;
+ *   resolveExistingCharacterId: ResolveExistingCharacterIdFn;
  *   materializeUploadFile: MaterializeUploadFileFn;
  * }} deps
  */
@@ -25,6 +27,7 @@ export function createCharacterFormService({
     safeInvoke,
     invalidateInvokeAll,
     resolveCharacterId,
+    resolveExistingCharacterId,
     materializeUploadFile,
 }) {
     /** @param {FormData} formData @param {string} key */
@@ -53,6 +56,20 @@ export function createCharacterFormService({
         }
 
         return String(raw);
+    }
+
+    /** @param {FormData} formData */
+    function avatarUrlFromForm(formData) {
+        const avatar = stringFromForm(formData, 'avatar_url', '').trim();
+        if (!avatar) {
+            throw new Error('Bad request: no avatar_url in request body');
+        }
+
+        if (/[\/\\\u0000]/.test(avatar)) {
+            throw new Error('Bad request: invalid avatar_url');
+        }
+
+        return avatar;
     }
 
     /** @param {FormData} formData @param {string} key */
@@ -116,7 +133,7 @@ export function createCharacterFormService({
         };
         const parsed = parseJsonStrict(stringFromForm(formData, 'extensions', ''), {}, "extensions JSON");
 
-        return _.merge({}, defaults, parsed);
+        return mergeObjects({}, defaults, parsed);
     }
 
     /** @param {FormData} formData */
@@ -151,7 +168,7 @@ export function createCharacterFormService({
      */
     function assignObjectPaths(target, values) {
         for (const [path, value] of Object.entries(values)) {
-            _.set(target, path, value);
+            setByPath(target, path, value);
         }
     }
 
@@ -169,9 +186,9 @@ export function createCharacterFormService({
             ? stringFromForm(formData, 'chat', '').trim()
             : `${name} - ${new Date().toISOString()}`;
         const createDate = stringFromForm(formData, 'create_date', '').trim();
-        const mergedExtensions = _.merge({}, _.get(baseCard, 'data.extensions', {}), dto.extensions);
+        const mergedExtensions = mergeObjects({}, getByPath(baseCard, 'data.extensions', {}), dto.extensions);
 
-        _.unset(baseCard, 'json_data');
+        unsetByPath(baseCard, 'json_data');
 
         assignObjectPaths(baseCard, {
             name,
@@ -204,24 +221,24 @@ export function createCharacterFormService({
         });
 
         if (typeof mergedExtensions.world === 'string' && mergedExtensions.world.trim()) {
-            _.unset(baseCard, 'data.character_book');
+            unsetByPath(baseCard, 'data.character_book');
         }
 
         if (formData.has('chat')) {
             if (chat) {
-                _.set(baseCard, 'chat', chat);
+                setByPath(baseCard, 'chat', chat);
             } else {
-                _.unset(baseCard, 'chat');
+                unsetByPath(baseCard, 'chat');
             }
         } else {
-            _.set(baseCard, 'chat', chat);
+            setByPath(baseCard, 'chat', chat);
         }
 
         if (formData.has('create_date')) {
             if (createDate) {
-                _.set(baseCard, 'create_date', createDate);
+                setByPath(baseCard, 'create_date', createDate);
             } else {
-                _.unset(baseCard, 'create_date');
+                unsetByPath(baseCard, 'create_date');
             }
         }
 
@@ -359,6 +376,43 @@ export function createCharacterFormService({
     }
 
     /** @param {FormData} formData @param {URL} requestUrl */
+    async function editCharacterAvatarFromForm(formData, requestUrl) {
+        const avatar = avatarUrlFromForm(formData);
+        const file = formData.get('avatar');
+        if (!(file instanceof Blob) || file.size === 0) {
+            throw new Error('Bad request: no file uploaded');
+        }
+
+        const characterId = await resolveExistingCharacterId({ avatar });
+        if (!characterId) {
+            throw new Error('Bad request: character file does not exist');
+        }
+
+        const crop = parseCropParam(requestUrl);
+        const preferredName = file instanceof File ? file.name : '';
+        const fileInfo = await materializeUploadFile(file, {
+            preferredName,
+        });
+        if (!fileInfo?.filePath) {
+            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
+            throw new Error(`Bad request: unable to access uploaded avatar file${reason}`);
+        }
+
+        try {
+            await safeInvoke('update_avatar', {
+                dto: {
+                    name: characterId,
+                    avatar_path: fileInfo.filePath,
+                    crop: crop || null,
+                },
+            });
+            invalidateInvokeAll('read_thumbnail_asset');
+        } finally {
+            await fileInfo.cleanup?.();
+        }
+    }
+
+    /** @param {FormData} formData @param {URL} requestUrl */
     async function uploadAvatarFromForm(formData, requestUrl) {
         const file = formData.get('avatar');
         if (!(file instanceof Blob)) {
@@ -394,6 +448,7 @@ export function createCharacterFormService({
     return {
         createCharacterFromForm,
         editCharacterFromForm,
+        editCharacterAvatarFromForm,
         uploadAvatarFromForm,
     };
 }

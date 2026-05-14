@@ -234,56 +234,39 @@ export function createCharacterService({ safeInvoke }) {
     /**
      * @param {{ avatar?: any; fallbackName?: string } | undefined} options
      */
-    async function resolveCharacterId(options = {}) {
+    function resolveCachedCharacterId(options = {}) {
         const avatar = options.avatar;
         const fallbackName = options.fallbackName;
         const avatarInternalId = getAvatarInternalId(avatar);
         const avatarFileName = normalizeAvatarFileName(avatar);
 
-        const resolveFromCache = () => {
-            if (avatar !== undefined && avatar !== null) {
-                const fromRawAvatar = characterByAvatar.get(String(avatar));
-                const fromRawAvatarId = getCharacterId(fromRawAvatar);
-                if (fromRawAvatarId) {
-                    return fromRawAvatarId;
-                }
+        if (avatar !== undefined && avatar !== null) {
+            const fromRawAvatar = characterByAvatar.get(String(avatar));
+            const fromRawAvatarId = getCharacterId(fromRawAvatar);
+            if (fromRawAvatarId) {
+                return fromRawAvatarId;
             }
+        }
 
-            if (avatarFileName) {
-                const fromFileName = characterByAvatar.get(avatarFileName);
-                const fromFileNameId = getCharacterId(fromFileName);
-                if (fromFileNameId) {
-                    return fromFileNameId;
-                }
+        if (avatarFileName) {
+            const fromFileName = characterByAvatar.get(avatarFileName);
+            const fromFileNameId = getCharacterId(fromFileName);
+            if (fromFileNameId) {
+                return fromFileNameId;
             }
+        }
 
-            if (avatarInternalId) {
-                const fromInternalId = characterById.get(avatarInternalId);
-                const fromInternalIdValue = getCharacterId(fromInternalId);
-                if (fromInternalIdValue) {
-                    return fromInternalIdValue;
-                }
-            }
-
-            return null;
-        };
-
-        if (avatarInternalId || avatarFileName) {
-            const cached = resolveFromCache();
-            if (cached) {
-                return cached;
-            }
-
-            await getAllCharacters({ shallow: true });
-            const refreshed = resolveFromCache();
-            if (refreshed) {
-                return refreshed;
+        if (avatarInternalId) {
+            const fromInternalId = characterById.get(avatarInternalId);
+            const fromInternalIdValue = getCharacterId(fromInternalId);
+            if (fromInternalIdValue) {
+                return fromInternalIdValue;
             }
         }
 
         const fallback = String(fallbackName || '').trim();
         if (!fallback) {
-            return avatarInternalId || null;
+            return null;
         }
 
         const cachedByName = characterByDisplayName.get(fallback);
@@ -298,20 +281,41 @@ export function createCharacterService({ safeInvoke }) {
             return cachedByInternalIdValue;
         }
 
-        await getAllCharacters({ shallow: true });
-        const refreshedByName = characterByDisplayName.get(fallback);
-        const refreshedByNameId = getCharacterId(refreshedByName);
-        if (refreshedByNameId) {
-            return refreshedByNameId;
+        return null;
+    }
+
+    /**
+     * @param {{ avatar?: any; fallbackName?: string } | undefined} options
+     */
+    async function resolveExistingCharacterId(options = {}) {
+        const avatar = options.avatar;
+        const fallbackName = String(options.fallbackName || '').trim();
+        const hasAvatarLookup = Boolean(getAvatarInternalId(avatar) || normalizeAvatarFileName(avatar));
+        if (!hasAvatarLookup && !fallbackName) {
+            return null;
         }
 
-        const refreshedByInternalId = characterById.get(fallback);
-        const refreshedByInternalIdValue = getCharacterId(refreshedByInternalId);
-        if (refreshedByInternalIdValue) {
-            return refreshedByInternalIdValue;
+        const cached = resolveCachedCharacterId(options);
+        if (cached) {
+            return cached;
         }
 
-        return avatarInternalId || fallback;
+        await getAllCharacters({ shallow: true, forceRefresh: true });
+        return resolveCachedCharacterId(options);
+    }
+
+    /**
+     * @param {{ avatar?: any; fallbackName?: string } | undefined} options
+     */
+    async function resolveCharacterId(options = {}) {
+        const existing = await resolveExistingCharacterId(options);
+        if (existing) {
+            return existing;
+        }
+
+        const avatarInternalId = getAvatarInternalId(options.avatar);
+        const fallback = String(options.fallbackName || '').trim();
+        return avatarInternalId || fallback || null;
     }
 
     /** @param {any} body */
@@ -407,6 +411,7 @@ export function createCharacterService({ safeInvoke }) {
         normalizeExtensions,
         getAllCharacters,
         resolveCharacterId,
+        resolveExistingCharacterId,
         getSingleCharacter,
         findAvatarByCharacterId,
         uniqueCharacterName,

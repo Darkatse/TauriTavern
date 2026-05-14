@@ -97,6 +97,7 @@ async fn setup_service() -> (
     let root = unique_temp_root();
     let characters_dir = root.join("characters");
     let chats_dir = root.join("chats");
+    let thumbnails_avatar_dir = root.join("thumbnails/avatar");
     let worlds_dir = root.join("worlds");
     let default_avatar = root.join("default.png");
 
@@ -106,6 +107,9 @@ async fn setup_service() -> (
     fs::create_dir_all(&chats_dir)
         .await
         .expect("create chats dir");
+    fs::create_dir_all(&thumbnails_avatar_dir)
+        .await
+        .expect("create avatar thumbnails dir");
     fs::create_dir_all(&worlds_dir)
         .await
         .expect("create worlds dir");
@@ -113,13 +117,18 @@ async fn setup_service() -> (
         .await
         .expect("write default avatar");
 
-    let character_repository =
-        FileCharacterRepository::new(characters_dir, chats_dir, default_avatar);
+    let character_repository = FileCharacterRepository::new(
+        characters_dir,
+        chats_dir,
+        thumbnails_avatar_dir,
+        default_avatar,
+    );
     let world_info_repository = FileWorldInfoRepository::new(worlds_dir);
     let service = CharacterService::new(
         Arc::new(FileCharacterRepository::new(
             root.join("characters"),
             root.join("chats"),
+            root.join("thumbnails/avatar"),
             root.join("default.png"),
         )),
         Arc::new(FileChatRepository::new(

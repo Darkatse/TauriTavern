@@ -7,7 +7,8 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::background_dto::{DeleteBackgroundDto, RenameBackgroundDto};
-use crate::domain::models::background::BackgroundImageMetadataIndex;
+use crate::domain::models::background::BackgroundListEntry;
+use crate::domain::models::image_metadata::ImageMetadataIndex;
 use crate::infrastructure::persistence::thumbnail_cache::read_thumbnail_or_original;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -108,14 +109,13 @@ async fn read_non_background_thumbnail_asset(
 #[tauri::command]
 pub async fn get_all_backgrounds(
     app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<String>, CommandError> {
+) -> Result<Vec<BackgroundListEntry>, CommandError> {
     log_command("get_all_backgrounds");
 
     app_state
-        .background_service
-        .get_all_backgrounds()
+        .image_metadata_service
+        .get_background_list_entries()
         .await
-        .map(|backgrounds| backgrounds.into_iter().map(|bg| bg.filename).collect())
         .map_err(map_command_error("Failed to get all backgrounds"))
 }
 
@@ -123,14 +123,14 @@ pub async fn get_all_backgrounds(
 pub async fn get_all_background_metadata(
     app_state: State<'_, Arc<AppState>>,
     prefix: Option<String>,
-) -> Result<BackgroundImageMetadataIndex, CommandError> {
+) -> Result<ImageMetadataIndex, CommandError> {
     log_command(format!(
         "get_all_background_metadata, prefix: {}",
         prefix.clone().unwrap_or_default()
     ));
 
     app_state
-        .background_service
+        .image_metadata_service
         .get_all_background_metadata(prefix.as_deref())
         .await
         .map_err(map_command_error("Failed to get background metadata"))

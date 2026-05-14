@@ -64,6 +64,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         safeInvoke: invokeService.safeInvoke,
         invalidateInvokeAll: invokeService.invalidateInvokeAll,
         resolveCharacterId: characterService.resolveCharacterId,
+        resolveExistingCharacterId: characterService.resolveExistingCharacterId,
         materializeUploadFile: uploadService.materializeUploadFile,
     });
 
@@ -106,6 +107,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         normalizeExtensions: characterService.normalizeExtensions,
         getAllCharacters: characterService.getAllCharacters,
         resolveCharacterId: characterService.resolveCharacterId,
+        resolveExistingCharacterId: characterService.resolveExistingCharacterId,
         getSingleCharacter: characterService.getSingleCharacter,
         ensureJsonl,
         stripJsonl,
@@ -118,6 +120,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         uniqueCharacterName: characterService.uniqueCharacterName,
         createCharacterFromForm: characterFormService.createCharacterFromForm,
         editCharacterFromForm: characterFormService.editCharacterFromForm,
+        editCharacterAvatarFromForm: characterFormService.editCharacterAvatarFromForm,
         uploadAvatarFromForm: characterFormService.uploadAvatarFromForm,
         materializeUploadFile: uploadService.materializeUploadFile,
         materializeAndroidContentUriUpload: androidArchiveService.materializeAndroidContentUriUpload,
