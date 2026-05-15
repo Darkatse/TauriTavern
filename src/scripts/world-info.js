@@ -1,8 +1,8 @@
 import { Fuse } from '../lib.js';
 
-import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getExtensionPromptByName, saveMetadata, getCurrentChatId, create_save, createOrEditCharacter, name1 } from '../script.js';
+import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getExtensionPromptByName, saveMetadata, getCurrentChatId, create_save, createOrEditCharacter, name1, getOneCharacter, select_selected_character } from '../script.js';
 import { extension_prompt_roles } from './extension-prompts.js';
-import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName, logSlashCommandWarn } from './utils.js';
+import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName, logSlashCommandWarn, addLongPressEvent, escapeHtml } from './utils.js';
 import { extension_settings, getContext } from './extensions.js';
 import { NOTE_MODULE_NAME, metadata_keys, shouldWIAddPrompt } from './authors-note.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -4165,7 +4165,13 @@ export async function deleteWorldInfoEntry(data, uid, { silent = false } = {}) {
         return;
     }
 
-    const confirmation = silent || await Popup.show.confirm(t`Delete the entry with UID: ${uid}?`, t`This action is irreversible!`);
+    const entry = data.entries[uid];
+    const keys = Array.isArray(entry?.key) ? entry.key.join(', ') : '';
+    const preview = String(entry?.comment || entry?.content || keys || uid);
+    const confirmation = silent || await Popup.show.confirm(
+        t`Delete the entry with UID: ${uid}?`,
+        `<p>${escapeHtml(preview)}</p><p>${t`This action is irreversible!`}</p>`,
+    );
     if (!confirmation) {
         return false;
     }
@@ -4337,16 +4343,10 @@ async function renameWorldInfo(name, data) {
     const entryPreviouslySelected = selected_world_info.findIndex((e) => e === oldName);
 
     await saveWorldInfo(newName, data, true);
-    await deleteWorldInfo(oldName);
-
-    const existingCharLores = world_info.charLore?.filter((e) => e.extraBooks.includes(oldName));
-    if (existingCharLores && existingCharLores.length > 0) {
-        existingCharLores.forEach((charLore) => {
-            const tempCharLore = charLore.extraBooks.filter((e) => e !== oldName);
-            tempCharLore.push(newName);
-            charLore.extraBooks = tempCharLore;
-        });
-        saveSettingsDebounced();
+    await updateWorldInfoLinks(oldName, newName);
+    const deleted = await deleteWorldInfo(oldName, { saveLinkedCharacter: false });
+    if (!deleted) {
+        throw new Error(`Failed to delete old world info "${oldName}" after rename.`);
     }
 
     if (entryPreviouslySelected !== -1) {
@@ -4358,6 +4358,98 @@ async function renameWorldInfo(name, data) {
     const selectedIndex = world_names.indexOf(newName);
     if (selectedIndex !== -1) {
         $('#world_editor_select').val(selectedIndex).trigger('change');
+    }
+}
+
+/**
+ * Retargets auxiliary and primary character lorebook links after a world rename.
+ * @param {string} oldName Previous world info file name
+ * @param {string} newName New world info file name
+ * @returns {Promise<void>}
+ */
+async function updateWorldInfoLinks(oldName, newName) {
+    const existingCharLores = world_info.charLore?.filter((e) => e.extraBooks.includes(oldName));
+    const linkedChIDs = [];
+    characters.forEach((character, chid) => {
+        if (character.data?.extensions?.world === oldName) {
+            linkedChIDs.push(chid);
+        }
+    });
+
+    if (linkedChIDs.length) {
+        const updatePrimaryLinks = await Popup.show.confirm(
+            t`World/Lorebook renamed!`,
+            `<p>${t`Would you like to update primary lorebook links for ${linkedChIDs.length} character(s) as well?`}</p>`,
+        ) == POPUP_RESULT.AFFIRMATIVE;
+
+        if (updatePrimaryLinks) {
+            const linkedCharacters = linkedChIDs.map(chid => ({ chid, character: characters[chid] }));
+            const response = await fetch('/api/characters/merge-attributes', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({
+                    avatars: linkedCharacters.map(({ character }) => character.avatar),
+                    data: {
+                        data: {
+                            extensions: {
+                                world: newName,
+                            },
+                        },
+                    },
+                }),
+            });
+
+            if (!response.ok) {
+                const message = await response.text();
+                const error = message || `Failed to update primary lorebook links: ${response.status}`;
+                toastr.error(error);
+                throw new Error(error);
+            }
+
+            const result = await response.json();
+            const updated = Array.isArray(result?.updated) ? result.updated : [];
+            const failed = [
+                ...(Array.isArray(result?.failed) ? result.failed : []),
+                ...(Array.isArray(result?.skipped) ? result.skipped : []),
+            ];
+            const updatedAvatars = new Set(updated);
+            let activeCharacterUpdated = false;
+
+            for (const { chid, character } of linkedCharacters) {
+                if (!updatedAvatars.has(character.avatar)) {
+                    continue;
+                }
+
+                character.data.extensions.world = newName;
+
+                if (String(chid) === String(this_chid)) {
+                    activeCharacterUpdated = true;
+                    await getOneCharacter(character.avatar);
+                }
+
+                toastr.success(t`Successfully updated link for ${character.name}.`);
+            }
+
+            if (activeCharacterUpdated) {
+                select_selected_character(this_chid, { switchMenu: false });
+                setWorldInfoButtonClass(this_chid, true);
+            }
+
+            if (failed.length > 0) {
+                const error = `Failed to update primary lorebook links for: ${failed.join(', ')}`;
+                toastr.error(error);
+                throw new Error(error);
+            }
+        }
+    }
+
+    if (existingCharLores && existingCharLores.length > 0) {
+        existingCharLores.forEach((charLore) => {
+            const tempCharLore = charLore.extraBooks.filter((e) => e !== oldName);
+            tempCharLore.push(newName);
+            charLore.extraBooks = tempCharLore;
+        });
+        saveSettingsDebounced();
     }
 }
 
@@ -6037,13 +6129,13 @@ export async function openWorldInfoEntry(worldName, uid, options = {}) {
 
 /**
  * Assigns a lorebook to the current chat.
- * @param {JQuery.ClickEvent<Document, undefined, any, any>} event Pointer event
+ * @param {{ shiftKey?: boolean, altKey?: boolean }} event Pointer event
  * @returns {Promise<void>}
  */
-export async function assignLorebookToChat(event) {
+export async function assignLorebookToChat({ shiftKey, altKey }) {
     const selectedName = chat_metadata[METADATA_KEY];
 
-    if (selectedName && event.altKey) {
+    if (selectedName && !shiftKey && !altKey) {
         openWorldInfoEditor(selectedName);
         return;
     }
@@ -6397,15 +6489,18 @@ export function initWorldInfo() {
 
         const worldName = characters[chid]?.data?.extensions?.world;
         const hasEmbed = checkEmbeddedWorld(chid);
-        if (worldName && world_names.includes(worldName) && !event.shiftKey) {
+        if (worldName && world_names.includes(worldName) && !event.shiftKey && !event.altKey) {
             openWorldInfoEditor(worldName);
-        } else if (hasEmbed && !event.shiftKey) {
+        } else if (hasEmbed && !event.shiftKey && !event.altKey) {
             await importEmbeddedWorldInfo();
             saveCharacterDebounced();
         }
         else {
             openSetWorldMenu();
         }
+    });
+    addLongPressEvent('#world_button', function () {
+        $(this).trigger($.Event('click', { shiftKey: true }));
     });
 
     const debouncedWorldInfoSearch = debounce((searchQuery) => {
@@ -6428,6 +6523,14 @@ export function initWorldInfo() {
     });
 
     $(document).on('click', '.chat_lorebook_button', assignLorebookToChat);
+    addLongPressEvent('.chat_lorebook_button', function () {
+        assignLorebookToChat({ shiftKey: true, altKey: false });
+    });
+
+    $('#group-chat-lorebook-dropdown').on('change', async function () {
+        $(this).prop('selectedIndex', 0);
+        await assignLorebookToChat({ shiftKey: true, altKey: false });
+    });
 
     // Not needed on mobile
     if (!isMobile()) {

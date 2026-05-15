@@ -12,6 +12,7 @@ export {};
  * @typedef {(
  *   | 'apply_native_regex_batch'
  *   | 'build_openai_logit_bias'
+ *   | 'bulk_merge_character_card_data'
  *   | 'cancel_chat_completion_generation'
  *   | 'cancel_chat_completion_stream'
  *   | 'cancel_data_archive_job'
@@ -49,6 +50,7 @@ export {};
  *   | 'delete_user_image'
  *   | 'delete_user_file'
  *   | 'delete_world_info'
+ *   | 'duplicate_character'
  *   | 'download_external_import_url'
  *   | 'encode_openai_tokens'
  *   | 'export_character_content'

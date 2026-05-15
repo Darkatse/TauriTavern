@@ -4,10 +4,11 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::character_dto::{
-    CharacterChatDto, CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
-    ExportCharacterContentDto, ExportCharacterContentResultDto, ExportCharacterDto,
-    GetCharacterChatsDto, ImportCharacterDto, MergeCharacterCardDataDto, RenameCharacterDto,
-    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
+    BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataResultDto, CharacterChatDto,
+    CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
+    DuplicateCharacterDto, ExportCharacterContentDto, ExportCharacterContentResultDto,
+    ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto, MergeCharacterCardDataDto,
+    RenameCharacterDto, UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -122,6 +123,22 @@ pub async fn merge_character_card_data(
 }
 
 #[tauri::command]
+pub async fn bulk_merge_character_card_data(
+    dto: BulkMergeCharacterCardDataDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<BulkMergeCharacterCardDataResultDto, CommandError> {
+    log_command("bulk_merge_character_card_data");
+
+    app_state
+        .character_service
+        .bulk_merge_character_card_data(dto)
+        .await
+        .map_err(map_command_error(
+            "Failed to bulk merge character card data",
+        ))
+}
+
+#[tauri::command]
 pub async fn delete_character(
     dto: DeleteCharacterDto,
     app_state: State<'_, Arc<AppState>>,
@@ -164,6 +181,20 @@ pub async fn rename_character(
         .rename_character(dto)
         .await
         .map_err(map_command_error("Failed to rename character"))
+}
+
+#[tauri::command]
+pub async fn duplicate_character(
+    dto: DuplicateCharacterDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<CharacterDto, CommandError> {
+    log_command(format!("duplicate_character {}", dto.name));
+
+    app_state
+        .character_service
+        .duplicate_character(dto)
+        .await
+        .map_err(map_command_error("Failed to duplicate character"))
 }
 
 #[tauri::command]

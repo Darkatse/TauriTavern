@@ -485,7 +485,7 @@ impl FileCharacterRepository {
             self.resolve_import_file_stem(&character, source_path, preserve_file_name)?;
 
         Self::prepare_imported_character_for_storage(&mut character, &file_stem);
-        Self::merge_character_projection_into_card_value(&mut card_value, &character)?;
+        Self::merge_existing_character_projection_into_card_value(&mut card_value, &character)?;
         let stored_card_json = Self::serialize_card_value(&card_value, "imported character card")?;
 
         let target_path = self
@@ -512,7 +512,7 @@ impl FileCharacterRepository {
             self.resolve_import_file_stem(&character, source_path, preserve_file_name)?;
 
         Self::prepare_imported_character_for_storage(&mut character, &file_stem);
-        Self::merge_character_projection_into_card_value(&mut card_value, &character)?;
+        Self::merge_existing_character_projection_into_card_value(&mut card_value, &character)?;
         let stored_card_json = Self::serialize_card_value(&card_value, "imported character card")?;
 
         let default_avatar = self.read_default_avatar().await?;

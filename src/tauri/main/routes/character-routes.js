@@ -1,4 +1,11 @@
 import { normalizeBinaryPayload, sanitizeAttachmentFileName } from '../binary-utils.js';
+import { assertCharacterFileName } from '../services/characters/character-request-utils.js';
+
+/** @param {unknown} error */
+function badRequestBody(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { error: message.replace(/^Bad request:\s*/i, '') };
+}
 
 /** @param {Record<string, any>} body */
 function buildCharacterMergeUpdate(body) {
@@ -59,11 +66,13 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     });
 
     router.post('/api/characters/create', async ({ body, url }) => {
-        if (!(body instanceof FormData)) {
-            return jsonResponse({ error: 'Expected multipart form data' }, 400);
+        if (body instanceof FormData) {
+            const created = await context.createCharacterFromForm(body, url);
+            await context.getAllCharacters({ shallow: true, forceRefresh: true });
+            return textResponse(created?.avatar || '');
         }
 
-        const created = await context.createCharacterFromForm(body, url);
+        const created = await context.createCharacterFromPayload(body);
         await context.getAllCharacters({ shallow: true, forceRefresh: true });
         return textResponse(created?.avatar || '');
     });
@@ -128,37 +137,25 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     });
 
     router.post('/api/characters/duplicate', async ({ body }) => {
-        const avatar = body?.avatar_url;
-        const originalCharacterId = await context.resolveCharacterId({ avatar });
+        let avatar = body?.avatar_url;
+        if (!avatar) {
+            return jsonResponse({ error: 'avatar URL not found' }, 400);
+        }
 
+        try {
+            avatar = assertCharacterFileName(avatar, 'avatar_url');
+        } catch (error) {
+            return jsonResponse(badRequestBody(error), 400);
+        }
+
+        const originalCharacterId = await context.resolveExistingCharacterId({ avatar });
         if (!originalCharacterId) {
             return jsonResponse({ error: 'Character not found' }, 404);
         }
 
-        const original = await context.safeInvoke('get_character', { name: originalCharacterId });
-        const baseName = `${original.name} (Copy)`;
-        const duplicateName = await context.uniqueCharacterName(baseName);
-
-        const dto = {
-            name: duplicateName,
-            description: original.description || '',
-            personality: original.personality || '',
-            scenario: original.scenario || '',
-            first_mes: original.first_mes || '',
-            mes_example: original.mes_example || '',
-            creator: original.creator || '',
-            creator_notes: original.creator_notes || '',
-            character_version: original.character_version || '',
-            tags: Array.isArray(original.tags) ? original.tags : [],
-            talkativeness: Number(original.talkativeness ?? 0.5),
-            fav: Boolean(original.fav),
-            alternate_greetings: Array.isArray(original.alternate_greetings) ? original.alternate_greetings : [],
-            system_prompt: original.system_prompt || '',
-            post_history_instructions: original.post_history_instructions || '',
-            extensions: context.normalizeExtensions(original.extensions),
-        };
-
-        const created = await context.safeInvoke('create_character', { dto });
+        const created = await context.safeInvoke('duplicate_character', {
+            dto: { name: originalCharacterId },
+        });
         const normalized = context.normalizeCharacter(created);
         await context.getAllCharacters({ shallow: true, forceRefresh: true });
 
@@ -170,8 +167,35 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             return jsonResponse({ error: 'Expected JSON object body' }, 400);
         }
 
-        const update = buildCharacterMergeUpdate(body);
-        const avatar = body?.avatar ?? body?.avatar_url;
+        if (Array.isArray(body.avatars)) {
+            if (!body.data || typeof body.data !== 'object' || Array.isArray(body.data)) {
+                return jsonResponse({ message: 'No valid update data provided.' }, 400);
+            }
+
+            const result = await context.safeInvoke('bulk_merge_character_card_data', {
+                dto: {
+                    avatars: body.avatars,
+                    data: body.data,
+                    filter: body.filter ?? null,
+                },
+            });
+            await context.getAllCharacters({ shallow: true, forceRefresh: true });
+            return jsonResponse(result);
+        }
+
+        let avatar = body?.avatar ?? body?.avatar_url;
+        if (avatar !== undefined && avatar !== null) {
+            try {
+                const fieldName = Object.prototype.hasOwnProperty.call(body, 'avatar') ? 'avatar' : 'avatar_url';
+                avatar = assertCharacterFileName(avatar, fieldName);
+            } catch (error) {
+                return jsonResponse(badRequestBody(error), 400);
+            }
+        }
+
+        const update = buildCharacterMergeUpdate(
+            avatar === undefined || avatar === null ? body : { ...body, avatar },
+        );
         const characterId = await context.resolveCharacterId({ avatar, fallbackName: body?.name });
 
         if (!characterId) {

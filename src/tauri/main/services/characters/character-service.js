@@ -390,22 +390,6 @@ export function createCharacterService({ safeInvoke }) {
         return '';
     }
 
-    /** @param {string} baseName */
-    async function uniqueCharacterName(baseName) {
-        await getAllCharacters({ shallow: true });
-
-        if (!characterByDisplayName.has(baseName)) {
-            return baseName;
-        }
-
-        let index = 2;
-        while (characterByDisplayName.has(`${baseName} ${index}`)) {
-            index += 1;
-        }
-
-        return `${baseName} ${index}`;
-    }
-
     return {
         normalizeCharacter,
         normalizeExtensions,
@@ -414,6 +398,5 @@ export function createCharacterService({ safeInvoke }) {
         resolveExistingCharacterId,
         getSingleCharacter,
         findAvatarByCharacterId,
-        uniqueCharacterName,
     };
 }

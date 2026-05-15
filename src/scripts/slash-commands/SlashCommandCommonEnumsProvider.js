@@ -337,3 +337,23 @@ export const commonEnumProviders = {
         new SlashCommandEnumValue('system', null, enumTypes.enum, enumIcons.system),
     ],
 };
+
+/**
+ * Common enum match providers for fuzzy autocomplete values.
+ */
+export const commonEnumMatchProviders = {
+    /**
+     * Matches folder-like enum values case-insensitively from either direction.
+     * @param {string} input Input text
+     * @param {string} check Folder prefix to match
+     * @param {{ trueOnEmpty?: boolean }} [options]
+     * @returns {boolean}
+     */
+    folderEnum: (input, check, { trueOnEmpty = true } = {}) => {
+        if (!check) return false;
+        if (!input) return trueOnEmpty;
+        const inputLower = input.toLowerCase();
+        const checkLower = check.toLowerCase();
+        return inputLower.startsWith(checkLower) || checkLower.startsWith(inputLower);
+    },
+};

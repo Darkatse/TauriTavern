@@ -6,6 +6,7 @@ import { createThumbnailService } from '../services/thumbnails/thumbnail-service
 import { createInvokeService } from '../services/invokes/invoke-service.js';
 import { createCharacterService } from '../services/characters/character-service.js';
 import { createCharacterFormService } from '../services/characters/character-form-service.js';
+import { createCharacterCreateService } from '../services/characters/character-create-service.js';
 import { createUploadService } from '../services/uploads/upload-service.js';
 import { createAndroidArchiveService } from '../services/android/android-archive-service.js';
 import { createHostInvokePolicies } from '../kernel/invokes/invoke-policies.js';
@@ -55,6 +56,10 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
 
     const characterService = createCharacterService({ safeInvoke: invokeService.safeInvoke });
     const uploadService = createUploadService();
+    const characterCreateService = createCharacterCreateService({
+        safeInvoke: invokeService.safeInvoke,
+        materializeUploadFile: uploadService.materializeUploadFile,
+    });
     const androidArchiveService = createAndroidArchiveService({
         safeInvoke: invokeService.safeInvoke,
         removeTempUploadFile: uploadService.removeTempUploadFile,
@@ -117,8 +122,8 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         exportChatAsText,
         exportChatAsJsonl,
         findAvatarByCharacterId: characterService.findAvatarByCharacterId,
-        uniqueCharacterName: characterService.uniqueCharacterName,
-        createCharacterFromForm: characterFormService.createCharacterFromForm,
+        createCharacterFromForm: characterCreateService.createCharacterFromForm,
+        createCharacterFromPayload: characterCreateService.createCharacterFromPayload,
         editCharacterFromForm: characterFormService.editCharacterFromForm,
         editCharacterAvatarFromForm: characterFormService.editCharacterAvatarFromForm,
         uploadAvatarFromForm: characterFormService.uploadAvatarFromForm,
