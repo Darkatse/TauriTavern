@@ -812,6 +812,20 @@ export function getTokenizerModel() {
         }
     }
 
+    if (oai_settings.chat_completion_source == chat_completion_sources.WORKERS_AI && oai_settings.workers_ai_model) {
+        const model = oai_settings.workers_ai_model.toLowerCase();
+
+        if (model.includes('qwen') || model.includes('qwq')) {
+            return qwen2Tokenizer;
+        } else if (model.includes('llama')) {
+            return llama3Tokenizer;
+        } else if (model.includes('deepseek')) {
+            return deepseekTokenizer;
+        } else if (model.includes('mistral')) {
+            return mistralTokenizer;
+        }
+    }
+
     if (oai_settings.chat_completion_source == chat_completion_sources.COHERE) {
         if (oai_settings.cohere_model.includes('command-a')) {
             return commandATokenizer;
