@@ -35,3 +35,19 @@ test('SillyTavern context generate is wired through safeGenerate', async () => {
     assert.match(source, /const generateSafely = createSafeGenerate\(\{\s*waitForIdle:\s*waitForGenerationIdle,\s*generate:\s*Generate,\s*\}\);/s);
     assert.match(source, /\bgenerate\s*:\s*generateSafely,/);
 });
+
+test('SillyTavern context exposes 1.18 ecosystem ABI additions', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/st-context.js'), 'utf8');
+    const contextStart = source.indexOf('export function getContext()');
+    assert.ok(contextStart >= 0);
+    const context = source.slice(contextStart);
+
+    assert.match(context, /\bgenerateRawData\s*,/);
+    assert.match(context, /\bgetExtensionManifest\s*,/);
+    assert.match(context, /\bwriteExtensionFieldBulk\s*,/);
+    assert.match(context, /\bSlashCommandEnumValue\s*,/);
+    assert.match(context, /\bloader\s*,/);
+    assert.match(context, /\bgetWorldInfoNames\s*:\s*\(\)\s*=>\s*Array\.isArray\(world_names\)\s*\?\s*\[\.\.\.world_names\]\s*:\s*\[\]\s*,/);
+
+    assert.match(context, /constants\s*:\s*\{\s*unset\s*:\s*UNSET_VALUE,\s*\}/s);
+});
