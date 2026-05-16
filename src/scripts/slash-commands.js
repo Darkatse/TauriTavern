@@ -52,6 +52,7 @@ import {
     setCharacterName,
     setExtensionPrompt,
     showMoreMessages,
+    swipe,
     stopGeneration,
     substituteParams,
     syncMesToSwipe,
@@ -67,7 +68,7 @@ import { getMessageTimeStamp, isMobile } from './RossAscends-mods.js';
 import { hideChatMessageRange } from './chats.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
-import { findGroupMemberId, groups, is_group_generating, openGroupById, resetSelectedGroup, saveGroupChat, selected_group, getGroupMembers } from './group-chats.js';
+import { findGroupMemberId, groups, is_group_generating, openGroupById, regenerateGroup, resetSelectedGroup, saveGroupChat, selected_group, getGroupMembers } from './group-chats.js';
 import { chat_completion_sources, oai_settings, promptManager, SILICONFLOW_ENDPOINT, ZAI_ENDPOINT } from './openai.js';
 import { user_avatar } from './personas.js';
 import { addEphemeralStoppingString, chat_styles, context_presets, flushEphemeralStoppingStrings, playMessageSound, power_user } from './power-user.js';
@@ -75,6 +76,7 @@ import { SERVER_INPUTS, textgen_types, textgenerationwebui_settings } from './te
 import { decodeTextTokens, getAvailableTokenizers, getFriendlyTokenizerName, getTextTokens, getTokenCountAsync, selectTokenizer } from './tokenizers.js';
 import { debounce, delay, equalsIgnoreCaseAndAccents, findChar, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, regexFromString, showFontAwesomePicker, stringToRange, trimToEndSentence, trimToStartSentence, waitUntilCondition } from './utils.js';
 import { registerVariableCommands, resolveVariable } from './variables.js';
+import { registerActionLoaderSlashCommands } from './action-loader-slashcommands.js';
 import { background_settings } from './backgrounds.js';
 import { SlashCommandClosure } from './slash-commands/SlashCommandClosure.js';
 import { SlashCommandClosureResult } from './slash-commands/SlashCommandClosureResult.js';
@@ -96,7 +98,7 @@ import { SlashCommandScope } from './slash-commands/SlashCommandScope.js';
 import { t } from './i18n.js';
 import { kai_settings } from './kai-settings.js';
 import { instruct_presets, selectContextPreset, selectInstructPreset } from './instruct-mode.js';
-import { debounce_timeout } from './constants.js';
+import { debounce_timeout, SWIPE_DIRECTION, SWIPE_SOURCE } from './constants.js';
 export {
     executeSlashCommands, executeSlashCommandsWithOptions, getSlashCommandsHelp, registerSlashCommand,
 };
@@ -1485,6 +1487,66 @@ export function initDefaultSlashCommands() {
                     ${t`Continues the chat with the provided prompt and waits for the generation to finish.`}
                 </li>
             </ul>
+        </div>
+    `,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'regenerate',
+        callback: regenerateChatCallback,
+        aliases: ['regen'],
+        namedArgumentList: [
+            new SlashCommandNamedArgument(
+                'await',
+                t`Whether to await for the regeneration before proceeding`,
+                [ARGUMENT_TYPE.BOOLEAN],
+                false,
+                false,
+                'false',
+            ),
+        ],
+        helpString: `
+        <div>
+            ${t`Regenerates the latest reply in the chat.`}
+        </div>
+        <div>
+            ${t`If <code>await=true</code> named argument is passed, the command will await for the regeneration before proceeding.`}
+        </div>
+    `,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'swipe',
+        callback: swipeChatCallback,
+        namedArgumentList: [
+            new SlashCommandNamedArgument(
+                'direction',
+                t`Swipe direction`,
+                [ARGUMENT_TYPE.STRING],
+                false,
+                false,
+                SWIPE_DIRECTION.RIGHT,
+                [
+                    new SlashCommandEnumValue(SWIPE_DIRECTION.RIGHT, t`Swipe to the next reply`, enumTypes.enum, enumIcons.default),
+                    new SlashCommandEnumValue(SWIPE_DIRECTION.LEFT, t`Swipe to the previous reply`, enumTypes.enum, enumIcons.default),
+                ],
+                [],
+                null,
+                true,
+            ),
+            new SlashCommandNamedArgument(
+                'await',
+                t`Whether to await for the swipe action before proceeding`,
+                [ARGUMENT_TYPE.BOOLEAN],
+                false,
+                false,
+                'false',
+            ),
+        ],
+        helpString: `
+        <div>
+            ${t`Swipes the latest reply. Defaults to <code>direction=right</code>; use <code>direction=left</code> to go to the previous reply. If no next swipe exists, behavior depends on message context.`}
+        </div>
+        <div>
+            ${t`If <code>await=true</code> named argument is passed, the command will await for the swipe action before proceeding.`}
         </div>
     `,
     }));
@@ -2974,6 +3036,24 @@ export function initDefaultSlashCommands() {
         helpString: t`Sets the specified prompt manager entry/entries on or off.`,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'pm-render',
+        callback: (args, _) => {
+            const dryRun = !isFalseBoolean(args?.refresh?.toString());
+            promptManager.render(dryRun);
+            return '';
+        },
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'refresh',
+                description: 'Perform a dry run of the generation to refresh token counters before rendering the prompt manager',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'true',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
+        ],
+        helpString: t`Rerenders the prompt manager content. Use this if you have made changes to the prompt entries through slash commands and want to see the changes reflected in the prompt manager UI.`,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'pick-icon',
         callback: async () => ((await showFontAwesomePicker()) ?? false).toString(),
         returns: t`The chosen icon name or false if cancelled.`,
@@ -3536,7 +3616,111 @@ export function initDefaultSlashCommands() {
         helpString: t`Plays the message received sound effect.`,
     }));
 
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'array-wrap',
+        aliases: ['list-wrap'],
+        returns: t`unnamed argument value wrapped into an array`,
+        helpString: t`Wraps a single unnamed argument into an array if it's not already an array. If the value is an empty string, returns an empty array.`,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'stringify',
+                description: t`Whether JSON primitives (numbers, booleans, nulls) should be treated as strings, i.e. ["null"] when stringify=true vs. [null] when stringify=false.`,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'true',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
+        ],
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: t`value`,
+                acceptsMultiple: false,
+                isRequired: true,
+                typeList: [ARGUMENT_TYPE.STRING, ARGUMENT_TYPE.DICTIONARY, ARGUMENT_TYPE.BOOLEAN, ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.LIST],
+            }),
+        ],
+        callback: (args, value) => {
+            if (value instanceof SlashCommandClosure) {
+                throw new SlashCommandExecutionError(t`Closures are not supported as unnamed arguments for /array-wrap. Did you forget to call the closure with parentheses?`);
+            }
+
+            if (Array.isArray(value)) {
+                throw new SlashCommandExecutionError(t`/array-wrap does not support multiple unnamed arguments.`);
+            }
+
+            if (value === '') {
+                return JSON.stringify([]);
+            }
+
+            try {
+                const parsedValue = JSON.parse(value);
+
+                if (Array.isArray(parsedValue)) {
+                    return value;
+                }
+
+                if (typeof parsedValue === 'object' && parsedValue !== null) {
+                    return JSON.stringify([parsedValue]);
+                }
+
+                const isJsonPrimitive = parsedValue === null || ['string', 'number', 'boolean'].includes(typeof parsedValue);
+                if (isJsonPrimitive && isFalseBoolean(String(args?.stringify?.toString()))) {
+                    return JSON.stringify([parsedValue]);
+                }
+
+                return JSON.stringify([value]);
+            } catch {
+                return JSON.stringify([value]);
+            }
+        },
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'array-unwrap',
+        aliases: ['list-unwrap'],
+        returns: t`unnamed argument value unwrapped from an array`,
+        helpString: t`Unwraps the first element of an array provided as an unnamed argument. If the value is not an array, returns the value as-is. If the array is empty, returns an empty string.`,
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: t`value`,
+                acceptsMultiple: false,
+                isRequired: true,
+                typeList: [ARGUMENT_TYPE.STRING, ARGUMENT_TYPE.DICTIONARY, ARGUMENT_TYPE.BOOLEAN, ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.LIST],
+            }),
+        ],
+        callback: (_args, value) => {
+            if (value instanceof SlashCommandClosure) {
+                throw new SlashCommandExecutionError(t`Closures are not supported as unnamed arguments for /array-unwrap. Did you forget to call the closure with parentheses?`);
+            }
+
+            if (Array.isArray(value)) {
+                throw new SlashCommandExecutionError(t`/array-unwrap does not support multiple unnamed arguments.`);
+            }
+
+            try {
+                const parsed = JSON.parse(value);
+
+                if (Array.isArray(parsed)) {
+                    const unwrappedValue = parsed?.[0] ?? '';
+
+                    if (unwrappedValue === null || unwrappedValue === undefined) {
+                        return '';
+                    }
+
+                    if (typeof unwrappedValue === 'object') {
+                        return JSON.stringify(unwrappedValue);
+                    }
+
+                    return String(unwrappedValue);
+                }
+
+                return value;
+            } catch {
+                return value;
+            }
+        },
+    }));
+
     registerVariableCommands();
+    registerActionLoaderSlashCommands();
 }
 
 const NARRATOR_NAME_KEY = 'narrator_name';
@@ -5361,6 +5545,64 @@ async function continueChatCallback(args, prompt) {
     return '';
 }
 
+async function regenerateChatCallback(args) {
+    const shouldAwait = isTrueBoolean(args?.await);
+
+    const outerPromise = new Promise((outerResolve) => setTimeout(async () => {
+        try {
+            await waitUntilCondition(() => !is_send_press && !is_group_generating, 10000, 100);
+        } catch {
+            console.warn('Timeout waiting for generation unlock');
+            toastr.warning(t`Cannot run /regenerate command while the reply is being generated.`);
+            outerResolve(Promise.resolve(''));
+            return '';
+        }
+
+        if (selected_group) {
+            outerResolve(Promise.resolve(regenerateGroup()));
+            return '';
+        }
+
+        outerResolve(new Promise(innerResolve => setTimeout(() => {
+            innerResolve(Generate('regenerate'));
+        }, 1)));
+        return '';
+    }, 1));
+
+    if (shouldAwait) {
+        const innerPromise = await outerPromise;
+        await innerPromise;
+    }
+
+    return '';
+}
+
+async function swipeChatCallback(args) {
+    const shouldAwait = isTrueBoolean(args?.await);
+    const direction = args?.direction === SWIPE_DIRECTION.LEFT ? SWIPE_DIRECTION.LEFT : SWIPE_DIRECTION.RIGHT;
+
+    const outerPromise = new Promise((outerResolve) => setTimeout(async () => {
+        try {
+            await waitUntilCondition(() => !is_send_press && !is_group_generating, 10000, 100);
+        } catch {
+            console.warn('Timeout waiting for generation unlock');
+            toastr.warning(t`Cannot run /swipe command while the reply is being generated.`);
+            outerResolve(Promise.resolve(''));
+            return '';
+        }
+
+        outerResolve(Promise.resolve(swipe(null, direction, { source: SWIPE_SOURCE.SLASH_COMMAND, repeated: false })));
+        return '';
+    }, 1));
+
+    if (shouldAwait) {
+        const innerPromise = await outerPromise;
+        await innerPromise;
+    }
+
+    return '';
+}
+
 export async function generateSystemMessage(args, prompt) {
     $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
 
@@ -6296,6 +6538,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
 
         return oai_settings.siliconflow_endpoint || SILICONFLOW_ENDPOINT.GLOBAL;
     }
+
 
     const isCurrentlyVertexAI = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI;
     if (api === chat_completion_sources.VERTEXAI || (!api && isCurrentlyVertexAI)) {

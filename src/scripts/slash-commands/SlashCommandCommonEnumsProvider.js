@@ -43,6 +43,8 @@ export const enumIcons = {
     image: '🖼️',
     video: '🎥',
     key: '🔑',
+    spinner: '♻️',
+    stop: '🛑',
 
     true: '✔️',
     false: '❌',
@@ -213,9 +215,13 @@ export const commonEnumProviders = {
     /**
      * All possible personas
      *
-     * @returns {SlashCommandEnumValue[]}
+     * @returns {() => SlashCommandEnumValue[]}
      */
-    personas: () => Object.values(power_user.personas).map(persona => new SlashCommandEnumValue(persona, null, enumTypes.name, enumIcons.persona)),
+    personas: ({ allowPersonaKey = false } = {}) => () => Object.entries(power_user.personas).map(([personaKey, personaName]) => {
+        const existsMultiple = Object.values(power_user.personas).filter(p => p === personaName).length > 1;
+        const returnValue = allowPersonaKey && existsMultiple ? personaKey : personaName;
+        return new SlashCommandEnumValue(returnValue, allowPersonaKey && existsMultiple ? personaName : null, enumTypes.name, enumIcons.persona);
+    }),
 
     /**
      * All possible tags, or only those that have been assigned
@@ -233,9 +239,9 @@ export const commonEnumProviders = {
      * All possible tags for a given char/group entity
      *
      * @param {('all' | 'existing' | 'not-existing')?} [mode='all'] - Which types of tags to show
-     * @returns {() => SlashCommandEnumValue[]}
+     * @returns {(executor:SlashCommandExecutor, scope:SlashCommandScope) => SlashCommandEnumValue[]}
      */
-    tagsForChar: (mode = 'all') => (/** @type {SlashCommandExecutor} */ executor) => {
+    tagsForChar: (mode = 'all') => (executor, _scope) => {
         // Try to see if we can find the char during execution to filter down the tags list some more. Otherwise take all tags.
         const charName = executor.namedArgumentList.find(it => it.name == 'name')?.value;
         if (charName instanceof SlashCommandClosure) throw new Error('Argument \'name\' does not support closures');
@@ -335,6 +341,15 @@ export const commonEnumProviders = {
         new SlashCommandEnumValue('user', null, enumTypes.enum, enumIcons.user),
         new SlashCommandEnumValue('assistant', null, enumTypes.enum, enumIcons.assistant),
         new SlashCommandEnumValue('system', null, enumTypes.enum, enumIcons.system),
+    ],
+
+    backgrounds: () => Array.from(document.querySelectorAll('.bg_example'))
+        .map(it => new SlashCommandEnumValue(it.getAttribute('bgfile')))
+        .filter(it => it.value?.length),
+
+    connectionProfiles: ({ includeNone = false } = {}) => () => [
+        ...includeNone ? [new SlashCommandEnumValue('<None>')] : [],
+        ...extension_settings.connectionManager.profiles.map(p => new SlashCommandEnumValue(p.name, null, enumTypes.name, enumIcons.server)),
     ],
 };
 
