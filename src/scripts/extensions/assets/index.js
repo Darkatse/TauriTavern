@@ -440,8 +440,7 @@ async function updateCurrentAssets() {
 //  Extension load             //
 //#############################//
 
-// This function is called when the extension is loaded
-jQuery(async () => {
+export async function init() {
     // This is an example of loading HTML from a file
     const windowTemplate = await renderExtensionTemplateAsync(MODULE_NAME, 'window', {});
     const windowHtml = $(windowTemplate);
@@ -503,4 +502,4 @@ jQuery(async () => {
     eventSource.on(event_types.OPEN_CHARACTER_LIBRARY, async (forceDefault) => {
         openCharacterBrowser(forceDefault);
     });
-});
+}

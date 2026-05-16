@@ -477,7 +477,7 @@ async function renderDetailsContent(detailsContent) {
     }
 }
 
-(async function () {
+export async function init() {
     extension_settings.connectionManager = extension_settings.connectionManager || structuredClone(DEFAULT_SETTINGS);
 
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
@@ -827,4 +827,4 @@ async function renderDetailsContent(detailsContent) {
             return JSON.stringify(profile);
         },
     }));
-})();
+}

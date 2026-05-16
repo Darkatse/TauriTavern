@@ -1521,7 +1521,7 @@ async function initVoiceMapInternal(unrestricted) {
     updateVoiceMap();
 }
 
-jQuery(async function () {
+export async function init() {
     async function addExtensionControls() {
         const settingsHtml = $(await renderExtensionTemplateAsync('tts', 'settings'));
         $('#tts_container').append(settingsHtml);
@@ -1609,4 +1609,4 @@ jQuery(async function () {
     }));
 
     document.body.appendChild(audioElement);
-});
+}

@@ -503,7 +503,7 @@ function hasExtensionHook(name, hookName) {
 /**
  * Calls a manifest hook for an extension.
  * Hooks are optional function names exported from the extension's JS entry point module.
- * The hook function can optionally return a Promise that will be awaited.
+ * The hook function can optionally return a Promise that will be awaited up to a diagnostic timeout.
  * @param {string} name Extension name
  * @param {'install' | 'update' | 'delete' | 'clean' | 'enable' | 'disable' | 'activate'} hookName The hook to call
  * @returns {Promise<void>}
@@ -527,47 +527,41 @@ async function callExtensionHook(name, hookName) {
     const hookFunctionName = manifest.hooks[hookName];
 
     if (typeof hookFunctionName !== 'string' || !hookFunctionName) {
-        console.warn(`callExtensionHook: Extension "${name}" hook "${hookName}" is not a valid string`);
-        return;
+        throw new Error(`Extension "${name}" hook "${hookName}" is not a valid string`);
     }
 
     if (!manifest.js) {
-        console.warn(`callExtensionHook: Extension "${name}" has hook "${hookName}" but no JS entry point defined in manifest`);
-        return;
+        throw new Error(`Extension "${name}" has hook "${hookName}" but no JS entry point defined in manifest`);
     }
 
     const url = getExtensionResourceUrl(name, manifest.js);
     console.debug(`callExtensionHook: Calling hook "${hookName}" (function "${hookFunctionName}") for extension "${name}"`);
 
-    try {
-        const module = await import(url);
+    const module = await import(url);
 
-        if (typeof module[hookFunctionName] !== 'function') {
-            console.warn(`callExtensionHook: Extension "${name}" hook "${hookName}" references "${hookFunctionName}" which is not an exported function`);
-            return;
-        }
-
-        const hookCallResult = module[hookFunctionName]();
-
-        const HOOK_TIMEOUT = 5000;
-        const HOOK_RESULT = {
-            OK: 'ok',
-            TIMEOUT: 'timeout',
-        };
-
-        const result = await Promise.race([
-            (hookCallResult instanceof Promise ? hookCallResult : Promise.resolve(hookCallResult)).then(() => HOOK_RESULT.OK),
-            delay(HOOK_TIMEOUT).then(() => HOOK_RESULT.TIMEOUT),
-        ]);
-
-        if (result === HOOK_RESULT.TIMEOUT) {
-            console.warn(`callExtensionHook: Hook "${hookName}" for extension "${name}" timed out after ${HOOK_TIMEOUT}ms`);
-        } else {
-            console.debug(`callExtensionHook: Hook "${hookName}" completed for extension "${name}"`);
-        }
-    } catch (error) {
-        console.error(`callExtensionHook: Error calling hook "${hookName}" for extension "${name}":`, error);
+    if (typeof module[hookFunctionName] !== 'function') {
+        throw new Error(`Extension "${name}" hook "${hookName}" references "${hookFunctionName}" which is not an exported function`);
     }
+
+    const hookCallResult = module[hookFunctionName]();
+
+    const HOOK_TIMEOUT = 5000;
+    const HOOK_RESULT = {
+        OK: 'ok',
+        TIMEOUT: 'timeout',
+    };
+
+    const result = await Promise.race([
+        (hookCallResult instanceof Promise ? hookCallResult : Promise.resolve(hookCallResult)).then(() => HOOK_RESULT.OK),
+        delay(HOOK_TIMEOUT).then(() => HOOK_RESULT.TIMEOUT),
+    ]);
+
+    if (result === HOOK_RESULT.TIMEOUT) {
+        console.warn(`callExtensionHook: Hook "${hookName}" for extension "${name}" timed out after ${HOOK_TIMEOUT}ms; continuing without waiting for completion`);
+        return;
+    }
+
+    console.debug(`callExtensionHook: Hook "${hookName}" completed for extension "${name}"`);
 }
 
 /**
@@ -782,8 +776,8 @@ async function activateExtensions({ parallelism = 1, includeExtension = () => tr
             }
             await addExtensionLocale(name, manifest);
             await Promise.all([addExtensionScript(name, manifest), addExtensionStyle(name, manifest)]);
-            activeExtensions.add(name);
             await callExtensionHook(name, 'activate');
+            activeExtensions.add(name);
         } catch (err) {
             console.log('Could not activate extension', name, err);
             extensionLoadErrors.add(t`Extension "${displayName}" failed to load: ${err}`);

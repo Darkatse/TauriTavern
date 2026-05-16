@@ -1727,7 +1727,7 @@ function onPresetRenamed({ apiId, oldName, newName }) {
 
 // Workaround for loading in sequence with other extensions
 // NOTE: Always puts extension at the top of the list, but this is fine since it's static
-jQuery(async () => {
+export async function init() {
     if (!Array.isArray(extension_settings.regex)) {
         extension_settings.regex = [];
     }
@@ -2155,4 +2155,4 @@ jQuery(async () => {
 
     presetManager.setupEventListeners();
     presetManager.registerSlashCommands();
-});
+}
