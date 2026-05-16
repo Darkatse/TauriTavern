@@ -138,6 +138,11 @@ export function jsonResponse(data, status = 200) {
     });
 }
 
+export function safeResponseStatusText(value) {
+    const text = String(value || '').trim();
+    return /^[\x20-\x7E]*$/.test(text) ? text : '';
+}
+
 export function textResponse(text, status = 200, statusText) {
     const init = {
         status,
@@ -145,9 +150,10 @@ export function textResponse(text, status = 200, statusText) {
             'Content-Type': 'text/plain; charset=utf-8',
         },
     };
+    const safeStatusText = safeResponseStatusText(statusText);
 
-    if (statusText) {
-        init.statusText = String(statusText);
+    if (safeStatusText) {
+        init.statusText = safeStatusText;
     }
 
     return new Response(String(text), {
