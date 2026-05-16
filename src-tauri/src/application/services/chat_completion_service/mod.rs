@@ -296,7 +296,10 @@ impl ChatCompletionService {
         self.ensure_endpoint_overrides_allowed_for_status(source, &dto)?;
         let model_list_source = resolve_status_model_list_source(source, &dto.custom_api_format)?;
 
-        if source == ChatCompletionSource::VertexAi {
+        if matches!(
+            source,
+            ChatCompletionSource::VertexAi | ChatCompletionSource::MiniMax
+        ) {
             return Ok(json!({
                 "bypass": true,
                 "data": []

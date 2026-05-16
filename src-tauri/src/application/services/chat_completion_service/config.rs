@@ -36,10 +36,13 @@ const SILICONFLOW_API_BASE_CN: &str = "https://api.siliconflow.cn/v1";
 const WORKERS_AI_API_BASE: &str = "https://api.cloudflare.com/client/v4/accounts";
 const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
 const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
+const MINIMAX_API_BASE: &str = "https://api.minimax.io/v1";
+const MINIMAX_API_BASE_CN: &str = "https://api.minimaxi.com/v1";
 const OPENROUTER_REFERER: &str = "https://tauritavern.client";
 const OPENROUTER_TITLE: &str = "TauriTavern";
 
 const ZAI_ENDPOINT_CODING: &str = "coding";
+const MINIMAX_ENDPOINT_CN: &str = "cn";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ApiConfigPurpose {
@@ -51,9 +54,11 @@ enum ApiConfigPurpose {
 struct ApiConfigHints<'a> {
     zai_endpoint: &'a str,
     siliconflow_endpoint: &'a str,
+    minimax_endpoint: &'a str,
     workers_ai_account_id: &'a str,
     nanogpt_provider: &'a str,
     nanogpt_payg_override: bool,
+    secret_id: Option<&'a str>,
 }
 
 pub(super) async fn resolve_status_api_config(
@@ -75,7 +80,9 @@ pub(super) async fn resolve_status_api_config(
         custom_headers_raw,
         ApiConfigHints {
             siliconflow_endpoint: dto.siliconflow_endpoint.trim(),
+            minimax_endpoint: dto.minimax_endpoint.trim(),
             workers_ai_account_id: dto.workers_ai_account_id.trim(),
+            secret_id: normalize_secret_id(dto.secret_id.as_deref()),
             ..Default::default()
         },
         ApiConfigPurpose::Status,
@@ -96,15 +103,18 @@ pub(super) async fn resolve_generate_api_config(
     let custom_headers_raw = get_payload_string(&dto.payload, "custom_include_headers");
     let zai_endpoint = get_payload_string(&dto.payload, "zai_endpoint");
     let siliconflow_endpoint = get_payload_string(&dto.payload, "siliconflow_endpoint");
+    let minimax_endpoint = get_payload_string(&dto.payload, "minimax_endpoint");
     let workers_ai_account_id = get_payload_string(&dto.payload, "workers_ai_account_id");
     let nanogpt_provider = get_payload_string(&dto.payload, "nanogpt_provider");
     let nanogpt_payg_override = get_payload_bool(&dto.payload, "nanogpt_payg_override")?;
+    let secret_id = get_payload_optional_string(&dto.payload, "secret_id")?;
 
     if source == ChatCompletionSource::VertexAi {
         return resolve_vertexai_generate_api_config(
             &dto.payload,
             reverse_proxy,
             proxy_password,
+            secret_id.as_deref(),
             secret_repository,
         )
         .await;
@@ -119,9 +129,11 @@ pub(super) async fn resolve_generate_api_config(
         ApiConfigHints {
             zai_endpoint: &zai_endpoint,
             siliconflow_endpoint: &siliconflow_endpoint,
+            minimax_endpoint: &minimax_endpoint,
             workers_ai_account_id: &workers_ai_account_id,
             nanogpt_provider: &nanogpt_provider,
             nanogpt_payg_override,
+            secret_id: secret_id.as_deref(),
         },
         ApiConfigPurpose::Generate,
         secret_repository,
@@ -152,7 +164,7 @@ async fn resolve_api_config(
             } else if uses_reverse_proxy {
                 proxy_password.to_string()
             } else {
-                read_optional_secret(secret_repository, SecretKeys::CUSTOM)
+                read_optional_secret(secret_repository, SecretKeys::CUSTOM, hints.secret_id)
                     .await?
                     .unwrap_or_default()
             };
@@ -181,7 +193,13 @@ async fn resolve_api_config(
                     )
                 })?;
 
-                read_required_secret(secret_repository, secret_key, source.display_name()).await?
+                read_required_secret(
+                    secret_repository,
+                    secret_key,
+                    hints.secret_id,
+                    source.display_name(),
+                )
+                .await?
             };
 
             let mut extra_headers = source_extra_headers(source);
@@ -260,6 +278,20 @@ fn get_payload_string(payload: &serde_json::Map<String, Value>, key: &str) -> St
         .unwrap_or_default()
 }
 
+fn get_payload_optional_string(
+    payload: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, ApplicationError> {
+    match payload.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(normalize_secret_id(Some(value)).map(str::to_string)),
+        Some(_) => Err(ApplicationError::ValidationError(format!(
+            "Chat completion request field must be a string: {}",
+            key
+        ))),
+    }
+}
+
 fn get_payload_bool(
     payload: &serde_json::Map<String, Value>,
     key: &str,
@@ -275,19 +307,26 @@ fn get_payload_bool(
     }
 }
 
+fn normalize_secret_id(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
 async fn read_required_secret(
     secret_repository: &Arc<dyn SecretRepository>,
     secret_key: &str,
+    secret_id: Option<&str>,
     source_name: &str,
 ) -> Result<String, ApplicationError> {
-    secret_repository
-        .read_secret(secret_key, None)
+    read_selected_secret(secret_repository, secret_key, secret_id)
         .await?
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| {
+            let selector = secret_id
+                .map(|id| format!(" for secret_id {id}"))
+                .unwrap_or_default();
             ApplicationError::ValidationError(format!(
-                "{} API key is missing. Please configure {}.",
-                source_name, secret_key
+                "{} API key is missing{}. Please configure {}.",
+                source_name, selector, secret_key
             ))
         })
 }
@@ -295,11 +334,29 @@ async fn read_required_secret(
 async fn read_optional_secret(
     secret_repository: &Arc<dyn SecretRepository>,
     secret_key: &str,
+    secret_id: Option<&str>,
 ) -> Result<Option<String>, ApplicationError> {
-    Ok(secret_repository
-        .read_secret(secret_key, None)
-        .await?
-        .filter(|value| !value.trim().is_empty()))
+    Ok(
+        read_selected_secret(secret_repository, secret_key, secret_id)
+            .await?
+            .filter(|value| !value.trim().is_empty()),
+    )
+}
+
+async fn read_selected_secret(
+    secret_repository: &Arc<dyn SecretRepository>,
+    secret_key: &str,
+    secret_id: Option<&str>,
+) -> Result<Option<String>, ApplicationError> {
+    let secret = secret_repository.read_secret(secret_key, secret_id).await?;
+    if let (Some(id), None) = (secret_id, secret.as_ref()) {
+        return Err(ApplicationError::ValidationError(format!(
+            "Secret id not found for {}: {}",
+            secret_key, id
+        )));
+    }
+
+    Ok(secret)
 }
 
 fn default_base_url(
@@ -338,6 +395,7 @@ fn default_base_url(
                 ZAI_API_BASE_COMMON.to_string()
             }
         }
+        ChatCompletionSource::MiniMax => minimax_base_url(hints.minimax_endpoint)?.to_string(),
         ChatCompletionSource::Custom => OPENAI_API_BASE.to_string(),
     };
 
@@ -360,6 +418,7 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
         ChatCompletionSource::SiliconFlow => Some(SecretKeys::SILICONFLOW),
         ChatCompletionSource::WorkersAi => Some(SecretKeys::WORKERS_AI),
         ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
+        ChatCompletionSource::MiniMax => Some(SecretKeys::MINIMAX),
         ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
     }
 }
@@ -405,10 +464,21 @@ fn workers_ai_base_url(
     Ok(format!("{WORKERS_AI_API_BASE}/{account_id}/{suffix}"))
 }
 
+fn minimax_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
+    match endpoint.trim().to_ascii_lowercase().as_str() {
+        "" | "global" => Ok(MINIMAX_API_BASE),
+        MINIMAX_ENDPOINT_CN => Ok(MINIMAX_API_BASE_CN),
+        other => Err(ApplicationError::ValidationError(format!(
+            "Unsupported MiniMax endpoint: {other}"
+        ))),
+    }
+}
+
 async fn resolve_vertexai_generate_api_config(
     payload: &Map<String, Value>,
     reverse_proxy: &str,
     proxy_password: &str,
+    secret_id: Option<&str>,
     secret_repository: &Arc<dyn SecretRepository>,
 ) -> Result<ChatCompletionApiConfig, ApplicationError> {
     let extra_headers = HashMap::new();
@@ -446,9 +516,13 @@ async fn resolve_vertexai_generate_api_config(
 
     match mode.as_str() {
         "express" => {
-            let api_key =
-                read_required_secret(secret_repository, SecretKeys::VERTEXAI, "Google Vertex AI")
-                    .await?;
+            let api_key = read_required_secret(
+                secret_repository,
+                SecretKeys::VERTEXAI,
+                secret_id,
+                "Google Vertex AI",
+            )
+            .await?;
 
             let base_url = if let Some(project_id) = project_override {
                 format!("{VERTEXAI_GLOBAL_BASE}/v1/projects/{project_id}/locations/{region}",)
@@ -468,6 +542,7 @@ async fn resolve_vertexai_generate_api_config(
             let service_account_json = read_required_secret(
                 secret_repository,
                 SecretKeys::VERTEXAI_SERVICE_ACCOUNT,
+                secret_id,
                 "Google Vertex AI",
             )
             .await?;
@@ -550,18 +625,39 @@ mod tests {
         ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
     };
     use crate::domain::errors::DomainError;
-    use crate::domain::models::secret::Secrets;
+    use crate::domain::models::secret::{SecretKeys, Secrets};
     use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
     use crate::domain::repositories::secret_repository::SecretRepository;
 
     use super::{
-        ApiConfigHints, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, OPENROUTER_API_BASE,
-        ZAI_API_BASE_CODING, default_base_url, resolve_generate_api_config,
-        resolve_status_api_config, source_extra_headers, supports_reverse_proxy, take_header_value,
+        ApiConfigHints, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, MINIMAX_API_BASE,
+        MINIMAX_API_BASE_CN, OPENROUTER_API_BASE, ZAI_API_BASE_CODING, default_base_url,
+        resolve_generate_api_config, resolve_status_api_config, source_extra_headers,
+        supports_reverse_proxy, take_header_value,
     };
 
     struct TestSecretRepository {
-        secrets: HashMap<String, String>,
+        secrets: HashMap<(String, Option<String>), String>,
+    }
+
+    impl TestSecretRepository {
+        fn active(key: &str, value: &str) -> Self {
+            Self::with_entries(&[(key, None, value)])
+        }
+
+        fn with_entries(entries: &[(&str, Option<&str>, &str)]) -> Self {
+            Self {
+                secrets: entries
+                    .iter()
+                    .map(|(key, id, value)| {
+                        (
+                            ((*key).to_string(), (*id).map(str::to_string)),
+                            (*value).to_string(),
+                        )
+                    })
+                    .collect(),
+            }
+        }
     }
 
     #[async_trait]
@@ -590,9 +686,12 @@ mod tests {
         async fn read_secret(
             &self,
             key: &str,
-            _id: Option<&str>,
+            id: Option<&str>,
         ) -> Result<Option<String>, DomainError> {
-            Ok(self.secrets.get(key).cloned())
+            Ok(self
+                .secrets
+                .get(&(key.to_string(), id.map(str::to_string)))
+                .cloned())
         }
 
         async fn delete_secret(&self, _key: &str, _id: Option<&str>) -> Result<(), DomainError> {
@@ -643,6 +742,28 @@ mod tests {
     }
 
     #[test]
+    fn minimax_endpoint_resolves_region_base() {
+        let global = default_base_url(
+            ChatCompletionSource::MiniMax,
+            ApiConfigPurpose::Generate,
+            &ApiConfigHints::default(),
+        )
+        .unwrap();
+        assert_eq!(global, MINIMAX_API_BASE);
+
+        let cn = default_base_url(
+            ChatCompletionSource::MiniMax,
+            ApiConfigPurpose::Generate,
+            &ApiConfigHints {
+                minimax_endpoint: "cn",
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(cn, MINIMAX_API_BASE_CN);
+    }
+
+    #[test]
     fn openrouter_uses_default_base_url() {
         let hints = ApiConfigHints::default();
         let actual = default_base_url(
@@ -665,6 +786,7 @@ mod tests {
     fn moonshot_and_zai_support_reverse_proxy() {
         assert!(supports_reverse_proxy(ChatCompletionSource::Moonshot));
         assert!(supports_reverse_proxy(ChatCompletionSource::Zai));
+        assert!(!supports_reverse_proxy(ChatCompletionSource::MiniMax));
     }
 
     #[test]
@@ -688,9 +810,10 @@ mod tests {
 
     #[tokio::test]
     async fn custom_status_authorization_header_overrides_saved_secret() {
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
-            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
-        });
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::CUSTOM,
+            "saved-secret",
+        ));
         let dto = ChatCompletionStatusRequestDto {
             chat_completion_source: "custom".to_string(),
             custom_url: "https://example.com/v1".to_string(),
@@ -723,9 +846,10 @@ mod tests {
 
     #[tokio::test]
     async fn custom_generate_falls_back_to_saved_secret_without_authorization_header() {
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
-            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
-        });
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::CUSTOM,
+            "saved-secret",
+        ));
         let dto = ChatCompletionGenerateRequestDto {
             payload: json!({
                 "chat_completion_source": "custom",
@@ -751,11 +875,231 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn custom_status_prefers_saved_secret_when_custom_url_present_even_if_reverse_proxy_present()
-     {
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
-            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
-        });
+    async fn generate_uses_requested_secret_id_for_provider_key() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[
+                (SecretKeys::OPENROUTER, None, "active-secret"),
+                (
+                    SecretKeys::OPENROUTER,
+                    Some("profile-secret"),
+                    "selected-secret",
+                ),
+            ]));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "openrouter",
+                "secret_id": "profile-secret",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_api_config(ChatCompletionSource::OpenRouter, &dto, &secret_repository)
+                .await
+                .expect("generate config should resolve");
+
+        assert_eq!(config.api_key, "selected-secret");
+    }
+
+    #[tokio::test]
+    async fn generate_secret_id_does_not_fallback_to_active_secret() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(
+            TestSecretRepository::with_entries(&[(SecretKeys::OPENROUTER, None, "active-secret")]),
+        );
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "openrouter",
+                "secret_id": "missing-secret",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let error =
+            resolve_generate_api_config(ChatCompletionSource::OpenRouter, &dto, &secret_repository)
+                .await
+                .expect_err("missing explicit secret id should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Secret id not found for api_key_openrouter: missing-secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn blank_secret_id_uses_active_secret() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(
+            TestSecretRepository::with_entries(&[(SecretKeys::OPENROUTER, None, "active-secret")]),
+        );
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "openrouter",
+                "secret_id": "  ",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_api_config(ChatCompletionSource::OpenRouter, &dto, &secret_repository)
+                .await
+                .expect("blank secret id should keep active-secret semantics");
+
+        assert_eq!(config.api_key, "active-secret");
+    }
+
+    #[tokio::test]
+    async fn generate_rejects_non_string_secret_id() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::OPENROUTER,
+            "active-secret",
+        ));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "openrouter",
+                "secret_id": 42,
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let error =
+            resolve_generate_api_config(ChatCompletionSource::OpenRouter, &dto, &secret_repository)
+                .await
+                .expect_err("non-string secret id should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Chat completion request field must be a string: secret_id")
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_generate_secret_id_selects_saved_secret() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[
+                (SecretKeys::CUSTOM, None, "active-secret"),
+                (
+                    SecretKeys::CUSTOM,
+                    Some("profile-secret"),
+                    "selected-secret",
+                ),
+            ]));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "custom",
+                "custom_url": "https://example.com/v1",
+                "secret_id": "profile-secret",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
+                .await
+                .expect("custom config should resolve");
+
+        assert_eq!(config.api_key, "selected-secret");
+    }
+
+    #[tokio::test]
+    async fn custom_authorization_header_ignores_secret_id() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[]));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "custom",
+                "custom_url": "https://example.com/v1",
+                "custom_include_headers": "Authorization: \"Bearer override\"",
+                "secret_id": "missing-secret",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
+                .await
+                .expect("authorization header should bypass saved secret lookup");
+
+        assert!(config.api_key.is_empty());
+        assert_eq!(
+            config.authorization_header.as_deref(),
+            Some("Bearer override")
+        );
+    }
+
+    #[tokio::test]
+    async fn status_uses_requested_secret_id_for_provider_key() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[
+                (SecretKeys::OPENROUTER, None, "active-secret"),
+                (
+                    SecretKeys::OPENROUTER,
+                    Some("profile-secret"),
+                    "selected-secret",
+                ),
+            ]));
+        let dto = ChatCompletionStatusRequestDto {
+            chat_completion_source: "openrouter".to_string(),
+            secret_id: Some("profile-secret".to_string()),
+            ..Default::default()
+        };
+
+        let config =
+            resolve_status_api_config(ChatCompletionSource::OpenRouter, &dto, &secret_repository)
+                .await
+                .expect("status config should resolve");
+
+        assert_eq!(config.api_key, "selected-secret");
+    }
+
+    #[tokio::test]
+    async fn vertexai_generate_uses_secret_id_for_express_key() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[
+                (SecretKeys::VERTEXAI, None, "active-secret"),
+                (
+                    SecretKeys::VERTEXAI,
+                    Some("vertex-profile"),
+                    "selected-secret",
+                ),
+            ]));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "vertexai",
+                "vertexai_auth_mode": "express",
+                "secret_id": "vertex-profile",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_api_config(ChatCompletionSource::VertexAi, &dto, &secret_repository)
+                .await
+                .expect("vertex express config should resolve");
+
+        assert_eq!(config.api_key, "selected-secret");
+    }
+
+    #[tokio::test]
+    async fn custom_status_prefers_custom_url_secret_over_reverse_proxy_secret() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::CUSTOM,
+            "saved-secret",
+        ));
         let dto = ChatCompletionStatusRequestDto {
             chat_completion_source: "custom".to_string(),
             reverse_proxy: "https://proxy.example.com/v1".to_string(),
@@ -781,9 +1125,10 @@ mod tests {
 
     #[tokio::test]
     async fn custom_status_uses_proxy_password_when_custom_url_missing_and_reverse_proxy_present() {
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
-            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
-        });
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::CUSTOM,
+            "saved-secret",
+        ));
         let dto = ChatCompletionStatusRequestDto {
             chat_completion_source: "custom".to_string(),
             reverse_proxy: "https://proxy.example.com/v1".to_string(),

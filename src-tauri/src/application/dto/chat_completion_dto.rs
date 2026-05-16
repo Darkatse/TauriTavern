@@ -18,7 +18,11 @@ pub struct ChatCompletionStatusRequestDto {
     #[serde(default)]
     pub siliconflow_endpoint: String,
     #[serde(default)]
+    pub minimax_endpoint: String,
+    #[serde(default)]
     pub workers_ai_account_id: String,
+    #[serde(default)]
+    pub secret_id: Option<String>,
     #[serde(default)]
     pub bypass_status_check: bool,
 }

@@ -1,0 +1,213 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+import { jsonResponse } from '../src/tauri/main/http-utils.js';
+import { createRouteRegistry } from '../src/tauri/main/router.js';
+
+let connectionManagerRequestServicePromise;
+
+function installBrowserShims() {
+    globalThis.window ??= {};
+    globalThis.document ??= { visibilityState: 'visible' };
+    Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        writable: true,
+        value: {
+            getItem: () => null,
+            setItem: () => {},
+            removeItem: () => {},
+        },
+    });
+}
+
+function extractDeclaration(source, marker) {
+    const start = source.indexOf(marker);
+    assert.notEqual(start, -1, `Missing declaration marker: ${marker}`);
+
+    const braceStart = source.indexOf('{', start);
+    assert.notEqual(braceStart, -1, `Missing declaration body: ${marker}`);
+
+    let depth = 0;
+    let quote = '';
+
+    for (let i = braceStart; i < source.length; i++) {
+        const char = source[i];
+        const next = source[i + 1];
+
+        if (quote) {
+            if (char === '\\') {
+                i++;
+            } else if (char === quote) {
+                quote = '';
+            }
+            continue;
+        }
+
+        if (char === '/' && next === '/') {
+            const lineEnd = source.indexOf('\n', i + 2);
+            i = lineEnd === -1 ? source.length : lineEnd;
+            continue;
+        }
+
+        if (char === '/' && next === '*') {
+            const commentEnd = source.indexOf('*/', i + 2);
+            i = commentEnd === -1 ? source.length : commentEnd + 1;
+            continue;
+        }
+
+        if (char === '"' || char === '\'' || char === '`') {
+            quote = char;
+            continue;
+        }
+
+        if (char === '{') {
+            depth++;
+        } else if (char === '}') {
+            depth--;
+            if (depth === 0) {
+                return source.slice(start, i + 1);
+            }
+        }
+    }
+
+    assert.fail(`Unterminated declaration: ${marker}`);
+}
+
+function templateText(strings, ...values) {
+    return strings.reduce((text, part, index) => `${text}${part}${values[index] ?? ''}`, '');
+}
+
+async function loadConnectionManagerRequestService(deps) {
+    if (!connectionManagerRequestServicePromise) {
+        connectionManagerRequestServicePromise = readFile(
+            new URL('../src/scripts/extensions/shared.js', import.meta.url),
+            'utf8',
+        ).then((source) => {
+            const declaration = extractDeclaration(source, 'export class ConnectionManagerRequestService')
+                .replace('export class ConnectionManagerRequestService', 'class ConnectionManagerRequestService');
+            return new Function(
+                'SillyTavern',
+                'proxies',
+                'CONNECT_API_MAP',
+                't',
+                `${declaration}\nreturn ConnectionManagerRequestService;`,
+            );
+        });
+    }
+
+    const factory = await connectionManagerRequestServicePromise;
+    return factory(deps.SillyTavern, deps.proxies, deps.CONNECT_API_MAP, templateText);
+}
+
+test('chat completion status route forwards secret_id to Rust DTO', async () => {
+    installBrowserShims();
+    const { registerAiRoutes } = await import('../src/tauri/main/routes/ai-routes.js');
+    const router = createRouteRegistry();
+    const calls = [];
+
+    registerAiRoutes(router, {
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            return { data: [] };
+        },
+    }, { jsonResponse });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/backends/chat-completions/status',
+        body: {
+            chat_completion_source: 'openrouter',
+            secret_id: 'profile-secret',
+        },
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { data: [] });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].command, 'get_chat_completions_status');
+    assert.equal(calls[0].args.dto.secret_id, 'profile-secret');
+});
+
+test('connection manager forwards profile secret id for completion requests', async () => {
+    const chatRequests = [];
+    const textRequests = [];
+    const CONNECT_API_MAP = {
+        minimax: { selected: 'openai', source: 'minimax' },
+        koboldcpp: { selected: 'textgenerationwebui', type: 'koboldcpp' },
+    };
+    const context = {
+        CONNECT_API_MAP,
+        extensionSettings: {
+            disabledExtensions: [],
+            connectionManager: {
+                profiles: [
+                    {
+                        id: 'chat-profile',
+                        api: 'minimax',
+                        model: 'MiniMax-M2.7',
+                        preset: 'chat-preset',
+                        proxy: 'main-proxy',
+                        'api-url': 'cn',
+                        'prompt-post-processing': 'merge-tools',
+                        'secret-id': 'chat-secret',
+                    },
+                    {
+                        id: 'text-profile',
+                        api: 'koboldcpp',
+                        model: 'kobold-model',
+                        preset: 'text-preset',
+                        instruct: 'text-instruct',
+                        'api-url': 'https://text.example',
+                        'secret-id': 'text-secret',
+                    },
+                ],
+            },
+        },
+        ChatCompletionService: {
+            processRequest: async (...args) => {
+                chatRequests.push(args);
+                return 'chat-result';
+            },
+        },
+        TextCompletionService: {
+            processRequest: async (...args) => {
+                textRequests.push(args);
+                return 'text-result';
+            },
+        },
+    };
+    const ConnectionManagerRequestService = await loadConnectionManagerRequestService({
+        SillyTavern: { getContext: () => context },
+        proxies: [{ name: 'main-proxy', url: 'https://proxy.example/v1', password: 'proxy-secret' }],
+        CONNECT_API_MAP,
+    });
+
+    assert.equal(
+        await ConnectionManagerRequestService.sendRequest('chat-profile', 'hello', 123, {
+            includePreset: false,
+            includeInstruct: false,
+        }),
+        'chat-result',
+    );
+    assert.equal(
+        await ConnectionManagerRequestService.sendRequest('text-profile', 'hi', 77, {
+            includePreset: false,
+            includeInstruct: false,
+        }),
+        'text-result',
+    );
+
+    assert.equal(chatRequests.length, 1);
+    assert.equal(chatRequests[0][0].secret_id, 'chat-secret');
+    assert.equal(chatRequests[0][0].chat_completion_source, 'minimax');
+    assert.equal(chatRequests[0][0].minimax_endpoint, 'cn');
+    assert.deepEqual(chatRequests[0][0].messages, [{ role: 'user', content: 'hello' }]);
+    assert.equal(chatRequests[0][0].reverse_proxy, 'https://proxy.example/v1');
+    assert.equal(chatRequests[0][0].proxy_password, 'proxy-secret');
+
+    assert.equal(textRequests.length, 1);
+    assert.equal(textRequests[0][0].secret_id, 'text-secret');
+    assert.equal(textRequests[0][0].api_type, 'koboldcpp');
+    assert.equal(textRequests[0][0].api_server, 'https://text.example');
+});

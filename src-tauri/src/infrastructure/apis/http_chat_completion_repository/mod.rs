@@ -478,6 +478,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 openai::list_models_with_path(self, config, source_name, "/models?detailed=true")
                     .await
             }
+            ChatCompletionSource::MiniMax => Err(DomainError::InvalidData(
+                "MiniMax does not expose dynamic model listing; status bypass belongs to the application service".to_string(),
+            )),
             ChatCompletionSource::Claude => claude::list_models(self, config).await,
             ChatCompletionSource::Makersuite => makersuite::list_models(self, config).await,
             ChatCompletionSource::VertexAi => vertexai::list_models(self, config).await,
@@ -503,7 +506,8 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::Chutes
             | ChatCompletionSource::SiliconFlow
             | ChatCompletionSource::WorkersAi
-            | ChatCompletionSource::Zai => {
+            | ChatCompletionSource::Zai
+            | ChatCompletionSource::MiniMax => {
                 openai::generate(self, config, endpoint_path, payload, source_name)
                     .await
                     .map(ChatCompletionRepositoryGenerateResponse::from_body)
@@ -578,7 +582,8 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::Chutes
             | ChatCompletionSource::SiliconFlow
             | ChatCompletionSource::WorkersAi
-            | ChatCompletionSource::Zai => {
+            | ChatCompletionSource::Zai
+            | ChatCompletionSource::MiniMax => {
                 openai::generate_stream(
                     self,
                     config,

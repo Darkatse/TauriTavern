@@ -22,6 +22,7 @@ pub enum ChatCompletionSource {
     SiliconFlow,
     WorkersAi,
     Zai,
+    MiniMax,
 }
 
 impl ChatCompletionSource {
@@ -44,6 +45,7 @@ impl ChatCompletionSource {
                 Some(Self::WorkersAi)
             }
             "zai" | "z.ai" | "glm" => Some(Self::Zai),
+            "minimax" | "mini-max" | "mini max" => Some(Self::MiniMax),
             _ => None,
         }
     }
@@ -65,6 +67,7 @@ impl ChatCompletionSource {
             Self::SiliconFlow => "siliconflow",
             Self::WorkersAi => "workers_ai",
             Self::Zai => "zai",
+            Self::MiniMax => "minimax",
         }
     }
 
@@ -85,6 +88,7 @@ impl ChatCompletionSource {
             Self::SiliconFlow => "SiliconFlow",
             Self::WorkersAi => "Cloudflare Workers AI",
             Self::Zai => "Z.AI (GLM)",
+            Self::MiniMax => "MiniMax",
         }
     }
 }
@@ -218,6 +222,10 @@ mod tests {
         assert_eq!(
             ChatCompletionSource::parse("zai"),
             Some(ChatCompletionSource::Zai)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("minimax"),
+            Some(ChatCompletionSource::MiniMax)
         );
         assert_eq!(
             ChatCompletionSource::parse("vertexai"),

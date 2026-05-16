@@ -687,6 +687,10 @@ export function getTokenizerModel() {
         return deepseekTokenizer;
     }
 
+    if (oai_settings.chat_completion_source == chat_completion_sources.MINIMAX) {
+        return turboTokenizer;
+    }
+
     // And for OpenRouter (if not a site model, then it's impossible to determine the tokenizer)
     if (main_api == 'openai' && oai_settings.chat_completion_source == chat_completion_sources.OPENROUTER && oai_settings.openrouter_model ||
         main_api == 'textgenerationwebui' && textgen_settings.type === textgen_types.OPENROUTER && textgen_settings.openrouter_model) {
