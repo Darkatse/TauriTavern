@@ -1,3 +1,4 @@
+pub mod endpoint_url;
 pub mod github_update_repository;
 pub mod http_chat_completion_repository;
 pub mod http_provider_metadata_repository;
@@ -5,3 +6,5 @@ pub mod http_stable_diffusion_repository;
 pub mod http_translate_repository;
 pub mod http_tts_repository;
 pub mod miktik_tokenizer_repository;
+pub mod workers_ai_endpoint;
+pub mod workers_ai_models;

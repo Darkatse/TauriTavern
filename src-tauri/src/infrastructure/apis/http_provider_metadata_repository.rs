@@ -13,13 +13,15 @@ use crate::domain::repositories::provider_metadata_repository::{
     NanoGptSubscriptionPeriod, NanoGptUsageBucket, OpenRouterCredits, ProviderMetadataRepository,
     SiliconFlowEndpoint,
 };
+use crate::infrastructure::apis::workers_ai_models::{
+    fetch_workers_ai_models, workers_ai_model_name,
+};
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 const NANOGPT_API_BASE: &str = "https://nano-gpt.com/api";
 const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
 const SILICONFLOW_API_BASE_CN: &str = "https://api.siliconflow.cn/v1";
-const WORKERS_AI_API_BASE: &str = "https://api.cloudflare.com/client/v4/accounts";
 
 pub struct HttpProviderMetadataRepository {
     http_clients: Arc<HttpClientPool>,
@@ -140,25 +142,12 @@ impl HttpProviderMetadataRepository {
         task: &str,
         per_page: u16,
     ) -> Result<Vec<Value>, DomainError> {
-        let encoded_account_id = Self::path_segment(account_id);
-        let mut url = Url::parse(&format!(
-            "{WORKERS_AI_API_BASE}/{encoded_account_id}/ai/models/search"
-        ))
-        .map_err(|error| {
-            DomainError::InternalError(format!("Failed to build Workers AI models URL: {error}"))
-        })?;
-        url.query_pairs_mut()
-            .append_pair("task", task)
-            .append_pair("per_page", &per_page.to_string());
-
         let client = self.client()?;
-        let request = client
-            .get(url)
-            .header(ACCEPT, "application/json")
-            .header(AUTHORIZATION, format!("Bearer {api_key}"));
-
-        let body = Self::send_json(request, "Cloudflare Workers AI", "models").await?;
-        parse_workers_ai_models(&body)
+        fetch_workers_ai_models(&client, api_key, account_id, task, per_page)
+            .await?
+            .into_iter()
+            .map(add_workers_ai_model_id)
+            .collect()
     }
 }
 
@@ -414,20 +403,11 @@ fn optional_usage_bucket(
     })
 }
 
-fn parse_workers_ai_models(body: &Value) -> Result<Vec<Value>, DomainError> {
-    let result = body
-        .get("result")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_response("Workers AI models result is not an array"))?;
-    result
-        .iter()
-        .map(|model| {
-            let mut object = require_object(model, "Workers AI model")?.clone();
-            let name = required_string_field(model, "name")?;
-            object.insert("id".to_string(), Value::String(name));
-            Ok(Value::Object(object))
-        })
-        .collect()
+fn add_workers_ai_model_id(model: Value) -> Result<Value, DomainError> {
+    let name = workers_ai_model_name(&model)?.to_string();
+    let mut object = require_object(&model, "Workers AI model")?.clone();
+    object.insert("id".to_string(), Value::String(name));
+    Ok(Value::Object(object))
 }
 
 fn parse_data_array(body: Value, label: &str) -> Result<Vec<Value>, DomainError> {
@@ -578,8 +558,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        model_has_vision_property, parse_nanogpt_credits, parse_nanogpt_model_providers,
-        parse_openrouter_credits, parse_openrouter_model_providers, parse_workers_ai_models,
+        add_workers_ai_model_id, model_has_vision_property, parse_nanogpt_credits,
+        parse_nanogpt_model_providers, parse_openrouter_credits, parse_openrouter_model_providers,
     };
 
     #[test]
@@ -684,13 +664,11 @@ mod tests {
 
     #[test]
     fn workers_ai_models_add_id_from_name() {
-        let models = parse_workers_ai_models(&json!({
-            "result": [{ "name": "@cf/meta/llama", "properties": [] }]
-        }))
-        .unwrap();
+        let model =
+            add_workers_ai_model_id(json!({ "name": "@cf/meta/llama", "properties": [] })).unwrap();
 
         assert_eq!(
-            models[0].get("id").and_then(|value| value.as_str()),
+            model.get("id").and_then(|value| value.as_str()),
             Some("@cf/meta/llama")
         );
     }

@@ -6,17 +6,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use base64::Engine;
-use reqwest::Url;
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Number, Value, json};
 use tokio::fs;
 use tokio::sync::watch;
 use tokio::time::{Duration, sleep};
+use url::Url;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::character::sanitize_filename;
 use crate::domain::repositories::stable_diffusion_repository::{
-    SdRouteRequest, SdRouteResponse, SdRouteResponseKind, StableDiffusionRepository,
+    SdRouteCredentials, SdRouteRequest, SdRouteResponse, SdRouteResponseKind,
+    StableDiffusionRepository,
+};
+use crate::infrastructure::apis::endpoint_url::append_endpoint_path;
+use crate::infrastructure::apis::workers_ai_endpoint::workers_ai_run_url;
+use crate::infrastructure::apis::workers_ai_models::{
+    fetch_workers_ai_models, workers_ai_model_name,
 };
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 use crate::infrastructure::sync_fs;
@@ -80,7 +86,12 @@ impl StableDiffusionRepository for HttpStableDiffusionRepository {
 
             // stable-diffusion.cpp (local chain)
             "sdcpp/ping" => sdcpp_ping(&self.http_clients, &request.body).await,
+            "sdcpp/models" => sdcpp_models(&self.http_clients, &request.body).await,
             "sdcpp/generate" => sdcpp_generate(&self.http_clients, &request.body, cancel).await,
+
+            // Cloudflare Workers AI (cloud chain)
+            "workersai/models" => workers_ai_models(&self.http_clients, &request).await,
+            "workersai/generate" => workers_ai_generate(&self.http_clients, &request, cancel).await,
 
             // DrawThings (local chain)
             "drawthings/ping" => drawthings_ping(&self.http_clients, &request.body).await,
@@ -144,11 +155,6 @@ fn optional_string(body: &Value, key: &str) -> String {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string()
-}
-
-fn parse_url(raw: &str) -> Result<Url, DomainError> {
-    Url::parse(raw.trim())
-        .map_err(|error| DomainError::InvalidData(format!("Invalid url: {error}")))
 }
 
 fn basic_auth_header(auth: &str) -> String {
@@ -242,8 +248,7 @@ async fn webui_ping(
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
     let auth = optional_string(body, "auth");
-    let mut options_url = parse_url(&url)?;
-    options_url.set_path("/sdapi/v1/options");
+    let options_url = append_endpoint_path(&url, "sdapi/v1/options")?;
 
     let client = http_client(http_clients)?;
     let response = client
@@ -270,10 +275,8 @@ async fn webui_upscalers(
     let auth = optional_string(body, "auth");
     let client = http_client(http_clients)?;
 
-    let mut upscalers_url = parse_url(&url)?;
-    upscalers_url.set_path("/sdapi/v1/upscalers");
-    let mut latent_url = parse_url(&url)?;
-    latent_url.set_path("/sdapi/v1/latent-upscale-modes");
+    let upscalers_url = append_endpoint_path(&url, "sdapi/v1/upscalers")?;
+    let latent_url = append_endpoint_path(&url, "sdapi/v1/latent-upscale-modes")?;
 
     let upscalers_fut = client
         .get(upscalers_url)
@@ -325,8 +328,7 @@ async fn webui_sdnext_upscalers(
     let auth = optional_string(body, "auth");
     let client = http_client(http_clients)?;
 
-    let mut upscalers_url = parse_url(&url)?;
-    upscalers_url.set_path("/sdapi/v1/upscalers");
+    let upscalers_url = append_endpoint_path(&url, "sdapi/v1/upscalers")?;
 
     let response = client
         .get(upscalers_url)
@@ -376,10 +378,8 @@ async fn webui_vaes(
     let auth = optional_string(body, "auth");
     let client = http_client(http_clients)?;
 
-    let mut auto_url = parse_url(&url)?;
-    auto_url.set_path("/sdapi/v1/sd-vae");
-    let mut forge_url = parse_url(&url)?;
-    forge_url.set_path("/sdapi/v1/sd-modules");
+    let auto_url = append_endpoint_path(&url, "sdapi/v1/sd-vae")?;
+    let forge_url = append_endpoint_path(&url, "sdapi/v1/sd-modules")?;
 
     let request = |target: Url| {
         client
@@ -427,8 +427,7 @@ async fn webui_samplers(
     let auth = optional_string(body, "auth");
     let client = http_client(http_clients)?;
 
-    let mut samplers_url = parse_url(&url)?;
-    samplers_url.set_path("/sdapi/v1/samplers");
+    let samplers_url = append_endpoint_path(&url, "sdapi/v1/samplers")?;
 
     let response = client
         .get(samplers_url)
@@ -462,8 +461,7 @@ async fn webui_schedulers(
     let auth = optional_string(body, "auth");
     let client = http_client(http_clients)?;
 
-    let mut schedulers_url = parse_url(&url)?;
-    schedulers_url.set_path("/sdapi/v1/schedulers");
+    let schedulers_url = append_endpoint_path(&url, "sdapi/v1/schedulers")?;
 
     let response = client
         .get(schedulers_url)
@@ -497,8 +495,7 @@ async fn webui_models(
     let auth = optional_string(body, "auth");
     let client = http_client(http_clients)?;
 
-    let mut models_url = parse_url(&url)?;
-    models_url.set_path("/sdapi/v1/sd-models");
+    let models_url = append_endpoint_path(&url, "sdapi/v1/sd-models")?;
 
     let response = client
         .get(models_url)
@@ -535,8 +532,7 @@ async fn webui_get_model(
     let auth = optional_string(body, "auth");
     let client = http_client(http_clients)?;
 
-    let mut options_url = parse_url(&url)?;
-    options_url.set_path("/sdapi/v1/options");
+    let options_url = append_endpoint_path(&url, "sdapi/v1/options")?;
 
     let response = client
         .get(options_url)
@@ -569,8 +565,7 @@ async fn webui_set_model(
     let model = require_string(body, "model")?;
     let client = http_client(http_clients)?;
 
-    let mut options_url = parse_url(&url)?;
-    options_url.set_path("/sdapi/v1/options");
+    let options_url = append_endpoint_path(&url, "sdapi/v1/options")?;
 
     let response = client
         .post(options_url)
@@ -587,8 +582,7 @@ async fn webui_set_model(
         ));
     }
 
-    let mut progress_url = parse_url(&url)?;
-    progress_url.set_path("/sdapi/v1/progress");
+    let progress_url = append_endpoint_path(&url, "sdapi/v1/progress")?;
 
     const MAX_ATTEMPTS: usize = 10;
     const CHECK_INTERVAL: Duration = Duration::from_millis(2000);
@@ -642,8 +636,7 @@ async fn webui_generate(
     let client = http_client(http_clients)?;
 
     // Forge compatibility: try to remove forge_additional_modules if remote is not Forge.
-    if let Ok(mut options_url) = parse_url(&url) {
-        options_url.set_path("/sdapi/v1/options");
+    if let Ok(options_url) = append_endpoint_path(&url, "sdapi/v1/options") {
         let options_result = client
             .get(options_url)
             .header(reqwest::header::AUTHORIZATION, basic_auth_header(&auth))
@@ -662,8 +655,7 @@ async fn webui_generate(
         }
     }
 
-    let mut txt2img_url = parse_url(&url)?;
-    txt2img_url.set_path("/sdapi/v1/txt2img");
+    let txt2img_url = append_endpoint_path(&url, "sdapi/v1/txt2img")?;
 
     let request_fut = client
         .post(txt2img_url)
@@ -678,8 +670,7 @@ async fn webui_generate(
             let _ = changed;
 
             if *cancel.borrow() {
-                let mut interrupt_url = parse_url(&url)?;
-                interrupt_url.set_path("/sdapi/v1/interrupt");
+                let interrupt_url = append_endpoint_path(&url, "sdapi/v1/interrupt")?;
                 let _ = client
                     .post(interrupt_url)
                     .header(reqwest::header::AUTHORIZATION, basic_auth_header(&auth))
@@ -716,10 +707,7 @@ async fn comfy_ping(
     body: &Value,
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
-    let base = parse_url(&url)?;
-    let target = base
-        .join("/system_stats")
-        .map_err(|error| DomainError::InvalidData(format!("Invalid comfy url: {error}")))?;
+    let target = append_endpoint_path(&url, "system_stats")?;
 
     let client = http_client(http_clients)?;
     let response = client
@@ -742,10 +730,7 @@ async fn comfy_object_info(
     body: &Value,
 ) -> Result<Value, DomainError> {
     let url = require_string(body, "url")?;
-    let base = parse_url(&url)?;
-    let target = base
-        .join("/object_info")
-        .map_err(|error| DomainError::InvalidData(format!("Invalid comfy url: {error}")))?;
+    let target = append_endpoint_path(&url, "object_info")?;
 
     let client = http_client(http_clients)?;
     let response = client
@@ -890,17 +875,10 @@ async fn comfy_generate(
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
     let prompt = require_string(body, "prompt")?;
-    let base = parse_url(&url)?;
 
-    let prompt_url = base
-        .join("/prompt")
-        .map_err(|error| DomainError::InvalidData(format!("Invalid comfy url: {error}")))?;
-    let history_url = base
-        .join("/history")
-        .map_err(|error| DomainError::InvalidData(format!("Invalid comfy url: {error}")))?;
-    let interrupt_url = base
-        .join("/interrupt")
-        .map_err(|error| DomainError::InvalidData(format!("Invalid comfy url: {error}")))?;
+    let prompt_url = append_endpoint_path(&url, "prompt")?;
+    let history_url = append_endpoint_path(&url, "history")?;
+    let interrupt_url = append_endpoint_path(&url, "interrupt")?;
 
     let client = http_client(http_clients)?;
 
@@ -1079,9 +1057,7 @@ async fn comfy_generate(
     let subfolder = info.get("subfolder").and_then(Value::as_str).unwrap_or("");
     let kind = info.get("type").and_then(Value::as_str).unwrap_or("output");
 
-    let mut view_url = base
-        .join("/view")
-        .map_err(|error| DomainError::InvalidData(format!("Invalid comfy url: {error}")))?;
+    let mut view_url = append_endpoint_path(&url, "view")?;
     view_url
         .query_pairs_mut()
         .append_pair("filename", filename)
@@ -1229,8 +1205,7 @@ async fn sdcpp_ping(
     body: &Value,
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
-    let mut target = parse_url(&url)?;
-    target.set_path("/v1/images/generations");
+    let target = append_endpoint_path(&url, "v1/images/generations")?;
 
     let client = http_client(http_clients)?;
     let response = client
@@ -1246,6 +1221,34 @@ async fn sdcpp_ping(
     }
 
     Ok(empty(200))
+}
+
+async fn sdcpp_models(
+    http_clients: &Arc<HttpClientPool>,
+    body: &Value,
+) -> Result<SdRouteResponse, DomainError> {
+    let url = require_string(body, "url")?;
+    let target = append_endpoint_path(&url, "v1/models")?;
+
+    let client = http_client(http_clients)?;
+    let response = client
+        .get(target)
+        .send()
+        .await
+        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+
+    if !response.status().is_success() {
+        return Err(DomainError::InternalError(
+            "stable-diffusion.cpp server returned an error.".to_string(),
+        ));
+    }
+
+    let value = response
+        .json::<Value>()
+        .await
+        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+
+    Ok(json_response(200, value))
 }
 
 fn maybe_insert(map: &mut Map<String, Value>, key: &str, value: Option<&Value>) {
@@ -1270,12 +1273,11 @@ async fn sdcpp_generate(
     mut cancel: watch::Receiver<bool>,
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
-    let base = parse_url(&url)?;
-    let mut target = base.clone();
-    target.set_path("/sdapi/v1/txt2img");
+    let target = append_endpoint_path(&url, "sdapi/v1/txt2img")?;
 
     let mut payload = Map::new();
     for key in [
+        "model",
         "prompt",
         "negative_prompt",
         "width",
@@ -1286,9 +1288,13 @@ async fn sdcpp_generate(
         "batch_size",
         "sampler_name",
         "scheduler",
-        "clip_skip",
     ] {
         maybe_insert(&mut payload, key, body.get(key));
+    }
+    if let Some(clip_skip) = optional_number_value(body, "clip_skip")? {
+        if clip_skip.as_f64().is_some_and(|clip_skip| clip_skip > 1.0) {
+            payload.insert("clip_skip".to_string(), clip_skip);
+        }
     }
 
     let client = http_client(http_clients)?;
@@ -1324,13 +1330,278 @@ async fn sdcpp_generate(
     Ok(json_response(200, value))
 }
 
+fn workers_ai_api_key(request: &SdRouteRequest) -> Result<&str, SdRouteResponse> {
+    match &request.credentials {
+        SdRouteCredentials::WorkersAi { api_key } => {
+            let api_key = api_key.trim();
+            if api_key.is_empty() {
+                Err(text(400, "Cloudflare Workers AI API key is required"))
+            } else {
+                Ok(api_key)
+            }
+        }
+        SdRouteCredentials::None => Err(text(400, "Cloudflare Workers AI API key is required")),
+    }
+}
+
+fn required_body_string_response(
+    body: &Value,
+    key: &str,
+    message: &str,
+) -> Result<String, SdRouteResponse> {
+    body.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| text(400, message))
+}
+
+fn optional_number_value(body: &Value, key: &str) -> Result<Option<Value>, DomainError> {
+    let Some(value) = body.get(key) else {
+        return Ok(None);
+    };
+
+    if value.is_null() || value.as_str().is_some_and(|text| text.trim().is_empty()) {
+        return Ok(None);
+    }
+
+    if value.is_number() {
+        return Ok(Some(value.clone()));
+    }
+
+    let Some(text) = value.as_str().map(str::trim) else {
+        return Err(DomainError::InvalidData(format!(
+            "Invalid numeric field: {key}"
+        )));
+    };
+
+    let number = text.parse::<f64>().map_err(|error| {
+        DomainError::InvalidData(format!("Invalid numeric field {key}: {error}"))
+    })?;
+    let number = Number::from_f64(number)
+        .ok_or_else(|| DomainError::InvalidData(format!("Invalid numeric field: {key}")))?;
+
+    Ok(Some(Value::Number(number)))
+}
+
+fn optional_nonnegative_number_value(
+    body: &Value,
+    key: &str,
+) -> Result<Option<Value>, DomainError> {
+    let Some(value) = optional_number_value(body, key)? else {
+        return Ok(None);
+    };
+
+    if value.as_f64().is_some_and(|number| number >= 0.0) {
+        Ok(Some(value))
+    } else {
+        Ok(None)
+    }
+}
+
+fn maybe_insert_number(
+    payload: &mut Map<String, Value>,
+    target_key: &str,
+    body: &Value,
+    body_key: &str,
+) -> Result<(), DomainError> {
+    if let Some(value) = optional_number_value(body, body_key)? {
+        payload.insert(target_key.to_string(), value);
+    }
+    Ok(())
+}
+
+fn maybe_insert_nonnegative_number(
+    payload: &mut Map<String, Value>,
+    target_key: &str,
+    body: &Value,
+    body_key: &str,
+) -> Result<(), DomainError> {
+    if let Some(value) = optional_nonnegative_number_value(body, body_key)? {
+        payload.insert(target_key.to_string(), value);
+    }
+    Ok(())
+}
+
+fn form_text_value(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Number(number) => number.to_string(),
+        Value::Bool(value) => value.to_string(),
+        _ => value.to_string(),
+    }
+}
+
+fn workers_ai_multipart_form(payload: &Map<String, Value>) -> reqwest::multipart::Form {
+    let mut form = reqwest::multipart::Form::new();
+    for (key, value) in payload {
+        form = form.text(key.clone(), form_text_value(value));
+    }
+    form
+}
+
+async fn workers_ai_models(
+    http_clients: &Arc<HttpClientPool>,
+    request: &SdRouteRequest,
+) -> Result<SdRouteResponse, DomainError> {
+    let api_key = match workers_ai_api_key(request) {
+        Ok(api_key) => api_key,
+        Err(response) => return Ok(response),
+    };
+    let account_id = match required_body_string_response(
+        &request.body,
+        "account_id",
+        "Cloudflare Workers AI account ID is required",
+    ) {
+        Ok(account_id) => account_id,
+        Err(response) => return Ok(response),
+    };
+
+    let client = http_clients.client(HttpClientProfile::ProviderMetadata)?;
+    let models = fetch_workers_ai_models(&client, api_key, &account_id, "Text-to-Image", 1000)
+        .await?
+        .into_iter()
+        .map(|model| {
+            let name = workers_ai_model_name(&model)?.to_string();
+            Ok(json!({ "value": &name, "text": &name }))
+        })
+        .collect::<Result<Vec<_>, DomainError>>()?;
+
+    Ok(json_response(200, json!(models)))
+}
+
+async fn workers_ai_generate(
+    http_clients: &Arc<HttpClientPool>,
+    request: &SdRouteRequest,
+    mut cancel: watch::Receiver<bool>,
+) -> Result<SdRouteResponse, DomainError> {
+    let api_key = match workers_ai_api_key(request) {
+        Ok(api_key) => api_key,
+        Err(response) => return Ok(response),
+    };
+    let account_id = match required_body_string_response(
+        &request.body,
+        "account_id",
+        "Cloudflare Workers AI account ID is required",
+    ) {
+        Ok(account_id) => account_id,
+        Err(response) => return Ok(response),
+    };
+    let model = match required_body_string_response(
+        &request.body,
+        "model",
+        "Cloudflare Workers AI model is required",
+    ) {
+        Ok(model) => model,
+        Err(response) => return Ok(response),
+    };
+    let prompt = match required_body_string_response(
+        &request.body,
+        "prompt",
+        "Cloudflare Workers AI prompt is required",
+    ) {
+        Ok(prompt) => prompt,
+        Err(response) => return Ok(response),
+    };
+
+    let mut payload = Map::new();
+    payload.insert("prompt".to_string(), Value::String(prompt));
+    if let Some(negative_prompt) = request
+        .body
+        .get("negative_prompt")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        payload.insert(
+            "negative_prompt".to_string(),
+            Value::String(negative_prompt.to_string()),
+        );
+    }
+    maybe_insert_number(&mut payload, "width", &request.body, "width")?;
+    maybe_insert_number(&mut payload, "height", &request.body, "height")?;
+    maybe_insert_number(&mut payload, "num_steps", &request.body, "steps")?;
+    maybe_insert_number(&mut payload, "guidance", &request.body, "scale")?;
+    maybe_insert_nonnegative_number(&mut payload, "seed", &request.body, "seed")?;
+
+    let target = workers_ai_run_url(&account_id, &model)?;
+    let client = http_client(http_clients)?;
+    let mut builder = client
+        .post(target)
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {api_key}"));
+
+    if model.contains("flux-2") {
+        builder = builder.multipart(workers_ai_multipart_form(&payload));
+    } else {
+        builder = builder
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(&Value::Object(payload));
+    }
+
+    let response = tokio::select! {
+        res = builder.send() => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
+        changed = cancel.changed() => {
+            let _ = changed;
+            return Err(DomainError::generation_cancelled_by_user());
+        }
+    };
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response.text().await.unwrap_or_else(|_| status.to_string());
+        return Ok(text(
+            500,
+            format!("Cloudflare Workers AI returned an error: {}", detail.trim()),
+        ));
+    }
+
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    if content_type.contains("application/json") {
+        let data = response
+            .json::<Value>()
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        let image = data
+            .pointer("/result/image")
+            .or_else(|| data.get("image"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                DomainError::InternalError(
+                    "Cloudflare Workers AI returned JSON without image data.".to_string(),
+                )
+            })?;
+
+        return Ok(json_response(
+            200,
+            json!({ "format": "png", "image": image }),
+        ));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let image = base64::engine::general_purpose::STANDARD.encode(bytes);
+
+    Ok(json_response(
+        200,
+        json!({ "format": "png", "image": image }),
+    ))
+}
+
 async fn drawthings_ping(
     http_clients: &Arc<HttpClientPool>,
     body: &Value,
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
-    let mut target = parse_url(&url)?;
-    target.set_path("/");
+    let target = append_endpoint_path(&url, "")?;
 
     let client = http_client(http_clients)?;
     let response = client
@@ -1354,8 +1625,7 @@ async fn drawthings_get_field(
     field: &str,
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
-    let mut target = parse_url(&url)?;
-    target.set_path("/");
+    let target = append_endpoint_path(&url, "")?;
 
     let client = http_client(http_clients)?;
     let response = client
@@ -1385,8 +1655,7 @@ async fn drawthings_generate(
     let url = require_string(body, "url")?;
     let auth = optional_string(body, "auth");
 
-    let mut target = parse_url(&url)?;
-    target.set_path("/sdapi/v1/txt2img");
+    let target = append_endpoint_path(&url, "sdapi/v1/txt2img")?;
 
     let mut cloned = body.clone();
     if let Some(map) = cloned.as_object_mut() {
@@ -1426,4 +1695,20 @@ async fn drawthings_generate(
         .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
     Ok(json_response(200, value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::optional_nonnegative_number_value;
+    use serde_json::json;
+
+    #[test]
+    fn workers_ai_seed_omits_negative_values() {
+        let body = json!({ "seed": -1 });
+
+        assert_eq!(
+            optional_nonnegative_number_value(&body, "seed").expect("read seed"),
+            None
+        );
+    }
 }

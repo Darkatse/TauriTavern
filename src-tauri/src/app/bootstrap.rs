@@ -269,6 +269,7 @@ pub(super) async fn build_services(
     let native_regex_service = Arc::new(NativeRegexService::new());
     let stable_diffusion_service = Arc::new(StableDiffusionService::new(
         repositories.stable_diffusion_repository,
+        repositories.secret_repository.clone(),
     ));
     let translate_service = Arc::new(TranslateService::new(
         repositories.translate_repository,
