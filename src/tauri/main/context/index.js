@@ -9,6 +9,7 @@ import { createCharacterFormService } from '../services/characters/character-for
 import { createCharacterCreateService } from '../services/characters/character-create-service.js';
 import { createUploadService } from '../services/uploads/upload-service.js';
 import { createAndroidArchiveService } from '../services/android/android-archive-service.js';
+import { createReadableFileStreamService } from '../services/files/readable-file-stream-service.js';
 import { createHostInvokePolicies } from '../kernel/invokes/invoke-policies.js';
 import { installAssetPathHelpers } from './asset-path-helpers.js';
 import {
@@ -56,6 +57,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
 
     const characterService = createCharacterService({ safeInvoke: invokeService.safeInvoke });
     const uploadService = createUploadService();
+    const readableFileStreamService = createReadableFileStreamService({ invoke });
     const characterCreateService = createCharacterCreateService({
         safeInvoke: invokeService.safeInvoke,
         materializeUploadFile: uploadService.materializeUploadFile,
@@ -132,6 +134,7 @@ export function createTauriMainContext({ invoke, convertFileSrc }) {
         materializeAndroidSkillImportArchive: androidArchiveService.materializeAndroidSkillImportArchive,
         pickAndroidImportArchive: androidArchiveService.pickAndroidImportArchive,
         removeTemporaryFile,
+        createReadableFileStream: readableFileStreamService.createReadableFileStream,
         saveAndroidExportArchive: androidArchiveService.saveAndroidExportArchive,
         toAssetUrl: assetService.toAssetUrl,
     };

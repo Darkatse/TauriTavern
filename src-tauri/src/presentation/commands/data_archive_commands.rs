@@ -2,10 +2,14 @@ use tauri::{AppHandle, Manager};
 
 use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::persistence::data_archive_jobs::{
-    DataArchiveJobStatus, cancel_data_archive_job as cancel_data_archive_job_impl,
+    DataArchiveJobStatus, UserBackupArchiveResult,
+    cancel_data_archive_job as cancel_data_archive_job_impl,
     cleanup_export_data_archive as cleanup_export_data_archive_impl,
+    cleanup_user_backup_archive as cleanup_user_backup_archive_impl,
+    export_user_backup_archive_file as export_user_backup_archive_file_impl,
     get_data_archive_job_status as get_data_archive_job_status_impl,
     save_export_data_archive as save_export_data_archive_impl,
+    save_user_backup_archive as save_user_backup_archive_impl,
     start_export_data_archive_job as start_export_data_archive_job_impl,
     start_import_data_archive_job as start_import_data_archive_job_impl,
 };
@@ -93,4 +97,58 @@ pub fn cleanup_export_data_archive(job_id: String) -> Result<(), CommandError> {
 
     cleanup_export_data_archive_impl(&job_id)
         .map_err(map_command_error("Failed to cleanup export data archive"))
+}
+
+#[tauri::command]
+pub async fn export_user_backup_archive(
+    app: AppHandle,
+    handle: String,
+    include_secrets: bool,
+) -> Result<UserBackupArchiveResult, CommandError> {
+    log_command(format!(
+        "export_user_backup_archive {} include_secrets={}",
+        handle, include_secrets
+    ));
+
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        export_user_backup_archive_file_impl(&app_handle, &handle, include_secrets)
+    })
+    .await
+    .map_err(|error| {
+        CommandError::InternalServerError(format!("User backup export task join error: {}", error))
+    })?
+    .map_err(map_command_error("Failed to export user backup archive"))
+}
+
+#[tauri::command]
+pub async fn save_user_backup_archive(
+    app: AppHandle,
+    archive_path: String,
+    file_name: String,
+) -> Result<String, CommandError> {
+    log_command("save_user_backup_archive");
+
+    let app_handle = app.clone();
+    let saved_path = tauri::async_runtime::spawn_blocking(move || {
+        save_user_backup_archive_impl(&app_handle, &archive_path, &file_name)
+    })
+    .await
+    .map_err(|error| {
+        CommandError::InternalServerError(format!("Save user backup task join error: {}", error))
+    })?
+    .map_err(map_command_error("Failed to save user backup archive"))?;
+
+    Ok(saved_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn cleanup_user_backup_archive(
+    app: AppHandle,
+    archive_path: String,
+) -> Result<(), CommandError> {
+    log_command("cleanup_user_backup_archive");
+
+    cleanup_user_backup_archive_impl(&app, &archive_path)
+        .map_err(map_command_error("Failed to cleanup user backup archive"))
 }

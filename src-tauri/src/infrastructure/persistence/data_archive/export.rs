@@ -11,7 +11,7 @@ use crate::infrastructure::zipkit::export_file_options;
 use super::DataArchiveExportResult;
 use super::shared::{
     COPY_BUFFER_BYTES, FILE_IO_BUFFER_BYTES, PROGRESS_REPORT_MIN_DELTA, copy_stream_with_cancel,
-    ensure_not_cancelled, internal_error, normalize_zip_path, progress_percent,
+    ensure_not_cancelled, internal_error, normalize_zip_path, path_components, progress_percent,
     read_directory_sorted,
 };
 
@@ -28,13 +28,49 @@ pub fn run_export_data_archive(
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<DataArchiveExportResult, DomainError> {
+    run_export_archive(
+        data_root,
+        output_path,
+        "data",
+        &|_| true,
+        report_progress,
+        is_cancelled,
+    )
+}
+
+pub fn run_export_user_backup_archive(
+    user_root: &Path,
+    output_path: &Path,
+    include_secrets: bool,
+    report_progress: &mut dyn FnMut(&str, f32, &str),
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<DataArchiveExportResult, DomainError> {
+    run_export_archive(
+        user_root,
+        output_path,
+        "",
+        &|relative_path| should_include_user_backup_entry(relative_path, include_secrets),
+        report_progress,
+        is_cancelled,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_export_archive(
+    source_root: &Path,
+    output_path: &Path,
+    zip_root: &str,
+    include_entry: &dyn Fn(&Path) -> bool,
+    report_progress: &mut dyn FnMut(&str, f32, &str),
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<DataArchiveExportResult, DomainError> {
     report_progress("preparing", 0.0, "Preparing export");
     ensure_not_cancelled(is_cancelled)?;
 
-    if !data_root.is_dir() {
+    if !source_root.is_dir() {
         return Err(DomainError::NotFound(format!(
-            "Data directory not found: {}",
-            data_root.display()
+            "Export source directory not found: {}",
+            source_root.display()
         )));
     }
 
@@ -43,9 +79,12 @@ pub fn run_export_data_archive(
             .map_err(|error| internal_error("Failed to create export output directory", error))?;
     }
 
-    let total_steps = count_export_entries(data_root, is_cancelled)?.saturating_add(1);
+    let normalized_zip_root = zip_root.trim_matches('/');
+    let root_step_count = u64::from(!normalized_zip_root.is_empty());
+    let total_steps = count_export_entries(source_root, source_root, include_entry, is_cancelled)?
+        .saturating_add(root_step_count);
     let mut progress = ExportProgress {
-        processed_steps: 1,
+        processed_steps: 0,
         total_steps,
         last_reported_percent: 0.0,
     };
@@ -59,17 +98,21 @@ pub fn run_export_data_archive(
     let buffered_output = BufWriter::with_capacity(FILE_IO_BUFFER_BYTES, output_file);
     let mut writer = ZipWriter::new(buffered_output);
 
-    writer
-        .add_directory("data/", dir_options)
-        .map_err(|error| internal_error("Failed to add archive root directory", error))?;
-    report_export_progress(&mut progress, report_progress);
+    if !normalized_zip_root.is_empty() {
+        writer
+            .add_directory(format!("{}/", normalized_zip_root), dir_options)
+            .map_err(|error| internal_error("Failed to add archive root directory", error))?;
+        progress.processed_steps = progress.processed_steps.saturating_add(1);
+        report_export_progress(&mut progress, report_progress);
+    }
 
     let mut copy_buffer = vec![0u8; COPY_BUFFER_BYTES];
     write_export_entries(
         &mut writer,
-        data_root,
-        data_root,
-        "data",
+        source_root,
+        source_root,
+        normalized_zip_root,
+        include_entry,
         dir_options,
         &mut progress,
         &mut copy_buffer,
@@ -105,7 +148,9 @@ pub fn default_export_file_name() -> String {
 }
 
 fn count_export_entries(
+    root: &Path,
     current: &Path,
+    include_entry: &dyn Fn(&Path) -> bool,
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<u64, DomainError> {
     let mut count = 0u64;
@@ -117,10 +162,21 @@ fn count_export_entries(
             .file_type()
             .map_err(|error| internal_error("Failed to read export entry type", error))?;
         let path = entry.path();
+        let relative_path = path
+            .strip_prefix(root)
+            .map_err(|error| internal_error("Failed to resolve export relative path", error))?;
+        if !include_entry(relative_path) {
+            continue;
+        }
 
         if file_type.is_dir() {
             count = count.saturating_add(1);
-            count = count.saturating_add(count_export_entries(&path, is_cancelled)?);
+            count = count.saturating_add(count_export_entries(
+                root,
+                &path,
+                include_entry,
+                is_cancelled,
+            )?);
             continue;
         }
 
@@ -138,6 +194,7 @@ fn write_export_entries(
     root: &Path,
     current: &Path,
     zip_prefix: &str,
+    include_entry: &dyn Fn(&Path) -> bool,
     dir_options: FileOptions,
     progress: &mut ExportProgress,
     copy_buffer: &mut [u8],
@@ -154,8 +211,12 @@ fn write_export_entries(
         let relative_path = path
             .strip_prefix(root)
             .map_err(|error| internal_error("Failed to resolve export relative path", error))?;
+        if !include_entry(relative_path) {
+            continue;
+        }
+
         let zip_relative = normalize_zip_path(relative_path);
-        let zip_path = format!("{}/{}", zip_prefix, zip_relative);
+        let zip_path = archive_zip_path(zip_prefix, &zip_relative);
 
         if file_type.is_dir() {
             writer
@@ -169,6 +230,7 @@ fn write_export_entries(
                 root,
                 &path,
                 zip_prefix,
+                include_entry,
                 dir_options,
                 progress,
                 copy_buffer,
@@ -205,6 +267,29 @@ fn write_export_entries(
     Ok(())
 }
 
+fn archive_zip_path(zip_prefix: &str, zip_relative: &str) -> String {
+    if zip_prefix.is_empty() {
+        return zip_relative.to_string();
+    }
+
+    format!("{}/{}", zip_prefix, zip_relative)
+}
+
+fn should_include_user_backup_entry(relative_path: &Path, include_secrets: bool) -> bool {
+    if include_secrets {
+        return true;
+    }
+
+    let components = path_components(relative_path);
+    match components.as_slice() {
+        [file_name] => file_name != "secrets.json",
+        [directory, file_name] if directory == "backups" => {
+            !(file_name.starts_with("secrets_migration_") && file_name.ends_with(".json"))
+        }
+        _ => true,
+    }
+}
+
 fn report_export_progress(
     progress: &mut ExportProgress,
     report_progress: &mut dyn FnMut(&str, f32, &str),
@@ -218,4 +303,51 @@ fn report_export_progress(
 
     progress.last_reported_percent = percent;
     report_progress("zipping", percent, "Writing archive entries");
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    fn user_backup_filter_excludes_secret_files_when_secret_export_is_disabled() {
+        assert!(!should_include_user_backup_entry(
+            Path::new("secrets.json"),
+            false
+        ));
+        assert!(!should_include_user_backup_entry(
+            Path::new("backups/secrets_migration_123.json"),
+            false
+        ));
+    }
+
+    #[test]
+    fn user_backup_filter_keeps_regular_files_when_secret_export_is_disabled() {
+        assert!(should_include_user_backup_entry(
+            Path::new("settings.json"),
+            false
+        ));
+        assert!(should_include_user_backup_entry(
+            Path::new("backups/chat.jsonl"),
+            false
+        ));
+        assert!(should_include_user_backup_entry(
+            Path::new("characters/secrets.json"),
+            false
+        ));
+    }
+
+    #[test]
+    fn user_backup_filter_keeps_secret_files_when_secret_export_is_enabled() {
+        assert!(should_include_user_backup_entry(
+            Path::new("secrets.json"),
+            true
+        ));
+        assert!(should_include_user_backup_entry(
+            Path::new("backups/secrets_migration_123.json"),
+            true
+        ));
+    }
 }

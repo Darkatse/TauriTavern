@@ -1,6 +1,7 @@
 import { registerSystemRoutes } from './system-routes.js';
 import { registerBootstrapRoutes } from './bootstrap-routes.js';
 import { registerSettingsRoutes } from './settings-routes.js';
+import { registerUserRoutes } from './user-routes.js';
 import { registerExtensionRoutes } from './extensions-routes.js';
 import { registerQuickReplyRoutes } from './quick-replies-routes.js';
 import { registerResourceRoutes } from './resource-routes.js';
@@ -20,6 +21,7 @@ export function registerRoutes(router, context, responses) {
     registerSystemRoutes(router, context, responses);
     registerBootstrapRoutes(router, context, responses);
     registerSettingsRoutes(router, context, responses);
+    registerUserRoutes(router, context, responses);
     registerQuickReplyRoutes(router, context, responses);
     registerExtensionRoutes(router, context, responses);
     registerResourceRoutes(router, context, responses);

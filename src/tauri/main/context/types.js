@@ -88,6 +88,7 @@ export {};
  *   materializeAndroidSkillImportArchive: (contentUri: string) => Promise<MaterializedFileInfo>;
  *   pickAndroidImportArchive: () => Promise<string>;
  *   removeTemporaryFile: (filePath: string) => Promise<void>;
+ *   createReadableFileStream: (filePath: string) => ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;
  *   saveAndroidExportArchive: (sourcePath: string, preferredName?: string) => Promise<AndroidExportResult>;
  *   toAssetUrl: (path: string) => string | null;
  * }} TauriMainContext

@@ -167,6 +167,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::data_archive_commands::cancel_data_archive_job,
         super::data_archive_commands::save_export_data_archive,
         super::data_archive_commands::cleanup_export_data_archive,
+        super::data_archive_commands::export_user_backup_archive,
+        super::data_archive_commands::save_user_backup_archive,
+        super::data_archive_commands::cleanup_user_backup_archive,
         // iOS file bridge commands
         #[cfg(target_os = "ios")]
         super::ios_file_bridge_commands::ios_import_data_archive_from_picker,

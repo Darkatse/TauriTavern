@@ -2,7 +2,7 @@ use chrono::Utc;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
@@ -12,12 +12,14 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::domain::errors::DomainError;
+#[cfg(target_os = "ios")]
+use crate::infrastructure::paths::IOS_EXPORT_STAGING_ROOT_NAME;
 use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::persistence::file_system::DataDirectory;
 
 use super::data_archive::{
     DataArchiveExportResult, DataArchiveImportResult, default_export_file_name, is_cancelled_error,
-    run_export_data_archive, run_import_data_archive,
+    run_export_data_archive, run_export_user_backup_archive, run_import_data_archive,
 };
 
 const STATE_PENDING: &str = "pending";
@@ -51,6 +53,12 @@ pub struct DataArchiveJobStatus {
     pub error: Option<String>,
     pub started_at: String,
     pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UserBackupArchiveResult {
+    pub file_name: String,
+    pub archive_path: String,
 }
 
 struct DataArchiveJob {
@@ -385,6 +393,46 @@ pub fn start_export_data_archive_job(app_handle: &AppHandle) -> Result<String, D
     Ok(job_id)
 }
 
+pub fn export_user_backup_archive_file(
+    app_handle: &AppHandle,
+    handle: &str,
+    include_secrets: bool,
+) -> Result<UserBackupArchiveResult, DomainError> {
+    let runtime_paths = app_handle.state::<RuntimePaths>();
+    let export_root = resolve_user_backup_export_root(app_handle, &runtime_paths)?;
+    fs::create_dir_all(&export_root).map_err(|error| {
+        DomainError::InternalError(format!("Failed to create export directory: {}", error))
+    })?;
+    cleanup_stale_exports(&export_root);
+
+    let (handle, user_root) = resolve_user_backup_root(&runtime_paths.data_root, handle)?;
+    let file_name = default_user_backup_file_name(&handle);
+    let output_path = export_root.join(format!(
+        ".user-backup-{}-{}",
+        Uuid::new_v4().simple(),
+        file_name
+    ));
+
+    let mut report_progress = |_stage: &str, _progress_percent: f32, _message: &str| {};
+    let is_cancelled = || false;
+
+    if let Err(error) = run_export_user_backup_archive(
+        &user_root,
+        &output_path,
+        include_secrets,
+        &mut report_progress,
+        &is_cancelled,
+    ) {
+        remove_file_if_exists(&output_path, "cleanup partial user backup archive");
+        return Err(error);
+    }
+
+    Ok(UserBackupArchiveResult {
+        file_name,
+        archive_path: output_path.to_string_lossy().to_string(),
+    })
+}
+
 pub fn get_data_archive_job_status(job_id: &str) -> Result<DataArchiveJobStatus, DomainError> {
     get_job(job_id)?.snapshot()
 }
@@ -440,7 +488,33 @@ pub fn save_export_data_archive(
             ))
         })?;
 
-    let source_path = PathBuf::from(&archive_path);
+    save_staged_archive_to_downloads(app_handle, Path::new(&archive_path), &file_name)
+}
+
+pub fn save_user_backup_archive(
+    app_handle: &AppHandle,
+    archive_path: &str,
+    file_name: &str,
+) -> Result<PathBuf, DomainError> {
+    let source_path = resolve_staged_user_backup_archive_path(app_handle, archive_path)?;
+    let file_name = validate_archive_file_name(file_name)?;
+    save_staged_archive_to_downloads(app_handle, &source_path, &file_name)
+}
+
+pub fn cleanup_user_backup_archive(
+    app_handle: &AppHandle,
+    archive_path: &str,
+) -> Result<(), DomainError> {
+    let source_path = resolve_staged_user_backup_archive_path(app_handle, archive_path)?;
+    remove_file_if_exists(&source_path, "cleanup user backup archive");
+    Ok(())
+}
+
+fn save_staged_archive_to_downloads(
+    app_handle: &AppHandle,
+    source_path: &Path,
+    file_name: &str,
+) -> Result<PathBuf, DomainError> {
     if !source_path.is_file() {
         return Err(DomainError::NotFound(format!(
             "Export archive file not found: {}",
@@ -459,7 +533,7 @@ pub fn save_export_data_archive(
         ))
     })?;
 
-    let target_path = download_dir.join(&file_name);
+    let target_path = download_dir.join(file_name);
     if target_path.exists() {
         return Err(DomainError::InvalidData(format!(
             "Export target already exists: {}",
@@ -467,11 +541,11 @@ pub fn save_export_data_archive(
         )));
     }
 
-    if fs::rename(&source_path, &target_path).is_ok() {
+    if fs::rename(source_path, &target_path).is_ok() {
         return Ok(target_path);
     }
 
-    if let Err(error) = fs::copy(&source_path, &target_path) {
+    if let Err(error) = fs::copy(source_path, &target_path) {
         remove_file_if_exists(&target_path, "cleanup partial export save");
         return Err(DomainError::InternalError(format!(
             "Failed to save export archive {} to {}: {}",
@@ -481,7 +555,7 @@ pub fn save_export_data_archive(
         )));
     }
 
-    if let Err(error) = fs::remove_file(&source_path) {
+    if let Err(error) = fs::remove_file(source_path) {
         remove_file_if_exists(&target_path, "cleanup partial export save");
         return Err(DomainError::InternalError(format!(
             "Failed to remove staged export archive {}: {}",
@@ -491,6 +565,189 @@ pub fn save_export_data_archive(
     }
 
     Ok(target_path)
+}
+
+fn validate_archive_file_name(file_name: &str) -> Result<String, DomainError> {
+    let file_name = file_name.trim();
+    if file_name.is_empty() {
+        return Err(DomainError::InvalidData(
+            "Export archive filename is required".to_string(),
+        ));
+    }
+
+    if file_name.contains('/') || file_name.contains('\\') {
+        return Err(DomainError::InvalidData(format!(
+            "Invalid export archive filename: {}",
+            file_name
+        )));
+    }
+
+    let mut components = Path::new(file_name).components();
+    let component = components.next();
+    if !matches!(component, Some(Component::Normal(_))) || components.next().is_some() {
+        return Err(DomainError::InvalidData(format!(
+            "Invalid export archive filename: {}",
+            file_name
+        )));
+    }
+
+    Ok(file_name.to_string())
+}
+
+#[cfg(target_os = "ios")]
+fn candidate_user_backup_export_roots(
+    app_handle: &AppHandle,
+    _runtime_paths: &RuntimePaths,
+) -> Result<Vec<PathBuf>, DomainError> {
+    let path_resolver = app_handle.path();
+    let mut roots = Vec::new();
+
+    if let Ok(cache_dir) = path_resolver.app_cache_dir() {
+        roots.push(
+            cache_dir
+                .join(IOS_EXPORT_STAGING_ROOT_NAME)
+                .join("user-backups"),
+        );
+    }
+
+    if let Ok(temp_dir) = path_resolver.temp_dir() {
+        roots.push(
+            temp_dir
+                .join(IOS_EXPORT_STAGING_ROOT_NAME)
+                .join("user-backups"),
+        );
+    }
+
+    if roots.is_empty() {
+        return Err(DomainError::InternalError(
+            "No writable iOS user backup staging directory is available".to_string(),
+        ));
+    }
+
+    Ok(roots)
+}
+
+#[cfg(not(target_os = "ios"))]
+fn candidate_user_backup_export_roots(
+    _app_handle: &AppHandle,
+    runtime_paths: &RuntimePaths,
+) -> Result<Vec<PathBuf>, DomainError> {
+    Ok(vec![runtime_paths.archive_exports_root.clone()])
+}
+
+fn resolve_user_backup_export_root(
+    app_handle: &AppHandle,
+    runtime_paths: &RuntimePaths,
+) -> Result<PathBuf, DomainError> {
+    let roots = candidate_user_backup_export_roots(app_handle, runtime_paths)?;
+    roots.into_iter().next().ok_or_else(|| {
+        DomainError::InternalError(
+            "No writable user backup staging directory is available".to_string(),
+        )
+    })
+}
+
+fn resolve_staged_user_backup_archive_path(
+    app_handle: &AppHandle,
+    archive_path: &str,
+) -> Result<PathBuf, DomainError> {
+    let archive_path = archive_path.trim();
+    if archive_path.is_empty() {
+        return Err(DomainError::InvalidData(
+            "User backup archive path is required".to_string(),
+        ));
+    }
+
+    let requested_path = PathBuf::from(archive_path);
+    if !requested_path.is_absolute() {
+        return Err(DomainError::InvalidData(
+            "User backup archive path must be absolute".to_string(),
+        ));
+    }
+
+    let canonical_path = fs::canonicalize(&requested_path).map_err(|_| {
+        DomainError::NotFound(format!(
+            "User backup archive file not found: {}",
+            requested_path.display()
+        ))
+    })?;
+    if !canonical_path.is_file() {
+        return Err(DomainError::NotFound(format!(
+            "User backup archive file not found: {}",
+            canonical_path.display()
+        )));
+    }
+
+    let runtime_paths = app_handle.state::<RuntimePaths>();
+    let roots = candidate_user_backup_export_roots(app_handle, &runtime_paths)?;
+    let mut canonical_roots = Vec::new();
+    for root in roots {
+        match fs::canonicalize(&root) {
+            Ok(root) => canonical_roots.push(root),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(DomainError::InternalError(format!(
+                    "Failed to resolve user backup staging directory {}: {}",
+                    root.display(),
+                    error
+                )));
+            }
+        }
+    }
+
+    if canonical_roots
+        .iter()
+        .any(|root| canonical_path.starts_with(root))
+    {
+        return Ok(canonical_path);
+    }
+
+    Err(DomainError::InvalidData(format!(
+        "User backup archive path is outside the staging directory: {}",
+        requested_path.display()
+    )))
+}
+
+fn resolve_user_backup_root(
+    data_root: &Path,
+    handle: &str,
+) -> Result<(String, PathBuf), DomainError> {
+    let handle = handle.trim();
+    if handle.is_empty() {
+        return Err(DomainError::InvalidData(
+            "User handle is required for backup".to_string(),
+        ));
+    }
+
+    if handle.contains('/') || handle.contains('\\') {
+        return Err(DomainError::InvalidData(format!(
+            "Invalid user handle for backup: {}",
+            handle
+        )));
+    }
+
+    let mut components = Path::new(handle).components();
+    let component = components.next();
+    if !matches!(component, Some(Component::Normal(_))) || components.next().is_some() {
+        return Err(DomainError::InvalidData(format!(
+            "Invalid user handle for backup: {}",
+            handle
+        )));
+    }
+
+    let user_root = data_root.join(handle);
+    if !user_root.is_dir() {
+        return Err(DomainError::NotFound(format!(
+            "User directory not found: {}",
+            handle
+        )));
+    }
+
+    Ok((handle.to_string(), user_root))
+}
+
+fn default_user_backup_file_name(handle: &str) -> String {
+    format!("{}-{}.zip", handle, Utc::now().format("%Y%m%d-%H%M%S"))
 }
 
 fn prepare_import_archive_path(
