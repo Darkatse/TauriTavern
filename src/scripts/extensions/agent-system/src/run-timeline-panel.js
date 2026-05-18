@@ -262,11 +262,35 @@ function createAgentRunTimelineApp() {
                 }
                 if (TERMINAL_EVENT_TYPES.includes(event.type)) {
                     this.terminalEvent = event;
+                    if (event.type === 'run_failed' && event?.payload?.userRetryable === true) {
+                        this.revealUserRetryableFailure(event);
+                    }
                 }
                 if (this.detailsOpen && this.selectedSeq == null && isDisplayableRunEvent(event)) {
                     void this.loadDetails();
                 }
                 this.$nextTick(() => this.stickToBottomIfNeeded());
+            },
+            revealUserRetryableFailure(event) {
+                this.collapsed = false;
+                this.selectedSeq = Number(event?.seq || 0) || this.selectedSeq;
+                this.detailsOpen = true;
+                this.$nextTick(() => {
+                    const pages = this.$refs.pages;
+                    if (pages instanceof HTMLElement) {
+                        pages.scrollTo({ left: pages.clientWidth, behavior: 'smooth' });
+                    }
+                });
+            },
+            invokeDetailAction(action) {
+                if (!action || action.kind !== 'retry') {
+                    return;
+                }
+                const trigger = globalThis.jQuery || globalThis.$;
+                if (typeof trigger !== 'function') {
+                    return;
+                }
+                trigger('#option_regenerate').trigger('click');
             },
             eventKey(event) {
                 return event?.id ? `id:${event.id}` : `seq:${event?.runId || ''}:${event?.seq || 0}`;
@@ -764,6 +788,20 @@ function createAgentRunTimelineApp() {
                                     <div class="ttas-run-detail-section-head">
                                         <strong>{{ tr(section.labelKey) }}</strong>
                                         <small v-if="section.path">{{ section.path }}</small>
+                                    </div>
+                                    <div v-if="section.actions && section.actions.length" class="ttas-run-detail-actions">
+                                        <button
+                                            v-for="action in section.actions"
+                                            :key="action.kind"
+                                            type="button"
+                                            class="menu_button ttas-run-detail-action"
+                                            :data-ttas-action="action.kind"
+                                            :title="action.hintKey ? tr(action.hintKey) : tr(action.labelKey)"
+                                            @click.stop="invokeDetailAction(action)"
+                                        >
+                                            <i v-if="action.icon" class="fa-solid" :class="action.icon" aria-hidden="true"></i>
+                                            <span>{{ tr(action.labelKey) }}</span>
+                                        </button>
                                     </div>
                                     <div v-if="section.fields && section.fields.length" class="ttas-run-detail-fields">
                                         <span v-for="field in section.fields" :key="field.label">

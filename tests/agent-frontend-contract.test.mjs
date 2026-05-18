@@ -787,3 +787,168 @@ test('Agent run detail formatter renders model turn display DTO', async () => {
     assert.equal(section.blocks[0].meta, 'reasoning_content · 30 bytes');
     assert.match(section.blocks[0].text, /Need to inspect/);
 });
+
+test('Agent error presenter surfaces userRetryable from run_failed payload', async () => {
+    const presenter = await importFresh('src/scripts/tauritavern/agent/agent-error-presenter.js');
+
+    const drift = presenter.presentAgentRunFailure({
+        payload: {
+            code: 'model.tool_call_required',
+            message: 'low-level message',
+            technicalMessage: 'Validation error: model.tool_call_required',
+            retryable: false,
+            userRetryable: true,
+        },
+    });
+    assert.equal(drift.code, 'model.tool_call_required');
+    assert.equal(drift.retryable, false);
+    assert.equal(drift.userRetryable, true);
+    assert.match(drift.message, /Agent tool flow/);
+
+    const transient = presenter.presentAgentRunFailure({
+        payload: { code: 'transient', message: 'busy', retryable: true },
+    });
+    assert.equal(transient.retryable, true);
+    assert.equal(transient.userRetryable, true);
+
+    const fatal = presenter.presentAgentRunFailure({
+        payload: { code: 'agent.internal_error', message: 'boom', retryable: false },
+    });
+    assert.equal(fatal.userRetryable, false);
+});
+
+test('Run failure detail surfaces a retry action and userRetryable field when allowed', async () => {
+    const { formatRunFailureDetail } = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
+
+    const drift = formatRunFailureDetail({
+        labelKey: 'timelineErrorDetails',
+        event: {
+            payload: {
+                code: 'agent.tool_after_finish',
+                message: 'fatal',
+                technicalMessage: 'Validation error: agent.tool_after_finish',
+                retryable: false,
+                userRetryable: true,
+            },
+        },
+    });
+    const userRetryableField = drift.fields.find(field => field.label === 'User-retryable');
+    assert.ok(userRetryableField, 'user-retryable field must be present');
+    assert.equal(userRetryableField.value, 'true');
+    assert.deepEqual(drift.actions.map(action => action.kind), ['retry']);
+
+    const fatal = formatRunFailureDetail({
+        labelKey: 'timelineErrorDetails',
+        event: { payload: { code: 'agent.internal_error', message: 'boom', retryable: false } },
+    });
+    assert.deepEqual(fatal.actions, []);
+});
+
+test('Agent run controller awaits rollback before rejecting on drift run_failed', async () => {
+    let listener = null;
+    installWindow({
+        agent: {
+            async startRunWithPromptSnapshot() {
+                return { runId: 'run-drift' };
+            },
+            subscribe(_runId, callback) {
+                listener = callback;
+                return () => {};
+            },
+        },
+    });
+
+    const controller = await importFresh('src/scripts/tauritavern/agent/agent-run-controller.js');
+    const deletions = [];
+    let resolveRollback;
+    const rollbackGate = new Promise((resolve) => {
+        resolveRollback = resolve;
+    });
+    controller.__setAgentRunRollbackScriptForTests({
+        chat: [
+            {},
+            { extra: { tauritavern: { agent: { runId: 'run-drift' } } } },
+        ],
+        async deleteMessage(index) {
+            deletions.push(index);
+            await rollbackGate;
+        },
+    });
+
+    const run = controller.startAndWaitForAgentRun({ generationType: 'normal' });
+    await Promise.resolve();
+
+    listener({
+        seq: 1,
+        runId: 'run-drift',
+        type: 'run_rollback_targets',
+        payload: {
+            reasonCode: 'model.tool_call_required',
+            targets: [{ path: 'output/main.md', mode: 'replace', messageId: '1', round: 1 }],
+        },
+    });
+    listener({
+        seq: 2,
+        runId: 'run-drift',
+        type: 'run_failed',
+        payload: {
+            code: 'model.tool_call_required',
+            message: 'drift',
+            retryable: false,
+            userRetryable: true,
+        },
+    });
+
+    let settled = false;
+    void run.catch(() => { settled = true; });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(settled, false, 'run must wait for rollback to complete');
+
+    resolveRollback();
+    await assert.rejects(() => run, (error) => {
+        assert.equal(error.userRetryable, true);
+        assert.equal(error.retryable, false);
+        assert.equal(error.agentErrorCode, 'model.tool_call_required');
+        return true;
+    });
+    assert.deepEqual(deletions, [1]);
+    controller.__setAgentRunRollbackScriptForTests(null);
+});
+
+test('Rollback helper deletes drift messages back-to-front and skips foreign messages', async () => {
+    const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
+
+    const chat = [
+        { extra: { tauritavern: { agent: { runId: 'run-x' } } } },
+        { extra: { tauritavern: { agent: { runId: 'other-run' } } } },
+        { extra: { tauritavern: { agent: { runId: 'run-x' } } } },
+    ];
+    const deletions = [];
+    const script = {
+        chat,
+        async deleteMessage(index) {
+            deletions.push(index);
+            chat.splice(index, 1);
+        },
+    };
+
+    const result = await rollbackAgentRunDriftMessages({
+        runId: 'run-x',
+        targets: [
+            { messageId: '0' },
+            { messageId: '1' },
+            { messageId: '2' },
+            { messageId: '2' },
+            { messageId: 'invalid' },
+            { messageId: '99' },
+        ],
+        script,
+    });
+
+    assert.deepEqual(deletions, [2, 0]);
+    assert.equal(result.deleted, 2);
+    assert.ok(result.skipped >= 2);
+    assert.equal(chat.length, 1);
+    assert.equal(chat[0].extra.tauritavern.agent.runId, 'other-run');
+});

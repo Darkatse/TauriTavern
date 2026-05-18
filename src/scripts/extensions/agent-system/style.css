@@ -983,6 +983,28 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     font-size: 0.7rem;
 }
 
+.ttas-run-detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 7px 8px 2px;
+}
+
+.ttas-run-detail-actions .ttas-run-detail-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    border-radius: 999px;
+}
+
+.ttas-run-detail-actions .ttas-run-detail-action[data-ttas-action="retry"] {
+    border-color: color-mix(in srgb, var(--ttas-accent) 60%, transparent);
+    color: var(--ttas-accent);
+}
+
 .ttas-run-detail-fields {
     display: flex;
     flex-wrap: wrap;
