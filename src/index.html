@@ -3954,6 +3954,21 @@
                                 <small data-i18n="The underlying model of your deployment. This is detected automatically when you connect.">The underlying model of your deployment. This is detected automatically when you connect.</small>
                             </div>
                         </div>
+                        <div id="chat_completion_custom_models" data-source="openai,claude,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,electronhub,chutes,nanogpt,deepseek,aimlapi,xai,pollinations,moonshot,fireworks,cometapi,zai,siliconflow">
+                            <h4>
+                                <span data-i18n="Custom Model List">Custom Model List</span>
+                                <small>
+                                    (<span id="chat_completion_custom_models_source_name"></span>)
+                                </small>
+                            </h4>
+                            <div class="toggle-description justifyLeft wide100p">
+                                <span data-i18n="Add model IDs that are not returned by the selected API. Use one model ID per line.">Add model IDs that are not returned by the selected API. Use one model ID per line.</span>
+                            </div>
+                            <textarea id="chat_completion_custom_models_text" class="text_pole textarea_compact monospace" rows="4" placeholder="model-id-1&#10;model-id-2"></textarea>
+                            <div class="flex-container justifyRight marginTopBot5">
+                                <div id="chat_completion_custom_models_apply" class="menu_button menu_button_icon" data-i18n="Apply Custom Models">Apply Custom Models</div>
+                            </div>
+                        </div>
                         <div id="prompt_post_processing_form">
                             <h4>
                                 <span data-i18n="Prompt Post-Processing">
