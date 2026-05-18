@@ -13,6 +13,7 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
+mod body_preview;
 mod claude;
 mod cohere;
 mod gemini_interactions;
