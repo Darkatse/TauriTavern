@@ -2964,12 +2964,20 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.stop = getCustomStoppingStrings(); // Mistral shouldn't have limits on stop strings.
     }
 
-    if (settings.chat_completion_source === chat_completion_sources.CUSTOM) {
-        generate_data.custom_url = settings.custom_url;
-        generate_data.custom_api_format = settings.custom_api_format;
+    const additionalParameterSources = [
+        chat_completion_sources.CUSTOM,
+        chat_completion_sources.CLAUDE,
+        chat_completion_sources.DEEPSEEK,
+    ];
+    if (additionalParameterSources.includes(settings.chat_completion_source)) {
         generate_data.custom_include_body = settings.custom_include_body;
         generate_data.custom_exclude_body = settings.custom_exclude_body;
         generate_data.custom_include_headers = settings.custom_include_headers;
+    }
+
+    if (settings.chat_completion_source === chat_completion_sources.CUSTOM) {
+        generate_data.custom_url = settings.custom_url;
+        generate_data.custom_api_format = settings.custom_api_format;
         generate_data.custom_claude_prompt_caching =
             settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES
             && Boolean(settings.custom_claude_prompt_caching);
@@ -4628,11 +4636,14 @@ async function getStatusOpen() {
         await validateReverseProxy();
     }
 
+    if ([chat_completion_sources.CUSTOM, chat_completion_sources.CLAUDE, chat_completion_sources.DEEPSEEK].includes(oai_settings.chat_completion_source)) {
+        data.custom_include_headers = oai_settings.custom_include_headers;
+    }
+
     if (oai_settings.chat_completion_source === chat_completion_sources.CUSTOM) {
         $('.model_custom_select').empty();
         data.custom_api_format = oai_settings.custom_api_format;
         data.custom_url = oai_settings.custom_url;
-        data.custom_include_headers = oai_settings.custom_include_headers;
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.AZURE_OPENAI) {
