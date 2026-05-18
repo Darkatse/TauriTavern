@@ -161,7 +161,7 @@ async fn resolve_api_config(
                 base_url,
                 api_key,
                 authorization_header: None,
-                extra_headers: source_extra_headers(source),
+                extra_headers: source_extra_headers_with_overrides(source, custom_headers_raw)?,
                 anthropic_beta_header_mode: source_anthropic_beta_header_mode(source),
             })
         }
@@ -434,6 +434,28 @@ fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String>
     headers
 }
 
+fn source_extra_headers_with_overrides(
+    source: ChatCompletionSource,
+    custom_headers_raw: &str,
+) -> Result<HashMap<String, String>, ApplicationError> {
+    let mut extra_headers = source_extra_headers(source);
+    if custom_headers_raw.trim().is_empty() {
+        return Ok(extra_headers);
+    }
+
+    let mut custom_headers = custom_parameters::parse_string_map(custom_headers_raw)?;
+    for header_name in ["Authorization", "x-api-key", "api-key", "anthropic-version"] {
+        if take_header_value(&mut custom_headers, header_name).is_some() {
+            return Err(ApplicationError::ValidationError(format!(
+                "Additional headers cannot override reserved header: {header_name}"
+            )));
+        }
+    }
+
+    extra_headers.extend(custom_headers);
+    Ok(extra_headers)
+}
+
 fn is_zai_coding_endpoint(value: &str) -> bool {
     value.trim().eq_ignore_ascii_case(ZAI_ENDPOINT_CODING)
 }
@@ -449,6 +471,7 @@ mod tests {
     use crate::application::dto::chat_completion_dto::{
         ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
     };
+    use crate::application::errors::ApplicationError;
     use crate::domain::errors::DomainError;
     use crate::domain::models::secret::Secrets;
     use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
@@ -692,5 +715,63 @@ mod tests {
             config.extra_headers.get("X-Trace").map(String::as_str),
             Some("abc")
         );
+    }
+
+    #[tokio::test]
+    async fn native_generate_merges_additional_headers() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
+            secrets: HashMap::from([("api_key_claude".to_string(), "secret".to_string())]),
+        });
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "claude",
+                "custom_include_headers": "X-Trace: abc\nX-Debug: true"
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be object"),
+        };
+
+        let config =
+            resolve_generate_api_config(ChatCompletionSource::Claude, &dto, &secret_repository)
+                .await
+                .expect("generate config should resolve");
+
+        assert_eq!(
+            config.extra_headers.get("X-Trace").map(String::as_str),
+            Some("abc")
+        );
+        assert_eq!(
+            config.extra_headers.get("X-Debug").map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[tokio::test]
+    async fn native_generate_rejects_reserved_additional_headers() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
+            secrets: HashMap::from([("api_key_claude".to_string(), "secret".to_string())]),
+        });
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "claude",
+                "custom_include_headers": "Authorization: Bearer hacked"
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be object"),
+        };
+
+        let error =
+            resolve_generate_api_config(ChatCompletionSource::Claude, &dto, &secret_repository)
+                .await
+                .expect_err("reserved headers should be rejected");
+
+        match error {
+            ApplicationError::ValidationError(message) => {
+                assert!(message.contains("Additional headers cannot override reserved header"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }
