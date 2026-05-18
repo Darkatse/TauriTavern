@@ -47,7 +47,7 @@ pub(in crate::application::services::agent_tools) fn workspace_read_file_spec() 
         name: WORKSPACE_READ_FILE.to_string(),
         model_name: MODEL_WORKSPACE_READ_FILE.to_string(),
         title: "Workspace Read File".to_string(),
-        description: "Read a visible UTF-8 Agent workspace file with line numbers. Fully read a file before using workspace_apply_patch on it; partial reads are only for inspection.".to_string(),
+        description: "Read a visible UTF-8 Agent workspace file with line numbers. Fully read a file before using workspace_apply_patch on it; partial reads are only for inspection. `path` MUST refer to a regular file (e.g. `persist/MEMORY.md`), NOT a directory or workspace root (`persist`, `output`, ...). Call workspace_list_files first when you do not know which file to open.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,

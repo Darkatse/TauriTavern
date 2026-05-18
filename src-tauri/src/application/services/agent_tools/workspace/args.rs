@@ -1,12 +1,31 @@
 use serde_json::{Map, Value};
 
 use super::policy::WorkspaceAccessPolicy;
+use crate::domain::errors::DomainError;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult, WorkspacePath};
 
 pub(super) use crate::application::services::agent_tools::common::{
-    object_args, optional_bool_arg, optional_usize_arg, required_raw_string_arg,
-    required_trimmed_string_arg, tool_error,
+    object_args, optional_bool_arg, optional_usize_arg, parse_workspace_conflict_message,
+    required_raw_string_arg, required_trimmed_string_arg, tool_error,
 };
+
+/// Pattern-match helper used by every read/write entry point so they all
+/// surface filesystem errors raised by the workspace repository as
+/// recoverable model-facing tool errors instead of bubbling up as
+/// `agent.internal_error`.
+pub(super) fn classify_workspace_io_error(
+    call: &AgentToolCall,
+    error: DomainError,
+) -> Result<AgentToolResult, DomainError> {
+    match error {
+        DomainError::NotFound(message) => Ok(tool_error(call, "workspace.file_not_found", &message)),
+        DomainError::Conflict(message) => {
+            let (code, detail) = parse_workspace_conflict_message(&message);
+            Ok(tool_error(call, code, detail))
+        }
+        other => Err(other),
+    }
+}
 
 pub(super) fn optional_list_path_arg(
     args: &Map<String, Value>,

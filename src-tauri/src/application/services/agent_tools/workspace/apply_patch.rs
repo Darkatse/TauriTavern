@@ -1,12 +1,11 @@
 use serde_json::json;
 
 use super::args::{
-    ensure_writable_workspace_path, object_args, optional_bool_arg, parse_workspace_path,
-    required_raw_string_arg, required_trimmed_string_arg, tool_error,
+    classify_workspace_io_error, ensure_writable_workspace_path, object_args, optional_bool_arg,
+    parse_workspace_path, required_raw_string_arg, required_trimmed_string_arg, tool_error,
 };
 use super::policy::workspace_access_policy;
 use crate::application::errors::ApplicationError;
-use crate::domain::errors::DomainError;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 
@@ -110,13 +109,10 @@ pub(in crate::application::services::agent_tools) async fn apply_patch(
 
     let file = match workspace_repository.read_text(run_id, &path).await {
         Ok(file) => file,
-        Err(DomainError::NotFound(message)) => {
-            return Ok((
-                tool_error(call, "workspace.file_not_found", &message),
-                AgentToolEffect::None,
-            ));
-        }
-        Err(error) => return Err(error.into()),
+        Err(error) => match classify_workspace_io_error(call, error) {
+            Ok(result) => return Ok((result, AgentToolEffect::None)),
+            Err(error) => return Err(error.into()),
+        },
     };
     if file.sha256 != read_state.sha256 {
         return Ok((
@@ -162,9 +158,13 @@ pub(in crate::application::services::agent_tools) async fn apply_patch(
         file.text.replacen(old_string, new_string, 1)
     };
     let old_sha256 = file.sha256.clone();
-    let file = workspace_repository
-        .write_text(run_id, &path, &updated)
-        .await?;
+    let file = match workspace_repository.write_text(run_id, &path, &updated).await {
+        Ok(file) => file,
+        Err(error) => match classify_workspace_io_error(call, error) {
+            Ok(result) => return Ok((result, AgentToolEffect::None)),
+            Err(error) => return Err(error.into()),
+        },
+    };
     session.remember_file(&file, true);
 
     let result = AgentToolResult {

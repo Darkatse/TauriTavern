@@ -6,6 +6,7 @@ use tokio::fs;
 use uuid::Uuid;
 
 use super::FileAgentRepository;
+use crate::domain::errors::DomainError;
 use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
 use crate::domain::models::agent::profile::{
     AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentModelBinding,
@@ -221,6 +222,81 @@ async fn repository_round_trips_run_workspace_event_and_checkpoint() {
         .await
         .expect("checkpoint");
     assert_eq!(checkpoint.files[0].bytes, 5);
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn read_text_on_directory_returns_conflict_error() {
+    // Issue #54: workspace_read_file used to bubble up the raw EISDIR
+    // ("Is a directory") OS error as `agent.internal_error` (retryable=false)
+    // and tear down the whole run. We now translate it into a structured
+    // `DomainError::Conflict` so the tool layer can surface it as a
+    // recoverable `workspace.path_is_directory` business error.
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_dir_read");
+    let manifest = sample_manifest(&run);
+    let profile = sample_resolved_profile(&manifest);
+
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .initialize_run(&run, &manifest, &serde_json::json!({"messages": []}), &profile)
+        .await
+        .expect("initialize workspace");
+
+    let persist_path = WorkspacePath::parse("persist").expect("persist root path");
+    let error = repository
+        .read_text(&run.id, &persist_path)
+        .await
+        .expect_err("reading a directory must fail");
+
+    match error {
+        DomainError::Conflict(message) => {
+            assert!(
+                message.starts_with("workspace.path_is_directory:"),
+                "expected workspace.path_is_directory conflict, got `{message}`"
+            );
+            assert!(
+                message.contains("persist"),
+                "conflict message should mention offending path, got `{message}`"
+            );
+        }
+        other => panic!("expected DomainError::Conflict, got {other:?}"),
+    }
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn write_text_on_directory_returns_conflict_error() {
+    // Same guard for write_text so workspace_write_file cannot wipe out a
+    // directory through the temp-file swap path.
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_dir_write");
+    let manifest = sample_manifest(&run);
+    let profile = sample_resolved_profile(&manifest);
+
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .initialize_run(&run, &manifest, &serde_json::json!({"messages": []}), &profile)
+        .await
+        .expect("initialize workspace");
+
+    let output_root = WorkspacePath::parse("output").expect("output root path");
+    let error = repository
+        .write_text(&run.id, &output_root, "should not land")
+        .await
+        .expect_err("writing to a directory must fail");
+
+    match error {
+        DomainError::Conflict(message) => {
+            assert!(message.starts_with("workspace.path_is_directory:"));
+            assert!(message.contains("output"));
+        }
+        other => panic!("expected DomainError::Conflict, got {other:?}"),
+    }
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }

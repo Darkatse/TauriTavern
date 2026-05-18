@@ -51,6 +51,24 @@ pub(super) fn optional_bool_arg(
         .ok_or_else(|| format!("{key} must be a boolean"))
 }
 
+/// Decode a `DomainError::Conflict` payload raised by the workspace
+/// repository into a `(code, detail)` pair suitable for a model-facing
+/// `AgentToolResult`. Today the only conflict we raise is
+/// `workspace.path_is_directory`, but new prefixes can be added here without
+/// touching every tool entry point.
+///
+/// Visibility is `pub(crate)` so that both the workspace tool layer
+/// (`workspace/args.rs`) and the runtime-service commit hook
+/// (`agent_runtime_service/commit.rs`) share a single parsing source of
+/// truth.
+pub(crate) fn parse_workspace_conflict_message(message: &str) -> (&'static str, &str) {
+    let trimmed = message.trim();
+    if let Some(rest) = trimmed.strip_prefix("workspace.path_is_directory:") {
+        return ("workspace.path_is_directory", rest.trim_start());
+    }
+    ("workspace.invalid_state", trimmed)
+}
+
 pub(super) fn tool_error(call: &AgentToolCall, error_code: &str, message: &str) -> AgentToolResult {
     AgentToolResult {
         call_id: call.id.clone(),

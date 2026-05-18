@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use super::args::{
-    ensure_writable_workspace_path, object_args, parse_workspace_path, required_raw_string_arg,
-    required_trimmed_string_arg, tool_error,
+    classify_workspace_io_error, ensure_writable_workspace_path, object_args, parse_workspace_path,
+    required_raw_string_arg, required_trimmed_string_arg, tool_error,
 };
 use super::policy::workspace_access_policy;
 use crate::application::errors::ApplicationError;
@@ -49,9 +49,13 @@ pub(in crate::application::services::agent_tools) async fn write_file(
     if let Err(result) = ensure_writable_workspace_path(call, &policy, &path) {
         return Ok((result, AgentToolEffect::None));
     }
-    let file = workspace_repository
-        .write_text(run_id, &path, content)
-        .await?;
+    let file = match workspace_repository.write_text(run_id, &path, content).await {
+        Ok(file) => file,
+        Err(error) => match classify_workspace_io_error(call, error) {
+            Ok(result) => return Ok((result, AgentToolEffect::None)),
+            Err(error) => return Err(error.into()),
+        },
+    };
     session.remember_file(&file, true);
 
     let result = AgentToolResult {

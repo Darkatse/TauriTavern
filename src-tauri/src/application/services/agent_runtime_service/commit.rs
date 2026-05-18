@@ -7,7 +7,9 @@ use super::{
 };
 use crate::application::dto::agent_dto::AgentResolveChatCommitDto;
 use crate::application::errors::ApplicationError;
-use crate::application::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
+use crate::application::services::agent_tools::{
+    AgentToolDispatchOutcome, AgentToolEffect, parse_workspace_conflict_message,
+};
 use crate::domain::errors::DomainError;
 use crate::domain::models::agent::{
     AgentChatCommitMode, AgentRunEventLevel, AgentRunStatus, AgentToolCall, AgentToolResult,
@@ -76,6 +78,10 @@ impl AgentRuntimeService {
                     &message,
                     elapsed_ms,
                 ));
+            }
+            Err(DomainError::Conflict(message)) => {
+                let (code, detail) = parse_workspace_conflict_message(&message);
+                return Ok(recoverable_tool_error(call, code, detail, elapsed_ms));
             }
             Err(error) => return Err(error.into()),
         };
