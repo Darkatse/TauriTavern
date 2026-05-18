@@ -79,6 +79,7 @@ import { SlashCommandAbortController } from './slash-commands/SlashCommandAbortC
 import { SlashCommandNamedArgumentAssignment } from './slash-commands/SlashCommandNamedArgumentAssignment.js';
 import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
 import { getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
+import { getAgentGenerationOptions } from './tauritavern/agent/agent-generation-router.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandBreakController } from './slash-commands/SlashCommandBreakController.js';
@@ -4502,7 +4503,14 @@ async function triggerGenerationCallback(args, value) {
             }
         }
 
-        outerResolve(new Promise(innerResolve => setTimeout(() => innerResolve(Generate('normal', { force_chid: chid })), 100)));
+        const agentOptions = await getAgentGenerationOptions({
+            generationType: 'normal',
+            isSlashCommand: false,
+            mainApi: main_api,
+            selectedGroup: selected_group,
+        }).catch(() => ({}));
+
+        outerResolve(new Promise(innerResolve => setTimeout(() => innerResolve(Generate('normal', { force_chid: chid, ...agentOptions })), 100)));
     }, 1));
 
     if (shouldAwait) {
