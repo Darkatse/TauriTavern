@@ -2312,21 +2312,31 @@ function applyCustomModelsToCurrentSource({ triggerModelChange = false } = {}) {
     }
 }
 
-function refreshCustomModelsEditorForCurrentSource() {
-    const source = oai_settings.chat_completion_source;
+function saveCurrentModelToCustomList(source = oai_settings.chat_completion_source) {
     const binding = getModelBindingForSource(source);
-    const $textarea = $('#chat_completion_custom_models_text');
-    const $applyButton = $('#chat_completion_custom_models_apply');
-
     if (!binding) {
-        $textarea.val('').prop('disabled', true);
-        $applyButton.addClass('disabled').attr('aria-disabled', 'true');
+        return;
+    }
+
+    const inputBinding = INPUT_BASED_MODEL_BINDINGS.find(candidate => candidate.key === binding.settingKey);
+    const modelInputSelector = inputBinding?.input || binding.selector;
+    const modelId = String($(modelInputSelector).val() || oai_settings[binding.settingKey] || '').trim();
+    if (!modelId) {
+        toastr.warning(t`Enter a model ID first.`);
         return;
     }
 
     const customModels = getCustomModelsForSource(source);
-    $textarea.val(customModels.join('\n')).prop('disabled', false);
-    $applyButton.removeClass('disabled').removeAttr('aria-disabled');
+    if (customModels.includes(modelId)) {
+        toastr.info(t`Model is already saved.`);
+        return;
+    }
+
+    setCustomModelsForSource(source, [...customModels, modelId]);
+    oai_settings[binding.settingKey] = modelId;
+    applyCustomModelsToCurrentSource({ triggerModelChange: false });
+    saveSettingsDebounced();
+    toastr.success(t`Model saved to model list.`);
 }
 
 function reconcileModelSelection(selectSelector, modelList, savedModelId) {
@@ -2775,7 +2785,6 @@ function saveModelList(data) {
         }
     }
 
-    refreshCustomModelsEditorForCurrentSource();
     applyCustomModelsToCurrentSource({ triggerModelChange: true });
 }
 
@@ -6543,7 +6552,6 @@ function toggleChatCompletionForms() {
     });
 
     applyCustomModelsToCurrentSource({ triggerModelChange: true });
-    refreshCustomModelsEditorForCurrentSource();
 }
 
 async function testApiConnection() {
@@ -7104,25 +7112,8 @@ export function initOpenAI() {
     }));
 
     $('#test_api_button').on('click', testApiConnection);
-    $('#chat_completion_custom_models_apply').on('click', async function () {
-        const source = oai_settings.chat_completion_source;
-        const binding = getModelBindingForSource(source);
-        if (!binding) {
-            return;
-        }
-
-        const modelIds = parseCustomModelList(String($('#chat_completion_custom_models_text').val() || ''));
-        setCustomModelsForSource(source, modelIds);
-        applyCustomModelsToCurrentSource({ triggerModelChange: true });
-        refreshCustomModelsEditorForCurrentSource();
-        saveSettingsDebounced();
-        startStatusLoading();
-        try {
-            await getStatusOpen();
-        } catch {
-            // getStatusOpen already handles user-facing status/error updates.
-        }
-        toastr.success(t`Custom models updated.`);
+    $('.save_model_to_list').on('click', function () {
+        saveCurrentModelToCustomList(String($(this).data('model-source') || oai_settings.chat_completion_source));
     });
 
     $('#temp_openai').on('input', function () {
