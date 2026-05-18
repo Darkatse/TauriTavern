@@ -1097,8 +1097,8 @@ fn parse_ws_event(payload: &[u8]) -> Result<Value, DomainError> {
             payload,
             &error,
         );
-        DomainError::InternalError(format!(
-            "OpenAI Responses WebSocket event is not valid JSON: {error}"
+        DomainError::transient(format!(
+            "model.upstream_invalid_response: OpenAI Responses WebSocket event is not valid JSON: {error}"
         ))
     })
 }

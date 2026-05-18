@@ -48,6 +48,12 @@ pub(super) fn body_preview_string(body: &[u8]) -> String {
 /// Read an upstream HTTP response body and parse it as JSON, logging a
 /// detailed diagnostic event on failure. Caller is responsible for ensuring
 /// the response status was 2xx before invoking this helper.
+///
+/// Both body-read failures and JSON-decode failures are reported as
+/// [`DomainError::Transient`] tagged with `model.upstream_invalid_response`,
+/// because in practice they are caused by upstream-side hiccups (CDN
+/// challenges, proxy timeouts mid-body, plain-text 200 errors) that are worth
+/// retrying rather than tearing the run down as a fatal `agent.internal_error`.
 pub(super) async fn read_upstream_json_body(
     provider_name: &str,
     operation: &str,
@@ -62,8 +68,8 @@ pub(super) async fn read_upstream_json_body(
         .to_string();
 
     let body = response.bytes().await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to read {operation} body from {provider_name} (status {}): {error}",
+        DomainError::transient(format!(
+            "model.upstream_invalid_response: {provider_name} returned status {} with unreadable body ({operation}): {error}",
             status.as_u16()
         ))
     })?;
@@ -79,8 +85,8 @@ pub(super) async fn read_upstream_json_body(
                 &body,
                 &error,
             );
-            Err(DomainError::InternalError(format!(
-                "Failed to parse {operation} JSON from {provider_name} (status {}): {error}",
+            Err(DomainError::transient(format!(
+                "model.upstream_invalid_response: {provider_name} returned status {} non-JSON body ({operation}): {error}",
                 status.as_u16()
             )))
         }
