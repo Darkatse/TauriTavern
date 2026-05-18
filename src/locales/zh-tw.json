@@ -4417,5 +4417,6 @@
     "agent.error.run_failed": "Agent 執行失敗",
     "agent.error.model_tool_call_required.message": "模型這次沒有進入 Agent 工具流程，而是直接輸出了正文。TauriTavern 已停止本輪，未寫入聊天。請重新生成；如果頻繁出現，建議縮短上下文或換用工具調用更穩定的模型。",
     "agent.error.model_tool_call_required.summary": "模型跳過了 Agent 工具流程，未提交訊息。",
+    "Save to Model List": "儲存到模型列表",
     "Clear": "清除"
 }
