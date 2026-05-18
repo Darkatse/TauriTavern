@@ -4,7 +4,7 @@ import { appendMediaToMessage, chat_metadata, eventSource, event_types, getReque
 import { getMessageTimeStamp } from '../../RossAscends-mods.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
 import { oai_settings } from '../../openai.js';
-import { getMultimodalCaption } from '../shared.js';
+import { getMultimodalCaption, NATIVE_CAPTION_UNAVAILABLE_MESSAGE } from '../shared.js';
 import { textgen_types, textgenerationwebui_settings } from '../../textgen-settings.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
@@ -223,6 +223,10 @@ async function sendCaptionedMessage(caption, image, mimeType) {
  * @returns {Promise<{caption: string}>} Generated caption
  */
 async function doCaptionRequest(base64Img, fileData, externalPrompt) {
+    if (globalThis.__TAURI_RUNNING__ === true && ['local', 'horde'].includes(extension_settings.caption.source)) {
+        throw new Error(NATIVE_CAPTION_UNAVAILABLE_MESSAGE);
+    }
+
     switch (extension_settings.caption.source) {
         case 'local':
             return await captionLocal(base64Img);
@@ -469,8 +473,14 @@ export async function init() {
 
         $('#caption_wand_container').append(sendButton);
         $(sendButton).on('click', () => {
+            let unavailableReason = '';
             const hasCaptionModule = (() => {
                 const settings = extension_settings.caption;
+
+                if (globalThis.__TAURI_RUNNING__ === true && ['local', 'horde', 'multimodal'].includes(settings.source)) {
+                    unavailableReason = NATIVE_CAPTION_UNAVAILABLE_MESSAGE;
+                    return false;
+                }
 
                 // Handle non-multimodal sources
                 if (settings.source === 'extras' && modules.includes('caption')) return true;
@@ -542,7 +552,7 @@ export async function init() {
             })();
 
             if (!hasCaptionModule) {
-                toastr.error('Choose other captioning source in the extension settings.', 'Captioning is not available');
+                toastr.error(unavailableReason || 'Choose other captioning source in the extension settings.', 'Captioning is not available');
                 return;
             }
 

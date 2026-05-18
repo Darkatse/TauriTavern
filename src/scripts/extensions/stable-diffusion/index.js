@@ -3285,8 +3285,9 @@ async function generateMultimodalPrompt(generationType, quietPrompt) {
         return caption;
     } catch (error) {
         console.error(error);
-        toastr.error('Multimodal captioning failed. Please try again.', 'Image Generation');
-        throw new Error('Multimodal captioning failed.');
+        const errorMessage = error?.message || String(error) || 'Multimodal captioning failed.';
+        toastr.error(errorMessage, 'Image Generation');
+        throw new Error(errorMessage, { cause: error });
     }
 }
 

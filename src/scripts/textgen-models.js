@@ -1296,5 +1296,13 @@ export function initTextGenModels() {
             $(this).append($element);
             $(this).trigger('change');
         });
+        nanoGptProvidersSelect.select2({
+            sorter: data => data.sort((a, b) => a.text.localeCompare(b.text)),
+            placeholder: t`Select providers. No selection = all providers.`,
+            searchInputPlaceholder: t`Search providers...`,
+            searchInputCssClass: 'text_pole',
+            width: '100%',
+            allowClear: true,
+        });
     }
 }

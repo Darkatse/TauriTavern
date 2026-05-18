@@ -25,7 +25,7 @@ import {
 } from '../script.js';
 import { persona_description_positions, power_user } from './power-user.js';
 import { getTokenCountAsync } from './tokenizers.js';
-import { PAGINATION_TEMPLATE, cancelDebounce, clearInfoBlock, debounce, delay, download, ensureImageFormatSupported, flashHighlight, getBase64Async, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, parseJsonFile, setInfoBlock, localizePagination, renderPaginationDropdown, paginationDropdownChangeHandler, findPersona, resolveAvatarData, stringToRange, sortIgnoreCaseAndAccents, equalsIgnoreCaseAndAccents, uuidv4 } from './utils.js';
+import { PAGINATION_TEMPLATE, addLongPressEvent, cancelDebounce, clearInfoBlock, debounce, delay, download, ensureImageFormatSupported, escapeHtml, flashHighlight, getBase64Async, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, parseJsonFile, setInfoBlock, localizePagination, renderPaginationDropdown, paginationDropdownChangeHandler, findPersona, resolveAvatarData, stringToRange, sortIgnoreCaseAndAccents, equalsIgnoreCaseAndAccents, uuidv4 } from './utils.js';
 import { debounce_timeout } from './constants.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
 import { groups, selected_group } from './group-chats.js';
@@ -43,6 +43,8 @@ import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandE
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { isFirefox } from './browser-fixes.js';
 import { slashCommandReturnHelper } from './slash-commands/SlashCommandReturnHelper.js';
+
+export { persona_description_positions };
 
 /**
  * @typedef {object} PersonaConnection A connection between a character and a character or group entity
@@ -1001,7 +1003,7 @@ async function selectCurrentPersona({ toastPersonaNameChange = true } = {}) {
         if (temporary.isTemporary) {
             toastr.info(t`This persona is only temporarily chosen. Click for more info.`, t`Temporary Persona`, {
                 preventDuplicates: true, onclick: () => {
-                    toastr.info(temporary.info.replaceAll('\n', '<br />'), t`Temporary Persona`, { escapeHtml: false });
+                    toastr.info(escapeHtml(temporary.info).replaceAll('\n', '<br />'), t`Temporary Persona`, { escapeHtml: false });
                 },
             });
         }
@@ -1166,9 +1168,9 @@ async function lockPersona(type = 'chat') {
                 if (power_user.persona_show_notifications) {
                     let additional = '';
                     if (unlinkedCharacters.length)
-                        additional += `<br /><br />${t`Unlinked existing persona${unlinkedCharacters.length > 1 ? 's' : ''}: ${unlinkedCharacters.join(', ')}`}`;
+                        additional += `<br /><br />${t`Unlinked existing persona${unlinkedCharacters.length > 1 ? 's' : ''}: ${unlinkedCharacters.map(escapeHtml).join(', ')}`}`;
                     if (additional || !isPersonaPanelOpen()) {
-                        toastr.success(t`User persona ${name1} is locked to character ${name2}${additional}`, t`Persona Locked`, { escapeHtml: false });
+                        toastr.success(t`User persona ${escapeHtml(name1)} is locked to character ${escapeHtml(name2)}${additional}`, t`Persona Locked`, { escapeHtml: false });
                     }
                 }
             }
@@ -1306,9 +1308,9 @@ async function onPersonaDescriptionDepthRoleInput() {
 
 /**
  * Opens a popup to set the lorebook for the current persona.
- * @param {JQuery.ClickEvent} event Click event
+ * @param {Pick<JQuery.ClickEvent, 'shiftKey' | 'altKey'>} event Click event
  */
-async function onPersonaLoreButtonClick(event) {
+async function onPersonaLoreButtonClick({ shiftKey, altKey }) {
     const personaName = power_user.personas[user_avatar];
     const selectedLorebook = power_user.persona_description_lorebook;
 
@@ -1317,7 +1319,7 @@ async function onPersonaLoreButtonClick(event) {
         return;
     }
 
-    if (event.altKey && selectedLorebook) {
+    if (selectedLorebook && !shiftKey && !altKey) {
         openWorldInfoEditor(selectedLorebook);
         return;
     }
@@ -2827,6 +2829,18 @@ export async function initPersonas() {
     $('#persona_depth_value').on('input', onPersonaDescriptionDepthValueInput);
     $('#persona_depth_role').on('input', onPersonaDescriptionDepthRoleInput);
     $('#persona_lore_button').on('click', onPersonaLoreButtonClick);
+    addLongPressEvent('#persona_lore_button', function () {
+        onPersonaLoreButtonClick({ shiftKey: true, altKey: false });
+    });
+    $('#persona-management-dropdown').on('change', async function () {
+        const target = $(this).find(':selected').attr('id');
+        $(this).prop('selectedIndex', 0);
+        switch (target) {
+            case 'persona_lorebook_link':
+                await onPersonaLoreButtonClick({ shiftKey: true, altKey: false });
+                break;
+        }
+    });
     $('#personas_backup').on('click', onBackupPersonas);
     $('#personas_restore').on('click', () => $('#personas_restore_input').trigger('click'));
     $('#personas_restore_input').on('change', onPersonasRestoreInput);

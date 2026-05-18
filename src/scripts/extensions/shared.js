@@ -7,6 +7,32 @@ import { textgen_types, textgenerationwebui_settings } from '../textgen-settings
 import { getTokenCountAsync } from '../tokenizers.js';
 import { createThumbnail, isValidUrl } from '../utils.js';
 
+export const NATIVE_CAPTION_UNAVAILABLE_MESSAGE = 'Image captioning is not implemented in the TauriTavern native backend.';
+
+async function getCaptionErrorMessage(response) {
+    const fallback = `Failed to caption image via Multimodal API. HTTP ${response.status}`;
+    const text = await response.text();
+    if (!text) {
+        return fallback;
+    }
+
+    try {
+        const data = JSON.parse(text);
+        if (typeof data.message === 'string' && data.message.trim()) {
+            return data.message;
+        }
+        if (typeof data.error === 'string' && data.error.trim()) {
+            return data.error;
+        }
+        if (typeof data.error?.message === 'string' && data.error.message.trim()) {
+            return data.error.message;
+        }
+        return `${fallback}: ${text}`;
+    } catch {
+        return text;
+    }
+}
+
 /**
  * Generates a caption for an image using a multimodal model.
  * @param {string} base64Img Base64 encoded image
@@ -14,6 +40,10 @@ import { createThumbnail, isValidUrl } from '../utils.js';
  * @returns {Promise<string>} Generated caption
  */
 export async function getMultimodalCaption(base64Img, prompt) {
+    if (globalThis.__TAURI_RUNNING__ === true) {
+        throw new Error(NATIVE_CAPTION_UNAVAILABLE_MESSAGE);
+    }
+
     const useReverseProxy =
         (['openai', 'anthropic', 'google', 'mistral', 'vertexai', 'xai', 'zai', 'moonshot'].includes(extension_settings.caption.multimodal_api))
         && extension_settings.caption.allow_reverse_proxy
@@ -151,7 +181,7 @@ export async function getMultimodalCaption(base64Img, prompt) {
     });
 
     if (!apiResult.ok) {
-        throw new Error('Failed to caption image via Multimodal API.');
+        throw new Error(await getCaptionErrorMessage(apiResult));
     }
 
     const { caption } = await apiResult.json();

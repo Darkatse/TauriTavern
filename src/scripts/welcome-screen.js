@@ -36,14 +36,46 @@ import { callGenericPopup, POPUP_TYPE } from './popup.js';
 import { getMessageTimeStamp } from './RossAscends-mods.js';
 import { renderTemplateAsync } from './templates.js';
 import { accountStorage } from './util/AccountStorage.js';
-import { flashHighlight, isElementInViewport, sortMoments, timestampToMoment } from './utils.js';
+import { clamp, flashHighlight, isElementInViewport, sortMoments, timestampToMoment } from './utils.js';
 
 const assistantAvatarKey = 'assistant';
 const pinnedChatsKey = 'pinnedChats';
+const recentChatsSettingsKey = 'recentChatsSettings';
 const defaultAssistantAvatar = 'default_Assistant.png';
 
-const DEFAULT_DISPLAYED = 3;
-const MAX_DISPLAYED = 15;
+const DEFAULT_MAX_DISPLAYED = 15;
+const DEFAULT_COLLAPSED_DISPLAYED = 3;
+
+/**
+ * Gets the current recent chats settings from account storage.
+ * @returns {{ maxDisplayed: number, collapsedDisplayed: number }}
+ */
+function getRecentChatsSettings() {
+    const value = accountStorage.getItem(recentChatsSettingsKey);
+    if (!value) {
+        return { maxDisplayed: DEFAULT_MAX_DISPLAYED, collapsedDisplayed: DEFAULT_COLLAPSED_DISPLAYED };
+    }
+
+    const parsed = JSON.parse(value);
+    const maxDisplayed = Number.parseInt(parsed?.maxDisplayed, 10);
+    const collapsedDisplayed = Number.parseInt(parsed?.collapsedDisplayed, 10);
+    if (!Number.isInteger(maxDisplayed) || maxDisplayed < 1 || !Number.isInteger(collapsedDisplayed) || collapsedDisplayed < 1 || collapsedDisplayed > maxDisplayed) {
+        throw new Error('Invalid recent chats settings.');
+    }
+
+    return {
+        maxDisplayed,
+        collapsedDisplayed,
+    };
+}
+
+/**
+ * Saves recent chats settings to account storage.
+ * @param {{ maxDisplayed: number, collapsedDisplayed: number }} settings
+ */
+function saveRecentChatsSettings(settings) {
+    accountStorage.setItem(recentChatsSettingsKey, JSON.stringify(settings));
+}
 
 /**
  * @typedef {Pick<RecentChat, 'group' | 'avatar' | 'file_name'>} PinnedChat
@@ -317,6 +349,12 @@ async function sendWelcomePanel(chats, expand = false) {
                 button.addEventListener('click', () => {
                     root.classList.add(recentHiddenClass);
                     accountStorage.setItem(recentHiddenKey, 'true');
+                });
+            });
+            root.querySelectorAll('.recentChatsSettings').forEach((button) => {
+                button.addEventListener('click', async (event) => {
+                    event.stopPropagation();
+                    await openRecentChatsSettingsPopup();
                 });
             });
         });
@@ -667,6 +705,66 @@ async function refreshWelcomeScreen({ flashChat = null } = {}) {
 }
 
 /**
+ * Opens a popup to configure recent chats settings.
+ */
+async function openRecentChatsSettingsPopup() {
+    const settings = getRecentChatsSettings();
+
+    const MIN_CHATS = 1;
+    const MAX_CHATS = 1000;
+
+    /** @type {import('./popup.js').CustomPopupInput} */
+    const maxRecentChatsInput = {
+        id: 'maxRecentChats',
+        type: 'number',
+        label: t`Max recent chats`,
+        tooltip: t`${MIN_CHATS} - ${MAX_CHATS}`,
+        defaultState: String(settings.maxDisplayed),
+        min: MIN_CHATS,
+        max: MAX_CHATS,
+        step: 1,
+    };
+
+    /** @type {import('./popup.js').CustomPopupInput} */
+    const collapsedRecentChatsInput = {
+        id: 'collapsedRecentChats',
+        type: 'number',
+        label: t`Collapsed recent chats`,
+        tooltip: t`${MIN_CHATS} - ${MAX_CHATS}`,
+        defaultState: String(settings.collapsedDisplayed),
+        min: MIN_CHATS,
+        max: MAX_CHATS,
+        step: 1,
+    };
+
+    await callGenericPopup(t`Recent Chats Settings`, POPUP_TYPE.CONFIRM, null, {
+        okButton: t`Save`,
+        cancelButton: t`Cancel`,
+        customInputs: [maxRecentChatsInput, collapsedRecentChatsInput],
+        onClose: (popup) => {
+            if (!popup.result) {
+                return;
+            }
+
+            const maxInputValue = popup.inputResults.get(maxRecentChatsInput.id)?.toString();
+            const collapsedInputValue = popup.inputResults.get(collapsedRecentChatsInput.id)?.toString();
+            const parsedMax = Number.parseInt(maxInputValue ?? '', 10);
+            const parsedCollapsed = Number.parseInt(collapsedInputValue ?? '', 10);
+            if (!Number.isInteger(parsedMax) || !Number.isInteger(parsedCollapsed)) {
+                throw new Error('Invalid recent chats settings input.');
+            }
+
+            const newMax = clamp(parsedMax, maxRecentChatsInput.min, maxRecentChatsInput.max);
+            const newCollapsed = clamp(parsedCollapsed, collapsedRecentChatsInput.min, newMax);
+
+            saveRecentChatsSettings({ maxDisplayed: newMax, collapsedDisplayed: newCollapsed });
+        },
+    });
+
+    await refreshWelcomeScreen();
+}
+
+/**
  * Gets the list of recent chats from the server.
  * @returns {Promise<RecentChat[]>} List of recent chats
  *
@@ -688,10 +786,11 @@ async function refreshWelcomeScreen({ flashChat = null } = {}) {
  * @property {boolean} pinned Indicates if the chat is pinned
  */
 async function getRecentChats() {
+    const settings = getRecentChatsSettings();
     const response = await fetch('/api/chats/recent', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ max: MAX_DISPLAYED, pinned: PinnedChatsManager.getAll() }),
+        body: JSON.stringify({ max: settings.maxDisplayed, pinned: PinnedChatsManager.getAll() }),
         cache: 'no-cache',
     });
 
@@ -733,7 +832,7 @@ async function getRecentChats() {
         chat.chat_name = chat.file_name.replace('.jsonl', '');
         chat.char_thumbnail = character ? getThumbnailUrl('avatar', character.avatar) : system_avatar;
         chat.is_group = !!group;
-        chat.hidden = index >= DEFAULT_DISPLAYED;
+        chat.hidden = index >= settings.collapsedDisplayed;
         chat.avatar = chat.avatar || '';
         chat.group = chat.group || '';
         chat.pinned = PinnedChatsManager.isPinned(chat);

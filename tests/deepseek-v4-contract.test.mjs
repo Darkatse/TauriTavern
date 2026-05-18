@@ -34,7 +34,7 @@ test('DeepSeek reasoning controls match the v4 request contract', async () => {
     assert.match(indexHtml, /DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort\./);
 });
 
-test('DeepSeek tool-call reasoning is persisted and replayed only for the same DeepSeek model', async () => {
+test('DeepSeek tool-call reasoning is persisted and replayed only for the same DeepSeek model turn owner', async () => {
     const [scriptSource, openaiSource, toolCallingSource] = await Promise.all([
         readProjectFile('src/script.js'),
         readProjectFile('src/scripts/openai.js'),
@@ -45,7 +45,8 @@ test('DeepSeek tool-call reasoning is persisted and replayed only for the same D
     assert.match(toolCallingSource, /tool_reasoning_content:\s*reasoningContent/);
     assert.match(scriptSource, /saveFunctionToolInvocations\(invocationResult\.invocations, native, reasoningContent\)/);
     assert.match(scriptSource, /saveFunctionToolInvocations\(invocationResult\.invocations, native, toolReasoning\)/);
-    assert.match(openaiSource, /const shouldReplayReasoningContent = currentApi === chat_completion_sources\.DEEPSEEK\s*&& oai_settings\.show_thoughts\s*&& isSameModel/);
+    assert.match(openaiSource, /const canReplayProviderTurnMetadata = isSameModel && !isOtherGroupMember/);
+    assert.match(openaiSource, /const shouldReplayReasoningContent = currentApi === chat_completion_sources\.DEEPSEEK\s*&& oai_settings\.show_thoughts\s*&& canReplayProviderTurnMetadata/);
     assert.match(openaiSource, /reasoning_content:\s*message\.reasoningContent/);
     assert.match(openaiSource, /reasoning_content:\s*item\.reasoningContent/);
 });
