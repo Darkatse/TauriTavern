@@ -59,6 +59,7 @@ pub(super) async fn generate(
     };
 
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
         HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
@@ -123,6 +124,7 @@ pub(super) async fn generate_stream(
     };
 
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
         HttpChatCompletionRepository::map_transport_error("Generation request failed", error)

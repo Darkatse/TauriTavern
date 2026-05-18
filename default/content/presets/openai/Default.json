@@ -11,6 +11,8 @@
     "mistralai_model": "mistral-large-latest",
     "custom_model": "",
     "custom_url": "",
+    "additional_parameters_by_source": {},
+    "additional_parameters_migration_version": 1,
     "custom_include_body": "",
     "custom_exclude_body": "",
     "custom_include_headers": "",

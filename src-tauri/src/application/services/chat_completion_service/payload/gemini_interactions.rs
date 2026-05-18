@@ -4,7 +4,7 @@ use serde_json::{Map, Number, Value, json};
 
 use crate::application::errors::ApplicationError;
 
-use super::shared::{apply_custom_body_overrides, message_content_to_text, parse_data_url};
+use super::shared::{message_content_to_text, parse_data_url};
 use super::tool_calls::{
     OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
     message_tool_name, message_tool_result_text, normalize_tool_result_payload,
@@ -13,23 +13,9 @@ use super::tool_calls::{
 const CUSTOM_API_FORMAT: &str = "custom_api_format";
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
-    let include_raw = payload
-        .get("custom_include_body")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let exclude_raw = payload
-        .get("custom_exclude_body")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-
     let request = build_gemini_interactions_payload(&payload)?;
 
-    let mut upstream_payload = Value::Object(request);
-    apply_custom_body_overrides(&mut upstream_payload, &include_raw, &exclude_raw)?;
-
-    Ok(("/interactions".to_string(), upstream_payload))
+    Ok(("/interactions".to_string(), Value::Object(request)))
 }
 
 fn build_gemini_interactions_payload(

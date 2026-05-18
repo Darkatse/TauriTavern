@@ -19,6 +19,7 @@ use crate::domain::repositories::prompt_cache_repository::PromptCacheRepository;
 use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::domain::repositories::settings_repository::SettingsRepository;
 
+mod additional_parameters;
 mod config;
 mod custom_api_format;
 mod custom_parameters;
@@ -28,6 +29,7 @@ mod prompt_caching;
 mod prompt_caching_plan;
 mod vertexai_auth;
 
+use self::additional_parameters::AdditionalParameters;
 use self::exchange::{
     ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
 };
@@ -165,6 +167,8 @@ impl ChatCompletionService {
             "reverse_proxy",
             "proxy_password",
             "custom_url",
+            "custom_include_body",
+            "custom_exclude_body",
             "custom_include_headers",
         ] {
             let Some(value) = payload.get(key) else {
@@ -322,14 +326,20 @@ impl ChatCompletionService {
         self.ensure_chat_completion_source_allowed(source)?;
         self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
         self.ensure_chat_completion_features_allowed(&dto.payload)?;
+        let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
         let provider_format = ChatCompletionProviderFormat::from_payload(source, &dto.payload)?;
 
         let settings = self.load_tauritavern_settings().await?;
         let prompt_caching_hints =
             prompt_caching_plan::PromptCachingRequestHints::from_payload(&dto.payload)?;
 
-        let mut config =
-            config::resolve_generate_api_config(source, &dto, &self.secret_repository).await?;
+        let mut config = config::resolve_generate_api_config(
+            source,
+            &dto,
+            &additional_parameters,
+            &self.secret_repository,
+        )
+        .await?;
         let payload = dto.payload;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
         self.apply_tauritavern_prompt_caching(
@@ -341,6 +351,7 @@ impl ChatCompletionService {
             prompt_caching_hints,
         )
         .await?;
+        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
 
         let response = self
             .chat_completion_repository
@@ -426,13 +437,19 @@ impl ChatCompletionService {
         self.ensure_chat_completion_source_allowed(source)?;
         self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
         self.ensure_chat_completion_features_allowed(&dto.payload)?;
+        let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
 
         let settings = self.load_tauritavern_settings().await?;
         let prompt_caching_hints =
             prompt_caching_plan::PromptCachingRequestHints::from_payload(&dto.payload)?;
 
-        let mut config =
-            config::resolve_generate_api_config(source, &dto, &self.secret_repository).await?;
+        let mut config = config::resolve_generate_api_config(
+            source,
+            &dto,
+            &additional_parameters,
+            &self.secret_repository,
+        )
+        .await?;
         let payload = dto.payload;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
         self.apply_tauritavern_prompt_caching(
@@ -444,6 +461,7 @@ impl ChatCompletionService {
             prompt_caching_hints,
         )
         .await?;
+        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
 
         self.chat_completion_repository
             .generate_stream(

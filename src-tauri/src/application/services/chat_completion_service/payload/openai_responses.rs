@@ -5,27 +5,15 @@ use serde_json::{Map, Number, Value, json};
 use crate::application::errors::ApplicationError;
 use crate::domain::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 
-use super::shared::{apply_custom_body_overrides, message_content_to_text};
+use super::shared::message_content_to_text;
 use super::tool_calls::message_tool_call_id;
 
 const REASONING_ENCRYPTED_CONTENT: &str = "reasoning.encrypted_content";
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
-    let include_raw = payload
-        .get("custom_include_body")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let exclude_raw = payload
-        .get("custom_exclude_body")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-
     let request = build_openai_responses_payload(&payload)?;
 
     let mut upstream_payload = Value::Object(request);
-    apply_custom_body_overrides(&mut upstream_payload, &include_raw, &exclude_raw)?;
     copy_internal_provider_state(&payload, &mut upstream_payload)?;
     finalize_openai_responses_payload(&mut upstream_payload)?;
 
@@ -813,7 +801,7 @@ mod tests {
     }
 
     #[test]
-    fn openai_responses_payload_readds_reasoning_include_after_overrides() {
+    fn openai_responses_payload_leaves_additional_include_to_service_layer() {
         let payload = json!({
             "chat_completion_source": "custom",
             "custom_api_format": "openai_responses",
@@ -834,12 +822,12 @@ mod tests {
         assert!(
             include
                 .iter()
-                .any(|value| value == "file_search_call.results")
+                .any(|value| value == "reasoning.encrypted_content")
         );
         assert!(
-            include
+            !include
                 .iter()
-                .any(|value| value == "reasoning.encrypted_content")
+                .any(|value| value == "file_search_call.results")
         );
     }
 

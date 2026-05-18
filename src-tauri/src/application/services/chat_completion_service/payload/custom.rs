@@ -7,7 +7,6 @@ use super::claude_messages;
 use super::gemini_interactions;
 use super::openai;
 use super::openai_responses;
-use super::shared::apply_custom_body_overrides;
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let format = CustomApiFormat::parse(
@@ -24,21 +23,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
         CustomApiFormat::ClaudeMessages => return claude_messages::build(payload),
     }
 
-    let include_raw = payload
-        .get("custom_include_body")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let exclude_raw = payload
-        .get("custom_exclude_body")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-
-    let (endpoint, mut upstream_payload) = openai::build(payload);
-    apply_custom_body_overrides(&mut upstream_payload, &include_raw, &exclude_raw)?;
-
-    Ok((endpoint, upstream_payload))
+    Ok(openai::build(payload))
 }
 
 #[cfg(test)]
@@ -49,7 +34,7 @@ mod tests {
     use super::build;
 
     #[test]
-    fn custom_payload_applies_overrides_and_strips_internal_fields() {
+    fn custom_payload_strips_internal_fields_without_applying_overrides() {
         let payload = json!({
             "chat_completion_source": "custom",
             "model": "gpt-4.1-mini",
@@ -75,15 +60,10 @@ mod tests {
             body.get("temperature")
                 .and_then(serde_json::Value::as_f64)
                 .unwrap_or_default(),
-            0.7
+            0.1
         );
-        assert_eq!(
-            body.get("presence_penalty")
-                .and_then(serde_json::Value::as_f64)
-                .unwrap_or_default(),
-            0.2
-        );
-        assert!(body.get("messages").is_none());
+        assert!(body.get("presence_penalty").is_none());
+        assert!(body.get("messages").is_some());
         assert!(body.get("custom_include_body").is_none());
         assert!(body.get("custom_exclude_body").is_none());
         assert!(body.get("custom_include_headers").is_none());
@@ -91,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_payload_supports_nested_yaml_overrides() {
+    fn custom_payload_leaves_nested_yaml_overrides_to_service_layer() {
         let payload = json!({
             "chat_completion_source": "custom",
             "model": "gpt-4.1-mini",
@@ -108,32 +88,13 @@ mod tests {
             .as_object()
             .expect("upstream body should be object");
 
-        assert_eq!(
-            body.get("enable_thinking")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            true
-        );
-        assert_eq!(
-            body.get("thinking")
-                .and_then(Value::as_object)
-                .and_then(|object| object.get("type"))
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            "enabled"
-        );
-        assert_eq!(
-            body.get("chat_template_kwargs")
-                .and_then(Value::as_object)
-                .and_then(|object| object.get("thinking"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            true
-        );
+        assert!(body.get("enable_thinking").is_none());
+        assert!(body.get("thinking").is_none());
+        assert!(body.get("chat_template_kwargs").is_none());
     }
 
     #[test]
-    fn custom_body_overrides_can_explicitly_set_reasoning_effort() {
+    fn custom_body_overrides_do_not_bypass_payload_builder() {
         let payload = json!({
             "chat_completion_source": "custom",
             "model": "gpt-5-2025-08-07",
@@ -150,16 +111,11 @@ mod tests {
             .as_object()
             .expect("upstream body should be object");
 
-        assert_eq!(
-            body.get("reasoning_effort")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            "auto"
-        );
+        assert!(body.get("reasoning_effort").is_none());
     }
 
     #[test]
-    fn custom_payload_supports_claude_messages_format_with_overrides() {
+    fn custom_payload_supports_claude_messages_format_without_inline_overrides() {
         let payload = json!({
             "chat_completion_source": "custom",
             "custom_api_format": "claude_messages",
@@ -180,12 +136,7 @@ mod tests {
         let body = upstream
             .as_object()
             .expect("upstream body should be object");
-        assert_eq!(
-            body.get("max_tokens")
-                .and_then(Value::as_i64)
-                .unwrap_or_default(),
-            77
-        );
-        assert!(body.get("temperature").is_none());
+        assert!(body.get("max_tokens").is_some());
+        assert_eq!(body.get("temperature").and_then(Value::as_f64), Some(0.1));
     }
 }

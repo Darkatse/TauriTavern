@@ -449,6 +449,7 @@ async fn generate_http(
 
     let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
         HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
@@ -533,6 +534,7 @@ async fn generate_stream_http(
 
     let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
         HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
@@ -889,6 +891,7 @@ fn build_ws_upgrade_request(
     let request = client.get(url);
     let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
     let mut request = request.build().map_err(|error| {
         DomainError::InvalidData(format!(
             "Invalid OpenAI Responses WebSocket upgrade request: {error}"
@@ -948,6 +951,7 @@ fn ws_connection_key(
     let mut headers = config
         .extra_headers
         .iter()
+        .chain(config.additional_headers.iter())
         .map(|(key, value)| format!("{}={}", key.trim().to_ascii_lowercase(), value.trim()))
         .collect::<Vec<_>>();
     headers.sort_unstable();
@@ -1186,6 +1190,7 @@ mod tests {
             api_key: "secret".to_string(),
             authorization_header: Some("Bearer override".to_string()),
             extra_headers: HashMap::new(),
+            additional_headers: HashMap::new(),
             anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
         };
 
@@ -1215,6 +1220,7 @@ mod tests {
             api_key: "secret".to_string(),
             authorization_header: None,
             extra_headers: HashMap::new(),
+            additional_headers: HashMap::new(),
             anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
         };
 

@@ -13,7 +13,7 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 use crate::domain::repositories::secret_repository::SecretRepository;
 
-use super::custom_parameters;
+use super::additional_parameters::AdditionalParameters;
 use super::vertexai_auth;
 
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
@@ -52,14 +52,16 @@ pub(super) async fn resolve_status_api_config(
     let proxy_password = dto.proxy_password.trim();
 
     let custom_url = dto.custom_url.trim();
-    let custom_headers_raw = dto.custom_include_headers.as_str();
+    let additional_parameters =
+        AdditionalParameters::from_status_headers(dto.custom_include_headers.as_str());
+    let additional_headers = additional_parameters.headers()?;
 
     resolve_api_config(
         source,
         reverse_proxy,
         proxy_password,
         custom_url,
-        custom_headers_raw,
+        additional_headers,
         "",
         ApiConfigPurpose::Status,
         secret_repository,
@@ -70,20 +72,22 @@ pub(super) async fn resolve_status_api_config(
 pub(super) async fn resolve_generate_api_config(
     source: ChatCompletionSource,
     dto: &ChatCompletionGenerateRequestDto,
+    additional_parameters: &AdditionalParameters,
     secret_repository: &Arc<dyn SecretRepository>,
 ) -> Result<ChatCompletionApiConfig, ApplicationError> {
     let reverse_proxy = dto.get_string("reverse_proxy").unwrap_or_default().trim();
     let proxy_password = dto.get_string("proxy_password").unwrap_or_default().trim();
     let custom_url_raw = get_payload_string(&dto.payload, "custom_url");
     let custom_url = custom_url_raw.trim();
-    let custom_headers_raw = get_payload_string(&dto.payload, "custom_include_headers");
     let zai_endpoint = get_payload_string(&dto.payload, "zai_endpoint");
+    let additional_headers = additional_parameters.headers()?;
 
     if source == ChatCompletionSource::VertexAi {
         return resolve_vertexai_generate_api_config(
             &dto.payload,
             reverse_proxy,
             proxy_password,
+            additional_headers,
             secret_repository,
         )
         .await;
@@ -94,7 +98,7 @@ pub(super) async fn resolve_generate_api_config(
         reverse_proxy,
         proxy_password,
         custom_url,
-        &custom_headers_raw,
+        additional_headers,
         &zai_endpoint,
         ApiConfigPurpose::Generate,
         secret_repository,
@@ -108,7 +112,7 @@ async fn resolve_api_config(
     reverse_proxy: &str,
     proxy_password: &str,
     custom_url: &str,
-    custom_headers_raw: &str,
+    additional_headers: HashMap<String, String>,
     zai_endpoint: &str,
     purpose: ApiConfigPurpose,
     secret_repository: &Arc<dyn SecretRepository>,
@@ -116,13 +120,10 @@ async fn resolve_api_config(
     match source {
         ChatCompletionSource::Custom => {
             let base_url = resolve_custom_base_url(custom_url, reverse_proxy)?;
-            let mut extra_headers = custom_parameters::parse_string_map(custom_headers_raw)?;
-            let authorization_header = take_header_value(&mut extra_headers, "Authorization");
+            let extra_headers = source_extra_headers(source);
             let uses_reverse_proxy = custom_url.is_empty() && !reverse_proxy.is_empty();
 
-            let api_key = if authorization_header.is_some() {
-                String::new()
-            } else if uses_reverse_proxy {
+            let api_key = if uses_reverse_proxy {
                 proxy_password.to_string()
             } else {
                 read_optional_secret(secret_repository, SecretKeys::CUSTOM)
@@ -133,8 +134,9 @@ async fn resolve_api_config(
             Ok(ChatCompletionApiConfig {
                 base_url,
                 api_key,
-                authorization_header,
+                authorization_header: None,
                 extra_headers,
+                additional_headers,
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
             })
         }
@@ -161,7 +163,8 @@ async fn resolve_api_config(
                 base_url,
                 api_key,
                 authorization_header: None,
-                extra_headers: source_extra_headers_with_overrides(source, custom_headers_raw)?,
+                extra_headers: source_extra_headers(source),
+                additional_headers,
                 anthropic_beta_header_mode: source_anthropic_beta_header_mode(source),
             })
         }
@@ -173,36 +176,6 @@ fn source_anthropic_beta_header_mode(source: ChatCompletionSource) -> AnthropicB
         ChatCompletionSource::Claude => AnthropicBetaHeaderMode::ClaudeDefaults,
         _ => AnthropicBetaHeaderMode::None,
     }
-}
-
-fn take_header_value(headers: &mut HashMap<String, String>, header_name: &str) -> Option<String> {
-    let mut matching_keys = headers
-        .keys()
-        .filter(|key| key.eq_ignore_ascii_case(header_name))
-        .cloned()
-        .collect::<Vec<_>>();
-
-    if matching_keys.is_empty() {
-        return None;
-    }
-
-    matching_keys.sort_unstable();
-
-    let preferred_key = matching_keys
-        .iter()
-        .find(|key| key.as_str() == header_name)
-        .cloned()
-        .unwrap_or_else(|| matching_keys[0].clone());
-
-    let value = headers.remove(&preferred_key);
-
-    for key in matching_keys {
-        if key != preferred_key {
-            headers.remove(&key);
-        }
-    }
-
-    value
 }
 
 fn resolve_custom_base_url(
@@ -328,6 +301,7 @@ async fn resolve_vertexai_generate_api_config(
     payload: &Map<String, Value>,
     reverse_proxy: &str,
     proxy_password: &str,
+    additional_headers: HashMap<String, String>,
     secret_repository: &Arc<dyn SecretRepository>,
 ) -> Result<ChatCompletionApiConfig, ApplicationError> {
     let extra_headers = HashMap::new();
@@ -338,6 +312,7 @@ async fn resolve_vertexai_generate_api_config(
             api_key: String::new(),
             authorization_header: Some(format!("Bearer {}", proxy_password)),
             extra_headers,
+            additional_headers,
             anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
         });
     }
@@ -380,6 +355,7 @@ async fn resolve_vertexai_generate_api_config(
                 api_key,
                 authorization_header: None,
                 extra_headers,
+                additional_headers,
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
             })
         }
@@ -403,6 +379,7 @@ async fn resolve_vertexai_generate_api_config(
                 api_key: String::new(),
                 authorization_header: Some(format!("Bearer {}", access_token)),
                 extra_headers,
+                additional_headers,
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
             })
         }
@@ -434,28 +411,6 @@ fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String>
     headers
 }
 
-fn source_extra_headers_with_overrides(
-    source: ChatCompletionSource,
-    custom_headers_raw: &str,
-) -> Result<HashMap<String, String>, ApplicationError> {
-    let mut extra_headers = source_extra_headers(source);
-    if custom_headers_raw.trim().is_empty() {
-        return Ok(extra_headers);
-    }
-
-    let mut custom_headers = custom_parameters::parse_string_map(custom_headers_raw)?;
-    for header_name in ["Authorization", "x-api-key", "api-key", "anthropic-version"] {
-        if take_header_value(&mut custom_headers, header_name).is_some() {
-            return Err(ApplicationError::ValidationError(format!(
-                "Additional headers cannot override reserved header: {header_name}"
-            )));
-        }
-    }
-
-    extra_headers.extend(custom_headers);
-    Ok(extra_headers)
-}
-
 fn is_zai_coding_endpoint(value: &str) -> bool {
     value.trim().eq_ignore_ascii_case(ZAI_ENDPOINT_CODING)
 }
@@ -471,16 +426,16 @@ mod tests {
     use crate::application::dto::chat_completion_dto::{
         ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
     };
-    use crate::application::errors::ApplicationError;
     use crate::domain::errors::DomainError;
     use crate::domain::models::secret::Secrets;
     use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
     use crate::domain::repositories::secret_repository::SecretRepository;
 
+    use super::super::additional_parameters::AdditionalParameters;
     use super::{
         ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, OPENROUTER_API_BASE, ZAI_API_BASE_CODING,
         default_base_url, resolve_generate_api_config, resolve_status_api_config,
-        source_extra_headers, supports_reverse_proxy, take_header_value,
+        source_extra_headers, supports_reverse_proxy,
     };
 
     struct TestSecretRepository {
@@ -577,27 +532,8 @@ mod tests {
         assert!(supports_reverse_proxy(ChatCompletionSource::Zai));
     }
 
-    #[test]
-    fn take_header_value_removes_all_case_variants() {
-        let mut headers = HashMap::from([
-            ("authorization".to_string(), "Bearer lower".to_string()),
-            ("Authorization".to_string(), "Bearer exact".to_string()),
-            ("x-extra".to_string(), "ok".to_string()),
-        ]);
-
-        let value = take_header_value(&mut headers, "Authorization");
-
-        assert_eq!(value.as_deref(), Some("Bearer exact"));
-        assert!(
-            headers
-                .keys()
-                .all(|key| !key.eq_ignore_ascii_case("authorization"))
-        );
-        assert_eq!(headers.get("x-extra").map(String::as_str), Some("ok"));
-    }
-
     #[tokio::test]
-    async fn custom_status_authorization_header_overrides_saved_secret() {
+    async fn custom_status_additional_headers_are_final_overrides() {
         let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
             secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
         });
@@ -614,20 +550,17 @@ mod tests {
                 .expect("status config should resolve");
 
         assert_eq!(config.base_url, "https://example.com/v1");
-        assert!(config.api_key.is_empty());
+        assert_eq!(config.api_key, "saved-secret");
+        assert_eq!(config.authorization_header, None);
         assert_eq!(
-            config.authorization_header.as_deref(),
-            Some("Bearer override")
-        );
-        assert_eq!(
-            config.extra_headers.get("X-Trace").map(String::as_str),
+            config.additional_headers.get("X-Trace").map(String::as_str),
             Some("abc")
         );
-        assert!(
-            config
-                .extra_headers
-                .keys()
-                .all(|key| !key.eq_ignore_ascii_case("authorization"))
+        assert_eq!(
+            config.additional_headers.iter().find_map(|(key, value)| key
+                .eq_ignore_ascii_case("authorization")
+                .then_some(value.as_str())),
+            Some("Bearer override")
         );
     }
 
@@ -647,15 +580,21 @@ mod tests {
             .expect("payload should be an object"),
         };
 
-        let config =
-            resolve_generate_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
-                .await
-                .expect("generate config should resolve");
+        let additional_parameters =
+            AdditionalParameters::from_payload(&dto.payload).expect("additional parameters parse");
+        let config = resolve_generate_api_config(
+            ChatCompletionSource::Custom,
+            &dto,
+            &additional_parameters,
+            &secret_repository,
+        )
+        .await
+        .expect("generate config should resolve");
 
         assert_eq!(config.api_key, "saved-secret");
         assert_eq!(config.authorization_header, None);
         assert_eq!(
-            config.extra_headers.get("X-Trace").map(String::as_str),
+            config.additional_headers.get("X-Trace").map(String::as_str),
             Some("abc")
         );
     }
@@ -684,7 +623,7 @@ mod tests {
         assert_eq!(config.api_key, "saved-secret");
         assert_eq!(config.authorization_header, None);
         assert_eq!(
-            config.extra_headers.get("X-Trace").map(String::as_str),
+            config.additional_headers.get("X-Trace").map(String::as_str),
             Some("abc")
         );
     }
@@ -712,13 +651,13 @@ mod tests {
         assert_eq!(config.api_key, "proxy-secret");
         assert_eq!(config.authorization_header, None);
         assert_eq!(
-            config.extra_headers.get("X-Trace").map(String::as_str),
+            config.additional_headers.get("X-Trace").map(String::as_str),
             Some("abc")
         );
     }
 
     #[tokio::test]
-    async fn native_generate_merges_additional_headers() {
+    async fn native_generate_stores_additional_headers_as_final_overrides() {
         let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
             secrets: HashMap::from([("api_key_claude".to_string(), "secret".to_string())]),
         });
@@ -732,23 +671,29 @@ mod tests {
             .expect("payload should be object"),
         };
 
-        let config =
-            resolve_generate_api_config(ChatCompletionSource::Claude, &dto, &secret_repository)
-                .await
-                .expect("generate config should resolve");
+        let additional_parameters =
+            AdditionalParameters::from_payload(&dto.payload).expect("additional parameters parse");
+        let config = resolve_generate_api_config(
+            ChatCompletionSource::Claude,
+            &dto,
+            &additional_parameters,
+            &secret_repository,
+        )
+        .await
+        .expect("generate config should resolve");
 
         assert_eq!(
-            config.extra_headers.get("X-Trace").map(String::as_str),
+            config.additional_headers.get("X-Trace").map(String::as_str),
             Some("abc")
         );
         assert_eq!(
-            config.extra_headers.get("X-Debug").map(String::as_str),
+            config.additional_headers.get("X-Debug").map(String::as_str),
             Some("true")
         );
     }
 
     #[tokio::test]
-    async fn native_generate_rejects_reserved_additional_headers() {
+    async fn native_generate_accepts_reserved_additional_headers_as_user_overrides() {
         let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
             secrets: HashMap::from([("api_key_claude".to_string(), "secret".to_string())]),
         });
@@ -762,16 +707,23 @@ mod tests {
             .expect("payload should be object"),
         };
 
-        let error =
-            resolve_generate_api_config(ChatCompletionSource::Claude, &dto, &secret_repository)
-                .await
-                .expect_err("reserved headers should be rejected");
+        let additional_parameters =
+            AdditionalParameters::from_payload(&dto.payload).expect("additional parameters parse");
+        let config = resolve_generate_api_config(
+            ChatCompletionSource::Claude,
+            &dto,
+            &additional_parameters,
+            &secret_repository,
+        )
+        .await
+        .expect("generate config should resolve");
 
-        match error {
-            ApplicationError::ValidationError(message) => {
-                assert!(message.contains("Additional headers cannot override reserved header"));
-            }
-            other => panic!("unexpected error: {other:?}"),
-        }
+        assert_eq!(
+            config
+                .additional_headers
+                .get("Authorization")
+                .map(String::as_str),
+            Some("Bearer hacked")
+        );
     }
 }

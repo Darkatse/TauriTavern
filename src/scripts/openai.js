@@ -150,6 +150,7 @@ const claude_max_temp = 1.0;
 const mistral_max_temp = 1.5;
 const openrouter_website_model = 'OR_Website';
 const openai_max_stop_strings = 4;
+const additional_parameters_migration_version = 1;
 
 const textCompletionModels = [
     'gpt-3.5-turbo-instruct',
@@ -280,6 +281,7 @@ const sensitiveFields = [
     'reverse_proxy',
     'proxy_password',
     'custom_url',
+    'additional_parameters_by_source',
     'custom_include_body',
     'custom_exclude_body',
     'custom_include_headers',
@@ -337,6 +339,8 @@ export const settingsToUpdate = {
     cometapi_model: ['#model_cometapi_select', 'cometapi_model', false, true],
     custom_model: ['#custom_model_id', 'custom_model', false, true],
     custom_url: ['#custom_api_url_text', 'custom_url', false, true],
+    additional_parameters_by_source: ['', 'additional_parameters_by_source', false, true],
+    additional_parameters_migration_version: ['', 'additional_parameters_migration_version', false, true],
     custom_include_body: ['#custom_include_body', 'custom_include_body', false, true],
     custom_exclude_body: ['#custom_exclude_body', 'custom_exclude_body', false, true],
     custom_include_headers: ['#custom_include_headers', 'custom_include_headers', false, true],
@@ -454,6 +458,8 @@ const default_settings = {
     custom_model: '',
     custom_url: '',
     custom_api_format: custom_api_formats.OPENAI_COMPAT,
+    additional_parameters_by_source: {},
+    additional_parameters_migration_version: additional_parameters_migration_version,
     custom_include_body: '',
     custom_exclude_body: '',
     custom_include_headers: '',
@@ -515,6 +521,132 @@ export let openai_settings;
 
 /** @type {import('./PromptManager.js').PromptManager} */
 export let promptManager = null;
+
+function createAdditionalParametersEntry() {
+    return {
+        include_body: '',
+        exclude_body: '',
+        include_headers: '',
+    };
+}
+
+function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeAdditionalParametersEntry(value) {
+    if (value === undefined) {
+        return createAdditionalParametersEntry();
+    }
+
+    if (!isPlainObject(value)) {
+        throw new Error('additional_parameters_by_source entries must be objects');
+    }
+
+    for (const key of ['include_body', 'exclude_body', 'include_headers']) {
+        if (value[key] === undefined) {
+            value[key] = '';
+            continue;
+        }
+
+        if (typeof value[key] !== 'string') {
+            throw new Error(`Additional parameter field must be a string: ${key}`);
+        }
+    }
+
+    return value;
+}
+
+function getAdditionalParametersStore(settings = oai_settings) {
+    if (settings.additional_parameters_by_source === undefined) {
+        settings.additional_parameters_by_source = {};
+    }
+
+    if (!isPlainObject(settings.additional_parameters_by_source)) {
+        throw new Error('additional_parameters_by_source must be an object');
+    }
+
+    return settings.additional_parameters_by_source;
+}
+
+function getAdditionalParametersSourceKey(settings = oai_settings) {
+    if (settings.chat_completion_source !== chat_completion_sources.CUSTOM) {
+        return settings.chat_completion_source || chat_completion_sources.OPENAI;
+    }
+
+    switch (settings.custom_api_format) {
+        case custom_api_formats.OPENAI_RESPONSES:
+            return custom_source_variants.OPENAI_RESPONSES;
+        case custom_api_formats.CLAUDE_MESSAGES:
+            return custom_source_variants.CLAUDE_MESSAGES;
+        case custom_api_formats.GEMINI_INTERACTIONS:
+            return custom_source_variants.GEMINI_INTERACTIONS;
+        case custom_api_formats.OPENAI_COMPAT:
+        default:
+            return chat_completion_sources.CUSTOM;
+    }
+}
+
+export function getAdditionalParametersForSource(
+    settings = oai_settings,
+    sourceKey = getAdditionalParametersSourceKey(settings),
+    { create = true } = {},
+) {
+    const store = getAdditionalParametersStore(settings);
+    const key = String(sourceKey || chat_completion_sources.OPENAI);
+    const value = store[key];
+
+    if (value === undefined && !create) {
+        return createAdditionalParametersEntry();
+    }
+
+    const entry = normalizeAdditionalParametersEntry(value);
+    if (create || value !== undefined) {
+        store[key] = entry;
+    }
+
+    return entry;
+}
+
+function getLegacyAdditionalParameters(settings) {
+    return {
+        include_body: typeof settings.custom_include_body === 'string' ? settings.custom_include_body : '',
+        exclude_body: typeof settings.custom_exclude_body === 'string' ? settings.custom_exclude_body : '',
+        include_headers: typeof settings.custom_include_headers === 'string' ? settings.custom_include_headers : '',
+    };
+}
+
+function applyAdditionalParametersToRequest(request, settings = oai_settings, { includeBody = true } = {}) {
+    const parameters = getAdditionalParametersForSource(
+        settings,
+        getAdditionalParametersSourceKey(settings),
+        { create: false },
+    );
+
+    if (includeBody) {
+        request.custom_include_body = parameters.include_body;
+        request.custom_exclude_body = parameters.exclude_body;
+    }
+
+    request.custom_include_headers = parameters.include_headers;
+}
+
+function hasSensitiveFieldValue(value) {
+    if (typeof value === 'string') {
+        return value.trim().length > 0;
+    }
+    if (Array.isArray(value)) {
+        return value.some(hasSensitiveFieldValue);
+    }
+    if (isPlainObject(value)) {
+        return Object.values(value).some(hasSensitiveFieldValue);
+    }
+    return Boolean(value);
+}
+
+function formatSensitiveFieldValue(value) {
+    return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
 
 async function validateReverseProxy() {
     if (!oai_settings.reverse_proxy) {
@@ -2964,16 +3096,7 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.stop = getCustomStoppingStrings(); // Mistral shouldn't have limits on stop strings.
     }
 
-    const additionalParameterSources = [
-        chat_completion_sources.CUSTOM,
-        chat_completion_sources.CLAUDE,
-        chat_completion_sources.DEEPSEEK,
-    ];
-    if (additionalParameterSources.includes(settings.chat_completion_source)) {
-        generate_data.custom_include_body = settings.custom_include_body;
-        generate_data.custom_exclude_body = settings.custom_exclude_body;
-        generate_data.custom_include_headers = settings.custom_include_headers;
-    }
+    applyAdditionalParametersToRequest(generate_data, settings);
 
     if (settings.chat_completion_source === chat_completion_sources.CUSTOM) {
         generate_data.custom_url = settings.custom_url;
@@ -4278,8 +4401,10 @@ export class ChatCompletion {
 /**
  * Migrate old Chat Completion settings to new format.
  * @param {ChatCompletionSettings} settings Settings to migrate
+ * @returns {boolean} True if settings were changed
  */
 function migrateChatCompletionSettings(settings) {
+    let changed = false;
     const migrateMap = [
         { oldKey: 'names_in_completion', oldValue: true, newKey: 'names_behavior', newValue: character_names_behavior.COMPLETION },
         { oldKey: 'chat_completion_source', oldValue: 'palm', newKey: 'chat_completion_source', newValue: chat_completion_sources.MAKERSUITE },
@@ -4301,12 +4426,59 @@ function migrateChatCompletionSettings(settings) {
                 : settings[migration.oldKey] === migration.oldValue;
             if (shouldMigrate) {
                 settings[migration.newKey] = migration.newValue;
+                changed = true;
             }
             if (migration.oldKey !== migration.newKey) {
                 delete settings[migration.oldKey];
+                changed = true;
             }
         }
     }
+
+    if (migrateAdditionalParameters(settings)) {
+        changed = true;
+    }
+
+    return changed;
+}
+
+function migrateAdditionalParameters(settings) {
+    let changed = false;
+
+    if (settings.additional_parameters_by_source === undefined) {
+        settings.additional_parameters_by_source = {};
+        changed = true;
+    }
+
+    const store = getAdditionalParametersStore(settings);
+    for (const key of Object.keys(store)) {
+        store[key] = normalizeAdditionalParametersEntry(store[key]);
+    }
+
+    const currentVersion = Number(settings.additional_parameters_migration_version || 0);
+    if (currentVersion >= additional_parameters_migration_version) {
+        return changed;
+    }
+
+    const legacy = getLegacyAdditionalParameters(settings);
+    const hasLegacyValues = Object.values(legacy).some(value => value.trim().length > 0);
+
+    if (hasLegacyValues) {
+        const sourceKey = getAdditionalParametersSourceKey(settings);
+        const entry = getAdditionalParametersForSource(settings, sourceKey);
+
+        for (const key of ['include_body', 'exclude_body', 'include_headers']) {
+            if (!entry[key].trim() && legacy[key].trim()) {
+                entry[key] = legacy[key];
+                changed = true;
+            }
+        }
+    }
+
+    settings.additional_parameters_migration_version = additional_parameters_migration_version;
+    changed = true;
+
+    return changed;
 }
 
 function resolveChatCompletionSourceSelectValue(settings) {
@@ -4473,7 +4645,7 @@ function loadOpenAISettings(data, settings) {
     });
     openai_setting_names = settingNames;
 
-    migrateChatCompletionSettings(settings);
+    const settingsMigrated = migrateChatCompletionSettings(settings);
 
     for (const key of Object.keys(default_settings)) {
         oai_settings[key] = settings[key] ?? default_settings[key];
@@ -4540,6 +4712,10 @@ function loadOpenAISettings(data, settings) {
     enforceIosPolicyChatCompletionSourceSelector();
     $('#chat_completion_source').trigger('change');
     updateCustomEndpointPreview();
+
+    if (settingsMigrated) {
+        saveSettingsDebounced();
+    }
 }
 
 function setNamesBehaviorControls() {
@@ -4636,9 +4812,7 @@ async function getStatusOpen() {
         await validateReverseProxy();
     }
 
-    if ([chat_completion_sources.CUSTOM, chat_completion_sources.CLAUDE, chat_completion_sources.DEEPSEEK].includes(oai_settings.chat_completion_source)) {
-        data.custom_include_headers = oai_settings.custom_include_headers;
-    }
+    applyAdditionalParametersToRequest(data, oai_settings, { includeBody: false });
 
     if (oai_settings.chat_completion_source === chat_completion_sources.CUSTOM) {
         $('.model_custom_select').empty();
@@ -4902,7 +5076,7 @@ async function onPresetImportFileChange(e) {
         return;
     }
 
-    const fields = sensitiveFields.filter(field => presetBody[field]).map(field => `<b>${field}</b>`);
+    const fields = sensitiveFields.filter(field => hasSensitiveFieldValue(presetBody[field])).map(field => `<b>${field}</b>`);
     const shouldConfirm = fields.length > 0;
 
     if (shouldConfirm) {
@@ -4985,7 +5159,9 @@ async function onExportPresetClick() {
 
     const preset = structuredClone(openai_settings[openai_setting_names[oai_settings.preset_settings_openai]]);
 
-    const fieldValues = sensitiveFields.filter(field => preset[field]).map(field => `<b>${field}</b>: <code>${preset[field]}</code>`);
+    const fieldValues = sensitiveFields
+        .filter(field => hasSensitiveFieldValue(preset[field]))
+        .map(field => `<b>${field}</b>: <code>${formatSensitiveFieldValue(preset[field])}</code>`);
     if (fieldValues.length > 0) {
         const textHeader = t`Your preset contains proxy and/or custom endpoint settings.`;
         const textMessage = '<div>' + t`Do you want to remove these fields before exporting?` + `</div><br>${DOMPurify.sanitize(fieldValues.join('<br>'))}`;
@@ -5139,9 +5315,12 @@ function onSettingsPresetChange() {
     const presetName = $('#settings_preset_openai').find(':selected').text();
     oai_settings.preset_settings_openai = presetName;
 
-    const preset = structuredClone(openai_settings[openai_setting_names[oai_settings.preset_settings_openai]]);
+    const presetIndex = openai_setting_names[oai_settings.preset_settings_openai];
+    const preset = structuredClone(openai_settings[presetIndex]);
 
-    migrateChatCompletionSettings(preset);
+    if (migrateChatCompletionSettings(preset)) {
+        openai_settings[presetIndex] = structuredClone(preset);
+    }
 
     const updateInput = (selector, value) => $(selector).val(value).trigger('input', { source: 'preset' });
     const updateCheckbox = (selector, value) => $(selector).prop('checked', value).trigger('input', { source: 'preset' });
@@ -6283,19 +6462,20 @@ function onProxyPasswordShowClick() {
 
 async function onCustomizeParametersClick() {
     const template = $(await renderTemplateAsync('customEndpointAdditionalParameters'));
+    const parameters = getAdditionalParametersForSource(oai_settings);
 
-    template.find('#custom_include_body').val(oai_settings.custom_include_body).on('input', function () {
-        oai_settings.custom_include_body = String($(this).val());
+    template.find('#custom_include_body').val(parameters.include_body).on('input', function () {
+        parameters.include_body = String($(this).val());
         saveSettingsDebounced();
     });
 
-    template.find('#custom_exclude_body').val(oai_settings.custom_exclude_body).on('input', function () {
-        oai_settings.custom_exclude_body = String($(this).val());
+    template.find('#custom_exclude_body').val(parameters.exclude_body).on('input', function () {
+        parameters.exclude_body = String($(this).val());
         saveSettingsDebounced();
     });
 
-    template.find('#custom_include_headers').val(oai_settings.custom_include_headers).on('input', function () {
-        oai_settings.custom_include_headers = String($(this).val());
+    template.find('#custom_include_headers').val(parameters.include_headers).on('input', function () {
+        parameters.include_headers = String($(this).val());
         saveSettingsDebounced();
     });
 

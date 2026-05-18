@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reqwest::header::AUTHORIZATION;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, RequestBuilder, StatusCode};
 use serde_json::Value;
 
@@ -177,27 +177,51 @@ impl HttpChatCompletionRepository {
         Self::apply_extra_headers_with_filter(request, headers, |_, _| false)
     }
 
+    fn apply_additional_headers(
+        request: RequestBuilder,
+        config: &ChatCompletionApiConfig,
+    ) -> RequestBuilder {
+        Self::apply_extra_headers(request, &config.additional_headers)
+    }
+
     fn apply_extra_headers_with_filter<F>(
-        mut request: RequestBuilder,
+        request: RequestBuilder,
         headers: &HashMap<String, String>,
         mut should_skip: F,
     ) -> RequestBuilder
     where
         F: FnMut(&str, &str) -> bool,
     {
+        let mut header_map = HeaderMap::new();
+
         for (key, value) in headers {
             if should_skip(key, value) {
                 continue;
             }
 
-            if key.trim().is_empty() || value.trim().is_empty() {
+            let key = key.trim();
+            let value = value.trim();
+            if key.is_empty() || value.is_empty() {
                 continue;
             }
 
-            request = request.header(key.as_str(), value.as_str());
+            let header_name = match HeaderName::from_bytes(key.as_bytes()) {
+                Ok(header_name) => header_name,
+                Err(_) => return request.header(key, value),
+            };
+            let header_value = match HeaderValue::from_str(value) {
+                Ok(header_value) => header_value,
+                Err(_) => return request.header(header_name, value),
+            };
+
+            header_map.insert(header_name, header_value);
         }
 
-        request
+        if header_map.is_empty() {
+            request
+        } else {
+            request.headers(header_map)
+        }
     }
 
     async fn map_error_response(
@@ -753,6 +777,7 @@ mod tests {
             api_key: "saved-secret".to_string(),
             authorization_header: Some("Bearer override".to_string()),
             extra_headers: HashMap::new(),
+            additional_headers: HashMap::new(),
             anthropic_beta_header_mode:
                 crate::domain::repositories::chat_completion_repository::AnthropicBetaHeaderMode::None,
         };
@@ -769,6 +794,36 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(values, vec!["Bearer override"]);
+    }
+
+    #[test]
+    fn additional_headers_replace_existing_header_values() {
+        let config = ChatCompletionApiConfig {
+            base_url: "https://example.com/v1".to_string(),
+            api_key: "saved-secret".to_string(),
+            authorization_header: None,
+            extra_headers: HashMap::new(),
+            additional_headers: HashMap::from([(
+                "Authorization".to_string(),
+                "Bearer final".to_string(),
+            )]),
+            anthropic_beta_header_mode:
+                crate::domain::repositories::chat_completion_repository::AnthropicBetaHeaderMode::None,
+        };
+
+        let request = Client::new().get("https://example.com");
+        let request = HttpChatCompletionRepository::apply_openai_auth(request, &config);
+        let request = HttpChatCompletionRepository::apply_additional_headers(request, &config);
+        let request = request.build().expect("request should build");
+
+        let values = request
+            .headers()
+            .get_all(AUTHORIZATION)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, vec!["Bearer final"]);
     }
 
     #[test]

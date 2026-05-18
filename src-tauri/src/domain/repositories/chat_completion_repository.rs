@@ -97,6 +97,7 @@ pub struct ChatCompletionApiConfig {
     pub api_key: String,
     pub authorization_header: Option<String>,
     pub extra_headers: HashMap<String, String>,
+    pub additional_headers: HashMap<String, String>,
     pub anthropic_beta_header_mode: AnthropicBetaHeaderMode,
 }
 
