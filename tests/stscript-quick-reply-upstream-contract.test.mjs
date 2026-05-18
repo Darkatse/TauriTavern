@@ -128,6 +128,16 @@ test('persona deletion invalidates the current-chat load guard before reselectin
     assert.match(deleteFn, /personaLastLoadedChatId = uuidv4\(\);\s*await loadPersonaForCurrentChat\(\{\s*doRender:\s*true\s*\}\);/);
 });
 
+test('connection manager exposes 1.18 streaming profile command', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/extensions/connection-manager/index.js'), 'utf8');
+    const names = extractCommandNames(source);
+
+    assert.ok(names.includes('profile-genstream'), 'missing connection-manager slash command: profile-genstream');
+    assert.match(source, /StreamingDisplay/);
+    assert.match(source, /ConnectionManagerRequestService\.getProfileIcon/);
+    assert.match(source, /formatReasoning/);
+});
+
 test('quick reply keeps Tauri chat input focus contract and 1.18 id assignment', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/extensions/quick-reply/src/QuickReplySet.js'), 'utf8');
 

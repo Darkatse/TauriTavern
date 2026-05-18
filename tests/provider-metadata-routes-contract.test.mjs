@@ -6,6 +6,7 @@ import { jsonResponse } from '../src/tauri/main/http-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerProviderRoutes } from '../src/tauri/main/routes/provider-routes.js';
 import { registerSettingsRoutes } from '../src/tauri/main/routes/settings-routes.js';
+import { registerVectorRoutes } from '../src/tauri/main/routes/vector-routes.js';
 
 const SECRET_BACKED_PROVIDER_METADATA_COMMANDS = [
     'get_openrouter_credits',
@@ -450,6 +451,73 @@ test('vectors source toggle exposes remote model failures without clearing curre
     ]);
     assert.equal(harness.consoleErrors.length, 1);
     assert.equal(harness.savedSettings.length, 0);
+});
+
+test('native vector endpoints fail fast while backend is not implemented', async () => {
+    const router = createRouteRegistry();
+    registerVectorRoutes(router, {}, { jsonResponse });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/vector/insert',
+        body: { collectionId: 'chat-1', items: [] },
+    });
+
+    assert.equal(response.status, 501);
+    assert.deepEqual(await response.json(), {
+        error: true,
+        cause: 'vector_endpoint_unavailable',
+        message: 'Vector Storage backend is not implemented in the native TauriTavern backend yet.',
+    });
+    assert.equal(router.canHandle('POST', '/api/vector/query'), true);
+
+    const unknownResponse = await router.handle({
+        method: 'POST',
+        path: '/api/vector/not-yet-known',
+        body: {},
+    });
+
+    assert.equal(unknownResponse.status, 404);
+    assert.deepEqual(await unknownResponse.json(), {
+        error: 'Unsupported vector endpoint: not-yet-known',
+    });
+});
+
+test('top-level native routes register vector fail-fast before provider routes', async () => {
+    const source = await readFile(new URL('../src/tauri/main/routes/index.js', import.meta.url), 'utf8');
+    const aiIndex = source.indexOf('registerAiRoutes(router, context, responses);');
+    const vectorIndex = source.indexOf('registerVectorRoutes(router, context, responses);');
+    const providerIndex = source.indexOf('registerProviderRoutes(router, context, responses);');
+
+    assert.match(source, /import \{ registerVectorRoutes \} from '\.\/vector-routes\.js';/);
+    assert.notEqual(aiIndex, -1);
+    assert.notEqual(vectorIndex, -1);
+    assert.notEqual(providerIndex, -1);
+    assert.ok(aiIndex < vectorIndex);
+    assert.ok(vectorIndex < providerIndex);
+});
+
+test('vectors runtime keeps upstream 1.18 summary skip settings and native fatal route semantics', async () => {
+    const source = await readFile(new URL('../src/scripts/extensions/vectors/index.js', import.meta.url), 'utf8');
+    const settingsHtml = await readFile(new URL('../src/scripts/extensions/vectors/settings.html', import.meta.url), 'utf8');
+
+    assert.match(source, /summary_retries: 2/);
+    assert.match(source, /summary_threshold: 200/);
+    assert.match(source, /keep_hidden: false/);
+    assert.match(source, /const skippedHashes = new Set\(\);/);
+    assert.match(source, /vector_endpoint_unavailable/);
+    assert.match(source, /function throwVectorResponseError\(response, action, collectionId = ''\)/);
+    assert.match(source, /\[404, 405, 501\]\.includes\(status\)/);
+    assert.match(source, /settings\.keep_hidden \|\| !x\.is_system/);
+    assert.match(source, /summarize\(toSummarize, settings\.summary_source, \{ skipOnFailure: true \}\)/);
+    assert.match(source, /skippedHashes\.add\(item\.hash\)/);
+
+    for (const id of ['vectors_keep_hidden', 'vectors_summary_retries', 'vectors_summary_threshold']) {
+        assert.match(settingsHtml, new RegExp(`id="${id}"`));
+        assert.match(source, new RegExp(`#${id}`));
+    }
+
+    assert.match(settingsHtml, /gemini-embedding-2-preview/);
 });
 
 test('unrelated secret mutations leave provider metadata caches intact', async () => {

@@ -90,6 +90,7 @@ async function loadConnectionManagerRequestService(deps) {
                 'SillyTavern',
                 'proxies',
                 'CONNECT_API_MAP',
+                'createModelIcon',
                 't',
                 `${declaration}\nreturn ConnectionManagerRequestService;`,
             );
@@ -97,7 +98,7 @@ async function loadConnectionManagerRequestService(deps) {
     }
 
     const factory = await connectionManagerRequestServicePromise;
-    return factory(deps.SillyTavern, deps.proxies, deps.CONNECT_API_MAP, templateText);
+    return factory(deps.SillyTavern, deps.proxies, deps.CONNECT_API_MAP, deps.createModelIcon ?? (() => null), templateText);
 }
 
 test('chat completion status route forwards secret_id to Rust DTO', async () => {
@@ -150,6 +151,7 @@ test('connection manager forwards profile secret id for completion requests', as
                         proxy: 'main-proxy',
                         'api-url': 'cn',
                         'prompt-post-processing': 'merge-tools',
+                        'custom-api-format': 'claude-messages',
                         'secret-id': 'chat-secret',
                     },
                     {
@@ -201,6 +203,7 @@ test('connection manager forwards profile secret id for completion requests', as
     assert.equal(chatRequests.length, 1);
     assert.equal(chatRequests[0][0].secret_id, 'chat-secret');
     assert.equal(chatRequests[0][0].chat_completion_source, 'minimax');
+    assert.equal(chatRequests[0][0].custom_api_format, 'claude-messages');
     assert.equal(chatRequests[0][0].minimax_endpoint, 'cn');
     assert.deepEqual(chatRequests[0][0].messages, [{ role: 'user', content: 'hello' }]);
     assert.equal(chatRequests[0][0].reverse_proxy, 'https://proxy.example/v1');
@@ -210,4 +213,53 @@ test('connection manager forwards profile secret id for completion requests', as
     assert.equal(textRequests[0][0].secret_id, 'text-secret');
     assert.equal(textRequests[0][0].api_type, 'koboldcpp');
     assert.equal(textRequests[0][0].api_server, 'https://text.example');
+});
+
+test('connection manager fails fast for native Text Completion profiles', async () => {
+    const CONNECT_API_MAP = {
+        koboldcpp: { selected: 'textgenerationwebui', type: 'koboldcpp' },
+    };
+    const context = {
+        CONNECT_API_MAP,
+        extensionSettings: {
+            disabledExtensions: [],
+            connectionManager: {
+                profiles: [{
+                    id: 'text-profile',
+                    api: 'koboldcpp',
+                    model: 'kobold-model',
+                    preset: 'text-preset',
+                    instruct: 'text-instruct',
+                    'api-url': 'https://text.example',
+                }],
+            },
+        },
+        TextCompletionService: {
+            processRequest: async () => {
+                throw new Error('should not call native text completion');
+            },
+        },
+    };
+    const ConnectionManagerRequestService = await loadConnectionManagerRequestService({
+        SillyTavern: { getContext: () => context },
+        proxies: [],
+        CONNECT_API_MAP,
+    });
+
+    globalThis.__TAURI_RUNNING__ = true;
+    try {
+        await assert.rejects(
+            () => ConnectionManagerRequestService.sendRequest('text-profile', 'hi', 77, {
+                includePreset: false,
+                includeInstruct: false,
+            }),
+            (error) => {
+                assert.equal(error.message, 'API request failed');
+                assert.match(error.cause?.message, /Text Completion profiles are not supported/);
+                return true;
+            },
+        );
+    } finally {
+        delete globalThis.__TAURI_RUNNING__;
+    }
 });

@@ -1,4 +1,4 @@
-import { CONNECT_API_MAP, getRequestHeaders } from '../../script.js';
+import { CONNECT_API_MAP, createModelIcon, getRequestHeaders } from '../../script.js';
 import { extension_settings, openThirdPartyExtensionMenu } from '../extensions.js';
 import { t } from '../i18n.js';
 import { oai_settings, proxies, ZAI_ENDPOINT } from '../openai.js';
@@ -443,6 +443,7 @@ export class ConnectionManagerRequestService {
                         max_tokens: maxTokens,
                         model: profile.model,
                         chat_completion_source: selectedApiMap.source,
+                        custom_api_format: profile['custom-api-format'],
                         secret_id: profile['secret-id'],
                         custom_url: profile['api-url'],
                         vertexai_region: profile['api-url'],
@@ -460,6 +461,9 @@ export class ConnectionManagerRequestService {
                 case 'textgenerationwebui': {
                     if (!selectedApiMap.type) {
                         throw new Error(`API type ${selectedApiMap.selected} does not support text completions`);
+                    }
+                    if (globalThis.__TAURI_RUNNING__ === true) {
+                        throw new Error('Text Completion profiles are not supported by the native TauriTavern generation backend yet. Use a Chat Completion profile.');
                     }
 
                     return await context.TextCompletionService.processRequest({
@@ -542,6 +546,29 @@ export class ConnectionManagerRequestService {
         const profile = SillyTavern.getContext().extensionSettings.connectionManager.profiles.find((p) => p.id === profileId);
         if (!profile) throw new Error(`Profile not found (ID: ${profileId})`);
         return profile;
+    }
+
+    /**
+     * Creates a model icon Image element for the given profile (or the currently selected profile).
+     * Returns null if the profile is not found, has no API, or Connection Manager is unavailable.
+     * @param {string} [profileId] - Profile ID. If omitted, uses the currently selected profile.
+     * @returns {HTMLImageElement | null}
+     */
+    static getProfileIcon(profileId) {
+        if ((SillyTavern.getContext()).extensionSettings.disabledExtensions.includes('connection-manager')) {
+            return null;
+        }
+
+        const id = profileId ?? (SillyTavern.getContext()).extensionSettings.connectionManager.selectedProfile;
+        if (!id) return null;
+
+        try {
+            const profile = this.getProfile(id);
+            if (!profile?.api) return null;
+            return createModelIcon(profile.api, profile.model);
+        } catch {
+            return null;
+        }
     }
 
     /**
