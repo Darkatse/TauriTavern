@@ -3001,6 +3001,9 @@
                             </div>
                             <div>
                                 <h4 data-i18n="OpenAI Model">OpenAI Model</h4>
+                                <input list="model_openai_select_fill" id="openai_model_id" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: gpt-4o" placeholder="Example: gpt-4o">
+                                <datalist id="model_openai_select_fill"></datalist>
+                                <h4 data-i18n="Available Models">Available Models</h4>
                                 <select id="model_openai_select">
                                     <optgroup label="GPT-5.2">
                                         <option value="gpt-5.2">gpt-5.2</option>
@@ -3109,6 +3112,9 @@
                             </div>
                             <div>
                                 <h4 data-i18n="Claude Model">Claude Model</h4>
+                                <input list="model_claude_select_fill" id="claude_model_id" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: claude-sonnet-4-5" placeholder="Example: claude-sonnet-4-5">
+                                <datalist id="model_claude_select_fill"></datalist>
+                                <h4 data-i18n="Available Models">Available Models</h4>
                                 <select id="model_claude_select">
                                     <optgroup label="Versions">
                                         <option value="claude-opus-4-7">claude-opus-4-7</option>
@@ -3267,6 +3273,9 @@
                             </div>
                             <div>
                                 <h4 data-i18n="Google Model">Google Model</h4>
+                                <input list="model_google_select_fill" id="google_model_id" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: gemini-2.5-pro" placeholder="Example: gemini-2.5-pro">
+                                <datalist id="model_google_select_fill"></datalist>
+                                <h4 data-i18n="Available Models">Available Models</h4>
                                 <select id="model_google_select">
                                     <optgroup label="Gemini 3.1">
                                         <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
@@ -3442,6 +3451,9 @@
                             <!-- Model Selection -->
                             <div>
                                 <h4 data-i18n="Google Model">Google Model</h4>
+                                <input list="model_vertexai_select_fill" id="vertexai_model_id" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: gemini-2.5-pro" placeholder="Example: gemini-2.5-pro">
+                                <datalist id="model_vertexai_select_fill"></datalist>
+                                <h4 data-i18n="Available Models">Available Models</h4>
                                 <select id="model_vertexai_select">
                                     <!-- data-mode="full" is for models that require a service account -->
                                     <optgroup label="Gemini 3.1">
@@ -3480,6 +3492,9 @@
                             </div>
                             <div>
                                 <h4 data-i18n="MistralAI Model">MistralAI Model</h4>
+                                <input list="model_mistralai_select_fill" id="mistralai_model_id" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: mistral-large-latest" placeholder="Example: mistral-large-latest">
+                                <datalist id="model_mistralai_select_fill"></datalist>
+                                <h4 data-i18n="Available Models">Available Models</h4>
                                 <select id="model_mistralai_select">
                                     <option data-i18n="-- Connect to the API --" value="">-- Connect to the API --</option>
                                 </select>
@@ -3639,6 +3654,9 @@
                             </div>
                             <div>
                                 <h4 data-i18n="DeepSeek Model">DeepSeek Model</h4>
+                                <input list="model_deepseek_select_fill" id="deepseek_model_id" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: deepseek-chat" placeholder="Example: deepseek-chat">
+                                <datalist id="model_deepseek_select_fill"></datalist>
+                                <h4 data-i18n="Available Models">Available Models</h4>
                                 <select id="model_deepseek_select">
                                     <option value="deepseek-v4-flash">deepseek-v4-flash</option>
                                     <option value="deepseek-v4-pro">deepseek-v4-pro</option>
@@ -3808,6 +3826,9 @@
                             </div>
                             <div>
                                 <h4 data-i18n="xAI Model">xAI Model</h4>
+                                <input list="model_xai_select_fill" id="xai_model_id" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: grok-3-beta" placeholder="Example: grok-3-beta">
+                                <datalist id="model_xai_select_fill"></datalist>
+                                <h4 data-i18n="Available Models">Available Models</h4>
                                 <select id="model_xai_select">
                                     <option value="" data-i18n="-- Connect to the API --">-- Connect to the API --</option>
                                 </select>
@@ -3860,6 +3881,9 @@
                                 For privacy reasons, your API key will be hidden after you click 'Connect'.
                             </div>
                             <h4 data-i18n="Moonshot AI Model">Moonshot AI Model</h4>
+                            <input list="model_moonshot_select_fill" id="moonshot_model_id" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: kimi-k2-0711-preview" placeholder="Example: kimi-k2-0711-preview">
+                            <datalist id="model_moonshot_select_fill"></datalist>
+                            <h4 data-i18n="Available Models">Available Models</h4>
                             <select id="model_moonshot_select">
                                 <option value="kimi-k2-0711-preview">kimi-k2-0711-preview</option>
                                 <option value="moonshot-v1-8k">moonshot-v1-8k</option>
@@ -3892,6 +3916,9 @@
                                 <option value="coding" data-i18n="Coding API">Coding API</option>
                             </select>
                             <h4 data-i18n="Z.AI Model">Z.AI Model</h4>
+                            <input list="model_zai_select_fill" id="zai_model_id" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: glm-4.6" placeholder="Example: glm-4.6">
+                            <datalist id="model_zai_select_fill"></datalist>
+                            <h4 data-i18n="Available Models">Available Models</h4>
                             <select id="model_zai_select">
                                 <option value="glm-5">glm-5</option>
                                 <option value="glm-4.7">glm-4.7</option>
@@ -3954,18 +3981,15 @@
                                 <small data-i18n="The underlying model of your deployment. This is detected automatically when you connect.">The underlying model of your deployment. This is detected automatically when you connect.</small>
                             </div>
                         </div>
-                        <div id="chat_completion_custom_models" data-source="openai,claude,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,electronhub,chutes,nanogpt,deepseek,aimlapi,xai,pollinations,moonshot,fireworks,cometapi,zai,siliconflow">
-                            <h4>
-                                <span data-i18n="Custom Model List">Custom Model List</span>
-                                <small>
-                                    (<span id="chat_completion_custom_models_source_name"></span>)
-                                </small>
-                            </h4>
-                            <div class="toggle-description justifyLeft wide100p">
-                                <span data-i18n="Add model IDs that are not returned by the selected API. Use one model ID per line.">Add model IDs that are not returned by the selected API. Use one model ID per line.</span>
+                        <div id="chat_completion_custom_models">
+                            <h4 data-i18n="Custom Models (Current Source)">Custom Models (Current Source)</h4>
+                            <div class="toggle-description justifyLeft">
+                                <span data-i18n="One model ID per line. Applies to the currently selected API source.">
+                                    One model ID per line. Applies to the currently selected API source.
+                                </span>
                             </div>
-                            <textarea id="chat_completion_custom_models_text" class="text_pole textarea_compact monospace" rows="4" placeholder="model-id-1&#10;model-id-2"></textarea>
-                            <div class="flex-container justifyRight marginTopBot5">
+                            <textarea id="chat_completion_custom_models_text" class="text_pole autoSetHeight wide100p" rows="4" data-i18n="[placeholder]Example: my-model-id" placeholder="Example: my-model-id"></textarea>
+                            <div class="flex-container marginTopBot5">
                                 <div id="chat_completion_custom_models_apply" class="menu_button menu_button_icon" data-i18n="Apply Custom Models">Apply Custom Models</div>
                             </div>
                         </div>
