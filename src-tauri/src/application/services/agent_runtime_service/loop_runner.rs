@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::model_turn::{
     append_tool_turn_to_request, assistant_message_for_next_turn, extract_response_text,
@@ -10,8 +10,21 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{AgentToolEffect, AgentToolSession};
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
-    AgentModelRequest, AgentRunEventLevel, AgentRunStatus, AgentToolResult, WorkspacePath,
+    AgentChatCommitMode, AgentModelRequest, AgentRunEventLevel, AgentRunStatus, AgentToolResult,
+    WorkspacePath,
 };
+
+/// Tracks a chat commit that the model produced during this run. When the
+/// run later fails because of instruction drift (issue #55), we surface
+/// these records on a `run_rollback_targets` event so the host UI can offer
+/// the user a clean Retry that discards the drift artifacts.
+#[derive(Debug, Clone)]
+struct CommittedChatMessage {
+    path: String,
+    mode: AgentChatCommitMode,
+    message_id: Option<String>,
+    round: usize,
+}
 
 impl AgentRuntimeService {
     pub(super) async fn run_tool_loop(
@@ -23,6 +36,7 @@ impl AgentRuntimeService {
     ) -> Result<Option<usize>, ApplicationError> {
         let mut tool_session = AgentToolSession::default();
         let mut commit_count = 0_usize;
+        let mut committed_messages: Vec<CommittedChatMessage> = Vec::new();
         for round in 1..=profile.tools.max_rounds {
             self.transition_status(run_id, AgentRunStatus::CallingModel)
                 .await?;
@@ -82,6 +96,8 @@ impl AgentRuntimeService {
             .await?;
 
             if tool_calls.is_empty() {
+                self.emit_run_rollback_targets(run_id, &committed_messages, "model.tool_call_required", round)
+                    .await?;
                 return Err(ApplicationError::ValidationError(
                     "model.tool_call_required: model must use Agent tools and finish through workspace_finish"
                         .to_string(),
@@ -94,6 +110,13 @@ impl AgentRuntimeService {
 
             for call in tool_calls {
                 if finished {
+                    self.emit_run_rollback_targets(
+                        run_id,
+                        &committed_messages,
+                        "agent.tool_after_finish",
+                        round,
+                    )
+                    .await?;
                     return Err(ApplicationError::ValidationError(
                         "agent.tool_after_finish: model requested additional tools after workspace.finish".to_string(),
                     ));
@@ -154,6 +177,12 @@ impl AgentRuntimeService {
                         message_id,
                     } => {
                         commit_count += 1;
+                        committed_messages.push(CommittedChatMessage {
+                            path: path.as_str().to_string(),
+                            mode: *mode,
+                            message_id: message_id.clone(),
+                            round,
+                        });
                         self.event(
                             run_id,
                             AgentRunEventLevel::Info,
@@ -195,7 +224,55 @@ impl AgentRuntimeService {
             self.ensure_not_cancelled(cancel)?;
         }
 
+        // We ran out of rounds before workspace_finish was called. Any
+        // commits made along the way are now orphaned — surface them so the
+        // host can offer a clean Retry that rolls them back.
+        self.emit_run_rollback_targets(
+            run_id,
+            &committed_messages,
+            "agent.max_tool_rounds_exceeded",
+            profile.tools.max_rounds,
+        )
+        .await?;
+
         Ok(None)
+    }
+
+    async fn emit_run_rollback_targets(
+        &self,
+        run_id: &str,
+        committed_messages: &[CommittedChatMessage],
+        reason_code: &str,
+        round: usize,
+    ) -> Result<(), ApplicationError> {
+        if committed_messages.is_empty() {
+            return Ok(());
+        }
+
+        let targets = committed_messages
+            .iter()
+            .map(|message| {
+                json!({
+                    "path": message.path,
+                    "mode": message.mode,
+                    "messageId": message.message_id.as_deref(),
+                    "round": message.round,
+                })
+            })
+            .collect::<Vec<_>>();
+        self.event(
+            run_id,
+            AgentRunEventLevel::Warn,
+            "run_rollback_targets",
+            json!({
+                "reasonCode": reason_code,
+                "round": round,
+                "targetCount": targets.len(),
+                "targets": Value::Array(targets),
+            }),
+        )
+        .await?;
+        Ok(())
     }
 
     async fn hydrate_recent_tool_results_for_model(
