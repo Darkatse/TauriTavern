@@ -16,20 +16,13 @@ impl ContentService {
 
     /// Initialize default content
     pub async fn initialize_default_content(&self, user_handle: &str) -> Result<(), DomainError> {
-        tracing::debug!("Initializing default content");
+        tracing::debug!("Synchronizing default content");
 
-        // Check if content is already initialized
-        if self.is_default_content_initialized(user_handle).await? {
-            tracing::debug!("Default content already initialized");
-            return Ok(());
-        }
-
-        // Copy default content to user directory
         self.content_repository
             .copy_default_content_to_user(user_handle)
             .await?;
 
-        tracing::debug!("Default content initialized successfully");
+        tracing::debug!("Default content synchronized successfully");
         Ok(())
     }
 

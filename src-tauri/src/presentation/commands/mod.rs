@@ -1,5 +1,6 @@
 // Tauri commands
 pub mod agent_commands;
+pub mod asset_commands;
 pub mod avatar_commands;
 pub mod background_commands;
 pub mod bootstrap_commands;

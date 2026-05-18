@@ -4,6 +4,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::application::services::agent_profile_service::AgentProfileService;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
+use crate::application::services::asset_service::AssetService;
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
 use crate::application::services::character_service::CharacterService;
@@ -49,6 +50,7 @@ pub struct AppState {
     pub secret_service: Arc<SecretService>,
     pub skill_service: Arc<SkillService>,
     pub content_service: Arc<ContentService>,
+    pub asset_service: Arc<AssetService>,
     pub extension_service: Arc<ExtensionService>,
     pub extension_store_service: Arc<ExtensionStoreService>,
     pub avatar_service: Arc<AvatarService>,
@@ -101,6 +103,7 @@ impl AppState {
             secret_service: services.secret_service,
             skill_service: services.skill_service,
             content_service: services.content_service,
+            asset_service: services.asset_service,
             extension_service: services.extension_service,
             extension_store_service: services.extension_store_service,
             avatar_service: services.avatar_service,

@@ -10,6 +10,7 @@ use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::agent_workspace_lifecycle_service::{
     AgentRunActivity, AgentWorkspaceLifecycleService,
 };
+use crate::application::services::asset_service::AssetService;
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
 use crate::application::services::character_service::CharacterService;
@@ -43,6 +44,7 @@ use crate::domain::errors::DomainError;
 use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
+use crate::domain::repositories::asset_repository::AssetRepository;
 use crate::domain::repositories::avatar_repository::AvatarRepository;
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::domain::repositories::character_repository::CharacterRepository;
@@ -86,6 +88,7 @@ use crate::infrastructure::logging::llm_api_logs::{
 use crate::infrastructure::persistence::file_system::DataDirectory;
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
+use crate::infrastructure::repositories::file_asset_repository::FileAssetRepository;
 use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
 use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
 use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
@@ -116,6 +119,7 @@ pub(super) struct AppServices {
     pub secret_service: Arc<SecretService>,
     pub skill_service: Arc<SkillService>,
     pub content_service: Arc<ContentService>,
+    pub asset_service: Arc<AssetService>,
     pub extension_service: Arc<ExtensionService>,
     pub extension_store_service: Arc<ExtensionStoreService>,
     pub avatar_service: Arc<AvatarService>,
@@ -152,6 +156,7 @@ struct AppRepositories {
     secret_repository: Arc<dyn SecretRepository>,
     skill_repository: Arc<dyn SkillRepository>,
     content_repository: Arc<dyn ContentRepository>,
+    asset_repository: Arc<dyn AssetRepository>,
     extension_repository: Arc<dyn ExtensionRepository>,
     extension_store_repository: Arc<dyn ExtensionStoreRepository>,
     avatar_repository: Arc<dyn AvatarRepository>,
@@ -212,6 +217,7 @@ pub(super) async fn build_services(
     };
 
     let content_service = Arc::new(ContentService::new(repositories.content_repository.clone()));
+    let asset_service = Arc::new(AssetService::new(repositories.asset_repository.clone()));
     let extension_service = Arc::new(ExtensionService::new(
         repositories.extension_repository.clone(),
     ));
@@ -340,6 +346,7 @@ pub(super) async fn build_services(
         secret_service,
         skill_service,
         content_service,
+        asset_service,
         extension_service,
         extension_store_service,
         avatar_service,
@@ -418,7 +425,14 @@ fn build_repositories(
 
     let content_repository: Arc<dyn ContentRepository> = Arc::new(FileContentRepository::new(
         app_handle.clone(),
+        data_root.clone(),
         default_user_dir.clone(),
+    ));
+
+    let asset_repository: Arc<dyn AssetRepository> = Arc::new(FileAssetRepository::new(
+        default_user_dir.clone(),
+        default_user_dir.join("assets"),
+        default_user_dir.join("characters"),
     ));
 
     let extension_repository: Arc<dyn ExtensionRepository> =
@@ -520,6 +534,7 @@ fn build_repositories(
         secret_repository,
         skill_repository,
         content_repository,
+        asset_repository,
         extension_repository,
         extension_store_repository,
         avatar_repository,

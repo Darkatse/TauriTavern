@@ -2,6 +2,7 @@
 pub mod agent_profile_repository;
 pub mod agent_run_repository;
 pub mod agent_workspace_lifecycle_repository;
+pub mod asset_repository;
 pub mod avatar_repository;
 pub mod background_repository;
 pub mod character_repository;

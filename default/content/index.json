@@ -500,7 +500,15 @@
         "type": "context"
     },
     {
+        "filename": "presets/context/Gemma 4.json",
+        "type": "context"
+    },
+    {
         "filename": "presets/instruct/Gemma 2.json",
+        "type": "instruct"
+    },
+    {
+        "filename": "presets/instruct/Gemma 4.json",
         "type": "instruct"
     },
     {
@@ -598,5 +606,33 @@
     {
         "filename": "presets/reasoning/Blank.json",
         "type": "reasoning"
+    },
+    {
+        "filename": "presets/reasoning/Gemma 4.json",
+        "type": "reasoning"
+    },
+    {
+        "filename": "presets/reasoning/Think XML.json",
+        "type": "reasoning"
+    },
+    {
+        "filename": "user.css",
+        "type": "stylesheet"
+    },
+    {
+        "filename": "errors/forbidden-by-whitelist.html",
+        "type": "error_page"
+    },
+    {
+        "filename": "errors/host-not-allowed.html",
+        "type": "error_page"
+    },
+    {
+        "filename": "errors/unauthorized.html",
+        "type": "error_page"
+    },
+    {
+        "filename": "errors/url-not-found.html",
+        "type": "error_page"
     }
 ]

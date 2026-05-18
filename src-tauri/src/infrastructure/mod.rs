@@ -4,6 +4,7 @@ pub mod apis;
 pub mod apple_webview_js_dialogs;
 pub mod assets;
 pub mod css_compat;
+pub mod data_root_content_dirs;
 pub mod github;
 pub mod http_client;
 pub mod http_client_pool;

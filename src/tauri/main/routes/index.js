@@ -13,6 +13,7 @@ import { registerProviderRoutes } from './provider-routes.js';
 import { registerStatsRoutes } from './stats-routes.js';
 import { registerWorldInfoRoutes } from './worldinfo-routes.js';
 import { registerContentRoutes } from './content-routes.js';
+import { registerAssetsRoutes } from './assets-routes.js';
 import { registerSdRoutes } from './sd-routes.js';
 import { registerTranslateRoutes } from './translate-routes.js';
 import { registerTtsRoutes } from './tts-routes.js';
@@ -30,6 +31,7 @@ export function registerRoutes(router, context, responses) {
     registerChatRoutes(router, context, responses);
     registerBackupsRoutes(router, context, responses);
     registerContentRoutes(router, context, responses);
+    registerAssetsRoutes(router, context, responses);
     registerWorldInfoRoutes(router, context, responses);
     registerAiRoutes(router, context, responses);
     registerVectorRoutes(router, context, responses);

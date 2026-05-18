@@ -5,6 +5,7 @@ pub mod agent_profile_service;
 pub mod agent_runtime_service;
 pub mod agent_tools;
 pub mod agent_workspace_lifecycle_service;
+pub mod asset_service;
 pub mod avatar_service;
 pub mod background_service;
 pub mod character_service;
