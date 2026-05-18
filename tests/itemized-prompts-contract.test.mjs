@@ -23,7 +23,7 @@ test('Itemized prompts use index+record schema and avoid chat-open migration wor
     const loadFn = extractBetween(
         source,
         'export async function loadItemizedPrompts(chatId) {',
-        'export async function saveItemizedPrompts(chatId) {',
+        'export async function saveItemizedPrompts(chatId,',
     );
 
     assert.match(loadFn, /await loadPromptIndex\(chatId\);/);
@@ -32,11 +32,83 @@ test('Itemized prompts use index+record schema and avoid chat-open migration wor
     assert.doesNotMatch(loadFn, /promptStorage\.getItem\(chatId\)/);
 });
 
+test('Itemized prompt lifecycle events wait for durable storage boundaries', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/itemized-prompts.js'), 'utf8');
+    const saveFn = extractBetween(
+        source,
+        'export async function saveItemizedPrompts(chatId,',
+        '/**\n * Replaces the itemized prompt text for a message.',
+    );
+    const deleteFn = extractBetween(
+        source,
+        'export async function deleteItemizedPrompts(chatId) {',
+        '/**\n * Empties the itemized prompts array and caches.',
+    );
+    const clearFn = extractBetween(
+        source,
+        'export async function clearItemizedPrompts() {',
+        'export function unloadItemizedPrompts() {',
+    );
+
+    assert.match(source, /async function flushPendingWritesDurable\(\)/);
+    assert.match(source, /const pendingIndexWrites = new Map\(\);/);
+    assert.match(source, /while \(pendingIndexWrites\.size > 0 && pendingRecordWrites\.size === 0\)/);
+
+    assert.match(saveFn, /requestIndexWrite\(chatId, entriesSnapshot\);\s*await flushPendingWritesDurable\(\);/);
+    assert.match(saveFn, /requestIndexWrite\(activeChatId, itemizedPrompts\);\s*await flushPendingWritesDurable\(\);/);
+    assert.match(saveFn, /await flushPendingWritesDurable\(\);[\s\S]*ITEMIZED_PROMPTS_SAVED/);
+
+    assert.match(deleteFn, /cancelPendingWritesForChat\(chatId\);\s*await waitForActiveFlush\(\);/);
+    assert.match(deleteFn, /await waitForActiveFlush\(\);[\s\S]*promptStorage\.keys\(\)/);
+    assert.match(deleteFn, /promptStorage\.removeItem\(key\)[\s\S]*ITEMIZED_PROMPTS_DELETED/);
+
+    assert.match(clearFn, /pendingRecordWrites\.clear\(\);\s*pendingIndexWrites\.clear\(\);\s*await waitForActiveFlush\(\);\s*await promptStorage\.clear\(\);/);
+    assert.match(clearFn, /await promptStorage\.clear\(\);[\s\S]*ITEMIZED_PROMPTS_DELETED/);
+});
+
 test('Chat rendering and generation rely on index presence, not whole records', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8');
+    const saveConditionalFn = extractBetween(
+        source,
+        'export async function saveChatConditional() {',
+        '/**\n * Saves the chat to the server.',
+    );
 
     assert.match(source, /hasItemizedPromptForMessage\(messageId\)/);
     assert.match(source, /upsertItemizedPromptRecord\(additionalPromptStuff\)/);
+    assert.match(saveConditionalFn, /const chatId = getCurrentChatId\(\);\s*const tokenCacheSaveState = captureTokenCacheSaveState\(chatId\);\s*const itemizedPromptsSnapshot = captureItemizedPromptsSaveSnapshot\(chatId\);/);
+    assert.match(saveConditionalFn, /enqueueChatSave\(async \(\) => \{\s*await saveTokenCache\(tokenCacheSaveState\);/);
+    assert.match(saveConditionalFn, /await saveItemizedPrompts\(chatId,\s*\{\s*entriesSnapshot: itemizedPromptsSnapshot,\s*cloneFromActive: false,\s*\}\);/);
+    assert.doesNotMatch(saveConditionalFn, /saveItemizedPrompts\(getCurrentChatId\(\)\)/);
 
     assert.doesNotMatch(source, /itemizedPrompts\.push\(additionalPromptStuff\)/);
+});
+
+test('Itemized prompt public lifecycle functions reject directly on storage failures', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/itemized-prompts.js'), 'utf8');
+    const loadFn = extractBetween(
+        source,
+        'export async function loadItemizedPrompts(chatId) {',
+        'export async function saveItemizedPrompts(chatId,',
+    );
+    const saveFn = extractBetween(
+        source,
+        'export async function saveItemizedPrompts(chatId,',
+        '/**\n * Replaces the itemized prompt text for a message.',
+    );
+    const deleteFn = extractBetween(
+        source,
+        'export async function deleteItemizedPrompts(chatId) {',
+        '/**\n * Empties the itemized prompts array and caches.',
+    );
+    const clearFn = extractBetween(
+        source,
+        'export async function clearItemizedPrompts() {',
+        'export function unloadItemizedPrompts() {',
+    );
+
+    for (const fn of [loadFn, saveFn, deleteFn, clearFn]) {
+        assert.doesNotMatch(fn, /queueMicrotask/);
+        assert.match(fn, /catch \(error\) \{[\s\S]*throw error;/);
+    }
 });

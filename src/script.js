@@ -284,7 +284,7 @@ import {
     getInstructStoppingSequences,
 } from './scripts/instruct-mode.js';
 import { initLocales, t, translate } from './scripts/i18n.js';
-import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
+import { captureTokenCacheSaveState, getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
 import {
     user_avatar,
     primeUserAvatarsSnapshot,
@@ -338,7 +338,7 @@ import { extractReasoningFromData, extractReasoningSignatureFromData, initReason
 import { accountStorage } from './scripts/util/AccountStorage.js';
 import { initWelcomeScreen, openPermanentAssistantChat, openPermanentAssistantCard, getPermanentAssistantAvatar } from './scripts/welcome-screen.js';
 import { initDataMaid } from './scripts/data-maid.js';
-import { clearItemizedPrompts, deleteItemizedPromptForMessage, deleteItemizedPrompts, findItemizedPromptSet, hasItemizedPromptForMessage, initItemizedPrompts, itemizedParams, itemizedPrompts, loadItemizedPrompts, promptItemize, replaceItemizedPromptText, saveItemizedPrompts, swapItemizedPrompts, unloadItemizedPrompts, upsertItemizedPromptRecord } from './scripts/itemized-prompts.js';
+import { captureItemizedPromptsSaveSnapshot, clearItemizedPrompts, deleteItemizedPromptForMessage, deleteItemizedPrompts, findItemizedPromptSet, hasItemizedPromptForMessage, initItemizedPrompts, itemizedParams, itemizedPrompts, loadItemizedPrompts, promptItemize, replaceItemizedPromptText, saveItemizedPrompts, swapItemizedPrompts, unloadItemizedPrompts, upsertItemizedPromptRecord } from './scripts/itemized-prompts.js';
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
 import { event_types, eventSource } from './scripts/events.js';
 import { initAccessibility } from './scripts/a11y.js';
@@ -10456,10 +10456,15 @@ export async function saveChatConditional() {
 
         // Keep prompt/token persistence serialized with chat writes to avoid
         // chat switches corrupting per-chat IndexedDB state.
-        const postSavePromise = enqueueChatSave(() => {
-            saveTokenCache();
-            saveItemizedPrompts(getCurrentChatId());
-            return Promise.resolve();
+        const chatId = getCurrentChatId();
+        const tokenCacheSaveState = captureTokenCacheSaveState(chatId);
+        const itemizedPromptsSnapshot = captureItemizedPromptsSaveSnapshot(chatId);
+        const postSavePromise = enqueueChatSave(async () => {
+            await saveTokenCache(tokenCacheSaveState);
+            await saveItemizedPrompts(chatId, {
+                entriesSnapshot: itemizedPromptsSnapshot,
+                cloneFromActive: false,
+            });
         });
 
         await savePromise;
@@ -11761,6 +11766,7 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
  * @param {string} param.oldFileName Old name of the chat (no JSONL extension)
  * @param {string} param.newFileName New name for the chat (no JSONL extension)
  * @param {boolean} [param.loader=true] Whether to show loader during the operation
+ * @returns {Promise<string|undefined>} Backend-committed chat file stem, or undefined if the rename was cancelled/failed
  */
 export async function renameGroupOrCharacterChat({ characterId, groupId, oldFileName, newFileName, loader: showLoader }) {
     const currentChatId = getCurrentChatId();
@@ -11773,11 +11779,11 @@ export async function renameGroupOrCharacterChat({ characterId, groupId, oldFile
 
     if (body.original_file === body.renamed_file) {
         console.debug('Chat rename cancelled, old and new names are the same');
-        return;
+        return undefined;
     }
     if (equalsIgnoreCaseAndAccents(body.original_file, body.renamed_file)) {
         toastr.warning(t`Name not accepted, as it is the same as before (ignoring case and accents).`, t`Rename Chat`);
-        return;
+        return undefined;
     }
 
     const loaderHandle = showLoader ? loader.show({
@@ -11794,24 +11800,22 @@ export async function renameGroupOrCharacterChat({ characterId, groupId, oldFile
             headers: getRequestHeaders(),
         });
 
-        if (!response.ok) {
-            throw new Error('Unsuccessful request.');
-        }
-
         const data = await response.json();
 
-        if (data.error) {
-            throw new Error('Server returned an error.');
+        if (!response.ok || data.error) {
+            throw new Error(data.details || (typeof data.error === 'string' ? data.error : 'Server returned an error.'));
         }
 
-        if (data.sanitizedFileName) {
-            newFileName = data.sanitizedFileName;
+        if (typeof data.sanitizedFileName !== 'string' || !data.sanitizedFileName) {
+            throw new Error('Server did not return renamed chat file name.');
         }
+
+        const committedFileName = data.sanitizedFileName;
 
         if (groupId) {
-            await renameGroupChat(groupId, oldFileName, newFileName);
+            await renameGroupChat(groupId, oldFileName, committedFileName);
         } else if (characterId !== undefined && String(characterId) === String(this_chid) && characters[characterId]?.chat === oldFileName) {
-            characters[characterId].chat = newFileName;
+            characters[characterId].chat = committedFileName;
             $('#selected_chat_pole').val(characters[characterId].chat);
             await createOrEditCharacter();
         }
@@ -11820,11 +11824,14 @@ export async function renameGroupOrCharacterChat({ characterId, groupId, oldFile
             await reloadCurrentChat();
         }
 
-        const eventData = { avatarId: body.avatar_url, groupId, oldFileName: body.original_file, newFileName: body.renamed_file };
+        const eventData = { avatarId: body.avatar_url, groupId, oldFileName: body.original_file, newFileName: `${committedFileName}.jsonl` };
         await eventSource.emit(event_types.CHAT_RENAMED, eventData);
-    } catch {
+        return committedFileName;
+    } catch (error) {
+        console.error('Failed to rename chat:', error);
         await delay(500);
         await callGenericPopup('An error has occurred. Chat was not renamed.', POPUP_TYPE.TEXT);
+        return undefined;
     } finally {
         await loaderHandle?.hide();
     }

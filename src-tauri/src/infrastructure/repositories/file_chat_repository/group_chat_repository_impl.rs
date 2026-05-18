@@ -6,6 +6,7 @@ use serde_json::Value;
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
+use crate::domain::models::chat::strip_jsonl_extension;
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
@@ -90,7 +91,7 @@ impl GroupChatRepository for FileChatRepository {
             let mut summary = entry.summary.clone();
             summary.chat_metadata = None;
 
-            let file_stem = Self::strip_jsonl_extension(&descriptor.file_name);
+            let file_stem = strip_jsonl_extension(&descriptor.file_name);
             if Self::file_stem_matches_all(file_stem, &fragments) {
                 results.push(summary);
                 continue;
@@ -124,7 +125,7 @@ impl GroupChatRepository for FileChatRepository {
         &self,
         chat_id: &str,
     ) -> Result<std::path::PathBuf, DomainError> {
-        let path = self.get_group_chat_path(chat_id);
+        let path = self.get_group_chat_path(chat_id)?;
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Group chat not found: {}",
@@ -184,8 +185,8 @@ impl GroupChatRepository for FileChatRepository {
         force: bool,
     ) -> Result<(), DomainError> {
         self.ensure_directory_exists().await?;
-        let path = self.get_group_chat_path(chat_id);
-        let backup_key = format!("group:{}", Self::strip_jsonl_extension(chat_id));
+        let path = self.get_group_chat_path(chat_id)?;
+        let backup_key = Self::get_group_backup_key(chat_id)?;
         self.write_payload_file_to_path(&path, source_path, force, chat_id, &backup_key)
             .await?;
         self.remove_summary_cache_for_path(&path).await;
@@ -193,7 +194,7 @@ impl GroupChatRepository for FileChatRepository {
     }
 
     async fn delete_group_chat_payload(&self, chat_id: &str) -> Result<(), DomainError> {
-        let path = self.get_group_chat_path(chat_id);
+        let path = self.get_group_chat_path(chat_id)?;
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Group chat not found: {}",
@@ -212,8 +213,13 @@ impl GroupChatRepository for FileChatRepository {
         &self,
         old_file_name: &str,
         new_file_name: &str,
-    ) -> Result<(), DomainError> {
-        let old_path = self.get_group_chat_path(old_file_name);
+    ) -> Result<String, DomainError> {
+        let old_path = self.get_group_chat_path(old_file_name)?;
+        let new_path = self.get_group_chat_path(new_file_name)?;
+        let (_old_payload_guard, _new_payload_guard) = self
+            .acquire_payload_rename_locks(&old_path, &new_path)
+            .await;
+
         if !old_path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Group chat not found: {}",
@@ -221,7 +227,7 @@ impl GroupChatRepository for FileChatRepository {
             )));
         }
 
-        let new_path = self.get_group_chat_path(new_file_name);
+        let committed_file_name = Self::normalize_jsonl_file_stem(new_file_name)?;
         if new_path.exists() {
             return Err(DomainError::InvalidData(format!(
                 "Group chat already exists: {}",
@@ -229,24 +235,20 @@ impl GroupChatRepository for FileChatRepository {
             )));
         }
 
-        fs::copy(&old_path, &new_path).await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to copy group chat file: {}", e))
-        })?;
-
-        fs::remove_file(&old_path).await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to remove old group chat file: {}", e))
+        fs::rename(&old_path, &new_path).await.map_err(|e| {
+            DomainError::InternalError(format!("Failed to rename group chat file: {}", e))
         })?;
         self.remove_summary_cache_for_path(&old_path).await;
         self.remove_summary_cache_for_path(&new_path).await;
 
-        Ok(())
+        Ok(committed_file_name)
     }
 
     async fn import_group_chat_payload(&self, file_path: &Path) -> Result<String, DomainError> {
         self.ensure_directory_exists().await?;
 
-        let chat_id = self.next_group_chat_id();
-        let target_path = self.get_group_chat_path(&chat_id);
+        let chat_id = self.next_group_chat_id()?;
+        let target_path = self.get_group_chat_path(&chat_id)?;
 
         fs::copy(file_path, &target_path).await.map_err(|e| {
             DomainError::InternalError(format!("Failed to import group chat file: {}", e))
@@ -266,7 +268,7 @@ impl GroupChatRepository for FileChatRepository {
     }
 
     async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Value, DomainError> {
-        let path = self.get_group_chat_path(chat_id);
+        let path = self.get_group_chat_path(chat_id)?;
         self.read_chat_metadata_from_path(&path).await
     }
 
@@ -276,7 +278,7 @@ impl GroupChatRepository for FileChatRepository {
         namespace: &str,
         value: Value,
     ) -> Result<(), DomainError> {
-        let path = self.get_group_chat_path(chat_id);
+        let path = self.get_group_chat_path(chat_id)?;
         self.set_chat_metadata_extension_in_path(&path, namespace, value)
             .await
     }
@@ -380,7 +382,7 @@ impl FileChatRepository {
         let filter_key = if let Some(chat_ids) = chat_ids {
             let mut normalized_ids: Vec<String> = chat_ids
                 .iter()
-                .map(|id| Self::strip_jsonl_extension(id).to_string())
+                .map(|id| strip_jsonl_extension(id).to_string())
                 .collect();
             normalized_ids.sort();
             normalized_ids.dedup();

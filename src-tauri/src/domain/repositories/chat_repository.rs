@@ -60,7 +60,7 @@ pub trait ChatRepository: Send + Sync {
         character_name: &str,
         old_file_name: &str,
         new_file_name: &str,
-    ) -> Result<(), DomainError>;
+    ) -> Result<String, DomainError>;
 
     /// Add a message to a chat
     async fn add_message(

@@ -77,6 +77,57 @@ test('common enum providers expose 1.18 STscript helper surface', async () => {
     assert.match(source, /export const commonEnumMatchProviders\s*=/);
 });
 
+test('persona slash commands expose SillyTavern 1.18 command surface', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/personas.js'), 'utf8');
+    const names = extractCommandNames(source);
+
+    for (const name of [
+        'persona-create',
+        'persona-update',
+        'persona-get',
+        'persona-delete',
+        'persona-duplicate',
+        'persona-lock',
+        'persona-set',
+        'persona-sync',
+    ]) {
+        assert.ok(names.includes(name), `missing persona slash command: ${name}`);
+    }
+
+    assert.match(source, /aliases:\s*\[\s*['"]persona-data['"]\s*\]/);
+});
+
+test('persona autocomplete calls the 1.18 higher-order enum provider', async () => {
+    const [personas, slashCommands] = await Promise.all([
+        readFile(path.join(REPO_ROOT, 'src/scripts/personas.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src/scripts/slash-commands.js'), 'utf8'),
+    ]);
+
+    assert.match(personas, /commonEnumProviders\.personas\(\{\s*allowPersonaKey:\s*true\s*\}\)/);
+    assert.match(slashCommands, /commonEnumProviders\.personas\(\{\s*allowPersonaKey:\s*true\s*\}\)/);
+    assert.doesNotMatch(personas, /enumProvider:\s*commonEnumProviders\.personas\s*[,}]/);
+    assert.doesNotMatch(slashCommands, /enumProvider:\s*commonEnumProviders\.personas\s*[,}]/);
+});
+
+test('persona slash helpers do not touch power-user enums during module evaluation', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/personas.js'), 'utf8');
+
+    assert.doesNotMatch(source, /const\s+POSITION_NAME_MAP\s*=\s*Object\.freeze/);
+    assert.match(source, /function parsePersonaPosition\(value\)[\s\S]*switch \(stringValue\)/);
+});
+
+test('persona deletion invalidates the current-chat load guard before reselecting', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/personas.js'), 'utf8');
+    const start = source.indexOf('async function deletePersona(');
+    const end = source.indexOf('async function deleteUserAvatar()');
+    assert.notEqual(start, -1, 'missing deletePersona');
+    assert.notEqual(end, -1, 'missing deleteUserAvatar');
+    const deleteFn = source.slice(start, end);
+
+    assert.match(source, /import\s+\{[\s\S]*\buuidv4\b[\s\S]*\}\s+from\s+'\.\/utils\.js';/);
+    assert.match(deleteFn, /personaLastLoadedChatId = uuidv4\(\);\s*await loadPersonaForCurrentChat\(\{\s*doRender:\s*true\s*\}\);/);
+});
+
 test('quick reply keeps Tauri chat input focus contract and 1.18 id assignment', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/extensions/quick-reply/src/QuickReplySet.js'), 'utf8');
 

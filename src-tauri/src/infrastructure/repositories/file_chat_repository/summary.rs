@@ -8,7 +8,7 @@ use tokio::fs::{self, File};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::chat::parse_message_timestamp_value;
+use crate::domain::models::chat::{parse_message_timestamp_value, strip_jsonl_extension};
 use crate::domain::repositories::chat_repository::ChatSearchResult;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::list_files_with_extension;
@@ -528,18 +528,18 @@ impl FileChatRepository {
         if let Some(chat_ids) = chat_ids {
             let id_set: HashSet<String> = chat_ids
                 .iter()
-                .map(|id| Self::strip_jsonl_extension(id).to_string())
+                .map(|id| strip_jsonl_extension(id).to_string())
                 .collect();
 
             let mut descriptors = Vec::new();
             for id in id_set {
-                let path = self.get_group_chat_path(&id);
+                let path = self.get_group_chat_path(&id)?;
                 if !path.exists() {
                     continue;
                 }
                 descriptors.push(ChatFileDescriptor {
                     character_name: String::new(),
-                    file_name: Self::normalize_jsonl_file_name(&id),
+                    file_name: Self::normalize_jsonl_file_name(&id)?,
                     path,
                 });
             }
@@ -650,7 +650,7 @@ impl FileChatRepository {
     ) -> Result<ChatSearchResult, DomainError> {
         self.ensure_directory_exists().await?;
 
-        let path = self.get_chat_path(character_name, file_name);
+        let path = self.get_chat_path(character_name, file_name)?;
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Chat not found: {}/{}",
@@ -660,7 +660,7 @@ impl FileChatRepository {
 
         let descriptor = ChatFileDescriptor {
             character_name: character_name.to_string(),
-            file_name: Self::normalize_jsonl_file_name(file_name),
+            file_name: Self::normalize_jsonl_file_name(file_name)?,
             path,
         };
 
@@ -674,7 +674,7 @@ impl FileChatRepository {
     ) -> Result<ChatSearchResult, DomainError> {
         self.ensure_directory_exists().await?;
 
-        let path = self.get_group_chat_path(chat_id);
+        let path = self.get_group_chat_path(chat_id)?;
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Group chat not found: {}",
@@ -684,7 +684,7 @@ impl FileChatRepository {
 
         let descriptor = ChatFileDescriptor {
             character_name: String::new(),
-            file_name: Self::normalize_jsonl_file_name(chat_id),
+            file_name: Self::normalize_jsonl_file_name(chat_id)?,
             path,
         };
 
@@ -850,7 +850,7 @@ impl FileChatRepository {
             signature,
             summary: ChatSearchResult {
                 character_name,
-                file_name: Self::normalize_jsonl_file_name(fallback_file_name),
+                file_name: Self::normalize_jsonl_file_name(fallback_file_name)?,
                 file_size: signature.size,
                 message_count,
                 preview,
@@ -876,7 +876,7 @@ impl FileChatRepository {
         let mut last_non_empty = String::new();
         let mut has_last_non_empty = false;
         let mut fingerprint = SearchFingerprint::new();
-        fingerprint.add_text(Self::strip_jsonl_extension(fallback_file_name));
+        fingerprint.add_text(strip_jsonl_extension(fallback_file_name));
 
         let mut line = String::new();
         loop {

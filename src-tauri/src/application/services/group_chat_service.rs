@@ -9,6 +9,7 @@ use crate::application::dto::chat_dto::{
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::AgentWorkspaceLifecycleService;
+use crate::application::services::chat_file_validation::validate_chat_file_name;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
@@ -300,6 +301,8 @@ impl GroupChatService {
         lines: Vec<String>,
         force: bool,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
+        validate_chat_file_name(chat_id, "Group chat id")?;
+
         self.group_chat_repository
             .save_group_chat_payload_windowed(chat_id, cursor, header, lines, force)
             .await
@@ -315,6 +318,8 @@ impl GroupChatService {
         op: ChatPayloadPatchOp,
         force: bool,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
+        validate_chat_file_name(chat_id, "Group chat id")?;
+
         self.group_chat_repository
             .patch_group_chat_payload_windowed(chat_id, cursor, header, op, force)
             .await
@@ -326,11 +331,7 @@ impl GroupChatService {
         &self,
         dto: SaveGroupChatFromFileDto,
     ) -> Result<(), ApplicationError> {
-        if dto.id.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "Group chat id cannot be empty".to_string(),
-            ));
-        }
+        validate_chat_file_name(&dto.id, "Group chat id")?;
 
         self.group_chat_repository
             .save_group_chat_payload_from_path(
@@ -344,11 +345,7 @@ impl GroupChatService {
 
     /// Delete a group chat payload file.
     pub async fn delete_group_chat(&self, dto: DeleteGroupChatDto) -> Result<(), ApplicationError> {
-        if dto.id.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "Group chat id cannot be empty".to_string(),
-            ));
-        }
+        validate_chat_file_name(&dto.id, "Group chat id")?;
 
         let target = AgentWorkspaceLifecycleService::group_target(&dto.id)?;
         self.agent_workspace_lifecycle_service
@@ -365,17 +362,18 @@ impl GroupChatService {
     }
 
     /// Rename a group chat payload file.
-    pub async fn rename_group_chat(&self, dto: RenameGroupChatDto) -> Result<(), ApplicationError> {
-        if dto.old_file_name.trim().is_empty() || dto.new_file_name.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "Group chat file name cannot be empty".to_string(),
-            ));
-        }
+    pub async fn rename_group_chat(
+        &self,
+        dto: RenameGroupChatDto,
+    ) -> Result<String, ApplicationError> {
+        validate_chat_file_name(&dto.old_file_name, "Old group chat file name")?;
+        validate_chat_file_name(&dto.new_file_name, "New group chat file name")?;
 
-        self.group_chat_repository
+        let committed_file_name = self
+            .group_chat_repository
             .rename_group_chat_payload(&dto.old_file_name, &dto.new_file_name)
             .await?;
-        Ok(())
+        Ok(committed_file_name)
     }
 
     /// Import a group chat payload and return the created chat id.

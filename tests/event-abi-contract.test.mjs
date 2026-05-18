@@ -75,3 +75,30 @@ test('TauriTavern keeps SETTINGS_LOADED in auto-fire events', async () => {
         /new\s+EventEmitter\(\[\s*event_types\.APP_READY,\s*event_types\.APP_INITIALIZED,\s*event_types\.SETTINGS_LOADED\s*\]\)/,
     );
 });
+
+test('chat rename events use backend-committed normalized file names', async () => {
+    const [script, welcomeScreen, route, chatCommand, groupCommand, chatService, groupService] = await Promise.all([
+        readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src/scripts/welcome-screen.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src/tauri/main/routes/chat-routes.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src-tauri/src/presentation/commands/chat_commands.rs'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src-tauri/src/presentation/commands/group_chat_commands.rs'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src-tauri/src/application/services/chat_service.rs'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src-tauri/src/application/services/group_chat_service.rs'), 'utf8'),
+    ]);
+
+    assert.match(route, /const sanitizedFileName = await context\.safeInvoke\('rename_group_chat'/);
+    assert.match(route, /const sanitizedFileName = await context\.safeInvoke\('rename_chat'/);
+    assert.match(route, /return jsonResponse\(\{\s*ok:\s*true,\s*sanitizedFileName\s*\}\)/);
+    assert.match(script, /const committedFileName = data\.sanitizedFileName;/);
+    assert.match(script, /newFileName:\s*`\$\{committedFileName\}\.jsonl`/);
+    assert.match(script, /return committedFileName;/);
+    assert.doesNotMatch(script, /newFileName:\s*body\.renamed_file/);
+    assert.match(welcomeScreen, /const committedFileName = await renameGroupOrCharacterChat/);
+    assert.match(welcomeScreen, /await updateRemoteChatName\(characterId,\s*committedFileName\)/);
+    assert.doesNotMatch(welcomeScreen, /await updateRemoteChatName\(characterId,\s*newName\)/);
+    assert.match(chatCommand, /pub async fn rename_chat\([\s\S]*\)\s*->\s*Result<String, CommandError>/);
+    assert.match(groupCommand, /pub async fn rename_group_chat\([\s\S]*\)\s*->\s*Result<String, CommandError>/);
+    assert.match(chatService, /pub async fn rename_chat\(&self, dto: RenameChatDto\)\s*->\s*Result<String, ApplicationError>/);
+    assert.match(groupService, /pub async fn rename_group_chat\([\s\S]*dto: RenameGroupChatDto,[\s\S]*\)\s*->\s*Result<String, ApplicationError>/);
+});

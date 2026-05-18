@@ -142,6 +142,29 @@ class PinnedChatsManager {
     }
 
     /**
+     * Migrates pinned state when a chat is renamed.
+     * @param {Partial<RecentChat>} recentChat Recent chat data with the original file name
+     * @param {string} newFileName New file name after rename
+     */
+    static rename(recentChat, newFileName) {
+        const oldKey = this.getKey(recentChat);
+        const pinState = { ...this.getState() };
+        if (!(oldKey in pinState)) {
+            return;
+        }
+
+        const updatedChat = { ...recentChat, file_name: newFileName };
+        const newKey = this.getKey(updatedChat);
+        pinState[newKey] = {
+            group: recentChat.group,
+            avatar: recentChat.avatar,
+            file_name: newFileName,
+        };
+        delete pinState[oldKey];
+        this.#saveState(pinState);
+    }
+
+    /**
      * Gets all pinned chats.
      * @returns {PinnedChat[]}
      */
@@ -497,13 +520,16 @@ async function renameRecentCharacterChat(avatarId, fileName) {
             console.log('No new name provided, aborting');
             return;
         }
-        await renameGroupOrCharacterChat({
+        const committedFileName = await renameGroupOrCharacterChat({
             characterId: String(characterId),
             oldFileName: fileName,
             newFileName: newName,
             loader: false,
         });
-        await updateRemoteChatName(characterId, newName);
+        if (!committedFileName) {
+            return;
+        }
+        await updateRemoteChatName(characterId, committedFileName);
         await refreshWelcomeScreen();
         toastr.success(t`Chat renamed.`);
     } catch (error) {
@@ -530,12 +556,15 @@ async function renameRecentGroupChat(groupId, fileName) {
             console.log('No new name provided, aborting');
             return;
         }
-        await renameGroupOrCharacterChat({
+        const committedFileName = await renameGroupOrCharacterChat({
             groupId: String(groupId),
             oldFileName: fileName,
             newFileName: String(newName),
             loader: false,
         });
+        if (!committedFileName) {
+            return;
+        }
         await refreshWelcomeScreen();
         toastr.success(t`Group chat renamed.`);
     } catch (error) {
@@ -839,5 +868,9 @@ export function initWelcomeScreen() {
         if (oldAvatar === getPermanentAssistantAvatar()) {
             accountStorage.setItem(assistantAvatarKey, newAvatar);
         }
+    });
+
+    eventSource.on(event_types.CHAT_RENAMED, ({ avatarId, groupId, oldFileName, newFileName }) => {
+        PinnedChatsManager.rename({ avatar: avatarId, group: groupId, file_name: oldFileName }, newFileName);
     });
 }

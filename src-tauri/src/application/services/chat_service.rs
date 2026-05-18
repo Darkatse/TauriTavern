@@ -11,6 +11,9 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::{
     AgentChatWorkspaceTarget, AgentWorkspaceLifecycleService,
 };
+use crate::application::services::chat_file_validation::{
+    validate_character_path_component, validate_chat_file_name,
+};
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentPersistentStatePrune;
@@ -154,7 +157,11 @@ impl ChatService {
     }
 
     /// Rename a chat
-    pub async fn rename_chat(&self, dto: RenameChatDto) -> Result<(), ApplicationError> {
+    pub async fn rename_chat(&self, dto: RenameChatDto) -> Result<String, ApplicationError> {
+        validate_character_path_component(&dto.character_name)?;
+        validate_chat_file_name(&dto.old_file_name, "Old chat file name")?;
+        validate_chat_file_name(&dto.new_file_name, "New chat file name")?;
+
         tracing::info!(
             "Renaming chat: {}/{} -> {}/{}",
             dto.character_name,
@@ -163,11 +170,12 @@ impl ChatService {
             dto.new_file_name
         );
 
-        self.chat_repository
+        let committed_file_name = self
+            .chat_repository
             .rename_chat(&dto.character_name, &dto.old_file_name, &dto.new_file_name)
             .await?;
 
-        Ok(())
+        Ok(committed_file_name)
     }
 
     /// Delete a chat
@@ -621,6 +629,9 @@ impl ChatService {
         lines: Vec<String>,
         force: bool,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
+        validate_character_path_component(character_name)?;
+        validate_chat_file_name(file_name, "Chat file name")?;
+
         self.chat_repository
             .save_chat_payload_windowed(character_name, file_name, cursor, header, lines, force)
             .await
@@ -637,6 +648,9 @@ impl ChatService {
         op: ChatPayloadPatchOp,
         force: bool,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
+        validate_character_path_component(character_name)?;
+        validate_chat_file_name(file_name, "Chat file name")?;
+
         self.chat_repository
             .patch_chat_payload_windowed(character_name, file_name, cursor, header, op, force)
             .await
@@ -648,11 +662,8 @@ impl ChatService {
         &self,
         dto: SaveChatFromFileDto,
     ) -> Result<(), ApplicationError> {
-        if dto.character_name.trim().is_empty() || dto.file_name.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "Character name and file name cannot be empty".to_string(),
-            ));
-        }
+        validate_character_path_component(&dto.character_name)?;
+        validate_chat_file_name(&dto.file_name, "Chat file name")?;
 
         self.chat_repository
             .save_chat_payload_from_path(

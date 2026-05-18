@@ -40,11 +40,13 @@ let indexWriteChain = Promise.resolve();
 /** @type {Map<string, any>} */
 const pendingRecordWrites = new Map();
 
-/** @type {{ chatId: string, entriesSnapshot: ItemizedPromptIndexEntry[] } | null} */
-let pendingIndexWrite = null;
+/** @type {Map<string, { chatId: string, entriesSnapshot: ItemizedPromptIndexEntry[] }>} */
+const pendingIndexWrites = new Map();
 
 let flushScheduled = false;
 let flushRunning = false;
+/** @type {Promise<void> | null} */
+let activeFlushPromise = null;
 
 function scheduleFlush() {
     if (flushScheduled) {
@@ -71,14 +73,7 @@ function flushPendingWrites(deadline) {
     }
 
     flushScheduled = false;
-    flushRunning = true;
-
-    void flushPendingWritesImpl(deadline).finally(() => {
-        flushRunning = false;
-        if (pendingRecordWrites.size > 0 || pendingIndexWrite) {
-            scheduleFlush();
-        }
-    }).catch((err) => {
+    void runPendingWritesFlush(deadline).catch((err) => {
         queueMicrotask(() => {
             throw err;
         });
@@ -87,8 +82,38 @@ function flushPendingWrites(deadline) {
 
 /**
  * @param {IdleDeadline | null} deadline
+ * @param {{ drainAll?: boolean }} [options]
  */
-async function flushPendingWritesImpl(deadline) {
+function runPendingWritesFlush(deadline, { drainAll = false } = {}) {
+    flushRunning = true;
+    activeFlushPromise = flushPendingWritesImpl(deadline, { drainAll }).finally(() => {
+        flushRunning = false;
+        activeFlushPromise = null;
+        if (pendingRecordWrites.size > 0 || pendingIndexWrites.size > 0) {
+            scheduleFlush();
+        }
+    });
+
+    return activeFlushPromise;
+}
+
+async function waitForActiveFlush() {
+    while (flushRunning && activeFlushPromise) {
+        await activeFlushPromise;
+    }
+}
+
+async function flushPendingWritesDurable() {
+    await waitForActiveFlush();
+    flushScheduled = false;
+    await runPendingWritesFlush(null, { drainAll: true });
+}
+
+/**
+ * @param {IdleDeadline | null} deadline
+ * @param {{ drainAll?: boolean }} [options]
+ */
+async function flushPendingWritesImpl(deadline, { drainAll = false } = {}) {
     const start = performance.now();
     const budgetMs = 8;
 
@@ -97,31 +122,50 @@ async function flushPendingWritesImpl(deadline) {
         pendingRecordWrites.delete(recordKey);
         await promptStorage.setItem(recordKey, record);
 
-        if (deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() < 1) {
+        if (!drainAll && deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() < 1) {
             break;
         }
 
-        if (performance.now() - start > budgetMs) {
+        if (!drainAll && performance.now() - start > budgetMs) {
             break;
         }
     }
 
-    if (pendingIndexWrite) {
-        const next = pendingIndexWrite;
-        pendingIndexWrite = null;
+    while (pendingIndexWrites.size > 0 && pendingRecordWrites.size === 0) {
+        const [chatId, next] = pendingIndexWrites.entries().next().value;
+        pendingIndexWrites.delete(chatId);
         await enqueueIndexWrite(next.chatId, next.entriesSnapshot);
+
+        if (!drainAll && deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() < 1) {
+            break;
+        }
+
+        if (!drainAll && performance.now() - start > budgetMs) {
+            break;
+        }
     }
 }
 
 function requestIndexWrite(chatId, entries) {
     const snapshot = entries.map((entry) => ({ mesId: entry.mesId, recordId: entry.recordId }));
-    pendingIndexWrite = { chatId, entriesSnapshot: snapshot };
+    pendingIndexWrites.set(chatId, { chatId, entriesSnapshot: snapshot });
     scheduleFlush();
 }
 
 function requestRecordWrite(recordKey, record) {
     pendingRecordWrites.set(recordKey, record);
     scheduleFlush();
+}
+
+function cancelPendingWritesForChat(chatId) {
+    pendingIndexWrites.delete(chatId);
+
+    const recordPrefix = getRecordKeyPrefix(chatId);
+    for (const pendingKey of pendingRecordWrites.keys()) {
+        if (pendingKey.startsWith(recordPrefix)) {
+            pendingRecordWrites.delete(pendingKey);
+        }
+    }
 }
 
 function getIndexKey(chatId) {
@@ -157,11 +201,7 @@ function enqueueIndexWrite(chatId, entriesSnapshot) {
     const snapshot = entriesSnapshot.map((entry) => ({ mesId: entry.mesId, recordId: entry.recordId }));
     const key = getIndexKey(chatId);
     const write = indexWriteChain.then(() => promptStorage.setItem(key, snapshot));
-    indexWriteChain = write.catch((error) => {
-        queueMicrotask(() => {
-            throw new Error(`Error saving itemized prompts index for chatId: ${chatId}`, { cause: error });
-        });
-    });
+    indexWriteChain = write.catch(() => undefined);
     return write;
 }
 
@@ -239,6 +279,14 @@ async function clonePromptStore(sourceChatId, targetChatId) {
     await promptStorage.setItem(getIndexKey(targetChatId), entriesSnapshot);
 }
 
+export function captureItemizedPromptsSaveSnapshot(chatId) {
+    if (!chatId || chatId !== activeChatId) {
+        return null;
+    }
+
+    return itemizedPrompts.map((entry) => ({ mesId: entry.mesId, recordId: entry.recordId }));
+}
+
 /**
  * Gets the itemized prompts for a chat.
  * @param {string} chatId Chat ID to load
@@ -253,28 +301,35 @@ export async function loadItemizedPrompts(chatId) {
         const index = await loadPromptIndex(chatId);
         if (index) {
             setActiveIndex(chatId, index);
+            await eventSource.emit(event_types.ITEMIZED_PROMPTS_LOADED, { chatId: chatId });
             return;
         }
     } catch (error) {
         clearActiveIndex();
-        queueMicrotask(() => {
-            throw error;
-        });
-        return;
+        throw error;
     }
 
     // Prompt Inspector is a low priority feature. We avoid per-chat legacy migration on chat open
     // to keep IndexedDB work off the hot path. Existing legacy data can be dropped.
     setActiveIndex(chatId, []);
+    await eventSource.emit(event_types.ITEMIZED_PROMPTS_LOADED, { chatId: chatId });
 }
 
 /**
  * Saves the itemized prompts for a chat.
  * @param {string} chatId Chat ID to save itemized prompts for
+ * @param {{ entriesSnapshot?: ItemizedPromptIndexEntry[] | null, cloneFromActive?: boolean }} [options]
  */
-export async function saveItemizedPrompts(chatId) {
+export async function saveItemizedPrompts(chatId, { entriesSnapshot = null, cloneFromActive = true } = {}) {
     try {
         if (!chatId) {
+            return;
+        }
+
+        if (Array.isArray(entriesSnapshot)) {
+            requestIndexWrite(chatId, entriesSnapshot);
+            await flushPendingWritesDurable();
+            await eventSource.emit(event_types.ITEMIZED_PROMPTS_SAVED, { chatId: chatId });
             return;
         }
 
@@ -282,16 +337,22 @@ export async function saveItemizedPrompts(chatId) {
             return;
         }
 
+        requestIndexWrite(activeChatId, itemizedPrompts);
+        await flushPendingWritesDurable();
+
         if (chatId === activeChatId) {
-            requestIndexWrite(activeChatId, itemizedPrompts);
+            await eventSource.emit(event_types.ITEMIZED_PROMPTS_SAVED, { chatId: chatId });
             return;
         }
 
+        if (!cloneFromActive) {
+            throw new Error(`Cannot save itemized prompts for inactive chatId: ${chatId}`);
+        }
+
         await clonePromptStore(activeChatId, chatId);
+        await eventSource.emit(event_types.ITEMIZED_PROMPTS_SAVED, { chatId: chatId });
     } catch (error) {
-        queueMicrotask(() => {
-            throw error;
-        });
+        throw error;
     }
 }
 
@@ -333,9 +394,8 @@ export async function deleteItemizedPrompts(chatId) {
             return;
         }
 
-        if (pendingIndexWrite?.chatId === chatId) {
-            pendingIndexWrite = null;
-        }
+        cancelPendingWritesForChat(chatId);
+        await waitForActiveFlush();
 
         const recordPrefix = getRecordKeyPrefix(chatId);
         const keys = await promptStorage.keys();
@@ -345,19 +405,13 @@ export async function deleteItemizedPrompts(chatId) {
                 .map((key) => promptStorage.removeItem(key)),
         );
 
-        for (const pendingKey of pendingRecordWrites.keys()) {
-            if (pendingKey.startsWith(recordPrefix)) {
-                pendingRecordWrites.delete(pendingKey);
-            }
-        }
-
         if (activeChatId === chatId) {
             clearActiveIndex();
         }
+
+        await eventSource.emit(event_types.ITEMIZED_PROMPTS_DELETED, { chatId: chatId, all: false });
     } catch (error) {
-        queueMicrotask(() => {
-            throw error;
-        });
+        throw error;
     }
 }
 
@@ -366,14 +420,14 @@ export async function deleteItemizedPrompts(chatId) {
  */
 export async function clearItemizedPrompts() {
     try {
-        await promptStorage.clear();
         pendingRecordWrites.clear();
-        pendingIndexWrite = null;
+        pendingIndexWrites.clear();
+        await waitForActiveFlush();
+        await promptStorage.clear();
         clearActiveIndex();
+        await eventSource.emit(event_types.ITEMIZED_PROMPTS_DELETED, { all: true });
     } catch (error) {
-        queueMicrotask(() => {
-            throw error;
-        });
+        throw error;
     }
 }
 

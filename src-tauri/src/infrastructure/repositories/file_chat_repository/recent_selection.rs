@@ -1,6 +1,7 @@
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
+use crate::domain::models::chat::strip_jsonl_extension;
 
 use super::FileChatRepository;
 use super::summary::ChatFileDescriptor;
@@ -17,26 +18,24 @@ impl FileChatRepository {
         file_name: &str,
     ) -> Option<String> {
         let normalized_character = character_name.trim();
-        let normalized_file = file_name.trim();
-        if normalized_character.is_empty() || normalized_file.is_empty() {
+        if normalized_character.is_empty() || file_name.trim().is_empty() {
             return None;
         }
 
         Some(format!(
             "{}/{}",
             normalized_character,
-            Self::normalize_jsonl_file_name(normalized_file)
+            Self::normalize_jsonl_file_name(file_name).ok()?
         ))
     }
 
     pub(super) fn group_recent_pin_key(chat_id: &str) -> Option<String> {
-        let normalized_chat_id = chat_id.trim();
-        if normalized_chat_id.is_empty() {
+        if chat_id.trim().is_empty() {
             return None;
         }
 
-        let normalized_file = Self::normalize_jsonl_file_name(normalized_chat_id);
-        Some(Self::strip_jsonl_extension(&normalized_file).to_string())
+        let normalized_file = Self::normalize_jsonl_file_name(chat_id).ok()?;
+        Some(strip_jsonl_extension(&normalized_file).to_string())
     }
 
     pub(super) async fn select_recent_descriptors<F>(

@@ -3,10 +3,63 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+use crate::domain::models::character::{
+    MAX_SANITIZED_FILENAME_BYTES, sanitize_filename, truncate_utf8_bytes,
+};
+
+const CHAT_FILE_EXTENSION: &str = ".jsonl";
+const MAX_CHAT_FILE_STEM_BYTES: usize = MAX_SANITIZED_FILENAME_BYTES - CHAT_FILE_EXTENSION.len();
+
 /// Format a date in the SillyTavern format (YYYY-MM-DD@HHhMMmSSs)
 pub fn humanized_date(date: DateTime<Utc>) -> String {
     let local = date.with_timezone(&Local);
     local.format("%Y-%m-%d@%Hh%Mm%Ss").to_string()
+}
+
+/// Remove the final lowercase `.jsonl` suffix when present.
+///
+/// This intentionally mirrors SillyTavern's case-sensitive chat file contract:
+/// `Story.JSONL` is a stem, not an extension.
+pub fn strip_jsonl_extension(file_name: &str) -> &str {
+    file_name
+        .strip_suffix(CHAT_FILE_EXTENSION)
+        .unwrap_or(file_name)
+}
+
+fn sanitize_chat_file_name(file_name: &str) -> String {
+    let stem = strip_jsonl_extension(file_name);
+    sanitize_filename(&format!("{stem}{CHAT_FILE_EXTENSION}"))
+}
+
+/// Normalize a chat payload file name using SillyTavern's full `name + .jsonl` contract.
+///
+/// Returns `None` when sanitization would erase the stem or truncate away the
+/// required `.jsonl` suffix. Callers should surface that as a validation error
+/// instead of falling back to a synthetic chat name.
+pub fn normalize_chat_file_name(file_name: &str) -> Option<String> {
+    let normalized = sanitize_chat_file_name(file_name);
+    if !normalized.ends_with(CHAT_FILE_EXTENSION) {
+        return None;
+    }
+
+    let stem = strip_jsonl_extension(&normalized);
+    if stem.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+/// Normalize a chat payload file stem without applying repository fallbacks.
+pub fn normalize_chat_file_stem(file_name: &str) -> Option<String> {
+    normalize_chat_file_name(file_name)
+        .map(|normalized| strip_jsonl_extension(&normalized).to_string())
+}
+
+/// Truncate an already-sanitized stem prefix while reserving byte space for a suffix.
+pub(crate) fn truncate_chat_file_stem_prefix<'a>(prefix: &'a str, suffix: &str) -> &'a str {
+    let max_prefix_bytes = MAX_CHAT_FILE_STEM_BYTES.saturating_sub(suffix.len());
+    truncate_utf8_bytes(prefix, max_prefix_bytes)
 }
 
 /// Format a date in the SillyTavern message format (Month DD, YYYY HH:MMam/pm)
@@ -332,7 +385,10 @@ pub fn parse_message_timestamp_value(send_date: Option<&Value>) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_message_timestamp, parse_message_timestamp_value};
+    use super::{
+        normalize_chat_file_name, normalize_chat_file_stem, parse_message_timestamp,
+        parse_message_timestamp_value, strip_jsonl_extension, truncate_chat_file_stem_prefix,
+    };
     use serde_json::json;
 
     #[test]
@@ -352,5 +408,97 @@ mod tests {
         let send_date = json!(1_700_000_000);
         let timestamp = parse_message_timestamp_value(Some(&send_date));
         assert_eq!(timestamp, 1_700_000_000_000);
+    }
+
+    #[test]
+    fn strips_jsonl_extension_like_upstream_case_sensitively() {
+        assert_eq!(strip_jsonl_extension("Chat.jsonl"), "Chat");
+        assert_eq!(strip_jsonl_extension("Chat.JSONL"), "Chat.JSONL");
+        assert_eq!(strip_jsonl_extension("Chat.json"), "Chat.json");
+    }
+
+    #[test]
+    fn sanitizes_chat_file_stem_without_repository_fallback() {
+        assert_eq!(
+            normalize_chat_file_name("Story:One.jsonl"),
+            Some("StoryOne.jsonl".to_string())
+        );
+        assert_eq!(
+            normalize_chat_file_stem("Story:One.jsonl"),
+            Some("StoryOne".to_string())
+        );
+        assert_eq!(
+            normalize_chat_file_stem("/ Story.jsonl"),
+            Some(" Story".to_string())
+        );
+        assert_eq!(
+            normalize_chat_file_stem("中文会话.jsonl"),
+            Some("中文会话".to_string())
+        );
+        assert_eq!(normalize_chat_file_stem("CON.jsonl"), None);
+        assert_eq!(normalize_chat_file_stem("*.jsonl"), None);
+    }
+
+    #[test]
+    fn keeps_uppercase_jsonl_as_part_of_the_chat_stem() {
+        assert_eq!(
+            normalize_chat_file_name("Story.JSONL"),
+            Some("Story.JSONL.jsonl".to_string())
+        );
+        assert_eq!(
+            normalize_chat_file_stem("Story.JSONL"),
+            Some("Story.JSONL".to_string())
+        );
+    }
+
+    #[test]
+    fn preserves_upstream_chat_file_spacing_semantics() {
+        assert_eq!(
+            normalize_chat_file_name(" Story.jsonl"),
+            Some(" Story.jsonl".to_string())
+        );
+        assert_eq!(
+            normalize_chat_file_stem(" Story.jsonl"),
+            Some(" Story".to_string())
+        );
+        assert_eq!(
+            normalize_chat_file_name("Story .jsonl"),
+            Some("Story .jsonl".to_string())
+        );
+        assert_eq!(
+            normalize_chat_file_stem("Story .jsonl"),
+            Some("Story ".to_string())
+        );
+        assert_eq!(
+            normalize_chat_file_name("session.jsonl "),
+            Some("session.jsonl .jsonl".to_string())
+        );
+        assert_eq!(
+            normalize_chat_file_stem("session.jsonl "),
+            Some("session.jsonl ".to_string())
+        );
+    }
+
+    #[test]
+    fn normalizes_complete_chat_file_name_before_utf8_byte_truncation() {
+        let max_stem = "a".repeat(249);
+        assert_eq!(
+            normalize_chat_file_name(&max_stem),
+            Some(format!("{}.jsonl", max_stem))
+        );
+        assert_eq!(normalize_chat_file_stem(&max_stem), Some(max_stem));
+
+        let overflowing_stem = "a".repeat(250);
+        assert_eq!(normalize_chat_file_name(&overflowing_stem), None);
+        assert_eq!(normalize_chat_file_stem(&overflowing_stem), None);
+    }
+
+    #[test]
+    fn truncates_generated_chat_stem_prefix_without_splitting_utf8() {
+        let prefix = "中".repeat(100);
+        let suffix = " - imported";
+        let truncated = truncate_chat_file_stem_prefix(&prefix, suffix);
+        assert!(truncated.is_char_boundary(truncated.len()));
+        assert!(format!("{}{}.jsonl", truncated, suffix).len() <= 255);
     }
 }

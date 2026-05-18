@@ -7,7 +7,10 @@ use tokio::fs;
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::character::{Character, sanitize_filename};
-use crate::domain::models::chat::humanized_date as humanized_chat_date;
+use crate::domain::models::chat::{
+    humanized_date as humanized_chat_date,
+    normalize_chat_file_stem as normalize_domain_chat_file_stem, truncate_chat_file_stem_prefix,
+};
 use crate::infrastructure::persistence::png_utils::{
     read_character_data_from_png, write_character_data_to_png,
 };
@@ -428,16 +431,23 @@ impl FileCharacterRepository {
     }
 
     fn default_chat_file_stem(name: &str) -> String {
-        format!("{} - {}", name, humanized_chat_date(Utc::now()))
+        let sanitized_name = sanitize_filename(name);
+        let suffix = format!(" - {}", humanized_chat_date(Utc::now()));
+        let prefix = truncate_chat_file_stem_prefix(&sanitized_name, &suffix);
+        let stem = format!("{prefix}{suffix}");
+        let normalized = normalize_domain_chat_file_stem(&stem);
+
+        normalized.unwrap_or_else(|| "chat".to_string())
     }
 
     fn normalize_chat_file_stem(chat_name: &str, character_name: &str) -> String {
-        let normalized = sanitize_filename(chat_name.trim().trim_end_matches(".jsonl"));
-        if normalized.is_empty() {
-            sanitize_filename(&Self::default_chat_file_stem(character_name))
-        } else {
-            normalized
+        if !chat_name.trim().is_empty() {
+            if let Some(normalized) = normalize_domain_chat_file_stem(chat_name) {
+                return normalized;
+            }
         }
+
+        Self::default_chat_file_stem(character_name)
     }
 
     fn prepare_imported_character_for_storage(character: &mut Character, file_stem: &str) {
@@ -527,6 +537,31 @@ impl FileCharacterRepository {
 #[cfg(test)]
 mod tests {
     use super::FileCharacterRepository;
+
+    #[test]
+    fn normalize_imported_character_chat_uses_shared_chat_file_contract() {
+        assert_eq!(
+            FileCharacterRepository::normalize_chat_file_stem(" Story.jsonl", "Alice"),
+            " Story"
+        );
+        assert_eq!(
+            FileCharacterRepository::normalize_chat_file_stem("Story.JSONL", "Alice"),
+            "Story.JSONL"
+        );
+        assert_eq!(
+            FileCharacterRepository::normalize_chat_file_stem("Story.jsonl ", "Alice"),
+            "Story.jsonl "
+        );
+    }
+
+    #[test]
+    fn normalize_imported_character_chat_default_keeps_room_for_jsonl_suffix() {
+        let long_name = "角色".repeat(130);
+        let stem = FileCharacterRepository::normalize_chat_file_stem("", &long_name);
+
+        assert!(!stem.is_empty());
+        assert!(format!("{stem}.jsonl").len() <= 255);
+    }
 
     #[test]
     fn normalize_json_surrogate_escapes_replaces_lone_high_surrogate() {

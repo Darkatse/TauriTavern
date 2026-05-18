@@ -259,9 +259,19 @@ function scheduleLegacyTokenCacheCleanup() {
     setTimeout(runAsync, 0);
 }
 
-export async function saveTokenCache() {
+function isTokenCacheState(value) {
+    return Boolean(value && typeof value === 'object' && 'chatId' in value && 'cache' in value);
+}
+
+export function captureTokenCacheSaveState(chatId = resolveTokenCacheChatId()) {
+    return getTokenCacheState(chatId);
+}
+
+export async function saveTokenCache(chatIdOrState = resolveTokenCacheChatId()) {
     console.debug('Chat Completions: saving token cache');
-    const state = getTokenCacheState(resolveTokenCacheChatId());
+    const state = isTokenCacheState(chatIdOrState)
+        ? chatIdOrState
+        : getTokenCacheState(chatIdOrState);
     await flushTokenCacheState(state);
 }
 

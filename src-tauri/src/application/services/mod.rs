@@ -9,6 +9,7 @@ pub mod avatar_service;
 pub mod background_service;
 pub mod character_service;
 pub mod chat_completion_service;
+mod chat_file_validation;
 pub mod chat_service;
 pub mod content_service;
 pub mod extension_service;

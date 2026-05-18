@@ -46,7 +46,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
 
         const fileName = context.stripJsonl(body?.file_name || body?.chatfile || body?.file);
 
-        if (!characterId || !fileName) {
+        if (!characterId || !fileName.trim()) {
             return jsonResponse({ error: 'Invalid chat payload request' }, 400);
         }
 
@@ -76,7 +76,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         });
 
         const fileName = context.stripJsonl(body?.file_name || body?.chatfile || body?.file);
-        if (!characterId || !fileName || !Array.isArray(body?.chat)) {
+        if (!characterId || !fileName.trim() || !Array.isArray(body?.chat)) {
             return jsonResponse({ error: 'Invalid chat payload' }, 400);
         }
 
@@ -111,7 +111,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         });
 
         const fileName = context.stripJsonl(body?.chatfile || body?.file_name || body?.file);
-        if (!characterId || !fileName) {
+        if (!characterId || !fileName.trim()) {
             return jsonResponse({ ok: true });
         }
 
@@ -137,21 +137,22 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         const oldFileName = context.stripJsonl(body?.original_file || body?.old_file_name);
         const newFileName = context.stripJsonl(body?.renamed_file || body?.new_file_name);
 
-        if (!oldFileName || !newFileName) {
+        if (!oldFileName.trim() || !newFileName.trim()) {
             return jsonResponse({ error: 'Invalid rename payload' }, 400);
         }
 
         if (body?.is_group) {
             try {
-                await context.safeInvoke('rename_group_chat', {
+                const sanitizedFileName = await context.safeInvoke('rename_group_chat', {
                     dto: {
                         old_file_name: oldFileName,
                         new_file_name: newFileName,
                     },
                 });
-                return jsonResponse({ ok: true, sanitizedFileName: newFileName });
-            } catch {
-                return jsonResponse({ error: true }, 400);
+                return jsonResponse({ ok: true, sanitizedFileName });
+            } catch (error) {
+                console.error('Failed to rename group chat:', error);
+                return jsonResponse({ error: true, details: String(error?.message || error || '') }, 400);
             }
         }
 
@@ -161,16 +162,17 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         }
 
         try {
-            await context.safeInvoke('rename_chat', {
+            const sanitizedFileName = await context.safeInvoke('rename_chat', {
                 dto: {
                     character_name: characterId,
                     old_file_name: oldFileName,
                     new_file_name: newFileName,
                 },
             });
-            return jsonResponse({ ok: true, sanitizedFileName: newFileName });
-        } catch {
-            return jsonResponse({ error: true }, 400);
+            return jsonResponse({ ok: true, sanitizedFileName });
+        } catch (error) {
+            console.error('Failed to rename chat:', error);
+            return jsonResponse({ error: true, details: String(error?.message || error || '') }, 400);
         }
     });
 
@@ -184,8 +186,8 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
                 return jsonResponse([]);
             }
             const chatIds = group.chats
-                .map((chatId) => String(chatId || '').trim())
-                .filter(Boolean);
+                .map((chatId) => String(chatId ?? ''))
+                .filter((chatId) => chatId.trim());
             if (chatIds.length === 0) {
                 return jsonResponse([]);
             }
@@ -228,7 +230,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         const exportFilename = String(body?.exportfilename || '');
         const fileName = context.stripJsonl(body?.file || body?.file_name);
 
-        if (!fileName) {
+        if (!fileName.trim()) {
             return jsonResponse({ message: 'Invalid export payload' }, 400);
         }
 
@@ -331,8 +333,8 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/chats/group/get', async ({ body }) => {
         const allowNotFound = allowMissingChat(body);
-        const id = String(body?.id || '').trim();
-        if (!id) {
+        const id = String(body?.id ?? '');
+        if (!id.trim()) {
             return jsonResponse({ error: 'Invalid group chat payload request' }, 400);
         }
 
@@ -351,8 +353,8 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/chats/group/info', async ({ body }) => {
-        const id = String(body?.id || '').trim();
-        if (!id) {
+        const id = String(body?.id ?? '');
+        if (!id.trim()) {
             return jsonResponse(null, 400);
         }
 
@@ -400,8 +402,8 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/chats/group/save', async ({ body }) => {
-        const id = String(body?.id || '').trim();
-        if (!id || !Array.isArray(body?.chat)) {
+        const id = String(body?.id ?? '');
+        if (!id.trim() || !Array.isArray(body?.chat)) {
             return jsonResponse({ error: 'Invalid group chat payload' }, 400);
         }
 
@@ -428,8 +430,8 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/chats/group/delete', async ({ body }) => {
-        const id = String(body?.id || '').trim();
-        if (!id) {
+        const id = String(body?.id ?? '');
+        if (!id.trim()) {
             return jsonResponse({ error: true }, 400);
         }
 
