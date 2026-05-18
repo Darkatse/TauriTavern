@@ -2277,12 +2277,20 @@ function appendMissingModelOptions($select, modelIds) {
         return;
     }
 
+    const tagName = String($select.prop('tagName') || '').toLowerCase();
+    if (!['select', 'datalist'].includes(tagName)) {
+        return;
+    }
+
+    const $optionParent = tagName === 'select'
+        ? ($select.children('optgroup').last().length ? $select.children('optgroup').last() : $select)
+        : $select;
     const existing = new Set($select.find('option').map((_, option) => String(option.value || '').trim()).get().filter(Boolean));
     for (const modelId of modelIds) {
         if (!modelId || existing.has(modelId)) {
             continue;
         }
-        $select.append(new Option(modelId, modelId));
+        $optionParent.append(new Option(modelId, modelId));
         existing.add(modelId);
     }
 }
@@ -2398,7 +2406,8 @@ function syncSourceModelInputs({ selectSelector, datalistSelector, modelList = [
             continue;
         }
         if (!selectIds.has(id)) {
-            $select.append($('<option>', { value: id, text: id, 'data-dynamic': '1' }));
+            const $optionParent = $select.children('optgroup').last().length ? $select.children('optgroup').last() : $select;
+            $optionParent.append($('<option>', { value: id, text: id, 'data-dynamic': '1' }));
             selectIds.add(id);
         }
         if (!datalistIds.has(id)) {
