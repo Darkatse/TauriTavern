@@ -325,6 +325,50 @@ test('Agent run controller tracks active runs until terminal events', async () =
     assert.equal(stateChanges.at(-1).lastEvent.type, 'run_completed');
 });
 
+test('Agent run controller treats partial success as a terminal resolved run', async () => {
+    let listener = null;
+    installWindow({
+        agent: {
+            async startRunWithPromptSnapshot(input) {
+                return { runId: 'run-partial', input };
+            },
+            subscribe(runId, callback) {
+                assert.equal(runId, 'run-partial');
+                listener = callback;
+                return () => {};
+            },
+        },
+    });
+
+    const controller = await importFresh('src/scripts/tauritavern/agent/agent-run-controller.js');
+    const stateChanges = [];
+    const unsubscribe = controller.subscribeAgentRunState((state) => {
+        stateChanges.push(state);
+    });
+
+    const run = controller.startAndWaitForAgentRun({ generationType: 'normal' });
+    await Promise.resolve();
+
+    listener({
+        type: 'run_partial_success',
+        payload: {
+            code: 'model.tool_call_required',
+            message: 'model must use Agent tools',
+            retryable: false,
+            userRetryable: false,
+            preservedCommitCount: 1,
+            preservedCommits: [{ path: 'output/main.md', mode: 'replace', messageId: '1', round: 2 }],
+        },
+    });
+    const result = await run;
+    unsubscribe();
+
+    assert.equal(result.handle.runId, 'run-partial');
+    assert.equal(result.terminalEvent.type, 'run_partial_success');
+    assert.equal(controller.hasActiveAgentRun(), false);
+    assert.equal(stateChanges.at(-1).lastEvent.type, 'run_partial_success');
+});
+
 test('Agent run controller clears active state when subscription setup fails', async () => {
     installWindow({
         agent: {
@@ -395,6 +439,26 @@ test('Agent run event presenter keeps timeline projection focused', async () => 
     assert.equal(recoveryItem.titleKey, 'timelineEventDriftRecoveryAttempted');
     assert.deepEqual(recoveryItem.titleParams, { attempt: 1, max: 1 });
     assert.equal(recoveryItem.summary, 'model.tool_call_required');
+
+    const partialEvent = {
+        seq: 6,
+        id: 'evt-partial',
+        runId: 'run-1',
+        type: 'run_partial_success',
+        level: 'warn',
+        payload: {
+            code: 'model.tool_call_required',
+            message: 'model must use tools',
+            preservedCommitCount: 1,
+            preservedCommits: [{ path: 'output/main.md', mode: 'replace', messageId: '3', round: 4 }],
+        },
+    };
+    assert.equal(presenter.isDisplayableRunEvent(partialEvent), true);
+    const partialItem = presenter.presentRunEvent(partialEvent);
+    assert.equal(partialItem.titleKey, 'timelineEventRunPartialSuccess');
+    assert.deepEqual(partialItem.titleParams, { count: 1 });
+    assert.equal(partialItem.tone, 'warn');
+    assert.equal(partialItem.summary, '1 committed message preserved');
 
     const projected = presenter.timelineItemsFromEvents([
         debugEvent,
@@ -860,6 +924,38 @@ test('Run failure detail surfaces a retry action and userRetryable field when al
         event: { payload: { code: 'agent.internal_error', message: 'boom', retryable: false } },
     });
     assert.deepEqual(fatal.actions, []);
+});
+
+test('Partial success detail keeps error visible without retry action', async () => {
+    const { formatRunFailureDetail } = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
+
+    const section = formatRunFailureDetail({
+        labelKey: 'timelineErrorDetails',
+        event: {
+            type: 'run_partial_success',
+            payload: {
+                code: 'model.tool_call_required',
+                message: 'model must use Agent tools',
+                technicalMessage: 'Validation error: model.tool_call_required',
+                retryable: false,
+                userRetryable: false,
+                preservedCommitCount: 1,
+                preservedCommits: [{ path: 'output/main.md', mode: 'replace', messageId: '3', round: 4 }],
+            },
+        },
+    });
+
+    assert.deepEqual(section.actions, []);
+    assert.deepEqual(section.fields, [
+        { label: 'Error', value: 'model.tool_call_required' },
+        { label: 'Preserved commits', value: '1' },
+        { label: 'Retryable', value: 'false' },
+        { label: 'User-retryable', value: 'false' },
+    ]);
+    assert.equal(section.blocks[0].labelKey, 'timelinePartialSuccessMessage');
+    assert.match(section.blocks[0].text, /kept committed chat output/);
+    assert.equal(section.blocks[1].labelKey, 'timelineResultText');
+    assert.equal(section.blocks[1].text, 'model must use Agent tools');
 });
 
 test('Agent run controller awaits rollback before rejecting on drift run_failed', async () => {

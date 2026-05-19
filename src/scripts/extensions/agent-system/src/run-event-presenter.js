@@ -13,11 +13,12 @@ const DISPLAY_EVENT_TYPES = new Set([
     'persistent_changes_committed',
     'drift_recovery_attempted',
     'run_completed',
+    'run_partial_success',
     'run_cancelled',
     'run_failed',
 ]);
 
-export const TERMINAL_EVENT_TYPES = Object.freeze(['run_completed', 'run_cancelled', 'run_failed']);
+export const TERMINAL_EVENT_TYPES = Object.freeze(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
 
 const SIDE_EFFECT_TOOL_COMPLETIONS = new Set([
     'workspace.write_file',
@@ -48,6 +49,7 @@ const EVENT_META = Object.freeze({
     persistent_changes_committed: { icon: 'fa-database', tone: 'success', kind: 'persist', titleKey: 'timelineEventPersistentCommitted' },
     drift_recovery_attempted: { icon: 'fa-arrows-rotate', tone: 'warn', kind: 'recover', titleKey: 'timelineEventDriftRecoveryAttempted' },
     run_completed: { icon: 'fa-circle-check', tone: 'success', kind: 'done', titleKey: 'timelineEventRunCompleted' },
+    run_partial_success: { icon: 'fa-circle-exclamation', tone: 'warn', kind: 'partial', titleKey: 'timelineEventRunPartialSuccess' },
     run_cancelled: { icon: 'fa-ban', tone: 'warn', kind: 'cancel', titleKey: 'timelineEventRunCancelled' },
     run_failed: { icon: 'fa-circle-xmark', tone: 'error', kind: 'fail', titleKey: 'timelineEventRunFailed' },
 });
@@ -149,7 +151,7 @@ export function buildEventDetailTargets(item, allEvents) {
         targets.push(buildPatchDiffTarget(event, allEvents));
     }
 
-    if (event?.type === 'run_failed') {
+    if (event?.type === 'run_failed' || event?.type === 'run_partial_success') {
         targets.push({ type: 'runFailure', labelKey: 'timelineErrorDetails', event });
     }
 
@@ -295,6 +297,8 @@ function eventTitleParams(type, payload) {
             return { count: payload.changeCount ?? 0 };
         case 'drift_recovery_attempted':
             return { attempt: payload.attempt ?? 0, max: payload.maxAttempts ?? 0 };
+        case 'run_partial_success':
+            return { count: payload.preservedCommitCount ?? 0 };
         default:
             return {};
     }
@@ -323,6 +327,8 @@ function eventSummary(type, payload) {
             return payload.reasonCode || '';
         case 'run_cancelled':
             return payload.message || '';
+        case 'run_partial_success':
+            return partialSuccessSummary(payload);
         case 'run_failed':
             return presentAgentRunFailure({ payload }).summary;
         default:
@@ -392,6 +398,14 @@ function elapsedSummary(value) {
         return '';
     }
     return `${Math.round(elapsed)} ms`;
+}
+
+function partialSuccessSummary(payload) {
+    const count = Number(payload.preservedCommitCount);
+    if (Number.isInteger(count) && count > 0) {
+        return `${count} committed message${count === 1 ? '' : 's'} preserved`;
+    }
+    return payload.message || payload.code || '';
 }
 
 function toolLabel(name) {

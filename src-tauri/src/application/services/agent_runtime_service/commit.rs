@@ -5,6 +5,7 @@ use uuid::Uuid;
 use super::{
     AgentCancelReceiver, AgentRuntimeService, HostChatCommitResult, PendingHostChatCommit,
 };
+use super::commit_ledger::RunCommitLedger;
 use crate::application::dto::agent_dto::AgentResolveChatCommitDto;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{
@@ -67,6 +68,8 @@ impl AgentRuntimeService {
         mode: AgentChatCommitMode,
         reason: Option<String>,
         elapsed_ms: u128,
+        round: usize,
+        commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let file = match self.workspace_repository.read_text(run_id, &path).await {
@@ -195,6 +198,7 @@ impl AgentRuntimeService {
 
         match host_result {
             Ok(result) => {
+                commit_ledger.record(&path, mode, result.message_id.clone(), round);
                 self.transition_status(run_id, AgentRunStatus::DispatchingTool)
                     .await?;
                 self.event(

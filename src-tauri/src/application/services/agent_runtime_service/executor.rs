@@ -3,7 +3,8 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use super::artifacts::build_agent_manifest;
-use super::error_payload::run_failure_payload;
+use super::commit_ledger::RunCommitLedger;
+use super::error_payload::{run_failure_payload, run_partial_success_payload};
 use super::prompt_snapshot::{prepare_agent_tool_request, request_summary};
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
@@ -20,51 +21,74 @@ impl AgentRuntimeService {
         resolved_profile: ResolvedAgentProfile,
         mut cancel: AgentCancelReceiver,
     ) {
+        let mut commit_ledger = RunCommitLedger::default();
         let result = self
             .execute_agent_loop_run_body(
                 &run_id,
                 prompt_snapshot,
                 request,
                 resolved_profile,
+                &mut commit_ledger,
                 &mut cancel,
             )
             .await;
 
+        self.finalize_agent_loop_run_result(&run_id, &commit_ledger, &result)
+            .await;
+        self.close_model_session_after_run(run_id);
+    }
+
+    async fn finalize_agent_loop_run_result(
+        &self,
+        run_id: &str,
+        commit_ledger: &RunCommitLedger,
+        result: &Result<(), ApplicationError>,
+    ) {
         match result {
             Ok(()) => {}
             Err(ApplicationError::Cancelled(message)) => {
-                self.clear_pending_chat_commits_for_run(&run_id).await;
+                self.clear_pending_chat_commits_for_run(run_id).await;
                 let _ = self
-                    .transition_status(&run_id, AgentRunStatus::Cancelled)
+                    .transition_status(run_id, AgentRunStatus::Cancelled)
                     .await;
                 let _ = self
                     .event(
-                        &run_id,
+                        run_id,
                         AgentRunEventLevel::Info,
                         "run_cancelled",
                         json!({ "message": message }),
                     )
                     .await;
-                self.active_runs.write().await.remove(&run_id);
+                self.active_runs.write().await.remove(run_id);
             }
             Err(error) => {
-                self.clear_pending_chat_commits_for_run(&run_id).await;
-                let _ = self
-                    .transition_status(&run_id, AgentRunStatus::Failed)
-                    .await;
-                let _ = self
-                    .event(
-                        &run_id,
-                        AgentRunEventLevel::Error,
-                        "run_failed",
-                        run_failure_payload(&error),
-                    )
-                    .await;
-                self.active_runs.write().await.remove(&run_id);
+                self.clear_pending_chat_commits_for_run(run_id).await;
+                if commit_ledger.is_empty() {
+                    let _ = self.transition_status(run_id, AgentRunStatus::Failed).await;
+                    let _ = self
+                        .event(
+                            run_id,
+                            AgentRunEventLevel::Error,
+                            "run_failed",
+                            run_failure_payload(error),
+                        )
+                        .await;
+                } else {
+                    let _ = self
+                        .transition_status(run_id, AgentRunStatus::PartialSuccess)
+                        .await;
+                    let _ = self
+                        .event(
+                            run_id,
+                            AgentRunEventLevel::Warn,
+                            "run_partial_success",
+                            run_partial_success_payload(error, commit_ledger),
+                        )
+                        .await;
+                }
+                self.active_runs.write().await.remove(run_id);
             }
         }
-
-        self.close_model_session_after_run(run_id);
     }
 
     #[cfg(test)]
@@ -76,8 +100,18 @@ impl AgentRuntimeService {
         resolved_profile: ResolvedAgentProfile,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
+        let mut commit_ledger = RunCommitLedger::default();
         let result = self
-            .execute_agent_loop_run_body(run_id, prompt_snapshot, request, resolved_profile, cancel)
+            .execute_agent_loop_run_body(
+                run_id,
+                prompt_snapshot,
+                request,
+                resolved_profile,
+                &mut commit_ledger,
+                cancel,
+            )
+            .await;
+        self.finalize_agent_loop_run_result(run_id, &commit_ledger, &result)
             .await;
         self.close_model_session_after_run(run_id.to_string());
         result
@@ -96,6 +130,7 @@ impl AgentRuntimeService {
         prompt_snapshot: Value,
         request: ChatCompletionGenerateRequestDto,
         resolved_profile: ResolvedAgentProfile,
+        commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
         let run = self
@@ -160,7 +195,7 @@ impl AgentRuntimeService {
         self.ensure_not_cancelled(cancel)?;
 
         self
-            .run_tool_loop(run_id, request, &resolved_profile, cancel)
+            .run_tool_loop(run_id, request, &resolved_profile, commit_ledger, cancel)
             .await?
             .ok_or_else(|| {
                 ApplicationError::ValidationError(format!(

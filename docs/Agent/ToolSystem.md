@@ -197,9 +197,9 @@ persist/
 如果模型一回合内仍然返回 0 个 tool_calls（drift），loop runner 会先做一次"软纠正"（issue #64）：把模型的纯文本回复推进 history，再追加一条 `user` 角色的合成提醒，让模型在下一轮重试。**每个 run 至多 1 次**（常量 `DRIFT_RECOVERY_MAX_ATTEMPTS`），每次都会写一条 `drift_recovery_attempted` 事件。
 
 - 软纠正后模型调用了 `workspace_finish`，或继续修订并再次 `workspace_commit` 后再 `workspace_finish` → run 继续，无 rollback。
-- 软纠正失败（模型再次 0 tool_calls）→ 回落到 `model.tool_call_required` 失败路径，发 `run_rollback_targets` + `run_failed`（`userRetryable=true`）。
+- 软纠正失败（模型再次 0 tool_calls）→ 回落到 `model.tool_call_required` 失败路径；若没有成功 chat commit，则写 `run_failed`（`userRetryable=true`）；若已有成功 chat commit，则写 `run_partial_success`，保留已提交聊天输出并以 warning 暴露底层错误。
 
-违反此契约的其它形态（`agent.tool_after_finish` / `agent.max_tool_rounds_exceeded`）目前不走软纠正、直接发 `run_rollback_targets`，原因是这两种 drift 本身已经发生了真实的工具调用，软纠正空间小。细节见 `RunEventJournal.md`。
+违反此契约的其它形态（`agent.tool_after_finish` / `agent.max_tool_rounds_exceeded`）目前不走软纠正，直接进入同一终态分类：没有成功 chat commit 时 fail-fast；已有成功 chat commit 时 `run_partial_success`。细节见 `RunEventJournal.md`。
 
 当前没有 MCP、shell、extension bridge、profile routing、Plan Mode runtime 或审批工具。
 

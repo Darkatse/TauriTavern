@@ -375,6 +375,10 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     border-color: color-mix(in srgb, var(--ttas-run-tone-error) 58%, var(--ttas-run-panel-border));
 }
 
+#ttas_agent_run_timeline.is-warning {
+    border-color: color-mix(in srgb, var(--ttas-run-tone-warn) 58%, var(--ttas-run-panel-border));
+}
+
 #ttas_agent_run_timeline.is-resizing {
     user-select: none;
 }
@@ -539,6 +543,10 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 #ttas_agent_run_timeline[data-ttas-status="failed"] .ttas-run-orb,
 #ttas_agent_run_timeline[data-ttas-status="cancelled"] .ttas-run-orb {
     color: var(--ttas-run-tone-error);
+}
+
+#ttas_agent_run_timeline[data-ttas-status="partial"] .ttas-run-orb {
+    color: var(--ttas-run-tone-warn);
 }
 
 #ttas_agent_run_timeline[data-ttas-status="completed"] .ttas-run-orb {

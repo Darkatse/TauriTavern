@@ -3,6 +3,7 @@ use std::time::Instant;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+use super::commit_ledger::RunCommitLedger;
 use super::AgentRuntimeService;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{
@@ -25,6 +26,7 @@ impl AgentRuntimeService {
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
         commit_count: usize,
+        commit_ledger: &mut RunCommitLedger,
         cancel: &mut super::AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let arguments_ref = self.store_tool_arguments(run_id, call).await?;
@@ -148,6 +150,8 @@ impl AgentRuntimeService {
                             mode,
                             reason,
                             outcome.elapsed_ms,
+                            round,
+                            commit_ledger,
                             cancel,
                         )
                         .await?

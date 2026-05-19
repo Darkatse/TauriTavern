@@ -29,7 +29,8 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
     AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentModelRole, AgentRun,
-    AgentRunEventLevel, AgentRunPresentation, AgentRunStatus, AgentToolCall, WorkspacePath,
+    AgentRunEventLevel, AgentRunPresentation, AgentRunStatus, AgentToolCall, WorkspaceManifest,
+    WorkspacePath, WorkspacePersistentChangeSet,
 };
 use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use crate::domain::models::skill::{SkillImportInput, SkillInlineFile, SkillInstallRequest};
@@ -39,7 +40,9 @@ use crate::domain::repositories::agent_run_repository::{
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::domain::repositories::skill_repository::SkillRepository;
-use crate::domain::repositories::workspace_repository::WorkspaceRepository;
+use crate::domain::repositories::workspace_repository::{
+    WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
+};
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
@@ -1126,18 +1129,18 @@ async fn foreground_run_commits_chat_message_before_finish() {
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
 
-/// Issue #55 + #64: when the model commits, then drifts by replying with
-/// plain text (no tool calls), the run gives the model **one** corrective
-/// nudge (issue #64 soft drift recovery). If it drifts AGAIN, the run
-/// must fail AND emit a `run_rollback_targets` event listing the
-/// now-orphaned chat message so the host UI can roll it back and offer
-/// the user a clean Retry. This is the failure-after-recovery path; the
-/// success path is covered by
+/// Issue #55 + #64 plus partial success: when the model commits, then
+/// drifts by replying with plain text (no tool calls), the run gives the
+/// model **one** corrective nudge. If it drifts AGAIN, the error remains
+/// visible, but the already host-confirmed chat commit is preserved and
+/// the terminal state becomes `partial_success` instead of rolling the
+/// message back. This is the failure-after-recovery path; the success path
+/// is covered by
 /// [`foreground_run_recovers_from_post_commit_drift_with_nudge`].
 #[tokio::test]
-async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
+async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_required_drift() {
     let root = std::env::temp_dir().join(format!(
-        "tauritavern-agent-drift-rollback-{}",
+        "tauritavern-agent-drift-partial-success-{}",
         Uuid::new_v4().simple()
     ));
     let repository = Arc::new(FileAgentRepository::new(root.clone()));
@@ -1177,8 +1180,8 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
                 }
             }]
         }),
-        // Round 2: commit the artifact (this is the moment that publishes
-        // the chat message we need to roll back later).
+        // Round 2: commit the artifact. This is the host-confirmed chat
+        // output partial success must preserve if the later run fails.
         json!({
             "choices": [{
                 "message": {
@@ -1208,7 +1211,7 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
         }),
         // Round 4: stubborn drift — model ignores the nudge and replies
         // with plain text again. Recovery budget is now exhausted, so the
-        // run fails and emits `run_rollback_targets`.
+        // run records a partial success preserving the committed message.
         json!({
             "choices": [{
                 "message": {
@@ -1263,8 +1266,11 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
 
     assert!(
         outcome.is_err(),
-        "drift after commit must fail the run, got Ok"
+        "partial success keeps the committed chat but must still expose the underlying error"
     );
+
+    let saved = repository.load_run(&run.id).await.expect("load run");
+    assert_eq!(saved.status, AgentRunStatus::PartialSuccess);
 
     let events = repository
         .read_events(
@@ -1279,10 +1285,9 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
         .expect("read events");
 
     // #64: the first drift must have produced exactly one
-    // `drift_recovery_attempted` event before we surrendered to the
-    // rollback path. If this assertion fails it means the rollback was
-    // emitted on the first drift (recovery was bypassed) — a regression
-    // of #64.
+    // `drift_recovery_attempted` event before we surrendered to the terminal
+    // partial-success path. If this assertion fails, the recovery attempt
+    // was bypassed — a regression of #64.
     let recovery_events: Vec<_> = events
         .iter()
         .filter(|event| event.event_type == "drift_recovery_attempted")
@@ -1290,7 +1295,7 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
     assert_eq!(
         recovery_events.len(),
         1,
-        "exactly one drift_recovery_attempted event must precede the rollback"
+        "exactly one drift_recovery_attempted event must precede partial success"
     );
     assert_eq!(recovery_events[0].level, AgentRunEventLevel::Warn);
     assert_eq!(recovery_events[0].payload["attempt"], 1);
@@ -1301,19 +1306,40 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
         "model.tool_call_required"
     );
 
-    let rollback = events
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "run_rollback_targets"),
+        "partial success must not auto-rollback committed chat output"
+    );
+    assert!(
+        !events.iter().any(|event| event.event_type == "run_failed"),
+        "partial success is its own terminal event, not run_failed"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "run_completed"),
+        "partial success must not masquerade as clean completion"
+    );
+
+    let partial = events
         .iter()
-        .find(|event| event.event_type == "run_rollback_targets")
-        .expect("run_rollback_targets event must be emitted on drift after commit");
-    assert_eq!(rollback.level, AgentRunEventLevel::Warn);
-    assert_eq!(rollback.payload["reasonCode"], "model.tool_call_required");
-    assert_eq!(rollback.payload["targetCount"], 1);
-    let targets = rollback.payload["targets"]
+        .find(|event| event.event_type == "run_partial_success")
+        .expect("run_partial_success event must be emitted on drift after commit");
+    assert_eq!(partial.level, AgentRunEventLevel::Warn);
+    assert_eq!(partial.payload["code"], "model.tool_call_required");
+    assert_eq!(partial.payload["retryable"], false);
+    assert_eq!(partial.payload["userRetryable"], false);
+    assert_eq!(partial.payload["preservedCommitCount"], 1);
+    let targets = partial.payload["preservedCommits"]
         .as_array()
-        .expect("targets array");
+        .expect("preserved commits array");
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0]["messageId"], "message_42");
     assert_eq!(targets[0]["path"], "output/main.md");
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 /// Issue #64: when the model commits and then drifts (plain text, no
@@ -1321,7 +1347,7 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
 /// give the model one more chance to call `workspace_finish`. If the
 /// model complies, the run completes normally — the commit is NOT
 /// rolled back. This is the happy-path complement to
-/// [`foreground_run_emits_rollback_targets_on_tool_call_required_drift`].
+/// [`foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_required_drift`].
 #[tokio::test]
 async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
     let root = std::env::temp_dir().join(format!(
@@ -1691,6 +1717,292 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
             .any(|event| event.event_type == "run_rollback_targets"),
         "no rollback when no commits existed before recovery"
     );
+}
+
+#[tokio::test]
+async fn foreground_run_without_commit_still_fails_after_drift_recovery_exhausts() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-drift-no-commit-failure-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_drift_no_commit_failure_test".to_string(),
+        workspace_id: "chat_drift_no_commit_failure_test".to_string(),
+        stable_chat_id: "stable_drift_no_commit_failure_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        persist_base_state_id: None,
+        presentation: AgentRunPresentation::Foreground,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "I will answer directly instead of using tools.",
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Still answering directly.",
+                }
+            }]
+        }),
+    ]));
+
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        test_profile_service(&root),
+    );
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("no commit stubborn drift")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.run.presentation = AgentRunPresentation::Foreground;
+
+    let outcome = service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await;
+    assert!(
+        outcome.is_err(),
+        "no-commit drift must remain a hard failure"
+    );
+
+    let saved = repository.load_run(&run.id).await.expect("load run");
+    assert_eq!(saved.status, AgentRunStatus::Failed);
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 100,
+            },
+        )
+        .await
+        .expect("read events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "drift_recovery_attempted")
+    );
+    assert!(
+        events.iter().any(|event| {
+            event.event_type == "run_failed"
+                && event.payload["code"] == json!("model.tool_call_required")
+                && event.payload["userRetryable"] == json!(true)
+        }),
+        "no-commit drift should expose the existing user-retryable failure"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "run_partial_success"),
+        "partial success requires at least one successful chat commit"
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn foreground_run_with_commit_becomes_partial_success_when_persistent_commit_fails() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-persistent-partial-success-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let workspace_repository = Arc::new(FailingPersistentCommitWorkspaceRepository {
+        inner: repository.clone(),
+    });
+    let run = AgentRun {
+        id: "run_persistent_partial_success_test".to_string(),
+        workspace_id: "chat_persistent_partial_success_test".to_string(),
+        stable_chat_id: "stable_persistent_partial_success_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        persist_base_state_id: None,
+        presentation: AgentRunPresentation::Foreground,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_write_persistent_failure",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"visible answer\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_commit_persistent_failure",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_commit",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_finish_persistent_failure",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_finish",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }),
+    ]));
+
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        workspace_repository,
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        test_profile_service(&root),
+    ));
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("persistent failure after commit")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.run.presentation = AgentRunPresentation::Foreground;
+
+    let resolver = tokio::spawn(resolve_next_chat_commit(
+        service.clone(),
+        repository.clone(),
+        run.id.clone(),
+        "message_persistent_failure",
+    ));
+    let outcome = service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await;
+    resolver.await.expect("resolver task");
+    assert!(
+        outcome.is_err(),
+        "persistent commit failure must still expose the underlying error"
+    );
+
+    let saved = repository.load_run(&run.id).await.expect("load run");
+    assert_eq!(saved.status, AgentRunStatus::PartialSuccess);
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 200,
+            },
+        )
+        .await
+        .expect("read events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "persistent_changes_commit_failed")
+    );
+    assert!(
+        events.iter().any(|event| {
+            event.event_type == "run_partial_success"
+                && event.payload["code"] == json!("agent.test_persistent_failure")
+                && event.payload["preservedCommitCount"] == json!(1)
+        }),
+        "persistent commit failure after chat commit should become partial success"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "run_completed"),
+        "persistent failure must not masquerade as clean completion"
+    );
+    assert!(
+        !events.iter().any(|event| event.event_type == "run_failed"),
+        "partial success is its own terminal event"
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
@@ -2717,6 +3029,74 @@ impl MockAgentModelGateway {
 }
 
 struct NullPresetRepository;
+
+struct FailingPersistentCommitWorkspaceRepository {
+    inner: Arc<FileAgentRepository>,
+}
+
+#[async_trait]
+impl WorkspaceRepository for FailingPersistentCommitWorkspaceRepository {
+    async fn initialize_run(
+        &self,
+        run: &AgentRun,
+        manifest: &WorkspaceManifest,
+        prompt_snapshot: &Value,
+        resolved_profile: &ResolvedAgentProfile,
+    ) -> Result<(), DomainError> {
+        self.inner
+            .initialize_run(run, manifest, prompt_snapshot, resolved_profile)
+            .await
+    }
+
+    async fn read_manifest(&self, run_id: &str) -> Result<WorkspaceManifest, DomainError> {
+        self.inner.read_manifest(run_id).await
+    }
+
+    async fn write_text(
+        &self,
+        run_id: &str,
+        path: &WorkspacePath,
+        text: &str,
+    ) -> Result<WorkspaceFile, DomainError> {
+        self.inner.write_text(run_id, path, text).await
+    }
+
+    async fn read_text(
+        &self,
+        run_id: &str,
+        path: &WorkspacePath,
+    ) -> Result<WorkspaceFile, DomainError> {
+        self.inner.read_text(run_id, path).await
+    }
+
+    async fn list_files(
+        &self,
+        run_id: &str,
+        path: Option<&WorkspacePath>,
+        depth: usize,
+        max_entries: usize,
+    ) -> Result<WorkspaceFileList, DomainError> {
+        self.inner
+            .list_files(run_id, path, depth, max_entries)
+            .await
+    }
+
+    async fn prepare_persistent_changes(
+        &self,
+        run_id: &str,
+    ) -> Result<WorkspacePersistentChangeSet, DomainError> {
+        self.inner.prepare_persistent_changes(run_id).await
+    }
+
+    async fn commit_persistent_changes(
+        &self,
+        _run_id: &str,
+    ) -> Result<WorkspacePersistentChangeSet, DomainError> {
+        Err(DomainError::InternalError(
+            "agent.test_persistent_failure: simulated persistent commit failure".to_string(),
+        ))
+    }
+}
 
 #[async_trait]
 impl PresetRepository for NullPresetRepository {

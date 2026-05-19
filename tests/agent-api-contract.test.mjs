@@ -105,3 +105,28 @@ test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid i
         /maxChars must be a positive integer/,
     );
 });
+
+test('agent chat commit bridge detaches on partial success terminal event', async () => {
+    const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-chat-commit-bridge.js'));
+    moduleUrl.search = `?case=partial-success-detach-${Date.now()}`;
+    const { attachHostCommitBridge } = await import(moduleUrl.href);
+
+    let listener = null;
+    let stopped = false;
+    attachHostCommitBridge({
+        runId: 'run-partial',
+        safeInvoke: async () => {},
+        readWorkspaceFile: async () => {},
+        subscribe(runId, handler) {
+            assert.equal(runId, 'run-partial');
+            listener = handler;
+            return () => {
+                stopped = true;
+            };
+        },
+    });
+
+    assert.equal(stopped, false);
+    listener({ type: 'run_partial_success', payload: { preservedCommitCount: 1 } });
+    assert.equal(stopped, true);
+});

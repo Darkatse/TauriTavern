@@ -38,6 +38,7 @@ pub enum AgentRunStatus {
     AwaitingHostCommit,
     Finishing,
     Completed,
+    PartialSuccess,
     Cancelling,
     Cancelled,
     Failed,

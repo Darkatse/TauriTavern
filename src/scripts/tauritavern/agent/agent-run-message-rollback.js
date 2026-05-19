@@ -1,6 +1,6 @@
-// Rolls back chat artifacts an Agent run committed before it failed because
-// of instruction drift. The backend emits `run_rollback_targets` with the
-// host-assigned messageId (chat array index returned by
+// Rolls back chat artifacts an Agent run committed when the user or a legacy
+// run flow explicitly discards partial output. `run_rollback_targets` carries
+// the host-assigned messageId (chat array index returned by
 // agent-chat-commit-bridge.js); per target we either:
 //
 // - pop just the swipe this run added to a pre-existing assistant message

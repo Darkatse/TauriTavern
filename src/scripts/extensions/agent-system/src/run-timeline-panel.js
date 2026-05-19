@@ -78,6 +78,9 @@ function createAgentRunTimelineApp() {
                 if (this.terminalType === 'run_cancelled') {
                     return 'cancelled';
                 }
+                if (this.terminalType === 'run_partial_success') {
+                    return 'partial';
+                }
                 if (this.terminalType === 'run_completed') {
                     return 'completed';
                 }
@@ -116,6 +119,9 @@ function createAgentRunTimelineApp() {
                 }
                 if (this.terminalType === 'run_cancelled') {
                     return tr('timelineCancelled');
+                }
+                if (this.terminalType === 'run_partial_success') {
+                    return tr('timelinePartialSuccess');
                 }
                 if (this.terminalType === 'run_completed') {
                     return tr('timelineCompleted');
@@ -339,6 +345,9 @@ function createAgentRunTimelineApp() {
                 }
                 if (type === 'run_completed') {
                     return tr('timelineOpDone');
+                }
+                if (type === 'run_partial_success') {
+                    return tr('timelineOpPartial');
                 }
                 if (type === 'run_failed' || type === 'tool_call_failed' || type === 'chat_commit_failed') {
                     return tr('timelineOpFail');
@@ -631,6 +640,7 @@ function createAgentRunTimelineApp() {
                     'is-details-open': detailsOpen,
                     'is-terminal': terminalType,
                     'is-error': terminalType === 'run_failed',
+                    'is-warning': terminalType === 'run_partial_success',
                     'is-resizing': resizing,
                 }"
                 :data-ttas-status="panelStatus"

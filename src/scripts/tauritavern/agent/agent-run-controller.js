@@ -3,7 +3,7 @@ import { rollbackAgentRunDriftMessages } from './agent-run-message-rollback.js';
 
 const AGENT_RUN_STATE_CHANGED = 'tauritavern-agent-run-state-changed';
 const AGENT_RUN_EVENT = 'tauritavern-agent-run-event';
-const TERMINAL_EVENTS = new Set(['run_completed', 'run_cancelled', 'run_failed']);
+const TERMINAL_EVENTS = new Set(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
 const ROLLBACK_EVENT_TYPE = 'run_rollback_targets';
 
 let activeRun = null;
@@ -100,11 +100,10 @@ export async function startAndWaitForAgentRun(input) {
 
     return new Promise((resolve, reject) => {
         let stop = () => {};
-        // Drift artifacts surface on `run_rollback_targets` (level=Warn)
-        // strictly before the matching `run_failed`. We start the rollback
-        // immediately on the first event but only resolve the run promise
-        // once it settles so vendor's finally(unblockGeneration) fires on
-        // a chat that already matches the failed run's state.
+        // Legacy and explicit-discard flows can surface rollback targets
+        // before the matching terminal event. We start cleanup immediately,
+        // then wait for it before settling so vendor's finally(unblockGeneration)
+        // observes the intended chat state.
         let pendingRollback = Promise.resolve();
 
         const clearActiveRun = (lastEvent = null) => {

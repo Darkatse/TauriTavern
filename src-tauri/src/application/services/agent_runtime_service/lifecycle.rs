@@ -164,7 +164,10 @@ impl AgentRuntimeService {
     ) -> Result<AgentRunHandleDto, ApplicationError> {
         let run = self.run_repository.load_run(&dto.run_id).await?;
         match run.status {
-            AgentRunStatus::Completed | AgentRunStatus::Cancelled | AgentRunStatus::Failed => {
+            AgentRunStatus::Completed
+            | AgentRunStatus::PartialSuccess
+            | AgentRunStatus::Cancelled
+            | AgentRunStatus::Failed => {
                 return Ok(AgentRunHandleDto {
                     run_id: run.id,
                     workspace_id: run.workspace_id,

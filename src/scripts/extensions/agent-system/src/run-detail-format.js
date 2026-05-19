@@ -103,6 +103,10 @@ export function formatPatchDiffDetail(target, file) {
 }
 
 export function formatRunFailureDetail(target) {
+    if (target?.event?.type === 'run_partial_success') {
+        return formatRunPartialSuccessDetail(target);
+    }
+
     const presentation = presentAgentRunFailure(target.event);
     const fields = [];
     const blocks = [];
@@ -135,6 +139,43 @@ export function formatRunFailureDetail(target) {
         fields,
         blocks,
         actions,
+    };
+}
+
+function formatRunPartialSuccessDetail(target) {
+    const payload = target?.event?.payload || {};
+    const fields = [];
+    const blocks = [];
+    const code = String(payload.code || '').trim();
+    const message = String(payload.message || '').trim();
+    const technicalMessage = String(payload.technicalMessage || message).trim();
+    const preservedCommitCount = Number(payload.preservedCommitCount);
+
+    if (code) {
+        fields.push(field(tr('timelineDetailFieldErrorCode'), code));
+    }
+    if (Number.isInteger(preservedCommitCount)) {
+        fields.push(field(tr('timelineDetailFieldPreservedCommits'), String(preservedCommitCount)));
+    }
+    fields.push(field(tr('timelineDetailFieldRetryable'), 'false'));
+    fields.push(field(tr('timelineDetailFieldUserRetryable'), 'false'));
+
+    addBlock(blocks, 'timelinePartialSuccessMessage', tr('timelinePartialSuccessDetail'));
+    if (message) {
+        addBlock(blocks, 'timelineResultText', message);
+    }
+    if (technicalMessage && technicalMessage !== message) {
+        addBlock(blocks, 'timelineTechnicalMessage', technicalMessage, DETAIL_TEXT_LIMIT, false, {
+            defaultOpen: false,
+        });
+    }
+
+    return {
+        labelKey: target.labelKey,
+        path: '',
+        fields,
+        blocks,
+        actions: [],
     };
 }
 

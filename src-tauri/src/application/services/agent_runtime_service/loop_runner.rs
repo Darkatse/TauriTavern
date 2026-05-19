@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
 
+use super::commit_ledger::RunCommitLedger;
 use super::model_turn::{
     append_tool_turn_to_request, assistant_message_for_next_turn, extract_response_text,
 };
@@ -10,8 +11,8 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{AgentToolEffect, AgentToolSession};
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
-    AgentChatCommitMode, AgentModelContentPart, AgentModelMessage, AgentModelRequest,
-    AgentModelRole, AgentRunEventLevel, AgentRunStatus, AgentToolResult, WorkspacePath,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole,
+    AgentRunEventLevel, AgentRunStatus, AgentToolResult, WorkspacePath,
 };
 
 /// How many in-loop drift recovery attempts to make per run before
@@ -22,29 +23,17 @@ use crate::domain::models::agent::{
 /// are common AND benign.
 const DRIFT_RECOVERY_MAX_ATTEMPTS: usize = 1;
 
-/// Tracks a chat commit that the model produced during this run. When the
-/// run later fails because of instruction drift (issue #55), we surface
-/// these records on a `run_rollback_targets` event so the host UI can offer
-/// the user a clean Retry that discards the drift artifacts.
-#[derive(Debug, Clone)]
-struct CommittedChatMessage {
-    path: String,
-    mode: AgentChatCommitMode,
-    message_id: Option<String>,
-    round: usize,
-}
-
 impl AgentRuntimeService {
     pub(super) async fn run_tool_loop(
         &self,
         run_id: &str,
         mut request: AgentModelRequest,
         profile: &ResolvedAgentProfile,
+        commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<Option<usize>, ApplicationError> {
         let mut tool_session = AgentToolSession::default();
         let mut commit_count = 0_usize;
-        let mut committed_messages: Vec<CommittedChatMessage> = Vec::new();
         // Issue #64: counter for soft drift recovery — see
         // `DRIFT_RECOVERY_MAX_ATTEMPTS` above. Persisted across rounds so a
         // single run gets at most N corrective nudges in total, not N per
@@ -123,7 +112,7 @@ impl AgentRuntimeService {
                     && round < profile.tools.max_rounds;
                 if can_recover {
                     drift_recovery_attempts += 1;
-                    let committed_count = committed_messages.len();
+                    let committed_count = commit_ledger.len();
                     let nudge_text = build_drift_recovery_nudge(
                         committed_count,
                         drift_recovery_attempts,
@@ -151,8 +140,6 @@ impl AgentRuntimeService {
                     self.ensure_not_cancelled(cancel)?;
                     continue;
                 }
-                self.emit_run_rollback_targets(run_id, &committed_messages, "model.tool_call_required", round)
-                    .await?;
                 return Err(ApplicationError::ValidationError(
                     "model.tool_call_required: model must use Agent tools and finish through workspace_finish"
                         .to_string(),
@@ -165,13 +152,6 @@ impl AgentRuntimeService {
 
             for call in tool_calls {
                 if finished {
-                    self.emit_run_rollback_targets(
-                        run_id,
-                        &committed_messages,
-                        "agent.tool_after_finish",
-                        round,
-                    )
-                    .await?;
                     return Err(ApplicationError::ValidationError(
                         "agent.tool_after_finish: model requested additional tools after workspace.finish".to_string(),
                     ));
@@ -183,11 +163,12 @@ impl AgentRuntimeService {
                         round,
                         &call,
                         &mut tool_session,
-                        profile,
-                        commit_count,
-                        cancel,
-                    )
-                    .await?;
+                    profile,
+                    commit_count,
+                    commit_ledger,
+                    cancel,
+                )
+                .await?;
                 match &outcome.effect {
                     AgentToolEffect::WorkspaceFileWritten { file } => {
                         self.checkpoint_workspace_file(
@@ -232,12 +213,6 @@ impl AgentRuntimeService {
                         message_id,
                     } => {
                         commit_count += 1;
-                        committed_messages.push(CommittedChatMessage {
-                            path: path.as_str().to_string(),
-                            mode: *mode,
-                            message_id: message_id.clone(),
-                            round,
-                        });
                         self.event(
                             run_id,
                             AgentRunEventLevel::Info,
@@ -279,55 +254,7 @@ impl AgentRuntimeService {
             self.ensure_not_cancelled(cancel)?;
         }
 
-        // We ran out of rounds before workspace_finish was called. Any
-        // commits made along the way are now orphaned — surface them so the
-        // host can offer a clean Retry that rolls them back.
-        self.emit_run_rollback_targets(
-            run_id,
-            &committed_messages,
-            "agent.max_tool_rounds_exceeded",
-            profile.tools.max_rounds,
-        )
-        .await?;
-
         Ok(None)
-    }
-
-    async fn emit_run_rollback_targets(
-        &self,
-        run_id: &str,
-        committed_messages: &[CommittedChatMessage],
-        reason_code: &str,
-        round: usize,
-    ) -> Result<(), ApplicationError> {
-        if committed_messages.is_empty() {
-            return Ok(());
-        }
-
-        let targets = committed_messages
-            .iter()
-            .map(|message| {
-                json!({
-                    "path": message.path,
-                    "mode": message.mode,
-                    "messageId": message.message_id.as_deref(),
-                    "round": message.round,
-                })
-            })
-            .collect::<Vec<_>>();
-        self.event(
-            run_id,
-            AgentRunEventLevel::Warn,
-            "run_rollback_targets",
-            json!({
-                "reasonCode": reason_code,
-                "round": round,
-                "targetCount": targets.len(),
-                "targets": Value::Array(targets),
-            }),
-        )
-        .await?;
-        Ok(())
     }
 
     async fn hydrate_recent_tool_results_for_model(
@@ -396,8 +323,8 @@ impl AgentRuntimeService {
 ///
 /// * **Post-commit drift** (committed_count > 0): model committed a chat
 ///   message but then replied with plain text instead of calling
-///   `workspace_finish`. We tell it that the commit will be rolled back if
-///   it doesn't finish, and that workspace edits only affect the chat after
+///   `workspace_finish`. We tell it that clean completion still requires
+///   `workspace_finish`, and that workspace edits only affect the chat after
 ///   another `workspace_commit`.
 /// * **No-commit drift** (committed_count == 0): model bypassed the tool
 ///   workflow entirely. We tell it that every turn must use a tool until
@@ -405,14 +332,18 @@ impl AgentRuntimeService {
 ///
 /// The attempt counter is included so the model can see we have a hard
 /// budget; if attempt == max_attempts there is no further leniency.
-fn build_drift_recovery_nudge(committed_count: usize, attempt: usize, max_attempts: usize) -> String {
+fn build_drift_recovery_nudge(
+    committed_count: usize,
+    attempt: usize,
+    max_attempts: usize,
+) -> String {
     if committed_count > 0 {
         format!(
             "[system reminder, drift recovery attempt {attempt}/{max_attempts}] You replied with \
              plain text but the run is not complete. You have committed {committed_count} \
              message(s) to the chat via workspace_commit; you MUST finalize the run by calling \
-             workspace_finish, or the commit(s) will be ROLLED BACK and the run will fail. If \
-             you need to revise the committed content, update the workspace file with \
+             workspace_finish, or the run will stop as partial_success with a warning instead of \
+             clean completion. If you need to revise the committed content, update the workspace file with \
              workspace_apply_patch or workspace_write_file, then call workspace_commit again \
              before workspace_finish. Do NOT repeat the content in plain text — that is treated \
              as instruction drift."

@@ -138,10 +138,10 @@ persistent_changes_committed
 persistent_changes_commit_failed
 run_committed
 run_completed
+run_partial_success
 run_cancel_requested
 run_cancelled
 drift_recovery_attempted
-run_rollback_targets
 run_failed
 ```
 
@@ -153,10 +153,10 @@ run_failed
 run_started
 status_changed
 run_completed
+run_partial_success
 run_cancel_requested
 run_cancelled
 drift_recovery_attempted
-run_rollback_targets
 run_failed
 ```
 
@@ -174,9 +174,31 @@ run_failed
 ```
 
 - `retryable`：宿主可不询问用户、安全地自动重试。仅在 `RateLimited`/`Transient` 等暂态错误上为 `true`。
-- `userRetryable`：用户可通过 UI 手动重试（前置已 rollback 漂移产物）。`retryable=true` 时一定为 `true`；此外 `model.tool_call_required`、`agent.tool_after_finish`、`agent.max_tool_rounds_exceeded` 等指令漂移类错误也是 `userRetryable=true`，但 **禁止** 自动重试。
+- `userRetryable`：用户可通过 UI 手动重试。`retryable=true` 时一定为 `true`；此外 `model.tool_call_required`、`agent.tool_after_finish`、`agent.max_tool_rounds_exceeded` 等指令漂移类错误也是 `userRetryable=true`，但 **禁止** 自动重试。若 run 已经成功 `workspace.commit` 过 chat，终态会改为 `run_partial_success`，不会复用 `run_failed.userRetryable`，避免用户在已保留输出上直接重试造成重复消息。
 
-当一次 run 因为指令漂移失败、并且该 run 已经通过 `workspace.commit` 向 chat 发布过消息时，loop runner 会在 `run_failed` **之前**额外写一条 `run_rollback_targets` 事件，列出本次 run 留下的"漂移产物"，宿主 UI 应据此回滚这些消息再向用户暴露 Retry：
+`run_partial_success` 是一个独立终态：当一次 run 已经通过 `workspace.commit` 向 chat 发布过至少一条消息，但后续仍因 drift、dispatch、`workspace.finish` / persistent commit 等错误失败时，executor 会保留这些 host-confirmed chat commit，并写 `run_partial_success`。它不是 clean success：错误仍在 payload 中暴露，`retryable` / `userRetryable` 固定为 `false`，宿主 UI 应以 warning 展示“已保留部分结果”。`workspace.finish` 未干净完成时不会提交 persistent state。
+
+```json
+{
+  "code": "model.tool_call_required",
+  "message": "model must use Agent tools and finish through workspace_finish",
+  "technicalMessage": "Validation error: model.tool_call_required: ...",
+  "retryable": false,
+  "userRetryable": false,
+  "details": {},
+  "preservedCommitCount": 1,
+  "preservedCommits": [
+    {
+      "path": "output/main.md",
+      "mode": "replace",
+      "messageId": "10",
+      "round": 4
+    }
+  ]
+}
+```
+
+`run_rollback_targets` 作为显式丢弃 / 旧版本清理事件形状保留。它不再是 committed drift 的默认终态路径：自动 rollback 会浪费模型已经通过 host 确认的输出。宿主收到该事件时，必须先完成 rollback，再暴露 retry 动作：
 
 ```json
 {
@@ -207,7 +229,7 @@ run_failed
 ```
 
 - 恢复成功 → run 继续，不会发 `run_rollback_targets`，也不会写 `run_failed`
-- 恢复失败（模型再次返回 0 tool_calls）→ 回落到原 #55 路径，发 `run_rollback_targets` + `run_failed`（`userRetryable=true`），允许用户手动重试
+- 恢复失败（模型再次返回 0 tool_calls）→ 若没有成功 chat commit，写 `run_failed`（`userRetryable=true`）；若已有成功 chat commit，写 `run_partial_success` 并保留输出
 
 ### 4.2 Workspace
 
@@ -526,10 +548,10 @@ commit_draft_created
 persistent_changes_committed
 run_committed
 run_completed
+run_partial_success
 run_cancel_requested
 run_cancelled
-run_rollback_targets
 run_failed
 ```
 
-这套事件已经足够支撑当前 tool loop、timeline、cancel、debug、commit 和后续 rollback/diff 基础。
+这套事件已经足够支撑当前 tool loop、timeline、cancel、debug、commit、partial-success 和 diff 基础。`run_rollback_targets` 作为显式丢弃 / 旧版本清理事件形状保留，但不再是 committed drift 的默认终态路径。

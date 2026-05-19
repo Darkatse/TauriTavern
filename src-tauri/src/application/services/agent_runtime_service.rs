@@ -16,6 +16,7 @@ use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 
 mod artifacts;
 mod commit;
+mod commit_ledger;
 mod error_payload;
 mod executor;
 mod journal;

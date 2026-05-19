@@ -1,10 +1,11 @@
 use serde_json::{Value, json};
 
+use super::commit_ledger::RunCommitLedger;
 use crate::application::errors::ApplicationError;
 
 /// Drift-class codes that should _never_ be auto-retried (the model
 /// disobeyed the tool contract), but the user is allowed to manually retry
-/// the same turn after the orphaned commits are rolled back. See issue #55.
+/// when no host-confirmed chat commit needs to be preserved. See issue #55.
 const USER_RETRYABLE_DRIFT_CODES: &[&str] = &[
     "model.tool_call_required",
     "agent.tool_after_finish",
@@ -24,6 +25,27 @@ pub(super) fn run_failure_payload(error: &ApplicationError) -> Value {
         "userRetryable": user_retryable,
         "details": {},
     })
+}
+
+pub(super) fn run_partial_success_payload(
+    error: &ApplicationError,
+    commit_ledger: &RunCommitLedger,
+) -> Value {
+    let mut payload = run_failure_payload(error);
+    let object = payload
+        .as_object_mut()
+        .expect("run failure payload must be a JSON object");
+    object.insert("retryable".to_string(), json!(false));
+    object.insert("userRetryable".to_string(), json!(false));
+    object.insert(
+        "preservedCommitCount".to_string(),
+        json!(commit_ledger.len()),
+    );
+    object.insert(
+        "preservedCommits".to_string(),
+        Value::Array(commit_ledger.preserved_commits()),
+    );
+    payload
 }
 
 fn agent_error_code_and_message(error: &ApplicationError) -> (String, String) {
@@ -177,5 +199,31 @@ mod tests {
             "openai returned status 200 non-JSON body (generate): expected value at line 1 column 1"
         );
         assert_eq!(payload["retryable"], true);
+    }
+
+    #[test]
+    fn partial_success_payload_preserves_commits_but_disables_retry_flags() {
+        let mut ledger = RunCommitLedger::default();
+        ledger.record(
+            &crate::domain::models::agent::WorkspacePath::parse("output/main.md").unwrap(),
+            crate::domain::models::agent::AgentChatCommitMode::Replace,
+            Some("42".to_string()),
+            3,
+        );
+
+        let payload = run_partial_success_payload(
+            &ApplicationError::ValidationError(
+                "model.tool_call_required: model must use Agent tools and finish through workspace_finish"
+                    .to_string(),
+            ),
+            &ledger,
+        );
+
+        assert_eq!(payload["code"], "model.tool_call_required");
+        assert_eq!(payload["retryable"], false);
+        assert_eq!(payload["userRetryable"], false);
+        assert_eq!(payload["preservedCommitCount"], 1);
+        assert_eq!(payload["preservedCommits"][0]["path"], "output/main.md");
+        assert_eq!(payload["preservedCommits"][0]["messageId"], "42");
     }
 }

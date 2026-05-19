@@ -1,6 +1,7 @@
 // @ts-check
 
 const activeCommitBridges = new Map();
+const TERMINAL_EVENTS = new Set(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
 
 export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, subscribe }) {
     const normalizedRunId = requireRunId(runId);
@@ -37,7 +38,7 @@ export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, s
             return;
         }
 
-        if (event?.type === 'run_completed' || event?.type === 'run_failed' || event?.type === 'run_cancelled') {
+        if (TERMINAL_EVENTS.has(event?.type)) {
             detachHostCommitBridge(normalizedRunId);
         }
     }, {
