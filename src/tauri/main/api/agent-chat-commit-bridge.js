@@ -11,6 +11,13 @@ export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, s
     const state = {
         runId: normalizedRunId,
         messageId: null,
+        // `createdMessage` and `firstSwipeId` are captured on the first commit so
+        // a later `run_rollback_targets` can tell whether deleting the run means
+        // removing the whole chat entry or only popping the swipe this run added
+        // to a pre-existing assistant message (regenerate / swipe generation
+        // types). See agent-run-message-rollback.js for the consumer.
+        createdMessage: null,
+        firstSwipeId: null,
         commitSeq: 0,
         resolvedCommitIds: new Set(),
         stop: null,
@@ -80,12 +87,20 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
         const isFirstCommit = state.messageId == null;
         let messageId;
         if (isFirstCommit) {
+            const lengthBefore = script.chat.length;
             await script.saveReply({
                 type: initialCommitSaveType(payload.generationType, mode),
                 getMessage: String(file?.text ?? ''),
             });
             messageId = getActiveMessageId(script.chat);
             state.messageId = messageId;
+            // saveReply for type='swipe' / 'regenerate' against an existing
+            // assistant message appends a new swipe in-place instead of pushing
+            // a new chat entry. We snapshot which case we're in so rollback can
+            // pop just the run's swipe (preserving prior swipes) rather than
+            // wiping the entire message.
+            state.createdMessage = script.chat.length > lengthBefore;
+            state.firstSwipeId = state.createdMessage ? null : readMessageSwipeId(script.chat[messageId]);
         } else {
             messageId = Number(state.messageId);
             assertActiveAgentMessage(script.chat, messageId, state.runId);
@@ -96,7 +111,10 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
         }
 
         state.commitSeq += 1;
-        mergeAgentCommitExtraIntoMessage(script.chat, messageId, payload, file, state.commitSeq);
+        mergeAgentCommitExtraIntoMessage(script.chat, messageId, payload, file, state.commitSeq, {
+            createdMessage: state.createdMessage,
+            firstSwipeId: state.firstSwipeId,
+        });
         await persistActiveChat(script);
 
         await safeInvoke('resolve_agent_chat_commit', {
@@ -156,6 +174,11 @@ function getActiveMessageId(chat) {
     return chat.length - 1;
 }
 
+function readMessageSwipeId(message) {
+    const swipeId = Number(message?.swipe_id);
+    return Number.isInteger(swipeId) && swipeId >= 0 ? swipeId : null;
+}
+
 function assertActiveAgentMessage(chat, messageId, runId) {
     if (!Array.isArray(chat) || chat.length - 1 !== messageId) {
         throw new Error('agent.chat_commit_message_mismatch: this run can only update its active chat message');
@@ -170,7 +193,7 @@ function assertActiveAgentMessage(chat, messageId, runId) {
     }
 }
 
-function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commitSeq) {
+function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commitSeq, runState = {}) {
     if (!Array.isArray(chat) || chat.length <= messageId) {
         throw new Error('agent.chat_commit_message_missing: active chat message is missing');
     }
@@ -192,6 +215,16 @@ function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commit
         bytes: file.bytes,
         sha256: file.sha256,
     };
+    const rollback = (() => {
+        // Default to deleting the whole message so messages persisted before
+        // this field was introduced keep the old rollback behavior.
+        const createdMessage = runState.createdMessage !== false;
+        const swipeId = Number(runState.firstSwipeId);
+        if (createdMessage || !Number.isInteger(swipeId) || swipeId < 0) {
+            return { strategy: 'deleteMessage' };
+        }
+        return { strategy: 'deleteSwipe', swipeId };
+    })();
     const extra = {
         tauritavern: {
             agent: {
@@ -206,6 +239,7 @@ function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commit
                 commitId: payload.commitId,
                 commitSeq,
                 commits: [...previousCommits, commit],
+                rollback,
                 artifacts: [{
                     path: file.path,
                     target: 'message_body',

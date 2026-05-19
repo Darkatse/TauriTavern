@@ -106,15 +106,26 @@ export function formatRunFailureDetail(target) {
     const presentation = presentAgentRunFailure(target.event);
     const fields = [];
     const blocks = [];
+    const actions = [];
 
     if (presentation.code) {
         fields.push(field(tr('timelineDetailFieldErrorCode'), presentation.code));
     }
     fields.push(field(tr('timelineDetailFieldRetryable'), String(presentation.retryable)));
+    fields.push(field(tr('timelineDetailFieldUserRetryable'), String(presentation.userRetryable)));
     addBlock(blocks, 'timelineResultText', presentation.message);
     if (presentation.technicalMessage && presentation.technicalMessage !== presentation.message) {
         addBlock(blocks, 'timelineTechnicalMessage', presentation.technicalMessage, DETAIL_TEXT_LIMIT, false, {
             defaultOpen: false,
+        });
+    }
+
+    if (presentation.userRetryable) {
+        actions.push({
+            kind: 'retry',
+            labelKey: 'timelineActionRetry',
+            hintKey: 'timelineActionRetryHint',
+            icon: 'fa-rotate-right',
         });
     }
 
@@ -123,6 +134,7 @@ export function formatRunFailureDetail(target) {
         path: '',
         fields,
         blocks,
+        actions,
     };
 }
 
