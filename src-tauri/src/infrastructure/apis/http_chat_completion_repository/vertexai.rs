@@ -8,6 +8,7 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 
 use super::HttpChatCompletionRepository;
+use super::body_preview::read_upstream_json_body;
 use super::normalizers;
 
 const PROVIDER_NAME: &str = "Google Vertex AI";
@@ -74,9 +75,7 @@ pub(super) async fn generate(
         .await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
-    })?;
+    let body = read_upstream_json_body(PROVIDER_NAME, "generate", response).await?;
 
     Ok(normalizers::normalize_gemini_response(body))
 }

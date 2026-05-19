@@ -8,6 +8,7 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 
 use super::HttpChatCompletionRepository;
+use super::body_preview::read_upstream_json_body;
 use super::normalizers;
 
 const GEMINI_API_VERSION: &str = "v1beta";
@@ -37,9 +38,7 @@ pub(super) async fn list_models(
         .await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse models JSON: {error}"))
-    })?;
+    let body = read_upstream_json_body("Google Gemini", "list_models", response).await?;
 
     let models = body
         .get("models")
@@ -122,9 +121,7 @@ pub(super) async fn generate(
         .await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
-    })?;
+    let body = read_upstream_json_body("Google Gemini", "generate", response).await?;
 
     Ok(normalizers::normalize_gemini_response(body))
 }

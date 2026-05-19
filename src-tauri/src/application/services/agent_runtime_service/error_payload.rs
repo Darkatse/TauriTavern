@@ -119,4 +119,19 @@ mod tests {
         assert_eq!(payload["message"], "upstream rate limit");
         assert_eq!(payload["retryable"], true);
     }
+
+    #[test]
+    fn upstream_invalid_response_is_transient_and_retryable() {
+        let payload = run_failure_payload(&ApplicationError::Transient(
+            "model.upstream_invalid_response: openai returned status 200 non-JSON body (generate): expected value at line 1 column 1"
+                .to_string(),
+        ));
+
+        assert_eq!(payload["code"], "model.upstream_invalid_response");
+        assert_eq!(
+            payload["message"],
+            "openai returned status 200 non-JSON body (generate): expected value at line 1 column 1"
+        );
+        assert_eq!(payload["retryable"], true);
+    }
 }

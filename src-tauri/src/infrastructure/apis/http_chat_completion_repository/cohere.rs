@@ -7,6 +7,7 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 
 use super::HttpChatCompletionRepository;
+use super::body_preview::read_upstream_json_body;
 
 pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
@@ -33,9 +34,7 @@ pub(super) async fn list_models(
         .await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse models JSON: {error}"))
-    })?;
+    let body = read_upstream_json_body("Cohere", "list_models", response).await?;
 
     Ok(json!({ "data": normalize_models(&body) }))
 }
@@ -73,9 +72,7 @@ pub(super) async fn generate(
         .await);
     }
 
-    response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
-    })
+    read_upstream_json_body("Cohere", "generate", response).await
 }
 
 pub(super) async fn generate_stream(

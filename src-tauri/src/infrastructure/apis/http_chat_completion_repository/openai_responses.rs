@@ -19,6 +19,7 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 
 use super::HttpChatCompletionRepository;
+use super::body_preview::{log_upstream_body_parse_failure, read_upstream_json_body};
 use super::normalizers;
 
 type ResponsesWsStream = tokio_tungstenite::WebSocketStream<reqwest::Upgraded>;
@@ -464,9 +465,7 @@ async fn generate_http(
         .await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
-    })?;
+    let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
     Ok(normalizers::normalize_openai_responses_response(body))
 }
@@ -1094,8 +1093,16 @@ fn response_from_ws_payload(payload: &[u8]) -> Result<Option<Value>, DomainError
 
 fn parse_ws_event(payload: &[u8]) -> Result<Value, DomainError> {
     serde_json::from_slice(payload).map_err(|error| {
-        DomainError::InternalError(format!(
-            "OpenAI Responses WebSocket event is not valid JSON: {error}"
+        log_upstream_body_parse_failure(
+            "OpenAI Responses",
+            "generate_stream_ws",
+            StatusCode::SWITCHING_PROTOCOLS,
+            "application/json",
+            payload,
+            &error,
+        );
+        DomainError::transient(format!(
+            "model.upstream_invalid_response: OpenAI Responses WebSocket event is not valid JSON: {error}"
         ))
     })
 }

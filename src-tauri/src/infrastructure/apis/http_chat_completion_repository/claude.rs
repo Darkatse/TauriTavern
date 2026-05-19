@@ -11,6 +11,7 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 
 use super::HttpChatCompletionRepository;
+use super::body_preview::read_upstream_json_body;
 use super::normalizers;
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -48,9 +49,7 @@ pub(super) async fn list_models(
         .await);
     }
 
-    response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse models JSON: {error}"))
-    })
+    read_upstream_json_body("Claude", "list_models", response).await
 }
 
 pub(super) async fn generate(
@@ -93,9 +92,7 @@ pub(super) async fn generate(
         .await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
-    })?;
+    let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
     if super::payload_contains_cache_control(payload) {
         let model = payload.get("model").and_then(Value::as_str);
