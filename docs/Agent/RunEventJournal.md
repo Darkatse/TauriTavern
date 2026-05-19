@@ -192,6 +192,8 @@ run_failed
 }
 ```
 
+`messageId` 总是 chat 数组下标。对于 swipe / regenerate 这类把新内容追加成 swipe 的 generation type，回滚应只移除本次 run 新增的那条 swipe（保留用户先前的 swipes），而不是删整条 message。宿主在写入消息时已把回滚策略记录在 `extra.tauritavern.agent.rollback`（`{ strategy: "deleteSwipe", swipeId }` 或 `{ strategy: "deleteMessage" }`），消费 `run_rollback_targets` 时按 message 上的 `rollback.strategy` 选择删整条还是只删 swipe。
+
 ### 4.2 Workspace
 
 ```text

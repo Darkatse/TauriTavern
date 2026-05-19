@@ -1,9 +1,21 @@
 const RUN_FAILURE_PRESENTATIONS = Object.freeze({
     'model.tool_call_required': Object.freeze({
-        message: 'The model skipped the Agent tool flow and tried to answer directly. No chat message was committed. Try regenerating; if this keeps happening, reduce the context or use a model with stronger tool calling.',
+        message: 'The model skipped the Agent tool flow and tried to answer directly. Any drift artifacts left in the chat were rolled back. Try regenerating; if this keeps happening, reduce the context or use a model with stronger tool calling.',
         messageKey: 'agent.error.model_tool_call_required.message',
-        summary: 'The model skipped the Agent tool flow; no message was committed.',
+        summary: 'The model skipped the Agent tool flow; drift artifacts rolled back.',
         summaryKey: 'agent.error.model_tool_call_required.summary',
+    }),
+    'agent.tool_after_finish': Object.freeze({
+        message: 'The model requested more tools after workspace.finish, which breaks the Agent contract. Any partial chat output was rolled back. Try regenerating; if this persists, lower the temperature or pick a model that obeys workspace.finish.',
+        messageKey: 'agent.error.tool_after_finish.message',
+        summary: 'Model kept calling tools after workspace.finish; drift rolled back.',
+        summaryKey: 'agent.error.tool_after_finish.summary',
+    }),
+    'agent.max_tool_rounds_exceeded': Object.freeze({
+        message: 'The Agent loop exceeded the configured maximum tool rounds before calling workspace.finish. Any partial chat output was rolled back. Try regenerating with a tighter prompt, or raise the round budget in the profile.',
+        messageKey: 'agent.error.max_tool_rounds_exceeded.message',
+        summary: 'Tool round budget exhausted; drift rolled back.',
+        summaryKey: 'agent.error.max_tool_rounds_exceeded.summary',
     }),
 });
 
@@ -13,6 +25,11 @@ export function presentAgentRunFailure(event) {
     const message = String(payload.message || '').trim();
     const technicalMessage = String(payload.technicalMessage || message || runFailed()).trim();
     const presentation = RUN_FAILURE_PRESENTATIONS[code];
+    const retryable = payload.retryable === true;
+    // Backend guarantees retryable=true implies userRetryable=true. If the
+    // backend omits userRetryable (older runtimes) fall back to retryable so
+    // we never block a manual retry that auto-retry would have allowed.
+    const userRetryable = payload.userRetryable === true || retryable;
 
     return {
         code,
@@ -23,7 +40,8 @@ export function presentAgentRunFailure(event) {
             ? translateAgentError(presentation.summary, presentation.summaryKey)
             : message || technicalMessage,
         technicalMessage,
-        retryable: payload.retryable === true,
+        retryable,
+        userRetryable,
     };
 }
 
