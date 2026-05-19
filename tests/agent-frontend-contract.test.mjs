@@ -952,3 +952,105 @@ test('Rollback helper deletes drift messages back-to-front and skips foreign mes
     assert.equal(chat.length, 1);
     assert.equal(chat[0].extra.tauritavern.agent.runId, 'other-run');
 });
+
+test('Rollback helper pops only the run-added swipe when the message pre-existed', async () => {
+    const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
+
+    const chat = [
+        { is_user: true, mes: 'hello' },
+        {
+            is_user: false,
+            mes: 'agent drift attempt',
+            swipe_id: 2,
+            swipes: ['user-authored', 'user-authored alt 1', 'agent drift attempt'],
+            swipe_info: [
+                { extra: {} },
+                { extra: {} },
+                { extra: { tauritavern: { agent: { runId: 'run-swipe' } } } },
+            ],
+            extra: {
+                tauritavern: {
+                    agent: {
+                        runId: 'run-swipe',
+                        rollback: { strategy: 'deleteSwipe', swipeId: 2 },
+                    },
+                },
+            },
+        },
+    ];
+
+    const swipeCalls = [];
+    const messageDeletions = [];
+    const script = {
+        chat,
+        async deleteSwipe(swipeId, messageId) {
+            swipeCalls.push({ swipeId, messageId });
+            chat[messageId].swipes.splice(swipeId, 1);
+            chat[messageId].swipe_info.splice(swipeId, 1);
+            chat[messageId].swipe_id = Math.min(swipeId, chat[messageId].swipes.length - 1);
+            chat[messageId].mes = chat[messageId].swipes[chat[messageId].swipe_id];
+            return chat[messageId].swipe_id;
+        },
+        async deleteMessage(index) {
+            messageDeletions.push(index);
+            chat.splice(index, 1);
+        },
+    };
+
+    const result = await rollbackAgentRunDriftMessages({
+        runId: 'run-swipe',
+        targets: [{ messageId: '1' }, { messageId: '1' }],
+        script,
+    });
+
+    assert.deepEqual(swipeCalls, [{ swipeId: 2, messageId: 1 }]);
+    assert.deepEqual(messageDeletions, []);
+    assert.equal(result.swipesRemoved, 1);
+    assert.equal(result.deleted, 0);
+    assert.equal(chat.length, 2, 'pre-existing message must be preserved');
+    assert.equal(chat[1].mes, 'user-authored alt 1');
+    assert.deepEqual(chat[1].swipes, ['user-authored', 'user-authored alt 1']);
+});
+
+test('Rollback helper falls back to deleteMessage when swipe metadata is unsafe', async () => {
+    const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
+
+    const chat = [
+        {
+            is_user: false,
+            swipes: ['only one'],
+            swipe_id: 0,
+            extra: {
+                tauritavern: {
+                    agent: {
+                        runId: 'run-edge',
+                        rollback: { strategy: 'deleteSwipe', swipeId: 0 },
+                    },
+                },
+            },
+        },
+    ];
+    const swipeCalls = [];
+    const messageDeletions = [];
+    const script = {
+        chat,
+        async deleteSwipe(swipeId, messageId) {
+            swipeCalls.push({ swipeId, messageId });
+        },
+        async deleteMessage(index) {
+            messageDeletions.push(index);
+            chat.splice(index, 1);
+        },
+    };
+
+    const result = await rollbackAgentRunDriftMessages({
+        runId: 'run-edge',
+        targets: [{ messageId: '0' }],
+        script,
+    });
+
+    assert.deepEqual(swipeCalls, [], 'must not call deleteSwipe when only one swipe remains');
+    assert.deepEqual(messageDeletions, [0]);
+    assert.equal(result.deleted, 1);
+    assert.equal(result.swipesRemoved, 0);
+});
