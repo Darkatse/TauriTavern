@@ -44,23 +44,22 @@ impl AgentRuntimeService {
         let started = Instant::now();
 
         if self.tool_registry.spec_by_name(&call.name).is_none() {
-            let error = ApplicationError::ValidationError(format!(
-                "model.unknown_tool_call: model requested unknown Agent tool `{}`",
-                call.name
-            ));
-            self.event(
-                run_id,
-                AgentRunEventLevel::Error,
-                "tool_call_failed",
-                json!({
-                    "round": round,
-                    "callId": call.id.as_str(),
-                    "name": call.name.as_str(),
-                    "message": error.to_string(),
-                }),
-            )
-            .await?;
-            return Err(error);
+            // Issue #69: previously this hard-failed the run with
+            // `model.unknown_tool_call`. That throws away any earlier work
+            // when the model only made a typo. Convert it to a recoverable
+            // tool error so the next turn the model sees the typo and can
+            // retry with a valid tool name.
+            let outcome = recoverable_tool_error(
+                call,
+                "model.unknown_tool_call",
+                &format!(
+                    "Unknown Agent tool `{}`. Pick from the tools listed in the request schema.",
+                    call.name
+                ),
+                started.elapsed().as_millis(),
+            );
+            self.record_tool_outcome(run_id, round, &outcome).await?;
+            return Ok(outcome);
         }
 
         if !tool_is_visible(profile, call.name.as_str()) {
@@ -158,6 +157,34 @@ impl AgentRuntimeService {
                 Ok(outcome)
             }
             Err(error) => {
+                // Issue #69: convert recoverable dispatch errors into a
+                // tool-error result so the model can see what went wrong
+                // and try again, rather than tearing down the whole run.
+                // We keep infrastructure / cancellation errors as hard
+                // failures because they aren't something the model can
+                // fix from inside the tool loop.
+                let elapsed_ms = started.elapsed().as_millis();
+                if let Some((code, detail)) =
+                    classify_dispatch_error_for_model(&error, call.name.as_str())
+                {
+                    self.event(
+                        run_id,
+                        AgentRunEventLevel::Warn,
+                        "tool_dispatch_soft_recovered",
+                        json!({
+                            "round": round,
+                            "callId": call.id.as_str(),
+                            "name": call.name.as_str(),
+                            "code": code,
+                            "message": detail,
+                        }),
+                    )
+                    .await?;
+                    let outcome =
+                        recoverable_tool_error(call, code, detail.as_str(), elapsed_ms);
+                    self.record_tool_outcome(run_id, round, &outcome).await?;
+                    return Ok(outcome);
+                }
                 self.event(
                     run_id,
                     AgentRunEventLevel::Error,
@@ -284,6 +311,74 @@ fn hex_encode(bytes: &[u8]) -> String {
 fn tool_is_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
     profile.tools.allow.iter().any(|allowed| allowed == name)
         && !profile.tools.deny.iter().any(|denied| denied == name)
+}
+
+/// Decide whether a dispatch-time `ApplicationError` is something the
+/// model could plausibly fix on a retry. If yes, return the
+/// (code, detail) pair we should feed back into the tool loop as a
+/// recoverable tool error; if no, return `None` so the caller keeps the
+/// existing fail-fast behavior.
+///
+/// We are deliberately conservative:
+///
+/// * `ValidationError` and `NotFound` are model-facing — they typically
+///   originate from arg parsing, path parsing, or repository lookups for
+///   resources the model named. The model can fix all three on its own.
+/// * `RateLimited` and `Transient` are also surfaced so the model can,
+///   say, fall back to a smaller search query. They are also auto-retried
+///   higher up, but a tool-result with the code is a useful signal.
+/// * `InternalError`, `PermissionDenied`, `Unauthorized`, `Cancelled` keep
+///   the original hard-fail behavior — those mean the host or
+///   infrastructure has decided this run cannot proceed.
+fn classify_dispatch_error_for_model(
+    error: &ApplicationError,
+    tool_name: &str,
+) -> Option<(&'static str, String)> {
+    match error {
+        ApplicationError::ValidationError(message) => {
+            Some((classify_tool_error_code(message), message.clone()))
+        }
+        ApplicationError::NotFound(message) => Some(("tool.not_found", message.clone())),
+        ApplicationError::RateLimited(message) => {
+            Some(("tool.rate_limited", message.clone()))
+        }
+        ApplicationError::Transient(message) => Some(("tool.transient", message.clone())),
+        ApplicationError::InternalError(_)
+        | ApplicationError::PermissionDenied(_)
+        | ApplicationError::Unauthorized(_)
+        | ApplicationError::Cancelled(_) => {
+            let _ = tool_name;
+            None
+        }
+    }
+}
+
+/// Extract a structured `tool.*` style error code from a validation
+/// error message when the tool layer encoded one (e.g.
+/// `workspace.invalid_path: ...`). Falls back to a generic
+/// `tool.invalid_call` so the model always sees a deterministic code.
+fn classify_tool_error_code(message: &str) -> &'static str {
+    let trimmed = message.trim();
+    let Some((prefix, _)) = trimmed.split_once(':') else {
+        return "tool.invalid_call";
+    };
+    let prefix = prefix.trim();
+    if prefix.contains('.')
+        && prefix
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        match prefix {
+            "workspace.invalid_path" => "workspace.invalid_path",
+            "workspace.path_is_directory" => "workspace.path_is_directory",
+            "workspace.file_not_found" => "workspace.file_not_found",
+            "workspace.invalid_args" => "workspace.invalid_args",
+            "model.unknown_tool_call" => "model.unknown_tool_call",
+            _ => "tool.invalid_call",
+        }
+    } else {
+        "tool.invalid_call"
+    }
 }
 
 fn recoverable_tool_error(

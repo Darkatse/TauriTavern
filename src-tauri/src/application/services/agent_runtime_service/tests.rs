@@ -1126,16 +1126,20 @@ async fn foreground_run_commits_chat_message_before_finish() {
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
 
-/// Issue #55 + #64: when the model commits, then drifts by replying with
-/// plain text (no tool calls), the run gives the model **one** corrective
-/// nudge (issue #64 soft drift recovery). If it drifts AGAIN, the run
-/// must fail AND emit a `run_rollback_targets` event listing the
-/// now-orphaned chat message so the host UI can roll it back and offer
-/// the user a clean Retry. This is the failure-after-recovery path; the
-/// success path is covered by
-/// [`foreground_run_recovers_from_post_commit_drift_with_nudge`].
+/// Issue #55 + #64 + #69: when the model commits, then drifts by
+/// replying with plain text (no tool calls), the run gives the model
+/// **one** corrective nudge (issue #64 soft drift recovery). If it
+/// drifts AGAIN after the nudge, issue #69 prefers preserving the
+/// committed work over rolling it back: the loop soft-falls-back to
+/// `finish_run`, the chat message stays, and the run is marked
+/// `Completed` with a `drift_soft_finished` warning event so the host
+/// UI can flag the run as "completed with warnings".
+///
+/// The hard-fail path (no commits to preserve → still hard fail with
+/// `run_rollback_targets`) is covered by
+/// [`foreground_run_hard_fails_when_no_commit_to_preserve`].
 #[tokio::test]
-async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
+async fn foreground_run_soft_finishes_when_drift_recovery_exhausts_after_commit() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-drift-rollback-{}",
         Uuid::new_v4().simple()
@@ -1250,6 +1254,172 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
         run.id.clone(),
         "message_42",
     ));
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("soft fallback must let the run complete cleanly");
+    resolver.await.expect("resolver task");
+
+    // #69: the run must complete (not fail) because a committed chat
+    // message exists. The model misbehaved, but throwing the chat away
+    // is worse than letting the user see it with a warning.
+    let saved = repository.load_run(&run.id).await.expect("load run");
+    assert_eq!(saved.status, AgentRunStatus::Completed);
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 200,
+            },
+        )
+        .await
+        .expect("read events");
+
+    // #64 regression guard: exactly one `drift_recovery_attempted`
+    // event must precede the soft completion. If this assertion fails
+    // it means recovery was bypassed entirely.
+    let recovery_events: Vec<_> = events
+        .iter()
+        .filter(|event| event.event_type == "drift_recovery_attempted")
+        .collect();
+    assert_eq!(
+        recovery_events.len(),
+        1,
+        "exactly one drift_recovery_attempted event must precede the soft finish"
+    );
+    assert_eq!(recovery_events[0].level, AgentRunEventLevel::Warn);
+    assert_eq!(recovery_events[0].payload["attempt"], 1);
+    assert_eq!(recovery_events[0].payload["maxAttempts"], 1);
+    assert_eq!(recovery_events[0].payload["committedCount"], 1);
+    assert_eq!(
+        recovery_events[0].payload["reasonCode"],
+        "model.tool_call_required"
+    );
+
+    // #69: after recovery exhausts, the loop must emit
+    // `drift_soft_finished` with the preserved commit, NOT
+    // `run_rollback_targets`. The host UI uses this to render a
+    // "completed with warnings" badge.
+    let soft_finished = events
+        .iter()
+        .find(|event| event.event_type == "drift_soft_finished")
+        .expect("drift_soft_finished event must be emitted instead of rollback");
+    assert_eq!(soft_finished.level, AgentRunEventLevel::Warn);
+    assert_eq!(
+        soft_finished.payload["reasonCode"],
+        "model.tool_call_required"
+    );
+    assert_eq!(soft_finished.payload["preservedCommitCount"], 1);
+    let preserved = soft_finished.payload["preservedCommits"]
+        .as_array()
+        .expect("preservedCommits array");
+    assert_eq!(preserved.len(), 1);
+    assert_eq!(preserved[0]["messageId"], "message_42");
+    assert_eq!(preserved[0]["path"], "output/main.md");
+
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "run_rollback_targets"),
+        "#69 soft fallback must not emit rollback when commits exist"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "run_completed"),
+        "run_completed must follow drift_soft_finished"
+    );
+}
+
+/// Issue #69 inverse case: when the model drifts and there is **no**
+/// committed work to preserve, the loop must still hard-fail with the
+/// original `model.tool_call_required` error so the user notices the
+/// run never produced a deliverable. The soft fallback only kicks in
+/// when there is something to preserve.
+#[tokio::test]
+async fn foreground_run_hard_fails_when_drift_recovery_exhausts_without_commit() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-drift-hardfail-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_drift_hardfail_test".to_string(),
+        workspace_id: "chat_drift_hardfail_test".to_string(),
+        stable_chat_id: "stable_drift_hardfail_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        persist_base_state_id: None,
+        presentation: AgentRunPresentation::Foreground,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        // Round 1: model drifts immediately — plain text, no tool calls,
+        // no prior commit. #64 still gets one recovery attempt.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "I'll just answer directly without using any tools.",
+                }
+            }]
+        }),
+        // Round 2: model ignores the nudge and drifts again. Recovery
+        // budget exhausted AND no commit to preserve → hard fail with
+        // `run_rollback_targets` (empty target list) so the host UI can
+        // still surface the error for the user.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Still answering directly, sorry.",
+                }
+            }]
+        }),
+    ]));
+
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        test_profile_service(&root),
+    ));
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("drift with no commit")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.run.presentation = AgentRunPresentation::Foreground;
+
     let outcome = service
         .execute_agent_loop_run_inner(
             &run.id,
@@ -1259,11 +1429,11 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
             &mut cancel_receiver,
         )
         .await;
-    resolver.await.expect("resolver task");
 
+    let error = outcome.expect_err("no-commit drift after recovery must hard-fail");
     assert!(
-        outcome.is_err(),
-        "drift after commit must fail the run, got Ok"
+        error.to_string().contains("model.tool_call_required"),
+        "unexpected error: {error}"
     );
 
     let events = repository
@@ -1278,42 +1448,20 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
         .await
         .expect("read events");
 
-    // #64: the first drift must have produced exactly one
-    // `drift_recovery_attempted` event before we surrendered to the
-    // rollback path. If this assertion fails it means the rollback was
-    // emitted on the first drift (recovery was bypassed) — a regression
-    // of #64.
-    let recovery_events: Vec<_> = events
+    // Recovery must still be attempted exactly once.
+    let recovery_count = events
         .iter()
         .filter(|event| event.event_type == "drift_recovery_attempted")
-        .collect();
-    assert_eq!(
-        recovery_events.len(),
-        1,
-        "exactly one drift_recovery_attempted event must precede the rollback"
-    );
-    assert_eq!(recovery_events[0].level, AgentRunEventLevel::Warn);
-    assert_eq!(recovery_events[0].payload["attempt"], 1);
-    assert_eq!(recovery_events[0].payload["maxAttempts"], 1);
-    assert_eq!(recovery_events[0].payload["committedCount"], 1);
-    assert_eq!(
-        recovery_events[0].payload["reasonCode"],
-        "model.tool_call_required"
-    );
+        .count();
+    assert_eq!(recovery_count, 1);
 
-    let rollback = events
-        .iter()
-        .find(|event| event.event_type == "run_rollback_targets")
-        .expect("run_rollback_targets event must be emitted on drift after commit");
-    assert_eq!(rollback.level, AgentRunEventLevel::Warn);
-    assert_eq!(rollback.payload["reasonCode"], "model.tool_call_required");
-    assert_eq!(rollback.payload["targetCount"], 1);
-    let targets = rollback.payload["targets"]
-        .as_array()
-        .expect("targets array");
-    assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0]["messageId"], "message_42");
-    assert_eq!(targets[0]["path"], "output/main.md");
+    // Soft finish must NOT fire because there is no commit to preserve.
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "drift_soft_finished"),
+        "soft fallback must not fire when there is nothing to preserve"
+    );
 }
 
 /// Issue #64: when the model commits and then drifts (plain text, no

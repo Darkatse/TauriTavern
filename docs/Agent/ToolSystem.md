@@ -197,9 +197,16 @@ persist/
 如果模型一回合内仍然返回 0 个 tool_calls（drift），loop runner 会先做一次"软纠正"（issue #64）：把模型的纯文本回复推进 history，再追加一条 `user` 角色的合成提醒，让模型在下一轮重试。**每个 run 至多 1 次**（常量 `DRIFT_RECOVERY_MAX_ATTEMPTS`），每次都会写一条 `drift_recovery_attempted` 事件。
 
 - 软纠正后模型调用了 `workspace_finish`（或继续修订）→ run 继续，无 rollback。
-- 软纠正失败（模型再次 0 tool_calls）→ 回落到 `model.tool_call_required` 失败路径，发 `run_rollback_targets` + `run_failed`（`userRetryable=true`）。
+- 软纠正失败（模型再次 0 tool_calls）→ **issue #69 soft fallback**：若该 run 已 commit 过 chat 消息，loop runner 改为发 `drift_soft_finished` 事件并继续走 `finish_run`（run 状态 `Completed`，commit 保留）；若没有任何 commit，保持原 `run_rollback_targets` + `run_failed`（`userRetryable=true`）路径让用户手动重试。
 
-违反此契约的其它形态（`agent.tool_after_finish` / `agent.max_tool_rounds_exceeded`）目前不走软纠正、直接发 `run_rollback_targets`，原因是这两种 drift 本身已经发生了真实的工具调用，软纠正空间小。细节见 `RunEventJournal.md`。
+其它 drift 形态也复用同一兜底（issue #69）：
+
+- `agent.tool_after_finish`（模型在 finish 后又请求工具）：已 commit 时跳过多余调用（每条写 `drift_soft_skipped_post_finish_tool`）继续走 finish；未 commit 时维持原 `run_rollback_targets` + `run_failed`。
+- `agent.max_tool_rounds_exceeded`（轮数耗尽未 finish）：已 commit 时发 `drift_soft_finished` 并自动 finish；未 commit 时维持原失败路径。
+- `finish_run` 内部 `commit_persistent_changes` 失败：保留 chat commit，`persistent_changes_commit_failed` payload 带 `softDegraded: true`，run 仍走 `Completed`。
+- `dispatch_tool_call` 阶段的 `ValidationError` / `NotFound` / `RateLimited` / `Transient` / 未知工具名：改为以 `recoverable_tool_error` 回填给下一轮 tool result，写 `tool_dispatch_soft_recovered` 事件；`InternalError` / `PermissionDenied` / `Unauthorized` / `Cancelled` 维持原硬失败。
+
+核心原则："已通过 `workspace.commit` 写出的工作绝不丢"。细节与 payload 形态见 `RunEventJournal.md`。
 
 当前没有 MCP、shell、extension bridge、profile routing、Plan Mode runtime 或审批工具。
 

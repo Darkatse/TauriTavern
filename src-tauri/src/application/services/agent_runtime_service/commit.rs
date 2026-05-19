@@ -267,35 +267,47 @@ impl AgentRuntimeService {
         self.transition_status(run_id, AgentRunStatus::Finishing)
             .await?;
 
-        let persistent_changes = match self
+        // Issue #69: never let a persistent-state commit failure throw
+        // away the chat message the model already committed. If
+        // `commit_persistent_changes` fails (disk full, journal corrupt,
+        // …), we emit `persistent_changes_commit_failed` as before, then
+        // continue with run completion so the user still sees the
+        // committed chat. The host UI should treat a `run_completed`
+        // event that follows a `persistent_changes_commit_failed` event
+        // as "completed with warnings" — persistent (cross-run) state
+        // for this run was discarded.
+        match self
             .workspace_repository
             .commit_persistent_changes(run_id)
             .await
         {
-            Ok(changes) => changes,
+            Ok(persistent_changes) => {
+                self.event(
+                    run_id,
+                    AgentRunEventLevel::Info,
+                    "persistent_changes_committed",
+                    json!({
+                        "stateId": persistent_changes.state_id,
+                        "baseStateId": persistent_changes.base_state_id,
+                        "changeCount": persistent_changes.changes.len(),
+                        "changes": &persistent_changes.changes,
+                    }),
+                )
+                .await?;
+            }
             Err(error) => {
                 self.event(
                     run_id,
                     AgentRunEventLevel::Error,
                     "persistent_changes_commit_failed",
-                    json!({ "message": error.to_string() }),
+                    json!({
+                        "message": error.to_string(),
+                        "softDegraded": true,
+                    }),
                 )
                 .await?;
-                return Err(error.into());
             }
-        };
-        self.event(
-            run_id,
-            AgentRunEventLevel::Info,
-            "persistent_changes_committed",
-            json!({
-                "stateId": persistent_changes.state_id,
-                "baseStateId": persistent_changes.base_state_id,
-                "changeCount": persistent_changes.changes.len(),
-                "changes": &persistent_changes.changes,
-            }),
-        )
-        .await?;
+        }
 
         self.transition_status(run_id, AgentRunStatus::Completed)
             .await?;

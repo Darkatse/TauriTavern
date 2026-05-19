@@ -151,6 +151,22 @@ impl AgentRuntimeService {
                     self.ensure_not_cancelled(cancel)?;
                     continue;
                 }
+                // Issue #69: drift recovery is exhausted. If the model has
+                // already committed work in this run, we *never* throw away
+                // that work — soft-fall-back to `finish_run` so the user
+                // sees the committed chat message instead of an empty
+                // rollback. Only when there is nothing to preserve do we
+                // hard-fail with `model.tool_call_required`.
+                if !committed_messages.is_empty() {
+                    self.emit_drift_soft_finished_event(
+                        run_id,
+                        &committed_messages,
+                        "model.tool_call_required",
+                        round,
+                    )
+                    .await?;
+                    return Ok(Some(commit_count));
+                }
                 self.emit_run_rollback_targets(run_id, &committed_messages, "model.tool_call_required", round)
                     .await?;
                 return Err(ApplicationError::ValidationError(
@@ -165,6 +181,29 @@ impl AgentRuntimeService {
 
             for call in tool_calls {
                 if finished {
+                    // Issue #69: model called `workspace_finish` and then
+                    // tried to queue more tools in the same round. Treat
+                    // this as a no-op for the trailing calls — the model
+                    // has already declared completion. If there were any
+                    // commits in this run, we still preserve them via the
+                    // normal finish path. With no commits we fall back to
+                    // the original hard error so the user notices something
+                    // is wrong with their prompt/profile.
+                    if !committed_messages.is_empty() {
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Warn,
+                            "drift_soft_skipped_post_finish_tool",
+                            json!({
+                                "round": round,
+                                "callId": call.id.as_str(),
+                                "name": call.name.as_str(),
+                                "reasonCode": "agent.tool_after_finish",
+                            }),
+                        )
+                        .await?;
+                        continue;
+                    }
                     self.emit_run_rollback_targets(
                         run_id,
                         &committed_messages,
@@ -279,9 +318,21 @@ impl AgentRuntimeService {
             self.ensure_not_cancelled(cancel)?;
         }
 
-        // We ran out of rounds before workspace_finish was called. Any
-        // commits made along the way are now orphaned — surface them so the
-        // host can offer a clean Retry that rolls them back.
+        // We ran out of rounds before workspace_finish was called.
+        // Issue #69: if the model committed any chat message during the
+        // run, soft-fall-back to finishing rather than throwing the work
+        // away. With no committed work, surface the original max-rounds
+        // failure so the host can offer a Retry.
+        if !committed_messages.is_empty() {
+            self.emit_drift_soft_finished_event(
+                run_id,
+                &committed_messages,
+                "agent.max_tool_rounds_exceeded",
+                profile.tools.max_rounds,
+            )
+            .await?;
+            return Ok(Some(commit_count));
+        }
         self.emit_run_rollback_targets(
             run_id,
             &committed_messages,
@@ -291,6 +342,46 @@ impl AgentRuntimeService {
         .await?;
 
         Ok(None)
+    }
+
+    /// Emit a `drift_soft_finished` warning event documenting that we
+    /// turned a drift-class failure into a successful run completion in
+    /// order to preserve the model's committed chat output. The payload
+    /// mirrors `run_rollback_targets` so the host UI can render a clear
+    /// "completed with warnings" badge instead of either silently
+    /// succeeding (confusing) or losing the chat message (data loss).
+    /// See issue #69.
+    async fn emit_drift_soft_finished_event(
+        &self,
+        run_id: &str,
+        committed_messages: &[CommittedChatMessage],
+        reason_code: &str,
+        round: usize,
+    ) -> Result<(), ApplicationError> {
+        let targets = committed_messages
+            .iter()
+            .map(|message| {
+                json!({
+                    "path": message.path,
+                    "mode": message.mode,
+                    "messageId": message.message_id.as_deref(),
+                    "round": message.round,
+                })
+            })
+            .collect::<Vec<_>>();
+        self.event(
+            run_id,
+            AgentRunEventLevel::Warn,
+            "drift_soft_finished",
+            json!({
+                "reasonCode": reason_code,
+                "round": round,
+                "preservedCommitCount": targets.len(),
+                "preservedCommits": Value::Array(targets),
+            }),
+        )
+        .await?;
+        Ok(())
     }
 
     async fn emit_run_rollback_targets(

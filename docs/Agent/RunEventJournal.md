@@ -207,7 +207,70 @@ run_failed
 ```
 
 - 恢复成功 → run 继续，不会发 `run_rollback_targets`，也不会写 `run_failed`
-- 恢复失败（模型再次返回 0 tool_calls）→ 回落到原 #55 路径，发 `run_rollback_targets` + `run_failed`（`userRetryable=true`），允许用户手动重试
+- 恢复失败（模型再次返回 0 tool_calls）：
+  - **如果该 run 已通过 `workspace.commit` 发布过消息** → 走 issue #69 **soft fallback**：写一条 `drift_soft_finished` 警告事件、然后正常调用 `finish_run`。run 状态为 `Completed`，已 commit 的 chat 消息保留，**不**回滚、**不**发 `run_failed`。宿主 UI 应据此事件展示"已完成但有警告"标记。
+  - **如果该 run 未 commit 任何 chat** → 回落到原 #55 路径，发 `run_rollback_targets` + `run_failed`（`userRetryable=true`），允许用户手动重试。
+
+**Soft fallback（issue #69）**：核心原则是"已 commit 的工作不能丢"。除了上面的 drift 恢复失败外，以下两个 drift 形态也复用同一兜底：
+
+| Drift 形态 | 已 commit? | 行为 |
+|------------|-----------|------|
+| `model.tool_call_required`（drift recovery 耗尽） | 是 | 发 `drift_soft_finished` → `finish_run` → `run_completed` |
+| `model.tool_call_required`（drift recovery 耗尽） | 否 | 发 `run_rollback_targets`（空）→ `run_failed` |
+| `agent.tool_after_finish`（finish 之后又调工具） | 是 | 发 `drift_soft_skipped_post_finish_tool` per 多余调用 → 走 finish 继续 → `run_completed` |
+| `agent.tool_after_finish` | 否 | 发 `run_rollback_targets`（空）→ `run_failed` |
+| `agent.max_tool_rounds_exceeded`（轮数耗尽未 finish） | 是 | 发 `drift_soft_finished` → `finish_run` → `run_completed` |
+| `agent.max_tool_rounds_exceeded` | 否 | 发 `run_rollback_targets`（空）→ `run_failed` |
+
+`drift_soft_finished` payload：
+
+```json
+{
+  "reasonCode": "model.tool_call_required",
+  "round": 9,
+  "preservedCommitCount": 1,
+  "preservedCommits": [
+    {
+      "path": "output/main.md",
+      "mode": "replace",
+      "messageId": "10",
+      "round": 8
+    }
+  ]
+}
+```
+
+`drift_soft_skipped_post_finish_tool` payload（每个多余调用一条）：
+
+```json
+{
+  "round": 5,
+  "callId": "call_extra",
+  "name": "workspace_apply_patch",
+  "reasonCode": "agent.tool_after_finish"
+}
+```
+
+**`persistent_changes_commit_failed` soft degrade（issue #69）**：当 `finish_run` 内部的持久化提交失败（磁盘满、journal 损坏…），不再硬失败整个 run。仍发 `persistent_changes_commit_failed`（payload 多一个 `softDegraded: true` 标记），但继续走 `Completed` 状态 — 已通过 `workspace.commit` 写出的 chat 消息不能因为持久化层故障被吞掉。宿主 UI 应监听这两个事件出现在同一 run 时，按"已完成但跨 run 状态丢失"展示。
+
+**Dispatch-time 错误的软化（issue #69）**：先前 `dispatch_tool_call` 在两种情况下硬失败整个 run：
+
+1. 模型调用了一个不存在的工具名（`model.unknown_tool_call`）；
+2. 工具实现层抛出 `ValidationError` / `NotFound` / `RateLimited` / `Transient`。
+
+现在这些都改为把错误以 `recoverable_tool_error` 的形式回填到下一轮 tool result，让模型自行更正。会同时发一条 `tool_dispatch_soft_recovered` 警告事件方便排查：
+
+```json
+{
+  "round": 3,
+  "callId": "call_typo",
+  "name": "workspaze_read_file",
+  "code": "model.unknown_tool_call",
+  "message": "Unknown Agent tool `workspaze_read_file`. ..."
+}
+```
+
+`InternalError` / `PermissionDenied` / `Unauthorized` / `Cancelled` 仍然保留原本的硬失败行为，因为这几类不是模型能自己修复的。
 
 ### 4.2 Workspace
 
