@@ -1,14 +1,13 @@
 use serde_json::json;
 
 use super::args::{
-    ensure_visible_workspace_path, object_args, optional_usize_arg, parse_workspace_path,
-    required_trimmed_string_arg, tool_error,
+    classify_workspace_io_error, ensure_visible_workspace_path, object_args, optional_usize_arg,
+    parse_workspace_path, required_trimmed_string_arg, tool_error,
 };
 use super::policy::workspace_access_policy;
 use super::render::{format_lines_with_numbers, split_lines_for_display};
 use super::{MAX_PARTIAL_READ_CHARS, MAX_READ_BYTES, MAX_READ_LINES};
 use crate::application::errors::ApplicationError;
-use crate::domain::errors::DomainError;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 
@@ -146,13 +145,10 @@ pub(in crate::application::services::agent_tools) async fn read_file(
 
     let file = match workspace_repository.read_text(run_id, &path).await {
         Ok(file) => file,
-        Err(DomainError::NotFound(message)) => {
-            return Ok((
-                tool_error(call, "workspace.file_not_found", &message),
-                AgentToolEffect::None,
-            ));
-        }
-        Err(error) => return Err(error.into()),
+        Err(error) => match classify_workspace_io_error(call, error) {
+            Ok(result) => return Ok((result, AgentToolEffect::None)),
+            Err(error) => return Err(error.into()),
+        },
     };
 
     let lines = split_lines_for_display(&file.text);

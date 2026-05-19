@@ -24,6 +24,9 @@ pub enum DomainError {
 
     #[error("{0}")]
     Transient(String),
+
+    #[error("{0}")]
+    Conflict(String),
 }
 
 impl DomainError {
@@ -43,6 +46,11 @@ impl DomainError {
 
     pub fn transient(message: impl Into<String>) -> Self {
         Self::Transient(message.into())
+    }
+
+    #[allow(dead_code)]
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::Conflict(message.into())
     }
 }
 

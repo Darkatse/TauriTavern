@@ -140,6 +140,7 @@ run_committed
 run_completed
 run_cancel_requested
 run_cancelled
+run_rollback_targets
 run_failed
 ```
 
@@ -153,6 +154,7 @@ status_changed
 run_completed
 run_cancel_requested
 run_cancelled
+run_rollback_targets
 run_failed
 ```
 
@@ -162,8 +164,31 @@ run_failed
 {
   "code": "tool_policy_denied",
   "message": "Tool mcp.foo is not allowed by current plan node",
+  "technicalMessage": "Validation error: tool_policy_denied: ...",
   "retryable": false,
+  "userRetryable": false,
   "details": {}
+}
+```
+
+- `retryable`：宿主可不询问用户、安全地自动重试。仅在 `RateLimited`/`Transient` 等暂态错误上为 `true`。
+- `userRetryable`：用户可通过 UI 手动重试（前置已 rollback 漂移产物）。`retryable=true` 时一定为 `true`；此外 `model.tool_call_required`、`agent.tool_after_finish`、`agent.max_tool_rounds_exceeded` 等指令漂移类错误也是 `userRetryable=true`，但 **禁止** 自动重试。
+
+当一次 run 因为指令漂移失败、并且该 run 已经通过 `workspace.commit` 向 chat 发布过消息时，loop runner 会在 `run_failed` **之前**额外写一条 `run_rollback_targets` 事件，列出本次 run 留下的"漂移产物"，宿主 UI 应据此回滚这些消息再向用户暴露 Retry：
+
+```json
+{
+  "reasonCode": "model.tool_call_required",
+  "round": 5,
+  "targetCount": 1,
+  "targets": [
+    {
+      "path": "output/main.md",
+      "mode": "replace",
+      "messageId": "10",
+      "round": 4
+    }
+  ]
 }
 ```
 
@@ -486,6 +511,7 @@ run_committed
 run_completed
 run_cancel_requested
 run_cancelled
+run_rollback_targets
 run_failed
 ```
 

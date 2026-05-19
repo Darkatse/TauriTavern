@@ -47,7 +47,7 @@ pub(in crate::application::services::agent_tools) fn workspace_read_file_spec() 
         name: WORKSPACE_READ_FILE.to_string(),
         model_name: MODEL_WORKSPACE_READ_FILE.to_string(),
         title: "Workspace Read File".to_string(),
-        description: "Read a visible UTF-8 Agent workspace file with line numbers. Fully read a file before using workspace_apply_patch on it; partial reads are only for inspection.".to_string(),
+        description: "Read a visible UTF-8 Agent workspace file with line numbers. Fully read a file before using workspace_apply_patch on it; partial reads are only for inspection. `path` MUST refer to a regular file (e.g. `persist/MEMORY.md`), NOT a directory or workspace root (`persist`, `output`, ...). Call workspace_list_files first when you do not know which file to open.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -208,7 +208,7 @@ pub(in crate::application::services::agent_tools) fn workspace_commit_spec() -> 
         name: WORKSPACE_COMMIT.to_string(),
         model_name: MODEL_WORKSPACE_COMMIT.to_string(),
         title: "Workspace Commit".to_string(),
-        description: "Commit a workspace text file to the current chat message. With no arguments, replace the current run message with output/main.md. append adds the file text to the same message, creating it when this run has not committed yet.".to_string(),
+        description: "Commit a workspace text file to the current chat message. With no arguments, replace the current run message with output/main.md. append adds the file text to the same message, creating it when this run has not committed yet. You MUST call workspace_finish in the SAME tool turn (or the immediately following one) after the final commit; never reply with plain text after a commit. Replying with plain text after a commit is treated as instruction drift, fails the run, and rolls the commit back.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,

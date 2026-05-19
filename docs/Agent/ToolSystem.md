@@ -190,7 +190,9 @@ persist/
 
 工具参数会写入 `tool-args/call_<sha256_8byte_hex(call-id)>.json`，工具结果会写入 `tool-results/call_<sha256_8byte_hex(call-id)>.json`；本地文件名只使用 SHA-256 前 8 字节 hex。provider 返回的原始 `call_id` 只作为不透明业务 ID 保存在 JSON 内容、journal payload 与下一轮 canonical `ToolResult` part 中，不作为本地文件名。Gateway 会在 provider 边界把它转换为对应 provider 格式。工具结果不会写入 SillyTavern chat 楼层。
 
-`workspace.apply_patch` 使用 Claude Code 风格的 `old_string` / `new_string` 单文件精确替换。未完整读取、版本变化、匹配 0 次或多次会作为 recoverable tool error 返回模型。模型传入的非法 path、空 path、不可见/不可写 path 也作为可恢复工具错误回填；repository 内部 escape/symlink/IO、journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
+`workspace.apply_patch` 使用 Claude Code 风格的 `old_string` / `new_string` 单文件精确替换。未完整读取、版本变化、匹配 0 次或多次会作为 recoverable tool error 返回模型。模型传入的非法 path、空 path、不可见/不可写 path 也作为可恢复工具错误回填；目标 path 实际指向目录的读写请求会作为 `workspace.path_is_directory` 业务错误回填，提示模型改用 `workspace_list_files`。repository 内部 escape/symlink/journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
+
+`workspace.commit` 与 `workspace.finish` 的契约：模型必须在最后一次 commit 之后的同一回合或紧随其后调用 `workspace.finish`，**不允许**在 commit 后回纯文本。违反此契约（包括 `model.tool_call_required` / `agent.tool_after_finish` / `agent.max_tool_rounds_exceeded`）属于 instruction drift，run 会以 `userRetryable=true` 失败，并通过 `run_rollback_targets` 事件给出本次 run 已 commit 的 message 列表供宿主 UI 回滚；细节见 `RunEventJournal.md`。
 
 当前没有 MCP、shell、extension bridge、profile routing、Plan Mode runtime 或审批工具。
 

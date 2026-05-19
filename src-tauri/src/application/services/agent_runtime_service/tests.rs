@@ -1126,6 +1126,157 @@ async fn foreground_run_commits_chat_message_before_finish() {
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
 
+/// Issue #55: when the model commits, then drifts by replying with plain
+/// text (no tool calls) in the next round, the run must fail AND emit a
+/// `run_rollback_targets` event listing the now-orphaned chat message so
+/// the host UI can roll it back and offer the user a clean Retry.
+#[tokio::test]
+async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-drift-rollback-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_drift_rollback_test".to_string(),
+        workspace_id: "chat_drift_rollback_test".to_string(),
+        stable_chat_id: "stable_drift_rollback_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        persist_base_state_id: None,
+        presentation: AgentRunPresentation::Foreground,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        // Round 1: legitimately write the artifact.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_write_drift",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"drift answer\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        // Round 2: commit the artifact (this is the moment that publishes
+        // the chat message we need to roll back later).
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_commit_drift",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_commit",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        // Round 3: drift — return plain text and no tool calls. This is
+        // the failure mode the issue describes.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Sorry, here is the full answer one more time...",
+                }
+            }]
+        }),
+    ]));
+
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        test_profile_service(&root),
+    ));
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("drift after commit")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.run.presentation = AgentRunPresentation::Foreground;
+
+    let resolver = tokio::spawn(resolve_next_chat_commit(
+        service.clone(),
+        repository.clone(),
+        run.id.clone(),
+        "message_42",
+    ));
+    let outcome = service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await;
+    resolver.await.expect("resolver task");
+
+    assert!(
+        outcome.is_err(),
+        "drift after commit must fail the run, got Ok"
+    );
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 200,
+            },
+        )
+        .await
+        .expect("read events");
+
+    let rollback = events
+        .iter()
+        .find(|event| event.event_type == "run_rollback_targets")
+        .expect("run_rollback_targets event must be emitted on drift after commit");
+    assert_eq!(rollback.level, AgentRunEventLevel::Warn);
+    assert_eq!(rollback.payload["reasonCode"], "model.tool_call_required");
+    assert_eq!(rollback.payload["targetCount"], 1);
+    let targets = rollback.payload["targets"]
+        .as_array()
+        .expect("targets array");
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0]["messageId"], "message_42");
+    assert_eq!(targets[0]["path"], "output/main.md");
+}
+
 #[tokio::test]
 async fn foreground_finish_before_commit_returns_recoverable_error() {
     let root = std::env::temp_dir().join(format!(
