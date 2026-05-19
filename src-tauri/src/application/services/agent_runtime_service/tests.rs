@@ -1126,10 +1126,14 @@ async fn foreground_run_commits_chat_message_before_finish() {
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
 
-/// Issue #55: when the model commits, then drifts by replying with plain
-/// text (no tool calls) in the next round, the run must fail AND emit a
-/// `run_rollback_targets` event listing the now-orphaned chat message so
-/// the host UI can roll it back and offer the user a clean Retry.
+/// Issue #55 + #64: when the model commits, then drifts by replying with
+/// plain text (no tool calls), the run gives the model **one** corrective
+/// nudge (issue #64 soft drift recovery). If it drifts AGAIN, the run
+/// must fail AND emit a `run_rollback_targets` event listing the
+/// now-orphaned chat message so the host UI can roll it back and offer
+/// the user a clean Retry. This is the failure-after-recovery path; the
+/// success path is covered by
+/// [`foreground_run_recovers_from_post_commit_drift_with_nudge`].
 #[tokio::test]
 async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
     let root = std::env::temp_dir().join(format!(
@@ -1191,13 +1195,25 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
                 }
             }]
         }),
-        // Round 3: drift — return plain text and no tool calls. This is
-        // the failure mode the issue describes.
+        // Round 3: drift — return plain text and no tool calls. With #64
+        // this triggers ONE soft recovery attempt (a corrective `user`
+        // message gets injected); the run does not fail yet.
         json!({
             "choices": [{
                 "message": {
                     "role": "assistant",
                     "content": "Sorry, here is the full answer one more time...",
+                }
+            }]
+        }),
+        // Round 4: stubborn drift — model ignores the nudge and replies
+        // with plain text again. Recovery budget is now exhausted, so the
+        // run fails and emits `run_rollback_targets`.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Sorry, here it is one more time...",
                 }
             }]
         }),
@@ -1262,6 +1278,29 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
         .await
         .expect("read events");
 
+    // #64: the first drift must have produced exactly one
+    // `drift_recovery_attempted` event before we surrendered to the
+    // rollback path. If this assertion fails it means the rollback was
+    // emitted on the first drift (recovery was bypassed) — a regression
+    // of #64.
+    let recovery_events: Vec<_> = events
+        .iter()
+        .filter(|event| event.event_type == "drift_recovery_attempted")
+        .collect();
+    assert_eq!(
+        recovery_events.len(),
+        1,
+        "exactly one drift_recovery_attempted event must precede the rollback"
+    );
+    assert_eq!(recovery_events[0].level, AgentRunEventLevel::Warn);
+    assert_eq!(recovery_events[0].payload["attempt"], 1);
+    assert_eq!(recovery_events[0].payload["maxAttempts"], 1);
+    assert_eq!(recovery_events[0].payload["committedCount"], 1);
+    assert_eq!(
+        recovery_events[0].payload["reasonCode"],
+        "model.tool_call_required"
+    );
+
     let rollback = events
         .iter()
         .find(|event| event.event_type == "run_rollback_targets")
@@ -1275,6 +1314,379 @@ async fn foreground_run_emits_rollback_targets_on_tool_call_required_drift() {
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0]["messageId"], "message_42");
     assert_eq!(targets[0]["path"], "output/main.md");
+}
+
+/// Issue #64: when the model commits and then drifts (plain text, no
+/// tool calls), the loop must inject a corrective `user` reminder and
+/// give the model one more chance to call `workspace_finish`. If the
+/// model complies, the run completes normally — the commit is NOT
+/// rolled back. This is the happy-path complement to
+/// [`foreground_run_emits_rollback_targets_on_tool_call_required_drift`].
+#[tokio::test]
+async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-drift-recovery-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_drift_recovery_test".to_string(),
+        workspace_id: "chat_drift_recovery_test".to_string(),
+        stable_chat_id: "stable_drift_recovery_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        persist_base_state_id: None,
+        presentation: AgentRunPresentation::Foreground,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        // Round 1: write artifact.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_write_recovery",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"recovered answer\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        // Round 2: commit it.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_commit_recovery",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_commit",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        // Round 3: drift — model replies in plain text instead of calling
+        // workspace_finish. #64 injects a corrective nudge.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Oh and here's the answer in chat form...",
+                }
+            }]
+        }),
+        // Round 4: model reads the nudge and complies — calls
+        // workspace_finish. Run should complete cleanly.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_finish_recovery",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_finish",
+                            "arguments": "{\"reason\":\"recovered after drift\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+    ]));
+
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway.clone(),
+        test_profile_service(&root),
+    ));
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("drift recovery happy path")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.run.presentation = AgentRunPresentation::Foreground;
+
+    let resolver = tokio::spawn(resolve_next_chat_commit(
+        service.clone(),
+        repository.clone(),
+        run.id.clone(),
+        "message_recovery_42",
+    ));
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("recovery should let the run complete");
+    resolver.await.expect("resolver task");
+
+    let saved = repository.load_run(&run.id).await.expect("load run");
+    assert_eq!(saved.status, AgentRunStatus::Completed);
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 200,
+            },
+        )
+        .await
+        .expect("read events");
+
+    let recovery_events: Vec<_> = events
+        .iter()
+        .filter(|event| event.event_type == "drift_recovery_attempted")
+        .collect();
+    assert_eq!(
+        recovery_events.len(),
+        1,
+        "recovery must fire exactly once for the single drift event"
+    );
+    assert_eq!(recovery_events[0].level, AgentRunEventLevel::Warn);
+    assert_eq!(recovery_events[0].payload["attempt"], 1);
+    assert_eq!(recovery_events[0].payload["maxAttempts"], 1);
+    assert_eq!(recovery_events[0].payload["committedCount"], 1);
+
+    // The commit must NOT be rolled back when recovery succeeds.
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "run_rollback_targets"),
+        "no rollback target events when recovery succeeds"
+    );
+    // The corrective nudge must reach the model — verify the message
+    // list grew with both the drifted assistant turn and our synthetic
+    // user reminder before round 4. The 4th model request should have
+    // received them.
+    let requests = model_gateway.requests().await;
+    assert_eq!(
+        requests.len(),
+        4,
+        "model must be called exactly 4 times (3 normal + 1 recovery)"
+    );
+    let last_request = requests.last().unwrap();
+    let drift_user_message = last_request
+        .messages
+        .iter()
+        .rev()
+        .find(|m| matches!(m.role, AgentModelRole::User))
+        .expect("recovery nudge must be present as user message");
+    let nudge_text = drift_user_message
+        .parts
+        .iter()
+        .find_map(|part| match part {
+            AgentModelContentPart::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .unwrap_or("");
+    assert!(
+        nudge_text.contains("drift recovery attempt 1/1"),
+        "nudge must include attempt counter; got: {nudge_text}"
+    );
+    assert!(
+        nudge_text.contains("workspace_finish"),
+        "nudge must reference workspace_finish; got: {nudge_text}"
+    );
+}
+
+/// Issue #64: when the model drifts WITHOUT having committed anything,
+/// the loop still tries one corrective nudge (per user decision). On
+/// recovery the model proceeds normally.
+#[tokio::test]
+async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-drift-recovery-nocommit-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_drift_recovery_nocommit_test".to_string(),
+        workspace_id: "chat_drift_recovery_nocommit_test".to_string(),
+        stable_chat_id: "stable_drift_recovery_nocommit_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        persist_base_state_id: None,
+        presentation: AgentRunPresentation::Foreground,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        // Round 1: drift right away — no tool calls.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Sure, here is the answer directly...",
+                }
+            }]
+        }),
+        // Round 2: model recovers and writes a file.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_write_nocommit",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"nudge worked\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        // Round 3: commit.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_commit_nocommit",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_commit",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        // Round 4: finish.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_finish_nocommit",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_finish",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }),
+    ]));
+
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway.clone(),
+        test_profile_service(&root),
+    ));
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("no-commit drift recovery")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.run.presentation = AgentRunPresentation::Foreground;
+
+    let resolver = tokio::spawn(resolve_next_chat_commit(
+        service.clone(),
+        repository.clone(),
+        run.id.clone(),
+        "message_nocommit_42",
+    ));
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("recovery should let the run complete");
+    resolver.await.expect("resolver task");
+
+    let saved = repository.load_run(&run.id).await.expect("load run");
+    assert_eq!(saved.status, AgentRunStatus::Completed);
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 200,
+            },
+        )
+        .await
+        .expect("read events");
+    let recovery_events: Vec<_> = events
+        .iter()
+        .filter(|event| event.event_type == "drift_recovery_attempted")
+        .collect();
+    assert_eq!(recovery_events.len(), 1);
+    assert_eq!(recovery_events[0].payload["committedCount"], 0);
+
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "run_rollback_targets"),
+        "no rollback when no commits existed before recovery"
+    );
 }
 
 #[tokio::test]

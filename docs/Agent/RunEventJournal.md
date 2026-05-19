@@ -140,6 +140,7 @@ run_committed
 run_completed
 run_cancel_requested
 run_cancelled
+drift_recovery_attempted
 run_rollback_targets
 run_failed
 ```
@@ -154,6 +155,7 @@ status_changed
 run_completed
 run_cancel_requested
 run_cancelled
+drift_recovery_attempted
 run_rollback_targets
 run_failed
 ```
@@ -191,6 +193,21 @@ run_failed
   ]
 }
 ```
+
+**Soft drift recovery（issue #64）**：在直接 fail-fast 之前，loop runner 会先做一次"软纠正"：当模型返回 0 tool_calls 时，把它的纯文本回复推进 history，再追加一条合成的 `user` 消息提醒它必须调用 `workspace_finish`（或 `workspace_apply_patch` + `workspace_finish`），然后让它在下一轮再试一次。每个 run 至多 1 次（受 `DRIFT_RECOVERY_MAX_ATTEMPTS` 控制）。每次尝试都会写一条 `drift_recovery_attempted` 事件，便于宿主 UI 给用户显示"系统正在纠正…"提示：
+
+```json
+{
+  "attempt": 1,
+  "maxAttempts": 1,
+  "round": 9,
+  "committedCount": 1,
+  "reasonCode": "model.tool_call_required"
+}
+```
+
+- 恢复成功 → run 继续，不会发 `run_rollback_targets`，也不会写 `run_failed`
+- 恢复失败（模型再次返回 0 tool_calls）→ 回落到原 #55 路径，发 `run_rollback_targets` + `run_failed`（`userRetryable=true`），允许用户手动重试
 
 ### 4.2 Workspace
 

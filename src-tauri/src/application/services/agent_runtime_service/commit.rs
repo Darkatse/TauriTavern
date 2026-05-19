@@ -214,7 +214,13 @@ impl AgentRuntimeService {
                         call_id: call.id.clone(),
                         name: call.name.clone(),
                         content: format!(
-                            "Committed {} to the current chat message with mode {:?}.",
+                            "Committed {} to the current chat message with mode {:?}. \
+                             REQUIRED NEXT STEP: call workspace_finish to complete the run. \
+                             If you need to revise the committed content, call \
+                             workspace_apply_patch (or workspace_write_file then workspace_commit \
+                             again) first, then call workspace_finish. DO NOT reply with plain \
+                             text after a commit: that is treated as instruction drift, fails the \
+                             run, and rolls back this commit.",
                             path.as_str(),
                             mode
                         ),
@@ -222,6 +228,7 @@ impl AgentRuntimeService {
                             "path": path.as_str(),
                             "mode": mode,
                             "messageId": result.message_id.as_deref(),
+                            "nextRequiredTool": "workspace_finish",
                         }),
                         is_error: false,
                         error_code: None,

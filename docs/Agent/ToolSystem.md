@@ -192,7 +192,14 @@ persist/
 
 `workspace.apply_patch` 使用 Claude Code 风格的 `old_string` / `new_string` 单文件精确替换。未完整读取、版本变化、匹配 0 次或多次会作为 recoverable tool error 返回模型。模型传入的非法 path、空 path、不可见/不可写 path 也作为可恢复工具错误回填；目标 path 实际指向目录的读写请求会作为 `workspace.path_is_directory` 业务错误回填，提示模型改用 `workspace_list_files`。repository 内部 escape/symlink/journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
 
-`workspace.commit` 与 `workspace.finish` 的契约：模型必须在最后一次 commit 之后的同一回合或紧随其后调用 `workspace.finish`，**不允许**在 commit 后回纯文本。违反此契约（包括 `model.tool_call_required` / `agent.tool_after_finish` / `agent.max_tool_rounds_exceeded`）属于 instruction drift，run 会以 `userRetryable=true` 失败，并通过 `run_rollback_targets` 事件给出本次 run 已 commit 的 message 列表供宿主 UI 回滚；细节见 `RunEventJournal.md`。
+`workspace.commit` 与 `workspace.finish` 的契约：模型必须在最后一次 commit 之后的同一回合或紧随其后调用 `workspace.finish`，**不允许**在 commit 后回纯文本。`workspace.commit` 工具的返回字符串本身会带强提示（"REQUIRED NEXT STEP: call workspace_finish..."），降低模型 drift 概率。
+
+如果模型一回合内仍然返回 0 个 tool_calls（drift），loop runner 会先做一次"软纠正"（issue #64）：把模型的纯文本回复推进 history，再追加一条 `user` 角色的合成提醒，让模型在下一轮重试。**每个 run 至多 1 次**（常量 `DRIFT_RECOVERY_MAX_ATTEMPTS`），每次都会写一条 `drift_recovery_attempted` 事件。
+
+- 软纠正后模型调用了 `workspace_finish`（或继续修订）→ run 继续，无 rollback。
+- 软纠正失败（模型再次 0 tool_calls）→ 回落到 `model.tool_call_required` 失败路径，发 `run_rollback_targets` + `run_failed`（`userRetryable=true`）。
+
+违反此契约的其它形态（`agent.tool_after_finish` / `agent.max_tool_rounds_exceeded`）目前不走软纠正、直接发 `run_rollback_targets`，原因是这两种 drift 本身已经发生了真实的工具调用，软纠正空间小。细节见 `RunEventJournal.md`。
 
 当前没有 MCP、shell、extension bridge、profile routing、Plan Mode runtime 或审批工具。
 
