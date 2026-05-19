@@ -10,9 +10,17 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{AgentToolEffect, AgentToolSession};
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
-    AgentChatCommitMode, AgentModelRequest, AgentRunEventLevel, AgentRunStatus, AgentToolResult,
-    WorkspacePath,
+    AgentChatCommitMode, AgentModelContentPart, AgentModelMessage, AgentModelRequest,
+    AgentModelRole, AgentRunEventLevel, AgentRunStatus, AgentToolResult, WorkspacePath,
 };
+
+/// How many in-loop drift recovery attempts to make per run before
+/// surrendering to the existing #55 fail-fast path. One attempt is
+/// enough for the common case (model forgets `workspace_finish` after
+/// the final commit) without burning excessive tokens on stubborn
+/// drifters; raise this only after we have data showing repeat drifts
+/// are common AND benign.
+const DRIFT_RECOVERY_MAX_ATTEMPTS: usize = 1;
 
 /// Tracks a chat commit that the model produced during this run. When the
 /// run later fails because of instruction drift (issue #55), we surface
@@ -37,6 +45,11 @@ impl AgentRuntimeService {
         let mut tool_session = AgentToolSession::default();
         let mut commit_count = 0_usize;
         let mut committed_messages: Vec<CommittedChatMessage> = Vec::new();
+        // Issue #64: counter for soft drift recovery — see
+        // `DRIFT_RECOVERY_MAX_ATTEMPTS` above. Persisted across rounds so a
+        // single run gets at most N corrective nudges in total, not N per
+        // drift event.
+        let mut drift_recovery_attempts: usize = 0;
         for round in 1..=profile.tools.max_rounds {
             self.transition_status(run_id, AgentRunStatus::CallingModel)
                 .await?;
@@ -96,6 +109,48 @@ impl AgentRuntimeService {
             .await?;
 
             if tool_calls.is_empty() {
+                // Issue #64: instead of failing the run immediately, give the
+                // model one chance to self-correct. The most common drift —
+                // model commits, then replies in plain text instead of
+                // calling `workspace_finish` — is a one-step contract slip,
+                // not a fundamental misunderstanding. We push the drifted
+                // assistant turn into history (so the model owns what it
+                // just said) and follow it with a synthetic `user` reminder.
+                // Multi-turn pattern is API-compatible with both Anthropic
+                // and OpenAI chat completions (no role-alternation
+                // constraint after a no-tool-use turn).
+                let can_recover = drift_recovery_attempts < DRIFT_RECOVERY_MAX_ATTEMPTS
+                    && round < profile.tools.max_rounds;
+                if can_recover {
+                    drift_recovery_attempts += 1;
+                    let committed_count = committed_messages.len();
+                    let nudge_text = build_drift_recovery_nudge(
+                        committed_count,
+                        drift_recovery_attempts,
+                        DRIFT_RECOVERY_MAX_ATTEMPTS,
+                    );
+                    request.messages.push(response.message.clone());
+                    request.messages.push(AgentModelMessage {
+                        role: AgentModelRole::User,
+                        parts: vec![AgentModelContentPart::Text { text: nudge_text }],
+                        provider_metadata: Value::Null,
+                    });
+                    self.event(
+                        run_id,
+                        AgentRunEventLevel::Warn,
+                        "drift_recovery_attempted",
+                        json!({
+                            "attempt": drift_recovery_attempts,
+                            "maxAttempts": DRIFT_RECOVERY_MAX_ATTEMPTS,
+                            "round": round,
+                            "committedCount": committed_count,
+                            "reasonCode": "model.tool_call_required",
+                        }),
+                    )
+                    .await?;
+                    self.ensure_not_cancelled(cancel)?;
+                    continue;
+                }
                 self.emit_run_rollback_targets(run_id, &committed_messages, "model.tool_call_required", round)
                     .await?;
                 return Err(ApplicationError::ValidationError(
@@ -333,6 +388,42 @@ impl AgentRuntimeService {
         }
 
         Ok(hydrated)
+    }
+}
+
+/// Build the corrective `user` message we inject when the model returns a
+/// turn with zero tool calls. The phrasing covers both common drift modes:
+///
+/// * **Post-commit drift** (committed_count > 0): model committed a chat
+///   message but then replied with plain text instead of calling
+///   `workspace_finish`. We tell it that the commit will be rolled back if
+///   it doesn't finish, and that it can use `workspace_apply_patch` if it
+///   wants to revise the committed content.
+/// * **No-commit drift** (committed_count == 0): model bypassed the tool
+///   workflow entirely. We tell it that every turn must use a tool until
+///   `workspace_finish`.
+///
+/// The attempt counter is included so the model can see we have a hard
+/// budget; if attempt == max_attempts there is no further leniency.
+fn build_drift_recovery_nudge(committed_count: usize, attempt: usize, max_attempts: usize) -> String {
+    if committed_count > 0 {
+        format!(
+            "[system reminder, drift recovery attempt {attempt}/{max_attempts}] You replied with \
+             plain text but the run is not complete. You have committed {committed_count} \
+             message(s) to the chat via workspace_commit; you MUST finalize the run by calling \
+             workspace_finish, or the commit(s) will be ROLLED BACK and the run will fail. If \
+             you need to revise the committed content, call workspace_apply_patch (or \
+             workspace_write_file + workspace_commit again) first, then workspace_finish. Do \
+             NOT repeat the content in plain text — that is treated as instruction drift."
+        )
+    } else {
+        format!(
+            "[system reminder, drift recovery attempt {attempt}/{max_attempts}] You replied with \
+             plain text, but every turn must use a tool until the run ends with workspace_finish. \
+             Inspect the workspace (workspace_list_files / workspace_read_file), produce the \
+             answer through workspace_write_file + workspace_commit, then call workspace_finish. \
+             Do NOT answer directly in plain text."
+        )
     }
 }
 
