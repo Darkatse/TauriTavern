@@ -194,7 +194,7 @@ run_failed
 }
 ```
 
-**Soft drift recovery**：在直接 fail-fast 之前，loop runner 会先做一次"软纠正"：当模型返回 0 tool_calls 时，把它的纯文本回复推进 history，再追加一条合成的 `user` 消息提醒它必须调用 `workspace_finish`（或 `workspace_apply_patch` + `workspace_finish`），然后让它在下一轮再试一次。每个 run 至多 1 次（受 `DRIFT_RECOVERY_MAX_ATTEMPTS` 控制）。每次尝试都会写一条 `drift_recovery_attempted` 事件，便于宿主 UI 给用户显示"系统正在纠正…"提示：
+**Soft drift recovery**：在直接 fail-fast 之前，loop runner 会先做一次"软纠正"：当模型返回 0 tool_calls 时，把它的纯文本回复推进 history，再追加一条合成的 `user` 消息提醒它必须调用 `workspace_finish`；如果需要修订已提交内容，必须先 `workspace_apply_patch` / `workspace_write_file`，再 `workspace_commit`，最后 `workspace_finish`。每个 run 至多 1 次（受 `DRIFT_RECOVERY_MAX_ATTEMPTS` 控制）。每次尝试都会写一条 `drift_recovery_attempted` 事件，便于宿主 UI 给用户显示"系统正在纠正…"提示：
 
 ```json
 {

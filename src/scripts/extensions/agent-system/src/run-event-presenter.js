@@ -11,6 +11,7 @@ const DISPLAY_EVENT_TYPES = new Set([
     'chat_commit_completed',
     'chat_commit_failed',
     'persistent_changes_committed',
+    'drift_recovery_attempted',
     'run_completed',
     'run_cancelled',
     'run_failed',
@@ -45,6 +46,7 @@ const EVENT_META = Object.freeze({
     chat_commit_completed: { icon: 'fa-circle-check', tone: 'success', kind: 'commit', titleKey: 'timelineEventCommitCompleted' },
     chat_commit_failed: { icon: 'fa-circle-exclamation', tone: 'error', kind: 'fail', titleKey: 'timelineEventCommitFailed' },
     persistent_changes_committed: { icon: 'fa-database', tone: 'success', kind: 'persist', titleKey: 'timelineEventPersistentCommitted' },
+    drift_recovery_attempted: { icon: 'fa-arrows-rotate', tone: 'warn', kind: 'recover', titleKey: 'timelineEventDriftRecoveryAttempted' },
     run_completed: { icon: 'fa-circle-check', tone: 'success', kind: 'done', titleKey: 'timelineEventRunCompleted' },
     run_cancelled: { icon: 'fa-ban', tone: 'warn', kind: 'cancel', titleKey: 'timelineEventRunCancelled' },
     run_failed: { icon: 'fa-circle-xmark', tone: 'error', kind: 'fail', titleKey: 'timelineEventRunFailed' },
@@ -291,6 +293,8 @@ function eventTitleParams(type, payload) {
             return { path: payload.path || '' };
         case 'persistent_changes_committed':
             return { count: payload.changeCount ?? 0 };
+        case 'drift_recovery_attempted':
+            return { attempt: payload.attempt ?? 0, max: payload.maxAttempts ?? 0 };
         default:
             return {};
     }
@@ -315,6 +319,8 @@ function eventSummary(type, payload) {
             return payload.message || '';
         case 'persistent_changes_committed':
             return Array.isArray(payload.changes) ? payload.changes.map((change) => change.path).filter(Boolean).join(', ') : '';
+        case 'drift_recovery_attempted':
+            return payload.reasonCode || '';
         case 'run_cancelled':
             return payload.message || '';
         case 'run_failed':

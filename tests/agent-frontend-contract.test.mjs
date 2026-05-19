@@ -378,6 +378,24 @@ test('Agent run event presenter keeps timeline projection focused', async () => 
     assert.deepEqual(item.titleParams, { tool: 'writing a file' });
     assert.equal(item.summary, 'call-1');
 
+    const recoveryEvent = {
+        seq: 5,
+        id: 'evt-recovery',
+        runId: 'run-1',
+        type: 'drift_recovery_attempted',
+        level: 'warn',
+        payload: {
+            attempt: 1,
+            maxAttempts: 1,
+            reasonCode: 'model.tool_call_required',
+        },
+    };
+    assert.equal(presenter.isDisplayableRunEvent(recoveryEvent), true);
+    const recoveryItem = presenter.presentRunEvent(recoveryEvent);
+    assert.equal(recoveryItem.titleKey, 'timelineEventDriftRecoveryAttempted');
+    assert.deepEqual(recoveryItem.titleParams, { attempt: 1, max: 1 });
+    assert.equal(recoveryItem.summary, 'model.tool_call_required');
+
     const projected = presenter.timelineItemsFromEvents([
         debugEvent,
         toolEvent,
@@ -916,6 +934,65 @@ test('Agent run controller awaits rollback before rejecting on drift run_failed'
     controller.__setAgentRunRollbackScriptForTests(null);
 });
 
+test('Agent run controller rejects rollback failures before presenting drift failure', async () => {
+    let listener = null;
+    installWindow({
+        agent: {
+            async startRunWithPromptSnapshot() {
+                return { runId: 'run-drift-rollback-fails' };
+            },
+            subscribe(_runId, callback) {
+                listener = callback;
+                return () => {};
+            },
+        },
+    });
+
+    const controller = await importFresh('src/scripts/tauritavern/agent/agent-run-controller.js');
+    controller.__setAgentRunRollbackScriptForTests({
+        chat: [
+            {},
+            { extra: { tauritavern: { agent: { runId: 'run-drift-rollback-fails' } } } },
+        ],
+        async deleteMessage() {
+            throw new Error('delete failed');
+        },
+    });
+
+    const run = controller.startAndWaitForAgentRun({ generationType: 'normal' });
+    await Promise.resolve();
+
+    listener({
+        seq: 1,
+        runId: 'run-drift-rollback-fails',
+        type: 'run_rollback_targets',
+        payload: {
+            reasonCode: 'model.tool_call_required',
+            targets: [{ path: 'output/main.md', mode: 'replace', messageId: '1', round: 1 }],
+        },
+    });
+    listener({
+        seq: 2,
+        runId: 'run-drift-rollback-fails',
+        type: 'run_failed',
+        payload: {
+            code: 'model.tool_call_required',
+            message: 'drift',
+            retryable: false,
+            userRetryable: true,
+        },
+    });
+
+    await assert.rejects(() => run, (error) => {
+        assert.equal(error.name, 'AgentRunRollbackError');
+        assert.equal(error.agentErrorCode, 'agent.rollback_failed');
+        assert.match(error.message, /delete failed/);
+        assert.equal(error.userRetryable, false);
+        return true;
+    });
+    controller.__setAgentRunRollbackScriptForTests(null);
+});
+
 test('Rollback helper deletes drift messages back-to-front and skips foreign messages', async () => {
     const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
 
@@ -1053,4 +1130,22 @@ test('Rollback helper falls back to deleteMessage when swipe metadata is unsafe'
     assert.deepEqual(messageDeletions, [0]);
     assert.equal(result.deleted, 1);
     assert.equal(result.swipesRemoved, 0);
+});
+
+test('Rollback helper fails fast when deleting a targeted drift message fails', async () => {
+    const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
+
+    await assert.rejects(
+        () => rollbackAgentRunDriftMessages({
+            runId: 'run-delete-fails',
+            targets: [{ messageId: '0' }],
+            script: {
+                chat: [{ extra: { tauritavern: { agent: { runId: 'run-delete-fails' } } } }],
+                async deleteMessage() {
+                    throw new Error('delete failed');
+                },
+            },
+        }),
+        /delete failed/,
+    );
 });

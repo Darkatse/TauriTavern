@@ -45,6 +45,18 @@ function errorFromRunEvent(event) {
     return error;
 }
 
+function errorFromRollbackFailure(error, terminalEvent) {
+    const message = error?.message || String(error || 'unknown rollback failure');
+    const wrapped = new Error(`Agent drift rollback failed before ${terminalEvent?.type || 'terminal event'}: ${message}`);
+    wrapped.name = 'AgentRunRollbackError';
+    wrapped.cause = error;
+    wrapped.event = terminalEvent;
+    wrapped.agentErrorCode = 'agent.rollback_failed';
+    wrapped.retryable = false;
+    wrapped.userRetryable = false;
+    return wrapped;
+}
+
 // Lazy-load the SillyTavern vendor module so tests can inject a fake script
 // surface via __setAgentRunRollbackScriptForTests without dragging the whole
 // chat runtime into the unit-test sandbox.
@@ -106,10 +118,9 @@ export async function startAndWaitForAgentRun(input) {
 
                 if (event?.type === ROLLBACK_EVENT_TYPE) {
                     pendingRollback = pendingRollback
-                        .then(() => handleRollbackEvent(handle.runId, event))
-                        .catch((rollbackError) => {
-                            console.error('[TauriTavern] Agent drift rollback failed', rollbackError);
-                        });
+                        .then(() => handleRollbackEvent(handle.runId, event));
+                    // Keep the promise observed; the terminal event still reports the failure.
+                    void pendingRollback.catch(() => {});
                     return;
                 }
 
@@ -119,7 +130,7 @@ export async function startAndWaitForAgentRun(input) {
 
                 stop();
                 const pending = pendingRollback;
-                void pending.finally(() => {
+                void pending.then(() => {
                     clearActiveRun(event);
 
                     if (event.type === 'run_failed') {
@@ -131,6 +142,9 @@ export async function startAndWaitForAgentRun(input) {
                         handle,
                         terminalEvent: event,
                     });
+                }, (rollbackError) => {
+                    clearActiveRun(event);
+                    reject(errorFromRollbackFailure(rollbackError, event));
                 });
             }, {
                 onError(error) {

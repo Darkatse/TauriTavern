@@ -158,6 +158,7 @@
     "agent_system.timelineEventCommitCompleted": "提交完成：{path}",
     "agent_system.timelineEventCommitFailed": "提交失敗",
     "agent_system.timelineEventCommitRequested": "請求提交：{path}",
+    "agent_system.timelineEventDriftRecoveryAttempted": "正在糾正工具流程（{attempt}/{max}）",
     "agent_system.timelineEventFileWritten": "寫入 {path}",
     "agent_system.timelineEventGeneric": "執行事件",
     "agent_system.timelineEventPatchApplied": "修改 {path}",

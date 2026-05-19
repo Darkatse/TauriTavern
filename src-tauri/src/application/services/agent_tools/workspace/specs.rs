@@ -208,7 +208,7 @@ pub(in crate::application::services::agent_tools) fn workspace_commit_spec() -> 
         name: WORKSPACE_COMMIT.to_string(),
         model_name: MODEL_WORKSPACE_COMMIT.to_string(),
         title: "Workspace Commit".to_string(),
-        description: "Commit a workspace text file to the current chat message. With no arguments, replace the current run message with output/main.md. append adds the file text to the same message, creating it when this run has not committed yet. You MUST call workspace_finish in the SAME tool turn (or the immediately following one) after the final commit; never reply with plain text after a commit. Replying with plain text after a commit is treated as instruction drift, fails the run, and rolls the commit back.".to_string(),
+        description: "Commit a workspace text file to the current chat message. With no arguments, replace the current run message with output/main.md. append adds the file text to the same message, creating it when this run has not committed yet. You may keep editing and commit again as needed; after the final commit, call workspace_finish to close the run. Do not reply in plain text as the final answer.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,

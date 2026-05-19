@@ -116,3 +116,15 @@ fn classify_unknown_error_bubbles_up_for_host_failure() {
         "infrastructural errors must remain host-level failures",
     );
 }
+
+#[test]
+fn classify_unknown_conflict_bubbles_up_for_host_failure() {
+    let call = make_test_tool_call("workspace.read_file");
+    let error = DomainError::Conflict("workspace.journal_conflict: checkpoint diverged".to_string());
+
+    let result = classify_workspace_io_error(&call, error);
+    assert!(
+        result.is_err(),
+        "only explicitly known workspace conflicts are model-recoverable",
+    );
+}

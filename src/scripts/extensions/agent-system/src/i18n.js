@@ -200,6 +200,7 @@ const DEFAULT_MESSAGES = Object.freeze({
     timelineEventCommitCompleted: 'Commit completed: {path}',
     timelineEventCommitFailed: 'Commit failed',
     timelineEventCommitRequested: 'Commit requested: {path}',
+    timelineEventDriftRecoveryAttempted: 'Correcting tool flow ({attempt}/{max})',
     timelineEventFileWritten: 'Wrote {path}',
     timelineEventGeneric: 'Run event',
     timelineEventPatchApplied: 'Patched {path}',

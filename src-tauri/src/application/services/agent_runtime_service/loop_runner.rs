@@ -397,8 +397,8 @@ impl AgentRuntimeService {
 /// * **Post-commit drift** (committed_count > 0): model committed a chat
 ///   message but then replied with plain text instead of calling
 ///   `workspace_finish`. We tell it that the commit will be rolled back if
-///   it doesn't finish, and that it can use `workspace_apply_patch` if it
-///   wants to revise the committed content.
+///   it doesn't finish, and that workspace edits only affect the chat after
+///   another `workspace_commit`.
 /// * **No-commit drift** (committed_count == 0): model bypassed the tool
 ///   workflow entirely. We tell it that every turn must use a tool until
 ///   `workspace_finish`.
@@ -412,9 +412,10 @@ fn build_drift_recovery_nudge(committed_count: usize, attempt: usize, max_attemp
              plain text but the run is not complete. You have committed {committed_count} \
              message(s) to the chat via workspace_commit; you MUST finalize the run by calling \
              workspace_finish, or the commit(s) will be ROLLED BACK and the run will fail. If \
-             you need to revise the committed content, call workspace_apply_patch (or \
-             workspace_write_file + workspace_commit again) first, then workspace_finish. Do \
-             NOT repeat the content in plain text — that is treated as instruction drift."
+             you need to revise the committed content, update the workspace file with \
+             workspace_apply_patch or workspace_write_file, then call workspace_commit again \
+             before workspace_finish. Do NOT repeat the content in plain text — that is treated \
+             as instruction drift."
         )
     } else {
         format!(

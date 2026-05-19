@@ -20,8 +20,10 @@ pub(super) fn classify_workspace_io_error(
     match error {
         DomainError::NotFound(message) => Ok(tool_error(call, "workspace.file_not_found", &message)),
         DomainError::Conflict(message) => {
-            let (code, detail) = parse_workspace_conflict_message(&message);
-            Ok(tool_error(call, code, detail))
+            if let Some((code, detail)) = parse_workspace_conflict_message(&message) {
+                return Ok(tool_error(call, code, detail));
+            }
+            Err(DomainError::Conflict(message))
         }
         other => Err(other),
     }

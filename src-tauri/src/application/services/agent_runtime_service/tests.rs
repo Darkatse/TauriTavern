@@ -1524,6 +1524,10 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
         nudge_text.contains("workspace_finish"),
         "nudge must reference workspace_finish; got: {nudge_text}"
     );
+    assert!(
+        nudge_text.contains("workspace_commit again before workspace_finish"),
+        "nudge must require another commit after revising workspace files; got: {nudge_text}"
+    );
 }
 
 /// Issue #64: when the model drifts WITHOUT having committed anything,

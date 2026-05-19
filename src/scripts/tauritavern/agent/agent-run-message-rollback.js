@@ -64,22 +64,17 @@ export async function rollbackAgentRunDriftMessages({ runId, targets, script }) 
             skipped += 1;
             continue;
         }
-        try {
-            const outcome = await rollbackOneMessage({
-                index,
-                message: chat[index],
-                deleteSwipe,
-                deleteMessage,
-            });
-            if (outcome === 'swipe') {
-                swipesRemoved += 1;
-            } else if (outcome === 'message') {
-                deleted += 1;
-            } else {
-                skipped += 1;
-            }
-        } catch (error) {
-            console.error('[TauriTavern] Failed to rollback Agent drift chat message', { index, runId: normalizedRunId, error });
+        const outcome = await rollbackOneMessage({
+            index,
+            message: chat[index],
+            deleteSwipe,
+            deleteMessage,
+        });
+        if (outcome === 'swipe') {
+            swipesRemoved += 1;
+        } else if (outcome === 'message') {
+            deleted += 1;
+        } else {
             skipped += 1;
         }
     }
