@@ -39,7 +39,9 @@ impl From<DomainError> for ApplicationError {
             DomainError::InternalError(msg) => ApplicationError::InternalError(msg),
             DomainError::RateLimited { message } => ApplicationError::RateLimited(message),
             DomainError::Transient(msg) => ApplicationError::Transient(msg),
-            DomainError::Conflict(msg) => ApplicationError::ValidationError(msg),
+            DomainError::WorkspacePathIsDirectory { path } => {
+                ApplicationError::ValidationError(format!("Workspace path is a directory: {path}"))
+            }
         }
     }
 }

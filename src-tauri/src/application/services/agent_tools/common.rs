@@ -51,22 +51,15 @@ pub(super) fn optional_bool_arg(
         .ok_or_else(|| format!("{key} must be a boolean"))
 }
 
-/// Decode a known `DomainError::Conflict` payload raised by the workspace
-/// repository into a `(code, detail)` pair suitable for a model-facing
-/// `AgentToolResult`. Unknown conflicts are not model-recoverable by default:
-/// they must bubble up so new repository states do not get silently flattened
-/// into generic tool errors.
-///
-/// Visibility is `pub(crate)` so that both the workspace tool layer
-/// (`workspace/args.rs`) and the runtime-service commit hook
-/// (`agent_runtime_service/commit.rs`) share a single parsing source of
-/// truth.
-pub(crate) fn parse_workspace_conflict_message(message: &str) -> Option<(&'static str, &str)> {
-    let trimmed = message.trim();
-    if let Some(rest) = trimmed.strip_prefix("workspace.path_is_directory:") {
-        return Some(("workspace.path_is_directory", rest.trim_start()));
-    }
-    None
+pub(crate) const WORKSPACE_PATH_IS_DIRECTORY_CODE: &str = "workspace.path_is_directory";
+
+/// Shared model-facing wording for the typed workspace-directory domain
+/// error. The repository only reports the fact; this layer knows which Agent
+/// tool can help the model recover.
+pub(crate) fn workspace_path_is_directory_message(path: &str) -> String {
+    format!(
+        "workspace path `{path}` is a directory; call workspace_list_files to list its contents and re-target a specific file."
+    )
 }
 
 pub(super) fn tool_error(call: &AgentToolCall, error_code: &str, message: &str) -> AgentToolResult {

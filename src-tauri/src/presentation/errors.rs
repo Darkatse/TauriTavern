@@ -49,7 +49,9 @@ impl From<DomainError> for CommandError {
             DomainError::InternalError(msg) => CommandError::InternalServerError(msg),
             DomainError::RateLimited { message } => CommandError::TooManyRequests(message),
             DomainError::Transient(msg) => CommandError::InternalServerError(msg),
-            DomainError::Conflict(msg) => CommandError::BadRequest(msg),
+            DomainError::WorkspacePathIsDirectory { path } => {
+                CommandError::BadRequest(format!("Workspace path is a directory: {path}"))
+            }
         }
     }
 }

@@ -158,7 +158,10 @@ pub(in crate::application::services::agent_tools) async fn apply_patch(
         file.text.replacen(old_string, new_string, 1)
     };
     let old_sha256 = file.sha256.clone();
-    let file = match workspace_repository.write_text(run_id, &path, &updated).await {
+    let file = match workspace_repository
+        .write_text(run_id, &path, &updated)
+        .await
+    {
         Ok(file) => file,
         Err(error) => match classify_workspace_io_error(call, error) {
             Ok(result) => return Ok((result, AgentToolEffect::None)),

@@ -49,7 +49,10 @@ pub(in crate::application::services::agent_tools) async fn write_file(
     if let Err(result) = ensure_writable_workspace_path(call, &policy, &path) {
         return Ok((result, AgentToolEffect::None));
     }
-    let file = match workspace_repository.write_text(run_id, &path, content).await {
+    let file = match workspace_repository
+        .write_text(run_id, &path, content)
+        .await
+    {
         Ok(file) => file,
         Err(error) => match classify_workspace_io_error(call, error) {
             Ok(result) => return Ok((result, AgentToolEffect::None)),

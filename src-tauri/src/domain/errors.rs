@@ -25,8 +25,8 @@ pub enum DomainError {
     #[error("{0}")]
     Transient(String),
 
-    #[error("{0}")]
-    Conflict(String),
+    #[error("Workspace path is a directory: {path}")]
+    WorkspacePathIsDirectory { path: String },
 }
 
 impl DomainError {
@@ -48,9 +48,8 @@ impl DomainError {
         Self::Transient(message.into())
     }
 
-    #[allow(dead_code)]
-    pub fn conflict(message: impl Into<String>) -> Self {
-        Self::Conflict(message.into())
+    pub fn workspace_path_is_directory(path: impl Into<String>) -> Self {
+        Self::WorkspacePathIsDirectory { path: path.into() }
     }
 }
 
@@ -75,6 +74,16 @@ mod tests {
         assert!(matches!(
             &error,
             DomainError::Cancelled(message) if message == "Job cancelled"
+        ));
+    }
+
+    #[test]
+    fn workspace_path_is_directory_constructor_keeps_path() {
+        let error = DomainError::workspace_path_is_directory("persist");
+
+        assert!(matches!(
+            &error,
+            DomainError::WorkspacePathIsDirectory { path } if path == "persist"
         ));
     }
 }

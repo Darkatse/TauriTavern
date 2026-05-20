@@ -306,19 +306,16 @@ impl WorkspaceRepository for FileAgentRepository {
 /// Reject calls that target an existing directory at `target`. The OS error
 /// for `read_to_string` on a directory (EISDIR / "Is a directory") used to
 /// bubble up as `DomainError::InternalError`, surfaced to the model as a
-/// non-retryable `agent.internal_error`. We translate it into a structured
-/// `DomainError::Conflict` so the tool layer can return a recoverable
-/// `workspace.path_is_directory` business error and prompt the model to use
-/// `workspace_list_files` instead.
+/// non-retryable `agent.internal_error`. The repository now returns a typed
+/// domain error and leaves model-facing recovery advice to the tool layer.
 async fn ensure_target_is_not_directory(
     target: &std::path::Path,
     workspace_path: &WorkspacePath,
 ) -> Result<(), DomainError> {
     match fs::symlink_metadata(target).await {
-        Ok(metadata) if metadata.file_type().is_dir() => Err(DomainError::Conflict(format!(
-            "workspace.path_is_directory: workspace path `{}` is a directory; use workspace_list_files to list its contents and re-target a specific file.",
-            workspace_path.as_str()
-        ))),
+        Ok(metadata) if metadata.file_type().is_dir() => Err(
+            DomainError::workspace_path_is_directory(workspace_path.as_str()),
+        ),
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(DomainError::InternalError(format!(

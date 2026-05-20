@@ -163,12 +163,12 @@ impl AgentRuntimeService {
                         round,
                         &call,
                         &mut tool_session,
-                    profile,
-                    commit_count,
-                    commit_ledger,
-                    cancel,
-                )
-                .await?;
+                        profile,
+                        commit_count,
+                        commit_ledger,
+                        cancel,
+                    )
+                    .await?;
                 match &outcome.effect {
                     AgentToolEffect::WorkspaceFileWritten { file } => {
                         self.checkpoint_workspace_file(

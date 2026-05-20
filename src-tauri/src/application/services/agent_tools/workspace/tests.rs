@@ -67,19 +67,17 @@ fn make_test_tool_call(name: &str) -> AgentToolCall {
 }
 
 #[test]
-fn classify_conflict_error_maps_to_path_is_directory() {
+fn classify_workspace_path_is_directory_error_maps_to_tool_error() {
     // Issue #54: a directory hit on workspace_read_file used to surface as
     // `agent.internal_error`. The tool layer now classifies the
-    // repository's structured Conflict into the recoverable
+    // repository's typed domain error into the recoverable
     // `workspace.path_is_directory` business error so the model can
     // self-correct by calling workspace_list_files.
     let call = make_test_tool_call("workspace.read_file");
-    let error = DomainError::Conflict(
-        "workspace.path_is_directory: workspace path `persist` is a directory".to_string(),
-    );
+    let error = DomainError::workspace_path_is_directory("persist");
 
     let result = classify_workspace_io_error(&call, error)
-        .expect("conflict must classify into a tool result, not a hard error");
+        .expect("directory error must classify into a tool result, not a hard error");
 
     assert!(result.is_error);
     assert_eq!(
@@ -102,7 +100,10 @@ fn classify_not_found_error_maps_to_file_not_found() {
         .expect("not found must classify into a tool result");
 
     assert!(result.is_error);
-    assert_eq!(result.error_code.as_deref(), Some("workspace.file_not_found"));
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("workspace.file_not_found")
+    );
 }
 
 #[test]
@@ -114,17 +115,5 @@ fn classify_unknown_error_bubbles_up_for_host_failure() {
     assert!(
         result.is_err(),
         "infrastructural errors must remain host-level failures",
-    );
-}
-
-#[test]
-fn classify_unknown_conflict_bubbles_up_for_host_failure() {
-    let call = make_test_tool_call("workspace.read_file");
-    let error = DomainError::Conflict("workspace.journal_conflict: checkpoint diverged".to_string());
-
-    let result = classify_workspace_io_error(&call, error);
-    assert!(
-        result.is_err(),
-        "only explicitly known workspace conflicts are model-recoverable",
     );
 }

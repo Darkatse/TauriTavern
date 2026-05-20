@@ -2,14 +2,15 @@ use serde_json::{Value, json};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
+use super::commit_ledger::RunCommitLedger;
 use super::{
     AgentCancelReceiver, AgentRuntimeService, HostChatCommitResult, PendingHostChatCommit,
 };
-use super::commit_ledger::RunCommitLedger;
 use crate::application::dto::agent_dto::AgentResolveChatCommitDto;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{
-    AgentToolDispatchOutcome, AgentToolEffect, parse_workspace_conflict_message,
+    AgentToolDispatchOutcome, AgentToolEffect, WORKSPACE_PATH_IS_DIRECTORY_CODE,
+    workspace_path_is_directory_message,
 };
 use crate::domain::errors::DomainError;
 use crate::domain::models::agent::{
@@ -82,11 +83,13 @@ impl AgentRuntimeService {
                     elapsed_ms,
                 ));
             }
-            Err(DomainError::Conflict(message)) => {
-                if let Some((code, detail)) = parse_workspace_conflict_message(&message) {
-                    return Ok(recoverable_tool_error(call, code, detail, elapsed_ms));
-                }
-                return Err(DomainError::Conflict(message).into());
+            Err(DomainError::WorkspacePathIsDirectory { path }) => {
+                return Ok(recoverable_tool_error(
+                    call,
+                    WORKSPACE_PATH_IS_DIRECTORY_CODE,
+                    &workspace_path_is_directory_message(&path),
+                    elapsed_ms,
+                ));
             }
             Err(error) => return Err(error.into()),
         };

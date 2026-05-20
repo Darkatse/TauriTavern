@@ -11,4 +11,4 @@ pub use dispatcher::{AgentToolDispatchOutcome, AgentToolDispatcher, AgentToolEff
 pub use registry::BuiltinAgentToolRegistry;
 pub use session::AgentToolSession;
 
-pub(crate) use common::parse_workspace_conflict_message;
+pub(crate) use common::{WORKSPACE_PATH_IS_DIRECTORY_CODE, workspace_path_is_directory_message};

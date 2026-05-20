@@ -3,8 +3,8 @@ use std::time::Instant;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::commit_ledger::RunCommitLedger;
 use super::AgentRuntimeService;
+use super::commit_ledger::RunCommitLedger;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{
     AgentToolDispatchOutcome, AgentToolEffect, AgentToolSession,

@@ -5,8 +5,9 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult, WorkspacePath};
 
 pub(super) use crate::application::services::agent_tools::common::{
-    object_args, optional_bool_arg, optional_usize_arg, parse_workspace_conflict_message,
+    WORKSPACE_PATH_IS_DIRECTORY_CODE, object_args, optional_bool_arg, optional_usize_arg,
     required_raw_string_arg, required_trimmed_string_arg, tool_error,
+    workspace_path_is_directory_message,
 };
 
 /// Pattern-match helper used by every read/write entry point so they all
@@ -18,13 +19,14 @@ pub(super) fn classify_workspace_io_error(
     error: DomainError,
 ) -> Result<AgentToolResult, DomainError> {
     match error {
-        DomainError::NotFound(message) => Ok(tool_error(call, "workspace.file_not_found", &message)),
-        DomainError::Conflict(message) => {
-            if let Some((code, detail)) = parse_workspace_conflict_message(&message) {
-                return Ok(tool_error(call, code, detail));
-            }
-            Err(DomainError::Conflict(message))
+        DomainError::NotFound(message) => {
+            Ok(tool_error(call, "workspace.file_not_found", &message))
         }
+        DomainError::WorkspacePathIsDirectory { path } => Ok(tool_error(
+            call,
+            WORKSPACE_PATH_IS_DIRECTORY_CODE,
+            &workspace_path_is_directory_message(&path),
+        )),
         other => Err(other),
     }
 }

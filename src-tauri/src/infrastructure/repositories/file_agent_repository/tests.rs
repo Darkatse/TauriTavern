@@ -227,12 +227,12 @@ async fn repository_round_trips_run_workspace_event_and_checkpoint() {
 }
 
 #[tokio::test]
-async fn read_text_on_directory_returns_conflict_error() {
+async fn read_text_on_directory_returns_typed_workspace_error() {
     // Issue #54: workspace_read_file used to bubble up the raw EISDIR
     // ("Is a directory") OS error as `agent.internal_error` (retryable=false)
     // and tear down the whole run. We now translate it into a structured
-    // `DomainError::Conflict` so the tool layer can surface it as a
-    // recoverable `workspace.path_is_directory` business error.
+    // domain error so the tool layer can surface it as a recoverable
+    // `workspace.path_is_directory` business error.
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
     let run = sample_run_with_id("run_dir_read");
@@ -241,7 +241,12 @@ async fn read_text_on_directory_returns_conflict_error() {
 
     repository.create_run(&run).await.expect("create run");
     repository
-        .initialize_run(&run, &manifest, &serde_json::json!({"messages": []}), &profile)
+        .initialize_run(
+            &run,
+            &manifest,
+            &serde_json::json!({"messages": []}),
+            &profile,
+        )
         .await
         .expect("initialize workspace");
 
@@ -252,24 +257,17 @@ async fn read_text_on_directory_returns_conflict_error() {
         .expect_err("reading a directory must fail");
 
     match error {
-        DomainError::Conflict(message) => {
-            assert!(
-                message.starts_with("workspace.path_is_directory:"),
-                "expected workspace.path_is_directory conflict, got `{message}`"
-            );
-            assert!(
-                message.contains("persist"),
-                "conflict message should mention offending path, got `{message}`"
-            );
+        DomainError::WorkspacePathIsDirectory { path } => {
+            assert_eq!(path, "persist");
         }
-        other => panic!("expected DomainError::Conflict, got {other:?}"),
+        other => panic!("expected DomainError::WorkspacePathIsDirectory, got {other:?}"),
     }
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
-async fn write_text_on_directory_returns_conflict_error() {
+async fn write_text_on_directory_returns_typed_workspace_error() {
     // Same guard for write_text so workspace_write_file cannot wipe out a
     // directory through the temp-file swap path.
     let root = temp_root();
@@ -280,7 +278,12 @@ async fn write_text_on_directory_returns_conflict_error() {
 
     repository.create_run(&run).await.expect("create run");
     repository
-        .initialize_run(&run, &manifest, &serde_json::json!({"messages": []}), &profile)
+        .initialize_run(
+            &run,
+            &manifest,
+            &serde_json::json!({"messages": []}),
+            &profile,
+        )
         .await
         .expect("initialize workspace");
 
@@ -291,11 +294,10 @@ async fn write_text_on_directory_returns_conflict_error() {
         .expect_err("writing to a directory must fail");
 
     match error {
-        DomainError::Conflict(message) => {
-            assert!(message.starts_with("workspace.path_is_directory:"));
-            assert!(message.contains("output"));
+        DomainError::WorkspacePathIsDirectory { path } => {
+            assert_eq!(path, "output");
         }
-        other => panic!("expected DomainError::Conflict, got {other:?}"),
+        other => panic!("expected DomainError::WorkspacePathIsDirectory, got {other:?}"),
     }
 
     fs::remove_dir_all(root).await.expect("cleanup");
