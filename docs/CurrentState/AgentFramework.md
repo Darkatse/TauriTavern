@@ -17,7 +17,7 @@
 - `provider_state` 已是 run-scoped continuation contract；OpenAI Responses 使用它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
 - Agent Skill 管理、导入导出、embedded skill 提示导入、`skill.list` / `skill.search` / `skill.read` 已落地。
 - Phase 3 Agent Profile 基线已落地：`profileId` 会解析为 `ResolvedAgentProfile`，驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds 与 model-facing prompt/tool descriptions。
-- PromptManager 已为 Agent Mode 提供 `agentSystemPrompt` 位置锚点与 `agentResults` 历史组件；`agentSystemPrompt` 内容只由 Agent Profile 提供，runtime 在 snapshot marker 原位置替换。
+- PromptManager 已为 Agent Mode 提供 `agentSystemPrompt` 位置锚点与 reserved no-op `agentResults` 位置标记；`agentSystemPrompt` 内容只由 Agent Profile 提供，runtime 在 snapshot marker 原位置替换，`agentResults` 不再向模型注入历史 commit 内容。
 - Profile 仍不接管 provider/model 切换；`preset.ref` 目前只做校验/记录，不改写 prompt snapshot 或 model。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。

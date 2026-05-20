@@ -313,17 +313,23 @@ test('default Agent profile exposes the effective default system prompt in front
     assert.equal(draft.instructions.agentSystemPrompt, buildDefaultAgentSystemPrompt(draft));
 });
 
-test('PromptManager uses Agent System Prompt as a runtime-resolved marker', async () => {
+test('PromptManager uses reserved Agent prompts as runtime-owned markers', async () => {
     const promptManagerSource = await readFile(path.join(REPO_ROOT, 'src/scripts/PromptManager.js'), 'utf8');
     const openAiSource = await readFile(path.join(REPO_ROOT, 'src/scripts/openai.js'), 'utf8');
 
     assert.match(promptManagerSource, /const AGENT_SYSTEM_PROMPT_IDENTIFIER = 'agentSystemPrompt';/);
+    assert.match(promptManagerSource, /const AGENT_RESULTS_PROMPT_IDENTIFIER = 'agentResults';/);
+    assert.match(promptManagerSource, /normalizeAgentPromptMarkerDefinitions\(\)/);
     assert.match(promptManagerSource, /normalizeAgentSystemPromptDefinition\(\)/);
+    assert.match(promptManagerSource, /normalizeAgentResultsPromptDefinition\(\)/);
+    assert.match(promptManagerSource, /agent\.results_prompt_definition_missing/);
     assert.match(promptManagerSource, /marker:\s*true/);
     assert.doesNotMatch(promptManagerSource, /case 'agentSystemPrompt':/);
 
     assert.match(openAiSource, /_tauritavern_agent_prompt_marker/);
     assert.match(openAiSource, /populateAgentSystemPromptMarker/);
+    assert.doesNotMatch(openAiSource, /populateAgentResults/);
+    assert.doesNotMatch(openAiSource, /\[Agent Result\]/);
     assert.doesNotMatch(openAiSource, /\[AGENT_SYSTEM_PROMPT_IDENTIFIER,\s*'nsfw'/);
 });
 

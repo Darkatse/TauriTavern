@@ -100,7 +100,8 @@ Provider adapter 只能把已经编译好的 `AgentModelRequest` / `ModelRequest
 - Tool call id 缺失必须 fail-fast；不得自动生成 fallback id。
 - `agentSystemPrompt` 的内容只来自已解析的 Agent Profile；PromptManager/Preset 只能控制该组件在 Agent prompt 中的位置。
 - Agent Mode 的 prompt snapshot 必须包含且只包含一个 `agentSystemPrompt` 内部 marker；runtime 在该位置替换真实 system prompt，缺失或重复必须 fail-fast。
-- Legacy Generation 必须剥离 Agent-only prompt component，不得接触 `agentSystemPrompt` marker、AgentResult 历史或 Agent system prompt 内容。
+- `agentResults` 是 PromptManager 中的 reserved no-op marker，不得向模型注入历史 Agent commit 内容；当前 run 的工具结果只能通过 runtime tool loop 的 assistant/tool messages 进入模型，跨 run 状态只能通过 persist/workspace 契约进入。
+- Legacy Generation 必须剥离 Agent-only prompt component，不得接触 `agentSystemPrompt` marker、`agentResults` marker 或 Agent system prompt 内容。
 
 ### 1.5 Agent Profile 是运行策略，不只是模型选择
 

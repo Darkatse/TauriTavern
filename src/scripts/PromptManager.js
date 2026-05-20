@@ -1036,7 +1036,7 @@ class PromptManager {
 
         // Add identifiers if there are none assigned to a prompt
         this.serviceSettings.prompts.forEach(prompt => prompt && (prompt.identifier = prompt.identifier ?? this.getUuidv4()));
-        this.normalizeAgentSystemPromptDefinition();
+        this.normalizeAgentPromptMarkerDefinitions();
         this.ensureAgentPromptOrderReferences();
 
         if (this.activeCharacter) {
@@ -1074,19 +1074,58 @@ class PromptManager {
     }
 
     /**
+     * Keep reserved Agent prompts as PromptManager position markers only.
+     *
+     * @returns {void}
+     */
+    normalizeAgentPromptMarkerDefinitions() {
+        this.normalizeAgentSystemPromptDefinition();
+        this.normalizeAgentResultsPromptDefinition();
+    }
+
+    /**
      * Keep Agent System Prompt as a PromptManager position marker only.
      *
      * @returns {void}
      */
     normalizeAgentSystemPromptDefinition() {
-        const prompt = this.getPromptById(AGENT_SYSTEM_PROMPT_IDENTIFIER);
+        this.normalizeAgentPromptMarkerDefinition(
+            AGENT_SYSTEM_PROMPT_IDENTIFIER,
+            'Agent System Prompt',
+            'agent.system_prompt_definition_missing: Agent System Prompt marker is missing',
+        );
+    }
+
+    /**
+     * Keep Agent Results as a reserved no-op PromptManager position marker.
+     *
+     * @returns {void}
+     */
+    normalizeAgentResultsPromptDefinition() {
+        this.normalizeAgentPromptMarkerDefinition(
+            AGENT_RESULTS_PROMPT_IDENTIFIER,
+            'Agent Results',
+            'agent.results_prompt_definition_missing: Agent Results marker is missing',
+        );
+    }
+
+    /**
+     * Canonicalize a reserved Agent prompt marker.
+     *
+     * @param {string} identifier
+     * @param {string} name
+     * @param {string} missingError
+     * @returns {void}
+     */
+    normalizeAgentPromptMarkerDefinition(identifier, name, missingError) {
+        const prompt = this.getPromptById(identifier);
         if (!prompt) {
-            throw new Error('agent.system_prompt_definition_missing: Agent System Prompt marker is missing');
+            throw new Error(missingError);
         }
 
         Object.assign(prompt, {
-            identifier: AGENT_SYSTEM_PROMPT_IDENTIFIER,
-            name: 'Agent System Prompt',
+            identifier,
+            name,
             role: 'system',
             content: '',
             system_prompt: true,
@@ -1110,7 +1149,7 @@ class PromptManager {
     ensureAgentPromptOrderReferences() {
         const agentReferences = [
             { identifier: AGENT_SYSTEM_PROMPT_IDENTIFIER, before: 'main', required: true },
-            { identifier: AGENT_RESULTS_PROMPT_IDENTIFIER },
+            { identifier: AGENT_RESULTS_PROMPT_IDENTIFIER, required: true },
         ];
 
         for (const promptOrder of this.serviceSettings.prompt_order) {
@@ -1193,7 +1232,6 @@ class PromptManager {
             'main',
             'chatHistory',
             'dialogueExamples',
-            'agentResults',
         ];
         return prompt.marker && !forceTogglePrompts.includes(prompt.identifier) ? false : !this.configuration.toggleDisabled.includes(prompt.identifier);
     }
@@ -1984,6 +2022,7 @@ class PromptManager {
             throw new Error('Prompt order strategy not supported.');
         }
 
+        this.normalizeAgentPromptMarkerDefinitions();
         this.ensureAgentPromptOrderReferences();
         toastr.success(t`Prompt import complete.`);
         this.saveServiceSettings().then(() => this.render());
@@ -2169,6 +2208,8 @@ const chatCompletionDefaultPrompts = {
         {
             'identifier': AGENT_RESULTS_PROMPT_IDENTIFIER,
             'name': 'Agent Results',
+            'role': 'system',
+            'content': '',
             'system_prompt': true,
             'marker': true,
         },

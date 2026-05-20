@@ -949,8 +949,6 @@ function setOpenAIMessages(chat) {
             && oai_settings.show_thoughts
             && canReplayProviderTurnMetadata;
         const reasoningContent = shouldReplayReasoningContent ? chat[j]?.extra?.tool_reasoning_content : null;
-        const agentResult = getAgentResultMetadata(chat[j], j);
-
         // Remove provider reasoning metadata from invocations if the API/model/speaker don't match.
         if (Array.isArray(invocations) && invocations.length > 0) {
             invocations.forEach((invocation, index) => {
@@ -963,22 +961,11 @@ function setOpenAIMessages(chat) {
             });
         }
 
-        messages[i] = { 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations, 'signature': signature, 'reasoning': reasoning, 'native': native, 'reasoningContent': reasoningContent, ...(agentResult && { agentResult }) };
+        messages[i] = { 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations, 'signature': signature, 'reasoning': reasoning, 'native': native, 'reasoningContent': reasoningContent };
         j++;
     }
 
     return messages;
-}
-
-/**
- * Extract Agent commit metadata without validating it on the legacy path.
- * @param {ChatMessage} message
- * @param {number} messageIndex
- * @returns {{ messageIndex: number, metadata: object }|null}
- */
-function getAgentResultMetadata(message, messageIndex) {
-    const metadata = message?.extra?.tauritavern?.agent;
-    return metadata ? { messageIndex, metadata } : null;
 }
 
 /**
@@ -1205,140 +1192,6 @@ async function populationInjectionPrompts(prompts, messages) {
 
     messages = messages.reverse();
     return messages;
-}
-
-/**
- * Populates committed Agent results into the Agent Results prompt marker.
- *
- * @param {object[]} messages - Array containing all messages.
- * @param {import('./PromptManager').PromptCollection} prompts - Map object containing all prompts where the key is the prompt identifier and the value is the prompt object.
- * @param {ChatCompletion} chatCompletion - An instance of ChatCompletion class that will be populated with the prompts.
- * @param {boolean} agentMode - Whether this prompt snapshot is owned by the Agent runtime.
- */
-async function populateAgentResults(messages, prompts, chatCompletion, agentMode) {
-    if (!agentMode || !prompts.has(AGENT_RESULTS_PROMPT_IDENTIFIER)) {
-        return;
-    }
-
-    chatCompletion.add(new MessageCollection(AGENT_RESULTS_PROMPT_IDENTIFIER), prompts.index(AGENT_RESULTS_PROMPT_IDENTIFIER));
-
-    const agentPool = messages.filter(message => message.agentResult).reverse();
-    for (const prompt of agentPool) {
-        const content = formatAgentResultPrompt(prompt.agentResult, prompt.content);
-        const message = await Message.createAsync('system', content, `${AGENT_RESULTS_PROMPT_IDENTIFIER}-${prompt.agentResult.messageIndex}`);
-
-        if (chatCompletion.canAfford(message)) {
-            chatCompletion.insertAtStart(message, AGENT_RESULTS_PROMPT_IDENTIFIER);
-        } else {
-            break;
-        }
-    }
-}
-
-/**
- * Format one committed Agent chat message for the prompt marker.
- *
- * @param {{ messageIndex: number, metadata: object }} agentResult
- * @param {string} content
- * @returns {string}
- */
-function formatAgentResultPrompt(agentResult, content) {
-    assertAgentResultMetadata(agentResult);
-
-    const { messageIndex, metadata } = agentResult;
-    const lines = [
-        '[Agent Result]',
-        `message_index: ${messageIndex}`,
-        `run_id: ${metadata.runId}`,
-        `workspace_id: ${metadata.workspaceId}`,
-        `stable_chat_id: ${metadata.stableChatId}`,
-        `persist_state_id: ${metadata.persistStateId}`,
-        `checkpoint_id: ${metadata.checkpointId}`,
-        `commit_id: ${metadata.commitId}`,
-        `commit_seq: ${metadata.commitSeq}`,
-    ];
-
-    if (metadata.persistBaseStateId) {
-        lines.push(`persist_base_state_id: ${metadata.persistBaseStateId}`);
-    }
-    if (metadata.profileId) {
-        lines.push(`profile_id: ${metadata.profileId}`);
-    }
-
-    for (const commit of metadata.commits) {
-        const reason = commit.reason ? ` reason=${commit.reason}` : '';
-        lines.push(`commit: seq=${commit.seq} id=${commit.commitId} checkpoint=${commit.checkpointId} mode=${commit.mode} path=${commit.path} bytes=${commit.bytes} sha256=${commit.sha256}${reason}`);
-    }
-
-    for (const artifact of metadata.artifacts) {
-        lines.push(`artifact: target=${artifact.target} path=${artifact.path} bytes=${artifact.bytes} sha256=${artifact.sha256}`);
-    }
-
-    lines.push('content:', String(content ?? '').trim());
-    return lines.join('\n');
-}
-
-/**
- * @param {{ messageIndex: number, metadata: object }} agentResult
- * @returns {void}
- */
-function assertAgentResultMetadata(agentResult) {
-    const { messageIndex, metadata } = agentResult;
-    if (!metadata || typeof metadata !== 'object') {
-        throw new Error(`Invalid AgentResult metadata at chat message ${messageIndex}`);
-    }
-    if (metadata.version !== 1) {
-        throw new Error(`Unsupported AgentResult metadata version at chat message ${messageIndex}: ${metadata.version}`);
-    }
-
-    for (const field of ['runId', 'workspaceId', 'stableChatId', 'persistStateId', 'checkpointId', 'commitId']) {
-        if (typeof metadata[field] !== 'string' || !metadata[field]) {
-            throw new Error(`Invalid AgentResult metadata field "${field}" at chat message ${messageIndex}`);
-        }
-    }
-
-    if (typeof metadata.commitSeq !== 'number') {
-        throw new Error(`Invalid AgentResult metadata field "commitSeq" at chat message ${messageIndex}`);
-    }
-    if (metadata.profileId !== null && metadata.profileId !== undefined && typeof metadata.profileId !== 'string') {
-        throw new Error(`Invalid AgentResult metadata field "profileId" at chat message ${messageIndex}`);
-    }
-    if (metadata.persistBaseStateId !== null && metadata.persistBaseStateId !== undefined && typeof metadata.persistBaseStateId !== 'string') {
-        throw new Error(`Invalid AgentResult metadata field "persistBaseStateId" at chat message ${messageIndex}`);
-    }
-    if (!Array.isArray(metadata.commits)) {
-        throw new Error(`Invalid AgentResult commits at chat message ${messageIndex}`);
-    }
-    if (!Array.isArray(metadata.artifacts)) {
-        throw new Error(`Invalid AgentResult artifacts at chat message ${messageIndex}`);
-    }
-
-    for (const [commitIndex, commit] of metadata.commits.entries()) {
-        for (const field of ['commitId', 'checkpointId', 'path', 'mode', 'sha256']) {
-            if (typeof commit?.[field] !== 'string' || !commit[field]) {
-                throw new Error(`Invalid AgentResult commit field "${field}" at chat message ${messageIndex}, commit ${commitIndex}`);
-            }
-        }
-        for (const field of ['seq', 'bytes']) {
-            if (typeof commit[field] !== 'number') {
-                throw new Error(`Invalid AgentResult commit field "${field}" at chat message ${messageIndex}, commit ${commitIndex}`);
-            }
-        }
-        if (commit.reason !== undefined && typeof commit.reason !== 'string') {
-            throw new Error(`Invalid AgentResult commit field "reason" at chat message ${messageIndex}, commit ${commitIndex}`);
-        }
-    }
-
-    for (const [artifactIndex, artifact] of metadata.artifacts.entries()) {
-        for (const field of ['target', 'path', 'sha256']) {
-            if (typeof artifact?.[field] !== 'string' || !artifact[field]) {
-                throw new Error(`Invalid AgentResult artifact field "${field}" at chat message ${messageIndex}, artifact ${artifactIndex}`);
-            }
-        }
-        if (typeof artifact.bytes !== 'number') {
-            throw new Error(`Invalid AgentResult artifact field "bytes" at chat message ${messageIndex}, artifact ${artifactIndex}`);
-        }
-    }
 }
 
 /**
@@ -1932,7 +1785,6 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
         await populateChatHistory(messages, prompts, chatCompletion, type, cyclePrompt);
         await populateDialogueExamples(prompts, chatCompletion, messageExamples);
     }
-    await populateAgentResults(messages, prompts, chatCompletion, agentMode);
 
     chatCompletion.freeBudget(controlPrompts);
     if (controlPrompts.collection.length) chatCompletion.add(controlPrompts);
