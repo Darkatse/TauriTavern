@@ -20,6 +20,9 @@
 //   re-saved message from a later run is surfaced as a contract violation.
 // - Targets are deduped and processed back-to-front so chat indices stay
 //   valid as messages are spliced out.
+// - After a successful destructive rollback, surviving messages revealed by
+//   the rollback receive MESSAGE_UPDATED so DOM-driven render adapters can
+//   rescan their current HTML/runtime state.
 // - Destructive rollback is fail-fast. Missing host APIs, invalid targets, run
 //   mismatches, missing strategy metadata, and unsafe swipe state throw instead
 //   of silently falling back to a broader delete.
@@ -35,6 +38,8 @@ export async function rollbackAgentRunDriftMessages({ runId, targets, script }) 
     }
 
     const chat = requireChatArray(script);
+    const emitMessageUpdated = requireMessageUpdatedEmitter(script);
+    const messagesToUpdate = new Set();
     let deleted = 0;
     let swipesRemoved = 0;
     for (const index of sortedIds) {
@@ -48,18 +53,21 @@ export async function rollbackAgentRunDriftMessages({ runId, targets, script }) 
             index,
             message: chat[index],
             script,
+            chat,
         });
-        if (outcome === 'swipe') {
+        rememberMessageForUpdate(messagesToUpdate, outcome.refreshMessage);
+        if (outcome.type === 'swipe') {
             swipesRemoved += 1;
-        } else if (outcome === 'message') {
+        } else if (outcome.type === 'message') {
             deleted += 1;
         }
     }
+    await emitRollbackMessageUpdates(chat, messagesToUpdate, emitMessageUpdated);
 
     return { attempted: sortedIds.length, deleted, swipesRemoved };
 }
 
-async function rollbackOneMessage({ index, message, script }) {
+async function rollbackOneMessage({ index, message, script, chat }) {
     const rollback = readNested(message, ROLLBACK_META_PATH);
     const strategy = String(rollback?.strategy || '').trim();
     if (!strategy) {
@@ -69,7 +77,10 @@ async function rollbackOneMessage({ index, message, script }) {
     if (strategy === 'deleteMessage') {
         const deleteMessage = requireHostFunction(script, 'deleteMessage');
         await deleteMessage(index);
-        return 'message';
+        if (chat.includes(message)) {
+            throw new Error(`agent.rollback_message_delete_failed: chat message ${index} was not removed`);
+        }
+        return { type: 'message', refreshMessage: messageRevealedByDelete(chat, index) };
     }
 
     if (strategy === 'deleteSwipe') {
@@ -80,7 +91,7 @@ async function rollbackOneMessage({ index, message, script }) {
         if (!Number.isInteger(Number(nextSwipeId))) {
             throw new Error(`agent.rollback_swipe_delete_failed: deleteSwipe did not confirm deletion for message ${index}`);
         }
-        return 'swipe';
+        return { type: 'swipe', refreshMessage: message };
     }
 
     throw new Error(`agent.rollback_strategy_unsupported: unsupported rollback strategy ${strategy}`);
@@ -126,6 +137,21 @@ function requireHostFunction(script, name) {
     return value;
 }
 
+function requireMessageUpdatedEmitter(script) {
+    const emit = script?.eventSource?.emit;
+    if (typeof emit !== 'function') {
+        throw new Error('agent.rollback_event_api_unavailable: eventSource.emit is unavailable');
+    }
+    const eventType = String(script?.event_types?.MESSAGE_UPDATED || '').trim();
+    if (!eventType) {
+        throw new Error('agent.rollback_event_type_unavailable: event_types.MESSAGE_UPDATED is unavailable');
+    }
+
+    return async (messageId) => {
+        await emit.call(script.eventSource, eventType, messageId);
+    };
+}
+
 function requireRollbackSwipeId(value, messageId) {
     if (!Number.isInteger(value) || value < 0) {
         throw new Error(`agent.rollback_swipe_id_invalid: rollback swipeId is invalid for message ${messageId}`);
@@ -142,6 +168,30 @@ function assertSafeSwipeRollbackTarget(message, swipeId, messageId) {
     }
     if (swipeId >= message.swipes.length) {
         throw new Error(`agent.rollback_swipe_id_invalid: swipe ${swipeId} is out of range for message ${messageId}`);
+    }
+}
+
+function messageRevealedByDelete(chat, deletedIndex) {
+    return chat[deletedIndex] ?? chat[deletedIndex - 1] ?? null;
+}
+
+function rememberMessageForUpdate(messagesToUpdate, message) {
+    if (message && typeof message === 'object') {
+        messagesToUpdate.add(message);
+    }
+}
+
+async function emitRollbackMessageUpdates(chat, messagesToUpdate, emitMessageUpdated) {
+    const messageIds = new Set();
+    for (const message of messagesToUpdate) {
+        const index = chat.indexOf(message);
+        if (index >= 0) {
+            messageIds.add(index);
+        }
+    }
+
+    for (const messageId of [...messageIds].sort((a, b) => a - b)) {
+        await emitMessageUpdated(messageId);
     }
 }
 

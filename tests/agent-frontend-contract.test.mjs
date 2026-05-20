@@ -33,6 +33,19 @@ function installWindow(api) {
     return window;
 }
 
+function installRollbackEventCapture(script, updates = []) {
+    script.event_types = {
+        ...(script.event_types || {}),
+        MESSAGE_UPDATED: 'message_updated',
+    };
+    script.eventSource = {
+        async emit(event, messageId) {
+            updates.push({ event, messageId });
+        },
+    };
+    return script;
+}
+
 test('Agent System settings use the extension store and publish changes', async () => {
     const writes = [];
     let stored = null;
@@ -1084,20 +1097,25 @@ test('Agent run controller awaits rollback before rejecting on drift run_failed'
 
     const controller = await importFresh('src/scripts/tauritavern/agent/agent-run-controller.js');
     const deletions = [];
+    const updates = [];
     let resolveRollback;
     const rollbackGate = new Promise((resolve) => {
         resolveRollback = resolve;
     });
-    controller.__setAgentRunRollbackScriptForTests({
-        chat: [
-            {},
-            { extra: { tauritavern: { agent: { runId: 'run-drift', rollback: { strategy: 'deleteMessage' } } } } },
-        ],
+    const chat = [
+        {},
+        { extra: { tauritavern: { agent: { runId: 'run-drift', rollback: { strategy: 'deleteMessage' } } } } },
+    ];
+    const rollbackScript = {
+        chat,
         async deleteMessage(index) {
             deletions.push(index);
             await rollbackGate;
+            chat.splice(index, 1);
         },
-    });
+    };
+    installRollbackEventCapture(rollbackScript, updates);
+    controller.__setAgentRunRollbackScriptForTests(rollbackScript);
 
     const run = controller.startAndWaitForAgentRun({ generationType: 'normal' });
     await Promise.resolve();
@@ -1137,6 +1155,7 @@ test('Agent run controller awaits rollback before rejecting on drift run_failed'
         return true;
     });
     assert.deepEqual(deletions, [1]);
+    assert.deepEqual(updates, [{ event: 'message_updated', messageId: 0 }]);
     controller.__setAgentRunRollbackScriptForTests(null);
 });
 
@@ -1155,7 +1174,7 @@ test('Agent run controller rejects rollback failures before presenting drift fai
     });
 
     const controller = await importFresh('src/scripts/tauritavern/agent/agent-run-controller.js');
-    controller.__setAgentRunRollbackScriptForTests({
+    const rollbackScript = {
         chat: [
             {},
             { extra: { tauritavern: { agent: { runId: 'run-drift-rollback-fails', rollback: { strategy: 'deleteMessage' } } } } },
@@ -1163,7 +1182,9 @@ test('Agent run controller rejects rollback failures before presenting drift fai
         async deleteMessage() {
             throw new Error('delete failed');
         },
-    });
+    };
+    installRollbackEventCapture(rollbackScript);
+    controller.__setAgentRunRollbackScriptForTests(rollbackScript);
 
     const run = controller.startAndWaitForAgentRun({ generationType: 'normal' });
     await Promise.resolve();
@@ -1208,6 +1229,7 @@ test('Rollback helper deletes drift messages back-to-front and dedupes targets',
         { extra: { tauritavern: { agent: { runId: 'run-x', rollback: { strategy: 'deleteMessage' } } } } },
     ];
     const deletions = [];
+    const updates = [];
     const script = {
         chat,
         async deleteMessage(index) {
@@ -1215,6 +1237,7 @@ test('Rollback helper deletes drift messages back-to-front and dedupes targets',
             chat.splice(index, 1);
         },
     };
+    installRollbackEventCapture(script, updates);
 
     const result = await rollbackAgentRunDriftMessages({
         runId: 'run-x',
@@ -1232,6 +1255,7 @@ test('Rollback helper deletes drift messages back-to-front and dedupes targets',
     assert.equal(result.swipesRemoved, 0);
     assert.equal(chat.length, 1);
     assert.equal(chat[0].extra.tauritavern.agent.runId, 'other-run');
+    assert.deepEqual(updates, [{ event: 'message_updated', messageId: 0 }]);
 });
 
 test('Rollback helper fails fast on invalid or foreign targets', async () => {
@@ -1250,10 +1274,10 @@ test('Rollback helper fails fast on invalid or foreign targets', async () => {
         () => rollbackAgentRunDriftMessages({
             runId: 'run-x',
             targets: [{ messageId: '0' }],
-            script: {
+            script: installRollbackEventCapture({
                 chat: [{ extra: { tauritavern: { agent: { runId: 'other-run' } } } }],
                 async deleteMessage() {},
-            },
+            }),
         }),
         /agent\.rollback_run_mismatch/,
     );
@@ -1287,6 +1311,7 @@ test('Rollback helper pops only the run-added swipe when the message pre-existed
 
     const swipeCalls = [];
     const messageDeletions = [];
+    const updates = [];
     const script = {
         chat,
         async deleteSwipe(swipeId, messageId) {
@@ -1302,6 +1327,7 @@ test('Rollback helper pops only the run-added swipe when the message pre-existed
             chat.splice(index, 1);
         },
     };
+    installRollbackEventCapture(script, updates);
 
     const result = await rollbackAgentRunDriftMessages({
         runId: 'run-swipe',
@@ -1316,6 +1342,7 @@ test('Rollback helper pops only the run-added swipe when the message pre-existed
     assert.equal(chat.length, 2, 'pre-existing message must be preserved');
     assert.equal(chat[1].mes, 'user-authored alt 1');
     assert.deepEqual(chat[1].swipes, ['user-authored', 'user-authored alt 1']);
+    assert.deepEqual(updates, [{ event: 'message_updated', messageId: 1 }]);
 });
 
 test('Rollback helper fails fast instead of deleting a message when swipe metadata is unsafe', async () => {
@@ -1338,6 +1365,7 @@ test('Rollback helper fails fast instead of deleting a message when swipe metada
     ];
     const swipeCalls = [];
     const messageDeletions = [];
+    const updates = [];
     const script = {
         chat,
         async deleteSwipe(swipeId, messageId) {
@@ -1348,6 +1376,7 @@ test('Rollback helper fails fast instead of deleting a message when swipe metada
             chat.splice(index, 1);
         },
     };
+    installRollbackEventCapture(script, updates);
 
     await assert.rejects(
         () => rollbackAgentRunDriftMessages({
@@ -1360,24 +1389,77 @@ test('Rollback helper fails fast instead of deleting a message when swipe metada
 
     assert.deepEqual(swipeCalls, [], 'must not call deleteSwipe when only one swipe remains');
     assert.deepEqual(messageDeletions, []);
+    assert.deepEqual(updates, []);
 });
 
 test('Rollback helper fails fast when deleting a targeted drift message fails', async () => {
     const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
+    const updates = [];
 
     await assert.rejects(
         () => rollbackAgentRunDriftMessages({
             runId: 'run-delete-fails',
             targets: [{ messageId: '0' }],
-            script: {
+            script: installRollbackEventCapture({
                 chat: [{ extra: { tauritavern: { agent: { runId: 'run-delete-fails', rollback: { strategy: 'deleteMessage' } } } } }],
                 async deleteMessage() {
                     throw new Error('delete failed');
                 },
-            },
+            }, updates),
         }),
         /delete failed/,
     );
+    assert.deepEqual(updates, []);
+});
+
+test('Rollback helper fails fast when deleteMessage leaves the target in chat', async () => {
+    const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
+
+    const chat = [
+        { extra: { tauritavern: { agent: { runId: 'run-noop-delete', rollback: { strategy: 'deleteMessage' } } } } },
+    ];
+    const updates = [];
+
+    await assert.rejects(
+        () => rollbackAgentRunDriftMessages({
+            runId: 'run-noop-delete',
+            targets: [{ messageId: '0' }],
+            script: installRollbackEventCapture({
+                chat,
+                async deleteMessage() {},
+            }, updates),
+        }),
+        /agent\.rollback_message_delete_failed/,
+    );
+
+    assert.equal(chat.length, 1);
+    assert.deepEqual(updates, []);
+});
+
+test('Rollback helper requires MESSAGE_UPDATED before destructive rollback', async () => {
+    const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
+
+    const chat = [
+        { extra: { tauritavern: { agent: { runId: 'run-no-events', rollback: { strategy: 'deleteMessage' } } } } },
+    ];
+    const deletions = [];
+    await assert.rejects(
+        () => rollbackAgentRunDriftMessages({
+            runId: 'run-no-events',
+            targets: [{ messageId: '0' }],
+            script: {
+                chat,
+                async deleteMessage(index) {
+                    deletions.push(index);
+                    chat.splice(index, 1);
+                },
+            },
+        }),
+        /agent\.rollback_event_api_unavailable/,
+    );
+
+    assert.deepEqual(deletions, []);
+    assert.equal(chat.length, 1, 'rollback must fail before mutating chat when update events are unavailable');
 });
 
 test('Rollback helper requires rollback strategy and host APIs for targeted messages', async () => {
@@ -1387,10 +1469,10 @@ test('Rollback helper requires rollback strategy and host APIs for targeted mess
         () => rollbackAgentRunDriftMessages({
             runId: 'run-missing-strategy',
             targets: [{ messageId: '0' }],
-            script: {
+            script: installRollbackEventCapture({
                 chat: [{ extra: { tauritavern: { agent: { runId: 'run-missing-strategy' } } } }],
                 async deleteMessage() {},
-            },
+            }),
         }),
         /agent\.rollback_strategy_missing/,
     );
@@ -1399,7 +1481,7 @@ test('Rollback helper requires rollback strategy and host APIs for targeted mess
         () => rollbackAgentRunDriftMessages({
             runId: 'run-swipe-no-api',
             targets: [{ messageId: '0' }],
-            script: {
+            script: installRollbackEventCapture({
                 chat: [{
                     swipes: ['old', 'new'],
                     extra: {
@@ -1412,7 +1494,7 @@ test('Rollback helper requires rollback strategy and host APIs for targeted mess
                     },
                 }],
                 async deleteMessage() {},
-            },
+            }),
         }),
         /agent\.rollback_host_api_unavailable: deleteSwipe/,
     );
