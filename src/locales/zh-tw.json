@@ -4417,5 +4417,9 @@
     "agent.error.run_failed": "Agent 執行失敗",
     "agent.error.model_tool_call_required.message": "模型這次沒有進入 Agent 工具流程，而是直接輸出了正文。TauriTavern 已停止本輪，未寫入聊天。請重新生成；如果頻繁出現，建議縮短上下文或換用工具調用更穩定的模型。",
     "agent.error.model_tool_call_required.summary": "模型跳過了 Agent 工具流程，未提交訊息。",
+    "agent.error.tool_after_finish.message": "模型在 workspace.finish 之後繼續請求工具，違反了 Agent 契約。TauriTavern 已停止本輪，未寫入聊天。請重新生成；如果頻繁出現，建議降低溫度或換用更遵守 workspace.finish 的模型。",
+    "agent.error.tool_after_finish.summary": "模型在 workspace.finish 之後繼續調用工具，未提交訊息。",
+    "agent.error.max_tool_rounds_exceeded.message": "Agent 迴圈在調用 workspace.finish 前耗盡了最大工具輪數。TauriTavern 已停止本輪，未寫入聊天。請用更明確的提示重新生成，或在配置中提高輪數預算。",
+    "agent.error.max_tool_rounds_exceeded.summary": "工具輪數預算耗盡，未提交訊息。",
     "Clear": "清除"
 }

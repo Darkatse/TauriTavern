@@ -198,7 +198,7 @@ run_failed
 }
 ```
 
-`run_rollback_targets` 作为显式丢弃 / 旧版本清理事件形状保留。它不再是 committed drift 的默认终态路径：自动 rollback 会浪费模型已经通过 host 确认的输出。宿主收到该事件时，必须先完成 rollback，再暴露 retry 动作：
+`run_rollback_targets` 作为显式丢弃 / 旧版本清理事件形状保留。它不再是 committed drift 的默认终态路径：自动 rollback 会浪费模型已经通过 host 确认的输出。宿主收到该事件时，rollback 必须 fail-fast：目标缺失、runId 不匹配、rollback strategy 缺失、swipe 状态不安全或宿主删除 API 不可用都必须报错，不能静默跳过或扩大为整条消息删除。若之后暴露 retry 动作，也必须使用 run handle / `generation_intent_recorded` 的 typed generation intent，不得触发 DOM regenerate 按钮。
 
 ```json
 {

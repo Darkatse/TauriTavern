@@ -17,6 +17,7 @@ import {
     subscribeAgentRunEvents,
     subscribeAgentRunState,
 } from '../../../tauritavern/agent/agent-run-controller.js';
+import { retryAgentRunFailure } from '../../../tauritavern/agent/agent-run-retry.js';
 import {
     buildEventDetailTargets,
     isDisplayableRunEvent,
@@ -288,15 +289,20 @@ function createAgentRunTimelineApp() {
                     }
                 });
             },
-            invokeDetailAction(action) {
+            async invokeDetailAction(action) {
                 if (!action || action.kind !== 'retry') {
                     return;
                 }
-                const trigger = globalThis.jQuery || globalThis.$;
-                if (typeof trigger !== 'function') {
-                    return;
+                try {
+                    await retryAgentRunFailure({
+                        run: this.currentRun,
+                        events: this.events,
+                        terminalEvent: this.terminalEvent,
+                    });
+                } catch (error) {
+                    console.error('[AgentSystem] Failed to retry Agent run', error);
+                    window.toastr?.error?.(errorText(error), tr('agentSystem'));
                 }
-                trigger('#option_regenerate').trigger('click');
             },
             eventKey(event) {
                 return event?.id ? `id:${event.id}` : `seq:${event?.runId || ''}:${event?.seq || 0}`;

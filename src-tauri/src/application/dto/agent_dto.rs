@@ -71,6 +71,7 @@ pub struct AgentRunHandleDto {
     pub run_id: String,
     pub workspace_id: String,
     pub stable_chat_id: String,
+    pub generation_type: String,
     pub status: AgentRunStatus,
 }
 

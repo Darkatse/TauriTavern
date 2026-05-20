@@ -899,6 +899,26 @@ test('Agent error presenter surfaces userRetryable from run_failed payload', asy
     assert.equal(fatal.userRetryable, false);
 });
 
+test('Agent error presenter translation keys exist in global locales', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/tauritavern/agent/agent-error-presenter.js',
+    ), 'utf8');
+    const keys = [...new Set([...source.matchAll(/'((?:agent\.error\.)[^']+)'/g)]
+        .map(match => match[1]))];
+    assert.ok(keys.length > 0, 'expected Agent error translation keys');
+
+    for (const locale of ['en', 'zh-cn', 'zh-tw']) {
+        const messages = JSON.parse(await readFile(path.join(
+            REPO_ROOT,
+            `src/locales/${locale}.json`,
+        ), 'utf8'));
+        for (const key of keys) {
+            assert.ok(Object.hasOwn(messages, key), `${locale} missing ${key}`);
+        }
+    }
+});
+
 test('Run failure detail surfaces a retry action and userRetryable field when allowed', async () => {
     const { formatRunFailureDetail } = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
 
@@ -924,6 +944,96 @@ test('Run failure detail surfaces a retry action and userRetryable field when al
         event: { payload: { code: 'agent.internal_error', message: 'boom', retryable: false } },
     });
     assert.deepEqual(fatal.actions, []);
+});
+
+test('Agent retry resolves typed generation intent instead of clicking regenerate UI', async () => {
+    const retry = await importFresh('src/scripts/tauritavern/agent/agent-run-retry.js');
+
+    assert.equal(retry.retryGenerationTypeFor('normal'), 'regenerate');
+    assert.equal(retry.retryGenerationTypeFor('regenerate'), 'regenerate');
+    assert.equal(retry.retryGenerationTypeFor('swipe'), 'swipe');
+    assert.throws(
+        () => retry.retryGenerationTypeFor('continue'),
+        /agent\.retry_generation_type_unsupported/,
+    );
+    assert.equal(retry.resolveAgentRunGenerationType({
+        events: [
+            { type: 'run_created', payload: {} },
+            { type: 'generation_intent_recorded', payload: { generationType: 'swipe' } },
+        ],
+    }), 'swipe');
+
+    const calls = [];
+    const result = await retry.retryAgentRunFailure({
+        run: { generationType: 'swipe' },
+        terminalEvent: { type: 'run_failed', payload: { userRetryable: true } },
+        runtime: {
+            mainApi: 'openai',
+            selectedGroup: null,
+            async getAgentGenerationOptions(input) {
+                calls.push({ kind: 'options', input });
+                return { agentMode: true, agentProfileId: 'writer' };
+            },
+            async Generate(type, options) {
+                calls.push({ kind: 'generate', type, options });
+                return 'retried';
+            },
+        },
+    });
+
+    assert.equal(result, 'retried');
+    assert.deepEqual(calls, [
+        {
+            kind: 'options',
+            input: { generationType: 'swipe', mainApi: 'openai', selectedGroup: null },
+        },
+        {
+            kind: 'generate',
+            type: 'swipe',
+            options: { agentMode: true, agentProfileId: 'writer' },
+        },
+    ]);
+
+    await assert.rejects(
+        () => retry.retryAgentRunFailure({
+            terminalEvent: { type: 'run_failed', payload: { userRetryable: true } },
+            runtime: {
+                mainApi: 'openai',
+                selectedGroup: null,
+                async getAgentGenerationOptions() {
+                    return { agentMode: true };
+                },
+                async Generate() {},
+            },
+        }),
+        /agent\.retry_generation_intent_missing/,
+    );
+    await assert.rejects(
+        () => retry.retryAgentRunFailure({
+            run: { generationType: 'normal' },
+            terminalEvent: { type: 'run_failed', payload: { userRetryable: true } },
+            runtime: {
+                mainApi: 'openai',
+                selectedGroup: null,
+                async getAgentGenerationOptions() {
+                    return {};
+                },
+                async Generate() {},
+            },
+        }),
+        /agent\.retry_agent_mode_disabled/,
+    );
+});
+
+test('Agent timeline retry action does not invoke the SillyTavern regenerate DOM button', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/run-timeline-panel.js',
+    ), 'utf8');
+
+    assert.match(source, /retryAgentRunFailure/);
+    assert.doesNotMatch(source, /option_regenerate/);
+    assert.doesNotMatch(source, /globalThis\.jQuery|globalThis\.\$/);
 });
 
 test('Partial success detail keeps error visible without retry action', async () => {
@@ -981,7 +1091,7 @@ test('Agent run controller awaits rollback before rejecting on drift run_failed'
     controller.__setAgentRunRollbackScriptForTests({
         chat: [
             {},
-            { extra: { tauritavern: { agent: { runId: 'run-drift' } } } },
+            { extra: { tauritavern: { agent: { runId: 'run-drift', rollback: { strategy: 'deleteMessage' } } } } },
         ],
         async deleteMessage(index) {
             deletions.push(index);
@@ -1048,7 +1158,7 @@ test('Agent run controller rejects rollback failures before presenting drift fai
     controller.__setAgentRunRollbackScriptForTests({
         chat: [
             {},
-            { extra: { tauritavern: { agent: { runId: 'run-drift-rollback-fails' } } } },
+            { extra: { tauritavern: { agent: { runId: 'run-drift-rollback-fails', rollback: { strategy: 'deleteMessage' } } } } },
         ],
         async deleteMessage() {
             throw new Error('delete failed');
@@ -1089,13 +1199,13 @@ test('Agent run controller rejects rollback failures before presenting drift fai
     controller.__setAgentRunRollbackScriptForTests(null);
 });
 
-test('Rollback helper deletes drift messages back-to-front and skips foreign messages', async () => {
+test('Rollback helper deletes drift messages back-to-front and dedupes targets', async () => {
     const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
 
     const chat = [
-        { extra: { tauritavern: { agent: { runId: 'run-x' } } } },
+        { extra: { tauritavern: { agent: { runId: 'run-x', rollback: { strategy: 'deleteMessage' } } } } },
         { extra: { tauritavern: { agent: { runId: 'other-run' } } } },
-        { extra: { tauritavern: { agent: { runId: 'run-x' } } } },
+        { extra: { tauritavern: { agent: { runId: 'run-x', rollback: { strategy: 'deleteMessage' } } } } },
     ];
     const deletions = [];
     const script = {
@@ -1110,20 +1220,43 @@ test('Rollback helper deletes drift messages back-to-front and skips foreign mes
         runId: 'run-x',
         targets: [
             { messageId: '0' },
-            { messageId: '1' },
             { messageId: '2' },
             { messageId: '2' },
-            { messageId: 'invalid' },
-            { messageId: '99' },
         ],
         script,
     });
 
     assert.deepEqual(deletions, [2, 0]);
+    assert.equal(result.attempted, 2);
     assert.equal(result.deleted, 2);
-    assert.ok(result.skipped >= 2);
+    assert.equal(result.swipesRemoved, 0);
     assert.equal(chat.length, 1);
     assert.equal(chat[0].extra.tauritavern.agent.runId, 'other-run');
+});
+
+test('Rollback helper fails fast on invalid or foreign targets', async () => {
+    const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
+
+    await assert.rejects(
+        () => rollbackAgentRunDriftMessages({
+            runId: 'run-x',
+            targets: [{ messageId: 'invalid' }],
+            script: { chat: [], async deleteMessage() {} },
+        }),
+        /agent\.rollback_target_invalid/,
+    );
+
+    await assert.rejects(
+        () => rollbackAgentRunDriftMessages({
+            runId: 'run-x',
+            targets: [{ messageId: '0' }],
+            script: {
+                chat: [{ extra: { tauritavern: { agent: { runId: 'other-run' } } } }],
+                async deleteMessage() {},
+            },
+        }),
+        /agent\.rollback_run_mismatch/,
+    );
 });
 
 test('Rollback helper pops only the run-added swipe when the message pre-existed', async () => {
@@ -1185,7 +1318,7 @@ test('Rollback helper pops only the run-added swipe when the message pre-existed
     assert.deepEqual(chat[1].swipes, ['user-authored', 'user-authored alt 1']);
 });
 
-test('Rollback helper falls back to deleteMessage when swipe metadata is unsafe', async () => {
+test('Rollback helper fails fast instead of deleting a message when swipe metadata is unsafe', async () => {
     const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
 
     const chat = [
@@ -1216,16 +1349,17 @@ test('Rollback helper falls back to deleteMessage when swipe metadata is unsafe'
         },
     };
 
-    const result = await rollbackAgentRunDriftMessages({
-        runId: 'run-edge',
-        targets: [{ messageId: '0' }],
-        script,
-    });
+    await assert.rejects(
+        () => rollbackAgentRunDriftMessages({
+            runId: 'run-edge',
+            targets: [{ messageId: '0' }],
+            script,
+        }),
+        /agent\.rollback_swipe_state_invalid/,
+    );
 
     assert.deepEqual(swipeCalls, [], 'must not call deleteSwipe when only one swipe remains');
-    assert.deepEqual(messageDeletions, [0]);
-    assert.equal(result.deleted, 1);
-    assert.equal(result.swipesRemoved, 0);
+    assert.deepEqual(messageDeletions, []);
 });
 
 test('Rollback helper fails fast when deleting a targeted drift message fails', async () => {
@@ -1236,12 +1370,50 @@ test('Rollback helper fails fast when deleting a targeted drift message fails', 
             runId: 'run-delete-fails',
             targets: [{ messageId: '0' }],
             script: {
-                chat: [{ extra: { tauritavern: { agent: { runId: 'run-delete-fails' } } } }],
+                chat: [{ extra: { tauritavern: { agent: { runId: 'run-delete-fails', rollback: { strategy: 'deleteMessage' } } } } }],
                 async deleteMessage() {
                     throw new Error('delete failed');
                 },
             },
         }),
         /delete failed/,
+    );
+});
+
+test('Rollback helper requires rollback strategy and host APIs for targeted messages', async () => {
+    const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
+
+    await assert.rejects(
+        () => rollbackAgentRunDriftMessages({
+            runId: 'run-missing-strategy',
+            targets: [{ messageId: '0' }],
+            script: {
+                chat: [{ extra: { tauritavern: { agent: { runId: 'run-missing-strategy' } } } }],
+                async deleteMessage() {},
+            },
+        }),
+        /agent\.rollback_strategy_missing/,
+    );
+
+    await assert.rejects(
+        () => rollbackAgentRunDriftMessages({
+            runId: 'run-swipe-no-api',
+            targets: [{ messageId: '0' }],
+            script: {
+                chat: [{
+                    swipes: ['old', 'new'],
+                    extra: {
+                        tauritavern: {
+                            agent: {
+                                runId: 'run-swipe-no-api',
+                                rollback: { strategy: 'deleteSwipe', swipeId: 1 },
+                            },
+                        },
+                    },
+                }],
+                async deleteMessage() {},
+            },
+        }),
+        /agent\.rollback_host_api_unavailable: deleteSwipe/,
     );
 });

@@ -186,7 +186,7 @@ const DEFAULT_MESSAGES = Object.freeze({
     timelineDetailFieldReplacements: 'Replacements',
     timelineDetailFieldPreservedCommits: 'Preserved commits',
     timelineActionRetry: 'Retry',
-    timelineActionRetryHint: 'Retry the same Agent generation after rolling back drift artifacts.',
+    timelineActionRetryHint: 'Retry the same Agent generation with the original generation intent.',
     timelineDetailFieldRetryable: 'Retryable',
     timelineDetailFieldRound: 'Round',
     timelineDetailFieldUserRetryable: 'User-retryable',

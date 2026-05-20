@@ -119,6 +119,7 @@ type AgentRunHandle = {
   status: AgentRunStatus;
   workspaceId: string;
   stableChatId: string;
+  generationType: string;
 };
 ```
 
@@ -127,6 +128,7 @@ type AgentRunHandle = {
 - `stableChatId` 是聊天的长期稳定身份。
 - `workspaceId` 必须由 `kind + stableChatId` 派生，不得由可变的 `chatRef` 文件名直接决定。
 - `runId` 是一次 Agent 执行身份，每次 normal/regenerate/swipe/continue 都必须生成新的 `runId`。
+- `generationType` 是启动时已校验的 SillyTavern generation intent；前端 retry 等宿主行为必须使用它或 `generation_intent_recorded` 事件，不得从 DOM 状态猜测。
 - 同一稳定聊天的多次 run 应共享同一个 chat workspace，但各自拥有独立 run workspace。
 
 Public Host ABI 可以允许调用方省略 `stableChatId`，但 `api.agent.startRunWithPromptSnapshot()` 必须在调用 Rust command 前通过 `api.chat.open(chatRef).stableId()` 解析并校验。Rust command 不应自行读取 SillyTavern metadata。

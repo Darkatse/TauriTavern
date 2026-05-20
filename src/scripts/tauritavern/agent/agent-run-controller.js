@@ -160,7 +160,10 @@ export async function startAndWaitForAgentRun(input) {
 }
 
 async function handleRollbackEvent(runId, event) {
-    const targets = Array.isArray(event?.payload?.targets) ? event.payload.targets : [];
+    const targets = event?.payload?.targets;
+    if (!Array.isArray(targets)) {
+        throw new Error('agent.rollback_targets_invalid: run_rollback_targets payload.targets must be an array');
+    }
     if (targets.length === 0) {
         return;
     }

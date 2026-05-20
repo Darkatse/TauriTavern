@@ -43,7 +43,8 @@ impl AgentRuntimeService {
         let request = request_from_prompt_snapshot(&prompt_snapshot)?;
         reject_external_tool_request(&request.payload)?;
 
-        if dto.generation_type.trim().is_empty() {
+        let generation_type = dto.generation_type.trim().to_string();
+        if generation_type.is_empty() {
             return Err(ApplicationError::ValidationError(
                 "agent.invalid_generation_type: generationType cannot be empty".to_string(),
             ));
@@ -88,7 +89,7 @@ impl AgentRuntimeService {
             workspace_id: workspace_id.clone(),
             stable_chat_id: stable_chat_id.clone(),
             chat_ref: dto.chat_ref,
-            generation_type: dto.generation_type,
+            generation_type: generation_type.clone(),
             profile_id: Some(resolved_profile.id.as_str().to_string()),
             persist_base_state_id: dto.persist_base_state_id,
             presentation,
@@ -154,6 +155,7 @@ impl AgentRuntimeService {
             run_id,
             workspace_id,
             stable_chat_id,
+            generation_type,
             status: AgentRunStatus::Created,
         })
     }
@@ -172,6 +174,7 @@ impl AgentRuntimeService {
                     run_id: run.id,
                     workspace_id: run.workspace_id,
                     stable_chat_id: run.stable_chat_id,
+                    generation_type: run.generation_type,
                     status: run.status,
                 });
             }
@@ -210,6 +213,7 @@ impl AgentRuntimeService {
             run_id: next.id,
             workspace_id: next.workspace_id,
             stable_chat_id: next.stable_chat_id,
+            generation_type: next.generation_type,
             status: next.status,
         })
     }
