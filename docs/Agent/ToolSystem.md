@@ -194,7 +194,7 @@ persist/
 
 `workspace.commit` 与 `workspace.finish` 的契约：模型可以多次 commit；当全部修订与 commit 完成后，必须用 `workspace.finish` 收口，不能用纯文本代替最终 answer。`workspace.commit` 工具的返回字符串只做温和提醒，提示模型可继续修订并再次 commit，但最终不要忘记 finish。
 
-如果模型一回合内仍然返回 0 个 tool_calls（drift），loop runner 会先做一次"软纠正"（issue #64）：把模型的纯文本回复推进 history，再追加一条 `user` 角色的合成提醒，让模型在下一轮重试。**每个 run 至多 1 次**（常量 `DRIFT_RECOVERY_MAX_ATTEMPTS`），每次都会写一条 `drift_recovery_attempted` 事件。
+如果模型一回合内仍然返回 0 个 tool_calls（drift），loop runner 会先做一次"软纠正"（issue #64）：把模型的纯文本回复捕获到 workspace 的 `direct_output.md`（默认 `output/direct_output.md`，实际跟随当前 profile 的 messageBody artifact root），写 `direct_output_captured` 与 checkpoint；再把该 assistant 回复推进 history，并追加一条 `user` 角色的合成提醒，让模型在下一轮通过 `workspace_commit` / `workspace_finish` 补回流程。**每个 run 至多 1 次**（常量 `DRIFT_RECOVERY_MAX_ATTEMPTS`），每次都会写一条 `drift_recovery_attempted` 事件。
 
 - 软纠正后模型调用了 `workspace_finish`，或继续修订并再次 `workspace_commit` 后再 `workspace_finish` → run 继续，无 rollback。
 - 软纠正失败（模型再次 0 tool_calls）→ 回落到 `model.tool_call_required` 失败路径；若没有成功 chat commit，则写 `run_failed`（`userRetryable=true`）；若已有成功 chat commit，则写 `run_partial_success`，保留已提交聊天输出并以 warning 暴露底层错误。

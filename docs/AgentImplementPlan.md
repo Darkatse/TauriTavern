@@ -198,7 +198,7 @@ workspace.commit 触发 host bridge 写入同一 chat message
 workspace.finish 收尾并提交 persist projection
 ```
 
-工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会以 `model.tool_call_required` 失败。前台 run 必须在 finish 前至少成功 commit 一次；后台 run 可以无 commit 完成。
+工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会先捕获到 workspace `direct_output.md` 并触发一次 soft drift recovery；恢复耗尽后以 `model.tool_call_required` 失败或在已有 commit 时进入 `run_partial_success`。前台 run 必须在 finish 前至少成功 commit 一次；后台 run 可以无 commit 完成。
 
 ## 8. 后续实施顺序
 

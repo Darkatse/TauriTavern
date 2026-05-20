@@ -119,6 +119,7 @@ model_call_retry_scheduled
 model_response_stored
 provider_state_updated
 model_completed
+direct_output_captured
 tool_call_requested
 tool_call_started
 tool_result_stored
@@ -219,7 +220,7 @@ run_failed
 }
 ```
 
-**Soft drift recovery**：在直接 fail-fast 之前，loop runner 会先做一次"软纠正"：当模型返回 0 tool_calls 时，把它的纯文本回复推进 history，再追加一条合成的 `user` 消息提醒它必须调用 `workspace_finish`；如果需要修订已提交内容，必须先 `workspace_apply_patch` / `workspace_write_file`，再 `workspace_commit`，最后 `workspace_finish`。每个 run 至多 1 次（受 `DRIFT_RECOVERY_MAX_ATTEMPTS` 控制）。每次尝试都会写一条 `drift_recovery_attempted` 事件，便于宿主 UI 给用户显示"系统正在纠正…"提示：
+**Soft drift recovery**：在直接 fail-fast 之前，loop runner 会先做一次"软纠正"：当模型返回 0 tool_calls 且包含纯文本时，runtime 会把该文本捕获到当前 profile messageBody artifact 所在 root 的 `direct_output.md`（默认 `output/direct_output.md`），写入 `direct_output_captured` 与 checkpoint；随后把纯文本回复推进 history，再追加一条合成的 `user` 消息提醒它必须通过 Agent 工具继续。如果直接输出就是目标回复，应显式 `workspace_commit` 该捕获文件，再调用 `workspace_finish`；如果需要修订已提交内容，必须先 `workspace_apply_patch` / `workspace_write_file`，再 `workspace_commit`，最后 `workspace_finish`。每个 run 至多 1 次（受 `DRIFT_RECOVERY_MAX_ATTEMPTS` 控制）。每次尝试都会写一条 `drift_recovery_attempted` 事件，便于宿主 UI 给用户显示"系统正在纠正…"提示：
 
 ```json
 {
@@ -273,6 +274,7 @@ model_tool_call_delta
 model_response_stored
 provider_state_updated
 model_completed
+direct_output_captured
 model_failed
 ```
 
@@ -535,6 +537,7 @@ model_request_created
 model_response_stored
 provider_state_updated
 model_completed
+direct_output_captured
 tool_call_requested
 tool_call_started
 tool_result_stored

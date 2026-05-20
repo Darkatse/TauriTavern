@@ -6,6 +6,7 @@ const DISPLAY_EVENT_TYPES = new Set([
     'tool_call_completed',
     'tool_call_failed',
     'workspace_file_written',
+    'direct_output_captured',
     'workspace_patch_applied',
     'chat_commit_requested',
     'chat_commit_completed',
@@ -42,6 +43,7 @@ const EVENT_META = Object.freeze({
     tool_call_completed: { icon: 'fa-check', tone: 'success', kind: 'tool', titleKey: 'timelineEventToolCompleted' },
     tool_call_failed: { icon: 'fa-triangle-exclamation', tone: 'warn', kind: 'fail', titleKey: 'timelineEventToolFailed' },
     workspace_file_written: { icon: 'fa-file-lines', tone: 'success', kind: 'write', titleKey: 'timelineEventFileWritten' },
+    direct_output_captured: { icon: 'fa-file-lines', tone: 'warn', kind: 'recover', titleKey: 'timelineEventDirectOutputCaptured' },
     workspace_patch_applied: { icon: 'fa-code-commit', tone: 'success', kind: 'patch', titleKey: 'timelineEventPatchApplied' },
     chat_commit_requested: { icon: 'fa-message', tone: 'active', kind: 'commit', titleKey: 'timelineEventCommitRequested' },
     chat_commit_completed: { icon: 'fa-circle-check', tone: 'success', kind: 'commit', titleKey: 'timelineEventCommitCompleted' },
@@ -156,6 +158,7 @@ export function buildEventDetailTargets(item, allEvents) {
     }
 
     if (event?.type === 'workspace_file_written'
+        || event?.type === 'direct_output_captured'
         || event?.type === 'workspace_patch_applied'
         || event?.type === 'chat_commit_requested'
         || event?.type === 'chat_commit_completed') {
@@ -289,6 +292,7 @@ function eventTitleParams(type, payload) {
         case 'tool_call_failed':
             return { tool: toolLabel(payload.name) };
         case 'workspace_file_written':
+        case 'direct_output_captured':
         case 'workspace_patch_applied':
         case 'chat_commit_requested':
         case 'chat_commit_completed':
@@ -313,6 +317,7 @@ function eventSummary(type, payload) {
         case 'tool_call_failed':
             return payload.message || payload.errorCode || '';
         case 'workspace_file_written':
+        case 'direct_output_captured':
         case 'workspace_patch_applied':
             return fileSummary(payload);
         case 'chat_commit_requested':

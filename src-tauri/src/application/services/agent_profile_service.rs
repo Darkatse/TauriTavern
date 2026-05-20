@@ -47,92 +47,100 @@ pub fn materialize_agent_system_prompt(
     }
 
     let mut lines = vec![
-        "TauriTavern Agent Mode is active.".to_string(),
-        "Work through the available Agent tools. Tool results are private run state, not chat messages.".to_string(),
-        format!(
-            "Available tool function names: {}.",
-            tools
-                .iter()
-                .map(|tool| tool.model_name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        "---".to_string(),
+        "tool_choice: required".to_string(),
+        "tools:".to_string(),
     ];
+    lines.extend(
+        tools
+            .iter()
+            .map(|tool| format!("- {}", tool.model_name.as_str())),
+    );
+    lines.extend([
+        "---".to_string(),
+        String::new(),
+        "# Agent Mode is active.".to_string(),
+        "- Work using the available agent tools. Tool results are private runtime data, not chat messages.".to_string(),
+        String::new(),
+    ]);
 
     if has_tool(tools, "chat.search") {
         lines.push(format!(
-            "Use {} to find relevant prior messages when you need more context. Only query is required.",
+            "- When more context is needed, use {} to find relevant prior messages. Provide only the search query.",
             model_name(tools, "chat.search")
         ));
     }
     if has_tool(tools, "chat.read_messages") {
         let source_hint = if has_tool(tools, "chat.search") {
-            format!("message indexes from {}", model_name(tools, "chat.search"))
+            format!(
+                "the message indices returned by {}",
+                model_name(tools, "chat.search")
+            )
         } else {
             "exact indexes you already know".to_string()
         };
         lines.push(format!(
-            "Use {} with {source_hint}. For long messages, read smaller ranges with start_char and max_chars.",
+            "- Use {} with {source_hint} for review. For longer messages, use start_char and max_chars to read smaller ranges.",
             model_name(tools, "chat.read_messages")
         ));
     }
     if has_tool(tools, "worldinfo.read_activated") {
         lines.push(format!(
-            "Use {} when active lore for this run matters. Call it with no arguments to list active refs, then pass entries with ref and optional start_char/max_chars to read only needed content.",
+            "- When activated world information is relevant to this run, use {}.",
             model_name(tools, "worldinfo.read_activated")
         ));
     }
     if has_tool(tools, "skill.list") {
         lines.push(format!(
-            "Use {} to discover visible Agent Skills when reusable writing, editing, planning, style, or character guidance may help.",
+            "- Use {} to discover visible agent skills when reusable writing, editing, planning, style, or character guidance may be helpful.",
             model_name(tools, "skill.list")
         ));
     }
     if has_tool(tools, "skill.search") {
         lines.push(format!(
-            "Use {} to locate relevant text inside large visible Skill files before reading exact ranges.",
+            "- Before reading exact ranges, use {} to locate relevant text within larger visible skill files.",
             model_name(tools, "skill.search")
         ));
     }
     if has_tool(tools, "skill.read") {
         lines.push(format!(
-            "Use {} to read SKILL.md first, then read referenced Skill files or ranges only when needed.",
+            "- Use {} to read SKILL.md first, then only read referenced skill files or specified ranges within them when necessary.",
             model_name(tools, "skill.read")
         ));
     }
     if has_tool(tools, "workspace.list_files") {
         lines.push(format!(
-            "Use {} to inspect visible workspace files.",
+            "- Use {} to inspect visible workspace files.",
             model_name(tools, "workspace.list_files")
         ));
     }
     if has_tool(tools, "workspace.search_files") {
         lines.push(format!(
-            "Use {} to find relevant text in visible workspace files such as persist/ memory before reading exact ranges.",
+            "- Before reading exact ranges, use {} to find relevant text within visible workspace files (e.g., persist/ memory).",
             model_name(tools, "workspace.search_files")
         ));
     }
     if has_tool(tools, "workspace.read_file") {
         lines.push(format!(
-            "Use {} before modifying an existing file. Read output has line numbers; never include line number prefixes in old_string or new_string.",
+            "- Use {} before modifying an existing file. Read content includes line numbers; never include line number prefixes in old_string or new_string.",
             model_name(tools, "workspace.read_file")
         ));
     }
     if has_tool(tools, "workspace.apply_patch") {
         lines.push(format!(
-            "Use {} for precise edits to existing files. The old_string must match exactly and uniquely unless replace_all is true.",
+            "- Use {} to perform precise edits on existing files. old_string must match exactly and be unique unless replace_all is true.",
             model_name(tools, "workspace.apply_patch")
         ));
     }
     if has_tool(tools, "workspace.write_file") {
         lines.push(format!(
-            "Use {} for new files or complete rewrites.",
+            "- Use {} to create new files or perform complete rewrites.",
             model_name(tools, "workspace.write_file")
         ));
     }
     if has_tool(tools, "workspace.commit") {
         lines.push(format!(
-            "Use {} to publish a visible workspace file to the current chat message. With no arguments it replaces the run's chat message with {}; mode append appends to the same message and creates it if this run has not committed yet.",
+            "- Use {} to publish visible workspace files into the current chat message. Without arguments, it will replace the current run's chat message with {}; mode append will append to the same message, creating it if this run has not committed yet.",
             model_name(tools, "workspace.commit"),
             profile.output.message_body_path
         ));
@@ -149,36 +157,99 @@ pub fn materialize_agent_system_prompt(
             .iter()
             .any(|root| root == "persist")
     {
-        lines.push("Use persist/ for concise information that should carry into later runs of this same chat, such as durable plot facts, unresolved threads, relationship state, and user style preferences.".to_string());
+        lines.push("- Use persist/ to store concise information that should carry over into subsequent runs of the same chat, such as persistent plot facts, unresolved threads, relationship states, and user style preferences.".to_string());
         lines.push(
-            "Do not copy full chat history, final replies, tool results, or temporary reasoning into persist/."
+            "- **Do not** copy full chat history, final replies, tool results, or temporary reasoning into persist/."
                 .to_string(),
         );
     }
 
     lines.push(format!(
-        "Visible workspace roots: {}.",
+        "- Visible workspace roots: {}.",
         profile.workspace.visible_roots.join(", ")
     ));
     lines.push(format!(
-        "Writable workspace roots: {}.",
+        "- Writable workspace roots: {}.",
         profile.workspace.writable_roots.join(", ")
     ));
+    lines.push(format!(
+        "- **Never** read {} before commit",
+        profile.output.message_body_path
+    ));
+    lines.push(
+        "> You may encounter: \"No visible workspace files found.\" This happens because there are no persisted files; please continue."
+            .to_string(),
+    );
     match profile.run.presentation {
         AgentRunPresentation::Foreground => lines.push(format!(
-            "Before calling {}, make at least one successful {} call so the user can see the final chat message.",
+            "# **Important**: Before calling {}, you **must successfully call {} at least once** so that the user can see the final chat message.",
             model_name(tools, "workspace.finish"),
             model_name(tools, "workspace.commit")
         )),
         AgentRunPresentation::Background => lines.push(format!(
-            "Background runs may call {} without committing a chat message.",
+            "# Background runs may call {} without committing a chat message.",
             model_name(tools, "workspace.finish")
         )),
     }
     lines.push(format!(
-        "Do not answer directly without finishing through {}.",
+        "# **Important**: **Do not** answer directly!!! **Must finish via {}.**",
         model_name(tools, "workspace.finish")
     ));
+    if has_tool(tools, "workspace.commit") && has_tool(tools, "workspace.finish") {
+        lines.extend([
+            String::new(),
+            format!(
+                "# Basic tool calling flow (adjusted based on the actual situation, but the flow must include {} + {}):",
+                model_name(tools, "workspace.commit"),
+                model_name(tools, "workspace.finish")
+            ),
+            String::new(),
+            "A simple template you can follow:".to_string(),
+            "    (thoughts before actions)".to_string(),
+            "    (call tools)(optional)".to_string(),
+            String::new(),
+            format!(
+                "    Now I need to call \"{}\" once.",
+                model_name(tools, "workspace.commit")
+            ),
+            format!(
+                "    Good, it has been committed. Finally, don't forget to call \"{}\".",
+                model_name(tools, "workspace.finish")
+            ),
+            String::new(),
+            "You also can follow commit-N-times template:".to_string(),
+            "    (thoughts before actions)".to_string(),
+        ]);
+        if has_tool(tools, "workspace.read_file") {
+            lines.push(format!(
+                "    ({})",
+                model_name(tools, "workspace.read_file")
+            ));
+        }
+        if has_tool(tools, "worldinfo.read_activated") {
+            lines.push(format!(
+                "    ({})",
+                model_name(tools, "worldinfo.read_activated")
+            ));
+        }
+        if has_tool(tools, "skill.list") {
+            lines.push(format!("    ({})", model_name(tools, "skill.list")));
+        }
+        lines.extend([
+            format!(
+                "    (call {} with append mode)",
+                model_name(tools, "workspace.commit")
+            ),
+            "    (think)".to_string(),
+            "    (edit if necessary)".to_string(),
+            format!(
+                "    ({} with append mode)",
+                model_name(tools, "workspace.commit")
+            ),
+            String::new(),
+        ]);
+    }
+    lines.push("Anyway: TOOLS&SKILLS IS ALL YOU NEED".to_string());
 
     lines.join("\n")
 }
@@ -953,18 +1024,16 @@ mod tests {
 
         let prompt = materialize_agent_system_prompt(&tools, &profile);
 
+        assert!(prompt.contains("tool_choice: required"));
+        assert!(prompt.contains("- chat_search_alias"));
+        assert!(prompt.contains("- workspace_commit_alias"));
+        assert!(prompt.contains("- workspace_finish_alias"));
+        assert!(!prompt.contains("TauriTavern"));
+        assert!(prompt.contains("use chat_search_alias to find relevant prior messages"));
         assert!(prompt.contains(
-            "Available tool function names: chat_search_alias, workspace_commit_alias, workspace_finish_alias."
+            "Before calling workspace_finish_alias, you **must successfully call workspace_commit_alias at least once**"
         ));
-        assert!(prompt.contains("Use chat_search_alias to find relevant prior messages"));
-        assert!(prompt.contains(
-            "Before calling workspace_finish_alias, make at least one successful workspace_commit_alias call"
-        ));
-        assert!(
-            prompt.contains(
-                "Do not answer directly without finishing through workspace_finish_alias."
-            )
-        );
+        assert!(prompt.contains("**Must finish via workspace_finish_alias.**"));
         assert!(!prompt.contains("workspace_read_file"));
     }
 
@@ -977,12 +1046,13 @@ mod tests {
 
         let prompt = materialize_agent_system_prompt(&tools, &profile);
 
-        assert!(prompt.contains("Visible workspace roots: output."));
-        assert!(prompt.contains("Writable workspace roots: output."));
+        assert!(prompt.contains("- Visible workspace roots: output."));
+        assert!(prompt.contains("- Writable workspace roots: output."));
         assert!(prompt.contains(
-            "Background runs may call workspace_finish_alias without committing a chat message."
+            "# Background runs may call workspace_finish_alias without committing a chat message."
         ));
         assert!(!prompt.contains("Use persist/"));
+        assert!(!prompt.contains("must successfully call"));
     }
 
     fn tool(name: &str, model_name: &str) -> AgentToolSpec {

@@ -502,8 +502,26 @@ test('Agent run event presenter keeps timeline projection focused', async () => 
     assert.deepEqual(recoveryItem.titleParams, { attempt: 1, max: 1 });
     assert.equal(recoveryItem.summary, 'model.tool_call_required');
 
-    const partialEvent = {
+    const directOutputEvent = {
         seq: 6,
+        id: 'evt-direct-output',
+        runId: 'run-1',
+        type: 'direct_output_captured',
+        level: 'warn',
+        payload: {
+            round: 2,
+            path: 'output/direct_output.md',
+            bytes: 32,
+        },
+    };
+    assert.equal(presenter.isDisplayableRunEvent(directOutputEvent), true);
+    const directOutputItem = presenter.presentRunEvent(directOutputEvent);
+    assert.equal(directOutputItem.titleKey, 'timelineEventDirectOutputCaptured');
+    assert.deepEqual(directOutputItem.titleParams, { path: 'output/direct_output.md' });
+    assert.equal(directOutputItem.summary, '32 bytes');
+
+    const partialEvent = {
+        seq: 7,
         id: 'evt-partial',
         runId: 'run-1',
         type: 'run_partial_success',
@@ -539,8 +557,9 @@ test('Agent run event presenter keeps timeline projection focused', async () => 
             type: 'workspace_file_written',
             payload: { path: 'output/main.md', bytes: 12 },
         },
+        directOutputEvent,
     ]);
-    assert.deepEqual(projected.map(event => event.type), ['workspace_file_written']);
+    assert.deepEqual(projected.map(event => event.type), ['workspace_file_written', 'direct_output_captured']);
 });
 
 test('Agent run tool labels stay user-facing in timeline projection', async () => {
@@ -597,8 +616,24 @@ test('Agent run event presenter derives lazy detail targets from journal refs', 
         ['file', 'timelineWorkspaceFile', 'output/main.md'],
     ]);
 
-    const patchRequested = {
+    const directOutputEvent = {
         seq: 4,
+        id: 'evt-direct-output',
+        runId: 'run-1',
+        type: 'direct_output_captured',
+        payload: { path: 'output/direct_output.md', bytes: 32 },
+    };
+    const directOutputTargets = presenter.buildEventDetailTargets(
+        presenter.presentRunEvent(directOutputEvent),
+        [resultEvent, completed, writeEvent, directOutputEvent],
+    );
+
+    assert.deepEqual(directOutputTargets.map(target => [target.type, target.labelKey, target.path || '']), [
+        ['file', 'timelineWorkspaceFile', 'output/direct_output.md'],
+    ]);
+
+    const patchRequested = {
+        seq: 5,
         id: 'evt-patch-requested',
         runId: 'run-1',
         type: 'tool_call_requested',
@@ -609,7 +644,7 @@ test('Agent run event presenter derives lazy detail targets from journal refs', 
         },
     };
     const patchCompleted = {
-        seq: 5,
+        seq: 6,
         id: 'evt-patch-completed',
         runId: 'run-1',
         type: 'tool_call_completed',
@@ -620,7 +655,7 @@ test('Agent run event presenter derives lazy detail targets from journal refs', 
         },
     };
     const patchEvent = {
-        seq: 6,
+        seq: 7,
         id: 'evt-patch',
         runId: 'run-1',
         type: 'workspace_patch_applied',

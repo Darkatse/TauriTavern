@@ -11,8 +11,8 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{AgentToolEffect, AgentToolSession};
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole,
-    AgentRunEventLevel, AgentRunStatus, AgentToolResult, WorkspacePath,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelResponse,
+    AgentModelRole, AgentRunEventLevel, AgentRunStatus, AgentToolResult, WorkspacePath,
 };
 
 /// How many in-loop drift recovery attempts to make per run before
@@ -108,6 +108,15 @@ impl AgentRuntimeService {
                 // Multi-turn pattern is API-compatible with both Anthropic
                 // and OpenAI chat completions (no role-alternation
                 // constraint after a no-tool-use turn).
+                let direct_output_path = self
+                    .capture_direct_output(
+                        run_id,
+                        round,
+                        model_response_path.as_str(),
+                        &response,
+                        profile,
+                    )
+                    .await?;
                 let can_recover = drift_recovery_attempts < DRIFT_RECOVERY_MAX_ATTEMPTS
                     && round < profile.tools.max_rounds;
                 if can_recover {
@@ -117,6 +126,7 @@ impl AgentRuntimeService {
                         committed_count,
                         drift_recovery_attempts,
                         DRIFT_RECOVERY_MAX_ATTEMPTS,
+                        direct_output_path.as_ref(),
                     );
                     request.messages.push(response.message.clone());
                     request.messages.push(AgentModelMessage {
@@ -257,6 +267,42 @@ impl AgentRuntimeService {
         Ok(None)
     }
 
+    async fn capture_direct_output(
+        &self,
+        run_id: &str,
+        round: usize,
+        model_response_path: &str,
+        response: &AgentModelResponse,
+        profile: &ResolvedAgentProfile,
+    ) -> Result<Option<WorkspacePath>, ApplicationError> {
+        let text = extract_response_text(response);
+        if text.trim().is_empty() {
+            return Ok(None);
+        }
+
+        let path = direct_output_path(profile)?;
+        let file = self
+            .workspace_repository
+            .write_text(run_id, &path, text)
+            .await?;
+        self.checkpoint_workspace_file(
+            run_id,
+            "direct_output_capture",
+            "direct_output_captured",
+            json!({
+                "round": round,
+                "path": file.path.as_str(),
+                "bytes": file.bytes,
+                "sha256": file.sha256.as_str(),
+                "modelResponsePath": model_response_path,
+            }),
+            file.path.clone(),
+        )
+        .await?;
+
+        Ok(Some(file.path))
+    }
+
     async fn hydrate_recent_tool_results_for_model(
         &self,
         run_id: &str,
@@ -336,7 +382,18 @@ fn build_drift_recovery_nudge(
     committed_count: usize,
     attempt: usize,
     max_attempts: usize,
+    direct_output_path: Option<&WorkspacePath>,
 ) -> String {
+    let direct_output_hint = direct_output_path
+        .map(|path| {
+            format!(
+                " I saved your direct text to {}. If that text is the intended reply, call workspace_commit with path \"{}\" before workspace_finish.",
+                path.as_str(),
+                path.as_str()
+            )
+        })
+        .unwrap_or_default();
+
     if committed_count > 0 {
         format!(
             "[system reminder, drift recovery attempt {attempt}/{max_attempts}] You replied with \
@@ -345,18 +402,28 @@ fn build_drift_recovery_nudge(
              workspace_finish, or the run will stop as partial_success with a warning instead of \
              clean completion. If you need to revise the committed content, update the workspace file with \
              workspace_apply_patch or workspace_write_file, then call workspace_commit again \
-             before workspace_finish. Do NOT repeat the content in plain text — that is treated \
-             as instruction drift."
+             before workspace_finish.{direct_output_hint} Do NOT repeat the content in plain text — \
+             that is treated as instruction drift."
         )
     } else {
         format!(
             "[system reminder, drift recovery attempt {attempt}/{max_attempts}] You replied with \
              plain text, but every turn must use a tool until the run ends with workspace_finish. \
              Inspect the workspace (workspace_list_files / workspace_read_file), produce the \
-             answer through workspace_write_file + workspace_commit, then call workspace_finish. \
+             answer through workspace_write_file + workspace_commit, then call workspace_finish.{direct_output_hint} \
              Do NOT answer directly in plain text."
         )
     }
+}
+
+fn direct_output_path(profile: &ResolvedAgentProfile) -> Result<WorkspacePath, ApplicationError> {
+    let message_body_path = WorkspacePath::parse(&profile.output.message_body_path)?;
+    let root = message_body_path
+        .as_str()
+        .split('/')
+        .next()
+        .unwrap_or("output");
+    WorkspacePath::parse(format!("{root}/direct_output.md")).map_err(ApplicationError::from)
 }
 
 fn provider_state_summary(provider_state: &serde_json::Value) -> serde_json::Value {

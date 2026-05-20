@@ -260,7 +260,7 @@ workspace.commit 成功后 host 写入同一条 chat message
 workspace.finish 结束 run，并提交 persist projection
 ```
 
-工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会以 `model.tool_call_required` 失败。前台 run 在 `workspace.finish` 前必须至少成功 `workspace.commit` 一次；后台 run 可以无 chat commit 结束。
+工具循环轮数来自 `profile.tools.maxRounds`。超过后以 `agent.max_tool_rounds_exceeded` 失败。模型直接输出文本且不调用工具会先触发一次 soft drift recovery：runtime 将直接文本捕获到当前 messageBody artifact root 下的 `direct_output.md`（默认 `output/direct_output.md`），记录 `direct_output_captured` 与 checkpoint，然后提醒模型通过 Agent 工具提交/结束；恢复耗尽后仍以 `model.tool_call_required` 失败或 `run_partial_success` 收口。前台 run 在 `workspace.finish` 前必须至少成功 `workspace.commit` 一次；后台 run 可以无 chat commit 结束。
 
 ## 当前 Run Events
 
@@ -279,6 +279,7 @@ model_call_attempt_started
 model_call_attempt_failed
 model_call_retry_scheduled
 model_completed
+direct_output_captured
 tool_call_requested
 tool_call_started
 tool_result_stored

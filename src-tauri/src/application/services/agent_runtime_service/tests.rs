@@ -90,8 +90,9 @@ async fn resolves_agent_system_prompt_through_runtime_boundary() {
         .await
         .expect("resolve prompt");
 
-    assert!(prompt.contains("TauriTavern Agent Mode is active."));
-    assert!(prompt.contains("Available tool function names:"));
+    assert!(prompt.contains("# Agent Mode is active."));
+    assert!(!prompt.contains("TauriTavern"));
+    assert!(prompt.contains("tool_choice: required"));
     assert!(prompt.contains("workspace_commit"));
     assert!(prompt.contains("workspace_finish"));
 }
@@ -1617,11 +1618,33 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
         nudge_text.contains("workspace_commit again before workspace_finish"),
         "nudge must require another commit after revising workspace files; got: {nudge_text}"
     );
+    assert!(
+        nudge_text.contains("output/direct_output.md"),
+        "nudge must point at the captured direct output file; got: {nudge_text}"
+    );
+
+    let captured = repository
+        .read_text(
+            &run.id,
+            &WorkspacePath::parse("output/direct_output.md").unwrap(),
+        )
+        .await
+        .expect("direct output should be captured in workspace");
+    assert_eq!(captured.text, "Oh and here's the answer in chat form...");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "direct_output_captured"
+                && event.payload["path"] == json!("output/direct_output.md")
+                && event.payload["round"] == json!(3)),
+        "direct output capture must be journaled"
+    );
 }
 
 /// Issue #64: when the model drifts WITHOUT having committed anything,
-/// the loop still tries one corrective nudge (per user decision). On
-/// recovery the model proceeds normally.
+/// the loop saves the direct text into workspace and gives the model one
+/// corrective nudge. On recovery the model can commit that captured file
+/// directly instead of regenerating or copying the content.
 #[tokio::test]
 async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
     let root = std::env::temp_dir().join(format!(
@@ -1657,24 +1680,7 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
                 }
             }]
         }),
-        // Round 2: model recovers and writes a file.
-        json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": "call_write_nocommit",
-                        "type": "function",
-                        "function": {
-                            "name": "workspace_write_file",
-                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"nudge worked\"}"
-                        }
-                    }]
-                }
-            }]
-        }),
-        // Round 3: commit.
+        // Round 2: model recovers by committing the captured direct output.
         json!({
             "choices": [{
                 "message": {
@@ -1685,13 +1691,13 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
                         "type": "function",
                         "function": {
                             "name": "workspace_commit",
-                            "arguments": "{}"
+                            "arguments": "{\"path\":\"output/direct_output.md\"}"
                         }
                     }]
                 }
             }]
         }),
-        // Round 4: finish.
+        // Round 3: finish.
         json!({
             "choices": [{
                 "message": {
@@ -1773,6 +1779,23 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
         .collect();
     assert_eq!(recovery_events.len(), 1);
     assert_eq!(recovery_events[0].payload["committedCount"], 0);
+
+    let captured = repository
+        .read_text(
+            &run.id,
+            &WorkspacePath::parse("output/direct_output.md").unwrap(),
+        )
+        .await
+        .expect("direct output should be captured in workspace");
+    assert_eq!(captured.text, "Sure, here is the answer directly...");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "direct_output_captured"
+                && event.payload["path"] == json!("output/direct_output.md")
+                && event.payload["round"] == json!(1)),
+        "direct output capture must be journaled"
+    );
 
     assert!(
         !events
