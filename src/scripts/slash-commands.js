@@ -62,7 +62,7 @@ import { hideChatMessageRange } from './chats.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { findGroupMemberId, groups, is_group_generating, openGroupById, resetSelectedGroup, saveGroupChat, selected_group, getGroupMembers } from './group-chats.js';
-import { chat_completion_sources, oai_settings, promptManager, ZAI_ENDPOINT } from './openai.js';
+import { addAndSelectCustomModelForSource, chat_completion_sources, getChatCompletionModelControl, isCustomModelActionValue, oai_settings, promptManager, ZAI_ENDPOINT } from './openai.js';
 import { user_avatar } from './personas.js';
 import { addEphemeralStoppingString, chat_styles, context_presets, flushEphemeralStoppingStrings, playMessageSound, power_user } from './power-user.js';
 import { SERVER_INPUTS, textgen_types, textgenerationwebui_settings } from './textgen-settings.js';
@@ -5220,10 +5220,10 @@ function setBackgroundCallback(_, bg) {
  * Retrieves the available model options based on the currently selected main API and its subtype
  * @param {boolean} quiet - Whether to suppress toasts
  *
- * @returns {{control: HTMLSelectElement|HTMLInputElement, options: HTMLOptionElement[]}?} An array of objects representing the available model options, or null if not supported
+ * @returns {{control: HTMLSelectElement|HTMLInputElement, options: HTMLOptionElement[], supportsCustomModels: boolean, customModelSource: string?}?} An array of objects representing the available model options, or null if not supported
  */
 function getModelOptions(quiet) {
-    const nullResult = { control: null, options: null };
+    const nullResult = { control: null, options: null, supportsCustomModels: false, customModelSource: null };
     const modelSelectMap = [
         { id: 'generic_model_textgenerationwebui', api: 'textgenerationwebui', type: textgen_types.GENERIC },
         { id: 'custom_model_textgenerationwebui', api: 'textgenerationwebui', type: textgen_types.OOBA },
@@ -5238,29 +5238,6 @@ function getModelOptions(quiet) {
         { id: 'tabby_model', api: 'textgenerationwebui', type: textgen_types.TABBY },
         { id: 'llamacpp_model', api: 'textgenerationwebui', type: textgen_types.LLAMACPP },
         { id: 'featherless_model', api: 'textgenerationwebui', type: textgen_types.FEATHERLESS },
-        { id: 'model_openai_select', api: 'openai', type: chat_completion_sources.OPENAI },
-        { id: 'model_claude_select', api: 'openai', type: chat_completion_sources.CLAUDE },
-        { id: 'model_openrouter_select', api: 'openai', type: chat_completion_sources.OPENROUTER },
-        { id: 'model_ai21_select', api: 'openai', type: chat_completion_sources.AI21 },
-        { id: 'model_google_select', api: 'openai', type: chat_completion_sources.MAKERSUITE },
-        { id: 'model_vertexai_select', api: 'openai', type: chat_completion_sources.VERTEXAI },
-        { id: 'model_mistralai_select', api: 'openai', type: chat_completion_sources.MISTRALAI },
-        { id: 'custom_model_id', api: 'openai', type: chat_completion_sources.CUSTOM },
-        { id: 'model_cohere_select', api: 'openai', type: chat_completion_sources.COHERE },
-        { id: 'model_perplexity_select', api: 'openai', type: chat_completion_sources.PERPLEXITY },
-        { id: 'model_groq_select', api: 'openai', type: chat_completion_sources.GROQ },
-        { id: 'model_chutes_select', api: 'openai', type: chat_completion_sources.CHUTES },
-        { id: 'model_siliconflow_select', api: 'openai', type: chat_completion_sources.SILICONFLOW },
-        { id: 'model_electronhub_select', api: 'openai', type: chat_completion_sources.ELECTRONHUB },
-        { id: 'model_nanogpt_select', api: 'openai', type: chat_completion_sources.NANOGPT },
-        { id: 'model_deepseek_select', api: 'openai', type: chat_completion_sources.DEEPSEEK },
-        { id: 'model_aimlapi_select', api: 'openai', type: chat_completion_sources.AIMLAPI },
-        { id: 'model_xai_select', api: 'openai', type: chat_completion_sources.XAI },
-        { id: 'model_pollinations_select', api: 'openai', type: chat_completion_sources.POLLINATIONS },
-        { id: 'model_moonshot_select', api: 'openai', type: chat_completion_sources.MOONSHOT },
-        { id: 'model_fireworks_select', api: 'openai', type: chat_completion_sources.FIREWORKS },
-        { id: 'model_cometapi_select', api: 'openai', type: chat_completion_sources.COMETAPI },
-        { id: 'model_zai_select', api: 'openai', type: chat_completion_sources.ZAI },
         { id: 'model_novel_select', api: 'novel', type: null },
         { id: 'horde_model', api: 'koboldhorde', type: null },
     ];
@@ -5277,7 +5254,10 @@ function getModelOptions(quiet) {
     }
 
     const apiSubType = getSubType();
-    const modelSelectItem = modelSelectMap.find(x => x.api == main_api && x.type == apiSubType)?.id;
+    const chatCompletionModelControl = main_api === 'openai' ? getChatCompletionModelControl(apiSubType) : null;
+    const modelSelectItem = chatCompletionModelControl?.selector?.startsWith('#')
+        ? chatCompletionModelControl.selector.slice(1)
+        : modelSelectMap.find(x => x.api == main_api && x.type == apiSubType)?.id;
 
     if (!modelSelectItem) {
         !quiet && toastr.info(t`Setting a model for your API is not supported or not implemented yet.`);
@@ -5310,8 +5290,17 @@ function getModelOptions(quiet) {
         return [valueOption];
     };
 
-    const options = getOptions(modelSelectControl).filter(x => x.value).filter(onlyUnique);
-    return { control: modelSelectControl, options };
+    const options = getOptions(modelSelectControl)
+        .filter(x => x.value)
+        .filter(x => !isCustomModelActionValue(x.value))
+        .filter(onlyUnique);
+
+    return {
+        control: modelSelectControl,
+        options,
+        supportsCustomModels: Boolean(chatCompletionModelControl?.supportsCustomModels),
+        customModelSource: chatCompletionModelControl?.source ?? null,
+    };
 }
 
 /**
@@ -5322,7 +5311,7 @@ function getModelOptions(quiet) {
  */
 function modelCallback(args, model) {
     const quiet = isTrueBoolean(args?.quiet);
-    const { control: modelSelectControl, options } = getModelOptions(quiet);
+    const { control: modelSelectControl, options, supportsCustomModels, customModelSource } = getModelOptions(quiet);
 
     // If no model was found, the reason was already logged, we just return here
     if (options === null) {
@@ -5344,7 +5333,7 @@ function modelCallback(args, model) {
         return model;
     }
 
-    if (!options.length) {
+    if (!options.length && !(supportsCustomModels && customModelSource)) {
         !quiet && toastr.warning(t`No model options found. Check your API settings.`);
         return '';
     }
@@ -5361,6 +5350,10 @@ function modelCallback(args, model) {
         newSelectedOption = exactValueMatch;
     } else if (exactTextMatch) {
         newSelectedOption = exactTextMatch;
+    } else if (supportsCustomModels && customModelSource) {
+        const selectedModel = addAndSelectCustomModelForSource(customModelSource, model);
+        !quiet && toastr.success(t`Model set to "${selectedModel}"`);
+        return selectedModel;
     } else if (fuzzySearchResult.length) {
         newSelectedOption = fuzzySearchResult[0].item;
     }

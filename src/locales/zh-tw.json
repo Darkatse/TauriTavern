@@ -4421,5 +4421,13 @@
     "agent.error.tool_after_finish.summary": "模型在 workspace.finish 之後繼續調用工具，未提交訊息。",
     "agent.error.max_tool_rounds_exceeded.message": "Agent 迴圈在調用 workspace.finish 前耗盡了最大工具輪數。TauriTavern 已停止本輪，未寫入聊天。請用更明確的提示重新生成，或在配置中提高輪數預算。",
     "agent.error.max_tool_rounds_exceeded.summary": "工具輪數預算耗盡，未提交訊息。",
-    "Clear": "清除"
+    "Clear": "清除",
+    "Custom Models": "自訂模型",
+    "Custom Models: ${0}": "自訂模型：${0}",
+    "Actions": "操作",
+    "Manage custom models...": "管理自訂模型...",
+    "Custom models saved.": "自訂模型已儲存。",
+    "Custom model already exists.": "自訂模型已存在。",
+    "Cannot delete current custom model": "無法刪除目前的自訂模型",
+    "Switch to another model before deleting it.": "請先切換到其他模型，再刪除此模型。"
 }

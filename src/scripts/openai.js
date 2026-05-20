@@ -210,6 +210,58 @@ export const chat_completion_sources = {
     SILICONFLOW: 'siliconflow',
 };
 
+const manage_custom_chat_completion_models_option = '__tauritavern_manage_custom_chat_completion_models__';
+const custom_model_option_values = new Set([
+    manage_custom_chat_completion_models_option,
+]);
+
+const chatCompletionModelControls = {
+    [chat_completion_sources.OPENAI]: { selector: '#model_openai_select', settingKey: 'openai_model', label: 'OpenAI', supportsCustomModels: true },
+    [chat_completion_sources.CLAUDE]: { selector: '#model_claude_select', settingKey: 'claude_model', label: 'Claude', supportsCustomModels: true },
+    [chat_completion_sources.OPENROUTER]: { selector: '#model_openrouter_select', settingKey: 'openrouter_model', label: 'OpenRouter', supportsCustomModels: true },
+    [chat_completion_sources.AI21]: { selector: '#model_ai21_select', settingKey: 'ai21_model', label: 'AI21', supportsCustomModels: true },
+    [chat_completion_sources.MAKERSUITE]: { selector: '#model_google_select', settingKey: 'google_model', label: 'Google AI Studio', supportsCustomModels: true },
+    [chat_completion_sources.VERTEXAI]: { selector: '#model_vertexai_select', settingKey: 'vertexai_model', label: 'Vertex AI', supportsCustomModels: true },
+    [chat_completion_sources.MISTRALAI]: { selector: '#model_mistralai_select', settingKey: 'mistralai_model', label: 'Mistral AI', supportsCustomModels: true },
+    [chat_completion_sources.CUSTOM]: { selector: '#custom_model_id', settingKey: 'custom_model', label: 'Custom', supportsCustomModels: false },
+    [chat_completion_sources.COHERE]: { selector: '#model_cohere_select', settingKey: 'cohere_model', label: 'Cohere', supportsCustomModels: true },
+    [chat_completion_sources.PERPLEXITY]: { selector: '#model_perplexity_select', settingKey: 'perplexity_model', label: 'Perplexity', supportsCustomModels: true },
+    [chat_completion_sources.GROQ]: { selector: '#model_groq_select', settingKey: 'groq_model', label: 'Groq', supportsCustomModels: true },
+    [chat_completion_sources.ELECTRONHUB]: { selector: '#model_electronhub_select', settingKey: 'electronhub_model', label: 'ElectronHub', supportsCustomModels: true },
+    [chat_completion_sources.CHUTES]: { selector: '#model_chutes_select', settingKey: 'chutes_model', label: 'Chutes', supportsCustomModels: true },
+    [chat_completion_sources.NANOGPT]: { selector: '#model_nanogpt_select', settingKey: 'nanogpt_model', label: 'NanoGPT', supportsCustomModels: true },
+    [chat_completion_sources.DEEPSEEK]: { selector: '#model_deepseek_select', settingKey: 'deepseek_model', label: 'DeepSeek', supportsCustomModels: true },
+    [chat_completion_sources.AIMLAPI]: { selector: '#model_aimlapi_select', settingKey: 'aimlapi_model', label: 'AI/ML API', supportsCustomModels: true },
+    [chat_completion_sources.XAI]: { selector: '#model_xai_select', settingKey: 'xai_model', label: 'xAI', supportsCustomModels: true },
+    [chat_completion_sources.POLLINATIONS]: { selector: '#model_pollinations_select', settingKey: 'pollinations_model', label: 'Pollinations', supportsCustomModels: true },
+    [chat_completion_sources.MOONSHOT]: { selector: '#model_moonshot_select', settingKey: 'moonshot_model', label: 'Moonshot', supportsCustomModels: true },
+    [chat_completion_sources.FIREWORKS]: { selector: '#model_fireworks_select', settingKey: 'fireworks_model', label: 'Fireworks AI', supportsCustomModels: true },
+    [chat_completion_sources.COMETAPI]: { selector: '#model_cometapi_select', settingKey: 'cometapi_model', label: 'CometAPI', supportsCustomModels: true },
+    [chat_completion_sources.AZURE_OPENAI]: { selector: '#azure_openai_model', settingKey: 'azure_openai_model', label: 'Azure OpenAI', supportsCustomModels: false },
+    [chat_completion_sources.ZAI]: { selector: '#model_zai_select', settingKey: 'zai_model', label: 'Z.AI', supportsCustomModels: true },
+    [chat_completion_sources.SILICONFLOW]: { selector: '#model_siliconflow_select', settingKey: 'siliconflow_model', label: 'SiliconFlow', supportsCustomModels: true },
+};
+
+export function getChatCompletionModelControl(source = oai_settings.chat_completion_source) {
+    const sourceKey = String(source || '');
+    const control = chatCompletionModelControls[sourceKey];
+    return control ? { source: sourceKey, ...control } : null;
+}
+
+function getChatCompletionModelControlByElement(element) {
+    for (const [source, control] of Object.entries(chatCompletionModelControls)) {
+        if (element.matches(control.selector)) {
+            return { source, ...control };
+        }
+    }
+
+    return null;
+}
+
+export function isCustomModelActionValue(value) {
+    return custom_model_option_values.has(String(value || ''));
+}
+
 const custom_api_formats = {
     OPENAI_COMPAT: 'openai_compat',
     OPENAI_RESPONSES: 'openai_responses',
@@ -339,6 +391,7 @@ export const settingsToUpdate = {
     cometapi_model: ['#model_cometapi_select', 'cometapi_model', false, true],
     custom_model: ['#custom_model_id', 'custom_model', false, true],
     custom_url: ['#custom_api_url_text', 'custom_url', false, true],
+    custom_models_by_source: ['', 'custom_models_by_source', false, true],
     additional_parameters_by_source: ['', 'additional_parameters_by_source', false, true],
     additional_parameters_migration_version: ['', 'additional_parameters_migration_version', false, true],
     custom_include_body: ['#custom_include_body', 'custom_include_body', false, true],
@@ -457,6 +510,7 @@ const default_settings = {
     azure_openai_model: '',
     custom_model: '',
     custom_url: '',
+    custom_models_by_source: {},
     custom_api_format: custom_api_formats.OPENAI_COMPAT,
     additional_parameters_by_source: {},
     additional_parameters_migration_version: additional_parameters_migration_version,
@@ -532,6 +586,103 @@ function createAdditionalParametersEntry() {
 
 function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeCustomModelId(value) {
+    if (typeof value !== 'string') {
+        throw new Error('Custom model ID must be a string');
+    }
+
+    const modelId = value.trim();
+    if (!modelId) {
+        throw new Error('Custom model ID cannot be empty');
+    }
+
+    return modelId;
+}
+
+function normalizeCustomModelsForSource(source, models) {
+    const control = getChatCompletionModelControl(source);
+    if (!control?.supportsCustomModels) {
+        throw new Error(`Custom models are not supported for source: ${source}`);
+    }
+
+    if (!Array.isArray(models)) {
+        throw new Error(`Custom models must be an array for source: ${source}`);
+    }
+
+    const seen = new Set();
+    const normalized = [];
+    for (const model of models) {
+        const modelId = normalizeCustomModelId(model);
+        if (seen.has(modelId)) {
+            continue;
+        }
+        seen.add(modelId);
+        normalized.push(modelId);
+    }
+
+    return normalized;
+}
+
+function getCustomModelsStore(settings = oai_settings) {
+    if (settings.custom_models_by_source === undefined) {
+        settings.custom_models_by_source = {};
+    }
+
+    if (!isPlainObject(settings.custom_models_by_source)) {
+        throw new Error('custom_models_by_source must be an object');
+    }
+
+    return settings.custom_models_by_source;
+}
+
+function normalizeKnownCustomModelsStore(settings = oai_settings) {
+    const store = getCustomModelsStore(settings);
+
+    for (const source of Object.keys(store)) {
+        const control = getChatCompletionModelControl(source);
+        if (!control?.supportsCustomModels) {
+            continue;
+        }
+
+        store[control.source] = normalizeCustomModelsForSource(control.source, store[control.source]);
+    }
+
+    return store;
+}
+
+function getCustomModelsForSource(source, settings = oai_settings) {
+    const control = getChatCompletionModelControl(source);
+    if (!control?.supportsCustomModels) {
+        return [];
+    }
+
+    const store = getCustomModelsStore(settings);
+    if (store[control.source] === undefined) {
+        return [];
+    }
+
+    store[control.source] = normalizeCustomModelsForSource(control.source, store[control.source]);
+    return store[control.source];
+}
+
+function setCustomModelsForSource(source, models, settings = oai_settings) {
+    const control = getChatCompletionModelControl(source);
+    if (!control?.supportsCustomModels) {
+        throw new Error(`Custom models are not supported for source: ${source}`);
+    }
+
+    const store = getCustomModelsStore(settings);
+    const normalized = normalizeCustomModelsForSource(control.source, models);
+
+    if (normalized.length === 0) {
+        delete store[control.source];
+    } else {
+        store[control.source] = normalized;
+    }
+
+    return normalized;
 }
 
 function normalizeAdditionalParametersEntry(value) {
@@ -2291,9 +2442,339 @@ function calculateChutesCost() {
     $('#chutes_max_prompt_cost').text(cost);
 }
 
+function getSourceModelSelect(source, { required = false } = {}) {
+    const control = getChatCompletionModelControl(source);
+    if (!control) {
+        if (required) {
+            throw new Error(`Model control is not registered for source: ${source}`);
+        }
+        return null;
+    }
+
+    const element = document.querySelector(control.selector);
+    if (!(element instanceof HTMLSelectElement)) {
+        if (required) {
+            throw new Error(`Model select control not found: ${control.selector}`);
+        }
+        return null;
+    }
+
+    return { control, element };
+}
+
+function getSelectModelOption(select, modelId) {
+    return Array.from(select.options).find(option => option.value === modelId && !isCustomModelActionValue(option.value)) ?? null;
+}
+
+function selectHasModelOption(select, modelId) {
+    return Boolean(getSelectModelOption(select, modelId));
+}
+
+function addCustomModelForSource(source, modelId) {
+    const { control, element } = getSourceModelSelect(source, { required: true });
+    if (!control.supportsCustomModels) {
+        throw new Error(`Custom models are not supported for source: ${source}`);
+    }
+
+    const normalizedModelId = normalizeCustomModelId(modelId);
+    const existingOption = getSelectModelOption(element, normalizedModelId);
+    if (existingOption && !existingOption.closest('[data-tauritavern-custom-models="true"]')) {
+        return normalizedModelId;
+    }
+
+    const models = getCustomModelsForSource(control.source);
+    if (!models.includes(normalizedModelId)) {
+        setCustomModelsForSource(control.source, [...models, normalizedModelId]);
+        saveSettingsDebounced();
+    }
+
+    return normalizedModelId;
+}
+
+export function addAndSelectCustomModelForSource(source, modelId) {
+    const normalizedModelId = addCustomModelForSource(source, modelId);
+    const { control, element } = getSourceModelSelect(source, { required: true });
+    applyCustomModelOptionsForSource(control.source);
+    $(element).val(normalizedModelId).trigger('change');
+    return normalizedModelId;
+}
+
+function isCustomModelValueForSource(source, value) {
+    const control = getChatCompletionModelControl(source);
+    if (!control?.supportsCustomModels || !value) {
+        return false;
+    }
+
+    if (getCustomModelsForSource(control.source).includes(value)) {
+        return true;
+    }
+
+    const element = document.querySelector(control.selector);
+    if (!(element instanceof HTMLSelectElement)) {
+        return false;
+    }
+
+    const option = getSelectModelOption(element, value);
+    return !option || Boolean(option.closest('[data-tauritavern-custom-models="true"]'));
+}
+
+function appendOption(parent, text, value) {
+    const option = new Option(text, value);
+    parent.append(option);
+    return option;
+}
+
+function applyCustomModelOptionsForSource(source) {
+    const selectEntry = getSourceModelSelect(source);
+    if (!selectEntry?.control.supportsCustomModels) {
+        return;
+    }
+
+    const { control, element } = selectEntry;
+    removeCustomModelOptionsForSource(source);
+
+    const customModels = getCustomModelsForSource(control.source);
+    const existingValues = new Set(Array.from(element.options).filter(option => !isCustomModelActionValue(option.value)).map(option => option.value));
+    const currentModel = String(oai_settings[control.settingKey] || '');
+    const customGroupModels = customModels.filter(modelId => !existingValues.has(modelId));
+
+    if (currentModel && !existingValues.has(currentModel) && !customGroupModels.includes(currentModel)) {
+        customGroupModels.unshift(currentModel);
+    }
+
+    if (customGroupModels.length > 0) {
+        const customGroup = document.createElement('optgroup');
+        customGroup.label = t`Custom Models`;
+        customGroup.dataset.tauritavernCustomModels = 'true';
+
+        for (const modelId of customGroupModels) {
+            appendOption(customGroup, modelId, modelId);
+        }
+
+        element.append(customGroup);
+    }
+
+    const actionGroup = document.createElement('optgroup');
+    actionGroup.label = t`Actions`;
+    actionGroup.dataset.tauritavernCustomModels = 'true';
+    appendOption(actionGroup, t`Manage custom models...`, manage_custom_chat_completion_models_option);
+    element.append(actionGroup);
+}
+
+function removeCustomModelOptionsForSource(source) {
+    const selectEntry = getSourceModelSelect(source);
+    if (!selectEntry) {
+        return;
+    }
+
+    selectEntry.element.querySelectorAll('[data-tauritavern-custom-models="true"]').forEach(node => node.remove());
+}
+
+function applyCustomModelOptionsToAllSources() {
+    for (const source of Object.keys(chatCompletionModelControls)) {
+        applyCustomModelOptionsForSource(source);
+    }
+}
+
+function chooseModelOrCurrentCustom(source, modelIds, currentModel, fallbackModel) {
+    if (!currentModel) {
+        return fallbackModel;
+    }
+
+    if (modelIds.includes(currentModel)) {
+        return currentModel;
+    }
+
+    const control = getChatCompletionModelControl(source);
+    if (control?.supportsCustomModels) {
+        return currentModel;
+    }
+
+    return fallbackModel;
+}
+
+function setModelSelectValue(source, value) {
+    const selectEntry = getSourceModelSelect(source);
+    if (!selectEntry) {
+        return;
+    }
+
+    applyCustomModelOptionsForSource(source);
+    $(selectEntry.element).val(value).trigger('change');
+}
+
+async function handleCustomModelSelectAction(select, value) {
+    if (!isCustomModelActionValue(value)) {
+        return false;
+    }
+
+    const control = getChatCompletionModelControlByElement(select);
+    if (!control?.supportsCustomModels) {
+        throw new Error(`Custom model action selected for unsupported control: ${select.id}`);
+    }
+
+    const previousValue = String(oai_settings[control.settingKey] || '');
+    applyCustomModelOptionsForSource(control.source);
+    $(select).val(previousValue);
+
+    if (value === manage_custom_chat_completion_models_option) {
+        const selectedModelId = await showCustomModelManager(control.source);
+        applyCustomModelOptionsForSource(control.source);
+        $(select).val(selectedModelId || String(oai_settings[control.settingKey] || ''));
+        if (selectedModelId) {
+            $(select).trigger('change');
+        }
+        return true;
+    }
+
+    throw new Error(`Unknown custom model action: ${value}`);
+}
+
+async function showCustomModelManager(source) {
+    const control = getChatCompletionModelControl(source);
+    if (!control?.supportsCustomModels) {
+        throw new Error(`Custom models are not supported for source: ${source}`);
+    }
+
+    const root = document.createElement('div');
+    root.classList.add('custom-model-manager', 'flex-container', 'flexFlowColumn', 'gap10px');
+
+    const header = document.createElement('h3');
+    header.textContent = t`Custom Models: ${control.label}`;
+    root.append(header);
+
+    const inputRow = document.createElement('div');
+    inputRow.classList.add('flex-container', 'gap5px');
+
+    const input = document.createElement('input');
+    input.classList.add('text_pole', 'flex1');
+    input.type = 'text';
+    input.placeholder = t`Model ID`;
+    input.autocomplete = 'off';
+    inputRow.append(input);
+
+    const addButton = document.createElement('div');
+    addButton.classList.add('menu_button', 'fa-solid', 'fa-plus', 'fa-fw');
+    addButton.title = t`Add`;
+    addButton.dataset.i18n = '[title]Add';
+    inputRow.append(addButton);
+
+    root.append(inputRow);
+
+    const list = document.createElement('div');
+    list.classList.add('custom-model-manager-list', 'flex-container', 'flexFlowColumn', 'gap5px');
+    root.append(list);
+
+    let draftModels = [...getCustomModelsForSource(control.source)];
+    let lastAddedModelId = null;
+
+    const renderList = () => {
+        list.replaceChildren();
+
+        for (const modelId of draftModels) {
+            const row = document.createElement('div');
+            row.classList.add('custom-model-manager-row', 'flex-container', 'alignItemsBaseline', 'gap5px');
+
+            const label = document.createElement('span');
+            label.classList.add('flex1');
+            label.textContent = modelId;
+            row.append(label);
+
+            const deleteButton = document.createElement('div');
+            deleteButton.classList.add('menu_button', 'menu_button_icon', 'fa-solid', 'fa-trash-can', 'fa-fw');
+            deleteButton.title = t`Delete`;
+            deleteButton.dataset.i18n = '[title]Delete';
+            deleteButton.addEventListener('click', async () => {
+                const currentModel = String(oai_settings[control.settingKey] || '');
+                if (modelId === currentModel && isCustomModelValueForSource(control.source, modelId)) {
+                    await Popup.show.text(t`Cannot delete current custom model`, t`Switch to another model before deleting it.`);
+                    return;
+                }
+
+                draftModels = draftModels.filter(model => model !== modelId);
+                renderList();
+            });
+            row.append(deleteButton);
+
+            list.append(row);
+        }
+    };
+
+    const addDraftModel = ({ selectExisting = false } = {}) => {
+        try {
+            const modelId = normalizeCustomModelId(input.value);
+            const selectEntry = getSourceModelSelect(control.source);
+            const existingOption = selectEntry ? getSelectModelOption(selectEntry.element, modelId) : null;
+            if (existingOption && !existingOption.closest('[data-tauritavern-custom-models="true"]')) {
+                if (selectExisting) {
+                    lastAddedModelId = modelId;
+                    input.value = '';
+                    return true;
+                }
+                toastr.info(t`Custom model already exists.`);
+                input.focus();
+                return false;
+            }
+            if (draftModels.includes(modelId)) {
+                if (!selectExisting) {
+                    toastr.info(t`Custom model already exists.`);
+                }
+                lastAddedModelId = modelId;
+                input.value = '';
+                input.focus();
+                return true;
+            }
+            draftModels = [...draftModels, modelId];
+            lastAddedModelId = modelId;
+            input.value = '';
+            renderList();
+            return true;
+        } catch (error) {
+            toastr.error(error instanceof Error ? error.message : String(error));
+            input.focus();
+            return false;
+        }
+    };
+
+    addButton.addEventListener('click', addDraftModel);
+    input.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') {
+            return;
+        }
+        event.preventDefault();
+        addDraftModel();
+    });
+
+    renderList();
+
+    const result = await callGenericPopup(root, POPUP_TYPE.CONFIRM, '', {
+        okButton: t`Save`,
+        cancelButton: t`Cancel`,
+        leftAlign: true,
+        onOpen: () => input.focus(),
+        onClosing: (popup) => {
+            if (popup.result !== POPUP_RESULT.AFFIRMATIVE || !input.value.trim()) {
+                return true;
+            }
+
+            return addDraftModel({ selectExisting: true });
+        },
+    });
+
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return null;
+    }
+
+    setCustomModelsForSource(control.source, draftModels);
+    saveSettingsDebounced();
+    toastr.success(t`Custom models saved.`);
+    return lastAddedModelId && draftModels.includes(lastAddedModelId) ? lastAddedModelId : null;
+}
+
 function saveModelList(data) {
     model_list = data.map((model) => ({ ...model }));
     model_list.sort((a, b) => a?.id && b?.id && a.id.localeCompare(b.id));
+    removeCustomModelOptionsForSource(oai_settings.chat_completion_source);
 
     if (oai_settings.chat_completion_source == chat_completion_sources.OPENROUTER) {
         model_list = openRouterSortBy(model_list, oai_settings.openrouter_sort_models);
@@ -2306,7 +2787,7 @@ function saveModelList(data) {
             appendOpenRouterOptions(model_list);
         }
 
-        $('#model_openrouter_select').val(oai_settings.openrouter_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.OPENROUTER, oai_settings.openrouter_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.OPENAI) {
@@ -2318,10 +2799,15 @@ function saveModelList(data) {
                     text: model.id,
                 }));
         });
-        // If the selected model is not in the list, revert to default
+        // Preserve explicit custom models even when the provider list does not include them.
         if (oai_settings.show_external_models) {
-            const model = model_list.findIndex((model) => model.id == oai_settings.openai_model) !== -1 ? oai_settings.openai_model : default_settings.openai_model;
-            $('#model_openai_select').val(model).trigger('change');
+            const model = chooseModelOrCurrentCustom(
+                chat_completion_sources.OPENAI,
+                model_list.map(model => model.id),
+                oai_settings.openai_model,
+                default_settings.openai_model,
+            );
+            setModelSelectValue(chat_completion_sources.OPENAI, model);
         }
     }
 
@@ -2352,22 +2838,26 @@ function saveModelList(data) {
             oai_settings.aimlapi_model = chatModels[0].id;
         }
 
-        $('#model_aimlapi_select').val(oai_settings.aimlapi_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.AIMLAPI, oai_settings.aimlapi_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.MISTRALAI) {
         $('#model_mistralai_select').empty();
 
-        for (const model of model_list.filter(model => model?.capabilities?.completion_chat)) {
+        const chatModels = model_list.filter(model => model?.capabilities?.completion_chat);
+
+        for (const model of chatModels) {
             $('#model_mistralai_select').append(new Option(model.id, model.id));
         }
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.mistralai_model);
-        if (!selectedModel) {
-            oai_settings.mistralai_model = model_list.find(model => model?.capabilities?.completion_chat)?.id;
-        }
+        oai_settings.mistralai_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.MISTRALAI,
+            chatModels.map(model => model.id),
+            oai_settings.mistralai_model,
+            chatModels[0]?.id || '',
+        );
 
-        $('#model_mistralai_select').val(oai_settings.mistralai_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.MISTRALAI, oai_settings.mistralai_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.ELECTRONHUB) {
@@ -2380,12 +2870,14 @@ function saveModelList(data) {
         const groupedList = oai_settings.electronhub_group_models ? electronHubGroupByVendor(model_list) : model_list;
         appendElectronHubOptions(groupedList, oai_settings.electronhub_group_models);
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.electronhub_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.electronhub_model)) {
-            oai_settings.electronhub_model = model_list[0].id;
-        }
+        oai_settings.electronhub_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.ELECTRONHUB,
+            model_list.map(model => model.id),
+            oai_settings.electronhub_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_electronhub_select').val(oai_settings.electronhub_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.ELECTRONHUB, oai_settings.electronhub_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.CHUTES) {
@@ -2401,12 +2893,14 @@ function saveModelList(data) {
             $('#model_chutes_select').append(option);
         }
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.chutes_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.chutes_model)) {
-            oai_settings.chutes_model = model_list[0].id;
-        }
+        oai_settings.chutes_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.CHUTES,
+            model_list.map(model => model.id),
+            oai_settings.chutes_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_chutes_select').val(oai_settings.chutes_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.CHUTES, oai_settings.chutes_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.NANOGPT) {
@@ -2419,12 +2913,14 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.nanogpt_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.nanogpt_model)) {
-            oai_settings.nanogpt_model = model_list[0].id;
-        }
+        oai_settings.nanogpt_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.NANOGPT,
+            model_list.map(model => model.id),
+            oai_settings.nanogpt_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_nanogpt_select').val(oai_settings.nanogpt_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.NANOGPT, oai_settings.nanogpt_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.DEEPSEEK) {
@@ -2437,12 +2933,14 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.deepseek_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.deepseek_model)) {
-            oai_settings.deepseek_model = model_list[0].id;
-        }
+        oai_settings.deepseek_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.DEEPSEEK,
+            model_list.map(model => model.id),
+            oai_settings.deepseek_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_deepseek_select').val(oai_settings.deepseek_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.DEEPSEEK, oai_settings.deepseek_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.POLLINATIONS) {
@@ -2455,12 +2953,14 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.pollinations_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.pollinations_model)) {
-            oai_settings.pollinations_model = model_list[0].id;
-        }
+        oai_settings.pollinations_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.POLLINATIONS,
+            model_list.map(model => model.id),
+            oai_settings.pollinations_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_pollinations_select').val(oai_settings.pollinations_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.POLLINATIONS, oai_settings.pollinations_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.MAKERSUITE) {
@@ -2492,12 +2992,14 @@ function saveModelList(data) {
             }
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.google_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.google_model)) {
-            oai_settings.google_model = model_list[0].id;
-        }
+        oai_settings.google_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.MAKERSUITE,
+            model_list.map(model => model.id),
+            oai_settings.google_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_google_select').val(oai_settings.google_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.MAKERSUITE, oai_settings.google_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.GROQ) {
@@ -2510,12 +3012,14 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.groq_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.groq_model)) {
-            oai_settings.groq_model = model_list[0].id;
-        }
+        oai_settings.groq_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.GROQ,
+            model_list.map(model => model.id),
+            oai_settings.groq_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_groq_select').val(oai_settings.groq_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.GROQ, oai_settings.groq_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.SILICONFLOW) {
@@ -2528,12 +3032,14 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.siliconflow_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.siliconflow_model)) {
-            oai_settings.siliconflow_model = model_list[0].id;
-        }
+        oai_settings.siliconflow_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.SILICONFLOW,
+            model_list.map(model => model.id),
+            oai_settings.siliconflow_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_siliconflow_select').val(oai_settings.siliconflow_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.SILICONFLOW, oai_settings.siliconflow_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.FIREWORKS) {
@@ -2549,12 +3055,15 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.fireworks_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.fireworks_model)) {
-            oai_settings.fireworks_model = model_list[0].id;
-        }
+        const chatModels = model_list.filter(model => model?.supports_chat);
+        oai_settings.fireworks_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.FIREWORKS,
+            chatModels.map(model => model.id),
+            oai_settings.fireworks_model,
+            chatModels[0]?.id || '',
+        );
 
-        $('#model_fireworks_select').val(oai_settings.fireworks_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.FIREWORKS, oai_settings.fireworks_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.COMETAPI) {
@@ -2571,13 +3080,19 @@ function saveModelList(data) {
             $('#model_cometapi_select').append(new Option(model.id, model.id));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.cometapi_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.cometapi_model)) {
-            oai_settings.cometapi_model = model_list[0].id;
+        const cometModels = model_list.filter(model => !COMETAPI_IGNORE_PATTERNS.some(pattern => model.id.toLowerCase().includes(pattern)));
+        const nextCometModel = chooseModelOrCurrentCustom(
+            chat_completion_sources.COMETAPI,
+            cometModels.map(model => model.id),
+            oai_settings.cometapi_model,
+            cometModels[0]?.id || '',
+        );
+        if (nextCometModel !== oai_settings.cometapi_model) {
+            oai_settings.cometapi_model = nextCometModel;
             saveSettingsDebounced();
         }
 
-        $('#model_cometapi_select').val(oai_settings.cometapi_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.COMETAPI, oai_settings.cometapi_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.AZURE_OPENAI) {
@@ -2600,12 +3115,14 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.xai_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.xai_model)) {
-            oai_settings.xai_model = model_list[0].id;
-        }
+        oai_settings.xai_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.XAI,
+            model_list.map(model => model.id),
+            oai_settings.xai_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_xai_select').val(oai_settings.xai_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.XAI, oai_settings.xai_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.MOONSHOT) {
@@ -2614,12 +3131,14 @@ function saveModelList(data) {
             $('#model_moonshot_select').append(new Option(model.id, model.id));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.moonshot_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.moonshot_model)) {
-            oai_settings.moonshot_model = model_list[0].id;
-        }
+        oai_settings.moonshot_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.MOONSHOT,
+            model_list.map(model => model.id),
+            oai_settings.moonshot_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_moonshot_select').val(oai_settings.moonshot_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.MOONSHOT, oai_settings.moonshot_model);
     }
 }
 
@@ -4439,7 +4958,23 @@ function migrateChatCompletionSettings(settings) {
         changed = true;
     }
 
+    if (migrateCustomModels(settings)) {
+        changed = true;
+    }
+
     return changed;
+}
+
+function migrateCustomModels(settings) {
+    const previous = JSON.stringify(settings.custom_models_by_source ?? null);
+
+    if (settings.custom_models_by_source === undefined) {
+        settings.custom_models_by_source = {};
+    }
+
+    normalizeKnownCustomModelsStore(settings);
+
+    return previous !== JSON.stringify(settings.custom_models_by_source);
 }
 
 function migrateAdditionalParameters(settings) {
@@ -4710,6 +5245,7 @@ function loadOpenAISettings(data, settings) {
     $('#openrouter_quantizations_chat').trigger('change');
     syncChatCompletionSourceSelector();
     enforceIosPolicyChatCompletionSourceSelector();
+    applyCustomModelOptionsToAllSources();
     $('#chat_completion_source').trigger('change');
     updateCustomEndpointPreview();
 
@@ -5362,6 +5898,7 @@ function onSettingsPresetChange() {
         // These cannot be changed via preset if unbound to connection
         if (oai_settings.bind_preset_to_connection) {
             syncChatCompletionSourceSelector();
+            applyCustomModelOptionsToAllSources();
             $('#chat_completion_source').trigger('change');
             $('#openrouter_providers_chat').trigger('change');
             $('#openrouter_quantizations_chat').trigger('change');
@@ -5712,14 +6249,17 @@ function getNanoGptMaxContext(model, isUnlocked) {
 async function onModelChange() {
     biasCache = undefined;
     let value = String($(this).val() || '');
+    if (this instanceof HTMLSelectElement && await handleCustomModelSelectAction(this, value)) {
+        return;
+    }
 
     // Skip setting the context size for sources that get it from external APIs
     const hasModelsLoaded = Array.isArray(model_list) && model_list.length > 0;
 
     if ($(this).is('#model_claude_select')) {
-        if (value.includes('-v')) {
+        if (value.includes('-v') && !isCustomModelValueForSource(chat_completion_sources.CLAUDE, value)) {
             value = value.replace('-v', '-');
-        } else if (value === '' || value === 'claude-2') {
+        } else if (value === '' || (value === 'claude-2' && !isCustomModelValueForSource(chat_completion_sources.CLAUDE, value))) {
             value = default_settings.claude_model;
         }
         console.log('Claude model changed to', value);
@@ -5734,7 +6274,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_openrouter_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.OPENROUTER, value))) {
             console.debug('Null OR model selected. Ignoring.');
             return;
         }
@@ -5744,7 +6284,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_ai21_select')) {
-        if (value === '' || value.startsWith('j2-')) {
+        if (value === '' || (value.startsWith('j2-') && !isCustomModelValueForSource(chat_completion_sources.AI21, value))) {
             value = 'jamba-large';
             $('#model_ai21_select').val(value);
         }
@@ -5769,7 +6309,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_mistralai_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.MISTRALAI, value))) {
             console.debug('Null MistralAI model selected. Ignoring.');
             return;
         }
@@ -5789,7 +6329,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_groq_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.GROQ, value))) {
             console.debug('Null Groq model selected. Ignoring.');
             return;
         }
@@ -5807,7 +6347,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_electronhub_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.ELECTRONHUB, value))) {
             console.debug('Null ElectronHub model selected. Ignoring.');
             return;
         }
@@ -5816,7 +6356,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_chutes_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.CHUTES, value))) {
             console.debug('Null Chutes model selected. Ignoring.');
             return;
         }
@@ -5825,7 +6365,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_nanogpt_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.NANOGPT, value))) {
             console.debug('Null NanoGPT model selected. Ignoring.');
             return;
         }
@@ -5856,7 +6396,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_aimlapi_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.AIMLAPI, value))) {
             console.debug('Null AI/ML model selected. Ignoring.');
             return;
         }
@@ -5874,7 +6414,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_moonshot_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.MOONSHOT, value))) {
             console.debug('Null Moonshot model selected. Ignoring.');
             return;
         }
@@ -5883,7 +6423,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_fireworks_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.FIREWORKS, value))) {
             console.debug('Null Fireworks model selected. Ignoring.');
             return;
         }
@@ -6340,6 +6880,8 @@ async function onConnectButtonClick(e) {
 }
 
 function toggleChatCompletionForms() {
+    applyCustomModelOptionsForSource(oai_settings.chat_completion_source);
+
     if (oai_settings.chat_completion_source == chat_completion_sources.CLAUDE) {
         $('#model_claude_select').trigger('change');
     }
@@ -7438,6 +7980,8 @@ export function initOpenAI() {
             resetScrollHeight($(this));
         });
     }
+
+    applyCustomModelOptionsToAllSources();
 
     if (!isMobile()) {
         $('#model_openrouter_select').select2({
