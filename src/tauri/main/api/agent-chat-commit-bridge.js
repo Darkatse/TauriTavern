@@ -21,6 +21,7 @@ export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, s
         firstSwipeId: null,
         commitSeq: 0,
         resolvedCommitIds: new Set(),
+        resolvedPersistentStateUpdateIds: new Set(),
         stop: null,
     };
     const stop = subscribe(normalizedRunId, (event) => {
@@ -30,6 +31,19 @@ export function attachHostCommitBridge({ runId, safeInvoke, readWorkspaceFile, s
                 event,
                 safeInvoke,
                 readWorkspaceFile,
+            }).catch((error) => {
+                queueMicrotask(() => {
+                    throw error;
+                });
+            });
+            return;
+        }
+
+        if (event?.type === 'persistent_state_metadata_update_requested') {
+            void handlePersistentStateMetadataUpdateRequested({
+                state,
+                event,
+                safeInvoke,
             }).catch((error) => {
                 queueMicrotask(() => {
                     throw error;
@@ -68,7 +82,7 @@ function detachHostCommitBridge(runId) {
 
 async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspaceFile }) {
     const payload = event?.payload || {};
-    const commitId = requireCommitPayloadString(payload, 'commitId');
+    const commitId = requirePayloadString(payload, 'commitId');
     if (state.resolvedCommitIds.has(commitId)) {
         return;
     }
@@ -76,8 +90,7 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
 
     try {
         await assertCurrentChat(payload.chatRef, payload.stableChatId);
-        const path = requireCommitPayloadString(payload, 'path');
-        requireCommitPayloadString(payload, 'persistStateId');
+        const path = requirePayloadString(payload, 'path');
         const mode = normalizeCommitMode(payload.mode);
         const file = await readWorkspaceFile({ runId: state.runId, path });
         const script = await import('../../../script.js');
@@ -136,6 +149,39 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
     }
 }
 
+async function handlePersistentStateMetadataUpdateRequested({ state, event, safeInvoke }) {
+    const payload = event?.payload || {};
+    const updateId = requirePayloadString(payload, 'updateId');
+    if (state.resolvedPersistentStateUpdateIds.has(updateId)) {
+        return;
+    }
+    state.resolvedPersistentStateUpdateIds.add(updateId);
+
+    try {
+        await assertCurrentChat(payload.chatRef, payload.stableChatId);
+        const script = await import('../../../script.js');
+        const messageId = normalizeMessageId(payload.messageId ?? state.messageId);
+        const stateId = requirePayloadString(payload, 'stateId');
+        mergePersistentStateExtraIntoMessage(script.chat, messageId, payload, stateId);
+        await persistActiveChat(script);
+
+        await safeInvoke('resolve_agent_persistent_state_metadata_update', {
+            dto: {
+                runId: state.runId,
+                updateId,
+            },
+        });
+    } catch (error) {
+        await safeInvoke('resolve_agent_persistent_state_metadata_update', {
+            dto: {
+                runId: state.runId,
+                updateId,
+                error: String(error?.message ?? error),
+            },
+        });
+    }
+}
+
 function requireRunId(value) {
     const runId = String(value || '').trim();
     if (!runId) {
@@ -144,10 +190,18 @@ function requireRunId(value) {
     return runId;
 }
 
-function requireCommitPayloadString(payload, key) {
+function normalizeMessageId(value) {
+    const messageId = Number(value);
+    if (!Number.isInteger(messageId) || messageId < 0) {
+        throw new Error('agent.persistent_state_message_id_invalid: messageId must be a non-negative integer');
+    }
+    return messageId;
+}
+
+function requirePayloadString(payload, key) {
     const value = String(payload?.[key] || '').trim();
     if (!value) {
-        throw new Error(`agent.chat_commit_payload_invalid: ${key} is required`);
+        throw new Error(`agent.host_payload_invalid: ${key} is required`);
     }
     return value;
 }
@@ -234,8 +288,8 @@ function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commit
                 workspaceId: payload.workspaceId,
                 stableChatId: payload.stableChatId,
                 profileId: payload.profileId ?? null,
-                persistStateId: payload.persistStateId,
                 persistBaseStateId: payload.persistBaseStateId ?? null,
+                persistStateStatus: 'not_committed',
                 checkpointId: payload.checkpointId,
                 commitId: payload.commitId,
                 commitSeq,
@@ -247,6 +301,37 @@ function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commit
                     bytes: file.bytes,
                     sha256: file.sha256,
                 }],
+            },
+        },
+    };
+
+    message.extra = mergePlainObject(message.extra, extra);
+    const swipeId = Number(message.swipe_id);
+    if (Array.isArray(message.swipe_info) && Number.isInteger(swipeId) && message.swipe_info[swipeId]) {
+        message.swipe_info[swipeId].extra = structuredClone(message.extra);
+    }
+}
+
+function mergePersistentStateExtraIntoMessage(chat, messageId, payload, stateId) {
+    if (!Array.isArray(chat) || chat.length <= messageId) {
+        throw new Error('agent.persistent_state_message_missing: target chat message is missing');
+    }
+
+    const message = chat[messageId];
+    if (!message || typeof message !== 'object') {
+        throw new Error('agent.persistent_state_message_invalid: target chat message is invalid');
+    }
+    if (message.extra?.tauritavern?.agent?.runId !== payload.runId) {
+        throw new Error('agent.persistent_state_message_mismatch: target message belongs to another run');
+    }
+
+    const extra = {
+        tauritavern: {
+            agent: {
+                persistStateId: stateId,
+                persistBaseStateId: payload.baseStateId ?? null,
+                persistStateStatus: 'committed',
+                persistChangeCount: Number(payload.changeCount ?? 0),
             },
         },
     };

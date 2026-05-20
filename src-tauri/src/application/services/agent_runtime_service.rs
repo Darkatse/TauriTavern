@@ -43,6 +43,11 @@ pub(super) struct HostChatCommitResult {
     pub(super) message_id: Option<String>,
 }
 
+pub(super) struct PendingPersistentStateMetadataUpdate {
+    pub(super) run_id: String,
+    pub(super) sender: oneshot::Sender<Result<(), String>>,
+}
+
 pub struct AgentRuntimeService {
     run_repository: Arc<dyn AgentRunRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
@@ -53,6 +58,8 @@ pub struct AgentRuntimeService {
     tool_dispatcher: AgentToolDispatcher,
     active_runs: RwLock<HashMap<String, watch::Sender<bool>>>,
     active_chat_commits: RwLock<HashMap<String, PendingHostChatCommit>>,
+    active_persistent_state_metadata_updates:
+        RwLock<HashMap<String, PendingPersistentStateMetadataUpdate>>,
 }
 
 impl AgentRuntimeService {
@@ -84,6 +91,7 @@ impl AgentRuntimeService {
             tool_dispatcher,
             active_runs: RwLock::new(HashMap::new()),
             active_chat_commits: RwLock::new(HashMap::new()),
+            active_persistent_state_metadata_updates: RwLock::new(HashMap::new()),
         }
     }
 

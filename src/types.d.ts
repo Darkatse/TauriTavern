@@ -92,6 +92,7 @@ type TauriTavernAgentRunStatus =
     | 'awaiting_host_commit'
     | 'finishing'
     | 'completed'
+    | 'partial_success'
     | 'cancelling'
     | 'cancelled'
     | 'failed';

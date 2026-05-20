@@ -11,8 +11,8 @@ use crate::application::dto::agent_dto::{
     AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentProfileIdDto,
     AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
     AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadWorkspaceFileDto,
-    AgentResolveChatCommitDto, AgentRunHandleDto, AgentSaveProfileDto, AgentStartRunDto,
-    AgentWorkspaceFileDto,
+    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto, AgentRunHandleDto,
+    AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
@@ -171,6 +171,22 @@ pub async fn resolve_agent_chat_commit(
         .resolve_chat_commit(dto)
         .await
         .map_err(map_command_error("Failed to resolve agent chat commit"))
+}
+
+#[tauri::command]
+pub async fn resolve_agent_persistent_state_metadata_update(
+    dto: AgentResolvePersistentStateMetadataUpdateDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("resolve_agent_persistent_state_metadata_update");
+
+    app_state
+        .agent_runtime_service
+        .resolve_persistent_state_metadata_update(dto)
+        .await
+        .map_err(map_command_error(
+            "Failed to resolve agent persistent state metadata update",
+        ))
 }
 
 #[tauri::command]

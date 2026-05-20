@@ -182,6 +182,14 @@ pub struct AgentResolveChatCommitDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentResolvePersistentStateMetadataUpdateDto {
+    pub run_id: String,
+    pub update_id: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentPruneChatPersistentStatesDto {
     pub chat_ref: AgentChatRef,
     #[serde(default, alias = "stableId")]

@@ -145,6 +145,7 @@ export {};
  *   | 'preview_skill_import'
  *   | 'delete_agent_profile'
  *   | 'resolve_agent_chat_commit'
+ *   | 'resolve_agent_persistent_state_metadata_update'
  *   | 'save_export_data_archive'
  *   | 'save_user_backup_archive'
  *   | 'save_agent_profile'

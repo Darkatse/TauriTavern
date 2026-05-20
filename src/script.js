@@ -6265,6 +6265,13 @@ function resolveAgentPersistBaseStateIdForGeneration(type) {
             continue;
         }
 
+        const persistStateStatus = String(metadata.persistStateStatus || '').trim();
+        if (persistStateStatus === 'not_committed') {
+            continue;
+        }
+        if (persistStateStatus && persistStateStatus !== 'committed') {
+            throw new Error(`agent.persist_state_status_invalid: Agent result at chat message ${i} has invalid persistStateStatus`);
+        }
         if (typeof metadata.persistStateId !== 'string' || !metadata.persistStateId.trim()) {
             throw new Error(`agent.persist_state_missing: Agent result at chat message ${i} has no persistStateId`);
         }

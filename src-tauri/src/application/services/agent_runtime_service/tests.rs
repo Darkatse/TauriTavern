@@ -11,7 +11,9 @@ use uuid::Uuid;
 
 use super::AgentRuntimeService;
 use super::artifacts::build_agent_manifest;
-use crate::application::dto::agent_dto::{AgentReadModelTurnDto, AgentResolveChatCommitDto};
+use crate::application::dto::agent_dto::{
+    AgentReadModelTurnDto, AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
+};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_identity::workspace_id_for_stable_chat_id;
@@ -1078,7 +1080,7 @@ async fn foreground_run_commits_chat_message_before_finish() {
     let mut profile = test_resolved_profile(&root).await;
     profile.run.presentation = AgentRunPresentation::Foreground;
 
-    let resolver = tokio::spawn(resolve_next_chat_commit(
+    let resolver = tokio::spawn(resolve_next_chat_commit_and_persistent_state_update(
         service.clone(),
         repository.clone(),
         run.id.clone(),
@@ -1118,8 +1120,25 @@ async fn foreground_run_commits_chat_message_before_finish() {
     assert!(
         events
             .iter()
+            .find(|event| event.event_type == "chat_commit_requested")
+            .and_then(|event| event.payload.get("persistStateId"))
+            .is_none(),
+        "chat commit must not publish a reusable persistent state pointer"
+    );
+    assert!(
+        events
+            .iter()
             .any(|event| event.event_type == "chat_commit_completed")
     );
+    assert!(events.iter().any(|event| {
+        event.event_type == "persistent_state_metadata_update_requested"
+            && event.payload["stateId"] == json!(run.id)
+            && event.payload["messageId"] == json!("message_1")
+    }));
+    assert!(events.iter().any(|event| {
+        event.event_type == "persistent_state_metadata_updated"
+            && event.payload["stateId"] == json!(run.id)
+    }));
     assert!(
         events
             .iter()
@@ -1283,6 +1302,21 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
         )
         .await
         .expect("read events");
+
+    let chat_commit_request = events
+        .iter()
+        .find(|event| event.event_type == "chat_commit_requested")
+        .expect("chat commit request");
+    assert!(
+        chat_commit_request.payload.get("persistStateId").is_none(),
+        "partial-success-prone chat commit must not publish a reusable persistent state pointer"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "persistent_state_metadata_update_requested"),
+        "partial success must not ask the host to attach a persistent state pointer"
+    );
 
     // #64: the first drift must have produced exactly one
     // `drift_recovery_attempted` event before we surrendered to the terminal
@@ -1463,7 +1497,7 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
     let mut profile = test_resolved_profile(&root).await;
     profile.run.presentation = AgentRunPresentation::Foreground;
 
-    let resolver = tokio::spawn(resolve_next_chat_commit(
+    let resolver = tokio::spawn(resolve_next_chat_commit_and_persistent_state_update(
         service.clone(),
         repository.clone(),
         run.id.clone(),
@@ -1672,7 +1706,7 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
     let mut profile = test_resolved_profile(&root).await;
     profile.run.presentation = AgentRunPresentation::Foreground;
 
-    let resolver = tokio::spawn(resolve_next_chat_commit(
+    let resolver = tokio::spawn(resolve_next_chat_commit_and_persistent_state_update(
         service.clone(),
         repository.clone(),
         run.id.clone(),
@@ -1984,6 +2018,12 @@ async fn foreground_run_with_commit_becomes_partial_success_when_persistent_comm
             .any(|event| event.event_type == "persistent_changes_commit_failed")
     );
     assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "persistent_state_metadata_update_requested"),
+        "failed persistent commit must not publish a reusable persistent state pointer"
+    );
+    assert!(
         events.iter().any(|event| {
             event.event_type == "run_partial_success"
                 && event.payload["code"] == json!("agent.test_persistent_failure")
@@ -2116,7 +2156,7 @@ async fn foreground_finish_before_commit_returns_recoverable_error() {
     let mut profile = test_resolved_profile(&root).await;
     profile.run.presentation = AgentRunPresentation::Foreground;
 
-    let resolver = tokio::spawn(resolve_next_chat_commit(
+    let resolver = tokio::spawn(resolve_next_chat_commit_and_persistent_state_update(
         service.clone(),
         repository.clone(),
         run.id.clone(),
@@ -2978,6 +3018,56 @@ async fn resolve_next_chat_commit(
         })
         .await
         .expect("resolve chat commit");
+}
+
+async fn resolve_next_chat_commit_and_persistent_state_update(
+    service: Arc<AgentRuntimeService>,
+    repository: Arc<FileAgentRepository>,
+    run_id: String,
+    message_id: &'static str,
+) {
+    resolve_next_chat_commit(
+        service.clone(),
+        repository.clone(),
+        run_id.clone(),
+        message_id,
+    )
+    .await;
+
+    let update_id = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let events = repository
+                .read_events(
+                    &run_id,
+                    AgentRunEventReadQuery {
+                        after_seq: Some(0),
+                        before_seq: None,
+                        limit: 200,
+                    },
+                )
+                .await
+                .expect("read events");
+            if let Some(update_id) = events
+                .iter()
+                .find(|event| event.event_type == "persistent_state_metadata_update_requested")
+                .and_then(|event| event.payload["updateId"].as_str())
+            {
+                return update_id.to_string();
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("persistent state metadata update request");
+
+    service
+        .resolve_persistent_state_metadata_update(AgentResolvePersistentStateMetadataUpdateDto {
+            run_id,
+            update_id,
+            error: None,
+        })
+        .await
+        .expect("resolve persistent state metadata update");
 }
 
 async fn save_character_payload(

@@ -5,8 +5,11 @@ use uuid::Uuid;
 use super::commit_ledger::RunCommitLedger;
 use super::{
     AgentCancelReceiver, AgentRuntimeService, HostChatCommitResult, PendingHostChatCommit,
+    PendingPersistentStateMetadataUpdate,
 };
-use crate::application::dto::agent_dto::AgentResolveChatCommitDto;
+use crate::application::dto::agent_dto::{
+    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
+};
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{
     AgentToolDispatchOutcome, AgentToolEffect, WORKSPACE_PATH_IS_DIRECTORY_CODE,
@@ -14,8 +17,8 @@ use crate::application::services::agent_tools::{
 };
 use crate::domain::errors::DomainError;
 use crate::domain::models::agent::{
-    AgentChatCommitMode, AgentRunEventLevel, AgentRunStatus, AgentToolCall, AgentToolResult,
-    ArtifactTarget, WorkspacePath,
+    AgentChatCommitMode, AgentRun, AgentRunEventLevel, AgentRunStatus, AgentToolCall,
+    AgentToolResult, ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
 };
 
 impl AgentRuntimeService {
@@ -57,6 +60,47 @@ impl AgentRuntimeService {
         pending.sender.send(result).map_err(|_| {
             ApplicationError::ValidationError(format!(
                 "agent.chat_commit_resolve_failed: run `{run_id}` is no longer waiting for commit `{commit_id}`"
+            ))
+        })
+    }
+
+    pub async fn resolve_persistent_state_metadata_update(
+        &self,
+        dto: AgentResolvePersistentStateMetadataUpdateDto,
+    ) -> Result<(), ApplicationError> {
+        let run_id = dto.run_id.trim();
+        let update_id = dto.update_id.trim();
+        if run_id.is_empty() || update_id.is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "agent.persistent_state_metadata_update_resolve_invalid: runId and updateId are required"
+                    .to_string(),
+            ));
+        }
+
+        let pending = {
+            let mut updates = self.active_persistent_state_metadata_updates.write().await;
+            let pending = updates.remove(update_id).ok_or_else(|| {
+                ApplicationError::ValidationError(format!(
+                    "agent.persistent_state_metadata_update_not_pending: update `{update_id}` is not awaiting host resolution"
+                ))
+            })?;
+            if pending.run_id != run_id {
+                updates.insert(update_id.to_string(), pending);
+                return Err(ApplicationError::ValidationError(format!(
+                    "agent.persistent_state_metadata_update_run_mismatch: update `{update_id}` belongs to another run"
+                )));
+            }
+            pending
+        };
+
+        let result = match dto.error.map(|value| value.trim().to_string()) {
+            Some(error) if !error.is_empty() => Err(error),
+            _ => Ok(()),
+        };
+
+        pending.sender.send(result).map_err(|_| {
+            ApplicationError::ValidationError(format!(
+                "agent.persistent_state_metadata_update_resolve_failed: run `{run_id}` is no longer waiting for update `{update_id}`"
             ))
         })
     }
@@ -171,7 +215,6 @@ impl AgentRuntimeService {
                 "chatRef": &run.chat_ref,
                 "generationType": run.generation_type.as_str(),
                 "profileId": run.profile_id.as_ref(),
-                "persistStateId": run.id.as_str(),
                 "persistBaseStateId": run.persist_base_state_id.as_deref(),
                 "path": file.path.as_str(),
                 "mode": mode,
@@ -269,9 +312,15 @@ impl AgentRuntimeService {
         }
     }
 
-    pub(super) async fn finish_run(&self, run_id: &str) -> Result<(), ApplicationError> {
+    pub(super) async fn finish_run(
+        &self,
+        run_id: &str,
+        commit_ledger: &RunCommitLedger,
+        cancel: &mut AgentCancelReceiver,
+    ) -> Result<(), ApplicationError> {
         self.transition_status(run_id, AgentRunStatus::Finishing)
             .await?;
+        let run = self.run_repository.load_run(run_id).await?;
 
         let persistent_changes = match self
             .workspace_repository
@@ -303,6 +352,14 @@ impl AgentRuntimeService {
         )
         .await?;
 
+        self.request_persistent_state_metadata_update(
+            &run,
+            &persistent_changes,
+            commit_ledger,
+            cancel,
+        )
+        .await?;
+
         self.transition_status(run_id, AgentRunStatus::Completed)
             .await?;
         self.event(
@@ -313,13 +370,127 @@ impl AgentRuntimeService {
         )
         .await?;
         self.active_runs.write().await.remove(run_id);
-        self.clear_pending_chat_commits_for_run(run_id).await;
+        self.clear_pending_host_requests_for_run(run_id).await;
 
         Ok(())
     }
 
-    pub(super) async fn clear_pending_chat_commits_for_run(&self, run_id: &str) {
+    async fn request_persistent_state_metadata_update(
+        &self,
+        run: &AgentRun,
+        persistent_changes: &WorkspacePersistentChangeSet,
+        commit_ledger: &RunCommitLedger,
+        cancel: &mut AgentCancelReceiver,
+    ) -> Result<(), ApplicationError> {
+        if commit_ledger.is_empty() {
+            return Ok(());
+        }
+        let message_id = commit_ledger.latest_message_id().ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.persistent_state_message_missing: host chat commit did not return a messageId"
+                    .to_string(),
+            )
+        })?;
+        let update_id = format!("persist_update_{}", Uuid::new_v4().simple());
+        let (sender, receiver) = oneshot::channel();
+        let previous = self
+            .active_persistent_state_metadata_updates
+            .write()
+            .await
+            .insert(
+                update_id.clone(),
+                PendingPersistentStateMetadataUpdate {
+                    run_id: run.id.clone(),
+                    sender,
+                },
+            );
+        if previous.is_some() {
+            return Err(ApplicationError::InternalError(format!(
+                "agent.persistent_state_metadata_update_id_collision: duplicate update id `{update_id}`"
+            )));
+        }
+
+        self.event(
+            run.id.as_str(),
+            AgentRunEventLevel::Info,
+            "persistent_state_metadata_update_requested",
+            json!({
+                "updateId": update_id.as_str(),
+                "runId": run.id.as_str(),
+                "workspaceId": run.workspace_id.as_str(),
+                "stableChatId": run.stable_chat_id.as_str(),
+                "chatRef": &run.chat_ref,
+                "generationType": run.generation_type.as_str(),
+                "profileId": run.profile_id.as_ref(),
+                "messageId": message_id,
+                "stateId": persistent_changes.state_id.as_str(),
+                "baseStateId": persistent_changes.base_state_id.as_deref(),
+                "changeCount": persistent_changes.changes.len(),
+                "changes": &persistent_changes.changes,
+            }),
+        )
+        .await?;
+
+        let host_result = tokio::select! {
+            result = receiver => {
+                result.map_err(|_| ApplicationError::InternalError(format!(
+                    "agent.persistent_state_metadata_update_channel_closed: host update `{update_id}` closed before resolution"
+                )))?
+            }
+            changed = cancel.changed() => {
+                let _ = changed;
+                self.active_persistent_state_metadata_updates
+                    .write()
+                    .await
+                    .remove(&update_id);
+                self.ensure_not_cancelled(cancel)?;
+                return Err(ApplicationError::Cancelled(
+                    "Agent run cancelled while awaiting persistent state metadata update".to_string(),
+                ));
+            }
+        };
+
+        match host_result {
+            Ok(()) => {
+                self.event(
+                    run.id.as_str(),
+                    AgentRunEventLevel::Info,
+                    "persistent_state_metadata_updated",
+                    json!({
+                        "updateId": update_id,
+                        "messageId": message_id,
+                        "stateId": persistent_changes.state_id.as_str(),
+                    }),
+                )
+                .await?;
+                Ok(())
+            }
+            Err(message) => {
+                self.event(
+                    run.id.as_str(),
+                    AgentRunEventLevel::Error,
+                    "persistent_state_metadata_update_failed",
+                    json!({
+                        "updateId": update_id,
+                        "messageId": message_id,
+                        "stateId": persistent_changes.state_id.as_str(),
+                        "message": message,
+                    }),
+                )
+                .await?;
+                Err(ApplicationError::ValidationError(format!(
+                    "agent.persistent_state_metadata_update_failed: {message}"
+                )))
+            }
+        }
+    }
+
+    pub(super) async fn clear_pending_host_requests_for_run(&self, run_id: &str) {
         self.active_chat_commits
+            .write()
+            .await
+            .retain(|_, pending| pending.run_id != run_id);
+        self.active_persistent_state_metadata_updates
             .write()
             .await
             .retain(|_, pending| pending.run_id != run_id);

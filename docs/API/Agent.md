@@ -360,6 +360,7 @@ Chat commit 不是公开 Host API 方法，而是 Agent tool 与 host bridge 的
 - Rust runtime 读取 workspace 文件、校验 required message body、创建 checkpoint，并写 `chat_commit_requested` event。
 - 前端 host bridge 校验当前 active chat 与 run 的 `chatRef/stableChatId` 一致。
 - bridge 通过上游 `saveReply()` 写入聊天，再调用 `resolve_agent_chat_commit`。
+- `chat_commit_requested` 不携带 `persistStateId`；该字段只能在 `workspace.finish` 成功提交 persistent state 后，由 `persistent_state_metadata_update_requested` / `resolve_agent_persistent_state_metadata_update` 写回同一条 chat message。
 - `replace` 后续使用 `appendFinal` 覆盖同一消息；`append` 后续使用 `append` 追加同一消息。
 - `append` 在本 run 尚无 commit 时不会报错，会创建本 run 的消息楼层。
 - 前台 run 在 `workspace.finish` 前必须至少成功 commit 一次；后台 run 可无 chat commit 完成。

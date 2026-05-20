@@ -39,6 +39,12 @@ impl RunCommitLedger {
         self.commits.len()
     }
 
+    pub(super) fn latest_message_id(&self) -> Option<&str> {
+        self.commits
+            .last()
+            .and_then(|message| message.message_id.as_deref())
+    }
+
     pub(super) fn preserved_commits(&self) -> Vec<Value> {
         self.commits
             .iter()

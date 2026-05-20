@@ -154,6 +154,7 @@
   - 详细参考见：`docs/API/Agent.md`。
   - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`subscribe()`。
   - Chat commit 由模型调用 `workspace.commit` 触发；前端内部 host bridge 响应 `chat_commit_requested`，通过上游 `saveReply()` 写同一消息楼层，再调用 `resolve_agent_chat_commit`。
+  - `persistStateId` 只在 persistent state 已经落盘后写入 chat metadata；host bridge 响应 `persistent_state_metadata_update_requested` 后调用 `resolve_agent_persistent_state_metadata_update`。
   - `startRunFromLegacyGenerate()` 是当前兼容入口：使用 Legacy dryRun 生成 `promptSnapshot`，再进入 Rust-owned Agent loop。
   - `startRunWithPromptSnapshot()` 必须在调用 backend 前解析 `stableChatId`；`workspaceId` 由 `kind + stableChatId` 派生，`runId` 仍表示单次执行。
   - 不存在公共 `startRun()` alias；启动入口必须通过名称表达来源和职责。

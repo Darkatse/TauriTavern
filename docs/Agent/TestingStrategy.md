@@ -243,7 +243,7 @@ Golden fixtures 应尽量脱敏，不包含真实 API key 或私人聊天。
 - `cargo test agent_model_gateway`、`cargo test openai_responses_payload`、`cargo test claude_native_content_blocks_are_replayed`、`cargo test normalize_` 通过。
 - `provider_state` / gateway 相关测试覆盖 OpenAI Responses `previousResponseId` / `messageCursor`、same-provider native metadata loss fail-fast、cross-provider private metadata 不迁移、LLM API log 剥离 `_tauritavern_provider_state`。
 - 控制台 workspace 读改 smoke 能依次写入 `plan/outline.md`、`scratch/draft.md`，调用 `workspace_list_files`，完整读取 draft，使用 `workspace_apply_patch` 修改 draft，写入 `summaries/revision_notes.md`、`output/main.md` 并进入 `awaiting_commit`。
-- `commit()` 能把 `output/main.md` 写入当前 active chat，并追加 `run_committed` / `run_completed`。
+- `commit()` 能把 `output/main.md` 写入当前 active chat；`workspace.finish` 成功后才把 durable `persistStateId` 写回该消息，并追加 `run_completed`。
 - Agent Mode off 的 Legacy Generate 行为不变。
 
 后续工具/运行时变更不合并，除非：

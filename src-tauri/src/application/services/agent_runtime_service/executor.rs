@@ -47,7 +47,7 @@ impl AgentRuntimeService {
         match result {
             Ok(()) => {}
             Err(ApplicationError::Cancelled(message)) => {
-                self.clear_pending_chat_commits_for_run(run_id).await;
+                self.clear_pending_host_requests_for_run(run_id).await;
                 let _ = self
                     .transition_status(run_id, AgentRunStatus::Cancelled)
                     .await;
@@ -62,7 +62,7 @@ impl AgentRuntimeService {
                 self.active_runs.write().await.remove(run_id);
             }
             Err(error) => {
-                self.clear_pending_chat_commits_for_run(run_id).await;
+                self.clear_pending_host_requests_for_run(run_id).await;
                 if commit_ledger.is_empty() {
                     let _ = self.transition_status(run_id, AgentRunStatus::Failed).await;
                     let _ = self
@@ -205,7 +205,7 @@ impl AgentRuntimeService {
             })?;
         self.ensure_not_cancelled(cancel)?;
 
-        self.finish_run(run_id).await?;
+        self.finish_run(run_id, commit_ledger, cancel).await?;
         Ok(())
     }
 }

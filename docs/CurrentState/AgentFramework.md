@@ -212,9 +212,13 @@ workspace.commit(path?, mode?)
   -> chat_commit_requested event
   -> 前端 saveReply(normal | append | appendFinal)
   -> resolve_agent_chat_commit
+  -> workspace.finish 成功提交 persist projection 后
+  -> persistent_state_metadata_update_requested event
+  -> 前端把 persistStateId 写回同一条 chat message
+  -> resolve_agent_persistent_state_metadata_update
 ```
 
-`mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。Commit 必须遵守 SillyTavern/windowed payload 保存契约，不能直接写 chat JSONL。
+`mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。Commit 必须遵守 SillyTavern/windowed payload 保存契约，不能直接写 chat JSONL。`persistStateId` 只能表示已经落盘的 durable persistent state；`chat_commit_requested` 不携带该字段，partial success 保留的聊天输出不会成为下一轮可复用 persist base。
 
 聊天删除现在会联动清理对应的 Agent chat workspace：
 
@@ -291,6 +295,8 @@ chat_commit_requested
 chat_commit_completed / chat_commit_failed
 chat_commit_recorded
 persistent_changes_committed / persistent_changes_commit_failed
+persistent_state_metadata_update_requested
+persistent_state_metadata_updated / persistent_state_metadata_update_failed
 run_completed
 run_partial_success
 run_cancel_requested
@@ -302,7 +308,7 @@ Provider stream chunk 不是 Agent run event。Agent UI 必须订阅 `api.agent.
 
 `model_completed` payload 当前包含 `round`、`modelResponsePath`、`toolCallCount`、assistant/reasoning 字节摘要与 `hasAssistantText` / `hasReasoning`。工具相关事件携带同一 `round`，便于 UI 从任意工具事件跳回本轮模型回合。
 
-`run_partial_success` 是 warning 级终态：当 run 已经有 host-confirmed `workspace.commit`，但之后因 drift、dispatch 或 persistent commit 错误未能干净完成时，保留已提交 chat 输出，并在 payload 中暴露原始错误与 `preservedCommits`。它不是 `run_completed`，也不触发自动 rollback。
+`run_partial_success` 是 warning 级终态：当 run 已经有 host-confirmed `workspace.commit`，但之后因 drift、dispatch、persistent commit 或 persistent metadata 写回错误未能干净完成时，保留已提交 chat 输出，并在 payload 中暴露原始错误与 `preservedCommits`。它不是 `run_completed`，也不触发自动 rollback。partial success 消息不会带可复用的 `persistStateId`；下一轮 Agent run 会跳过它，继续寻找更早的 committed persistent state。
 
 ## 当前文件布局
 
