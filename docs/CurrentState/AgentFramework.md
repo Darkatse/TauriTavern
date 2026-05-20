@@ -359,7 +359,9 @@ Workspace path 必须是相对路径。绝对路径、Windows drive prefix、NUL
 
 ## 当前手动测试入口
 
-Agent System 扩展已在输入栏提供 Agent Mode toggle。开启后，普通发送、regenerate 菜单与右划 overswipe 生成新候选会走 Agent；普通切换已有 swipe 候选仍保持 Legacy swipe 行为。
+Agent System 扩展已在输入栏提供 Agent Mode toggle。开启后，普通发送、`/trigger`、regenerate 菜单与右划 overswipe 生成新候选会走 Agent；普通切换已有 swipe 候选仍保持 Legacy swipe 行为。
+
+`/trigger` 仍保持 SillyTavern 的 `normal` generation 语义，不新增 generation type；但 Agent 路由错误必须 fail-fast，不得回退 Legacy Generate。
 
 前端控制台入口：
 

@@ -230,6 +230,7 @@ run_failed
 
 - 恢复成功 → run 继续，不会发 `run_rollback_targets`，也不会写 `run_failed`
 - 恢复失败（模型再次返回 0 tool_calls）→ 若没有成功 chat commit，写 `run_failed`（`userRetryable=true`）；若已有成功 chat commit，写 `run_partial_success` 并保留输出
+- 上述 rollback / partial-success 语义与前端入口无关；普通发送、`/trigger`、regenerate 与 overswipe 只要进入 Agent run，都必须遵守同一 journal 与 host commit 契约。
 
 ### 4.2 Workspace
 

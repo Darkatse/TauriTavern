@@ -201,6 +201,23 @@ test('Agent generation router uses the global toggle for normal regenerate and s
     );
 });
 
+test('/trigger routes Agent generation fail-fast without Legacy fallback', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/slash-commands.js'), 'utf8');
+    const start = source.indexOf('async function triggerGenerationCallback');
+    const end = source.indexOf('/**\n * Find persona by name.', start);
+    assert.ok(start >= 0 && end > start, 'triggerGenerationCallback section must be present');
+
+    const section = source.slice(start, end);
+    assert.match(section, /runTriggeredGeneration/);
+    assert.match(section, /getAgentGenerationOptions\(\{\s*generationType: 'normal',\s*isSlashCommand: false,\s*mainApi: main_api,\s*selectedGroup: selected_group,\s*\}\)/s);
+    assert.match(section, /toastr\.error\(agentErrorMessage\(error\), t`Agent Mode`\)/);
+    assert.match(section, /return Generate\('normal', \{ force_chid: chid, \.\.\.agentOptions \}\)/);
+    assert.doesNotMatch(section, /\.catch\(\(\) => \(\{\}\)\)/);
+
+    const routeCall = section.slice(section.indexOf('getAgentGenerationOptions'));
+    assert.doesNotMatch(routeCall, /getAgentGenerationOptions[\s\S]*?\.catch\s*\(/);
+});
+
 test('Agent System confirmations use SillyTavern Popup instead of window.confirm', async () => {
     const calls = [];
     installWindow({});

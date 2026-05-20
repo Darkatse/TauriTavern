@@ -80,6 +80,7 @@ import { SlashCommandNamedArgumentAssignment } from './slash-commands/SlashComma
 import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
 import { getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
 import { getAgentGenerationOptions } from './tauritavern/agent/agent-generation-router.js';
+import { agentErrorMessage } from './tauritavern/agent/agent-error-presenter.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandBreakController } from './slash-commands/SlashCommandBreakController.js';
@@ -4480,45 +4481,60 @@ async function addGroupMemberCallback(_, name) {
 
 async function triggerGenerationCallback(args, value) {
     const shouldAwait = isTrueBoolean(args?.await);
-    const outerPromise = new Promise((outerResolve) => setTimeout(async () => {
-        try {
-            await waitUntilCondition(() => !is_send_press && !is_group_generating, 10000, 100);
-        } catch {
-            console.warn('Timeout waiting for generation unlock');
-            toastr.warning(t`Cannot run /trigger command while the reply is being generated.`);
-            outerResolve(Promise.resolve(''));
-            return '';
+    const generationPromise = runTriggeredGeneration(value);
+
+    if (shouldAwait) {
+        await generationPromise;
+    } else {
+        void generationPromise.catch((error) => {
+            console.error('Error running /trigger command', error);
+            queueMicrotask(() => {
+                throw error;
+            });
+        });
+    }
+
+    return '';
+}
+
+async function runTriggeredGeneration(value) {
+    await delay(1);
+    try {
+        await waitUntilCondition(() => !is_send_press && !is_group_generating, 10000, 100);
+    } catch {
+        console.warn('Timeout waiting for generation unlock');
+        toastr.warning(t`Cannot run /trigger command while the reply is being generated.`);
+        return '';
+    }
+
+    // Prevent generate recursion
+    $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
+
+    let chid = undefined;
+
+    if (selected_group && value) {
+        chid = findGroupMemberId(value);
+
+        if (chid === undefined) {
+            console.warn(`WARN: No group member found for argument ${value}`);
         }
+    }
 
-        // Prevent generate recursion
-        $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
-
-        let chid = undefined;
-
-        if (selected_group && value) {
-            chid = findGroupMemberId(value);
-
-            if (chid === undefined) {
-                console.warn(`WARN: No group member found for argument ${value}`);
-            }
-        }
-
-        const agentOptions = await getAgentGenerationOptions({
+    let agentOptions;
+    try {
+        agentOptions = await getAgentGenerationOptions({
             generationType: 'normal',
             isSlashCommand: false,
             mainApi: main_api,
             selectedGroup: selected_group,
-        }).catch(() => ({}));
-
-        outerResolve(new Promise(innerResolve => setTimeout(() => innerResolve(Generate('normal', { force_chid: chid, ...agentOptions })), 100)));
-    }, 1));
-
-    if (shouldAwait) {
-        const innerPromise = await outerPromise;
-        await innerPromise;
+        });
+    } catch (error) {
+        toastr.error(agentErrorMessage(error), t`Agent Mode`);
+        throw error;
     }
 
-    return '';
+    await delay(100);
+    return Generate('normal', { force_chid: chid, ...agentOptions });
 }
 /**
  * Find persona by name.
