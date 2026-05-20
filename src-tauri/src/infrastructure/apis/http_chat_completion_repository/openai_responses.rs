@@ -19,10 +19,14 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 
 use super::HttpChatCompletionRepository;
-use super::body_preview::{log_upstream_body_parse_failure, read_upstream_json_body};
 use super::normalizers;
+use super::response_body::{log_upstream_body_parse_failure, read_upstream_json_body};
 
 type ResponsesWsStream = tokio_tungstenite::WebSocketStream<reqwest::Upgraded>;
+
+const OPERATION_GENERATE_WS: &str = "generate_ws";
+const OPERATION_GENERATE_STREAM_WS: &str = "generate_stream_ws";
+const OPERATION_GENERATE_PERSISTENT_WS: &str = "generate_persistent_ws";
 
 #[derive(Default)]
 pub(super) struct ResponsesWsSessionPool {
@@ -629,12 +633,17 @@ impl ResponsesWsSession {
 
             match message {
                 Message::Text(text) => {
-                    if let Some(response) = response_from_ws_payload(text.as_str().as_bytes())? {
+                    if let Some(response) = response_from_ws_payload(
+                        text.as_str().as_bytes(),
+                        OPERATION_GENERATE_PERSISTENT_WS,
+                    )? {
                         return Ok(response);
                     }
                 }
                 Message::Binary(bytes) => {
-                    if let Some(response) = response_from_ws_payload(bytes.as_ref())? {
+                    if let Some(response) =
+                        response_from_ws_payload(bytes.as_ref(), OPERATION_GENERATE_PERSISTENT_WS)?
+                    {
                         return Ok(response);
                     }
                 }
@@ -687,12 +696,16 @@ async fn generate_ws(
 
         match message {
             Message::Text(text) => {
-                if let Some(response) = response_from_ws_payload(text.as_str().as_bytes())? {
+                if let Some(response) =
+                    response_from_ws_payload(text.as_str().as_bytes(), OPERATION_GENERATE_WS)?
+                {
                     return Ok(normalizers::normalize_openai_responses_response(response));
                 }
             }
             Message::Binary(bytes) => {
-                if let Some(response) = response_from_ws_payload(bytes.as_ref())? {
+                if let Some(response) =
+                    response_from_ws_payload(bytes.as_ref(), OPERATION_GENERATE_WS)?
+                {
                     return Ok(normalizers::normalize_openai_responses_response(response));
                 }
             }
@@ -824,9 +837,11 @@ fn forward_ws_stream_event(
     sender: &ChatCompletionStreamSender,
     payload: &[u8],
 ) -> Result<(), ResponsesWsStreamError> {
-    let event = parse_ws_event(payload).map_err(|error| ResponsesWsStreamError {
-        error,
-        emitted: state.has_emitted(),
+    let event = parse_ws_event(payload, OPERATION_GENERATE_STREAM_WS).map_err(|error| {
+        ResponsesWsStreamError {
+            error,
+            emitted: state.has_emitted(),
+        }
     })?;
     let event_type = event
         .get("type")
@@ -1070,8 +1085,8 @@ fn provider_session_id(payload: &Value) -> Result<Option<String>, DomainError> {
     Ok(Some(session_id.to_string()))
 }
 
-fn response_from_ws_payload(payload: &[u8]) -> Result<Option<Value>, DomainError> {
-    let event = parse_ws_event(payload)?;
+fn response_from_ws_payload(payload: &[u8], operation: &str) -> Result<Option<Value>, DomainError> {
+    let event = parse_ws_event(payload, operation)?;
     let event_type = event
         .get("type")
         .and_then(Value::as_str)
@@ -1091,18 +1106,18 @@ fn response_from_ws_payload(payload: &[u8]) -> Result<Option<Value>, DomainError
     }
 }
 
-fn parse_ws_event(payload: &[u8]) -> Result<Value, DomainError> {
+fn parse_ws_event(payload: &[u8], operation: &str) -> Result<Value, DomainError> {
     serde_json::from_slice(payload).map_err(|error| {
         log_upstream_body_parse_failure(
             "OpenAI Responses",
-            "generate_stream_ws",
+            operation,
             StatusCode::SWITCHING_PROTOCOLS,
             "application/json",
             payload,
             &error,
         );
         DomainError::transient(format!(
-            "model.upstream_invalid_response: OpenAI Responses WebSocket event is not valid JSON: {error}"
+            "model.upstream_invalid_response: OpenAI Responses WebSocket event is not valid JSON ({operation}): {error}"
         ))
     })
 }
@@ -1254,5 +1269,17 @@ mod tests {
         assert!(!error.emitted);
         assert_eq!(error.error.to_string(), "Internal error: unsupported ws");
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn ws_invalid_json_event_is_transient_and_preserves_operation() {
+        let error = parse_ws_event(b"not-json", OPERATION_GENERATE_WS)
+            .expect_err("invalid websocket event should fail");
+
+        assert!(matches!(error, DomainError::Transient(_)));
+        assert_eq!(
+            error.to_string(),
+            "model.upstream_invalid_response: OpenAI Responses WebSocket event is not valid JSON (generate_ws): expected ident at line 1 column 2"
+        );
     }
 }

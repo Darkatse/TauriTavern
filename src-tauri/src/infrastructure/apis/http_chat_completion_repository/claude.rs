@@ -11,8 +11,8 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 
 use super::HttpChatCompletionRepository;
-use super::body_preview::read_upstream_json_body;
 use super::normalizers;
+use super::response_body::read_upstream_json_body;
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const ANTHROPIC_BETA_OUTPUT_128K: &str = "output-128k-2025-02-19";

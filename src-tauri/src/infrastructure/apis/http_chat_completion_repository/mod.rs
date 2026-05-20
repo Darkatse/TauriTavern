@@ -13,7 +13,6 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
-mod body_preview;
 mod claude;
 mod cohere;
 mod gemini_interactions;
@@ -21,6 +20,7 @@ mod makersuite;
 mod normalizers;
 mod openai;
 mod openai_responses;
+mod response_body;
 mod vertexai;
 
 #[derive(Debug, Clone, Copy)]

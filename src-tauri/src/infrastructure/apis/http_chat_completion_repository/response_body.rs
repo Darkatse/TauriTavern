@@ -46,8 +46,9 @@ pub(super) fn body_preview_string(body: &[u8]) -> String {
 }
 
 /// Read an upstream HTTP response body and parse it as JSON, logging a
-/// detailed diagnostic event on failure. Caller is responsible for ensuring
-/// the response status was 2xx before invoking this helper.
+/// detailed diagnostic event on failure. Callers should classify explicit HTTP
+/// error statuses before invoking this helper; this path is for responses whose
+/// body was expected to carry the provider JSON contract.
 ///
 /// Both body-read failures and JSON-decode failures are reported as
 /// [`DomainError::Transient`] tagged with `model.upstream_invalid_response`,
@@ -74,15 +75,31 @@ pub(super) async fn read_upstream_json_body(
         ))
     })?;
 
-    match serde_json::from_slice::<Value>(&body) {
+    parse_upstream_json_body(
+        provider_name,
+        operation,
+        status,
+        &content_type,
+        body.as_ref(),
+    )
+}
+
+pub(super) fn parse_upstream_json_body(
+    provider_name: &str,
+    operation: &str,
+    status: StatusCode,
+    content_type: &str,
+    body: &[u8],
+) -> Result<Value, DomainError> {
+    match serde_json::from_slice::<Value>(body) {
         Ok(value) => Ok(value),
         Err(error) => {
             log_upstream_body_parse_failure(
                 provider_name,
                 operation,
                 status,
-                &content_type,
-                &body,
+                content_type,
+                body,
                 &error,
             );
             Err(DomainError::transient(format!(
@@ -116,5 +133,37 @@ mod tests {
         let body = vec![0xff, 0xfe, b'O', b'K'];
         let preview = body_preview_string(&body);
         assert!(preview.contains("OK"));
+    }
+
+    #[test]
+    fn parse_upstream_json_body_returns_transient_invalid_response_for_non_json_body() {
+        let error = parse_upstream_json_body(
+            "OpenAI",
+            "generate",
+            StatusCode::OK,
+            "text/html",
+            b"<html>gateway challenge</html>",
+        )
+        .expect_err("non-json body should be transient");
+
+        assert!(matches!(error, DomainError::Transient(_)));
+        assert_eq!(
+            error.to_string(),
+            "model.upstream_invalid_response: OpenAI returned status 200 non-JSON body (generate): expected value at line 1 column 1"
+        );
+    }
+
+    #[test]
+    fn parse_upstream_json_body_accepts_valid_json_even_with_imprecise_content_type() {
+        let value = parse_upstream_json_body(
+            "OpenAI",
+            "generate",
+            StatusCode::OK,
+            "text/plain",
+            br#"{"ok":true}"#,
+        )
+        .expect("valid JSON should parse");
+
+        assert_eq!(value["ok"], true);
     }
 }

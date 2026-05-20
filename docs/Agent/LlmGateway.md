@@ -253,6 +253,7 @@ Gateway 错误建议：
 
 ```text
 model.provider_denied
+model.upstream_invalid_response
 model.unsupported_tool_call
 model.invalid_tool_call
 model.request_build_failed
@@ -262,7 +263,7 @@ model.cancelled
 model.native_metadata_lost
 ```
 
-Agent runtime 会按 Profile `run.modelRetry` 重试 `429` rate limit 与 transient transport/provider availability 错误；payload build、policy denied、response decode、tool call id、native metadata 等契约错误不重试。
+Agent runtime 会按 Profile `run.modelRetry` 重试 `429` rate limit 与 transient transport/provider availability 错误。`model.upstream_invalid_response` 专用于上游响应体不可读或不是合法 provider JSON 的暂态异常，可自动重试；payload build、policy denied、provider 明确拒绝、response schema decode、tool call id、native metadata 等本地或 provider 明确契约错误不重试。
 
 `model.native_metadata_lost` 不应静默降级。
 

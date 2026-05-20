@@ -173,7 +173,7 @@ run_failed
 }
 ```
 
-- `retryable`：宿主可不询问用户、安全地自动重试。仅在 `RateLimited`/`Transient` 等暂态错误上为 `true`。
+- `retryable`：宿主可不询问用户、安全地自动重试。仅在 `RateLimited`/`Transient` 等暂态错误上为 `true`。例如 `model.upstream_invalid_response` 表示上游响应体本应承载 provider JSON 契约但不可读或不是合法 JSON，属于可重试的 transient invalid response；它不应用于 request build、provider 明确拒绝、tool call / native metadata / response schema 等本地契约错误。
 - `userRetryable`：用户可通过 UI 手动重试。`retryable=true` 时一定为 `true`；此外 `model.tool_call_required`、`agent.tool_after_finish`、`agent.max_tool_rounds_exceeded` 等指令漂移类错误也是 `userRetryable=true`，但 **禁止** 自动重试。若 run 已经成功 `workspace.commit` 过 chat，终态会改为 `run_partial_success`，不会复用 `run_failed.userRetryable`，避免用户在已保留输出上直接重试造成重复消息。
 
 `run_partial_success` 是一个独立终态：当一次 run 已经通过 `workspace.commit` 向 chat 发布过至少一条消息，但后续仍因 drift、dispatch、`workspace.finish` / persistent commit 等错误失败时，executor 会保留这些 host-confirmed chat commit，并写 `run_partial_success`。它不是 clean success：错误仍在 payload 中暴露，`retryable` / `userRetryable` 固定为 `false`，宿主 UI 应以 warning 展示“已保留部分结果”。`workspace.finish` 未干净完成时不会提交 persistent state。

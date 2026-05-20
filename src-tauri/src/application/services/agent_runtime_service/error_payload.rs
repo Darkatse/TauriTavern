@@ -199,6 +199,7 @@ mod tests {
             "openai returned status 200 non-JSON body (generate): expected value at line 1 column 1"
         );
         assert_eq!(payload["retryable"], true);
+        assert_eq!(payload["userRetryable"], true);
     }
 
     #[test]
