@@ -65,9 +65,9 @@ Built-in defaults
 
 ### 1.3 Agent System Prompt Ownership
 
-`instructions.agentSystemPrompt` 只属于 Agent Profile：`null` 使用 runtime 默认值，非空字符串完整替换默认值。
+`instructions.agentSystemPrompt` 只属于 Agent Profile：`null` 使用 resolved profile 默认值，非空字符串完整替换默认值。
 
-Preset / PromptManager 中的 `agentSystemPrompt` 不是内容源，只是 Agent Mode 的位置锚点。前端 snapshot 必须在该位置放入一个内部 marker；Rust runtime 必须要求 marker 恰好出现一次，并在原位置替换为已解析的 Profile system prompt。Legacy Generation 必须移除 Agent-only 组件，不能看到 marker 或 Agent system prompt 内容。
+Preset / PromptManager 中的 `agentSystemPrompt` 不是内容源，而是 Agent Mode 的组装位置、enabled 状态与 role 契约。前端必须先解析 Agent Profile，再在该 PromptManager index materialize 真实 Agent system prompt；Rust runtime 只消费组装后的最终 messages，并 fail-fast 拒绝内部 marker 泄漏。Legacy Generation 必须移除 Agent-only 组件，不能看到 `agentSystemPrompt` 或 Agent system prompt 内容。
 
 ## 2. Preset Agent Schema
 

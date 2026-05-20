@@ -6,6 +6,7 @@ import { loadSettings, patchSettings } from './settings-store.js';
 import { buildSkillFileTree } from './skill-file-tree.js';
 import { openSkillFileViewer } from './skill-file-viewer.js';
 import { downloadBlobWithRuntime } from '../../../file-export.js';
+import { normalizeAgentSystemPrompt } from '../../../tauritavern/agent/agent-system-prompt.js';
 
 const SKILL_FILE_VIEW_MAX_CHARS = 80000;
 const PROFILE_EXPORT_CONTENT_TYPE = 'application/json';
@@ -50,6 +51,10 @@ const WORKSPACE_ROOT_ICONS = Object.freeze({
     summaries: 'fa-layer-group',
     persist: 'fa-database',
 });
+
+function normalizeResolvedAgentSystemPrompt(result) {
+    return normalizeAgentSystemPrompt(result?.agentSystemPrompt);
+}
 
 const SkillFileTreeNode = {
     name: 'SkillFileTreeNode',
@@ -132,6 +137,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 selectedProfileId: DEFAULT_PROFILE_ID,
                 draft: profileForEdit(defaultProfile()),
                 draftJson: prettyJson(defaultProfile()),
+                resolvedAgentSystemPrompt: '',
                 skills: [],
                 selectedSkillName: '',
                 skillFiles: [],
@@ -157,6 +163,18 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             },
             isBuiltinProfile() {
                 return this.draft.id === DEFAULT_PROFILE_ID;
+            },
+            agentSystemPromptEditorValue() {
+                if (this.isBuiltinProfile) {
+                    return this.resolvedAgentSystemPrompt;
+                }
+                return this.draft.instructions.agentSystemPrompt ?? '';
+            },
+            agentSystemPromptPlaceholder() {
+                if (this.isBuiltinProfile || String(this.draft.instructions.agentSystemPrompt || '').trim()) {
+                    return '';
+                }
+                return this.resolvedAgentSystemPrompt;
             },
             profileStats() {
                 const allowedTools = new Set(Array.isArray(this.draft?.tools?.allow) ? this.draft.tools.allow : []);
@@ -356,12 +374,17 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             },
             async selectProfile(profileId) {
                 const id = profileId || DEFAULT_PROFILE_ID;
-                const result = await requireAgentApi().profiles.load({ profileId: id });
+                const profilesApi = requireAgentApi().profiles;
+                const [result, promptResult] = await Promise.all([
+                    profilesApi.load({ profileId: id }),
+                    profilesApi.resolveSystemPrompt({ profileId: id }),
+                ]);
                 if (!result?.profile) {
                     throw new Error(tr('agentProfileNotFound', { id }));
                 }
                 this.selectedProfileId = id;
                 this.draft = profileForEdit(result.profile);
+                this.resolvedAgentSystemPrompt = normalizeResolvedAgentSystemPrompt(promptResult);
                 this.refreshDraftJson();
             },
             refreshDraftJson() {
@@ -371,11 +394,13 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 const parsed = JSON.parse(this.draftJson);
                 this.draft = profileForEdit(parsed);
                 this.selectedProfileId = parsed.id;
+                this.resolvedAgentSystemPrompt = '';
             },
             newProfile() {
                 const id = this.nextProfileId('agent-profile');
                 this.selectedProfileId = id;
                 this.draft = profileForEdit(defaultProfile(id));
+                this.resolvedAgentSystemPrompt = '';
                 this.refreshDraftJson();
             },
             copyProfile() {
@@ -385,7 +410,14 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 copy.displayName = tr('copyDisplayName', { name: copy.displayName });
                 this.selectedProfileId = id;
                 this.draft = profileForEdit(copy);
+                this.resolvedAgentSystemPrompt = '';
                 this.refreshDraftJson();
+            },
+            setAgentSystemPromptDraft(event) {
+                if (this.isBuiltinProfile) {
+                    return;
+                }
+                this.draft.instructions.agentSystemPrompt = event.target.value;
             },
             nextProfileId(base) {
                 const normalized = normalizeProfileId(base) || 'agent-profile';
@@ -944,7 +976,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </div>
                                     <label class="ttas-field">
                                         <span>{{ tr('agentSystemPrompt') }}</span>
-                                        <textarea class="text_pole textarea_compact ttas-system-prompt-textarea" rows="12" v-model="draft.instructions.agentSystemPrompt" :disabled="isBuiltinProfile"></textarea>
+                                        <textarea class="text_pole textarea_compact ttas-system-prompt-textarea" rows="12" :value="agentSystemPromptEditorValue" :placeholder="agentSystemPromptPlaceholder" :disabled="isBuiltinProfile" @input="setAgentSystemPromptDraft"></textarea>
                                     </label>
                                 </div>
 

@@ -11,7 +11,8 @@ use crate::application::dto::agent_dto::{
     AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentProfileIdDto,
     AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
     AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadWorkspaceFileDto,
-    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto, AgentRunHandleDto,
+    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
+    AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRunHandleDto,
     AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
 };
 use crate::application::errors::ApplicationError;
@@ -57,6 +58,23 @@ pub async fn list_agent_tool_specs(
     Ok(AgentListToolSpecsResultDto {
         tools: app_state.agent_runtime_service.tool_specs().to_vec(),
     })
+}
+
+#[tauri::command]
+pub async fn resolve_agent_system_prompt(
+    dto: AgentResolveSystemPromptDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentResolveSystemPromptResultDto, CommandError> {
+    log_command("resolve_agent_system_prompt");
+
+    app_state
+        .agent_runtime_service
+        .resolve_agent_system_prompt(dto.profile_id.as_deref())
+        .await
+        .map(|agent_system_prompt| AgentResolveSystemPromptResultDto {
+            agent_system_prompt,
+        })
+        .map_err(map_command_error("Failed to resolve agent system prompt"))
 }
 
 #[tauri::command]

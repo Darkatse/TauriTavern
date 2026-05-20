@@ -172,8 +172,7 @@ impl AgentRuntimeService {
         self.ensure_not_cancelled(cancel)?;
 
         let visible_tools = self.tool_registry.visible_specs(&resolved_profile)?;
-        let request =
-            prepare_agent_tool_request(request, &visible_tools, &resolved_profile, run_id)?;
+        let request = prepare_agent_tool_request(request, &visible_tools, run_id)?;
         self.transition_status(run_id, AgentRunStatus::AssemblingContext)
             .await?;
         self.event(

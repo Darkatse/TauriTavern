@@ -150,6 +150,10 @@ test('Agent generation router uses the global toggle for normal regenerate and s
                         },
                     };
                 },
+                async resolveSystemPrompt({ profileId } = {}) {
+                    assert.equal(profileId, stored.selectedProfileId);
+                    return { agentSystemPrompt: 'Resolved Agent System Prompt.' };
+                },
             },
         },
     });
@@ -178,6 +182,7 @@ test('Agent generation router uses the global toggle for normal regenerate and s
                 initialChatHistoryMessages: 6,
                 includeActivatedWorldInfo: false,
             },
+            agentSystemPrompt: 'Resolved Agent System Prompt.',
         });
     }
 
@@ -288,46 +293,53 @@ test('Agent System CSS does not globally override upstream utility classes', asy
     assert.deepEqual(leakedSelectors, []);
 });
 
-test('default Agent profile exposes the effective default system prompt in frontend drafts', async () => {
+test('Agent profile drafts keep Agent system prompt owned by the backend resolver', async () => {
     const {
         DEFAULT_PROFILE_ID,
     } = await importFresh('src/scripts/extensions/agent-system/src/constants.js');
     const {
-        buildDefaultAgentSystemPrompt,
         defaultProfile,
+        normalizeProfileForSave,
         profileForEdit,
     } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
+    const profileModelSource = await readFile(path.join(REPO_ROOT, 'src/scripts/extensions/agent-system/src/profile-model.js'), 'utf8');
+    const panelSource = await readFile(path.join(REPO_ROOT, 'src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js'), 'utf8');
 
     const profile = defaultProfile();
     assert.equal(profile.id, DEFAULT_PROFILE_ID);
-    assert.equal(profile.instructions.agentSystemPrompt, buildDefaultAgentSystemPrompt(profile));
-    assert.match(profile.instructions.agentSystemPrompt, /TauriTavern Agent Mode is active\./);
-    assert.match(profile.instructions.agentSystemPrompt, /workspace_commit/);
-    assert.match(profile.instructions.agentSystemPrompt, /workspace_finish/);
+    assert.equal(profile.instructions.agentSystemPrompt, null);
 
     const backendBuiltIn = {
         ...profile,
         instructions: { agentSystemPrompt: null },
     };
     const draft = profileForEdit(backendBuiltIn);
-    assert.equal(draft.instructions.agentSystemPrompt, buildDefaultAgentSystemPrompt(draft));
+    assert.equal(draft.instructions.agentSystemPrompt, null);
+    assert.equal(normalizeProfileForSave(draft).instructions.agentSystemPrompt, null);
+    assert.doesNotMatch(profileModelSource, /buildDefaultAgentSystemPrompt/);
+    assert.match(panelSource, /resolveSystemPrompt/);
+    assert.match(panelSource, /resolvedAgentSystemPrompt/);
 });
 
-test('PromptManager uses reserved Agent prompts as runtime-owned markers', async () => {
+test('PromptManager materializes reserved Agent prompts at PromptManager positions', async () => {
     const promptManagerSource = await readFile(path.join(REPO_ROOT, 'src/scripts/PromptManager.js'), 'utf8');
     const openAiSource = await readFile(path.join(REPO_ROOT, 'src/scripts/openai.js'), 'utf8');
 
     assert.match(promptManagerSource, /const AGENT_SYSTEM_PROMPT_IDENTIFIER = 'agentSystemPrompt';/);
     assert.match(promptManagerSource, /const AGENT_RESULTS_PROMPT_IDENTIFIER = 'agentResults';/);
+    assert.match(promptManagerSource, /normalizeAgentPromptRole/);
     assert.match(promptManagerSource, /normalizeAgentPromptMarkerDefinitions\(\)/);
     assert.match(promptManagerSource, /normalizeAgentSystemPromptDefinition\(\)/);
     assert.match(promptManagerSource, /normalizeAgentResultsPromptDefinition\(\)/);
     assert.match(promptManagerSource, /agent\.results_prompt_definition_missing/);
     assert.match(promptManagerSource, /marker:\s*true/);
+    assert.doesNotMatch(promptManagerSource, /existing\.enabled\s*=\s*true/);
     assert.doesNotMatch(promptManagerSource, /case 'agentSystemPrompt':/);
 
-    assert.match(openAiSource, /_tauritavern_agent_prompt_marker/);
-    assert.match(openAiSource, /populateAgentSystemPromptMarker/);
+    assert.match(openAiSource, /populateAgentSystemPrompt/);
+    assert.match(openAiSource, /Message\.fromPromptAsync\(materializedPrompt\)/);
+    assert.doesNotMatch(openAiSource, /_tauritavern_agent_prompt_marker/);
+    assert.doesNotMatch(openAiSource, /populateAgentSystemPromptMarker/);
     assert.doesNotMatch(openAiSource, /populateAgentResults/);
     assert.doesNotMatch(openAiSource, /\[Agent Result\]/);
     assert.doesNotMatch(openAiSource, /\[AGENT_SYSTEM_PROMPT_IDENTIFIER,\s*'nsfw'/);

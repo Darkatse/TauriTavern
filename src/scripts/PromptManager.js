@@ -1126,7 +1126,7 @@ class PromptManager {
         Object.assign(prompt, {
             identifier,
             name,
-            role: 'system',
+            role: normalizeAgentPromptRole(prompt.role),
             content: '',
             system_prompt: true,
             marker: true,
@@ -1148,17 +1148,14 @@ class PromptManager {
      */
     ensureAgentPromptOrderReferences() {
         const agentReferences = [
-            { identifier: AGENT_SYSTEM_PROMPT_IDENTIFIER, before: 'main', required: true },
-            { identifier: AGENT_RESULTS_PROMPT_IDENTIFIER, required: true },
+            { identifier: AGENT_SYSTEM_PROMPT_IDENTIFIER, before: 'main' },
+            { identifier: AGENT_RESULTS_PROMPT_IDENTIFIER },
         ];
 
         for (const promptOrder of this.serviceSettings.prompt_order) {
             for (const reference of agentReferences) {
                 const existing = promptOrder.order.find(entry => entry.identifier === reference.identifier);
                 if (existing) {
-                    if (reference.required) {
-                        existing.enabled = true;
-                    }
                     continue;
                 }
 
@@ -2161,6 +2158,12 @@ class PromptManager {
 
 const AGENT_SYSTEM_PROMPT_IDENTIFIER = 'agentSystemPrompt';
 const AGENT_RESULTS_PROMPT_IDENTIFIER = 'agentResults';
+const AGENT_PROMPT_ROLES = new Set(['system', 'user', 'assistant']);
+
+function normalizeAgentPromptRole(value) {
+    const role = String(value || '').trim().toLowerCase();
+    return AGENT_PROMPT_ROLES.has(role) ? role : 'system';
+}
 
 const chatCompletionDefaultPrompts = {
     'prompts': [

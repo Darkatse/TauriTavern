@@ -234,6 +234,7 @@ type TauriTavernAgentProfileDefinition = {
 type TauriTavernAgentProfilesApi = {
     list: () => Promise<{ profiles: TauriTavernAgentProfileSummary[] }>;
     load: (input: string | { profileId: string }) => Promise<{ profile: TauriTavernAgentProfileDefinition | null }>;
+    resolveSystemPrompt: (input?: string | { profileId?: string | null }) => Promise<{ agentSystemPrompt: string }>;
     save: (input: TauriTavernAgentProfileDefinition | { profile: TauriTavernAgentProfileDefinition }) => Promise<void>;
     delete: (input: string | { profileId: string }) => Promise<void>;
 };

@@ -4,12 +4,10 @@ use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestD
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use crate::domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole,
-    AgentRunPresentation, AgentToolSpec,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolSpec,
 };
 
 const AGENT_PROMPT_MARKER_FIELD: &str = "_tauritavern_agent_prompt_marker";
-const AGENT_SYSTEM_PROMPT_MARKER: &str = "agentSystemPrompt";
 
 pub(super) fn request_from_prompt_snapshot(
     prompt_snapshot: &Value,
@@ -41,13 +39,11 @@ pub(super) fn request_from_prompt_snapshot(
 pub(super) fn prepare_agent_tool_request(
     mut request: ChatCompletionGenerateRequestDto,
     tools: &[AgentToolSpec],
-    profile: &ResolvedAgentProfile,
     run_id: &str,
 ) -> Result<AgentModelRequest, ApplicationError> {
     reject_external_tool_request(&request.payload)?;
 
-    let agent_system_prompt = build_agent_system_prompt(tools, profile);
-    let messages = messages_from_payload(&mut request.payload, &agent_system_prompt)?;
+    let messages = messages_from_payload(&mut request.payload)?;
 
     request.payload.remove("tools");
     request.payload.remove("tool_choice");
@@ -94,160 +90,6 @@ pub(super) fn validate_prompt_snapshot_context_policy(
     }
 
     Ok(())
-}
-
-fn build_agent_system_prompt(tools: &[AgentToolSpec], profile: &ResolvedAgentProfile) -> String {
-    if let Some(prompt) = profile.instructions.agent_system_prompt.as_ref() {
-        return prompt.clone();
-    }
-
-    let mut lines = vec![
-        "TauriTavern Agent Mode is active.".to_string(),
-        "Work through the available Agent tools. Tool results are private run state, not chat messages.".to_string(),
-        format!(
-            "Available tool function names: {}.",
-            tools
-                .iter()
-                .map(|tool| tool.model_name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    ];
-
-    if has_tool(tools, "chat.search") {
-        lines.push(format!(
-            "Use {} to find relevant prior messages when you need more context. Only query is required.",
-            model_name(tools, "chat.search")
-        ));
-    }
-    if has_tool(tools, "chat.read_messages") {
-        let source_hint = if has_tool(tools, "chat.search") {
-            format!("message indexes from {}", model_name(tools, "chat.search"))
-        } else {
-            "exact indexes you already know".to_string()
-        };
-        lines.push(format!(
-            "Use {} with {source_hint}. For long messages, read smaller ranges with start_char and max_chars.",
-            model_name(tools, "chat.read_messages")
-        ));
-    }
-    if has_tool(tools, "worldinfo.read_activated") {
-        lines.push(format!(
-            "Use {} when active lore for this run matters. Call it with no arguments to list active refs, then pass entries with ref and optional start_char/max_chars to read only needed content.",
-            model_name(tools, "worldinfo.read_activated")
-        ));
-    }
-    if has_tool(tools, "skill.list") {
-        lines.push(format!(
-            "Use {} to discover visible Agent Skills when reusable writing, editing, planning, style, or character guidance may help.",
-            model_name(tools, "skill.list")
-        ));
-    }
-    if has_tool(tools, "skill.search") {
-        lines.push(format!(
-            "Use {} to locate relevant text inside large visible Skill files before reading exact ranges.",
-            model_name(tools, "skill.search")
-        ));
-    }
-    if has_tool(tools, "skill.read") {
-        lines.push(format!(
-            "Use {} to read SKILL.md first, then read referenced Skill files or ranges only when needed.",
-            model_name(tools, "skill.read")
-        ));
-    }
-    if has_tool(tools, "workspace.list_files") {
-        lines.push(format!(
-            "Use {} to inspect visible workspace files.",
-            model_name(tools, "workspace.list_files")
-        ));
-    }
-    if has_tool(tools, "workspace.search_files") {
-        lines.push(format!(
-            "Use {} to find relevant text in visible workspace files such as persist/ memory before reading exact ranges.",
-            model_name(tools, "workspace.search_files")
-        ));
-    }
-    if has_tool(tools, "workspace.read_file") {
-        lines.push(format!(
-            "Use {} before modifying an existing file. Read output has line numbers; never include line number prefixes in old_string or new_string.",
-            model_name(tools, "workspace.read_file")
-        ));
-    }
-    if has_tool(tools, "workspace.apply_patch") {
-        lines.push(format!(
-            "Use {} for precise edits to existing files. The old_string must match exactly and uniquely unless replace_all is true.",
-            model_name(tools, "workspace.apply_patch")
-        ));
-    }
-    if has_tool(tools, "workspace.write_file") {
-        lines.push(format!(
-            "Use {} for new files or complete rewrites.",
-            model_name(tools, "workspace.write_file")
-        ));
-    }
-    if has_tool(tools, "workspace.commit") {
-        lines.push(format!(
-            "Use {} to publish a visible workspace file to the current chat message. With no arguments it replaces the run's chat message with {}; mode append appends to the same message and creates it if this run has not committed yet.",
-            model_name(tools, "workspace.commit"),
-            profile.output.message_body_path
-        ));
-    }
-
-    if profile
-        .workspace
-        .visible_roots
-        .iter()
-        .any(|root| root == "persist")
-        && profile
-            .workspace
-            .writable_roots
-            .iter()
-            .any(|root| root == "persist")
-    {
-        lines.push("Use persist/ for concise information that should carry into later runs of this same chat, such as durable plot facts, unresolved threads, relationship state, and user style preferences.".to_string());
-        lines.push(
-            "Do not copy full chat history, final replies, tool results, or temporary reasoning into persist/."
-                .to_string(),
-        );
-    }
-
-    lines.push(format!(
-        "Visible workspace roots: {}.",
-        profile.workspace.visible_roots.join(", ")
-    ));
-    lines.push(format!(
-        "Writable workspace roots: {}.",
-        profile.workspace.writable_roots.join(", ")
-    ));
-    match profile.run.presentation {
-        AgentRunPresentation::Foreground => lines.push(format!(
-            "Before calling {}, make at least one successful {} call so the user can see the final chat message.",
-            model_name(tools, "workspace.finish"),
-            model_name(tools, "workspace.commit")
-        )),
-        AgentRunPresentation::Background => lines.push(format!(
-            "Background runs may call {} without committing a chat message.",
-            model_name(tools, "workspace.finish")
-        )),
-    }
-    lines.push(format!(
-        "Do not answer directly without finishing through {}.",
-        model_name(tools, "workspace.finish")
-    ));
-
-    lines.join("\n")
-}
-
-fn has_tool(tools: &[AgentToolSpec], name: &str) -> bool {
-    tools.iter().any(|tool| tool.name == name)
-}
-
-fn model_name<'a>(tools: &'a [AgentToolSpec], name: &'a str) -> &'a str {
-    tools
-        .iter()
-        .find(|tool| tool.name == name)
-        .map(|tool| tool.model_name.as_str())
-        .unwrap_or(name)
 }
 
 pub(super) fn reject_external_tool_request(
@@ -329,7 +171,6 @@ fn find_payload_object(value: &Value) -> Option<Map<String, Value>> {
 
 fn messages_from_payload(
     payload: &mut Map<String, Value>,
-    agent_system_prompt: &str,
 ) -> Result<Vec<AgentModelMessage>, ApplicationError> {
     let messages = match payload.remove("messages") {
         Some(Value::Array(messages)) => messages,
@@ -360,66 +201,33 @@ fn messages_from_payload(
     };
     payload.remove("prompt");
 
-    let mut marker_count = 0_usize;
-    for message in &messages {
-        if agent_prompt_marker(message)?.is_some() {
-            marker_count += 1;
-        }
-    }
-
-    match marker_count {
-        0 => {
-            return Err(ApplicationError::ValidationError(
-                "agent.system_prompt_marker_missing: prompt snapshot must include exactly one agentSystemPrompt marker".to_string(),
-            ));
-        }
-        1 => {}
-        _ => {
-            return Err(ApplicationError::ValidationError(
-                "agent.system_prompt_marker_duplicate: prompt snapshot must include exactly one agentSystemPrompt marker".to_string(),
-            ));
-        }
-    }
-
     messages
         .iter()
-        .map(|message| {
-            if agent_prompt_marker(message)?.is_some() {
-                Ok(text_message(
-                    AgentModelRole::System,
-                    agent_system_prompt.to_string(),
-                ))
-            } else {
-                message_from_openai_value(message)
-            }
-        })
+        .map(message_from_openai_value)
         .collect::<Result<Vec<_>, _>>()
 }
 
-fn agent_prompt_marker(value: &Value) -> Result<Option<&str>, ApplicationError> {
+fn reject_agent_prompt_marker(value: &Value) -> Result<(), ApplicationError> {
     let Some(marker) = value
         .as_object()
         .and_then(|object| object.get(AGENT_PROMPT_MARKER_FIELD))
     else {
-        return Ok(None);
+        return Ok(());
     };
 
-    let marker = marker.as_str().ok_or_else(|| {
-        ApplicationError::ValidationError(
+    if !marker.is_string() {
+        return Err(ApplicationError::ValidationError(
             "agent.invalid_prompt_marker: prompt marker must be a string".to_string(),
-        )
-    })?;
-
-    if marker != AGENT_SYSTEM_PROMPT_MARKER {
-        return Err(ApplicationError::ValidationError(format!(
-            "agent.unknown_prompt_marker: unsupported prompt marker {marker}"
-        )));
+        ));
     }
 
-    Ok(Some(marker))
+    Err(ApplicationError::ValidationError(
+        "agent.prompt_marker_unmaterialized: prompt snapshot must materialize agentSystemPrompt before entering the Agent runtime".to_string(),
+    ))
 }
 
 fn message_from_openai_value(value: &Value) -> Result<AgentModelMessage, ApplicationError> {
+    reject_agent_prompt_marker(value)?;
     let object = value.as_object().ok_or_else(|| {
         ApplicationError::ValidationError(
             "agent.invalid_prompt_snapshot: message must be an object".to_string(),
@@ -484,14 +292,6 @@ fn content_parts_from_openai_value(value: Option<&Value>) -> Vec<AgentModelConte
     }
 }
 
-fn text_message(role: AgentModelRole, text: String) -> AgentModelMessage {
-    AgentModelMessage {
-        role,
-        parts: vec![AgentModelContentPart::Text { text }],
-        provider_metadata: Value::Null,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -522,34 +322,31 @@ mod tests {
     }
 
     #[test]
-    fn agent_system_prompt_replaces_marker_at_prompt_manager_position() {
+    fn materialized_agent_system_prompt_passes_through_at_prompt_manager_position() {
         let request = request_from_prompt_snapshot(&json!({
             "chatCompletionPayload": {
                 "messages": [
-                    { "role": "system", "content": "Before marker." },
-                    agent_system_marker(),
+                    { "role": "system", "content": "Before Agent prompt." },
+                    { "role": "user", "content": "Materialized Agent System Prompt." },
                     { "role": "user", "content": "hello" }
                 ]
             }
         }))
         .expect("request");
-        let profile = test_profile(Some(
-            "Custom Agent System Prompt.\nUse the creator contract.",
-        ));
 
-        let request =
-            prepare_agent_tool_request(request, &[], &profile, "run_test").expect("agent request");
+        let request = prepare_agent_tool_request(request, &[], "run_test").expect("agent request");
 
-        assert_eq!(message_text(&request, 0), "Before marker.");
+        assert_eq!(message_text(&request, 0), "Before Agent prompt.");
+        assert_eq!(request.messages[1].role, AgentModelRole::User);
         assert_eq!(
             message_text(&request, 1),
-            "Custom Agent System Prompt.\nUse the creator contract."
+            "Materialized Agent System Prompt."
         );
         assert_eq!(message_text(&request, 2), "hello");
     }
 
     #[test]
-    fn agent_system_prompt_defaults_when_profile_omits_it() {
+    fn internal_agent_prompt_marker_is_rejected() {
         let request = request_from_prompt_snapshot(&json!({
             "chatCompletionPayload": {
                 "messages": [
@@ -559,55 +356,14 @@ mod tests {
             }
         }))
         .expect("request");
-        let profile = test_profile(None);
 
-        let request =
-            prepare_agent_tool_request(request, &[], &profile, "run_test").expect("agent request");
-
-        assert!(message_text(&request, 0).contains("TauriTavern Agent Mode is active."));
-    }
-
-    #[test]
-    fn agent_system_prompt_marker_is_required() {
-        let request = request_from_prompt_snapshot(&json!({
-            "chatCompletionPayload": {
-                "messages": [{ "role": "user", "content": "hello" }]
-            }
-        }))
-        .expect("request");
-        let profile = test_profile(None);
-
-        let error = prepare_agent_tool_request(request, &[], &profile, "run_test")
-            .expect_err("marker fails");
+        let error =
+            prepare_agent_tool_request(request, &[], "run_test").expect_err("marker leak fails");
 
         assert!(
             error
                 .to_string()
-                .contains("agent.system_prompt_marker_missing")
-        );
-    }
-
-    #[test]
-    fn agent_system_prompt_marker_must_be_unique() {
-        let request = request_from_prompt_snapshot(&json!({
-            "chatCompletionPayload": {
-                "messages": [
-                    agent_system_marker(),
-                    { "role": "user", "content": "hello" },
-                    agent_system_marker()
-                ]
-            }
-        }))
-        .expect("request");
-        let profile = test_profile(None);
-
-        let error = prepare_agent_tool_request(request, &[], &profile, "run_test")
-            .expect_err("marker fails");
-
-        assert!(
-            error
-                .to_string()
-                .contains("agent.system_prompt_marker_duplicate")
+                .contains("agent.prompt_marker_unmaterialized")
         );
     }
 
@@ -620,7 +376,7 @@ mod tests {
                 "includeActivatedWorldInfo": true
             },
             "chatCompletionPayload": {
-                "messages": [agent_system_marker()]
+                "messages": [{ "role": "system", "content": "Materialized Agent System Prompt." }]
             }
         });
 
@@ -635,7 +391,7 @@ mod tests {
         let profile = test_profile(None);
         let prompt_snapshot = json!({
             "chatCompletionPayload": {
-                "messages": [agent_system_marker()]
+                "messages": [{ "role": "system", "content": "Materialized Agent System Prompt." }]
             }
         });
 
@@ -655,7 +411,7 @@ mod tests {
                 "includeActivatedWorldInfo": true
             },
             "chatCompletionPayload": {
-                "messages": [agent_system_marker()]
+                "messages": [{ "role": "system", "content": "Materialized Agent System Prompt." }]
             }
         });
 
@@ -664,9 +420,6 @@ mod tests {
     }
 
     fn message_text(request: &AgentModelRequest, index: usize) -> &str {
-        if index == 1 {
-            assert_eq!(request.messages[index].role, AgentModelRole::System);
-        }
         match &request.messages[index].parts[0] {
             AgentModelContentPart::Text { text } => text.as_str(),
             _ => panic!("expected text message"),

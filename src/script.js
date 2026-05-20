@@ -58,6 +58,7 @@ import {
     applyInitialChatHistoryPolicy,
     normalizeAgentContextPolicy,
 } from './scripts/tauritavern/agent/agent-context-policy.js';
+import { normalizeAgentSystemPrompt } from './scripts/tauritavern/agent/agent-system-prompt.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -4762,6 +4763,7 @@ function removeLastMessage() {
  * @property {boolean} [agentMode] Internal TauriTavern Agent prompt snapshot mode.
  * @property {string|null} [agentProfileId] Agent profile to use when agentMode is active.
  * @property {{ initialChatHistoryMessages: number, includeActivatedWorldInfo: boolean }|null} [agentContextPolicy] Agent prompt context policy.
+ * @property {string|null} [agentSystemPrompt] Resolved Agent system prompt to materialize through PromptManager.
  */
 
 const generationIdleGate = createGenerationIdleGate();
@@ -4806,11 +4808,12 @@ export async function Generate(type, options = {}, dryRun = false) {
     }
 }
 
-async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, agentMode = false, agentProfileId = null, agentContextPolicy = null } = {}, dryRun = false) {
+async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, agentMode = false, agentProfileId = null, agentContextPolicy = null, agentSystemPrompt = null } = {}, dryRun = false) {
     console.log('Generate entered');
     setGenerationProgress(0);
     generation_started = new Date();
     const resolvedAgentContextPolicy = agentMode ? normalizeAgentContextPolicy(agentContextPolicy) : null;
+    const resolvedAgentSystemPrompt = agentMode ? normalizeAgentSystemPrompt(agentSystemPrompt) : null;
 
     // Prevent generation from shallow characters
     await unshallowCharacter(this_chid);
@@ -5891,6 +5894,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 messages: oaiMessages,
                 messageExamples: oaiMessageExamples,
                 agentMode,
+                agentSystemPrompt: resolvedAgentSystemPrompt,
             }, dryRun);
             generate_data = { prompt: prompt };
 

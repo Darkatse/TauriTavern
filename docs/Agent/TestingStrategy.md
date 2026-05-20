@@ -258,7 +258,7 @@ Profile / Plan 相关变更不合并，除非：
 - profile resolution 测试通过。
 - `input/resolved_profile.json` 快照写入测试通过。
 - tool/skill/workspace/output policy 的 runtime 行为测试通过。
-- `agentSystemPrompt` marker 位置替换、缺省回退、缺失 fail-fast、重复 fail-fast 测试通过。
+- `agentSystemPrompt` 前端 materialize、PromptManager index/role 保留、runtime marker 泄漏 fail-fast 测试通过。
 - strict/free/hybrid plan 与 profile switch 相关测试在对应功能实现时补齐。
 
 MCP 相关变更不合并，除非：

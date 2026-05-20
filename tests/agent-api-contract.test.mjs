@@ -36,12 +36,14 @@ test('api.agent.profiles forwards profile commands with camelCase DTOs', async (
     assert.ok(agent.profiles);
     await agent.profiles.list();
     await agent.profiles.load({ profileId: 'writer' });
+    await agent.profiles.resolveSystemPrompt({ profileId: 'writer' });
     await agent.profiles.save({ profile });
     await agent.profiles.delete('writer');
 
     assert.deepEqual(calls, [
         { command: 'list_agent_profiles', args: undefined },
         { command: 'load_agent_profile', args: { dto: { profileId: 'writer' } } },
+        { command: 'resolve_agent_system_prompt', args: { dto: { profileId: 'writer' } } },
         { command: 'save_agent_profile', args: { dto: { profile } } },
         { command: 'delete_agent_profile', args: { dto: { profileId: 'writer' } } },
     ]);

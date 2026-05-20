@@ -181,6 +181,15 @@ function createAgentApi({ safeInvoke }) {
         return safeInvoke('load_agent_profile', { dto: { profileId } });
     }
 
+    async function resolveSystemPrompt(input = {}) {
+        const profileId = normalizeOptionalString(input?.profileId ?? input?.profile_id ?? input);
+        return safeInvoke('resolve_agent_system_prompt', {
+            dto: {
+                ...(profileId ? { profileId } : {}),
+            },
+        });
+    }
+
     async function saveProfile(input) {
         const profile = input?.profile ?? input;
         if (!isPlainObject(profile)) {
@@ -206,6 +215,7 @@ function createAgentApi({ safeInvoke }) {
         profiles: {
             list: listProfiles,
             load: loadProfile,
+            resolveSystemPrompt,
             save: saveProfile,
             delete: deleteProfile,
         },

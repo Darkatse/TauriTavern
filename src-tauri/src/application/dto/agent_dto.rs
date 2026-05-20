@@ -34,6 +34,19 @@ pub struct AgentProfileIdDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentResolveSystemPromptDto {
+    #[serde(default)]
+    pub profile_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentResolveSystemPromptResultDto {
+    pub agent_system_prompt: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentSaveProfileDto {
     pub profile: AgentProfileDefinition,
 }

@@ -1,5 +1,6 @@
 import { loadAgentSystemSettings } from './agent-system-settings.js';
 import { loadAgentContextPolicy } from './agent-context-policy.js';
+import { loadResolvedAgentSystemPrompt } from './agent-system-prompt.js';
 
 const AGENT_GENERATION_TYPES = new Set(['normal', 'regenerate', 'swipe']);
 
@@ -21,12 +22,16 @@ export async function getAgentGenerationOptions({
         selectedGroup,
     });
 
-    const agentContextPolicy = await loadAgentContextPolicy(settings.selectedProfileId);
+    const [agentContextPolicy, agentSystemPrompt] = await Promise.all([
+        loadAgentContextPolicy(settings.selectedProfileId),
+        loadResolvedAgentSystemPrompt(settings.selectedProfileId),
+    ]);
 
     return {
         agentMode: true,
         agentProfileId: settings.selectedProfileId,
         agentContextPolicy,
+        agentSystemPrompt,
     };
 }
 

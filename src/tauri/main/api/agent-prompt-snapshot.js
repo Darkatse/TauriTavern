@@ -5,11 +5,15 @@ import {
     loadAgentContextPolicy,
     normalizeAgentContextPolicy,
 } from '../../../scripts/tauritavern/agent/agent-context-policy.js';
+import {
+    loadResolvedAgentSystemPrompt,
+    normalizeAgentSystemPrompt,
+} from '../../../scripts/tauritavern/agent/agent-system-prompt.js';
 
 const LEGACY_DRY_RUN_SOURCE = 'legacy-generate-dry-run';
 
 /**
- * @param {{ generationType?: string; generateOptions?: Record<string, any>; profileId?: string; agentContextPolicy?: Record<string, any> }} input
+ * @param {{ generationType?: string; generateOptions?: Record<string, any>; profileId?: string; agentContextPolicy?: Record<string, any>; agentSystemPrompt?: string }} input
  * @returns {Promise<{ promptSnapshot: { contextPolicy: any; chatCompletionPayload: any; worldInfoActivation?: any }; generationIntent: any }>}
  */
 export async function buildAgentPromptSnapshot(input = {}) {
@@ -18,6 +22,9 @@ export async function buildAgentPromptSnapshot(input = {}) {
     const agentContextPolicy = input.agentContextPolicy
         ? normalizeAgentContextPolicy(input.agentContextPolicy)
         : await loadAgentContextPolicy(input.profileId);
+    const agentSystemPrompt = Object.prototype.hasOwnProperty.call(input, 'agentSystemPrompt')
+        ? normalizeAgentSystemPrompt(input.agentSystemPrompt)
+        : await loadResolvedAgentSystemPrompt(input.profileId);
     const script = await import('../../../script.js');
 
     if (script.main_api !== 'openai') {
@@ -28,6 +35,7 @@ export async function buildAgentPromptSnapshot(input = {}) {
         ...generateOptions,
         agentMode: true,
         agentContextPolicy,
+        agentSystemPrompt,
     });
     const messages = generateData?.prompt;
     assertMessagesReady(messages);

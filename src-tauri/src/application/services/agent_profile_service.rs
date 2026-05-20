@@ -38,6 +38,163 @@ pub struct AgentProfileResolveInput<'a> {
     pub known_tools: &'a [AgentToolSpec],
 }
 
+pub fn materialize_agent_system_prompt(
+    tools: &[AgentToolSpec],
+    profile: &ResolvedAgentProfile,
+) -> String {
+    if let Some(prompt) = profile.instructions.agent_system_prompt.as_ref() {
+        return prompt.clone();
+    }
+
+    let mut lines = vec![
+        "TauriTavern Agent Mode is active.".to_string(),
+        "Work through the available Agent tools. Tool results are private run state, not chat messages.".to_string(),
+        format!(
+            "Available tool function names: {}.",
+            tools
+                .iter()
+                .map(|tool| tool.model_name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    ];
+
+    if has_tool(tools, "chat.search") {
+        lines.push(format!(
+            "Use {} to find relevant prior messages when you need more context. Only query is required.",
+            model_name(tools, "chat.search")
+        ));
+    }
+    if has_tool(tools, "chat.read_messages") {
+        let source_hint = if has_tool(tools, "chat.search") {
+            format!("message indexes from {}", model_name(tools, "chat.search"))
+        } else {
+            "exact indexes you already know".to_string()
+        };
+        lines.push(format!(
+            "Use {} with {source_hint}. For long messages, read smaller ranges with start_char and max_chars.",
+            model_name(tools, "chat.read_messages")
+        ));
+    }
+    if has_tool(tools, "worldinfo.read_activated") {
+        lines.push(format!(
+            "Use {} when active lore for this run matters. Call it with no arguments to list active refs, then pass entries with ref and optional start_char/max_chars to read only needed content.",
+            model_name(tools, "worldinfo.read_activated")
+        ));
+    }
+    if has_tool(tools, "skill.list") {
+        lines.push(format!(
+            "Use {} to discover visible Agent Skills when reusable writing, editing, planning, style, or character guidance may help.",
+            model_name(tools, "skill.list")
+        ));
+    }
+    if has_tool(tools, "skill.search") {
+        lines.push(format!(
+            "Use {} to locate relevant text inside large visible Skill files before reading exact ranges.",
+            model_name(tools, "skill.search")
+        ));
+    }
+    if has_tool(tools, "skill.read") {
+        lines.push(format!(
+            "Use {} to read SKILL.md first, then read referenced Skill files or ranges only when needed.",
+            model_name(tools, "skill.read")
+        ));
+    }
+    if has_tool(tools, "workspace.list_files") {
+        lines.push(format!(
+            "Use {} to inspect visible workspace files.",
+            model_name(tools, "workspace.list_files")
+        ));
+    }
+    if has_tool(tools, "workspace.search_files") {
+        lines.push(format!(
+            "Use {} to find relevant text in visible workspace files such as persist/ memory before reading exact ranges.",
+            model_name(tools, "workspace.search_files")
+        ));
+    }
+    if has_tool(tools, "workspace.read_file") {
+        lines.push(format!(
+            "Use {} before modifying an existing file. Read output has line numbers; never include line number prefixes in old_string or new_string.",
+            model_name(tools, "workspace.read_file")
+        ));
+    }
+    if has_tool(tools, "workspace.apply_patch") {
+        lines.push(format!(
+            "Use {} for precise edits to existing files. The old_string must match exactly and uniquely unless replace_all is true.",
+            model_name(tools, "workspace.apply_patch")
+        ));
+    }
+    if has_tool(tools, "workspace.write_file") {
+        lines.push(format!(
+            "Use {} for new files or complete rewrites.",
+            model_name(tools, "workspace.write_file")
+        ));
+    }
+    if has_tool(tools, "workspace.commit") {
+        lines.push(format!(
+            "Use {} to publish a visible workspace file to the current chat message. With no arguments it replaces the run's chat message with {}; mode append appends to the same message and creates it if this run has not committed yet.",
+            model_name(tools, "workspace.commit"),
+            profile.output.message_body_path
+        ));
+    }
+
+    if profile
+        .workspace
+        .visible_roots
+        .iter()
+        .any(|root| root == "persist")
+        && profile
+            .workspace
+            .writable_roots
+            .iter()
+            .any(|root| root == "persist")
+    {
+        lines.push("Use persist/ for concise information that should carry into later runs of this same chat, such as durable plot facts, unresolved threads, relationship state, and user style preferences.".to_string());
+        lines.push(
+            "Do not copy full chat history, final replies, tool results, or temporary reasoning into persist/."
+                .to_string(),
+        );
+    }
+
+    lines.push(format!(
+        "Visible workspace roots: {}.",
+        profile.workspace.visible_roots.join(", ")
+    ));
+    lines.push(format!(
+        "Writable workspace roots: {}.",
+        profile.workspace.writable_roots.join(", ")
+    ));
+    match profile.run.presentation {
+        AgentRunPresentation::Foreground => lines.push(format!(
+            "Before calling {}, make at least one successful {} call so the user can see the final chat message.",
+            model_name(tools, "workspace.finish"),
+            model_name(tools, "workspace.commit")
+        )),
+        AgentRunPresentation::Background => lines.push(format!(
+            "Background runs may call {} without committing a chat message.",
+            model_name(tools, "workspace.finish")
+        )),
+    }
+    lines.push(format!(
+        "Do not answer directly without finishing through {}.",
+        model_name(tools, "workspace.finish")
+    ));
+
+    lines.join("\n")
+}
+
+fn has_tool(tools: &[AgentToolSpec], name: &str) -> bool {
+    tools.iter().any(|tool| tool.name == name)
+}
+
+fn model_name<'a>(tools: &'a [AgentToolSpec], name: &'a str) -> &'a str {
+    tools
+        .iter()
+        .find(|tool| tool.name == name)
+        .map(|tool| tool.model_name.as_str())
+        .unwrap_or(name)
+}
+
 impl AgentProfileService {
     pub fn new(
         profile_repository: Arc<dyn AgentProfileRepository>,
@@ -761,4 +918,155 @@ fn validate_artifact_id(id: &str) -> Result<(), ApplicationError> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::domain::models::agent::AgentToolSpec;
+    use crate::domain::models::agent::profile::ResolvedAgentProfile;
+
+    use super::materialize_agent_system_prompt;
+
+    #[test]
+    fn materialized_agent_system_prompt_uses_profile_override_exactly() {
+        let profile = test_profile(
+            Some("Custom Agent System Prompt.\nKeep this exact."),
+            "foreground",
+        );
+
+        let prompt =
+            materialize_agent_system_prompt(&[tool("workspace.finish", "finish_alias")], &profile);
+
+        assert_eq!(prompt, "Custom Agent System Prompt.\nKeep this exact.");
+    }
+
+    #[test]
+    fn default_agent_system_prompt_uses_visible_tool_model_names() {
+        let profile = test_profile(None, "foreground");
+        let tools = vec![
+            tool("chat.search", "chat_search_alias"),
+            tool("workspace.commit", "workspace_commit_alias"),
+            tool("workspace.finish", "workspace_finish_alias"),
+        ];
+
+        let prompt = materialize_agent_system_prompt(&tools, &profile);
+
+        assert!(prompt.contains(
+            "Available tool function names: chat_search_alias, workspace_commit_alias, workspace_finish_alias."
+        ));
+        assert!(prompt.contains("Use chat_search_alias to find relevant prior messages"));
+        assert!(prompt.contains(
+            "Before calling workspace_finish_alias, make at least one successful workspace_commit_alias call"
+        ));
+        assert!(
+            prompt.contains(
+                "Do not answer directly without finishing through workspace_finish_alias."
+            )
+        );
+        assert!(!prompt.contains("workspace_read_file"));
+    }
+
+    #[test]
+    fn default_agent_system_prompt_reflects_profile_workspace_policy() {
+        let mut profile = test_profile(None, "background");
+        profile.workspace.visible_roots = vec!["output".to_string()];
+        profile.workspace.writable_roots = vec!["output".to_string()];
+        let tools = vec![tool("workspace.finish", "workspace_finish_alias")];
+
+        let prompt = materialize_agent_system_prompt(&tools, &profile);
+
+        assert!(prompt.contains("Visible workspace roots: output."));
+        assert!(prompt.contains("Writable workspace roots: output."));
+        assert!(prompt.contains(
+            "Background runs may call workspace_finish_alias without committing a chat message."
+        ));
+        assert!(!prompt.contains("Use persist/"));
+    }
+
+    fn tool(name: &str, model_name: &str) -> AgentToolSpec {
+        AgentToolSpec {
+            name: name.to_string(),
+            model_name: model_name.to_string(),
+            title: name.to_string(),
+            description: String::new(),
+            input_schema: json!({}),
+            output_schema: None,
+            annotations: json!({}),
+            source: "test".to_string(),
+        }
+    }
+
+    fn test_profile(agent_system_prompt: Option<&str>, presentation: &str) -> ResolvedAgentProfile {
+        let instructions = match agent_system_prompt {
+            Some(prompt) => json!({ "agentSystemPrompt": prompt }),
+            None => json!({}),
+        };
+
+        serde_json::from_value(json!({
+            "schemaVersion": 1,
+            "kind": "tauritavern.agentProfile",
+            "id": "test",
+            "displayName": "Test",
+            "preset": {
+                "mode": "none",
+                "required": false
+            },
+            "model": {
+                "mode": "currentPromptSnapshot"
+            },
+            "run": {
+                "presentation": presentation,
+                "modelRetry": {
+                    "maxRetries": 0,
+                    "intervalMs": 3000
+                }
+            },
+            "context": {
+                "initialChatHistoryMessages": -1,
+                "includeActivatedWorldInfo": true
+            },
+            "instructions": instructions,
+            "tools": {
+                "allow": ["workspace.finish"],
+                "deny": [],
+                "toolDescriptions": {},
+                "maxRounds": 1,
+                "maxCallsPerRun": 1,
+                "maxCallsPerTool": {}
+            },
+            "skills": {
+                "visible": ["*"],
+                "deny": [],
+                "maxReadCharsPerCall": 1,
+                "maxReadCharsPerRun": 1
+            },
+            "workspace": {
+                "visibleRoots": ["output", "persist"],
+                "writableRoots": ["output", "persist"]
+            },
+            "plan": {
+                "mode": "none",
+                "beta": true,
+                "nodes": []
+            },
+            "output": {
+                "artifacts": [{
+                    "id": "main",
+                    "path": "output/main.md",
+                    "kind": "markdown",
+                    "target": "message_body",
+                    "required": true,
+                    "assemblyOrder": 0
+                }],
+                "messageBodyArtifactId": "main",
+                "messageBodyPath": "output/main.md"
+            },
+            "sourceTrace": {
+                "profileSource": "test"
+            }
+        }))
+        .expect("test profile")
+    }
 }

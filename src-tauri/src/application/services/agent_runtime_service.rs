@@ -3,8 +3,11 @@ use std::sync::Arc;
 
 use tokio::sync::{RwLock, oneshot, watch};
 
+use crate::application::errors::ApplicationError;
 use crate::application::services::agent_model_gateway::AgentModelGateway;
-use crate::application::services::agent_profile_service::AgentProfileService;
+use crate::application::services::agent_profile_service::{
+    AgentProfileResolveInput, AgentProfileService, materialize_agent_system_prompt,
+};
 use crate::application::services::agent_tools::{AgentToolDispatcher, BuiltinAgentToolRegistry};
 use crate::application::services::skill_service::SkillService;
 use crate::domain::models::agent::AgentToolSpec;
@@ -97,5 +100,21 @@ impl AgentRuntimeService {
 
     pub fn tool_specs(&self) -> &[AgentToolSpec] {
         self.tool_registry.specs()
+    }
+
+    pub async fn resolve_agent_system_prompt(
+        &self,
+        profile_id: Option<&str>,
+    ) -> Result<String, ApplicationError> {
+        let profile = self
+            .profile_service
+            .resolve_profile(AgentProfileResolveInput {
+                profile_id,
+                known_tools: self.tool_registry.specs(),
+            })
+            .await?;
+        let visible_tools = self.tool_registry.visible_specs(&profile)?;
+
+        Ok(materialize_agent_system_prompt(&visible_tools, &profile))
     }
 }

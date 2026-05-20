@@ -121,8 +121,6 @@ const default_scenario_format = '{{scenario}}';
 const default_group_nudge_prompt = '[Write the next reply only as {{char}}.]';
 const AGENT_SYSTEM_PROMPT_IDENTIFIER = 'agentSystemPrompt';
 const AGENT_RESULTS_PROMPT_IDENTIFIER = 'agentResults';
-const AGENT_PROMPT_MARKER_FIELD = '_tauritavern_agent_prompt_marker';
-const AGENT_SYSTEM_PROMPT_MARKER_CONTENT = '[TauriTavern Agent System Prompt is resolved by the Agent runtime.]';
 const AGENT_ONLY_PROMPT_IDENTIFIERS = new Set([AGENT_SYSTEM_PROMPT_IDENTIFIER, AGENT_RESULTS_PROMPT_IDENTIFIER]);
 const default_bias_presets = {
     [default_bias]: [],
@@ -1548,23 +1546,34 @@ function removeAgentOnlyPrompts(prompts) {
 }
 
 /**
- * Populates the Agent System Prompt marker at the PromptManager-controlled position.
+ * Materializes the resolved Agent System Prompt at the PromptManager-controlled position.
  *
  * @param {import('./PromptManager.js').PromptCollection} prompts - PromptCollection containing all prompts.
  * @param {ChatCompletion} chatCompletion - An instance of ChatCompletion class that will be populated with the prompts.
  * @param {boolean} agentMode - Whether this prompt snapshot is owned by the Agent runtime.
+ * @param {string|null} agentSystemPrompt - Resolved Agent system prompt content.
  */
-async function populateAgentSystemPromptMarker(prompts, chatCompletion, agentMode) {
+async function populateAgentSystemPrompt(prompts, chatCompletion, agentMode, agentSystemPrompt) {
     if (!agentMode) {
         return;
     }
     if (!prompts.has(AGENT_SYSTEM_PROMPT_IDENTIFIER)) {
-        throw new Error('agent.system_prompt_marker_missing: PromptManager must include agentSystemPrompt in Agent Mode');
+        throw new Error('agent.system_prompt_component_missing: PromptManager must include agentSystemPrompt in Agent Mode');
     }
 
+    const content = String(agentSystemPrompt ?? '');
+    if (!content.trim()) {
+        throw new Error('agent.system_prompt_required: Agent Mode requires a resolved Agent system prompt');
+    }
+
+    const prompt = prompts.get(AGENT_SYSTEM_PROMPT_IDENTIFIER);
+    const materializedPrompt = promptManager.preparePrompt({
+        ...prompt,
+        content,
+    });
+
     chatCompletion.add(new MessageCollection(AGENT_SYSTEM_PROMPT_IDENTIFIER), prompts.index(AGENT_SYSTEM_PROMPT_IDENTIFIER));
-    const message = await Message.createAsync('system', AGENT_SYSTEM_PROMPT_MARKER_CONTENT, AGENT_SYSTEM_PROMPT_IDENTIFIER);
-    message.agentPromptMarker = AGENT_SYSTEM_PROMPT_IDENTIFIER;
+    const message = await Message.fromPromptAsync(materializedPrompt);
     chatCompletion.insertAtEnd(message, AGENT_SYSTEM_PROMPT_IDENTIFIER);
 }
 
@@ -1617,9 +1626,10 @@ export function getPromptRole(role) {
  * @param {object[]} options.messageExamples - Array containing all message examples.
  * @param {(message: string) => void} options.attachWarning - Warning sink for attach-existing prompt issues.
  * @param {boolean} [options.agentMode] Skip legacy frontend tool registration for Agent-owned tool loops.
+ * @param {string|null} [options.agentSystemPrompt] Resolved Agent system prompt content.
  * @returns {Promise<void>}
  */
-async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning, agentMode = false }) {
+async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning, agentMode = false, agentSystemPrompt = null }) {
     if (!agentMode) {
         removeAgentOnlyPrompts(prompts);
     }
@@ -1649,7 +1659,7 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     };
 
     chatCompletion.reserveBudget(3); // every reply is primed with <|start|>assistant<|message|>
-    await populateAgentSystemPromptMarker(prompts, chatCompletion, agentMode);
+    await populateAgentSystemPrompt(prompts, chatCompletion, agentMode, agentSystemPrompt);
 
     // Character and world information
     await addToChatCompletion('worldInfoBefore');
@@ -1972,6 +1982,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
  * @param {object[]} content.messages - An array of messages to be used as chat history.
  * @param {string[]} content.messageExamples - An array of messages to be used as dialogue examples.
  * @param {boolean} [content.agentMode] Skip legacy frontend tool state for Agent-owned tool loops.
+ * @param {string|null} [content.agentSystemPrompt] Resolved Agent system prompt content.
  * @param dryRun - Whether this is a live call or not.
  * @returns {Promise<(any[]|boolean)[]>} An array where the first element is the prepared chat and the second element is a boolean flag.
  */
@@ -1993,6 +2004,7 @@ export async function prepareOpenAIMessages({
     messages,
     messageExamples,
     agentMode = false,
+    agentSystemPrompt = null,
 }, dryRun) {
     // Without a character selected, there is no way to accurately calculate tokens
     if (!promptManager.activeCharacter && dryRun) return [null, false];
@@ -2028,7 +2040,7 @@ export async function prepareOpenAIMessages({
         };
 
         // Fill the chat completion with as much context as the budget allows
-        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning, agentMode });
+        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning, agentMode, agentSystemPrompt });
     } catch (error) {
         if (error instanceof TokenBudgetExceededError) {
             toastr.error(t`Mandatory prompts exceed the context size.`);
@@ -2044,6 +2056,9 @@ export async function prepareOpenAIMessages({
             chatCompletion.log(error);
             chatCompletion.log(error.stack);
             chatCompletion.log('----------------------------------------------------');
+        }
+        if (agentMode) {
+            throw error;
         }
     } finally {
         // Pass chat completion to prompt manager for inspection
@@ -4185,8 +4200,6 @@ class Message {
     native = null;
     /** @type {string?} */
     reasoningContent = null;
-    /** @type {string?} */
-    agentPromptMarker = null;
 
     /**
      * @constructor
@@ -4502,7 +4515,6 @@ class MessageCollection {
                     ...(message.reasoning && { reasoning: message.reasoning }),
                     ...(message.native && { native: message.native }),
                     ...(message.reasoningContent && { reasoning_content: message.reasoningContent }),
-                    ...(message.agentPromptMarker && { [AGENT_PROMPT_MARKER_FIELD]: message.agentPromptMarker }),
                 });
             }
             return acc;
@@ -4798,7 +4810,6 @@ export class ChatCompletion {
                     ...(item.reasoning ? { reasoning: item.reasoning } : {}),
                     ...(item.native ? { native: item.native } : {}),
                     ...(item.reasoningContent ? { reasoning_content: item.reasoningContent } : {}),
-                    ...(item.agentPromptMarker ? { [AGENT_PROMPT_MARKER_FIELD]: item.agentPromptMarker } : {}),
                 };
                 chat.push(message);
             } else {

@@ -68,6 +68,35 @@ fn workspace_id_uses_stable_chat_id_not_character_chat_file_name() {
 }
 
 #[tokio::test]
+async fn resolves_agent_system_prompt_through_runtime_boundary() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-system-prompt-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(vec![])),
+        test_profile_service(&root),
+    );
+
+    let prompt = service
+        .resolve_agent_system_prompt(None)
+        .await
+        .expect("resolve prompt");
+
+    assert!(prompt.contains("TauriTavern Agent Mode is active."));
+    assert!(prompt.contains("Available tool function names:"));
+    assert!(prompt.contains("workspace_commit"));
+    assert!(prompt.contains("workspace_finish"));
+}
+
+#[tokio::test]
 async fn agent_loop_writes_artifact_and_completes() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-loop-{}",
@@ -2891,7 +2920,10 @@ async fn dispatcher_progressively_reads_worldinfo_activation_from_run_snapshot()
 
 fn prompt_messages(user_content: &str) -> Value {
     json!([
-        agent_system_marker(),
+        {
+            "role": "system",
+            "content": "Materialized Agent System Prompt.",
+        },
         {
             "role": "user",
             "content": user_content,
@@ -2915,14 +2947,6 @@ fn assert_hashed_tool_audit_path(path: &str, root: &str) {
         digest.bytes().all(|byte| byte.is_ascii_hexdigit()),
         "{path}"
     );
-}
-
-fn agent_system_marker() -> Value {
-    json!({
-        "role": "system",
-        "content": "[marker]",
-        "_tauritavern_agent_prompt_marker": "agentSystemPrompt"
-    })
 }
 
 struct MockAgentModelGateway {

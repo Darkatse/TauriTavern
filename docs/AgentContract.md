@@ -98,10 +98,10 @@ Provider adapter 只能把已经编译好的 `AgentModelRequest` / `ModelRequest
 - `provider_state` 只能作为 run-scoped continuation state 在 Agent gateway / ChatCompletion payload builder / repository 内部传递；不得成为 prompt 内容、用户设置或上游 provider 字段。
 - `_tauritavern_provider_state` 必须在 LLM API log 和真正发往上游的 payload 前剥离。
 - Tool call id 缺失必须 fail-fast；不得自动生成 fallback id。
-- `agentSystemPrompt` 的内容只来自已解析的 Agent Profile；PromptManager/Preset 只能控制该组件在 Agent prompt 中的位置。
-- Agent Mode 的 prompt snapshot 必须包含且只包含一个 `agentSystemPrompt` 内部 marker；runtime 在该位置替换真实 system prompt，缺失或重复必须 fail-fast。
+- `agentSystemPrompt` 的内容只来自已解析的 Agent Profile；PromptManager/Preset 控制该组件在 Agent prompt 中的位置与 role。
+- Agent Mode 前端必须在 PromptManager 的 `agentSystemPrompt` index materialize 真实 Agent system prompt；runtime 只消费最终 messages，并 fail-fast 拒绝内部 marker 泄漏。
 - `agentResults` 是 PromptManager 中的 reserved no-op marker，不得向模型注入历史 Agent commit 内容；当前 run 的工具结果只能通过 runtime tool loop 的 assistant/tool messages 进入模型，跨 run 状态只能通过 persist/workspace 契约进入。
-- Legacy Generation 必须剥离 Agent-only prompt component，不得接触 `agentSystemPrompt` marker、`agentResults` marker 或 Agent system prompt 内容。
+- Legacy Generation 必须剥离 Agent-only prompt component，不得接触 `agentSystemPrompt`、`agentResults` 或 Agent system prompt 内容。
 
 ### 1.5 Agent Profile 是运行策略，不只是模型选择
 
