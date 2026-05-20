@@ -91,7 +91,7 @@ pub trait GroupChatRepository: Send + Sync {
         &self,
         old_file_name: &str,
         new_file_name: &str,
-    ) -> Result<(), DomainError>;
+    ) -> Result<String, DomainError>;
 
     /// Import a group chat payload and return the created chat id (without extension).
     async fn import_group_chat_payload(&self, file_path: &Path) -> Result<String, DomainError>;

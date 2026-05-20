@@ -1,5 +1,6 @@
 // Tauri commands
 pub mod agent_commands;
+pub mod asset_commands;
 pub mod avatar_commands;
 pub mod background_commands;
 pub mod bootstrap_commands;
@@ -19,11 +20,13 @@ pub mod group_chat_commands;
 pub mod group_commands;
 pub mod helpers;
 pub mod image_commands;
+pub mod image_metadata_commands;
 #[cfg(target_os = "ios")]
 pub mod ios_file_bridge_commands;
 pub mod lan_sync_commands;
 pub mod native_regex_commands;
 pub mod preset_commands;
+pub mod provider_metadata_commands;
 pub mod quick_reply_commands;
 pub mod registry;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]

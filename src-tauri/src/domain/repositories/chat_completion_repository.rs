@@ -20,7 +20,9 @@ pub enum ChatCompletionSource {
     NanoGpt,
     Chutes,
     SiliconFlow,
+    WorkersAi,
     Zai,
+    MiniMax,
 }
 
 impl ChatCompletionSource {
@@ -39,7 +41,11 @@ impl ChatCompletionSource {
             "nanogpt" | "nano-gpt" | "nano gpt" => Some(Self::NanoGpt),
             "chutes" => Some(Self::Chutes),
             "siliconflow" | "silicon flow" => Some(Self::SiliconFlow),
+            "workers_ai" | "workers-ai" | "workers ai" | "cloudflare workers ai" => {
+                Some(Self::WorkersAi)
+            }
             "zai" | "z.ai" | "glm" => Some(Self::Zai),
+            "minimax" | "mini-max" | "mini max" => Some(Self::MiniMax),
             _ => None,
         }
     }
@@ -59,7 +65,9 @@ impl ChatCompletionSource {
             Self::NanoGpt => "nanogpt",
             Self::Chutes => "chutes",
             Self::SiliconFlow => "siliconflow",
+            Self::WorkersAi => "workers_ai",
             Self::Zai => "zai",
+            Self::MiniMax => "minimax",
         }
     }
 
@@ -78,7 +86,9 @@ impl ChatCompletionSource {
             Self::NanoGpt => "NanoGPT",
             Self::Chutes => "Chutes",
             Self::SiliconFlow => "SiliconFlow",
+            Self::WorkersAi => "Cloudflare Workers AI",
             Self::Zai => "Z.AI (GLM)",
+            Self::MiniMax => "MiniMax",
         }
     }
 }
@@ -207,8 +217,16 @@ mod tests {
             Some(ChatCompletionSource::SiliconFlow)
         );
         assert_eq!(
+            ChatCompletionSource::parse("workers_ai"),
+            Some(ChatCompletionSource::WorkersAi)
+        );
+        assert_eq!(
             ChatCompletionSource::parse("zai"),
             Some(ChatCompletionSource::Zai)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("minimax"),
+            Some(ChatCompletionSource::MiniMax)
         );
         assert_eq!(
             ChatCompletionSource::parse("vertexai"),

@@ -141,7 +141,7 @@ export function createInvokeService({ invoke, policies }) {
             case 'InternalServerError':
                 return `Internal server error: ${nested}`;
             case 'TooManyRequests':
-                return nested;
+                return `Too many requests: ${nested}`;
             default:
                 return '';
         }

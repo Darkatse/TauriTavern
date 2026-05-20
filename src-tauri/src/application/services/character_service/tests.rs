@@ -1,7 +1,8 @@
 use super::CharacterService;
 use crate::application::dto::character_dto::{
-    CreateCharacterDto, ExportCharacterContentDto, ExportCharacterDto, ImportCharacterDto,
-    MergeCharacterCardDataDto, UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
+    BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataFilterDto, CreateCharacterDto,
+    ExportCharacterContentDto, ExportCharacterDto, ImportCharacterDto, MergeCharacterCardDataDto,
+    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::{
@@ -97,6 +98,7 @@ async fn setup_service() -> (
     let root = unique_temp_root();
     let characters_dir = root.join("characters");
     let chats_dir = root.join("chats");
+    let thumbnails_avatar_dir = root.join("thumbnails/avatar");
     let worlds_dir = root.join("worlds");
     let default_avatar = root.join("default.png");
 
@@ -106,6 +108,9 @@ async fn setup_service() -> (
     fs::create_dir_all(&chats_dir)
         .await
         .expect("create chats dir");
+    fs::create_dir_all(&thumbnails_avatar_dir)
+        .await
+        .expect("create avatar thumbnails dir");
     fs::create_dir_all(&worlds_dir)
         .await
         .expect("create worlds dir");
@@ -113,13 +118,18 @@ async fn setup_service() -> (
         .await
         .expect("write default avatar");
 
-    let character_repository =
-        FileCharacterRepository::new(characters_dir, chats_dir, default_avatar);
+    let character_repository = FileCharacterRepository::new(
+        characters_dir,
+        chats_dir,
+        thumbnails_avatar_dir,
+        default_avatar,
+    );
     let world_info_repository = FileWorldInfoRepository::new(worlds_dir);
     let service = CharacterService::new(
         Arc::new(FileCharacterRepository::new(
             root.join("characters"),
             root.join("chats"),
+            root.join("thumbnails/avatar"),
             root.join("default.png"),
         )),
         Arc::new(FileChatRepository::new(
@@ -802,7 +812,7 @@ async fn update_character_card_data_materializes_bound_lorebook_for_v3_origin_ca
             "name": "Bound Raw Update",
             "description": "Before",
             "first_mes": "Hello",
-            "character_book": embedded_book,
+            "character_book": embedded_book.clone(),
             "extensions": {
                 "talkativeness": 0.5,
                 "fav": false,
@@ -1072,6 +1082,105 @@ async fn merge_character_card_data_preserves_unknown_fields() {
             .and_then(serde_json::Value::as_str),
         Some("After Merge")
     );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn bulk_merge_character_card_data_filters_and_unsets_extension_fields() {
+    let (service, character_repository, _world_info_repository, root) = setup_service().await;
+
+    fn card_payload(name: &str, extra_extension: Option<serde_json::Value>) -> serde_json::Value {
+        let mut extensions = serde_json::Map::from_iter([
+            ("talkativeness".to_string(), json!(0.5)),
+            ("fav".to_string(), json!(false)),
+            ("world".to_string(), json!("")),
+            (
+                "depth_prompt".to_string(),
+                json!({
+                    "prompt": "",
+                    "depth": 4,
+                    "role": "system"
+                }),
+            ),
+        ]);
+
+        if let Some(value) = extra_extension {
+            extensions.insert("greeting_tools".to_string(), value);
+        }
+
+        json!({
+            "spec": "chara_card_v2",
+            "spec_version": "2.0",
+            "name": name,
+            "description": "",
+            "personality": "",
+            "scenario": "",
+            "first_mes": "Hello",
+            "mes_example": "",
+            "data": {
+                "name": name,
+                "description": "",
+                "personality": "",
+                "scenario": "",
+                "first_mes": "Hello",
+                "mes_example": "",
+                "creator_notes": "",
+                "system_prompt": "",
+                "post_history_instructions": "",
+                "tags": [],
+                "alternate_greetings": [],
+                "extensions": extensions
+            }
+        })
+    }
+
+    write_character_png(&root, "Bulk A", &card_payload("Bulk A", Some(json!("old")))).await;
+    write_character_png(&root, "Bulk B", &card_payload("Bulk B", None)).await;
+
+    let result = service
+        .bulk_merge_character_card_data(BulkMergeCharacterCardDataDto {
+            avatars: vec!["Bulk A.png".to_string(), "Bulk B.png".to_string()],
+            data: json!({
+                "data": {
+                    "extensions": {
+                        "greeting_tools": "__@@UNSET@@__",
+                        "bulk_marker": true
+                    }
+                }
+            }),
+            filter: Some(BulkMergeCharacterCardDataFilterDto {
+                path: "data.extensions.greeting_tools".to_string(),
+            }),
+        })
+        .await
+        .expect("bulk merge character card data");
+
+    assert_eq!(result.updated, vec!["Bulk A.png".to_string()]);
+    assert_eq!(result.skipped, vec!["Bulk B.png".to_string()]);
+    assert!(result.failed.is_empty());
+
+    let stored_a: serde_json::Value = serde_json::from_str(
+        &character_repository
+            .read_character_card_json("Bulk A")
+            .await
+            .expect("read bulk A"),
+    )
+    .expect("parse bulk A");
+    let stored_b: serde_json::Value = serde_json::from_str(
+        &character_repository
+            .read_character_card_json("Bulk B")
+            .await
+            .expect("read bulk B"),
+    )
+    .expect("parse bulk B");
+
+    assert_eq!(stored_a.pointer("/data/extensions/greeting_tools"), None);
+    assert_eq!(
+        stored_a.pointer("/data/extensions/bulk_marker"),
+        Some(&json!(true))
+    );
+    assert_eq!(stored_b.pointer("/data/extensions/bulk_marker"), None);
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -1635,6 +1744,9 @@ async fn create_character_persists_embedded_primary_lorebook() {
 
     service
         .create_character(CreateCharacterDto {
+            file_name: None,
+            json_data: None,
+            primary_lorebook: Some("bound-book".to_string()),
             name: "Export Test".to_string(),
             description: "desc".to_string(),
             personality: "persona".to_string(),
@@ -1681,11 +1793,113 @@ async fn create_character_persists_embedded_primary_lorebook() {
 }
 
 #[tokio::test]
-async fn create_character_requires_existing_primary_lorebook() {
-    let (service, _character_repository, _world_info_repository, root) = setup_service().await;
+async fn create_character_preserves_json_data_foreign_fields() {
+    let (service, character_repository, _world_info_repository, root) = setup_service().await;
+    let embedded_book = json!({
+        "name": "embedded-book",
+        "entries": [
+            { "content": "keep me" }
+        ],
+        "extensions": {
+            "source": "json_data"
+        }
+    });
+    let base_card = json!({
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "name": "Old Name",
+        "description": "Old description",
+        "json_data": { "recursive": true },
+        "x_custom_top": { "nested": true },
+        "data": {
+            "name": "Old Name",
+            "description": "Old description",
+            "character_book": embedded_book,
+            "extensions": {
+                "tavern_helper": {
+                    "scripts": [
+                        { "id": "script-1" }
+                    ]
+                }
+            },
+            "x_custom_data": 123
+        }
+    });
 
-    let error = service
+    service
         .create_character(CreateCharacterDto {
+            file_name: Some("Json Data Create".to_string()),
+            json_data: Some(base_card.to_string()),
+            primary_lorebook: None,
+            name: "Json Data Create".to_string(),
+            description: "New description".to_string(),
+            personality: "persona".to_string(),
+            scenario: String::new(),
+            first_mes: "hello".to_string(),
+            mes_example: String::new(),
+            creator: None,
+            creator_notes: None,
+            character_version: None,
+            tags: None,
+            talkativeness: Some(0.5),
+            fav: Some(false),
+            alternate_greetings: None,
+            system_prompt: None,
+            post_history_instructions: None,
+            extensions: None,
+        })
+        .await
+        .expect("create character from json_data");
+
+    let stored_json = character_repository
+        .read_character_card_json("Json Data Create")
+        .await
+        .expect("read created character card");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse created character card");
+
+    assert_eq!(stored_value.get("json_data"), None);
+    assert_eq!(
+        stored_value.get("x_custom_top"),
+        Some(&json!({ "nested": true }))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/x_custom_data"),
+        Some(&json!(123))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/extensions/tavern_helper/scripts/0/id"),
+        Some(&json!("script-1"))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/character_book"),
+        Some(&embedded_book)
+    );
+    assert_eq!(
+        stored_value
+            .get("description")
+            .and_then(serde_json::Value::as_str),
+        Some("New description")
+    );
+    assert_eq!(
+        stored_value
+            .pointer("/data/name")
+            .and_then(serde_json::Value::as_str),
+        Some("Json Data Create")
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn create_character_keeps_flat_world_when_lorebook_is_missing() {
+    let (service, character_repository, _world_info_repository, root) = setup_service().await;
+
+    service
+        .create_character(CreateCharacterDto {
+            file_name: None,
+            json_data: None,
+            primary_lorebook: Some("missing-book".to_string()),
             name: "Missing World".to_string(),
             description: "desc".to_string(),
             personality: "persona".to_string(),
@@ -1704,12 +1918,53 @@ async fn create_character_requires_existing_primary_lorebook() {
             extensions: Some(json!({ "world": "missing-book" })),
         })
         .await
-        .expect_err("missing primary lorebook should fail");
+        .expect("missing flat world should not block character creation");
 
-    assert!(matches!(
-        error,
-        ApplicationError::NotFound(message) if message == "World info file missing-book doesn't exist"
-    ));
+    let stored = character_repository
+        .find_by_name("Missing World")
+        .await
+        .expect("load stored character");
+    assert_eq!(stored.data.extensions.world, "missing-book");
+    assert!(stored.data.character_book.is_none());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn create_character_keeps_extension_world_without_materializing_lorebook() {
+    let (service, character_repository, _world_info_repository, root) = setup_service().await;
+
+    service
+        .create_character(CreateCharacterDto {
+            file_name: None,
+            json_data: None,
+            primary_lorebook: None,
+            name: "Extension World".to_string(),
+            description: "desc".to_string(),
+            personality: "persona".to_string(),
+            scenario: String::new(),
+            first_mes: "hello".to_string(),
+            mes_example: String::new(),
+            creator: None,
+            creator_notes: None,
+            character_version: None,
+            tags: None,
+            talkativeness: Some(0.5),
+            fav: Some(false),
+            alternate_greetings: None,
+            system_prompt: None,
+            post_history_instructions: None,
+            extensions: Some(json!({ "world": "missing-book" })),
+        })
+        .await
+        .expect("extensions.world should not trigger create-time materialization");
+
+    let stored = character_repository
+        .find_by_name("Extension World")
+        .await
+        .expect("load stored character");
+    assert_eq!(stored.data.extensions.world, "missing-book");
+    assert!(stored.data.character_book.is_none());
 
     let _ = fs::remove_dir_all(&root).await;
 }

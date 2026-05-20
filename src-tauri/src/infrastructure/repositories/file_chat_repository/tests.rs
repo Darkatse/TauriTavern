@@ -138,6 +138,18 @@ fn backup_name_reserved_windows_name_becomes_empty() {
 }
 
 #[test]
+fn group_backup_key_uses_committed_chat_file_stem() {
+    assert_eq!(
+        FileChatRepository::get_group_backup_key("group/name.jsonl").expect("group backup key"),
+        "group:groupname"
+    );
+    assert_eq!(
+        FileChatRepository::get_group_backup_key("Story.JSONL").expect("group backup key"),
+        "group:Story.JSONL"
+    );
+}
+
+#[test]
 fn backup_file_prefix_matches_sillytavern_pattern() {
     let prefix = FileChatRepository::backup_file_prefix("A:li*ce Name");
     assert_eq!(prefix, "chat_alice_name_");
@@ -218,6 +230,131 @@ async fn save_chat_payload_from_path_sanitizes_windows_unsafe_path_segments() {
         .await
         .expect("load raw payload bytes via unsanitized identifiers");
     assert_eq!(loaded_bytes, raw_payload.as_bytes());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn save_chat_payload_from_path_preserves_unicode_and_upstream_spacing() {
+    let (repository, root) = setup_repository().await;
+
+    let character_name = "角色";
+    let file_name = " 中文会话 .jsonl";
+    let raw_payload = payload_to_jsonl(&payload_with_integrity("unicode-file-name"));
+    let source = root.join("unicode-chat-source.jsonl");
+    fs::write(&source, &raw_payload)
+        .await
+        .expect("write unicode chat payload source");
+
+    repository
+        .save_chat_payload_from_path(character_name, file_name, &source, false)
+        .await
+        .expect("save payload with unicode chat file name");
+
+    let expected_path = root
+        .join("chats")
+        .join(sanitize_filename(character_name))
+        .join(" 中文会话 .jsonl");
+    assert!(expected_path.exists());
+    assert!(
+        !root
+            .join("chats")
+            .join(sanitize_filename(character_name))
+            .join("中文会话.jsonl")
+            .exists()
+    );
+
+    let loaded_bytes = repository
+        .get_chat_payload_bytes(character_name, " 中文会话 ")
+        .await
+        .expect("load unicode chat payload bytes");
+    assert_eq!(loaded_bytes, raw_payload.as_bytes());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn save_chat_payload_from_path_keeps_uppercase_jsonl_as_stem_text() {
+    let (repository, root) = setup_repository().await;
+
+    let raw_payload = payload_to_jsonl(&payload_with_integrity("uppercase-jsonl-stem"));
+    let source = root.join("uppercase-jsonl-source.jsonl");
+    fs::write(&source, &raw_payload)
+        .await
+        .expect("write uppercase jsonl chat payload source");
+
+    repository
+        .save_chat_payload_from_path("alice", "Story.JSONL", &source, false)
+        .await
+        .expect("save payload with uppercase JSONL in stem");
+
+    assert!(
+        root.join("chats")
+            .join("alice")
+            .join("Story.JSONL.jsonl")
+            .exists()
+    );
+    assert!(
+        !root
+            .join("chats")
+            .join("alice")
+            .join("Story.jsonl")
+            .exists()
+    );
+
+    let loaded_bytes = repository
+        .get_chat_payload_bytes("alice", "Story.JSONL")
+        .await
+        .expect("load uppercase JSONL stem payload bytes");
+    assert_eq!(loaded_bytes, raw_payload.as_bytes());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn save_chat_payload_from_path_rejects_chat_file_names_that_sanitize_to_empty() {
+    let (repository, root) = setup_repository().await;
+
+    let raw_payload = payload_to_jsonl(&payload_with_integrity("invalid-file-name"));
+    let source = root.join("invalid-chat-name-source.jsonl");
+    fs::write(&source, &raw_payload)
+        .await
+        .expect("write invalid chat payload source");
+
+    let error = repository
+        .save_chat_payload_from_path("alice", "*.jsonl", &source, false)
+        .await
+        .expect_err("empty sanitized chat file name should fail");
+
+    assert!(
+        matches!(error, DomainError::InvalidData(message) if message == "Invalid chat file name")
+    );
+    assert!(!root.join("chats").join("alice").join("chat.jsonl").exists());
+    assert!(!root.join("chats").join("alice").join(".jsonl").exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn save_chat_payload_from_path_rejects_names_that_lose_jsonl_suffix_after_truncation() {
+    let (repository, root) = setup_repository().await;
+
+    let raw_payload = payload_to_jsonl(&payload_with_integrity("truncated-extension"));
+    let source = root.join("truncated-extension-source.jsonl");
+    fs::write(&source, &raw_payload)
+        .await
+        .expect("write chat payload source");
+
+    let overlong_file_name = "a".repeat(250);
+    let error = repository
+        .save_chat_payload_from_path("alice", &overlong_file_name, &source, false)
+        .await
+        .expect_err("chat file name must keep a complete jsonl suffix");
+
+    assert!(
+        matches!(error, DomainError::InvalidData(message) if message == "Invalid chat file name")
+    );
+    assert!(!root.join("chats").join("alice").exists());
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -482,6 +619,30 @@ async fn save_group_chat_payload_from_path_sanitizes_windows_unsafe_id() {
 }
 
 #[tokio::test]
+async fn save_group_chat_payload_from_path_rejects_ids_that_sanitize_to_empty() {
+    let (repository, root) = setup_repository().await;
+
+    let raw_payload = payload_to_jsonl(&payload_with_integrity("group-invalid-id"));
+    let source = root.join("group-invalid-id-source.jsonl");
+    fs::write(&source, &raw_payload)
+        .await
+        .expect("write group payload source");
+
+    let error = repository
+        .save_group_chat_payload_from_path("*.jsonl", &source, false)
+        .await
+        .expect_err("empty sanitized group chat id should fail");
+
+    assert!(
+        matches!(error, DomainError::InvalidData(message) if message == "Invalid chat file name")
+    );
+    assert!(!root.join("group chats").join("chat.jsonl").exists());
+    assert!(!root.join("group chats").join(".jsonl").exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn save_group_chat_payload_from_path_enforces_integrity() {
     let (repository, root) = setup_repository().await;
 
@@ -592,6 +753,38 @@ async fn import_chat_payload_creates_unique_files() {
 }
 
 #[tokio::test]
+async fn import_chat_payload_preserves_jsonl_suffix_for_long_character_names() {
+    let (repository, root) = setup_repository().await;
+
+    let import_path = root.join("long-import.jsonl");
+    let import_content = payload_to_jsonl(&payload_with_integrity("import-long"));
+    fs::write(&import_path, import_content)
+        .await
+        .expect("write long import file");
+
+    let long_display_name = "角色".repeat(130);
+    let first = repository
+        .import_chat_payload("alice", &long_display_name, "User", &import_path, "jsonl")
+        .await
+        .expect("first import with long display name");
+    let second = repository
+        .import_chat_payload("alice", &long_display_name, "User", &import_path, "jsonl")
+        .await
+        .expect("second import with long display name");
+
+    assert_eq!(first.len(), 1);
+    assert_eq!(second.len(), 1);
+    assert_ne!(first[0], second[0]);
+    for file_name in [&first[0], &second[0]] {
+        assert!(file_name.ends_with(".jsonl"));
+        assert!(file_name.len() <= 255);
+        assert!(root.join("chats").join("alice").join(file_name).exists());
+    }
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn rename_chat_keeps_raw_header_fields_intact() {
     let (repository, root) = setup_repository().await;
     let payload = vec![
@@ -618,10 +811,11 @@ async fn rename_chat_keeps_raw_header_fields_intact() {
         .await
         .expect("save payload");
 
-    repository
-        .rename_chat("alice", "session", "session-renamed")
+    let committed_file_name = repository
+        .rename_chat("alice", "session", "session-renamed.jsonl")
         .await
         .expect("rename chat");
+    assert_eq!(committed_file_name, "session-renamed");
 
     let renamed = repository
         .get_chat_payload("alice", "session-renamed")
@@ -638,6 +832,70 @@ async fn rename_chat_keeps_raw_header_fields_intact() {
 
     let old = repository.get_chat_payload("alice", "session").await;
     assert!(matches!(old, Err(DomainError::NotFound(_))));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn rename_chat_rejects_empty_sanitized_target_without_fallback() {
+    let (repository, root) = setup_repository().await;
+
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session",
+        &payload_with_integrity("rename-invalid-target"),
+        false,
+    )
+    .await
+    .expect("save payload");
+
+    let error = repository
+        .rename_chat("alice", "session", "*.jsonl")
+        .await
+        .expect_err("empty sanitized rename target should fail");
+
+    assert!(
+        matches!(error, DomainError::InvalidData(message) if message == "Invalid chat file name")
+    );
+    assert!(
+        root.join("chats")
+            .join("alice")
+            .join("session.jsonl")
+            .exists()
+    );
+    assert!(!root.join("chats").join("alice").join("chat.jsonl").exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn rename_group_chat_returns_committed_file_stem() {
+    let (repository, root) = setup_repository().await;
+    let payload = payload_with_integrity("group-rename-a");
+
+    save_group_chat_payload_from_values(&repository, &root, "group-session", &payload, false)
+        .await
+        .expect("save group payload");
+
+    let committed_file_name = repository
+        .rename_group_chat_payload("group-session", "group-session-renamed.jsonl")
+        .await
+        .expect("rename group chat");
+
+    assert_eq!(committed_file_name, "group-session-renamed");
+    assert!(
+        root.join("group chats")
+            .join("group-session-renamed.jsonl")
+            .exists()
+    );
+    assert!(
+        !root
+            .join("group chats")
+            .join("group-session.jsonl")
+            .exists()
+    );
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -1503,6 +1761,62 @@ async fn list_recent_chat_summaries_limits_results_and_keeps_pinned() {
 }
 
 #[tokio::test]
+async fn list_recent_chat_summaries_preserves_upstream_spacing_in_pinned_keys() {
+    let (repository, root) = setup_repository().await;
+    let characters_dir = root.join("characters");
+    fs::create_dir_all(&characters_dir)
+        .await
+        .expect("create characters directory");
+    fs::write(characters_dir.join("alice.png"), b"")
+        .await
+        .expect("create alice card");
+
+    let plain_payload =
+        payload_with_message("recent-plain", "2026-01-01T00:00:00.000Z", "plain", "Alice");
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session",
+        &plain_payload,
+        false,
+    )
+    .await
+    .expect("save plain chat");
+
+    let spaced_payload = payload_with_message(
+        "recent-spaced",
+        "2026-01-02T00:00:00.000Z",
+        "spaced",
+        "Alice",
+    );
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        " session",
+        &spaced_payload,
+        false,
+    )
+    .await
+    .expect("save spaced chat");
+
+    let pinned = vec![PinnedCharacterChat {
+        character_name: "alice".to_string(),
+        file_name: " session".to_string(),
+    }];
+    let results = repository
+        .list_recent_chat_summaries(None, false, 1, &pinned)
+        .await
+        .expect("list recent summaries");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].file_name, " session.jsonl");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn list_recent_group_chat_summaries_limits_results_and_keeps_pinned() {
     let (repository, root) = setup_repository().await;
 
@@ -1545,6 +1859,44 @@ async fn list_recent_group_chat_summaries_limits_results_and_keeps_pinned() {
             .iter()
             .any(|entry| entry.file_name == "group-new.jsonl")
     );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn list_recent_group_chat_summaries_preserves_upstream_spacing_in_pinned_keys() {
+    let (repository, root) = setup_repository().await;
+
+    let plain_payload = payload_with_message(
+        "group-recent-plain",
+        "2026-01-01T00:00:00.000Z",
+        "plain group",
+        "Group",
+    );
+    save_group_chat_payload_from_values(&repository, &root, "group", &plain_payload, false)
+        .await
+        .expect("save plain group chat");
+
+    let spaced_payload = payload_with_message(
+        "group-recent-spaced",
+        "2026-01-02T00:00:00.000Z",
+        "spaced group",
+        "Group",
+    );
+    save_group_chat_payload_from_values(&repository, &root, " group", &spaced_payload, false)
+        .await
+        .expect("save spaced group chat");
+
+    let pinned = vec![PinnedGroupChat {
+        chat_id: " group".to_string(),
+    }];
+    let results = repository
+        .list_recent_group_chat_summaries(None, false, 1, &pinned)
+        .await
+        .expect("list recent group summaries");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].file_name, " group.jsonl");
 
     let _ = fs::remove_dir_all(&root).await;
 }

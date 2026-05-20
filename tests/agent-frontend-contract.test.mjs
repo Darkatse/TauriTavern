@@ -218,6 +218,20 @@ test('/trigger routes Agent generation fail-fast without Legacy fallback', async
     assert.doesNotMatch(routeCall, /getAgentGenerationOptions[\s\S]*?\.catch\s*\(/);
 });
 
+test('/regenerate routes Agent generation fail-fast without Legacy fallback', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/slash-commands.js'), 'utf8');
+    const start = source.indexOf('async function regenerateChatCallback');
+    const end = source.indexOf('async function swipeChatCallback', start);
+    assert.ok(start >= 0 && end > start, 'regenerateChatCallback section must be present');
+
+    const section = source.slice(start, end);
+    assert.match(section, /runRegeneration/);
+    assert.match(section, /getAgentGenerationOptions\(\{\s*generationType: 'regenerate',\s*mainApi: main_api,\s*selectedGroup: selected_group,\s*\}\)/s);
+    assert.match(section, /toastr\.error\(agentErrorMessage\(error\), t`Agent Mode`\)/);
+    assert.match(section, /return Generate\('regenerate', agentOptions\)/);
+    assert.doesNotMatch(section, /getAgentGenerationOptions[\s\S]*?\.catch\s*\(/);
+});
+
 test('Agent System confirmations use SillyTavern Popup instead of window.confirm', async () => {
     const calls = [];
     installWindow({});

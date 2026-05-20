@@ -5,7 +5,7 @@ use tauri::State;
 use crate::app::AppState;
 use crate::application::dto::secret_dto::{
     AllSecretsDto, DeleteSecretDto, FindSecretDto, FindSecretResponseDto, RenameSecretDto,
-    RotateSecretDto, SecretStateDto, WriteSecretDto,
+    RotateSecretDto, SecretSettingsDto, SecretStateDto, WriteSecretDto,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -40,6 +40,15 @@ pub async fn read_secret_state(
         .read_secret_state()
         .await
         .map_err(map_command_error("Failed to read secret state"))
+}
+
+#[tauri::command]
+pub async fn read_secret_settings(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<SecretSettingsDto, CommandError> {
+    log_command("read_secret_settings");
+
+    Ok(app_state.secret_service.read_settings())
 }
 
 #[tauri::command]

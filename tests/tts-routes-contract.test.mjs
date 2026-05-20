@@ -171,6 +171,56 @@ test('mimo tts route delegates generation to backend command', async () => {
     ]);
 });
 
+test('minimax tts route delegates generation to backend command', async () => {
+    const router = createRouteRegistry();
+    const safeInvokeCalls = [];
+    const context = {
+        safeInvoke: async (command, args) => {
+            safeInvokeCalls.push({ command, args });
+            return {
+                status: 200,
+                contentType: 'audio/mpeg',
+                bodyBase64: encodeBytes([7, 8, 9]),
+            };
+        },
+    };
+
+    registerTtsRoutes(router, context);
+
+    const body = {
+        text: 'Hello MiniMax',
+        voiceId: 'Chinese (Mandarin)_Unrestrained_Young_Man',
+        apiHost: 'https://api.minimax.io',
+        model: 'speech-02-hd',
+        speed: 1,
+        volume: 1,
+        pitch: 0,
+        audioSampleRate: 32000,
+        bitrate: 128000,
+        format: 'mp3',
+        language: 'English',
+    };
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/minimax/generate-voice',
+        body,
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'audio/mpeg');
+    assert.deepEqual(Array.from(new Uint8Array(await response.arrayBuffer())), [7, 8, 9]);
+    assert.deepEqual(safeInvokeCalls, [
+        {
+            command: 'tts_handle',
+            args: {
+                path: 'minimax/generate-voice',
+                body,
+            },
+        },
+    ]);
+});
+
 test('tts route preserves backend validation response bodies', async () => {
     const router = createRouteRegistry();
     const message = 'Unsupported MiMo model: mimo-v3-tts';
@@ -200,12 +250,47 @@ test('tts route preserves backend validation response bodies', async () => {
     assert.equal(await response.text(), message);
 });
 
+test('minimax tts route exposes backend errors as json without invalid statusText', async () => {
+    const router = createRouteRegistry();
+    const message = 'API Error: 音色不存在';
+    const context = {
+        safeInvoke: async () => ({
+            status: 502,
+            contentType: 'application/json; charset=utf-8',
+            bodyBase64: encodeText(JSON.stringify({ error: message })),
+            statusText: message,
+        }),
+    };
+
+    registerTtsRoutes(router, context);
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/minimax/generate-voice',
+        body: {
+            text: 'hello',
+            voiceId: 'Chinese (Mandarin)_Unrestrained_Young_Man',
+        },
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 502);
+    assert.equal(response.statusText, '');
+    assert.deepEqual(await response.json(), { error: message });
+});
+
 test('grok provider voice list contract avoids silent fallback', async () => {
     const source = await readFile(new URL('../src/scripts/extensions/tts/grok.js', import.meta.url), 'utf8');
 
     assert.doesNotMatch(source, /voice_id:\s*'una'/);
     assert.doesNotMatch(source, /using fallback/i);
     assert.match(source, /Grok voice list response did not include any voices/);
+});
+
+test('minimax tts frontend can fall back from json errors to text errors', async () => {
+    const source = await readFile(new URL('../src/scripts/extensions/tts/minimax.js', import.meta.url), 'utf8');
+
+    assert.match(source, /response\.clone\(\)\.json\(\)/);
 });
 
 test('tts host route stays a backend-command adapter', async () => {

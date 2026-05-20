@@ -99,7 +99,7 @@ pub async fn add_message(
 pub async fn rename_chat(
     dto: RenameChatDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
+) -> Result<String, CommandError> {
     log_command(format!(
         "rename_chat {}/{} -> {}/{}",
         dto.character_name, dto.old_file_name, dto.character_name, dto.new_file_name

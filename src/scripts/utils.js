@@ -181,6 +181,15 @@ export function isValidUrl(value) {
 }
 
 /**
+ * Checks if a URL is external to the current domain.
+ * @param {string} url URL to check
+ * @returns {boolean} True if the URL is external, false otherwise
+ */
+export function isExternalUrl(url) {
+    return (url.indexOf('://') > 0 || url.indexOf('//') === 0) && !url.startsWith(window.location.origin);
+}
+
+/**
  * Checks if a string is a valid UUID (version 1-5).
  * @param {string} value String to check
  * @returns {boolean} True if the string is a valid UUID, false otherwise.
@@ -1752,24 +1761,116 @@ export function loadFileToDocument(url, type) {
     });
 }
 
+export const supportedImageMimeTypes = Object.freeze([
+    'image/jpeg',
+    'image/png',
+    'image/bmp',
+    'image/tiff',
+    'image/gif',
+    'image/apng',
+    'image/webp',
+    'image/avif',
+]);
+
+/**
+ * Opens a file picker dialog for selecting an avatar image.
+ * @returns {Promise<string|null>} Base64 data URL of selected image, or null if cancelled
+ */
+export async function promptForAvatarFile() {
+    return new Promise(resolve => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = supportedImageMimeTypes.join(',');
+        input.onchange = async (e) => {
+            if (!(e.target instanceof HTMLInputElement)) {
+                resolve(null);
+                return;
+            }
+            const file = e.target.files?.[0];
+            if (!file) {
+                resolve(null);
+                return;
+            }
+            try {
+                const converted = await ensureImageFormatSupported(file);
+                resolve(await getBase64Async(converted));
+            } catch (error) {
+                console.error('Error processing selected image:', error);
+                toastr.error(t`Failed to process selected image: ${error.message}`);
+                resolve(null);
+            }
+        };
+        input.oncancel = () => resolve(null);
+        input.click();
+    });
+}
+
+/**
+ * Resolves avatar data from "prompt", a base64 data URL, or a same-origin/local asset path.
+ * @param {string} input Avatar source
+ * @returns {Promise<string|null>} Base64 data URL, or null if invalid/cancelled
+ */
+export async function resolveAvatarData(input) {
+    if (!input || typeof input !== 'string') {
+        return null;
+    }
+
+    const trimmed = input.trim();
+
+    if (trimmed.toLowerCase() === 'prompt') {
+        return await promptForAvatarFile();
+    }
+
+    if (trimmed.startsWith('data:image/')) {
+        return trimmed;
+    }
+
+    if (isExternalUrl(trimmed)) {
+        toastr.warning(t`External URLs are not supported for avatars. Use a local file path or "prompt" to select a file.`);
+        return null;
+    }
+
+    if (trimmed.includes('/') || trimmed.endsWith('.png')) {
+        try {
+            let url = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+            if (trimmed.startsWith(window.location.origin)) {
+                url = new URL(trimmed).pathname;
+            }
+            if (!url.includes('/', 1)) {
+                url = `/characters/${trimmed}`;
+            }
+
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`File not found or inaccessible: ${response.status}`);
+            }
+
+            const blob = await response.blob();
+            if (!blob.type.startsWith('image/')) {
+                throw new Error('File is not an image');
+            }
+
+            const converted = await ensureImageFormatSupported(new File([blob], 'avatar.png', { type: blob.type }));
+            return await getBase64Async(converted);
+        } catch (error) {
+            console.error('Error fetching local avatar:', error);
+            toastr.warning(t`Failed to load avatar from path: ${error.message}`);
+            return null;
+        }
+    }
+
+    console.warn('Unknown avatar format:', trimmed.substring(0, 50));
+    toastr.warning(t`Unknown avatar format. Use "prompt" to select a file, or provide a local file path.`);
+    return null;
+}
+
 /**
  * Ensure that we can import war crime image formats like WEBP and AVIF.
  * @param {File} file Input file
  * @returns {Promise<File>} A promise that resolves to the supported file.
  */
 export async function ensureImageFormatSupported(file) {
-    const supportedTypes = [
-        'image/jpeg',
-        'image/png',
-        'image/bmp',
-        'image/tiff',
-        'image/gif',
-        'image/apng',
-        'image/webp',
-        'image/avif',
-    ];
-
-    if (supportedTypes.includes(file.type) || !file.type.startsWith('image/')) {
+    if (supportedImageMimeTypes.includes(file.type) || !file.type.startsWith('image/')) {
         return file;
     }
 
@@ -2069,6 +2170,25 @@ export function setValueByPath(obj, path, value) {
     }
 
     currentObject[keyParts[keyParts.length - 1]] = value;
+}
+
+/**
+ * Deletes a value from a nested object at the given dot-separated path.
+ * @param {object} obj Object to delete from
+ * @param {string} path Dot-separated key path
+ */
+export function deleteValueByPath(obj, path) {
+    const keyParts = path.split('.');
+    let current = obj;
+
+    for (let i = 0; i < keyParts.length - 1; i++) {
+        if (!current || typeof current !== 'object') return;
+        current = current[keyParts[i]];
+    }
+
+    if (current && typeof current === 'object') {
+        delete current[keyParts[keyParts.length - 1]];
+    }
 }
 
 /**
@@ -2960,4 +3080,53 @@ export function createTimeout(ms, errorMessage = '') {
     return new Promise((_, reject) => {
         setTimeout(() => reject(new Error(errorMessage)), ms);
     });
+}
+
+/**
+ * Registers a delegated long-press handler for touch devices.
+ * @param {string} selector CSS selector for target elements.
+ * @param {(e: TouchEvent) => void} callback Callback invoked with `this` bound to the matched element.
+ * @param {number} [delay=500] Long-press duration in milliseconds.
+ */
+export function addLongPressEvent(selector, callback, delay = 500) {
+    let timer = null;
+    let fired = false;
+    let target = null;
+
+    document.addEventListener('touchstart', function (event) {
+        if (!(event.target instanceof Element)) {
+            return;
+        }
+
+        const element = event.target.closest(selector);
+        if (!element) {
+            return;
+        }
+
+        target = element;
+        fired = false;
+        timer = setTimeout(() => {
+            fired = true;
+            event.preventDefault();
+            callback.call(element, event);
+        }, delay);
+    }, { passive: false });
+
+    document.addEventListener('touchend', cancelTimer);
+    document.addEventListener('touchmove', cancelTimer);
+    document.addEventListener('touchcancel', cancelTimer);
+
+    document.addEventListener('click', function (event) {
+        if (fired && target && target.contains(event.target)) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            fired = false;
+            target = null;
+        }
+    }, true);
+
+    function cancelTimer() {
+        clearTimeout(timer);
+        timer = null;
+    }
 }

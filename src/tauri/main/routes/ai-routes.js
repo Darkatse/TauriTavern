@@ -50,6 +50,15 @@ const ANDROID_GENERATION_BRIDGE_NAME = 'TauriTavernAndroidAiBridge';
 const FAILURE_NOTIFICATION_MAX_BODY_LENGTH = 180;
 const ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS = 4000;
 const ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA = 160;
+const CAPTION_UNAVAILABLE_ROUTES = Object.freeze([
+    '/api/extra/caption',
+    '/api/horde/caption-image',
+    '/api/openai/caption-image',
+    '/api/google/caption-image',
+    '/api/anthropic/caption-image',
+    '/api/backends/text-completions/ollama/caption-image',
+]);
+const CAPTION_UNAVAILABLE_MESSAGE = 'Image captioning is not implemented in the TauriTavern native backend.';
 const i18nNotificationKeys = Object.freeze({
     successTitle: 'tauritavern_ai_notification_success_title',
     successBody: 'tauritavern_ai_notification_success_body',
@@ -196,6 +205,7 @@ function getCompletionModel(payload) {
         source.deepseek_model,
         source.moonshot_model,
         source.siliconflow_model,
+        source.minimax_model,
         source.zai_model,
     ];
 
@@ -610,6 +620,13 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
         progressMinCharsDelta: ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA,
     });
 
+    for (const route of CAPTION_UNAVAILABLE_ROUTES) {
+        router.post(route, async () => jsonResponse({
+            error: true,
+            message: CAPTION_UNAVAILABLE_MESSAGE,
+        }, 501));
+    }
+
     router.post('/api/backends/chat-completions/status', async ({ body }) => {
         const payload = asObject(body);
         const dto = {
@@ -619,6 +636,10 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
             proxy_password: String(payload.proxy_password || ''),
             custom_url: String(payload.custom_url || ''),
             custom_include_headers: String(payload.custom_include_headers || ''),
+            siliconflow_endpoint: String(payload.siliconflow_endpoint || ''),
+            minimax_endpoint: String(payload.minimax_endpoint || ''),
+            workers_ai_account_id: String(payload.workers_ai_account_id || ''),
+            secret_id: payload.secret_id ?? null,
             bypass_status_check: Boolean(payload.bypass_status_check),
         };
 

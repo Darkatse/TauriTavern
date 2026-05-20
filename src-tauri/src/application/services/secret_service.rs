@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::application::dto::secret_dto::{
-    AllSecretsDto, FindSecretResponseDto, SecretStateDto, SecretStateItemDto,
+    AllSecretsDto, FindSecretResponseDto, SecretSettingsDto, SecretStateDto, SecretStateItemDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::domain::errors::DomainError;
@@ -23,6 +23,12 @@ impl SecretService {
 
     pub async fn clear_cache(&self) -> Result<(), DomainError> {
         self.secret_repository.clear_cache().await
+    }
+
+    pub fn read_settings(&self) -> SecretSettingsDto {
+        SecretSettingsDto {
+            allow_keys_exposure: self.allow_keys_exposure,
+        }
     }
 
     /// 写入密钥并返回新密钥 ID

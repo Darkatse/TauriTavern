@@ -11,6 +11,7 @@ mod custom;
 mod deepseek;
 mod gemini_interactions;
 mod makersuite;
+mod minimax;
 mod moonshot;
 mod nanogpt;
 mod openai;
@@ -20,6 +21,7 @@ mod prompt_post_processing;
 mod shared;
 mod tool_calls;
 mod vertexai;
+mod workers_ai;
 mod zai;
 
 pub(super) fn build_payload(
@@ -28,7 +30,7 @@ pub(super) fn build_payload(
 ) -> Result<(String, Value), ApplicationError> {
     let mut payload = payload;
 
-    if source != ChatCompletionSource::DeepSeek {
+    if !matches!(source, ChatCompletionSource::DeepSeek) {
         prompt_post_processing::apply_custom_prompt_post_processing(&mut payload);
     }
 
@@ -41,8 +43,10 @@ pub(super) fn build_payload(
         ChatCompletionSource::Moonshot => Ok(moonshot::build(payload)),
         ChatCompletionSource::NanoGpt => nanogpt::build(payload),
         ChatCompletionSource::Chutes => chutes::build(payload),
+        ChatCompletionSource::WorkersAi => workers_ai::build(payload),
         ChatCompletionSource::OpenRouter => Ok(openrouter::build(payload)),
         ChatCompletionSource::Zai => Ok(zai::build(payload)),
+        ChatCompletionSource::MiniMax => Ok(minimax::build(payload)),
         ChatCompletionSource::Custom => custom::build(payload),
         ChatCompletionSource::Claude => Ok(claude::build(payload)?),
         ChatCompletionSource::Makersuite => Ok(makersuite::build(payload)?),

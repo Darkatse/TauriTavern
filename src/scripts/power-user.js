@@ -66,6 +66,8 @@ import { DEFAULT_REASONING_TEMPLATE, loadReasoningTemplates } from './reasoning.
 import { bindModelTemplates } from './chat-templates.js';
 import { IMAGE_OVERSWIPE, MEDIA_DISPLAY } from './constants.js';
 import { t } from './i18n.js';
+import { extractDominantColor, generateThemePalette, deriveBackgroundName } from './util/ThemeGenerator.js';
+import { getBackgroundPath, isCustomBackgroundUrl } from './backgrounds.js';
 
 export const toastPositionClasses = [
     'toast-top-left',
@@ -2681,7 +2683,7 @@ async function saveTheme(name = undefined, theme = undefined) {
  * @param {string} name Name of the theme
  * @returns {object} Theme object
  */
-function getThemeObject(name) {
+export function getThemeObject(name) {
     return {
         name,
         blur_strength: power_user.blur_strength,
@@ -3037,210 +3039,53 @@ function doResetPanels() {
     return '';
 }
 
-function setAvgBG() {
-    const bgimg = new Image();
-    bgimg.src = $('#bg1')
-        .css('background-image')
-        .replace(/^url\(['"]?/, '')
-        .replace(/['"]?\)$/, '');
+async function setAvgBG(args) {
+    const nameOverride = args?.name ? String(args.name).trim() : '';
+    const bgOverride = args?.bg ? String(args.bg).trim() : '';
+    const force = isTrueBoolean(args?.force?.toString());
 
-    /*     const charAvatar = new Image()
-        charAvatar.src = $("#avatar_load_preview")
-            .attr('src')
+    let bgUrl;
+    if (bgOverride) {
+        const isCustom = isCustomBackgroundUrl(bgOverride);
+        bgUrl = isCustom ? bgOverride : getBackgroundPath(bgOverride);
+    } else {
+        bgUrl = $('#bg1')
+            .css('background-image')
             .replace(/^url\(['"]?/, '')
             .replace(/['"]?\)$/, '');
-
-        const userAvatar = new Image()
-        userAvatar.src = $("#user_avatar_block .avatar.selected img")
-            .attr('src')
-            .replace(/^url\(['"]?/, '')
-            .replace(/['"]?\)$/, ''); */
-
-
-    bgimg.onload = function () {
-        var rgb = getAverageRGB(bgimg);
-        //console.log(`average color of the bg is:`)
-        //console.log(rgb);
-        $('#blur-tint-color-picker').attr('color', 'rgb(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ')');
-
-        const backgroundColorString = $('#blur-tint-color-picker').attr('color')
-            .replace('rgba', '')
-            .replace('rgb', '')
-            .replace('(', '[')
-            .replace(')', ']');   //[50, 120, 200, 1]; // Example background color
-        const backgroundColorArray = JSON.parse(backgroundColorString); //[200, 200, 200, 1]
-        console.log(backgroundColorArray);
-        $('#main-text-color-picker').attr('color', getReadableTextColor(backgroundColorArray));
-        console.log($('#main-text-color-picker').attr('color')); // Output: 'rgba(0, 47, 126, 1)'
-    };
-
-    /*     charAvatar.onload = function () {
-            var rgb = getAverageRGB(charAvatar);
-            //console.log(`average color of the AI avatar is:`);
-            //console.log(rgb);
-            $("#bot-mes-blur-tint-color-picker").attr('color', 'rgb(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ')');
-        }
-
-        userAvatar.onload = function () {
-            var rgb = getAverageRGB(userAvatar);
-            //console.log(`average color of the user avatar is:`);
-            //console.log(rgb);
-            $("#user-mes-blur-tint-color-picker").attr('color', 'rgb(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ')');
-        } */
-
-    function getAverageRGB(imgEl) {
-
-        var blockSize = 5, // only visit every 5 pixels
-            defaultRGB = { r: 0, g: 0, b: 0 }, // for non-supporting envs
-            canvas = document.createElement('canvas'),
-            context = canvas.getContext && canvas.getContext('2d'),
-            data, width, height,
-            i = -4,
-            length,
-            rgb = { r: 0, g: 0, b: 0 },
-            count = 0;
-
-        if (!context) {
-            return defaultRGB;
-        }
-
-        height = canvas.height = imgEl.naturalHeight || imgEl.offsetHeight || imgEl.height;
-        width = canvas.width = imgEl.naturalWidth || imgEl.offsetWidth || imgEl.width;
-        context.drawImage(imgEl, 0, 0);
-
-        try {
-            data = context.getImageData(0, 0, width, height);
-        } catch (e) {
-            /* security error, img on diff domain */alert('x');
-            return defaultRGB;
-        }
-
-        length = data.data.length;
-        while ((i += blockSize * 4) < length) {
-            ++count;
-            rgb.r += data.data[i];
-            rgb.g += data.data[i + 1];
-            rgb.b += data.data[i + 2];
-        }
-
-        // ~~ used to floor values
-        rgb.r = ~~(rgb.r / count);
-        rgb.g = ~~(rgb.g / count);
-        rgb.b = ~~(rgb.b / count);
-
-        return rgb;
-
     }
 
-    /**
-     * Converts an HSL color value to RGB.
-     * @param {number} h Hue value
-     * @param {number} s Saturation value
-     * @param {number} l Luminance value
-     * @return {Array} The RGB representation
-     */
-    function hslToRgb(h, s, l) {
-        const hueToRgb = (p, q, t) => {
-            if (t < 0) t += 1;
-            if (t > 1) t -= 1;
-            if (t < 1 / 6) return p + (q - p) * 6 * t;
-            if (t < 1 / 2) return q;
-            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-            return p;
-        };
-
-        if (s === 0) {
-            return [l, l, l];
-        }
-
-        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-        const p = 2 * l - q;
-        const r = hueToRgb(p, q, h + 1 / 3);
-        const g = hueToRgb(p, q, h);
-        const b = hueToRgb(p, q, h - 1 / 3);
-
-        return [r * 255, g * 255, b * 255];
+    if (!bgUrl || bgUrl === 'none') {
+        toastr.warning('No background image set.');
+        return '';
     }
 
-    //this version keeps BG and main text in same hue
-    /* function getReadableTextColor(rgb) {
-         const [r, g, b] = rgb;
+    const bgName = deriveBackgroundName(bgUrl);
+    const themeName = nameOverride || `bgcol - ${bgName}`;
 
-         // Convert RGB to HSL
-         const rgbToHsl = (r, g, b) => {
-             const max = Math.max(r, g, b);
-             const min = Math.min(r, g, b);
-             const d = max - min;
-             const l = (max + min) / 2;
-
-             if (d === 0) return [0, 0, l];
-
-             const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-             const h = (() => {
-                 switch (max) {
-                     case r:
-                         return (g - b) / d + (g < b ? 6 : 0);
-                     case g:
-                         return (b - r) / d + 2;
-                     case b:
-                         return (r - g) / d + 4;
-                 }
-             })() / 6;
-
-             return [h, s, l];
-         };
-         const [h, s, l] = rgbToHsl(r / 255, g / 255, b / 255);
-
-         // Calculate appropriate text color based on background color
-         const targetLuminance = l > 0.5 ? 0.2 : 0.8;
-         const targetSaturation = s > 0.5 ? s - 0.2 : s + 0.2;
-         const [rNew, gNew, bNew] = hslToRgb(h, targetSaturation, targetLuminance);
-
-         // Return the text color in RGBA format
-         return `rgba(${rNew.toFixed(0)}, ${gNew.toFixed(0)}, ${bNew.toFixed(0)}, 1)`;
-     }*/
-
-    //this version makes main text complimentary color to BG color
-    function getReadableTextColor(rgb) {
-        const [r, g, b] = rgb;
-
-        // Convert RGB to HSL
-        const rgbToHsl = (r, g, b) => {
-            const max = Math.max(r, g, b);
-            const min = Math.min(r, g, b);
-            const d = max - min;
-            const l = (max + min) / 2;
-
-            if (d === 0) return [0, 0, l];
-
-            const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-            const h = (() => {
-                switch (max) {
-                    case r:
-                        return (g - b) / d + (g < b ? 6 : 0);
-                    case g:
-                        return (b - r) / d + 2;
-                    case b:
-                        return (r - g) / d + 4;
-                }
-            })() / 6;
-
-            return [h, s, l];
-        };
-        const [h, s, l] = rgbToHsl(r / 255, g / 255, b / 255);
-
-        // Calculate complementary color based on background color
-        const complementaryHue = (h + 0.5) % 1;
-        const complementarySaturation = s > 0.5 ? s - 0.6 : s + 0.6;
-        const complementaryLuminance = l > 0.5 ? 0.2 : 0.8;
-
-        // Convert complementary color back to RGB
-        const [rNew, gNew, bNew] = hslToRgb(complementaryHue, complementarySaturation, complementaryLuminance);
-
-        // Return the text color in RGBA format
-        return `rgba(${rNew.toFixed(0)}, ${gNew.toFixed(0)}, ${bNew.toFixed(0)}, 1)`;
+    if (themes.some(t => t.name === themeName) && !force) {
+        toastr.warning('Pass "force=true" to overwrite.', `A theme named "${themeName}" already exists.`);
+        return '';
     }
 
+    const bgimg = new Image();
+    bgimg.crossOrigin = 'anonymous';
+    bgimg.src = bgUrl;
+
+    await new Promise((resolve, reject) => {
+        bgimg.onload = resolve;
+        bgimg.onerror = () => reject(new Error('Failed to load background image'));
+    });
+
+    const dominantRgb = extractDominantColor(bgimg);
+    const palette = generateThemePalette(dominantRgb);
+    const theme = getThemeObject(themeName);
+    Object.assign(theme, palette);
+
+    await saveTheme(themeName, theme);
+    applyTheme(themeName);
+
+    toastr.success(`Theme "${themeName}" generated and applied.`);
     return '';
 }
 
@@ -4504,7 +4349,27 @@ jQuery(() => {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'bgcol',
         callback: setAvgBG,
-        helpString: '– WIP test of auto-bg avg coloring',
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'force',
+                description: 'force generation even if a theme with the same name already exists',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'false',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'name',
+                description: 'override the generated theme name',
+                typeList: [ARGUMENT_TYPE.STRING],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'bg',
+                description: 'background image filename to use instead of the current one',
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.backgrounds,
+            }),
+        ],
+        helpString: 'Generates a new theme based on a dominant color of the specified background image. Saves as "bgcol - background name".',
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'theme',

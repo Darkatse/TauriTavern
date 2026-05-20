@@ -22,6 +22,23 @@ pub enum ContentType {
     QuickReplies,
     SysPrompt,
     Reasoning,
+    ErrorPage,
+    Stylesheet,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentScope {
+    User,
+    Global,
+}
+
+impl ContentType {
+    pub fn scope(&self) -> ContentScope {
+        match self {
+            ContentType::ErrorPage | ContentType::Stylesheet => ContentScope::Global,
+            _ => ContentScope::User,
+        }
+    }
 }
 
 /// Content item struct
@@ -41,4 +58,21 @@ pub trait ContentRepository: Send + Sync {
 
     /// Check if default content is initialized for a user
     async fn is_default_content_initialized(&self, user_handle: &str) -> Result<bool, DomainError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ContentScope, ContentType};
+
+    #[test]
+    fn stylesheet_and_error_pages_are_global_content() {
+        assert_eq!(ContentType::Stylesheet.scope(), ContentScope::Global);
+        assert_eq!(ContentType::ErrorPage.scope(), ContentScope::Global);
+    }
+
+    #[test]
+    fn ordinary_default_content_remains_user_scoped() {
+        assert_eq!(ContentType::Character.scope(), ContentScope::User);
+        assert_eq!(ContentType::Settings.scope(), ContentScope::User);
+    }
 }

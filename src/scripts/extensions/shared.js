@@ -1,4 +1,4 @@
-import { CONNECT_API_MAP, getRequestHeaders } from '../../script.js';
+import { CONNECT_API_MAP, createModelIcon, getRequestHeaders } from '../../script.js';
 import { extension_settings, openThirdPartyExtensionMenu } from '../extensions.js';
 import { t } from '../i18n.js';
 import { getAdditionalParametersForSource, oai_settings, proxies, ZAI_ENDPOINT } from '../openai.js';
@@ -7,6 +7,32 @@ import { textgen_types, textgenerationwebui_settings } from '../textgen-settings
 import { getTokenCountAsync } from '../tokenizers.js';
 import { createThumbnail, isValidUrl } from '../utils.js';
 
+export const NATIVE_CAPTION_UNAVAILABLE_MESSAGE = 'Image captioning is not implemented in the TauriTavern native backend.';
+
+async function getCaptionErrorMessage(response) {
+    const fallback = `Failed to caption image via Multimodal API. HTTP ${response.status}`;
+    const text = await response.text();
+    if (!text) {
+        return fallback;
+    }
+
+    try {
+        const data = JSON.parse(text);
+        if (typeof data.message === 'string' && data.message.trim()) {
+            return data.message;
+        }
+        if (typeof data.error === 'string' && data.error.trim()) {
+            return data.error;
+        }
+        if (typeof data.error?.message === 'string' && data.error.message.trim()) {
+            return data.error.message;
+        }
+        return `${fallback}: ${text}`;
+    } catch {
+        return text;
+    }
+}
+
 /**
  * Generates a caption for an image using a multimodal model.
  * @param {string} base64Img Base64 encoded image
@@ -14,6 +40,10 @@ import { createThumbnail, isValidUrl } from '../utils.js';
  * @returns {Promise<string>} Generated caption
  */
 export async function getMultimodalCaption(base64Img, prompt) {
+    if (globalThis.__TAURI_RUNNING__ === true) {
+        throw new Error(NATIVE_CAPTION_UNAVAILABLE_MESSAGE);
+    }
+
     const useReverseProxy =
         (['openai', 'anthropic', 'google', 'mistral', 'vertexai', 'xai', 'zai', 'moonshot'].includes(extension_settings.caption.multimodal_api))
         && extension_settings.caption.allow_reverse_proxy
@@ -131,6 +161,10 @@ export async function getMultimodalCaption(base64Img, prompt) {
         requestBody.zai_endpoint = oai_settings.zai_endpoint || ZAI_ENDPOINT.COMMON;
     }
 
+    if (extension_settings.caption.multimodal_api === 'workers_ai') {
+        requestBody.workers_ai_account_id = oai_settings.workers_ai_account_id;
+    }
+
     function getEndpointUrl() {
         switch (extension_settings.caption.multimodal_api) {
             case 'google':
@@ -152,7 +186,7 @@ export async function getMultimodalCaption(base64Img, prompt) {
     });
 
     if (!apiResult.ok) {
-        throw new Error('Failed to caption image via Multimodal API.');
+        throw new Error(await getCaptionErrorMessage(apiResult));
     }
 
     const { caption } = await apiResult.json();
@@ -287,6 +321,10 @@ function throwIfInvalidModel(useReverseProxy) {
 
     if (multimodalApi === 'pollinations' && !secret_state[SECRET_KEYS.POLLINATIONS]) {
         throw new Error('Pollinations API key is not set.');
+    }
+
+    if (multimodalApi === 'workers_ai' && (!secret_state[SECRET_KEYS.WORKERS_AI] || !oai_settings.workers_ai_account_id)) {
+        throw new Error('Workers AI API key or account ID is not set.');
     }
 }
 
@@ -440,9 +478,13 @@ export class ConnectionManagerRequestService {
                         max_tokens: maxTokens,
                         model: profile.model,
                         chat_completion_source: selectedApiMap.source,
+                        custom_api_format: profile['custom-api-format'],
+                        secret_id: profile['secret-id'],
                         custom_url: profile['api-url'],
                         vertexai_region: profile['api-url'],
                         zai_endpoint: profile['api-url'],
+                        siliconflow_endpoint: profile['api-url'],
+                        minimax_endpoint: profile['api-url'],
                         reverse_proxy: proxyPreset?.url,
                         proxy_password: proxyPreset?.password,
                         custom_prompt_post_processing: profile['prompt-post-processing'],
@@ -455,6 +497,9 @@ export class ConnectionManagerRequestService {
                     if (!selectedApiMap.type) {
                         throw new Error(`API type ${selectedApiMap.selected} does not support text completions`);
                     }
+                    if (globalThis.__TAURI_RUNNING__ === true) {
+                        throw new Error('Text Completion profiles are not supported by the native TauriTavern generation backend yet. Use a Chat Completion profile.');
+                    }
 
                     return await context.TextCompletionService.processRequest({
                         stream,
@@ -463,6 +508,7 @@ export class ConnectionManagerRequestService {
                         model: profile.model,
                         api_type: selectedApiMap.type,
                         api_server: profile['api-url'],
+                        secret_id: profile['secret-id'],
                         ...overridePayload,
                     }, {
                         instructName: includeInstruct ? profile.instruct : undefined,
@@ -535,6 +581,29 @@ export class ConnectionManagerRequestService {
         const profile = SillyTavern.getContext().extensionSettings.connectionManager.profiles.find((p) => p.id === profileId);
         if (!profile) throw new Error(`Profile not found (ID: ${profileId})`);
         return profile;
+    }
+
+    /**
+     * Creates a model icon Image element for the given profile (or the currently selected profile).
+     * Returns null if the profile is not found, has no API, or Connection Manager is unavailable.
+     * @param {string} [profileId] - Profile ID. If omitted, uses the currently selected profile.
+     * @returns {HTMLImageElement | null}
+     */
+    static getProfileIcon(profileId) {
+        if ((SillyTavern.getContext()).extensionSettings.disabledExtensions.includes('connection-manager')) {
+            return null;
+        }
+
+        const id = profileId ?? (SillyTavern.getContext()).extensionSettings.connectionManager.selectedProfile;
+        if (!id) return null;
+
+        try {
+            const profile = this.getProfile(id);
+            if (!profile?.api) return null;
+            return createModelIcon(profile.api, profile.model);
+        } catch {
+            return null;
+        }
     }
 
     /**

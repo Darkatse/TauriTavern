@@ -401,6 +401,25 @@ impl FileCharacterRepository {
         Ok(characters)
     }
 
+    pub(crate) async fn list_avatar_filenames(&self) -> Result<Vec<String>, DomainError> {
+        self.ensure_directory_exists().await?;
+
+        let character_files = list_files_with_extension(&self.characters_dir, "png").await?;
+        let mut avatars = Vec::with_capacity(character_files.len());
+
+        for path in character_files {
+            let file_name = path.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
+                DomainError::InvalidData(format!(
+                    "Character avatar path is not valid UTF-8: {:?}",
+                    path
+                ))
+            })?;
+            avatars.push(file_name.to_string());
+        }
+
+        Ok(avatars)
+    }
+
     pub(crate) async fn read_default_avatar(&self) -> Result<Vec<u8>, DomainError> {
         match fs::read(&self.default_avatar_path).await {
             Ok(bytes) => Ok(bytes),

@@ -10,6 +10,7 @@ use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::agent_workspace_lifecycle_service::{
     AgentRunActivity, AgentWorkspaceLifecycleService,
 };
+use crate::application::services::asset_service::AssetService;
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
 use crate::application::services::character_service::CharacterService;
@@ -20,9 +21,11 @@ use crate::application::services::extension_service::ExtensionService;
 use crate::application::services::extension_store_service::ExtensionStoreService;
 use crate::application::services::group_chat_service::GroupChatService;
 use crate::application::services::group_service::GroupService;
+use crate::application::services::image_metadata_service::ImageMetadataService;
 use crate::application::services::lan_sync_service::LanSyncService;
 use crate::application::services::native_regex_service::NativeRegexService;
 use crate::application::services::preset_service::PresetService;
+use crate::application::services::provider_metadata_service::ProviderMetadataService;
 use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
@@ -41,6 +44,7 @@ use crate::domain::errors::DomainError;
 use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
+use crate::domain::repositories::asset_repository::AssetRepository;
 use crate::domain::repositories::avatar_repository::AvatarRepository;
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::domain::repositories::character_repository::CharacterRepository;
@@ -52,8 +56,10 @@ use crate::domain::repositories::extension_repository::ExtensionRepository;
 use crate::domain::repositories::extension_store_repository::ExtensionStoreRepository;
 use crate::domain::repositories::group_chat_repository::GroupChatRepository;
 use crate::domain::repositories::group_repository::GroupRepository;
+use crate::domain::repositories::image_metadata_repository::ImageMetadataRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::domain::repositories::prompt_cache_repository::PromptCacheRepository;
+use crate::domain::repositories::provider_metadata_repository::ProviderMetadataRepository;
 use crate::domain::repositories::quick_reply_repository::QuickReplyRepository;
 use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::domain::repositories::settings_repository::SettingsRepository;
@@ -70,6 +76,7 @@ use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
 use crate::infrastructure::apis::http_chat_completion_repository::HttpChatCompletionRepository;
+use crate::infrastructure::apis::http_provider_metadata_repository::HttpProviderMetadataRepository;
 use crate::infrastructure::apis::http_stable_diffusion_repository::HttpStableDiffusionRepository;
 use crate::infrastructure::apis::http_translate_repository::HttpTranslateRepository;
 use crate::infrastructure::apis::http_tts_repository::HttpTtsRepository;
@@ -81,6 +88,7 @@ use crate::infrastructure::logging::llm_api_logs::{
 use crate::infrastructure::persistence::file_system::DataDirectory;
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
+use crate::infrastructure::repositories::file_asset_repository::FileAssetRepository;
 use crate::infrastructure::repositories::file_avatar_repository::FileAvatarRepository;
 use crate::infrastructure::repositories::file_background_repository::FileBackgroundRepository;
 use crate::infrastructure::repositories::file_character_repository::FileCharacterRepository;
@@ -89,6 +97,7 @@ use crate::infrastructure::repositories::file_content_repository::FileContentRep
 use crate::infrastructure::repositories::file_extension_repository::FileExtensionRepository;
 use crate::infrastructure::repositories::file_extension_store_repository::FileExtensionStoreRepository;
 use crate::infrastructure::repositories::file_group_repository::FileGroupRepository;
+use crate::infrastructure::repositories::file_image_metadata_repository::FileImageMetadataRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
 use crate::infrastructure::repositories::file_prompt_cache_repository::FilePromptCacheRepository;
 use crate::infrastructure::repositories::file_quick_reply_repository::FileQuickReplyRepository;
@@ -110,17 +119,20 @@ pub(super) struct AppServices {
     pub secret_service: Arc<SecretService>,
     pub skill_service: Arc<SkillService>,
     pub content_service: Arc<ContentService>,
+    pub asset_service: Arc<AssetService>,
     pub extension_service: Arc<ExtensionService>,
     pub extension_store_service: Arc<ExtensionStoreService>,
     pub avatar_service: Arc<AvatarService>,
     pub group_service: Arc<GroupService>,
     pub background_service: Arc<BackgroundService>,
+    pub image_metadata_service: Arc<ImageMetadataService>,
     pub theme_service: Arc<ThemeService>,
     pub preset_service: Arc<PresetService>,
     pub quick_reply_service: Arc<QuickReplyService>,
     pub agent_profile_service: Arc<AgentProfileService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
+    pub provider_metadata_service: Arc<ProviderMetadataService>,
     pub tokenization_service: Arc<TokenizationService>,
     pub stable_diffusion_service: Arc<StableDiffusionService>,
     pub translate_service: Arc<TranslateService>,
@@ -144,11 +156,13 @@ struct AppRepositories {
     secret_repository: Arc<dyn SecretRepository>,
     skill_repository: Arc<dyn SkillRepository>,
     content_repository: Arc<dyn ContentRepository>,
+    asset_repository: Arc<dyn AssetRepository>,
     extension_repository: Arc<dyn ExtensionRepository>,
     extension_store_repository: Arc<dyn ExtensionStoreRepository>,
     avatar_repository: Arc<dyn AvatarRepository>,
     group_repository: Arc<dyn GroupRepository>,
     background_repository: Arc<dyn BackgroundRepository>,
+    image_metadata_repository: Arc<dyn ImageMetadataRepository>,
     theme_repository: Arc<dyn ThemeRepository>,
     preset_repository: Arc<dyn PresetRepository>,
     quick_reply_repository: Arc<dyn QuickReplyRepository>,
@@ -158,6 +172,7 @@ struct AppRepositories {
     workspace_repository: Arc<dyn WorkspaceRepository>,
     checkpoint_repository: Arc<dyn CheckpointRepository>,
     chat_completion_repository: Arc<dyn ChatCompletionRepository>,
+    provider_metadata_repository: Arc<dyn ProviderMetadataRepository>,
     tokenizer_repository: Arc<dyn TokenizerRepository>,
     stable_diffusion_repository: Arc<dyn StableDiffusionRepository>,
     translate_repository: Arc<dyn TranslateRepository>,
@@ -202,6 +217,7 @@ pub(super) async fn build_services(
     };
 
     let content_service = Arc::new(ContentService::new(repositories.content_repository.clone()));
+    let asset_service = Arc::new(AssetService::new(repositories.asset_repository.clone()));
     let extension_service = Arc::new(ExtensionService::new(
         repositories.extension_repository.clone(),
     ));
@@ -209,8 +225,12 @@ pub(super) async fn build_services(
         repositories.extension_store_repository.clone(),
     ));
     let avatar_service = Arc::new(AvatarService::new(repositories.avatar_repository.clone()));
+    let image_metadata_service = Arc::new(ImageMetadataService::new(
+        repositories.image_metadata_repository.clone(),
+    ));
     let background_service = Arc::new(BackgroundService::new(
         repositories.background_repository.clone(),
+        repositories.image_metadata_repository.clone(),
     ));
     let theme_service = Arc::new(ThemeService::new(repositories.theme_repository.clone()));
     let preset_service = Arc::new(PresetService::new(repositories.preset_repository.clone()));
@@ -227,6 +247,11 @@ pub(super) async fn build_services(
         repositories.secret_repository.clone(),
         repositories.settings_repository.clone(),
         repositories.prompt_cache_repository.clone(),
+        ios_policy.clone(),
+    ));
+    let provider_metadata_service = Arc::new(ProviderMetadataService::new(
+        repositories.provider_metadata_repository,
+        repositories.secret_repository.clone(),
         ios_policy.clone(),
     ));
     let agent_runtime_service = Arc::new(AgentRuntimeService::new(
@@ -250,6 +275,7 @@ pub(super) async fn build_services(
     let native_regex_service = Arc::new(NativeRegexService::new());
     let stable_diffusion_service = Arc::new(StableDiffusionService::new(
         repositories.stable_diffusion_repository,
+        repositories.secret_repository.clone(),
     ));
     let translate_service = Arc::new(TranslateService::new(
         repositories.translate_repository,
@@ -320,17 +346,20 @@ pub(super) async fn build_services(
         secret_service,
         skill_service,
         content_service,
+        asset_service,
         extension_service,
         extension_store_service,
         avatar_service,
         group_service,
         background_service,
+        image_metadata_service,
         theme_service,
         preset_service,
         quick_reply_service,
         agent_profile_service,
         agent_runtime_service,
         chat_completion_service,
+        provider_metadata_service,
         tokenization_service,
         stable_diffusion_service,
         translate_service,
@@ -356,6 +385,10 @@ fn build_repositories(
         Arc::new(FileCharacterRepository::new(
             data_directory.characters().to_path_buf(),
             data_directory.chats().to_path_buf(),
+            data_directory
+                .default_user()
+                .join("thumbnails")
+                .join("avatar"),
             data_directory.default_avatar().to_path_buf(),
         ));
 
@@ -392,7 +425,14 @@ fn build_repositories(
 
     let content_repository: Arc<dyn ContentRepository> = Arc::new(FileContentRepository::new(
         app_handle.clone(),
+        data_root.clone(),
         default_user_dir.clone(),
+    ));
+
+    let asset_repository: Arc<dyn AssetRepository> = Arc::new(FileAssetRepository::new(
+        default_user_dir.clone(),
+        default_user_dir.join("assets"),
+        default_user_dir.join("characters"),
     ));
 
     let extension_repository: Arc<dyn ExtensionRepository> =
@@ -420,6 +460,11 @@ fn build_repositories(
         Arc::new(FileBackgroundRepository::new(
             data_directory.default_user().join("backgrounds"),
             data_directory.default_user().join("thumbnails/bg"),
+        ));
+    let image_metadata_repository: Arc<dyn ImageMetadataRepository> =
+        Arc::new(FileImageMetadataRepository::new(
+            default_user_dir.clone(),
+            data_directory.default_user().join("backgrounds"),
         ));
 
     let theme_repository: Arc<dyn ThemeRepository> =
@@ -452,6 +497,9 @@ fn build_repositories(
             Arc::new(HttpChatCompletionRepository::new(http_client_pool.clone())),
             llm_api_log_store,
         ));
+    let provider_metadata_repository: Arc<dyn ProviderMetadataRepository> = Arc::new(
+        HttpProviderMetadataRepository::new(http_client_pool.clone()),
+    );
     let tokenizer_cache_dir = data_root.join("_cache").join("tokenizers");
     let tokenizer_repository: Arc<dyn TokenizerRepository> = Arc::new(
         MiktikTokenizerRepository::new(tokenizer_cache_dir, http_client_pool.clone()),
@@ -486,11 +534,13 @@ fn build_repositories(
         secret_repository,
         skill_repository,
         content_repository,
+        asset_repository,
         extension_repository,
         extension_store_repository,
         avatar_repository,
         group_repository,
         background_repository,
+        image_metadata_repository,
         theme_repository,
         preset_repository,
         quick_reply_repository,
@@ -500,6 +550,7 @@ fn build_repositories(
         workspace_repository,
         checkpoint_repository,
         chat_completion_repository,
+        provider_metadata_repository,
         tokenizer_repository,
         stable_diffusion_repository,
         translate_repository,

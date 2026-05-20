@@ -29,19 +29,19 @@ test('windowed-state: get/set/clear windowed chat state', async () => {
     assert.equal(getWindowedChatState(), null);
 });
 
-test('windowed-state: getWindowedChatKey trims and separates kinds', async () => {
+test('windowed-state: getWindowedChatKey preserves upstream-significant chat id text', async () => {
     const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/windowed-state.js'));
     const { getWindowedChatKey } = mod;
 
     assert.equal(getWindowedChatKey(null), '');
-    assert.equal(getWindowedChatKey({ kind: 'group', id: '  grp-1  ' }), 'group:grp-1');
+    assert.equal(getWindowedChatKey({ kind: 'group', id: ' grp-1 ' }), 'group: grp-1 ');
 
     assert.equal(getWindowedChatKey({
         kind: 'character',
         characterName: ' Alice ',
         avatarUrl: ' /User%20Avatars/a.png ',
         fileName: ' chat-1 ',
-    }), 'character:Alice|/User%20Avatars/a.png|chat-1');
+    }), 'character:Alice|/User%20Avatars/a.png| chat-1 ');
 });
 
 test('windowed-state: mergeWindowedChatCursorOffset applies header delta to active offset', async () => {

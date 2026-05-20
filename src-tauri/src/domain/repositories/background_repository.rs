@@ -1,16 +1,11 @@
 use crate::domain::errors::DomainError;
-use crate::domain::models::background::{
-    Background, BackgroundAsset, BackgroundImageMetadataIndex,
-};
+use crate::domain::models::background::BackgroundAsset;
 use async_trait::async_trait;
 use std::path::Path;
 
 /// Repository interface for background images
 #[async_trait]
 pub trait BackgroundRepository: Send + Sync {
-    /// Get all background images
-    async fn get_all_backgrounds(&self) -> Result<Vec<Background>, DomainError>;
-
     /// Delete a background image by filename
     async fn delete_background(&self, filename: &str) -> Result<(), DomainError>;
 
@@ -37,9 +32,4 @@ pub trait BackgroundRepository: Send + Sync {
         filename: &str,
         animated: bool,
     ) -> Result<BackgroundAsset, DomainError>;
-
-    /// Get metadata for all system backgrounds.
-    async fn get_all_background_metadata(
-        &self,
-    ) -> Result<BackgroundImageMetadataIndex, DomainError>;
 }

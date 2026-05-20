@@ -8,6 +8,11 @@ const __dirname = path.dirname(__filename);
 
 const sharedResolve = {
   extensions: ['.js'],
+  alias: {
+    '/lib.js': path.resolve(__dirname, 'src/lib.js'),
+    '/script.js': path.resolve(__dirname, 'src/script.js'),
+    '/scripts': path.resolve(__dirname, 'src/scripts'),
+  },
   fallback: {
     "path": false,
     "fs": false,
@@ -16,7 +21,10 @@ const sharedResolve = {
     "buffer": false,
     "util": false,
     "assert": false,
-    "os": false
+    "os": false,
+    "http": false,
+    "https": false,
+    "url": false
   }
 };
 

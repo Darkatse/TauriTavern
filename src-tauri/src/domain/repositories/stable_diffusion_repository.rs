@@ -8,6 +8,13 @@ use crate::domain::errors::DomainError;
 pub struct SdRouteRequest {
     pub path: String,
     pub body: Value,
+    pub credentials: SdRouteCredentials,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SdRouteCredentials {
+    None,
+    WorkersAi { api_key: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

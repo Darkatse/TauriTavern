@@ -10,6 +10,7 @@ mod presentation;
 // move it down into app/application/presentation instead of growing lib.rs further.
 
 use app::spawn_initialization;
+use infrastructure::data_root_content_dirs::DataRootContentDirs;
 use infrastructure::http_client_pool::HttpClientPool;
 use infrastructure::logging::{devtools, llm_api_logs, logger};
 use infrastructure::paths::resolve_runtime_paths;
@@ -22,6 +23,7 @@ use presentation::web_resources::third_party_endpoint::handle_third_party_asset_
 use presentation::web_resources::thumbnail_endpoint::{
     ThumbnailEndpointPolicy, handle_thumbnail_web_request,
 };
+use presentation::web_resources::user_css_endpoint::handle_user_css_web_request;
 use presentation::web_resources::user_data_endpoint::handle_user_data_asset_web_request;
 use tauri::Manager;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -146,8 +148,11 @@ pub fn run() {
             let third_party_dirs =
                 ThirdPartyExtensionDirs::from_data_root(&runtime_paths.data_root);
             let user_dirs = DefaultUserWebDirs::from_data_root(&runtime_paths.data_root);
+            let data_root_content_dirs =
+                DataRootContentDirs::from_data_root(&runtime_paths.data_root);
             app.manage(third_party_dirs.clone());
             app.manage(user_dirs.clone());
+            app.manage(data_root_content_dirs.clone());
 
             let tauritavern_settings = load_tauritavern_settings(&runtime_paths.data_root)?;
             let ios_policy_scope =
@@ -184,8 +189,13 @@ pub fn run() {
 
             http_client_pool.apply_request_proxy_settings(&tauritavern_settings.request_proxy)?;
             llm_api_log_store.apply_settings(tauritavern_settings.dev.effective_llm_api_keep());
-            let _main_window =
-                create_main_window(app, third_party_dirs, user_dirs, thumbnail_policy)?;
+            let _main_window = create_main_window(
+                app,
+                third_party_dirs,
+                user_dirs,
+                data_root_content_dirs,
+                thumbnail_policy,
+            )?;
 
             #[cfg(target_os = "windows")]
             {
@@ -225,6 +235,7 @@ fn create_main_window(
     app: &mut tauri::App,
     third_party_dirs: ThirdPartyExtensionDirs,
     user_dirs: DefaultUserWebDirs,
+    data_root_content_dirs: DataRootContentDirs,
     thumbnail_policy: std::sync::Arc<ThumbnailEndpointPolicy>,
 ) -> Result<tauri::webview::WebviewWindow, Box<dyn std::error::Error>> {
     let window_config = app
@@ -238,12 +249,14 @@ fn create_main_window(
     let local_extensions_dir = third_party_dirs.local_dir;
     let global_extensions_dir = third_party_dirs.global_dir;
     let user_dirs = user_dirs;
+    let user_css_file = data_root_content_dirs.user_css_file;
     let thumbnail_policy = thumbnail_policy;
 
     let builder = tauri::webview::WebviewWindowBuilder::from_config(app.handle(), window_config)?
         // Route browser-visible URLs to host-owned file handlers here so the frontend can keep
         // using stable HTTP-like paths for extensions, thumbnails, and user data assets.
         .on_web_resource_request(move |request, response| {
+            handle_user_css_web_request(&user_css_file, &request, response);
             handle_third_party_asset_web_request(
                 &local_extensions_dir,
                 &global_extensions_dir,

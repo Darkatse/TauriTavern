@@ -85,7 +85,13 @@ pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
         "custom_include_headers",
         "custom_claude_prompt_caching",
         "custom_url",
+        "secret_id",
         "bypass_status_check",
+        "siliconflow_endpoint",
+        "minimax_endpoint",
+        "workers_ai_account_id",
+        "nanogpt_provider",
+        "nanogpt_payg_override",
     ] {
         payload.remove(key);
     }
@@ -375,7 +381,26 @@ fn is_text_completion(payload: &Map<String, Value>) -> bool {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::build;
+    use super::{build, strip_internal_fields};
+
+    #[test]
+    fn strip_internal_fields_removes_secret_id_selector() {
+        let mut payload = json!({
+            "secret_id": "profile-secret",
+            "model": "gpt-4.1-mini"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        strip_internal_fields(&mut payload);
+
+        assert!(payload.get("secret_id").is_none());
+        assert_eq!(
+            payload.get("model").and_then(Value::as_str),
+            Some("gpt-4.1-mini")
+        );
+    }
 
     #[test]
     fn custom_payload_does_not_forward_reasoning_effort_for_non_openai_models() {

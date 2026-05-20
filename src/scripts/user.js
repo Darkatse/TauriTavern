@@ -1,5 +1,6 @@
 import { getRequestHeaders } from '../script.js';
 import { POPUP_RESULT, POPUP_TYPE, callGenericPopup } from './popup.js';
+import { canViewSecrets } from './secrets.js';
 import { renderTemplateAsync } from './templates.js';
 import { ensureImageFormatSupported, getBase64Async, humanFileSize } from './utils.js';
 
@@ -251,19 +252,79 @@ async function createUser(form, callback) {
  * @param {function} callback Success callback
  * @returns {Promise<void>}
  */
+async function readBackupFailureMessage(response) {
+    const text = await response.text();
+    try {
+        const data = JSON.parse(text);
+        return data?.error || data?.message || 'Unknown error';
+    } catch {
+        return text || 'Unknown error';
+    }
+}
+
+function isTauriRuntime() {
+    return globalThis.__TAURI_RUNNING__ === true;
+}
+
+function showNativeBackupResult(payload) {
+    const cleanupError = String(payload?.cleanup_error || '').trim();
+    if (cleanupError) {
+        toastr.warning(cleanupError, 'Backup cleanup failed');
+    }
+
+    if (payload?.mode === 'ios-native-share') {
+        if (payload?.completed === true) {
+            toastr.success('User backup is ready to share or save.', 'Backup Complete', { timeOut: 8000 });
+        } else {
+            toastr.info('Sharing cancelled.', 'Backup Cancelled');
+        }
+        return;
+    }
+
+    const savedPath = String(payload?.saved_target || '').trim();
+    if (savedPath) {
+        toastr.success(`User backup saved: ${savedPath}`, 'Backup Complete', { timeOut: 8000 });
+        return;
+    }
+
+    toastr.success('User backup saved.', 'Backup Complete');
+}
+
+function showBackupSecretsWarning() {
+    const message = isTauriRuntime()
+        ? 'The backup will not include secrets because Allow Keys Exposure is disabled in TauriTavern Settings.'
+        : 'The backup will not include secrets due to a server configuration.';
+    toastr.warning(message, 'Secrets Not Included');
+}
+
 async function backupUserData(handle, callback) {
     try {
-        toastr.info('Please wait for the download to start.', 'Backup Requested');
+        toastr.info(isTauriRuntime() ? 'Please wait while the backup is prepared.' : 'Please wait for the download to start.', 'Backup Requested');
         const response = await fetch('/api/users/backup', {
             method: 'POST',
             headers: getRequestHeaders(),
-            body: JSON.stringify({ handle }),
+            body: JSON.stringify({ handle, native: isTauriRuntime() }),
         });
 
         if (!response.ok) {
-            const data = await response.json();
-            toastr.error(data.error || 'Unknown error', 'Failed to backup user data');
+            const errorMessage = await readBackupFailureMessage(response);
+            toastr.error(errorMessage, 'Failed to backup user data');
             throw new Error('Failed to backup user data');
+        }
+
+        if (isTauriRuntime()) {
+            const payload = await response.json();
+            if (payload?.includes_secrets === false) {
+                showBackupSecretsWarning();
+            }
+            showNativeBackupResult(payload);
+            callback();
+            return;
+        }
+
+        const includesSecrets = await canViewSecrets();
+        if (includesSecrets === false) {
+            showBackupSecretsWarning();
         }
 
         const blob = await response.blob();
@@ -327,8 +388,7 @@ async function changePassword(handle, callback) {
 
         toastr.success('Password changed successfully', 'Password Changed');
         callback();
-    }
-    catch (error) {
+    } catch (error) {
         console.error('Error changing password:', error);
     }
 }
@@ -455,7 +515,6 @@ async function changeName(handle, name, callback) {
 
         toastr.success('Name changed successfully', 'Name Changed');
         callback();
-
     } catch (error) {
         console.error('Error changing name:', error);
     }
@@ -495,7 +554,6 @@ async function restoreSnapshot(name, callback) {
     } catch (error) {
         console.error('Error restoring snapshot:', error);
     }
-
 }
 
 /**
@@ -601,7 +659,6 @@ async function viewSettingsSnapshots() {
                     const content = await loadSnapshotContent(snapshot.name);
                     contentBlock.val(content);
                 }
-
             });
             template.find('.snapshotList').append(snapshotBlock);
         }
@@ -667,7 +724,6 @@ async function resetEverything(callback) {
     } catch (error) {
         console.error('Error resetting everything:', error);
     }
-
 }
 
 async function openUserProfile() {

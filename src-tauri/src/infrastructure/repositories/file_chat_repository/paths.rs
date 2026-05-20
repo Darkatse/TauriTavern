@@ -7,6 +7,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::domain::errors::DomainError;
 use crate::domain::models::character::sanitize_filename;
+use crate::domain::models::chat::{normalize_chat_file_name, normalize_chat_file_stem};
 use crate::infrastructure::persistence::file_system::unique_temp_path;
 
 use super::FileChatRepository;
@@ -78,13 +79,33 @@ impl FileChatRepository {
         lock.lock_owned().await
     }
 
+    pub(super) async fn acquire_payload_rename_locks(
+        &self,
+        old_path: &Path,
+        new_path: &Path,
+    ) -> (OwnedMutexGuard<()>, Option<OwnedMutexGuard<()>>) {
+        if old_path == new_path {
+            return (self.acquire_payload_write_lock(old_path).await, None);
+        }
+
+        if old_path < new_path {
+            let old_guard = self.acquire_payload_write_lock(old_path).await;
+            let new_guard = self.acquire_payload_write_lock(new_path).await;
+            (old_guard, Some(new_guard))
+        } else {
+            let new_guard = self.acquire_payload_write_lock(new_path).await;
+            let old_guard = self.acquire_payload_write_lock(old_path).await;
+            (old_guard, Some(new_guard))
+        }
+    }
+
     pub(super) fn temp_payload_path(path: &Path) -> PathBuf {
         unique_temp_path(path, "chat.jsonl")
     }
 
-    fn normalize_jsonl_file_stem(file_name: &str) -> String {
-        let stripped = Self::strip_jsonl_extension(file_name);
-        Self::sanitize_path_component(stripped, "chat")
+    pub(super) fn normalize_jsonl_file_stem(file_name: &str) -> Result<String, DomainError> {
+        normalize_chat_file_stem(file_name)
+            .ok_or_else(|| DomainError::InvalidData("Invalid chat file name".to_string()))
     }
 
     /// Get the path to a character's chat directory
@@ -93,18 +114,10 @@ impl FileChatRepository {
             .join(Self::sanitize_path_component(character_name, "character"))
     }
 
-    /// Ensure chat file names always use the JSONL extension
-    pub(super) fn normalize_jsonl_file_name(file_name: &str) -> String {
-        format!("{}.jsonl", Self::normalize_jsonl_file_stem(file_name))
-    }
-
-    /// Remove JSONL extension if present
-    pub(super) fn strip_jsonl_extension(file_name: &str) -> &str {
-        if file_name.len() >= 6 && file_name[file_name.len() - 6..].eq_ignore_ascii_case(".jsonl") {
-            &file_name[..file_name.len() - 6]
-        } else {
-            file_name
-        }
+    /// Normalize chat file names with SillyTavern-compatible `.jsonl` sanitization.
+    pub(super) fn normalize_jsonl_file_name(file_name: &str) -> Result<String, DomainError> {
+        normalize_chat_file_name(file_name)
+            .ok_or_else(|| DomainError::InvalidData("Invalid chat file name".to_string()))
     }
 
     /// Build a timestamp that is safe to use in file names on all platforms.
@@ -184,15 +197,19 @@ impl FileChatRepository {
     }
 
     /// Get the path to a chat file
-    pub(super) fn get_chat_path(&self, character_name: &str, file_name: &str) -> PathBuf {
-        let normalized = Self::normalize_jsonl_file_name(file_name);
-        self.get_character_dir(character_name).join(normalized)
+    pub(super) fn get_chat_path(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<PathBuf, DomainError> {
+        let normalized = Self::normalize_jsonl_file_name(file_name)?;
+        Ok(self.get_character_dir(character_name).join(normalized))
     }
 
     /// Get the path to a group chat file
-    pub(super) fn get_group_chat_path(&self, chat_id: &str) -> PathBuf {
-        let normalized = Self::normalize_jsonl_file_name(chat_id);
-        self.group_chats_dir.join(normalized)
+    pub(super) fn get_group_chat_path(&self, chat_id: &str) -> Result<PathBuf, DomainError> {
+        let normalized = Self::normalize_jsonl_file_name(chat_id)?;
+        Ok(self.group_chats_dir.join(normalized))
     }
 
     /// Get the path to a chat backup file
@@ -247,11 +264,22 @@ impl FileChatRepository {
     }
 
     /// Get the cache key for a chat
-    pub(super) fn get_cache_key(&self, character_name: &str, file_name: &str) -> String {
-        format!(
+    pub(super) fn get_cache_key(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<String, DomainError> {
+        Ok(format!(
             "{}:{}",
             Self::sanitize_path_component(character_name, "character"),
-            Self::normalize_jsonl_file_stem(file_name)
-        )
+            Self::normalize_jsonl_file_stem(file_name)?
+        ))
+    }
+
+    pub(super) fn get_group_backup_key(chat_id: &str) -> Result<String, DomainError> {
+        Ok(format!(
+            "group:{}",
+            Self::normalize_jsonl_file_stem(chat_id)?
+        ))
     }
 }

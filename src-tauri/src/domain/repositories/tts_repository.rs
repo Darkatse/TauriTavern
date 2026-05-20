@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use serde_json::json;
 
 use crate::domain::errors::DomainError;
 
@@ -7,6 +8,23 @@ pub struct GrokOutputFormat {
     pub codec: String,
     pub sample_rate: u32,
     pub bit_rate: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct MinimaxGenerateRequest {
+    pub api_key: String,
+    pub group_id: String,
+    pub text: String,
+    pub voice_id: String,
+    pub api_host: String,
+    pub model: String,
+    pub speed: f64,
+    pub volume: f64,
+    pub pitch: f64,
+    pub audio_sample_rate: u32,
+    pub bitrate: u32,
+    pub format: String,
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +46,9 @@ pub enum TtsRequest {
         model: String,
         format: String,
         instructions: Option<String>,
+    },
+    MinimaxGenerate {
+        request: MinimaxGenerateRequest,
     },
 }
 
@@ -56,6 +77,16 @@ impl TtsRouteResponse {
             content_type: "text/plain; charset=utf-8".to_string(),
             body: message.clone().into_bytes(),
             status_text: Some(message),
+        }
+    }
+
+    pub fn json_error(status: u16, message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self {
+            status,
+            content_type: "application/json; charset=utf-8".to_string(),
+            body: json!({ "error": message }).to_string().into_bytes(),
+            status_text: None,
         }
     }
 }

@@ -15,6 +15,8 @@ test('chat completion custom models are implemented through the shared model-con
 
     assert.match(openaiSource, /const chatCompletionModelControls = \{/);
     assert.match(openaiSource, /export function getChatCompletionModelControl/);
+    assert.match(openaiSource, /\[chat_completion_sources\.MINIMAX\]:\s*\{\s*selector:\s*'#model_minimax_select',\s*settingKey:\s*'minimax_model'[\s\S]*?supportsCustomModels:\s*true\s*\}/);
+    assert.match(openaiSource, /\[chat_completion_sources\.WORKERS_AI\]:\s*\{\s*selector:\s*'#model_workers_ai_select',\s*settingKey:\s*'workers_ai_model'[\s\S]*?supportsCustomModels:\s*true\s*\}/);
     assert.match(openaiSource, /custom_models_by_source:\s*\['',\s*'custom_models_by_source',\s*false,\s*true\]/);
     assert.match(openaiSource, /custom_models_by_source:\s*\{\}/);
     assert.match(openaiSource, /function normalizeKnownCustomModelsStore/);
@@ -39,8 +41,11 @@ test('dynamic model lists preserve explicit custom selections instead of falling
     assert.match(openaiSource, /function chooseModelOrCurrentCustom/);
     assert.match(openaiSource, /setModelSelectValue\(chat_completion_sources\.OPENAI,\s*model\)/);
     assert.match(openaiSource, /setModelSelectValue\(chat_completion_sources\.MISTRALAI,\s*oai_settings\.mistralai_model\)/);
+    assert.match(openaiSource, /oai_settings\.workers_ai_model = chooseModelOrCurrentCustom\(\s*chat_completion_sources\.WORKERS_AI,/);
+    assert.match(openaiSource, /setModelSelectValue\(chat_completion_sources\.WORKERS_AI,\s*oai_settings\.workers_ai_model\)/);
     assert.match(openaiSource, /setModelSelectValue\(chat_completion_sources\.COMETAPI,\s*oai_settings\.cometapi_model\)/);
     assert.match(openaiSource, /!hasModelsLoaded && !isCustomModelValueForSource\(chat_completion_sources\.OPENROUTER,\s*value\)/);
+    assert.match(openaiSource, /!hasModelsLoaded && !isCustomModelValueForSource\(chat_completion_sources\.WORKERS_AI,\s*value\)/);
 });
 
 test('/model command uses the chat completion registry and excludes select action sentinels', async () => {

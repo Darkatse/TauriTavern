@@ -173,7 +173,7 @@ const handleCharChange = () => {
     settings.charConfig = charConfig;
 };
 
-const init = async () => {
+export async function init() {
     await loadSets();
     await loadSettings();
     log('settings: ', settings);
@@ -218,7 +218,7 @@ const init = async () => {
     eventSource.on(event_types.APP_READY, async()=>await finalizeInit());
 
     globalThis.quickReplyApi = quickReplyApi;
-};
+}
 const finalizeInit = async () => {
     debug('executing startup');
     await autoExec.handleStartup();
@@ -233,7 +233,6 @@ const finalizeInit = async () => {
     isReady = true;
     debug('READY');
 };
-await init();
 
 const purgeCharacterQuickReplySets = ({ character }) => {
     // Remove the character's Quick Reply Sets from the settings.

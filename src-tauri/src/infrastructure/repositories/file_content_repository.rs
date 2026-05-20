@@ -6,7 +6,7 @@ use tokio::fs;
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::content_repository::{
-    ContentItem, ContentRepository, ContentType,
+    ContentItem, ContentRepository, ContentScope, ContentType,
 };
 use crate::infrastructure::assets::{
     copy_resource_to_file, list_default_content_files_under, read_resource_json,
@@ -24,6 +24,7 @@ struct ContentIndexItem {
 /// File Content Repository implementation
 pub struct FileContentRepository {
     app_handle: AppHandle,
+    data_root: PathBuf,
     user_content_dir: PathBuf,
 }
 
@@ -33,40 +34,44 @@ impl FileContentRepository {
     /// # Arguments
     ///
     /// * `app_handle` - Tauri app handle for resolving resource paths
+    /// * `data_root` - Path to the global data root
     /// * `user_content_dir` - Path to the user content directory (e.g., data/default-user)
     ///   This should be the complete path to the user directory, not just the parent directory.
-    pub fn new(app_handle: AppHandle, user_content_dir: PathBuf) -> Self {
+    pub fn new(app_handle: AppHandle, data_root: PathBuf, user_content_dir: PathBuf) -> Self {
         Self {
             app_handle,
+            data_root,
             user_content_dir,
         }
     }
 
     /// Convert content type string to enum
-    fn content_type_from_string(&self, content_type: &str) -> ContentType {
+    fn content_type_from_string(&self, content_type: &str) -> Result<ContentType, DomainError> {
         match content_type {
-            "settings" => ContentType::Settings,
-            "character" => ContentType::Character,
-            "sprites" => ContentType::Sprites,
-            "background" => ContentType::Background,
-            "world" => ContentType::World,
-            "avatar" => ContentType::Avatar,
-            "theme" => ContentType::Theme,
-            "workflow" => ContentType::Workflow,
-            "kobold_preset" => ContentType::KoboldPreset,
-            "openai_preset" => ContentType::OpenAIPreset,
-            "novel_preset" => ContentType::NovelPreset,
-            "textgen_preset" => ContentType::TextGenPreset,
-            "instruct" => ContentType::Instruct,
-            "context" => ContentType::Context,
-            "moving_ui" => ContentType::MovingUI,
-            "quick_replies" => ContentType::QuickReplies,
-            "sysprompt" => ContentType::SysPrompt,
-            "reasoning" => ContentType::Reasoning,
-            _ => {
-                logger::warn(&format!("Unknown content type: {}", content_type));
-                ContentType::Settings // Default to settings
-            }
+            "settings" => Ok(ContentType::Settings),
+            "character" => Ok(ContentType::Character),
+            "sprites" => Ok(ContentType::Sprites),
+            "background" => Ok(ContentType::Background),
+            "world" => Ok(ContentType::World),
+            "avatar" => Ok(ContentType::Avatar),
+            "theme" => Ok(ContentType::Theme),
+            "workflow" => Ok(ContentType::Workflow),
+            "kobold_preset" => Ok(ContentType::KoboldPreset),
+            "openai_preset" => Ok(ContentType::OpenAIPreset),
+            "novel_preset" => Ok(ContentType::NovelPreset),
+            "textgen_preset" => Ok(ContentType::TextGenPreset),
+            "instruct" => Ok(ContentType::Instruct),
+            "context" => Ok(ContentType::Context),
+            "moving_ui" => Ok(ContentType::MovingUI),
+            "quick_replies" => Ok(ContentType::QuickReplies),
+            "sysprompt" => Ok(ContentType::SysPrompt),
+            "reasoning" => Ok(ContentType::Reasoning),
+            "error_page" => Ok(ContentType::ErrorPage),
+            "stylesheet" => Ok(ContentType::Stylesheet),
+            _ => Err(DomainError::InvalidData(format!(
+                "Unknown default content type: {}",
+                content_type
+            ))),
         }
     }
 
@@ -91,6 +96,8 @@ impl FileContentRepository {
             ContentType::QuickReplies => user_dir.join("QuickReplies"),
             ContentType::SysPrompt => user_dir.join("sysprompt"),
             ContentType::Reasoning => user_dir.join("reasoning"),
+            ContentType::ErrorPage => self.data_root.join("_errors"),
+            ContentType::Stylesheet => self.data_root.join("_css"),
         }
     }
 
@@ -139,46 +146,76 @@ impl FileContentRepository {
 
         Ok(target_dir.join(base_filename))
     }
-}
 
-#[async_trait]
-impl ContentRepository for FileContentRepository {
-    async fn copy_default_content_to_user(&self, user_handle: &str) -> Result<(), DomainError> {
-        tracing::info!(
-            "Copying default content to user directory for user: {}",
-            user_handle
-        );
+    fn content_log_path(&self, scope: ContentScope, user_dir: &Path) -> PathBuf {
+        match scope {
+            ContentScope::User => user_dir.join("content.log"),
+            ContentScope::Global => self.data_root.join("content.log"),
+        }
+    }
 
-        // Get content index
-        let content_items = self.get_content_index().await?;
+    async fn read_content_log(path: &Path) -> Result<Vec<String>, DomainError> {
+        match fs::read_to_string(path).await {
+            Ok(text) => Ok(text
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(error) => {
+                logger::error(&format!("Failed to read content log {:?}: {}", path, error));
+                Err(DomainError::InternalError(format!(
+                    "Failed to read content log: {}",
+                    error
+                )))
+            }
+        }
+    }
 
-        // User content directory - self.user_content_dir 已经是 data/default-user 路径了，不需要再 join user_handle
-        let user_dir = self.user_content_dir.clone();
-
-        // Create user directory if it doesn't exist
-        fs::create_dir_all(&user_dir).await.map_err(|e| {
-            tracing::error!("Failed to create user directory {:?}: {}", user_dir, e);
-            DomainError::InternalError(format!("Failed to create user directory: {}", e))
-        })?;
-
-        // Create a content log to track copied files
-        let mut content_log = Vec::new();
-        let content_log_path = user_dir.join("content.log");
-
-        // Read existing content log if it exists
-        if content_log_path.exists() {
-            let content_log_text = fs::read_to_string(&content_log_path).await.map_err(|e| {
-                logger::error(&format!("Failed to read content log: {}", e));
-                DomainError::InternalError(format!("Failed to read content log: {}", e))
+    async fn write_content_log(path: &Path, entries: &[String]) -> Result<(), DomainError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await.map_err(|error| {
+                logger::error(&format!(
+                    "Failed to create content log directory {:?}: {}",
+                    parent, error
+                ));
+                DomainError::InternalError(format!(
+                    "Failed to create content log directory: {}",
+                    error
+                ))
             })?;
-
-            content_log = content_log_text.lines().map(|s| s.to_string()).collect();
         }
 
-        // Copy each content item
-        for item in content_items {
-            // Skip if already in content log
-            if content_log.contains(&item.filename) {
+        fs::write(path, entries.join("\n")).await.map_err(|error| {
+            logger::error(&format!(
+                "Failed to write content log {:?}: {}",
+                path, error
+            ));
+            DomainError::InternalError(format!("Failed to write content log: {}", error))
+        })
+    }
+
+    async fn seed_content_scope(
+        &self,
+        scope: ContentScope,
+        content_items: &[ContentItem],
+        user_dir: &Path,
+    ) -> Result<(), DomainError> {
+        let scoped_items = content_items
+            .iter()
+            .filter(|item| item.content_type.scope() == scope)
+            .collect::<Vec<_>>();
+
+        if scoped_items.is_empty() {
+            return Ok(());
+        }
+
+        let log_path = self.content_log_path(scope, user_dir);
+        let mut content_log = Self::read_content_log(&log_path).await?;
+
+        for item in scoped_items {
+            if content_log.iter().any(|entry| entry == &item.filename) {
                 logger::debug(&format!(
                     "Skipping content item {}, already in log",
                     item.filename
@@ -186,23 +223,20 @@ impl ContentRepository for FileContentRepository {
                 continue;
             }
 
-            // Get the target directory based on content type
-            let target_dir = self.get_target_directory(&item.content_type, &user_dir);
-
-            // Ensure target directory exists
-            fs::create_dir_all(&target_dir).await.map_err(|e| {
+            let target_dir = self.get_target_directory(&item.content_type, user_dir);
+            fs::create_dir_all(&target_dir).await.map_err(|error| {
                 logger::error(&format!(
                     "Failed to create target directory {:?}: {}",
-                    target_dir, e
+                    target_dir, error
                 ));
-                DomainError::InternalError(format!("Failed to create target directory: {}", e))
+                DomainError::InternalError(format!("Failed to create target directory: {}", error))
             })?;
 
             let resource_entries = self.expand_resource_entries(&item.filename)?;
 
             for resource_entry in resource_entries {
                 let resource_path = format!("default/content/{}", resource_entry);
-                let dest_path = self.build_destination_path(&item, &resource_entry, &target_dir)?;
+                let dest_path = self.build_destination_path(item, &resource_entry, &target_dir)?;
 
                 if dest_path.exists() {
                     logger::debug(&format!(
@@ -213,23 +247,56 @@ impl ContentRepository for FileContentRepository {
                 }
 
                 logger::debug(&format!("Copying {} to {:?}", resource_path, dest_path));
-
                 copy_resource_to_file(&self.app_handle, &resource_path, &dest_path).await?;
             }
 
-            // Add to content log
             content_log.push(item.filename.clone());
         }
 
-        // Write content log
-        fs::write(&content_log_path, content_log.join("\n"))
-            .await
-            .map_err(|e| {
-                logger::error(&format!("Failed to write content log: {}", e));
-                DomainError::InternalError(format!("Failed to write content log: {}", e))
-            })?;
+        Self::write_content_log(&log_path, &content_log).await
+    }
 
-        tracing::info!("Default content copied successfully");
+    async fn content_log_contains_any(
+        &self,
+        scope: ContentScope,
+        content_items: &[ContentItem],
+        user_dir: &Path,
+    ) -> Result<bool, DomainError> {
+        let scoped_items = content_items
+            .iter()
+            .filter(|item| item.content_type.scope() == scope)
+            .collect::<Vec<_>>();
+
+        if scoped_items.is_empty() {
+            return Ok(false);
+        }
+
+        let content_log = Self::read_content_log(&self.content_log_path(scope, user_dir)).await?;
+        Ok(scoped_items
+            .iter()
+            .any(|item| content_log.iter().any(|entry| entry == &item.filename)))
+    }
+}
+
+#[async_trait]
+impl ContentRepository for FileContentRepository {
+    async fn copy_default_content_to_user(&self, user_handle: &str) -> Result<(), DomainError> {
+        tracing::info!("Synchronizing default content for user: {}", user_handle);
+
+        let content_items = self.get_content_index().await?;
+        let user_dir = self.user_content_dir.clone();
+
+        fs::create_dir_all(&user_dir).await.map_err(|e| {
+            tracing::error!("Failed to create user directory {:?}: {}", user_dir, e);
+            DomainError::InternalError(format!("Failed to create user directory: {}", e))
+        })?;
+
+        self.seed_content_scope(ContentScope::Global, &content_items, &user_dir)
+            .await?;
+        self.seed_content_scope(ContentScope::User, &content_items, &user_dir)
+            .await?;
+
+        tracing::info!("Default content synchronized successfully");
         Ok(())
     }
 
@@ -238,13 +305,13 @@ impl ContentRepository for FileContentRepository {
             read_resource_json(&self.app_handle, "default/content/index.json")?;
 
         // Convert to domain model
-        let content_items = index_items
-            .into_iter()
-            .map(|item| ContentItem {
+        let mut content_items = Vec::with_capacity(index_items.len());
+        for item in index_items {
+            content_items.push(ContentItem {
                 filename: item.filename,
-                content_type: self.content_type_from_string(&item.content_type),
-            })
-            .collect();
+                content_type: self.content_type_from_string(&item.content_type)?,
+            });
+        }
 
         Ok(content_items)
     }
@@ -255,41 +322,12 @@ impl ContentRepository for FileContentRepository {
             user_handle
         ));
 
-        // User content directory - self.user_content_dir 已经是 data/default-user 路径了，不需要再 join user_handle
         let user_dir = self.user_content_dir.clone();
-
-        // Content log path
-        let content_log_path = user_dir.join("content.log");
-
-        // If content log doesn't exist, content is not initialized
-        if !content_log_path.exists() {
-            logger::debug(&format!("Content log not found for user: {}", user_handle));
-            return Ok(false);
-        }
-
-        // Read content log
-        let content_log_text = fs::read_to_string(&content_log_path).await.map_err(|e| {
-            logger::error(&format!("Failed to read content log: {}", e));
-            DomainError::InternalError(format!("Failed to read content log: {}", e))
-        })?;
-
-        // Get content index
         let content_items = self.get_content_index().await?;
 
-        // Check if all content items are in the log
-        let content_log: Vec<String> = content_log_text.lines().map(|s| s.to_string()).collect();
-
-        // If content log is empty, content is not initialized
-        if content_log.is_empty() {
-            logger::debug(&format!("Content log is empty for user: {}", user_handle));
-            return Ok(false);
-        }
-
-        // Check if at least some content items are in the log
-        // We don't require all items to be in the log, as new content might be added later
-        let has_content = content_items
-            .iter()
-            .any(|item| content_log.contains(&item.filename));
+        let has_content = self
+            .content_log_contains_any(ContentScope::User, &content_items, &user_dir)
+            .await?;
 
         logger::debug(&format!(
             "Default content initialized for user {}: {}",

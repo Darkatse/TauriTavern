@@ -4,7 +4,7 @@ use serde_json::Value;
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::chat::Chat;
+use crate::domain::models::chat::{Chat, strip_jsonl_extension};
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::replace_file_with_fallback;
 use crate::infrastructure::persistence::jsonl_utils::{
@@ -46,7 +46,7 @@ impl FileChatRepository {
             user_name,
             character_name,
             create_date,
-            file_name: Some(Self::strip_jsonl_extension(file_name).to_string()),
+            file_name: Some(strip_jsonl_extension(file_name).to_string()),
             ..Default::default()
         };
 
@@ -258,9 +258,9 @@ impl FileChatRepository {
             character_name, file_name
         ));
 
-        let file_name = Self::normalize_jsonl_file_name(file_name);
+        let file_name = Self::normalize_jsonl_file_name(file_name)?;
 
-        let path = self.get_chat_path(character_name, &file_name);
+        let path = self.get_chat_path(character_name, &file_name)?;
         let bytes = self.read_payload_bytes_from_path(&path).await?;
         let objects: Vec<Value> = parse_jsonl_bytes(&bytes)?;
         self.parse_chat_from_payload(character_name, &file_name, &objects)
@@ -282,6 +282,9 @@ impl FileChatRepository {
             chat.character_name, file_name
         ));
 
+        let path = self.get_chat_path(&chat.character_name, file_name)?;
+        let backup_key = self.get_cache_key(&chat.character_name, file_name)?;
+
         // Ensure the character directory exists
         let character_dir = self.get_character_dir(&chat.character_name);
         if !character_dir.exists() {
@@ -291,9 +294,7 @@ impl FileChatRepository {
             })?;
         }
 
-        let path = self.get_chat_path(&chat.character_name, file_name);
         let objects = Self::build_payload_from_chat(chat)?;
-        let backup_key = self.get_cache_key(&chat.character_name, file_name);
 
         self.write_payload_to_path(&path, &objects, force, &chat.character_name, &backup_key)
             .await?;

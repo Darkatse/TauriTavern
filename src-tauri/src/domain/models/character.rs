@@ -496,10 +496,27 @@ mod tests {
     }
 }
 
+pub(crate) const MAX_SANITIZED_FILENAME_BYTES: usize = 255;
+
+pub(crate) fn truncate_utf8_bytes(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+
+    let mut end = 0usize;
+    for (index, ch) in value.char_indices() {
+        let next = index + ch.len_utf8();
+        if next > max_bytes {
+            break;
+        }
+        end = next;
+    }
+
+    &value[..end]
+}
+
 /// Sanitize a filename to be safe for file systems
 pub fn sanitize_filename(name: &str) -> String {
-    const MAX_FILENAME_BYTES: usize = 255;
-
     fn is_illegal_character(ch: char) -> bool {
         matches!(ch, '/' | '?' | '<' | '>' | '\\' | ':' | '*' | '|' | '"')
     }
@@ -530,23 +547,6 @@ pub fn sanitize_filename(name: &str) -> String {
                 .is_some_and(|suffix| suffix.len() == 1 && suffix.as_bytes()[0].is_ascii_digit())
     }
 
-    fn truncate_utf8_bytes(value: &str, max_bytes: usize) -> &str {
-        if value.len() <= max_bytes {
-            return value;
-        }
-
-        let mut end = 0usize;
-        for (index, ch) in value.char_indices() {
-            let next = index + ch.len_utf8();
-            if next > max_bytes {
-                break;
-            }
-            end = next;
-        }
-
-        &value[..end]
-    }
-
     let mut sanitized = String::with_capacity(name.len());
     for ch in name.chars() {
         if is_illegal_character(ch) || is_control_code(ch) {
@@ -564,8 +564,7 @@ pub fn sanitize_filename(name: &str) -> String {
         sanitized.pop();
     }
 
-    let trimmed = sanitized.trim();
-    truncate_utf8_bytes(trimmed, MAX_FILENAME_BYTES).to_string()
+    truncate_utf8_bytes(&sanitized, MAX_SANITIZED_FILENAME_BYTES).to_string()
 }
 
 #[cfg(test)]
@@ -590,6 +589,13 @@ mod filename_tests {
     fn sanitize_filename_strips_trailing_dots_and_spaces() {
         assert_eq!(sanitize_filename("name. "), "name");
         assert_eq!(sanitize_filename("name..."), "name");
+    }
+
+    #[test]
+    fn sanitize_filename_preserves_leading_spaces_like_upstream() {
+        assert_eq!(sanitize_filename(" name "), " name");
+        assert_eq!(sanitize_filename("/ name"), " name");
+        assert_eq!(sanitize_filename("中文/ 测试"), "中文 测试");
     }
 
     #[test]

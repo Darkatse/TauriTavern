@@ -78,6 +78,7 @@ export const SECRET_KEYS = {
     POLLINATIONS: 'api_key_pollinations',
     VOLCENGINE_APP_ID: 'volcengine_app_id',
     VOLCENGINE_ACCESS_KEY: 'volcengine_access_key',
+    WORKERS_AI: 'api_key_workers_ai',
 };
 
 const FRIENDLY_NAMES = {
@@ -132,7 +133,7 @@ const FRIENDLY_NAMES = {
     [SECRET_KEYS.LINGVA_URL]: 'Lingva Endpoint (e.g. https://lingva.ml/api/v1)',
     [SECRET_KEYS.ONERING_URL]: 'OneRingTranslator Endpoint (e.g. http://127.0.0.1:4990/translate)',
     [SECRET_KEYS.DEEPLX_URL]: 'DeepLX Endpoint (e.g. http://127.0.0.1:1188/translate)',
-    [SECRET_KEYS.MINIMAX]: 'MiniMax TTS',
+    [SECRET_KEYS.MINIMAX]: 'MiniMax',
     [SECRET_KEYS.MINIMAX_GROUP_ID]: 'MiniMax Group ID',
     [SECRET_KEYS.MOONSHOT]: 'Moonshot AI',
     [SECRET_KEYS.COMETAPI]: 'CometAPI',
@@ -143,6 +144,7 @@ const FRIENDLY_NAMES = {
     [SECRET_KEYS.POLLINATIONS]: 'Pollinations',
     [SECRET_KEYS.VOLCENGINE_APP_ID]: 'Volcengine App ID',
     [SECRET_KEYS.VOLCENGINE_ACCESS_KEY]: 'Volcengine Access Key',
+    [SECRET_KEYS.WORKERS_AI]: 'Cloudflare Workers AI',
 };
 
 const INPUT_MAP = {
@@ -185,8 +187,10 @@ const INPUT_MAP = {
     [SECRET_KEYS.AZURE_OPENAI]: '#api_key_azure_openai',
     [SECRET_KEYS.ZAI]: '#api_key_zai',
     [SECRET_KEYS.SILICONFLOW]: '#api_key_siliconflow',
+    [SECRET_KEYS.MINIMAX]: '#api_key_minimax',
     [SECRET_KEYS.COMFY_RUNPOD]: '#api_key_comfy_runpod',
     [SECRET_KEYS.POLLINATIONS]: '#api_key_pollinations',
+    [SECRET_KEYS.WORKERS_AI]: '#api_key_workers_ai',
 };
 
 const getLabel = () => moment().format('L LT');
@@ -278,6 +282,29 @@ function getActiveSecretLabel(key) {
         return activeSecret.label || activeSecret.value || t`[No label]`;
     }
     return '';
+}
+
+/**
+ * Checks if secrets can be viewed based on server configuration.
+ * @returns {Promise<boolean|null>} A boolean value, or null if the request fails.
+ */
+export async function canViewSecrets() {
+    try {
+        const response = await fetch('/api/secrets/settings', {
+            method: 'POST',
+            headers: getRequestHeaders({ omitContentType: true }),
+        });
+
+        if (!response.ok) {
+            return null;
+        }
+
+        const data = await response.json();
+        return data?.allowKeysExposure === true;
+    } catch (error) {
+        console.error('Error getting secrets settings:', error);
+        return null;
+    }
 }
 
 async function viewSecrets() {
@@ -504,7 +531,7 @@ function authorizeOpenRouter() {
  * Checks if the OpenRouter authorization code is present in the URL, and if so, exchanges it for an API key.
  * @returns {Promise<void>}
  */
-async function checkOpenRouterAuth() {
+export async function checkOpenRouterAuth() {
     const params = new URLSearchParams(location.search);
     const source = params.get('source');
     if (source === 'openrouter') {

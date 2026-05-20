@@ -40,6 +40,10 @@ function stripCommandErrorPrefix(error) {
     return message;
 }
 
+function hasOwn(value, key) {
+    return Object.prototype.hasOwnProperty.call(value || {}, key);
+}
+
 export function registerResourceRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/files/sanitize-filename', async ({ body }) => {
         const sanitized = sanitizeFileName(body?.fileName || '');
@@ -235,8 +239,12 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
 
     router.post('/api/backgrounds/all', async () => {
         const images = await context.safeInvoke('get_all_backgrounds');
+        if (!Array.isArray(images)) {
+            throw new Error('get_all_backgrounds returned non-array payload');
+        }
+
         return jsonResponse({
-            images: Array.isArray(images) ? images : [],
+            images,
             config: { width: 160, height: 90 },
         });
     });
@@ -244,9 +252,89 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
     router.post('/api/image-metadata/all', async ({ body }) => {
         const prefix = typeof body?.prefix === 'string' ? body.prefix : '';
         const payload = await context.safeInvoke('get_all_background_metadata', { prefix });
-        return jsonResponse(payload && typeof payload === 'object'
-            ? payload
-            : { version: 1, images: {} });
+        return jsonResponse(payload);
+    });
+
+    router.post('/api/backgrounds/folders', async () => {
+        const payload = await context.safeInvoke('get_background_folders');
+        return jsonResponse(payload);
+    });
+
+    router.post('/api/image-metadata/folders/get', async () => {
+        const payload = await context.safeInvoke('get_background_folders');
+        return jsonResponse(payload.folders);
+    });
+
+    router.post('/api/image-metadata/folders/create', async ({ body }) => {
+        const folder = await context.safeInvoke('create_image_metadata_folder', {
+            dto: { name: body?.name || '' },
+        });
+        return jsonResponse(folder);
+    });
+
+    router.post('/api/image-metadata/folders/update', async ({ body }) => {
+        const dto = { id: body?.id || '' };
+        if (hasOwn(body, 'name')) {
+            dto.name = body.name;
+        }
+        if (hasOwn(body, 'thumbnailFile')) {
+            dto.thumbnail_file = body.thumbnailFile;
+        } else if (hasOwn(body, 'thumbnail_file')) {
+            dto.thumbnail_file = body.thumbnail_file;
+        }
+
+        const folder = await context.safeInvoke('update_image_metadata_folder', { dto });
+        return jsonResponse(folder);
+    });
+
+    router.post('/api/image-metadata/folders/delete', async ({ body }) => {
+        await context.safeInvoke('delete_image_metadata_folder', {
+            dto: { id: body?.id || '' },
+        });
+        return jsonResponse({ ok: true });
+    });
+
+    router.post('/api/image-metadata/folders/set-thumbnails', async ({ body }) => {
+        const updates = body?.updates;
+        if (!Array.isArray(updates)) {
+            return jsonResponse({ error: '"updates" must be an array of {id, thumbnailFile}.' }, 400);
+        }
+
+        const dtoUpdates = [];
+        for (const update of updates) {
+            const thumbnailFile = hasOwn(update, 'thumbnailFile') ? update.thumbnailFile : update?.thumbnail_file;
+            if (!update?.id || typeof thumbnailFile !== 'string') {
+                return jsonResponse({ error: '"updates" must be an array of {id, thumbnailFile}.' }, 400);
+            }
+            dtoUpdates.push({ id: update.id, thumbnail_file: thumbnailFile });
+        }
+
+        await context.safeInvoke('set_image_metadata_folder_thumbnails', {
+            dto: { updates: dtoUpdates },
+        });
+        return jsonResponse({ ok: true });
+    });
+
+    router.post('/api/image-metadata/folders/assign', async ({ body }) => {
+        if (!Array.isArray(body?.paths)) {
+            return jsonResponse({ error: '"paths" array is required.' }, 400);
+        }
+
+        await context.safeInvoke('assign_images_to_metadata_folder', {
+            dto: { id: body?.id || '', paths: body.paths },
+        });
+        return jsonResponse({ ok: true });
+    });
+
+    router.post('/api/image-metadata/folders/unassign', async ({ body }) => {
+        if (!Array.isArray(body?.paths)) {
+            return jsonResponse({ error: '"paths" array is required.' }, 400);
+        }
+
+        await context.safeInvoke('unassign_images_from_metadata_folder', {
+            dto: { id: body?.id || '', paths: body.paths },
+        });
+        return jsonResponse({ ok: true });
     });
 
     router.post('/api/backgrounds/delete', async ({ body }) => {

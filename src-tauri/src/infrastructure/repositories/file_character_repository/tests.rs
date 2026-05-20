@@ -49,6 +49,7 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
     let root = unique_temp_root();
     let characters_dir = root.join("characters");
     let chats_dir = root.join("chats");
+    let thumbnails_avatar_dir = root.join("thumbnails/avatar");
     let default_avatar = root.join("default.png");
 
     fs::create_dir_all(&characters_dir)
@@ -57,11 +58,19 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
     fs::create_dir_all(&chats_dir)
         .await
         .expect("create chats dir");
+    fs::create_dir_all(&thumbnails_avatar_dir)
+        .await
+        .expect("create avatar thumbnails dir");
     fs::write(&default_avatar, build_minimal_png())
         .await
         .expect("write default avatar");
 
-    let repository = FileCharacterRepository::new(characters_dir, chats_dir, default_avatar);
+    let repository = FileCharacterRepository::new(
+        characters_dir,
+        chats_dir,
+        thumbnails_avatar_dir,
+        default_avatar,
+    );
     (repository, root)
 }
 
@@ -225,6 +234,104 @@ async fn create_with_avatar_sanitizes_file_stem_like_sillytavern() {
         .expect("create character");
 
     assert_eq!(created.avatar, "UnsafeName.png");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn create_with_avatar_prefers_explicit_file_stem() {
+    let (repository, root) = setup_repository().await;
+
+    let mut character = Character::new(
+        "Display Name".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "Hi".to_string(),
+    );
+    character.file_name = Some("Permanent Assistant".to_string());
+
+    let created = repository
+        .create_with_avatar(&character, None, None)
+        .await
+        .expect("create character");
+
+    assert_eq!(created.avatar, "Permanent Assistant.png");
+    assert_eq!(created.file_name, Some("Permanent Assistant".to_string()));
+
+    let loaded = repository
+        .find_by_name("Permanent Assistant")
+        .await
+        .expect("load character by file stem");
+    assert_eq!(loaded.name, "Display Name");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn duplicate_copies_png_bytes_and_uses_upstream_suffix() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "name": "Display Name",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "hello",
+        "x_custom_root": { "keep": true },
+        "data": {
+            "name": "Display Name",
+            "description": "desc",
+            "personality": "persona",
+            "first_mes": "hello",
+            "extensions": {
+                "world": "Shared Lore"
+            }
+        }
+    });
+    let source_png = write_character_data_to_png(
+        &build_distinct_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+
+    let source_path = root.join("characters").join("Alice_1.png");
+    let occupied_path = root.join("characters").join("Alice_2.png");
+    fs::write(&source_path, &source_png)
+        .await
+        .expect("write source character png");
+    fs::write(
+        &occupied_path,
+        write_character_data_to_png(
+            &build_minimal_png(),
+            &serde_json::to_string(&json!({ "name": "Occupied", "first_mes": "hi" }))
+                .expect("serialize occupied card"),
+        )
+        .expect("embed occupied card"),
+    )
+    .await
+    .expect("write occupied duplicate target");
+
+    let duplicated = repository
+        .duplicate("Alice_1")
+        .await
+        .expect("duplicate character");
+
+    assert_eq!(duplicated.avatar, "Alice_3.png");
+    assert_eq!(duplicated.file_name, Some("Alice_3".to_string()));
+
+    let duplicated_path = root.join("characters").join("Alice_3.png");
+    let duplicated_bytes = fs::read(&duplicated_path)
+        .await
+        .expect("read duplicated character png");
+    assert_eq!(duplicated_bytes, source_png);
+
+    let duplicated_json =
+        read_character_data_from_png(&duplicated_bytes).expect("extract duplicated card json");
+    let duplicated_value: serde_json::Value =
+        serde_json::from_str(&duplicated_json).expect("parse duplicated card json");
+    assert_eq!(
+        duplicated_value["x_custom_root"]["keep"].as_bool(),
+        Some(true)
+    );
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -903,6 +1010,28 @@ async fn save_character_cache_exposes_real_avatar_file_name() {
 }
 
 #[tokio::test]
+async fn list_avatar_filenames_uses_directory_entries_without_card_parsing() {
+    let (repository, root) = setup_repository().await;
+
+    fs::write(root.join("characters").join("Broken.png"), b"not a card")
+        .await
+        .expect("write placeholder png");
+    fs::write(root.join("characters").join("Notes.json"), b"{}")
+        .await
+        .expect("write non-character file");
+
+    let mut avatars = repository
+        .list_avatar_filenames()
+        .await
+        .expect("list avatar filenames");
+    avatars.sort();
+
+    assert_eq!(avatars, vec!["Broken.png".to_string()]);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn find_all_shallow_preserves_runtime_fields_and_omits_character_book() {
     let (repository, root) = setup_repository().await;
 
@@ -1214,6 +1343,45 @@ async fn rename_preserves_avatar_pixel_data() {
     assert_eq!(old_image.to_rgba8(), new_image.to_rgba8());
 
     assert!(!old_file_path.exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn update_avatar_invalidates_stale_thumbnail() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Avatar Target".to_string(),
+        "desc".to_string(),
+        "personality".to_string(),
+        "hello".to_string(),
+    );
+    let created = repository
+        .create_with_avatar(&character, None, None)
+        .await
+        .expect("create character");
+
+    let thumbnail_path = root.join("thumbnails/avatar").join(&created.avatar);
+    fs::write(&thumbnail_path, b"stale thumbnail")
+        .await
+        .expect("write stale thumbnail");
+
+    let replacement_path = root.join("replacement.png");
+    fs::write(&replacement_path, build_distinct_png())
+        .await
+        .expect("write replacement avatar");
+
+    repository
+        .update_avatar(&created, &replacement_path, None)
+        .await
+        .expect("update avatar");
+
+    assert!(
+        !fs::try_exists(&thumbnail_path)
+            .await
+            .expect("check thumbnail")
+    );
 
     let _ = fs::remove_dir_all(&root).await;
 }

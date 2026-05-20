@@ -22,6 +22,7 @@ mod openai;
 mod openai_responses;
 mod response_body;
 mod vertexai;
+mod workers_ai;
 
 #[derive(Debug, Clone, Copy)]
 struct PromptCachePerformanceUsage {
@@ -486,13 +487,25 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::Groq
             | ChatCompletionSource::Moonshot
             | ChatCompletionSource::Chutes
-            | ChatCompletionSource::SiliconFlow
             | ChatCompletionSource::Zai => openai::list_models(self, config, source_name).await,
+            ChatCompletionSource::SiliconFlow => {
+                openai::list_models_with_path(
+                    self,
+                    config,
+                    source_name,
+                    "/models?type=text&sub_type=chat",
+                )
+                .await
+            }
+            ChatCompletionSource::WorkersAi => workers_ai::list_models(self, config).await,
             ChatCompletionSource::Cohere => cohere::list_models(self, config).await,
             ChatCompletionSource::NanoGpt => {
                 openai::list_models_with_path(self, config, source_name, "/models?detailed=true")
                     .await
             }
+            ChatCompletionSource::MiniMax => Err(DomainError::InvalidData(
+                "MiniMax does not expose dynamic model listing; status bypass belongs to the application service".to_string(),
+            )),
             ChatCompletionSource::Claude => claude::list_models(self, config).await,
             ChatCompletionSource::Makersuite => makersuite::list_models(self, config).await,
             ChatCompletionSource::VertexAi => vertexai::list_models(self, config).await,
@@ -517,7 +530,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::NanoGpt
             | ChatCompletionSource::Chutes
             | ChatCompletionSource::SiliconFlow
-            | ChatCompletionSource::Zai => {
+            | ChatCompletionSource::WorkersAi
+            | ChatCompletionSource::Zai
+            | ChatCompletionSource::MiniMax => {
                 openai::generate(self, config, endpoint_path, payload, source_name)
                     .await
                     .map(ChatCompletionRepositoryGenerateResponse::from_body)
@@ -591,7 +606,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::NanoGpt
             | ChatCompletionSource::Chutes
             | ChatCompletionSource::SiliconFlow
-            | ChatCompletionSource::Zai => {
+            | ChatCompletionSource::WorkersAi
+            | ChatCompletionSource::Zai
+            | ChatCompletionSource::MiniMax => {
                 openai::generate_stream(
                     self,
                     config,

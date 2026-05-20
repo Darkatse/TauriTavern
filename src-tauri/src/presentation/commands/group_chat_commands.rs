@@ -243,7 +243,7 @@ pub async fn delete_group_chat(
 pub async fn rename_group_chat(
     dto: RenameGroupChatDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
+) -> Result<String, CommandError> {
     log_command(format!(
         "rename_group_chat {} -> {}",
         dto.old_file_name, dto.new_file_name

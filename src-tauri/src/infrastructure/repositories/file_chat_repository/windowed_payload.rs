@@ -143,7 +143,7 @@ impl FileChatRepository {
         file_name: &str,
         max_lines: usize,
     ) -> Result<ChatPayloadTail, DomainError> {
-        let path = self.get_chat_path(character_name, file_name);
+        let path = self.get_chat_path(character_name, file_name)?;
         read_payload_tail_lines(&path, max_lines).await
     }
 
@@ -154,7 +154,7 @@ impl FileChatRepository {
         cursor: ChatPayloadCursor,
         max_lines: usize,
     ) -> Result<ChatPayloadChunk, DomainError> {
-        let path = self.get_chat_path(character_name, file_name);
+        let path = self.get_chat_path(character_name, file_name)?;
         read_payload_before_lines(&path, cursor, max_lines).await
     }
 
@@ -169,6 +169,9 @@ impl FileChatRepository {
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.ensure_directory_exists().await?;
 
+        let path = self.get_chat_path(character_name, file_name)?;
+        let backup_key = self.get_cache_key(character_name, file_name)?;
+
         let character_dir = self.get_character_dir(character_name);
         fs::create_dir_all(&character_dir).await.map_err(|error| {
             DomainError::InternalError(format!(
@@ -177,9 +180,7 @@ impl FileChatRepository {
             ))
         })?;
 
-        let path = self.get_chat_path(character_name, file_name);
         let _write_guard = self.acquire_payload_write_lock(&path).await;
-        let backup_key = self.get_cache_key(character_name, file_name);
         let result = save_payload_windowed_internal(&path, cursor, header, lines, force).await?;
 
         {
@@ -199,7 +200,7 @@ impl FileChatRepository {
         chat_id: &str,
         max_lines: usize,
     ) -> Result<ChatPayloadTail, DomainError> {
-        let path = self.get_group_chat_path(chat_id);
+        let path = self.get_group_chat_path(chat_id)?;
         read_payload_tail_lines(&path, max_lines).await
     }
 
@@ -209,7 +210,7 @@ impl FileChatRepository {
         cursor: ChatPayloadCursor,
         max_lines: usize,
     ) -> Result<ChatPayloadChunk, DomainError> {
-        let path = self.get_group_chat_path(chat_id);
+        let path = self.get_group_chat_path(chat_id)?;
         read_payload_before_lines(&path, cursor, max_lines).await
     }
 
@@ -223,9 +224,9 @@ impl FileChatRepository {
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.ensure_directory_exists().await?;
 
-        let path = self.get_group_chat_path(chat_id);
+        let path = self.get_group_chat_path(chat_id)?;
         let _write_guard = self.acquire_payload_write_lock(&path).await;
-        let backup_key = format!("group:{}", Self::strip_jsonl_extension(chat_id));
+        let backup_key = Self::get_group_backup_key(chat_id)?;
         let result = save_payload_windowed_internal(&path, cursor, header, lines, force).await?;
 
         self.remove_summary_cache_for_path(&path).await;

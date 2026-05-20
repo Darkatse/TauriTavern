@@ -6,7 +6,9 @@ use std::path::PathBuf;
 
 use crate::domain::errors::DomainError;
 
-pub use export::{default_export_file_name, run_export_data_archive};
+pub use export::{
+    default_export_file_name, run_export_data_archive, run_export_user_backup_archive,
+};
 pub use import::run_import_data_archive;
 
 #[derive(Debug, Clone)]

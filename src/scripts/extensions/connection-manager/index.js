@@ -1,7 +1,7 @@
 import { DOMPurify, Fuse } from '../../../lib.js';
 
-import { event_types, eventSource, main_api, online_status, saveSettingsDebounced } from '../../../script.js';
-import { extension_settings, renderExtensionTemplateAsync } from '../../extensions.js';
+import { activateSendButtons, deactivateSendButtons, event_types, eventSource, main_api, online_status, saveSettingsDebounced } from '../../../script.js';
+import { extension_settings, getContext, renderExtensionTemplateAsync } from '../../extensions.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from '../../popup.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { SlashCommandAbortController } from '../../slash-commands/SlashCommandAbortController.js';
@@ -9,11 +9,16 @@ import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '
 import { commonEnumProviders, enumIcons } from '../../slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandDebugController } from '../../slash-commands/SlashCommandDebugController.js';
 import { enumTypes, SlashCommandEnumValue } from '../../slash-commands/SlashCommandEnumValue.js';
+import { SlashCommandClosure } from '../../slash-commands/SlashCommandClosure.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommandScope } from '../../slash-commands/SlashCommandScope.js';
-import { collapseSpaces, getUniqueName, isFalseBoolean, uuidv4, waitUntilCondition } from '../../utils.js';
+import { collapseSpaces, getUniqueName, isFalseBoolean, isTrueBoolean, uuidv4, waitUntilCondition } from '../../utils.js';
 import { t } from '../../i18n.js';
 import { getSecretLabelById } from '../../secrets.js';
+import { performFuzzySearch } from '/scripts/power-user.js';
+import { StreamingDisplay } from '/scripts/streaming-display.js';
+import { ConnectionManagerRequestService } from '../shared.js';
+import { formatReasoning } from '/scripts/reasoning.js';
 
 const MODULE_NAME = 'connection-manager';
 const NONE = '<None>';
@@ -477,7 +482,205 @@ async function renderDetailsContent(detailsContent) {
     }
 }
 
-(async function () {
+/**
+ * Callback for the /profile-genstream command.
+ * Generates text using Connection Manager with streaming display support.
+ * @param {object} args Named arguments
+ * @param {string} value Unnamed argument (the prompt)
+ * @returns {Promise<string>} The generated text, optionally with formatted reasoning
+ */
+async function generateStreamCallback(args, value) {
+    if (!value) {
+        console.warn('WARN: No argument provided for /profile-genstream command');
+        return '';
+    }
+
+    const context = getContext();
+    if (context.extensionSettings.disabledExtensions.includes('connection-manager')) {
+        toastr.error(t`Connection Manager is required for /profile-genstream. Use /gen or /genraw instead.`);
+        return '';
+    }
+
+    const profileIdOrName = args?.profile;
+    const includeReasoning = isTrueBoolean(args?.reasoning);
+    const systemPrompt = typeof args?.system == 'string' ? args.system : '';
+    const maxTokens = Number(args?.length ?? 2048) || 2048;
+    const lock = isTrueBoolean(args?.lock);
+    const generatingLabel = typeof args?.generating === 'string' ? args.generating : 'Generating...';
+    const completedLabel = typeof args?.completed === 'string' ? args.completed : 'Generated';
+    const enableStop = !isFalseBoolean(args?.stop);
+    const onStopClosure = args?.onStop instanceof SlashCommandClosure ? args.onStop : null;
+    const onCompleteClosure = args?.onComplete instanceof SlashCommandClosure ? args.onComplete : null;
+
+    let completeDelay = 3000;
+    if (args?.delay !== undefined) {
+        if (typeof args.delay === 'string' && args.delay.toLowerCase() === 'infinite') {
+            completeDelay = null;
+        } else {
+            const parsed = Number(args.delay);
+            if (!isNaN(parsed) && parsed >= 0) {
+                completeDelay = parsed;
+            } else if (!isNaN(parsed) && parsed < 0) {
+                completeDelay = null;
+            }
+        }
+    }
+
+    const abortController = enableStop ? new AbortController() : null;
+    const onStopHandler = enableStop ? async () => {
+        abortController.abort();
+        if (onStopClosure) {
+            try {
+                const localClosure = onStopClosure.getCopy();
+                localClosure.onProgress = () => { };
+                await localClosure.execute();
+            } catch (e) {
+                console.error('[GenStream] Error executing onStop closure', e);
+            }
+        }
+    } : null;
+
+    try {
+        if (lock) {
+            deactivateSendButtons();
+        }
+
+        let effectiveProfileId = context.extensionSettings.connectionManager.selectedProfile;
+        const profiles = context.extensionSettings.connectionManager.profiles;
+
+        if (profileIdOrName) {
+            const profile = profiles.find(p => p.id === profileIdOrName);
+            if (profile) {
+                effectiveProfileId = profile.id;
+            } else {
+                const fuseResults = performFuzzySearch('profile', profiles, [{ name: 'name', weight: 10 }], profileIdOrName);
+                if (fuseResults.length > 0) {
+                    effectiveProfileId = fuseResults[0].item.id;
+                } else {
+                    toastr.warning(t`Connection profile not found: ${profileIdOrName}`);
+                    return '';
+                }
+            }
+        }
+
+        if (!effectiveProfileId) {
+            toastr.error(t`No connection profile specified or selected. Use profile= argument or select a profile in Connection Manager.`);
+            return '';
+        }
+
+        const effectiveProfile = ConnectionManagerRequestService.getProfile(effectiveProfileId);
+        const selectedApiMap = ConnectionManagerRequestService.validateProfile(effectiveProfile);
+        if (globalThis.__TAURI_RUNNING__ === true && selectedApiMap.selected === 'textgenerationwebui') {
+            throw new Error('Text Completion profiles are not supported by the native TauriTavern generation backend yet. Use a Chat Completion profile.');
+        }
+
+        const display = new StreamingDisplay();
+        display.show({
+            label: generatingLabel,
+            icon: ConnectionManagerRequestService.getProfileIcon(effectiveProfileId),
+            onStop: onStopHandler,
+        });
+
+        const messages = [
+            ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+            { role: 'user', content: value },
+        ];
+
+        let finalText = '';
+        let finalReasoning = '';
+
+        function buildResultText() {
+            if (includeReasoning && finalReasoning) {
+                const { formatted } = formatReasoning(finalReasoning, finalText);
+                return formatted;
+            }
+
+            return finalText;
+        }
+
+        try {
+            const streamResponse = await ConnectionManagerRequestService.sendRequest(
+                effectiveProfileId,
+                messages,
+                maxTokens,
+                { extractData: true, includePreset: true, stream: true, signal: abortController?.signal ?? undefined },
+            );
+
+            if (typeof streamResponse === 'function') {
+                const generator = streamResponse();
+                for await (const chunk of generator) {
+                    finalText = chunk.text;
+                    finalReasoning = chunk.state?.reasoning || '';
+                    display.updateReasoning(finalReasoning);
+                    display.updateContent(finalText);
+                }
+            } else {
+                finalText = streamResponse?.content || '';
+                finalReasoning = streamResponse?.reasoning || '';
+                if (finalReasoning) {
+                    display.updateReasoning(finalReasoning);
+                }
+                display.updateContent(finalText);
+            }
+        } catch (error) {
+            if (abortController?.signal?.aborted) {
+                display.markStopped({ label: `${generatingLabel} [Stopped]` });
+                return buildResultText();
+            }
+
+            console.warn('[Slash Commands] Streaming failed, falling back to non-streaming:', error);
+            display.hide({ instant: true });
+
+            const response = await ConnectionManagerRequestService.sendRequest(
+                effectiveProfileId,
+                messages,
+                maxTokens,
+                { extractData: true, includePreset: true, stream: false },
+            );
+
+            finalText = response?.content || '';
+            finalReasoning = response?.reasoning || '';
+
+            display.show({
+                label: generatingLabel,
+                icon: ConnectionManagerRequestService.getProfileIcon(effectiveProfileId),
+            });
+            if (finalReasoning) {
+                display.updateReasoning(finalReasoning);
+            }
+            display.updateContent(finalText);
+        }
+
+        display.complete({ label: completedLabel, delay: completeDelay });
+
+        if (onCompleteClosure) {
+            try {
+                const localClosure = onCompleteClosure.getCopy();
+                localClosure.onProgress = () => { };
+                await localClosure.execute();
+            } catch (e) {
+                console.error('[GenStream] Error executing onComplete closure', e);
+            }
+        }
+
+        if (!finalText) {
+            toastr.warning(t`Generation returned empty result`);
+            return '';
+        }
+
+        return buildResultText();
+    } catch (err) {
+        console.error('Error on /profile-genstream generation', err);
+        toastr.error(err.message, t`API Error`, { preventDuplicates: true });
+        return '';
+    } finally {
+        if (lock) {
+            activateSendButtons();
+        }
+    }
+}
+
+export async function init() {
     extension_settings.connectionManager = extension_settings.connectionManager || structuredClone(DEFAULT_SETTINGS);
 
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
@@ -827,4 +1030,114 @@ async function renderDetailsContent(detailsContent) {
             return JSON.stringify(profile);
         },
     }));
-})();
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'profile-genstream',
+        callback: generateStreamCallback,
+        returns: t`generated text`,
+        namedArgumentList: [
+            new SlashCommandNamedArgument(
+                'lock', t`lock user input during generation`, [ARGUMENT_TYPE.BOOLEAN], false, false, 'off', commonEnumProviders.boolean('onOff')(),
+            ),
+            SlashCommandNamedArgument.fromProps({
+                name: 'profile',
+                description: t`connection profile ID to use for generation`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.connectionProfiles(),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'reasoning',
+                description: t`include formatted reasoning in the output`,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'false',
+                enumProvider: commonEnumProviders.boolean('trueFalse'),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'system',
+                description: t`system prompt at the start`,
+                typeList: [ARGUMENT_TYPE.STRING],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'length',
+                description: t`API response length in tokens`,
+                typeList: [ARGUMENT_TYPE.NUMBER],
+                defaultValue: '2048',
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'generating',
+                description: t`label/title for the generation display`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: 'Generating...',
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'completed',
+                description: t`updated label/title for when generation completes`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: 'Generated',
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'delay',
+                description: t`auto-hide delay in ms after generation completes. Use "infinite" or negative to keep until manually closed`,
+                typeList: [ARGUMENT_TYPE.NUMBER],
+                defaultValue: '3000',
+                enumList: [
+                    new SlashCommandEnumValue('infinite', 'Keep the streaming display open until manually closed', 'command', 'infinity'),
+                    new SlashCommandEnumValue('any delay in seconds', null, 'number', 'time', () => true, input => input),
+                ],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'stop',
+                description: t`show a stop button on the streaming display that aborts generation when clicked`,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'true',
+                enumProvider: commonEnumProviders.boolean('trueFalse'),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'onStop',
+                description: t`closure to execute when the stop button is clicked (in addition to aborting the request)`,
+                typeList: [ARGUMENT_TYPE.CLOSURE],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'onComplete',
+                description: t`closure to execute after generation completes successfully`,
+                typeList: [ARGUMENT_TYPE.CLOSURE],
+            }),
+        ],
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'prompt',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+            }),
+        ],
+        helpString: `
+            <div>
+                ${t`Generates text using Connection Manager with streaming display. Shows live generation progress including reasoning (thinking) and content.`}
+            </div>
+            <div>
+                ${t`Requires Connection Manager extension. Uses the currently selected profile or the specified profile= argument.`}
+            </div>
+            <div>
+                ${t`Use reasoning=true to include formatted reasoning in the output (using the defined reasoning template). This can be parsed later with /reasoning-parse.`}
+            </div>
+            <div>
+                ${t`Use delay to control auto-hide behavior: number (ms), "infinite", or negative to keep the display open until manually closed. The display shows a green LED when complete.`}
+            </div>
+            <div>
+                ${t`A stop button is shown by default (stop=true). Click it to abort generation and return whatever was streamed so far. Use stop=false to hide the stop button.`}
+            </div>
+            <div>
+                ${t`Use onStop and onComplete closures for custom behavior when generation is stopped or completes.`}
+            </div>
+            <div>
+                ${t`Example: <pre><code>/profile-genstream profile=my-profile-id reasoning=true Summarize the following text</code></pre>`}
+            </div>
+            <div>
+                ${t`Example with infinite display: <pre><code>/profile-genstream delay=infinite Tell me a story</code></pre>`}
+            </div>
+            <div>
+                ${t`Example with custom stop handler: <pre><code>/profile-genstream onStop={: /echo "Generation stopped!" :} Tell me a story</code></pre>`}
+            </div>
+        `,
+    }));
+}
