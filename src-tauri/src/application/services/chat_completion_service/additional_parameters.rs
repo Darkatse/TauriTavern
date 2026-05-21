@@ -33,6 +33,31 @@ impl AdditionalParameters {
         custom_parameters::parse_string_map(&self.include_headers)
     }
 
+    pub(super) fn ensure_body_overrides_do_not_touch(
+        &self,
+        protected_keys: &[&str],
+    ) -> Result<(), ApplicationError> {
+        if protected_keys.is_empty() {
+            return Ok(());
+        }
+
+        if !self.include_body.trim().is_empty() {
+            for key in custom_parameters::parse_object(&self.include_body)?.keys() {
+                if protected_keys.contains(&key.as_str()) {
+                    return Err(protected_body_override_error(key));
+                }
+            }
+        }
+
+        for key in custom_parameters::parse_key_list(&self.exclude_body)? {
+            if protected_keys.contains(&key.as_str()) {
+                return Err(protected_body_override_error(&key));
+            }
+        }
+
+        Ok(())
+    }
+
     pub(super) fn apply_body_overrides(
         &self,
         upstream_payload: &mut Value,
@@ -69,6 +94,12 @@ fn optional_string(payload: &Map<String, Value>, key: &str) -> Result<String, Ap
             key
         ))
     })
+}
+
+fn protected_body_override_error(key: &str) -> ApplicationError {
+    ApplicationError::ValidationError(format!(
+        "Chat completion body override cannot modify protected field: {key}"
+    ))
 }
 
 #[cfg(test)]
@@ -115,5 +146,55 @@ mod tests {
             AdditionalParameters::from_payload(&payload).expect_err("field type should fail");
 
         assert!(error.to_string().contains("custom_include_body"));
+    }
+
+    #[test]
+    fn protected_body_overrides_reject_include_keys() {
+        let payload = json!({
+            "custom_include_body": "{\"messages\":[{\"role\":\"user\",\"content\":\"override\"}]}"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be an object");
+        let parameters = AdditionalParameters::from_payload(&payload).expect("parameters parse");
+
+        let error = parameters
+            .ensure_body_overrides_do_not_touch(&["messages"])
+            .expect_err("protected include key should fail");
+
+        assert!(error.to_string().contains("protected field: messages"));
+    }
+
+    #[test]
+    fn protected_body_overrides_reject_exclude_keys() {
+        let payload = json!({
+            "custom_exclude_body": "[\"tools\"]"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be an object");
+        let parameters = AdditionalParameters::from_payload(&payload).expect("parameters parse");
+
+        let error = parameters
+            .ensure_body_overrides_do_not_touch(&["tools"])
+            .expect_err("protected exclude key should fail");
+
+        assert!(error.to_string().contains("protected field: tools"));
+    }
+
+    #[test]
+    fn protected_body_overrides_allow_unrelated_keys() {
+        let payload = json!({
+            "custom_include_body": "{ \"metadata\": { \"feature\": \"test\" } }",
+            "custom_exclude_body": "[\"temperature\"]"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be an object");
+        let parameters = AdditionalParameters::from_payload(&payload).expect("parameters parse");
+
+        parameters
+            .ensure_body_overrides_do_not_touch(&["messages", "tools"])
+            .expect("unrelated overrides should pass");
     }
 }

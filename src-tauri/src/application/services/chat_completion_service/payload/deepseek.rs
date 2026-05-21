@@ -4,6 +4,7 @@ use crate::application::errors::ApplicationError;
 
 use super::openai;
 use super::prompt_post_processing::{PromptNames, PromptProcessingType, post_process_prompt};
+use super::tool_calls;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeepSeekThinkingMode {
@@ -41,7 +42,9 @@ pub(super) fn build(mut payload: Map<String, Value>) -> Result<(String, Value), 
             ensure_tool_context_reasoning_content(&mut processed)?;
         }
 
-        payload.insert("messages".to_string(), Value::Array(processed));
+        let processed = Value::Array(processed);
+        tool_calls::validate_openai_chat_tool_transcript(Some(&processed), false)?;
+        payload.insert("messages".to_string(), processed);
     }
 
     strip_empty_required_arrays_from_tools(&mut payload);
@@ -455,6 +458,56 @@ mod tests {
             assistant.get("reasoning_content").and_then(Value::as_str),
             Some("need weather")
         );
+    }
+
+    #[test]
+    fn deepseek_semi_tools_keeps_tool_call_assistant_after_assistant_text() {
+        let payload = json!({
+            "model": "deepseek-chat",
+            "messages": [
+                {"role":"user","content":"draft"},
+                {"role":"assistant","content":"I'll prepare it."},
+                {
+                    "role":"assistant",
+                    "content":"I'll write the file now.",
+                    "tool_calls":[{
+                        "id":"call_1",
+                        "type":"function",
+                        "function":{
+                            "name":"workspace_write_file",
+                            "arguments":"{\"path\":\"output/main.md\",\"content\":\"hi\"}"
+                        }
+                    }]
+                },
+                {"role":"tool","tool_call_id":"call_1","content":"ok"}
+            ],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "workspace_write_file",
+                    "description": "write file",
+                    "parameters": { "type": "object", "required": [] }
+                }
+            }],
+            "chat_completion_source": "deepseek"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("payload should build");
+        let messages = upstream
+            .get("messages")
+            .and_then(Value::as_array)
+            .expect("messages must be array");
+
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert!(messages[1].get("tool_calls").is_none());
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[3]["role"], "tool");
+        assert_eq!(messages[3]["tool_call_id"], "call_1");
     }
 
     #[test]

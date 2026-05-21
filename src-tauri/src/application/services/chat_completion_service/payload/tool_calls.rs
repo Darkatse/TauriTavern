@@ -1,4 +1,8 @@
+use std::collections::HashSet;
+
 use serde_json::{Map, Value, json};
+
+use crate::application::errors::ApplicationError;
 
 use super::shared::message_content_to_text;
 
@@ -77,6 +81,81 @@ pub(super) fn fallback_tool_name() -> &'static str {
     DEFAULT_TOOL_NAME
 }
 
+pub(super) fn validate_openai_chat_tool_transcript(
+    messages: Option<&Value>,
+    allow_orphan_tool_outputs: bool,
+) -> Result<(), ApplicationError> {
+    let Some(messages) = messages else {
+        return Ok(());
+    };
+
+    let Some(entries) = messages.as_array() else {
+        return Ok(());
+    };
+
+    let mut pending_call_ids = HashSet::<String>::new();
+
+    for (index, entry) in entries.iter().enumerate() {
+        let message = entry.as_object().ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "chat_completion.invalid_tool_transcript: message {index} must be an object"
+            ))
+        })?;
+        let role = non_empty_string(message.get("role"))
+            .map(|role| role.to_ascii_lowercase())
+            .unwrap_or_else(|| "user".to_string());
+
+        match role.as_str() {
+            "assistant" => {
+                if !pending_call_ids.is_empty() {
+                    return Err(pending_tool_calls_error(index, &pending_call_ids));
+                }
+
+                for call_id in strict_tool_call_ids(message.get("tool_calls"), index)? {
+                    if !pending_call_ids.insert(call_id.clone()) {
+                        return Err(ApplicationError::ValidationError(format!(
+                            "chat_completion.invalid_tool_transcript: duplicate assistant tool_call id `{call_id}` at message {index}"
+                        )));
+                    }
+                }
+            }
+            "tool" | "function" => {
+                let call_id = message_tool_call_id(message).ok_or_else(|| {
+                    ApplicationError::ValidationError(format!(
+                        "chat_completion.invalid_tool_transcript: tool message {index} is missing tool_call_id"
+                    ))
+                })?;
+
+                if pending_call_ids.remove(&call_id) {
+                    continue;
+                }
+
+                if allow_orphan_tool_outputs && pending_call_ids.is_empty() {
+                    continue;
+                }
+
+                return Err(ApplicationError::ValidationError(format!(
+                    "chat_completion.invalid_tool_transcript: tool message {index} references call_id without preceding assistant tool_calls: {call_id}"
+                )));
+            }
+            _ => {
+                if !pending_call_ids.is_empty() {
+                    return Err(pending_tool_calls_error(index, &pending_call_ids));
+                }
+            }
+        }
+    }
+
+    if !pending_call_ids.is_empty() {
+        return Err(ApplicationError::ValidationError(format!(
+            "chat_completion.invalid_tool_transcript: assistant tool_calls are missing tool responses: {}",
+            sorted_call_ids(&pending_call_ids).join(", ")
+        )));
+    }
+
+    Ok(())
+}
+
 fn parse_tool_call_arguments(value: Option<&Value>) -> Value {
     let Some(value) = value else {
         return Value::Object(Map::new());
@@ -91,6 +170,38 @@ fn parse_tool_call_arguments(value: Option<&Value>) -> Value {
     }
 }
 
+fn strict_tool_call_ids(
+    value: Option<&Value>,
+    message_index: usize,
+) -> Result<Vec<String>, ApplicationError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+
+    match value {
+        Value::Null => Ok(Vec::new()),
+        Value::Array(entries) => entries
+            .iter()
+            .enumerate()
+            .map(|(call_index, entry)| {
+                let object = entry.as_object().ok_or_else(|| {
+                    ApplicationError::ValidationError(format!(
+                        "chat_completion.invalid_tool_transcript: assistant tool_call {call_index} at message {message_index} must be an object"
+                    ))
+                })?;
+                non_empty_string(object.get("id")).ok_or_else(|| {
+                    ApplicationError::ValidationError(format!(
+                        "chat_completion.invalid_tool_transcript: assistant tool_call {call_index} at message {message_index} is missing id"
+                    ))
+                })
+            })
+            .collect(),
+        _ => Err(ApplicationError::ValidationError(format!(
+            "chat_completion.invalid_tool_transcript: assistant tool_calls at message {message_index} must be an array"
+        ))),
+    }
+}
+
 fn non_empty_string(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
@@ -99,11 +210,30 @@ fn non_empty_string(value: Option<&Value>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn pending_tool_calls_error(
+    message_index: usize,
+    pending_call_ids: &HashSet<String>,
+) -> ApplicationError {
+    ApplicationError::ValidationError(format!(
+        "chat_completion.invalid_tool_transcript: message {message_index} appears before tool responses for assistant tool_calls: {}",
+        sorted_call_ids(pending_call_ids).join(", ")
+    ))
+}
+
+fn sorted_call_ids(call_ids: &HashSet<String>) -> Vec<&str> {
+    let mut call_ids = call_ids.iter().map(String::as_str).collect::<Vec<_>>();
+    call_ids.sort_unstable();
+    call_ids
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{extract_openai_tool_calls, normalize_tool_result_payload};
+    use super::{
+        extract_openai_tool_calls, normalize_tool_result_payload,
+        validate_openai_chat_tool_transcript,
+    };
 
     #[test]
     fn extract_openai_tool_calls_parses_arguments_and_signature() {
@@ -129,5 +259,88 @@ mod tests {
     fn normalize_tool_result_payload_wraps_plain_text() {
         let payload = normalize_tool_result_payload("done");
         assert_eq!(payload["content"], "done");
+    }
+
+    #[test]
+    fn validate_openai_chat_tool_transcript_accepts_matching_tool_result() {
+        let messages = json!([
+            {"role":"user","content":"weather"},
+            {
+                "role":"assistant",
+                "content":"checking",
+                "tool_calls":[{
+                    "id":"call_1",
+                    "type":"function",
+                    "function":{"name":"weather","arguments":"{}"}
+                }]
+            },
+            {"role":"tool","tool_call_id":"call_1","content":"sunny"}
+        ]);
+
+        validate_openai_chat_tool_transcript(Some(&messages), false).expect("valid transcript");
+    }
+
+    #[test]
+    fn validate_openai_chat_tool_transcript_rejects_orphan_tool_result() {
+        let messages = json!([
+            {"role":"user","content":"weather"},
+            {"role":"tool","tool_call_id":"call_1","content":"sunny"}
+        ]);
+
+        let error = validate_openai_chat_tool_transcript(Some(&messages), false)
+            .expect_err("orphan tool result must fail");
+
+        assert!(error.to_string().contains("without preceding assistant"));
+    }
+
+    #[test]
+    fn validate_openai_chat_tool_transcript_allows_incremental_tool_result() {
+        let messages = json!([
+            {"role":"tool","tool_call_id":"call_1","content":"sunny"}
+        ]);
+
+        validate_openai_chat_tool_transcript(Some(&messages), true)
+            .expect("previous response continuation can send only tool outputs");
+    }
+
+    #[test]
+    fn validate_openai_chat_tool_transcript_rejects_missing_tool_call_id() {
+        let messages = json!([
+            {
+                "role":"assistant",
+                "content":"checking",
+                "tool_calls":[{
+                    "type":"function",
+                    "function":{"name":"weather","arguments":"{}"}
+                }]
+            }
+        ]);
+
+        let error = validate_openai_chat_tool_transcript(Some(&messages), false)
+            .expect_err("missing assistant tool call id must fail");
+
+        assert!(error.to_string().contains("is missing id"));
+    }
+
+    #[test]
+    fn validate_openai_chat_tool_transcript_rejects_interrupted_tool_turn() {
+        let messages = json!([
+            {
+                "role":"assistant",
+                "content":"checking",
+                "tool_calls":[{
+                    "id":"call_1",
+                    "type":"function",
+                    "function":{"name":"weather","arguments":"{}"}
+                }]
+            },
+            {"role":"user","content":"never mind"},
+            {"role":"tool","tool_call_id":"call_1","content":"sunny"}
+        ]);
+
+        let error = validate_openai_chat_tool_transcript(Some(&messages), false)
+            .expect_err("tool calls must be answered before the next turn");
+
+        assert!(error.to_string().contains("appears before tool responses"));
     }
 }

@@ -12,8 +12,9 @@ use crate::domain::errors::DomainError;
 use crate::domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use crate::domain::models::settings::{PromptCacheTtl, TauriTavernSettings};
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionNormalizationReport,
-    ChatCompletionRepository, ChatCompletionSource, ChatCompletionStreamSender,
+    CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    ChatCompletionNormalizationReport, ChatCompletionRepository, ChatCompletionSource,
+    ChatCompletionStreamSender,
 };
 use crate::domain::repositories::prompt_cache_repository::PromptCacheRepository;
 use crate::domain::repositories::secret_repository::SecretRepository;
@@ -35,6 +36,14 @@ use self::exchange::{
 };
 
 const OPENAI_SOURCE: &str = ChatCompletionSource::OpenAi.key();
+const AGENT_STRUCTURAL_BODY_OVERRIDE_KEYS: &[&str] = &[
+    "messages",
+    "input",
+    "tools",
+    "tool_choice",
+    "previous_response_id",
+    CHAT_COMPLETION_PROVIDER_STATE_FIELD,
+];
 
 struct ChatCompletionExecution {
     source: ChatCompletionSource,
@@ -330,6 +339,7 @@ impl ChatCompletionService {
         self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
         self.ensure_chat_completion_features_allowed(&dto.payload)?;
         let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
+        Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
         let provider_format = ChatCompletionProviderFormat::from_payload(source, &dto.payload)?;
 
         let settings = self.load_tauritavern_settings().await?;
@@ -355,6 +365,7 @@ impl ChatCompletionService {
         )
         .await?;
         additional_parameters.apply_body_overrides(&mut upstream_payload)?;
+        payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
 
         let response = self
             .chat_completion_repository
@@ -441,6 +452,7 @@ impl ChatCompletionService {
         self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
         self.ensure_chat_completion_features_allowed(&dto.payload)?;
         let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
+        Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
 
         let settings = self.load_tauritavern_settings().await?;
         let prompt_caching_hints =
@@ -465,6 +477,7 @@ impl ChatCompletionService {
         )
         .await?;
         additional_parameters.apply_body_overrides(&mut upstream_payload)?;
+        payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
 
         self.chat_completion_repository
             .generate_stream(
@@ -523,6 +536,18 @@ impl ChatCompletionService {
             .load_tauritavern_settings()
             .await
             .map_err(ApplicationError::from)
+    }
+
+    fn ensure_agent_body_overrides_allowed(
+        payload: &Map<String, Value>,
+        additional_parameters: &AdditionalParameters,
+    ) -> Result<(), ApplicationError> {
+        if !payload.contains_key(CHAT_COMPLETION_PROVIDER_STATE_FIELD) {
+            return Ok(());
+        }
+
+        additional_parameters
+            .ensure_body_overrides_do_not_touch(AGENT_STRUCTURAL_BODY_OVERRIDE_KEYS)
     }
 
     async fn apply_tauritavern_prompt_caching(

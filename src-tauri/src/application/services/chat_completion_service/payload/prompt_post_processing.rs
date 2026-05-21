@@ -281,6 +281,9 @@ fn merge_messages(messages: Vec<Value>, names: &PromptNames, options: MergeOptio
             let Some(current_object) = message.as_object() else {
                 return false;
             };
+            if !is_plain_text_prompt_message(current_object) {
+                return false;
+            }
 
             let current_role = current_object
                 .get("role")
@@ -301,6 +304,9 @@ fn merge_messages(messages: Vec<Value>, names: &PromptNames, options: MergeOptio
             let Some(last_object) = merged.last().and_then(Value::as_object) else {
                 return false;
             };
+            if !is_plain_text_prompt_message(last_object) {
+                return false;
+            }
 
             last_object
                 .get("role")
@@ -450,6 +456,12 @@ fn merge_messages(messages: Vec<Value>, names: &PromptNames, options: MergeOptio
     merged
 }
 
+fn is_plain_text_prompt_message(message: &Map<String, Value>) -> bool {
+    message.len() == 2
+        && message.get("role").is_some_and(Value::is_string)
+        && message.get("content").is_some_and(Value::is_string)
+}
+
 fn normalize_message_content(content: &mut Value, content_tokens: &mut HashMap<String, Value>) {
     match content {
         Value::String(_) => {}
@@ -570,5 +582,57 @@ mod tests {
             })
             .collect();
         assert_eq!(roles, vec!["user", "assistant"]);
+    }
+
+    #[test]
+    fn merge_tools_keeps_structured_assistant_tool_call_turns() {
+        let names = PromptNames {
+            char_name: String::new(),
+            user_name: String::new(),
+            group_names: Vec::new(),
+        };
+        let messages = vec![
+            json!({"role":"user","content":"draft"}),
+            json!({"role":"assistant","content":"I'll prepare it."}),
+            json!({
+                "role":"assistant",
+                "content":"I'll write the file now.",
+                "tool_calls":[{
+                    "id":"call_1",
+                    "type":"function",
+                    "function":{"name":"workspace_write_file","arguments":"{}"}
+                }]
+            }),
+            json!({"role":"tool","tool_call_id":"call_1","content":"ok"}),
+        ];
+
+        let merged = post_process_prompt(messages, PromptProcessingType::SemiTools, &names);
+
+        assert_eq!(merged.len(), 4);
+        assert_eq!(merged[1]["role"], "assistant");
+        assert!(merged[1].get("tool_calls").is_none());
+        assert_eq!(merged[2]["role"], "assistant");
+        assert_eq!(merged[2]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(merged[3]["role"], "tool");
+        assert_eq!(merged[3]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn merge_keeps_unknown_structured_fields_unmerged() {
+        let names = PromptNames {
+            char_name: String::new(),
+            user_name: String::new(),
+            group_names: Vec::new(),
+        };
+        let messages = vec![
+            json!({"role":"assistant","content":"a","reasoning_content":"kept"}),
+            json!({"role":"assistant","content":"b"}),
+        ];
+
+        let merged = post_process_prompt(messages, PromptProcessingType::MergeTools, &names);
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0]["reasoning_content"], "kept");
+        assert_eq!(merged[1]["content"], "b");
     }
 }
