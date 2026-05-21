@@ -326,7 +326,7 @@ test('Agent System profile panel no longer owns legacy Skill management UI', asy
         REPO_ROOT,
         'src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js',
     ), 'utf8');
-    const skillManagerSource = await readFile(path.join(
+    const skillExtensionSource = await readFile(path.join(
         REPO_ROOT,
         'src/scripts/extensions/agent-system/src/skill-manager/panel-app.js',
     ), 'utf8');
@@ -341,16 +341,16 @@ test('Agent System profile panel no longer owns legacy Skill management UI', asy
     assert.doesNotMatch(panelSource, /skillImport/);
     assert.doesNotMatch(panelSource, /requireSkillApi/);
     assert.doesNotMatch(panelSource, /openSkillFileViewer/);
-    assert.match(skillManagerSource, /subscribeAgentProfilesChanged/);
-    assert.match(skillManagerSource, /subscribeSettings/);
-    assert.match(skillManagerSource, /syncSelectedProfileFromSettings/);
-    assert.match(skillManagerSource, /writeFile/);
-    assert.match(skillManagerSource, /<SkillFileViewer/);
+    assert.match(skillExtensionSource, /subscribeAgentProfilesChanged/);
+    assert.match(skillExtensionSource, /subscribeSettings/);
+    assert.match(skillExtensionSource, /syncSelectedProfileFromSettings/);
+    assert.match(skillExtensionSource, /writeFile/);
+    assert.match(skillExtensionSource, /<SkillFileViewer/);
     assert.doesNotMatch(skillFileViewerSource, /showModal/);
     assert.doesNotMatch(skillFileViewerSource, /createApp/);
 });
 
-test('Skill Manager resolves active scoped sections from SillyTavern context', async () => {
+test('Skill extension resolves active scoped sections from SillyTavern context', async () => {
     const hostWindow = installWindow({});
     hostWindow.SillyTavern = {
         getContext() {
@@ -460,7 +460,7 @@ test('Embedded Skill items export the selected scoped Skill archive', async () =
     });
 });
 
-test('Skill Manager portability sync embeds moved preset-scoped Skills', async () => {
+test('Skill extension portability sync embeds moved preset-scoped Skills', async () => {
     const exportCalls = [];
     const writes = [];
     let storedSkills = null;
@@ -535,7 +535,7 @@ test('Skill Manager portability sync embeds moved preset-scoped Skills', async (
     });
 });
 
-test('Skill Manager portability sync writes character embedded Skills without edit-form coupling', async () => {
+test('Skill extension portability sync writes character embedded Skills without edit-form coupling', async () => {
     const previousFetch = globalThis.fetch;
     const previousDocument = globalThis.document;
     delete globalThis.document;
@@ -650,7 +650,7 @@ test('Agent System stylesheet drops legacy profile-tab Skill selectors', async (
     }
 });
 
-test('Skill Manager marks unsaved GUI presets unavailable instead of inventing a scope', async () => {
+test('Skill extension marks unsaved GUI presets unavailable instead of inventing a scope', async () => {
     const hostWindow = installWindow({});
     hostWindow.SillyTavern = {
         getContext() {

@@ -829,7 +829,7 @@ export function createSkillManagerPanelRoot() {
         },
         template: `
             <div class="ttas-root ttas-panel-root ttas-skill-manager-root ttas-skill-manager-inline">
-                <div v-if="loading && !initialized" class="ttas-loading">{{ tr('loadingSkillManager') }}</div>
+                <div v-if="loading && !initialized" class="ttas-loading">{{ tr('loadingSkillExtension') }}</div>
                 <div v-else class="ttas-panel-body ttas-skill-manager-body">
                     <div v-if="error" class="ttas-error">
                         <i class="fa-solid fa-triangle-exclamation"></i>
