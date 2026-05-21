@@ -321,6 +321,368 @@ test('Agent profile drafts keep Agent system prompt owned by the backend resolve
     assert.match(panelSource, /resolvedAgentSystemPrompt/);
 });
 
+test('Agent System profile panel no longer owns legacy Skill management UI', async () => {
+    const panelSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js',
+    ), 'utf8');
+    const skillManagerSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/skill-manager/panel-app.js',
+    ), 'utf8');
+    const skillFileViewerSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/skill-manager/file-viewer.js',
+    ), 'utf8');
+
+    assert.doesNotMatch(panelSource, /activeTab === 'skills'/);
+    assert.doesNotMatch(panelSource, /refreshSkills/);
+    assert.doesNotMatch(panelSource, /selectedSkillName/);
+    assert.doesNotMatch(panelSource, /skillImport/);
+    assert.doesNotMatch(panelSource, /requireSkillApi/);
+    assert.doesNotMatch(panelSource, /openSkillFileViewer/);
+    assert.match(skillManagerSource, /subscribeAgentProfilesChanged/);
+    assert.match(skillManagerSource, /subscribeSettings/);
+    assert.match(skillManagerSource, /syncSelectedProfileFromSettings/);
+    assert.match(skillManagerSource, /writeFile/);
+    assert.match(skillManagerSource, /<SkillFileViewer/);
+    assert.doesNotMatch(skillFileViewerSource, /showModal/);
+    assert.doesNotMatch(skillFileViewerSource, /createApp/);
+});
+
+test('Skill Manager resolves active scoped sections from SillyTavern context', async () => {
+    const hostWindow = installWindow({});
+    hostWindow.SillyTavern = {
+        getContext() {
+            return {
+                mainApi: 'openai',
+                getPresetManager(apiId) {
+                    assert.equal(apiId, 'openai');
+                    return {
+                        getSelectedPreset() {
+                            return 'Creative';
+                        },
+                        getSelectedPresetName() {
+                            return 'Creative';
+                        },
+                    };
+                },
+                characterId: 0,
+                characters: [
+                    {
+                        name: 'Aurelia',
+                        avatar: 'characters/Aurelia.png',
+                    },
+                ],
+            };
+        },
+    };
+
+    const {
+        buildSkillScopeSections,
+        skillScopeKey,
+        skillScopeLabel,
+    } = await importFresh('src/scripts/extensions/agent-system/src/skill-manager/scope.js');
+
+    const sections = buildSkillScopeSections({
+        selectedProfileId: 'writer',
+        profiles: [{ id: 'writer', displayName: 'Writer' }],
+    });
+
+    assert.deepEqual(sections.map((section) => section.id), ['global', 'preset', 'profile', 'character']);
+    assert.deepEqual(sections.find((section) => section.id === 'preset').scope, {
+        kind: 'preset',
+        apiId: 'openai',
+        name: 'Creative',
+    });
+    assert.equal(sections.find((section) => section.id === 'preset').subtitle, 'openai / Creative');
+    assert.equal(skillScopeLabel(sections.find((section) => section.id === 'preset').scope), 'Preset / Creative');
+    assert.doesNotMatch(skillScopeLabel(sections.find((section) => section.id === 'preset').scope), /preset:openai/);
+    assert.deepEqual(sections.find((section) => section.id === 'profile').scope, {
+        kind: 'profile',
+        profileId: 'writer',
+    });
+    assert.deepEqual(sections.find((section) => section.id === 'character').scope, {
+        kind: 'character',
+        characterId: 'Aurelia',
+    });
+    assert.equal(skillScopeKey(sections.find((section) => section.id === 'character').scope), 'character:Aurelia');
+});
+
+test('Embedded assets panel uses scoped Skill selections', async () => {
+    const panelSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/embedded-assets-panel.js',
+    ), 'utf8');
+
+    assert.match(panelSource, /requireSkillApi\(\)\.list\(\{\s*scope:\s*\{\s*kind:\s*'all'\s*\}\s*\}\)/s);
+    assert.match(panelSource, /selectedSkillKey/);
+    assert.match(panelSource, /skillSelectionKey/);
+    assert.match(panelSource, /embedSkill\(target, skill\)/);
+    assert.doesNotMatch(panelSource, /selectedSkillName/);
+});
+
+test('Embedded Skill items export the selected scoped Skill archive', async () => {
+    const calls = [];
+    installWindow({
+        skill: {
+            async export(options) {
+                calls.push(options);
+                return {
+                    fileName: 'writer.ttskill',
+                    contentBase64: 'UEsDBAo=',
+                    sha256: 'abc123',
+                };
+            },
+        },
+    });
+
+    const { buildEmbeddedSkillItem } = await importFresh('src/scripts/extensions/agent-system/src/embedded-assets.js');
+    const item = await buildEmbeddedSkillItem({
+        name: 'writer',
+        scope: { kind: 'profile', profileId: 'writer' },
+    });
+
+    assert.deepEqual(calls, [
+        {
+            scope: { kind: 'profile', profileId: 'writer' },
+            name: 'writer',
+        },
+    ]);
+    assert.deepEqual(item, {
+        bundleFormat: 'ttskill-archive-base64-v1',
+        skillName: 'writer',
+        sourceScope: { kind: 'profile', profileId: 'writer' },
+        sourceScopeLabel: 'Agent Profile / writer',
+        fileName: 'writer.ttskill',
+        contentBase64: 'UEsDBAo=',
+        sha256: 'abc123',
+    });
+});
+
+test('Skill Manager portability sync embeds moved preset-scoped Skills', async () => {
+    const exportCalls = [];
+    const writes = [];
+    let storedSkills = null;
+    const hostWindow = installWindow({
+        skill: {
+            async export(options) {
+                exportCalls.push(options);
+                return {
+                    fileName: 'writer.ttskill',
+                    contentBase64: 'UEsDBAo=',
+                    sha256: 'abc123',
+                };
+            },
+        },
+    });
+    hostWindow.SillyTavern = {
+        getContext() {
+            return {
+                getPresetManager(apiId) {
+                    assert.equal(apiId, 'openai');
+                    return {
+                        getCompletionPresetByName(name) {
+                            return name === 'Creative' ? { name } : null;
+                        },
+                        readPresetExtensionField({ name, path: fieldPath }) {
+                            assert.equal(name, 'Creative');
+                            assert.equal(fieldPath, 'tauritavern.skills');
+                            return storedSkills;
+                        },
+                        async writePresetExtensionField({ name, path: fieldPath, value }) {
+                            writes.push({ name, path: fieldPath, value });
+                            storedSkills = value;
+                        },
+                    };
+                },
+            };
+        },
+    };
+
+    const { syncSkillMovePortability } = await importFresh(
+        'src/scripts/extensions/agent-system/src/skill-manager/embedded-skill-sync.js',
+    );
+    const presetScope = { kind: 'preset', apiId: 'openai', name: 'Creative' };
+    await syncSkillMovePortability(
+        {
+            name: 'writer',
+            fromScope: { kind: 'global' },
+            toScope: presetScope,
+        },
+        {
+            action: 'installed',
+            name: 'writer',
+            scope: presetScope,
+        },
+    );
+
+    assert.deepEqual(exportCalls, [{ scope: presetScope, name: 'writer' }]);
+    assert.equal(writes.length, 1);
+    assert.deepEqual(storedSkills, {
+        version: 1,
+        items: [
+            {
+                bundleFormat: 'ttskill-archive-base64-v1',
+                skillName: 'writer',
+                sourceScope: presetScope,
+                sourceScopeLabel: 'Preset / Creative',
+                fileName: 'writer.ttskill',
+                contentBase64: 'UEsDBAo=',
+                sha256: 'abc123',
+            },
+        ],
+    });
+});
+
+test('Skill Manager portability sync writes character embedded Skills without edit-form coupling', async () => {
+    const previousFetch = globalThis.fetch;
+    const previousDocument = globalThis.document;
+    delete globalThis.document;
+
+    const fetchCalls = [];
+    globalThis.fetch = async (url, options) => {
+        fetchCalls.push({
+            url,
+            body: JSON.parse(options.body),
+        });
+        return {
+            ok: true,
+            text: async () => '',
+        };
+    };
+
+    try {
+        const character = {
+            name: 'Aurelia',
+            avatar: 'characters/Aurelia.png',
+            data: {
+                extensions: {
+                    tauritavern: {
+                        agentProfiles: {
+                            version: 1,
+                            items: [{ profile: { id: 'stale-local-profile' } }],
+                        },
+                    },
+                },
+            },
+            json_data: JSON.stringify({
+                data: {
+                    extensions: {
+                        tauritavern: {
+                            agentProfiles: {
+                                version: 1,
+                                items: [{ profile: { id: 'stale-local-profile' } }],
+                            },
+                        },
+                    },
+                },
+            }),
+        };
+        const hostWindow = installWindow({
+            skill: {
+                async export() {
+                    return {
+                        fileName: 'writer.ttskill',
+                        contentBase64: 'UEsDBAo=',
+                        sha256: 'abc123',
+                    };
+                },
+            },
+        });
+        hostWindow.SillyTavern = {
+            getContext() {
+                return {
+                    characters: [character],
+                    getRequestHeaders() {
+                        return { 'content-type': 'application/json' };
+                    },
+                };
+            },
+        };
+
+        const { syncSkillWritePortability } = await importFresh(
+            'src/scripts/extensions/agent-system/src/skill-manager/embedded-skill-sync.js',
+        );
+        await syncSkillWritePortability({
+            scope: { kind: 'character', characterId: 'Aurelia' },
+            name: 'writer',
+        });
+
+        assert.equal(fetchCalls.length, 1);
+        assert.equal(fetchCalls[0].url, '/api/characters/merge-attributes');
+        assert.equal(fetchCalls[0].body.avatar, 'Aurelia.png');
+        assert.deepEqual(Object.keys(fetchCalls[0].body.data.extensions.tauritavern), ['skills']);
+        assert.equal(
+            character.data.extensions.tauritavern.skills.items[0].contentBase64,
+            'UEsDBAo=',
+        );
+        assert.equal(
+            character.data.extensions.tauritavern.agentProfiles.items[0].profile.id,
+            'stale-local-profile',
+        );
+    } finally {
+        globalThis.fetch = previousFetch;
+        if (previousDocument === undefined) {
+            delete globalThis.document;
+        } else {
+            globalThis.document = previousDocument;
+        }
+    }
+});
+
+test('Agent System stylesheet drops legacy profile-tab Skill selectors', async () => {
+    const css = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/style.css',
+    ), 'utf8');
+
+    for (const selector of [
+        'ttas-skill-hero',
+        'ttas-skill-pane',
+        'ttas-skill-meta',
+        'ttas-tags',
+        'ttas-import-summary',
+        'ttas-warning-list',
+        'ttas-details',
+    ]) {
+        assert.doesNotMatch(css, new RegExp(`\\.${selector}\\b`));
+    }
+});
+
+test('Skill Manager marks unsaved GUI presets unavailable instead of inventing a scope', async () => {
+    const hostWindow = installWindow({});
+    hostWindow.SillyTavern = {
+        getContext() {
+            return {
+                mainApi: 'openai',
+                getPresetManager() {
+                    return {
+                        getSelectedPreset() {
+                            return 'gui';
+                        },
+                        getSelectedPresetName() {
+                            return 'Unsaved GUI Draft';
+                        },
+                    };
+                },
+                characterId: undefined,
+                characters: [],
+            };
+        },
+    };
+
+    const { buildSkillScopeSections } = await importFresh('src/scripts/extensions/agent-system/src/skill-manager/scope.js');
+    const sections = buildSkillScopeSections({
+        selectedProfileId: 'writer',
+        profiles: [{ id: 'writer', displayName: 'Writer' }],
+    });
+    const preset = sections.find((section) => section.id === 'preset');
+
+    assert.equal(preset.available, false);
+    assert.equal(preset.scope, null);
+});
+
 test('PromptManager materializes reserved Agent prompts at PromptManager positions', async () => {
     const promptManagerSource = await readFile(path.join(REPO_ROOT, 'src/scripts/PromptManager.js'), 'utf8');
     const openAiSource = await readFile(path.join(REPO_ROOT, 'src/scripts/openai.js'), 'utf8');

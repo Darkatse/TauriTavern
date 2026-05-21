@@ -46,8 +46,9 @@ api.skill.list()
 api.skill.previewImport(input)
 api.skill.installImport(request)
 api.skill.readFile(input)
+api.skill.writeFile(input)
+api.skill.move(input)
 api.skill.export(input)
-api.skill.exportSkill(input)
 ```
 
 `api.skill` 是用户/UI/扩展侧的 Skill 管理入口；Agent run 内只通过 `skill.list` / `skill.search` / `skill.read` 工具消费已安装 Skill。

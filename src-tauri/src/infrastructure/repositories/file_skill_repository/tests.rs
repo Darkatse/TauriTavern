@@ -11,7 +11,7 @@ use super::*;
 use crate::domain::models::skill::{
     SkillFileKind, SkillImportConflictKind, SkillImportInput, SkillInlineFile, SkillInstallAction,
     SkillInstallConflictStrategy, SkillInstallRequest, SkillMoveRequest, SkillReadRequest,
-    SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillSearchRequest,
+    SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillSearchRequest, SkillWriteRequest,
 };
 use crate::domain::repositories::skill_repository::SkillRepository;
 
@@ -213,6 +213,141 @@ async fn reads_skill_file_ranges() {
     assert_eq!(chars.content, "blue");
     assert_eq!(chars.start_char, 6);
     assert_eq!(chars.end_char, 10);
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn writes_skill_file_and_updates_index_metadata() {
+    let root = temp_root("write-file");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill("test-skill", vec![("references/a.md", "hello")]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+    let before = repository
+        .read_skill_file(SkillReadRequest {
+            scope: global_scope(),
+            name: "test-skill".to_string(),
+            path: "references/a.md".to_string(),
+            start_line: None,
+            line_count: None,
+            start_char: None,
+            max_chars: None,
+        })
+        .await
+        .expect("read before write");
+    let before_index = repository
+        .list_skills(global_filter())
+        .await
+        .expect("list before write");
+
+    let saved = repository
+        .write_skill_file(SkillWriteRequest {
+            scope: global_scope(),
+            name: "test-skill".to_string(),
+            path: "references/a.md".to_string(),
+            content: "hello updated".to_string(),
+            expected_sha256: Some(before.sha256),
+        })
+        .await
+        .expect("write skill file");
+
+    assert_eq!(saved.content, "hello updated");
+    let listed = repository
+        .list_skills(global_filter())
+        .await
+        .expect("list skills");
+    assert_eq!(listed[0].total_bytes, before_index[0].total_bytes + 8);
+    assert_ne!(listed[0].installed_hash, before_index[0].installed_hash);
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn write_skill_file_rejects_stale_expected_hash() {
+    let root = temp_root("write-stale");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill("test-skill", vec![("references/a.md", "hello")]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+
+    let error = repository
+        .write_skill_file(SkillWriteRequest {
+            scope: global_scope(),
+            name: "test-skill".to_string(),
+            path: "references/a.md".to_string(),
+            content: "hello updated".to_string(),
+            expected_sha256: Some("stale".to_string()),
+        })
+        .await
+        .expect_err("stale hash should fail");
+    assert!(error.to_string().contains("Skill file changed on disk"));
+
+    let read = repository
+        .read_skill_file(SkillReadRequest {
+            scope: global_scope(),
+            name: "test-skill".to_string(),
+            path: "references/a.md".to_string(),
+            start_line: None,
+            line_count: None,
+            start_char: None,
+            max_chars: None,
+        })
+        .await
+        .expect("read after rejected write");
+    assert_eq!(read.content, "hello");
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn write_skill_file_rejects_skill_rename() {
+    let root = temp_root("write-rename");
+    let repository = FileSkillRepository::new(root.clone());
+    repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill("test-skill", vec![]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+
+    let error = repository
+        .write_skill_file(SkillWriteRequest {
+            scope: global_scope(),
+            name: "test-skill".to_string(),
+            path: "SKILL.md".to_string(),
+            content: "---\nname: other-skill\ndescription: Different name.\n---\n".to_string(),
+            expected_sha256: None,
+        })
+        .await
+        .expect_err("renaming through write should fail");
+    assert!(error.to_string().contains("cannot rename"));
+
+    let read = repository
+        .read_skill_file(SkillReadRequest {
+            scope: global_scope(),
+            name: "test-skill".to_string(),
+            path: "SKILL.md".to_string(),
+            start_line: None,
+            line_count: None,
+            start_char: None,
+            max_chars: None,
+        })
+        .await
+        .expect("read after rejected rename");
+    assert!(read.content.contains("name: test-skill"));
 
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }

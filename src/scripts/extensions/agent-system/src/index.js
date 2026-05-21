@@ -5,6 +5,7 @@ import { translateAgentSystem as tr } from './i18n.js';
 import { mountChatInputAgentToggle } from './chat-input-toggle.js';
 import { mountEmbeddedAssetButtons } from './embedded-assets-buttons.js';
 import { mountAgentRunTimelinePanel } from './run-timeline-panel.js';
+import { mountSkillManagerSettingsPanel } from './skill-manager/settings-entry.js';
 import { openAgentSystemPanel } from './panel-popup.js';
 import { loadSettings, patchSettings, subscribeSettings } from './settings-store.js';
 
@@ -98,6 +99,7 @@ async function mountAgentSystem() {
     mount.id = 'agent_system_mount';
     container.appendChild(mount);
     createAgentSystemEntryApp().mount(mount);
+    mountSkillManagerSettingsPanel();
     await mountChatInputAgentToggle();
     await mountEmbeddedAssetButtons();
     await mountAgentRunTimelinePanel();

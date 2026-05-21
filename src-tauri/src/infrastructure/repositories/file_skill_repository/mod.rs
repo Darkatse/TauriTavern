@@ -11,6 +11,7 @@ mod paths;
 mod read;
 mod retarget;
 mod source_refs;
+mod write;
 
 #[cfg(test)]
 mod tests;
@@ -26,7 +27,7 @@ use crate::domain::models::skill::{
     SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
     SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest, SkillReadResult,
     SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult,
-    SkillSearchRequest, SkillSearchResult,
+    SkillSearchRequest, SkillSearchResult, SkillWriteRequest,
 };
 use crate::domain::repositories::skill_repository::SkillRepository;
 
@@ -170,6 +171,14 @@ impl SkillRepository for FileSkillRepository {
         request: SkillReadRequest,
     ) -> Result<SkillReadResult, DomainError> {
         read::read_skill_file(self, request).await
+    }
+
+    async fn write_skill_file(
+        &self,
+        request: SkillWriteRequest,
+    ) -> Result<SkillReadResult, DomainError> {
+        let _guard = self.mutation_lock.lock().await;
+        write::write_skill_file(self, request).await
     }
 
     async fn search_skill_files(

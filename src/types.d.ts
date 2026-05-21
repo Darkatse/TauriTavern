@@ -306,7 +306,18 @@ type TauriTavernSkillInstallConflictStrategy = 'skip' | 'replace';
 
 type TauriTavernSkillInstallAction = 'installed' | 'replaced' | 'already_installed' | 'skipped';
 
+type TauriTavernSkillScope =
+    | { kind: 'global' }
+    | { kind: 'preset'; apiId: string; name: string }
+    | { kind: 'profile'; profileId: string }
+    | { kind: 'character'; characterId: string };
+
+type TauriTavernSkillScopeFilter =
+    | { kind: 'all' }
+    | TauriTavernSkillScope;
+
 type TauriTavernSkillIndexEntry = {
+    scope: TauriTavernSkillScope;
     name: string;
     description: string;
     displayName?: string;
@@ -355,6 +366,13 @@ type TauriTavernSkillImportInput =
         kind: 'archiveFile';
         path: string;
         source?: any;
+    }
+    | {
+        kind: 'archiveBase64';
+        fileName: string;
+        contentBase64: string;
+        sha256?: string;
+        source?: any;
     };
 
 type TauriTavernSkillFileRef = {
@@ -377,6 +395,7 @@ type TauriTavernSkillImportPreview = {
 };
 
 type TauriTavernSkillInstallResult = {
+    scope: TauriTavernSkillScope;
     name: string;
     action: TauriTavernSkillInstallAction;
     skill?: TauriTavernSkillIndexEntry;
@@ -406,16 +425,21 @@ type TauriTavernSkillExportPayload = {
 };
 
 type TauriTavernSkillApi = {
-    list: () => Promise<TauriTavernSkillIndexEntry[]>;
-    listFiles: (options: { name: string }) => Promise<TauriTavernSkillFileRef[]>;
+    list: (options?: { scope?: TauriTavernSkillScopeFilter; filter?: TauriTavernSkillScopeFilter }) => Promise<TauriTavernSkillIndexEntry[]>;
+    listFiles: (options: { scope?: TauriTavernSkillScope; name: string }) => Promise<TauriTavernSkillFileRef[]>;
     pickImportArchive: () => Promise<TauriTavernSkillImportInput | null>;
     discardPickedImport: (input?: TauriTavernSkillImportInput | null) => Promise<void>;
-    previewImport: (input: TauriTavernSkillImportInput) => Promise<TauriTavernSkillImportPreview>;
+    previewImport: (options: {
+        input: TauriTavernSkillImportInput;
+        targetScope?: TauriTavernSkillScope;
+    }) => Promise<TauriTavernSkillImportPreview>;
     installImport: (request: {
         input: TauriTavernSkillImportInput;
+        targetScope?: TauriTavernSkillScope;
         conflictStrategy?: TauriTavernSkillInstallConflictStrategy;
     }) => Promise<TauriTavernSkillInstallResult>;
     readFile: (options: {
+        scope?: TauriTavernSkillScope;
         name: string;
         path: string;
         maxChars?: number;
@@ -423,10 +447,25 @@ type TauriTavernSkillApi = {
         lineCount?: number;
         startChar?: number;
     }) => Promise<TauriTavernSkillReadResult>;
-    export: (options: { name: string }) => Promise<TauriTavernSkillExportPayload>;
-    exportSkill: (options: { name: string }) => Promise<TauriTavernSkillExportPayload>;
-    delete: (options: { name: string }) => Promise<void>;
-    deleteSkill: (options: { name: string }) => Promise<void>;
+    writeFile: (options: {
+        scope?: TauriTavernSkillScope;
+        name: string;
+        path: string;
+        content: string;
+        expectedSha256?: string;
+    }) => Promise<TauriTavernSkillReadResult>;
+    export: (options: { scope?: TauriTavernSkillScope; name: string }) => Promise<TauriTavernSkillExportPayload>;
+    delete: (options: { scope?: TauriTavernSkillScope; name: string }) => Promise<void>;
+    move: (request: {
+        name: string;
+        fromScope: TauriTavernSkillScope;
+        toScope: TauriTavernSkillScope;
+        conflictStrategy?: TauriTavernSkillInstallConflictStrategy;
+    }) => Promise<TauriTavernSkillInstallResult>;
+    retargetScope: (request: {
+        fromScope: TauriTavernSkillScope;
+        toScope: TauriTavernSkillScope;
+    }) => Promise<any>;
 };
 
 type TauriTavernFrontendLogsApi = {

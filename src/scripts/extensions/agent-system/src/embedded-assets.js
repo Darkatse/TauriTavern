@@ -1,6 +1,7 @@
 import { DEFAULT_PROFILE_ID } from './constants.js';
 import { clone, requireSkillApi } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
+import { skillScopeLabel } from './skill-scope.js';
 
 const EMBEDDED_PROFILES_VERSION = 1;
 const EMBEDDED_SKILLS_VERSION = 1;
@@ -36,20 +37,28 @@ function requireSillyTavernContext() {
 function requirePresetTarget(target) {
     const context = requireSillyTavernContext();
     const apiId = String(target?.apiId || '').trim();
+    const name = String(target?.name || '').trim();
     const presetManager = context.getPresetManager?.(apiId);
     if (!presetManager) {
         throw new Error(tr('presetManagerUnavailable'));
     }
 
+    if (name) {
+        return requirePresetByName({ apiId, name, presetManager });
+    }
+
     const selectedValue = String(presetManager.getSelectedPreset?.() || '').trim();
+    const selectedName = String(presetManager.getSelectedPresetName?.() || '').trim();
     if (selectedValue === 'gui') {
         throw new Error(tr('presetMustBeSaved'));
     }
-
-    const name = String(presetManager.getSelectedPresetName?.() || '').trim();
-    if (!name) {
+    if (!selectedName) {
         throw new Error(tr('presetSelectionRequired'));
     }
+    return requirePresetByName({ apiId, name: selectedName, presetManager });
+}
+
+function requirePresetByName({ apiId, name, presetManager }) {
     if (typeof presetManager.getCompletionPresetByName !== 'function') {
         throw new Error(tr('presetManagerUnavailable'));
     }
@@ -78,6 +87,51 @@ function requireCharacterTarget() {
         characterId,
         character,
     };
+}
+
+function characterIdFromAvatar(avatar) {
+    const fileName = String(avatar || '').trim().split(/[\\/]/).pop() || '';
+    return fileName.replace(/\.[^.]+$/, '');
+}
+
+function characterAvatarFileName(character) {
+    const fileName = String(character?.avatar || '').trim().split(/[\\/]/).pop() || '';
+    if (!fileName) {
+        throw new Error(tr('characterSelectionRequired'));
+    }
+    return fileName;
+}
+
+function requireCharacterTargetByScope(scope) {
+    const context = requireSillyTavernContext();
+    const characterId = String(scope?.characterId || '').trim();
+    if (!characterId) {
+        throw new Error(tr('skillScopeNotFound', { id: '' }));
+    }
+    const characters = Array.isArray(context.characters)
+        ? context.characters
+        : Object.values(context.characters || {});
+    const character = characters.find((item) => characterIdFromAvatar(item?.avatar) === characterId);
+    if (!character) {
+        throw new Error(tr('characterSelectionRequired'));
+    }
+    return {
+        kind: TARGET_KIND.CHARACTER,
+        context,
+        characterId,
+        character,
+    };
+}
+
+function resolveScopeTarget(scope) {
+    const kind = String(scope?.kind || '').trim();
+    if (kind === TARGET_KIND.PRESET) {
+        return requirePresetTarget(scope);
+    }
+    if (kind === TARGET_KIND.CHARACTER) {
+        return requireCharacterTargetByScope(scope);
+    }
+    throw new Error(tr('embeddedAssetTargetInvalid'));
 }
 
 function resolveTarget(target) {
@@ -171,6 +225,16 @@ function upsertSkill(packageValue, item) {
     return packageValue;
 }
 
+function requireSkillRef(value) {
+    const skill = requirePlainObject(value, 'skill');
+    const name = String(skill.name || '').trim();
+    if (!name) {
+        throw new Error(tr('skillNameRequired'));
+    }
+    const scope = clone(requirePlainObject(skill.scope, 'skill.scope'));
+    return { name, scope };
+}
+
 function removeProfile(packageValue, profileId) {
     const id = String(profileId || '').trim();
     if (!id) {
@@ -209,8 +273,14 @@ function readSkillPackage(target) {
     return skillPackage(target.character?.data?.extensions?.tauritavern?.skills);
 }
 
-function requireCharacterJsonDataField() {
+function findCharacterJsonDataField() {
+    if (typeof document === 'undefined') {
+        return null;
+    }
     const field = document.getElementById('character_json_data');
+    if (field === null) {
+        return null;
+    }
     if (!(field instanceof HTMLInputElement)) {
         throw new Error(tr('characterJsonDataFieldUnavailable'));
     }
@@ -226,23 +296,24 @@ function buildCharacterJsonData(character, tauritavern) {
 }
 
 async function writeCharacterTauriTavernPatch(target, patch) {
-    const field = requireCharacterJsonDataField();
+    const patchValue = clone(requirePlainObject(patch, 'tauritavern patch'));
     const current = clone(target.character?.data?.extensions?.tauritavern || {});
-    const tauritavern = {
+    const nextTauriTavern = {
         ...current,
-        ...patch,
+        ...patchValue,
     };
-    const jsonData = buildCharacterJsonData(target.character, tauritavern);
+    const jsonData = buildCharacterJsonData(target.character, nextTauriTavern);
     const serializedJsonData = JSON.stringify(jsonData);
+    const avatar = characterAvatarFileName(target.character);
 
     const response = await fetch('/api/characters/merge-attributes', {
         method: 'POST',
         headers: target.context.getRequestHeaders(),
         body: JSON.stringify({
-            avatar: target.character.avatar,
+            avatar,
             data: {
                 extensions: {
-                    tauritavern,
+                    tauritavern: patchValue,
                 },
             },
         }),
@@ -254,9 +325,12 @@ async function writeCharacterTauriTavernPatch(target, patch) {
 
     target.character.data = target.character.data || {};
     target.character.data.extensions = target.character.data.extensions || {};
-    target.character.data.extensions.tauritavern = tauritavern;
+    target.character.data.extensions.tauritavern = nextTauriTavern;
     target.character.json_data = serializedJsonData;
-    field.value = serializedJsonData;
+    const field = findCharacterJsonDataField();
+    if (field) {
+        field.value = serializedJsonData;
+    }
 }
 
 async function writeProfiles(target, packageValue) {
@@ -298,9 +372,18 @@ export async function embedProfile(targetInput, profile) {
     await writeProfiles(target, next);
 }
 
-export async function embedSkill(targetInput, skillName) {
+export async function embedSkill(targetInput, skillRef) {
     const target = resolveTarget(targetInput);
-    const next = upsertSkill(readSkillPackage(target), await buildEmbeddedSkillItem(skillName));
+    const next = upsertSkill(readSkillPackage(target), await buildEmbeddedSkillItem(skillRef));
+    await writeSkills(target, next);
+}
+
+export async function embedSkillForScope(scope, skillName) {
+    const target = resolveScopeTarget(scope);
+    const next = upsertSkill(readSkillPackage(target), await buildEmbeddedSkillItem({
+        scope,
+        name: skillName,
+    }));
     await writeSkills(target, next);
 }
 
@@ -314,11 +397,22 @@ export async function removeEmbeddedSkill(targetInput, skillName) {
     await writeSkills(target, removeSkill(readSkillPackage(target), skillName));
 }
 
-export async function buildEmbeddedSkillItem(skillName) {
-    const payload = await requireSkillApi().exportSkill({ name: skillName });
+export async function removeEmbeddedSkillForScope(scope, skillName) {
+    const target = resolveScopeTarget(scope);
+    await writeSkills(target, removeSkill(readSkillPackage(target), skillName));
+}
+
+export async function buildEmbeddedSkillItem(skillRef) {
+    const skill = requireSkillRef(skillRef);
+    const payload = await requireSkillApi().export({
+        scope: skill.scope,
+        name: skill.name,
+    });
     return {
         bundleFormat: SKILL_ARCHIVE_BUNDLE_FORMAT,
-        skillName,
+        skillName: skill.name,
+        sourceScope: skill.scope,
+        sourceScopeLabel: skillScopeLabel(skill.scope),
         fileName: payload.fileName,
         contentBase64: payload.contentBase64,
         sha256: payload.sha256,

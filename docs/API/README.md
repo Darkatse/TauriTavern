@@ -36,7 +36,7 @@ const api = host?.api;
   - approval、listRuns、readDiff、rollback 仍是后续工作；当前入口显式 throw。
 - `api.skill`（已落地）
   - 面向本地 Agent Skill 管理。
-  - 当前提供 list、previewImport、installImport、readFile、export/exportSkill；Agent run 内只能通过 `skill.list` / `skill.search` / `skill.read` 工具消费已安装 Skill。
+  - 当前提供 scope-aware 的 list、previewImport、installImport、readFile、writeFile、move、export、delete；Agent run 内只能通过 `skill.list` / `skill.search` / `skill.read` 工具消费已安装 Skill。
 - `api.mcp`（规划中）
   - 面向 MCP server/tool/resource/prompt 的独立平台能力。
   - Agent 可以消费 MCP，但 MCP 不依附 Agent Mode。

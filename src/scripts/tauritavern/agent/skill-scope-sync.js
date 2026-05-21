@@ -12,6 +12,10 @@ function requireTauriSkillApi() {
     return skillApi;
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} label
+ */
 function requireNonEmptyString(value, label) {
     const text = String(value || '').trim();
     if (!text) {
@@ -20,6 +24,9 @@ function requireNonEmptyString(value, label) {
     return text;
 }
 
+/**
+ * @param {{ apiId: string; oldName: string; newName: string }} input
+ */
 export async function retargetPresetSkillsAfterRename({ apiId, oldName, newName }) {
     const skillApi = requireTauriSkillApi();
     if (!skillApi) {

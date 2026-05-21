@@ -284,6 +284,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::skill_commands::preview_skill_import,
         super::skill_commands::install_skill_import,
         super::skill_commands::read_skill_file,
+        super::skill_commands::write_skill_file,
         super::skill_commands::export_skill,
         super::skill_commands::delete_skill,
         super::skill_commands::move_skill,

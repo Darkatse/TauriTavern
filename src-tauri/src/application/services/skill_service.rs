@@ -7,7 +7,7 @@ use crate::domain::models::skill::{
     SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
     SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest, SkillReadResult,
     SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult,
-    SkillSearchRequest, SkillSearchResult,
+    SkillSearchRequest, SkillSearchResult, SkillWriteRequest,
 };
 use crate::domain::repositories::skill_repository::SkillRepository;
 
@@ -55,6 +55,13 @@ impl SkillService {
         request: SkillReadRequest,
     ) -> Result<SkillReadResult, ApplicationError> {
         Ok(self.repository.read_skill_file(request).await?)
+    }
+
+    pub async fn write_skill_file(
+        &self,
+        request: SkillWriteRequest,
+    ) -> Result<SkillReadResult, ApplicationError> {
+        Ok(self.repository.write_skill_file(request).await?)
     }
 
     pub async fn search_skill_files(
@@ -170,6 +177,7 @@ mod tests {
         SkillExportResult, SkillImportInput, SkillImportPreview, SkillInstallRequest,
         SkillMoveRequest, SkillReadRequest, SkillReadResult, SkillScopeRetargetRequest,
         SkillScopeRetargetResult, SkillSearchRequest, SkillSearchResult, SkillSourceRef,
+        SkillWriteRequest,
     };
     use crate::domain::repositories::skill_repository::SkillRepository;
 
@@ -217,6 +225,13 @@ mod tests {
         async fn read_skill_file(
             &self,
             _request: SkillReadRequest,
+        ) -> Result<SkillReadResult, DomainError> {
+            unreachable!("not needed for resolver tests")
+        }
+
+        async fn write_skill_file(
+            &self,
+            _request: SkillWriteRequest,
         ) -> Result<SkillReadResult, DomainError> {
             unreachable!("not needed for resolver tests")
         }

@@ -5,7 +5,7 @@ use crate::domain::models::skill::{
     SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
     SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest, SkillReadResult,
     SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult,
-    SkillSearchRequest, SkillSearchResult,
+    SkillSearchRequest, SkillSearchResult, SkillWriteRequest,
 };
 
 #[async_trait]
@@ -35,6 +35,11 @@ pub trait SkillRepository: Send + Sync {
     async fn read_skill_file(
         &self,
         request: SkillReadRequest,
+    ) -> Result<SkillReadResult, DomainError>;
+
+    async fn write_skill_file(
+        &self,
+        request: SkillWriteRequest,
     ) -> Result<SkillReadResult, DomainError>;
 
     async fn search_skill_files(

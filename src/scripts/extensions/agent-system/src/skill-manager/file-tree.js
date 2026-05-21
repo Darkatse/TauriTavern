@@ -1,4 +1,4 @@
-import { translateAgentSystem as tr } from './i18n.js';
+import { translateAgentSystem as tr } from '../i18n.js';
 
 function skillFilePath(value) {
     const path = String(value || '').trim();

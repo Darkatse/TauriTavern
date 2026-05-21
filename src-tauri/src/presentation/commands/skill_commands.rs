@@ -9,7 +9,7 @@ use crate::app::AppState;
 use crate::domain::models::skill::{
     SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry, SkillInstallRequest,
     SkillInstallResult, SkillMoveRequest, SkillReadRequest, SkillReadResult, SkillScope,
-    SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult,
+    SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult, SkillWriteRequest,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -106,6 +106,30 @@ pub async fn read_skill_file(
         })
         .await
         .map_err(map_command_error("Failed to read Agent Skill file"))
+}
+
+#[tauri::command]
+pub async fn write_skill_file(
+    name: String,
+    path: String,
+    content: String,
+    scope: Option<SkillScope>,
+    expected_sha256: Option<String>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<SkillReadResult, CommandError> {
+    log_command(format!("write_skill_file {}/{}", name, path));
+
+    app_state
+        .skill_service
+        .write_skill_file(SkillWriteRequest {
+            scope: scope.unwrap_or_default(),
+            name,
+            path,
+            content,
+            expected_sha256,
+        })
+        .await
+        .map_err(map_command_error("Failed to write Agent Skill file"))
 }
 
 #[tauri::command]

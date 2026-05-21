@@ -9,6 +9,37 @@ import {
 } from './embedded-assets.js';
 import { errorText, requireAgentApi, requireSkillApi } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
+import { skillScopeKey, skillScopeLabel } from './skill-scope.js';
+
+function skillSelectionKey(skill) {
+    const scopeKey = skillScopeKey(skill?.scope);
+    const name = String(skill?.name || '').trim();
+    if (!scopeKey || !name) {
+        throw new Error(tr('skillScopeNotFound', { id: name || scopeKey || '' }));
+    }
+    return JSON.stringify({ scopeKey, name });
+}
+
+function sortSkillOptions(skills) {
+    return [...skills].sort((left, right) => {
+        const leftName = String(left.displayName || left.name || '');
+        const rightName = String(right.displayName || right.name || '');
+        return leftName.localeCompare(rightName, undefined, { sensitivity: 'base' })
+            || left.scopeLabel.localeCompare(right.scopeLabel, undefined, { sensitivity: 'base' });
+    });
+}
+
+function buildSkillOptions(skills) {
+    if (!Array.isArray(skills)) {
+        throw new Error(tr('skillListMustBeArray'));
+    }
+
+    return sortSkillOptions(skills.map((skill) => ({
+        ...skill,
+        key: skillSelectionKey(skill),
+        scopeLabel: skillScopeLabel(skill.scope),
+    })));
+}
 
 export function createEmbeddedAssetsPanelRoot({ target, requestClose }) {
     return {
@@ -24,7 +55,7 @@ export function createEmbeddedAssetsPanelRoot({ target, requestClose }) {
                 embeddedProfiles: [],
                 embeddedSkills: [],
                 selectedProfileId: '',
-                selectedSkillName: '',
+                selectedSkillKey: '',
                 agentIcon: AGENT_TOGGLE_ICON,
             };
         },
@@ -36,7 +67,11 @@ export function createEmbeddedAssetsPanelRoot({ target, requestClose }) {
                 return this.embeddedProfiles.some((item) => item?.profile?.id === this.selectedProfileId);
             },
             selectedSkillEmbedded() {
-                return this.embeddedSkills.some((item) => item?.skillName === this.selectedSkillName);
+                const skill = this.selectedSkill;
+                return Boolean(skill) && this.embeddedSkills.some((item) => item?.skillName === skill.name);
+            },
+            selectedSkill() {
+                return this.skills.find((skill) => skill.key === this.selectedSkillKey) || null;
             },
             profileActionLabel() {
                 return this.selectedProfileEmbedded ? tr('updateEmbeddedAsset') : tr('embedProfile');
@@ -74,11 +109,11 @@ export function createEmbeddedAssetsPanelRoot({ target, requestClose }) {
                 try {
                     const [profileResult, skills, embedded] = await Promise.all([
                         requireAgentApi().profiles.list(),
-                        requireSkillApi().list(),
+                        requireSkillApi().list({ scope: { kind: 'all' } }),
                         Promise.resolve(readEmbeddedAssets(target)),
                     ]);
                     this.profiles = Array.isArray(profileResult?.profiles) ? profileResult.profiles : [];
-                    this.skills = Array.isArray(skills) ? skills : [];
+                    this.skills = buildSkillOptions(skills);
                     this.applyEmbeddedState(embedded);
                     this.syncSelections();
                     this.initialized = true;
@@ -103,8 +138,8 @@ export function createEmbeddedAssetsPanelRoot({ target, requestClose }) {
                 if (!this.embeddableProfiles.some((profile) => profile.id === this.selectedProfileId)) {
                     this.selectedProfileId = this.embeddableProfiles[0]?.id || '';
                 }
-                if (!this.skills.some((skill) => skill.name === this.selectedSkillName)) {
-                    this.selectedSkillName = this.skills[0]?.name || '';
+                if (!this.skills.some((skill) => skill.key === this.selectedSkillKey)) {
+                    this.selectedSkillKey = this.skills[0]?.key || '';
                 }
             },
             async runAssetAction(action) {
@@ -135,12 +170,13 @@ export function createEmbeddedAssetsPanelRoot({ target, requestClose }) {
                 });
             },
             async embedSelectedSkill() {
-                if (!this.selectedSkillName) {
+                const skill = this.selectedSkill;
+                if (!skill) {
                     throw new Error(tr('selectSkillFirst'));
                 }
                 await this.runAssetAction(async () => {
-                    await embedSkill(target, this.selectedSkillName);
-                    this.toast(tr('embeddedSkill', { name: this.selectedSkillName }));
+                    await embedSkill(target, skill);
+                    this.toast(tr('embeddedSkill', { name: this.skillOptionLabel(skill) }));
                 });
             },
             async removeProfileItem(item) {
@@ -162,6 +198,14 @@ export function createEmbeddedAssetsPanelRoot({ target, requestClose }) {
             },
             skillDisplayName(skill) {
                 return skill.displayName || skill.name;
+            },
+            skillOptionLabel(skill) {
+                return `${this.skillDisplayName(skill)} (${skill.scopeLabel})`;
+            },
+            embeddedSkillSubtitle(item) {
+                const sourceScopeLabel = String(item?.sourceScopeLabel || '').trim();
+                const fileName = String(item?.fileName || '').trim();
+                return sourceScopeLabel ? `${sourceScopeLabel} - ${fileName}` : fileName;
             },
         },
         template: `
@@ -227,11 +271,11 @@ export function createEmbeddedAssetsPanelRoot({ target, requestClose }) {
                             <div class="ttas-embed-action-row">
                                 <label class="ttas-field">
                                     <span>{{ tr('selectSkill') }}</span>
-                                    <select v-model="selectedSkillName" :disabled="saving || skills.length === 0">
-                                        <option v-for="skill in skills" :key="skill.name" :value="skill.name">{{ skillDisplayName(skill) }}</option>
+                                    <select v-model="selectedSkillKey" :disabled="saving || skills.length === 0">
+                                        <option v-for="skill in skills" :key="skill.key" :value="skill.key">{{ skillOptionLabel(skill) }}</option>
                                     </select>
                                 </label>
-                                <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="saving || !selectedSkillName" @click="embedSelectedSkill">
+                                <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="saving || !selectedSkill" @click="embedSelectedSkill">
                                     <i class="fa-solid" :class="saving ? 'fa-spinner fa-spin' : 'fa-file-zipper'"></i>
                                     <span>{{ skillActionLabel }}</span>
                                 </button>
@@ -269,7 +313,7 @@ export function createEmbeddedAssetsPanelRoot({ target, requestClose }) {
                                         <i class="fa-solid fa-book-bookmark"></i>
                                         <div>
                                             <strong>{{ item.skillName }}</strong>
-                                            <span>{{ item.fileName }}</span>
+                                            <span>{{ embeddedSkillSubtitle(item) }}</span>
                                         </div>
                                         <button type="button" class="menu_button menu_button_icon ttas-danger-button" :title="tr('removeEmbeddedAsset')" :aria-label="tr('removeEmbeddedAsset')" :disabled="saving" @click="removeSkillItem(item)">
                                             <i class="fa-solid fa-xmark"></i>

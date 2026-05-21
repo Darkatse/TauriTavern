@@ -562,9 +562,18 @@ function reportEmbeddedSkillError(error) {
 }
 
 /**
- * @param {{ items: any[]; sourceLabel: string; storageKey: string }} options
+ * @param {string} avatarFileName
  */
-async function previewAndPromptEmbeddedSkills({ items, sourceLabel, storageKey }) {
+function characterIdFromAvatarName(avatarFileName) {
+    const fileName = String(avatarFileName || '').trim().split(/[\\/]/).pop() || '';
+    const index = fileName.lastIndexOf('.');
+    return index > 0 ? fileName.slice(0, index) : fileName;
+}
+
+/**
+ * @param {{ items: any[]; sourceLabel: string; storageKey: string; targetScope: any }} options
+ */
+async function previewAndPromptEmbeddedSkills({ items, sourceLabel, storageKey, targetScope }) {
     const skillApi = getSkillApi();
     if (!skillApi || items.length === 0) {
         return;
@@ -578,7 +587,7 @@ async function previewAndPromptEmbeddedSkills({ items, sourceLabel, storageKey }
     for (const item of items) {
         previews.push({
             item,
-            preview: await skillApi.previewImport(item.input),
+            preview: await skillApi.previewImport({ input: item.input, targetScope }),
         });
     }
 
@@ -600,6 +609,7 @@ async function previewAndPromptEmbeddedSkills({ items, sourceLabel, storageKey }
     for (const decision of decisions) {
         const request = /** @type {any} */ ({
             input: decision.item.input,
+            targetScope,
         });
         if (decision.conflictStrategy !== undefined) {
             request.conflictStrategy = decision.conflictStrategy;
@@ -632,6 +642,7 @@ export async function maybePromptForPresetEmbeddedSkills({ apiId, name, preset }
             items,
             sourceLabel: String(name || t`Imported preset`),
             storageKey,
+            targetScope: { kind: 'preset', apiId, name },
         });
     } catch (error) {
         reportEmbeddedSkillError(error);
@@ -665,6 +676,7 @@ export async function maybePromptForCharacterEmbeddedSkills({ avatarFileName, la
             items,
             sourceLabel: String(label || character?.name || character?.data?.name || t`Imported character`),
             storageKey,
+            targetScope: { kind: 'character', characterId: characterIdFromAvatarName(avatarFileName) },
         });
     } catch (error) {
         reportEmbeddedSkillError(error);

@@ -14,16 +14,21 @@ const skill = window.__TAURITAVERN__.api.skill;
 
 ```ts
 type TauriTavernSkillApi = {
-  list(): Promise<TauriTavernSkillIndexEntry[]>;
-  listFiles(options: { name: string }): Promise<TauriTavernSkillFileRef[]>;
+  list(options?: { scope?: TauriTavernSkillScopeFilter }): Promise<TauriTavernSkillIndexEntry[]>;
+  listFiles(options: { scope?: TauriTavernSkillScope; name: string }): Promise<TauriTavernSkillFileRef[]>;
   pickImportArchive(): Promise<TauriTavernSkillImportInput | null>;
   discardPickedImport(input?: TauriTavernSkillImportInput | null): Promise<void>;
-  previewImport(input: TauriTavernSkillImportInput): Promise<TauriTavernSkillImportPreview>;
+  previewImport(options: {
+    input: TauriTavernSkillImportInput;
+    targetScope?: TauriTavernSkillScope;
+  }): Promise<TauriTavernSkillImportPreview>;
   installImport(request: {
     input: TauriTavernSkillImportInput;
+    targetScope?: TauriTavernSkillScope;
     conflictStrategy?: 'skip' | 'replace';
   }): Promise<TauriTavernSkillInstallResult>;
   readFile(options: {
+    scope?: TauriTavernSkillScope;
     name: string;
     path: string;
     startLine?: number;
@@ -31,12 +36,25 @@ type TauriTavernSkillApi = {
     startChar?: number;
     maxChars?: number;
   }): Promise<TauriTavernSkillReadResult>;
-  export(options: { name: string }): Promise<TauriTavernSkillExportPayload>;
-  exportSkill(options: { name: string }): Promise<TauriTavernSkillExportPayload>;
-  delete(options: { name: string }): Promise<void>;
-  deleteSkill(options: { name: string }): Promise<void>;
+  writeFile(options: {
+    scope?: TauriTavernSkillScope;
+    name: string;
+    path: string;
+    content: string;
+    expectedSha256?: string;
+  }): Promise<TauriTavernSkillReadResult>;
+  export(options: { scope?: TauriTavernSkillScope; name: string }): Promise<TauriTavernSkillExportPayload>;
+  delete(options: { scope?: TauriTavernSkillScope; name: string }): Promise<void>;
+  move(request: {
+    name: string;
+    fromScope: TauriTavernSkillScope;
+    toScope: TauriTavernSkillScope;
+    conflictStrategy?: 'skip' | 'replace';
+  }): Promise<TauriTavernSkillInstallResult>;
 };
 ```
+
+`TauriTavernSkillScope` 分为 `global` / `preset` / `profile` / `character`。未显式传入 scope 的旧无归属操作按 `global` 处理。
 
 ## 导入输入
 
@@ -108,12 +126,18 @@ type action = 'installed' | 'replaced' | 'already_installed' | 'skipped';
 - `maxChars` 省略时默认 20000，后端最大 80000。
 - 二进制文件、非法路径、symlink escape、缺失文件都会 reject。
 
-`export()` / `exportSkill()`：
+`writeFile()`：
+
+- 只写入已安装 Skill 内的 UTF-8 文本文件。
+- `expectedSha256` 用于乐观并发校验；hash 不匹配时后端应 reject。
+- 前端不做本地伪保存，写入必须经过 Host API。
+
+`export()`：
 
 - 返回 base64 编码的 `.ttskill` zip。
 - `.ttskill` 只包含 Skill 文件本身；不会写入会改变内容 hash 的导出诊断文件。
 
-`delete()` / `deleteSkill()`：
+`delete()`：
 
 - 删除一个已安装 Skill 的索引记录与文件目录。
 - 不会触发 source-ref 的增量解绑；这是用户显式删除 Skill 的管理动作。

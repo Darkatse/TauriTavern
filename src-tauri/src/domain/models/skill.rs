@@ -270,6 +270,18 @@ pub struct SkillReadRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct SkillWriteRequest {
+    #[serde(default)]
+    pub scope: SkillScope,
+    pub name: String,
+    pub path: String,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillReadResult {
     pub scope: SkillScope,
     pub name: String,

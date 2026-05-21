@@ -5,11 +5,24 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+function ensureCustomEvent() {
+    if (typeof globalThis.CustomEvent === 'function') {
+        return;
+    }
+
+    globalThis.CustomEvent = class CustomEvent extends Event {
+        constructor(type, options = {}) {
+            super(type, options);
+            this.detail = options.detail;
+        }
+    };
+}
+
 async function installHarness() {
     const calls = [];
-    globalThis.window = {
-        __TAURITAVERN__: { api: {} },
-    };
+    ensureCustomEvent();
+    globalThis.window = new EventTarget();
+    globalThis.window.__TAURITAVERN__ = { api: {} };
 
     const { installAgentApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent.js')));
     installAgentApi({
@@ -47,6 +60,24 @@ test('api.agent.profiles forwards profile commands with camelCase DTOs', async (
         { command: 'save_agent_profile', args: { dto: { profile } } },
         { command: 'delete_agent_profile', args: { dto: { profileId: 'writer' } } },
     ]);
+});
+
+test('api.agent.profiles publishes profile change events after successful mutations', async () => {
+    const { agent } = await installHarness();
+    const { subscribeAgentProfilesChanged } = await import(pathToFileURL(path.join(
+        REPO_ROOT,
+        'src/scripts/tauritavern/agent/agent-profile-events.js',
+    )));
+    const events = [];
+    const unsubscribe = subscribeAgentProfilesChanged(() => {
+        events.push('changed');
+    });
+
+    await agent.profiles.save({ profile: { id: 'writer' } });
+    await agent.profiles.delete('writer');
+    unsubscribe();
+
+    assert.deepEqual(events, ['changed', 'changed']);
 });
 
 test('api.agent.profiles fails fast on invalid profile inputs', async () => {

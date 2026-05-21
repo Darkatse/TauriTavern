@@ -1,14 +1,11 @@
 import { DEFAULT_PROFILE_ID, KNOWN_TOOLS, WORKSPACE_ROOTS } from './constants.js';
-import { confirmAction, errorText, prettyJson, requireAgentApi, requireSkillApi } from './host-api.js';
-import { translateAgentSystem as tr, translateSkillInstallAction } from './i18n.js';
+import { confirmAction, errorText, prettyJson, requireAgentApi } from './host-api.js';
+import { translateAgentSystem as tr } from './i18n.js';
 import { defaultProfile, normalizeProfileForSave, normalizeProfileId, profileForEdit } from './profile-model.js';
 import { loadSettings, patchSettings } from './settings-store.js';
-import { buildSkillFileTree } from './skill-file-tree.js';
-import { openSkillFileViewer } from './skill-file-viewer.js';
 import { downloadBlobWithRuntime } from '../../../file-export.js';
 import { normalizeAgentSystemPrompt } from '../../../tauritavern/agent/agent-system-prompt.js';
 
-const SKILL_FILE_VIEW_MAX_CHARS = 80000;
 const PROFILE_EXPORT_CONTENT_TYPE = 'application/json';
 
 const TOOL_GROUPS = Object.freeze([
@@ -56,76 +53,8 @@ function normalizeResolvedAgentSystemPrompt(result) {
     return normalizeAgentSystemPrompt(result?.agentSystemPrompt);
 }
 
-const SkillFileTreeNode = {
-    name: 'SkillFileTreeNode',
-    props: {
-        depth: {
-            type: Number,
-            required: true,
-        },
-        isFolderOpen: {
-            type: Function,
-            required: true,
-        },
-        node: {
-            type: Object,
-            required: true,
-        },
-    },
-    emits: ['toggle-folder', 'open-file'],
-    methods: {
-        rowPadding(depth) {
-            return `${8 + depth * 16}px`;
-        },
-        tr(key, params) {
-            return tr(key, params);
-        },
-    },
-    template: `
-        <li class="ttas-file-tree-item" :class="'ttas-file-tree-' + node.type">
-            <button
-                v-if="node.type === 'folder'"
-                type="button"
-                class="ttas-file-row"
-                :style="{ paddingLeft: rowPadding(depth) }"
-                :aria-expanded="isFolderOpen(node)"
-                @click="$emit('toggle-folder', node)"
-            >
-                <i class="fa-solid" :class="isFolderOpen(node) ? 'fa-folder-open' : 'fa-folder'"></i>
-                <span>{{ node.name }}</span>
-                <small>{{ node.children.length }}</small>
-            </button>
-            <button
-                v-else
-                type="button"
-                class="ttas-file-row"
-                :style="{ paddingLeft: rowPadding(depth) }"
-                @click="$emit('open-file', node)"
-            >
-                <i class="fa-solid" :class="node.file.kind === 'binary' ? 'fa-file' : 'fa-file-lines'"></i>
-                <span>{{ node.name }}</span>
-                <small>{{ tr('byteCount', { count: node.file.sizeBytes }) }}</small>
-            </button>
-            <ul v-if="node.type === 'folder' && isFolderOpen(node)" class="ttas-file-tree">
-                <SkillFileTreeNode
-                    v-for="child in node.children"
-                    :key="child.path"
-                    :node="child"
-                    :depth="depth + 1"
-                    :is-folder-open="isFolderOpen"
-                    @toggle-folder="$emit('toggle-folder', $event)"
-                    @open-file="$emit('open-file', $event)"
-                />
-            </ul>
-        </li>
-    `,
-};
-
 export function createAgentSystemPanelRoot({ requestClose }) {
     return {
-        components: {
-            SkillFileTreeNode,
-        },
         data() {
             return {
                 initialized: false,
@@ -138,18 +67,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 draft: profileForEdit(defaultProfile()),
                 draftJson: prettyJson(defaultProfile()),
                 resolvedAgentSystemPrompt: '',
-                skills: [],
-                selectedSkillName: '',
-                skillFiles: [],
-                skillFilesRequestId: 0,
-                loadingSkillFiles: false,
-                expandedSkillFolders: {},
-                skillImportInput: null,
-                skillImportConflictStrategy: 'skip',
-                skillImportPreview: null,
                 tabs: [
                     { id: 'profiles', labelKey: 'profiles', icon: 'fa-id-card-clip' },
-                    { id: 'skills', labelKey: 'skills', icon: 'fa-book-bookmark' },
                 ],
                 toolSpecs: [],
                 toolNames: [...KNOWN_TOOLS],
@@ -250,63 +169,6 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     description: String(schema?.description || ''),
                 }));
             },
-            selectedSkill() {
-                return this.skills.find((skill) => skill.name === this.selectedSkillName) || null;
-            },
-            selectedSkillTags() {
-                if (!this.selectedSkill) {
-                    return [];
-                }
-                const tags = [
-                    tr('fileCount', { count: this.selectedSkill.fileCount }),
-                    tr('byteCount', { count: this.selectedSkill.totalBytes }),
-                ];
-                if (this.selectedSkill.version) {
-                    tags.push(this.selectedSkill.version);
-                }
-                if (this.selectedSkill.sourceKind) {
-                    tags.push(this.selectedSkill.sourceKind);
-                }
-                if (this.selectedSkill.hasScripts) {
-                    tags.push(tr('scriptsIncluded'));
-                }
-                if (this.selectedSkill.hasBinary) {
-                    tags.push(tr('binaryFiles'));
-                }
-                return tags;
-            },
-            selectedSkillFileTree() {
-                if (!this.selectedSkill) {
-                    return [];
-                }
-
-                return buildSkillFileTree(this.skillFiles);
-            },
-            skillImportPreviewSkill() {
-                return this.skillImportPreview?.skill || null;
-            },
-            skillImportPath() {
-                return this.skillImportInput?.path || '';
-            },
-            skillImportHasConflict() {
-                return this.skillImportPreview?.conflict?.kind === 'different';
-            },
-            skillImportConflictText() {
-                const kind = this.skillImportPreview?.conflict?.kind;
-                if (kind === 'new') {
-                    return tr('conflictNew');
-                }
-                if (kind === 'same') {
-                    return tr('conflictSame');
-                }
-                if (kind === 'different') {
-                    return tr('conflictDifferent');
-                }
-                return '';
-            },
-            skillImportWarnings() {
-                return Array.isArray(this.skillImportPreview?.warnings) ? this.skillImportPreview.warnings : [];
-            },
         },
         async mounted() {
             await this.initialize();
@@ -319,7 +181,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     if (!this.tabs.some((tab) => tab.id === this.settings.activeTab)) {
                         this.settings = await patchSettings(this.settings, { activeTab: 'profiles' });
                     }
-                    await Promise.all([this.refreshToolSpecs(), this.refreshProfiles(), this.refreshSkills()]);
+                    await Promise.all([this.refreshToolSpecs(), this.refreshProfiles()]);
                     this.selectedProfileId = this.settings.selectedProfileId || DEFAULT_PROFILE_ID;
                     await this.selectProfile(this.selectedProfileId);
                     this.initialized = true;
@@ -330,14 +192,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     this.loading = false;
                 }
             },
-            async closePanel() {
-                try {
-                    await this.clearSkillImportDraft();
-                    requestClose();
-                } catch (error) {
-                    this.reportError(error);
-                    throw error;
-                }
+            closePanel() {
+                requestClose();
             },
             tr(key, params) {
                 return tr(key, params);
@@ -618,173 +474,6 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 await this.refreshProfiles();
                 await this.setDefaultProfile(DEFAULT_PROFILE_ID);
                 this.toast(tr('deletedProfile', { id }));
-            },
-            async refreshSkills() {
-                this.skills = await requireSkillApi().list();
-                if (this.skills.length === 0) {
-                    this.selectedSkillName = '';
-                    this.skillFiles = [];
-                    this.skillFilesRequestId += 1;
-                    this.loadingSkillFiles = false;
-                    this.expandedSkillFolders = {};
-                    return;
-                }
-                if (!this.skills.some((skill) => skill.name === this.selectedSkillName)) {
-                    this.selectedSkillName = this.skills[0].name;
-                    this.expandedSkillFolders = {};
-                }
-                await this.loadSelectedSkillFiles();
-            },
-            async selectSkill(skillName) {
-                if (!skillName || skillName === this.selectedSkillName) {
-                    return;
-                }
-                this.selectedSkillName = skillName;
-                this.expandedSkillFolders = {};
-                await this.loadSelectedSkillFiles();
-            },
-            async loadSelectedSkillFiles() {
-                const skillName = this.selectedSkillName;
-                const requestId = ++this.skillFilesRequestId;
-                if (!skillName) {
-                    this.skillFiles = [];
-                    this.loadingSkillFiles = false;
-                    return;
-                }
-                this.skillFiles = [];
-                this.loadingSkillFiles = true;
-                try {
-                    const files = await requireSkillApi().listFiles({ name: skillName });
-                    if (requestId !== this.skillFilesRequestId || skillName !== this.selectedSkillName) {
-                        return;
-                    }
-                    this.skillFiles = files;
-                } catch (error) {
-                    if (requestId !== this.skillFilesRequestId || skillName !== this.selectedSkillName) {
-                        return;
-                    }
-                    this.reportError(error);
-                    throw error;
-                } finally {
-                    if (requestId === this.skillFilesRequestId && skillName === this.selectedSkillName) {
-                        this.loadingSkillFiles = false;
-                    }
-                }
-            },
-            folderKey(node) {
-                return `${this.selectedSkillName}:${node.path}`;
-            },
-            isFolderOpen(node) {
-                return this.expandedSkillFolders[this.folderKey(node)] === true;
-            },
-            toggleSkillFolder(node) {
-                const key = this.folderKey(node);
-                this.expandedSkillFolders = {
-                    ...this.expandedSkillFolders,
-                    [key]: !this.expandedSkillFolders[key],
-                };
-            },
-            async openSkillFile(node) {
-                if (!this.selectedSkillName) {
-                    throw new Error(tr('selectSkillFirst'));
-                }
-                if (node.file.kind === 'binary') {
-                    const error = new Error(tr('cannotDisplayBinarySkillFile', { path: node.path }));
-                    this.reportError(error);
-                    throw error;
-                }
-
-                try {
-                    const result = await requireSkillApi().readFile({
-                        name: this.selectedSkillName,
-                        path: node.path,
-                        maxChars: SKILL_FILE_VIEW_MAX_CHARS,
-                    });
-                    openSkillFileViewer(result);
-                } catch (error) {
-                    this.reportError(error);
-                    throw error;
-                }
-            },
-            async clearSkillImportDraft() {
-                await requireSkillApi().discardPickedImport?.(this.skillImportInput);
-                this.skillImportInput = null;
-                this.skillImportPreview = null;
-            },
-            async pickAndPreviewSkillImport() {
-                try {
-                    await this.clearSkillImportDraft();
-                    const input = await requireSkillApi().pickImportArchive();
-                    if (!input) {
-                        return;
-                    }
-
-                    this.skillImportInput = input;
-                    this.skillImportConflictStrategy = 'skip';
-                    this.skillImportPreview = await requireSkillApi().previewImport(input);
-                } catch (error) {
-                    this.skillImportInput = null;
-                    this.skillImportPreview = null;
-                    this.reportError(error);
-                    throw error;
-                }
-            },
-            async installSkillImport() {
-                if (!this.skillImportInput || !this.skillImportPreview) {
-                    throw new Error(tr('previewSkillImportFirst'));
-                }
-
-                try {
-                    const request = { input: this.skillImportInput };
-                    if (this.skillImportHasConflict) {
-                        request.conflictStrategy = this.skillImportConflictStrategy;
-                    }
-                    const result = await requireSkillApi().installImport(request);
-                    this.skills = await requireSkillApi().list();
-                    this.selectedSkillName = result.name;
-                    this.expandedSkillFolders = {};
-                    this.skillImportInput = null;
-                    this.skillImportPreview = null;
-                    await this.loadSelectedSkillFiles();
-                    this.toast(tr('skillInstallToast', {
-                        action: translateSkillInstallAction(result.action),
-                        name: result.name,
-                    }));
-                } catch (error) {
-                    this.skillImportInput = null;
-                    this.skillImportPreview = null;
-                    this.reportError(error);
-                    throw error;
-                }
-            },
-            async exportSelectedSkill() {
-                if (!this.selectedSkillName) {
-                    throw new Error(tr('selectSkillFirst'));
-                }
-                const payload = await requireSkillApi().exportSkill({ name: this.selectedSkillName });
-                const anchor = document.createElement('a');
-                anchor.href = `data:application/zip;base64,${payload.contentBase64}`;
-                anchor.download = payload.fileName;
-                document.body.appendChild(anchor);
-                anchor.click();
-                anchor.remove();
-                this.toast(tr('exportedSkill', { name: this.selectedSkillName }));
-            },
-            async deleteSelectedSkill() {
-                if (!this.selectedSkillName) {
-                    throw new Error(tr('selectSkillFirst'));
-                }
-                const name = this.selectedSkillName;
-                if (!await confirmAction(tr('deleteSkillConfirm', { name }))) {
-                    return;
-                }
-
-                await this.clearSkillImportDraft();
-                await requireSkillApi().deleteSkill({ name });
-                this.expandedSkillFolders = {};
-                this.skillFiles = [];
-                await this.refreshSkills();
-                this.toast(tr('deletedSkill', { name }));
             },
             prettyJson(value) {
                 return prettyJson(value);
@@ -1173,139 +862,6 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </div>
                                     <textarea class="text_pole ttas-json" v-model="draftJson" :readonly="isBuiltinProfile"></textarea>
                                 </div>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section v-else-if="activeTab === 'skills'" key="skills" class="ttas-panel">
-                        <div class="ttas-grid">
-                            <aside class="ttas-list ttas-side-list">
-                                <div class="ttas-list-header">
-                                    <h4>{{ tr('skills') }}</h4>
-                                    <span>{{ tr('skillCount', { count: skills.length }) }}</span>
-                                </div>
-                                <button v-for="skill in skills" :key="skill.name" type="button" :class="{ active: selectedSkillName === skill.name }" @click="selectSkill(skill.name)">
-                                    <strong>{{ skill.displayName || skill.name }}</strong>
-                                    <span>{{ skill.name }}</span>
-                                    <small>{{ skill.description }}</small>
-                                </button>
-                                <p v-if="skills.length === 0" class="ttas-empty">{{ tr('noSkillsInstalled') }}</p>
-                            </aside>
-
-                            <div class="ttas-pane ttas-skill-pane">
-                                <label class="ttas-mobile-select ttas-field">
-                                    <span>{{ tr('skills') }}</span>
-                                    <select :value="selectedSkillName" @change="selectSkill($event.target.value)" :disabled="skills.length === 0">
-                                        <option v-for="skill in skills" :key="skill.name" :value="skill.name">{{ skill.displayName || skill.name }}</option>
-                                    </select>
-                                </label>
-
-                                <div class="ttas-skill-hero">
-                                    <div v-if="selectedSkill" class="ttas-skill-meta">
-                                        <div class="ttas-eyebrow">{{ selectedSkill.name }}</div>
-                                        <h4>{{ selectedSkill.displayName || selectedSkill.name }}</h4>
-                                        <p>{{ selectedSkill.description }}</p>
-                                        <div class="ttas-tags">
-                                            <span v-for="tag in selectedSkillTags" :key="tag">{{ tag }}</span>
-                                        </div>
-                                    </div>
-                                    <div class="ttas-editor-actions">
-                                        <button type="button" class="menu_button menu_button_icon" @click="refreshSkills">
-                                            <i class="fa-solid fa-rotate"></i>
-                                            <span>{{ tr('refresh') }}</span>
-                                        </button>
-                                        <button type="button" class="menu_button menu_button_icon" @click="exportSelectedSkill" :disabled="!selectedSkillName">
-                                            <i class="fa-solid fa-file-export"></i>
-                                            <span>{{ tr('export') }}</span>
-                                        </button>
-                                        <button type="button" class="menu_button menu_button_icon ttas-danger-button" @click="deleteSelectedSkill" :disabled="!selectedSkillName">
-                                            <i class="fa-solid fa-trash-can"></i>
-                                            <span>{{ tr('delete') }}</span>
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div class="ttas-section ttas-files-section">
-                                    <div class="ttas-section-title">
-                                        <i class="fa-solid fa-folder-open"></i>
-                                        <h4>{{ tr('files') }}</h4>
-                                    </div>
-                                    <div class="ttas-file-viewport" :class="{ loading: loadingSkillFiles }">
-                                        <div v-if="loadingSkillFiles" class="ttas-file-loading" role="status" aria-live="polite">
-                                            <span>{{ tr('loadingSkillFiles') }}</span>
-                                            <div class="ttas-file-loading-lines" aria-hidden="true">
-                                                <i v-for="index in 5" :key="index"></i>
-                                            </div>
-                                        </div>
-                                        <ul v-else-if="selectedSkillFileTree.length > 0" class="ttas-file-tree ttas-file-tree-root">
-                                            <SkillFileTreeNode
-                                                v-for="node in selectedSkillFileTree"
-                                                :key="node.path"
-                                                :node="node"
-                                                :depth="0"
-                                                :is-folder-open="isFolderOpen"
-                                                @toggle-folder="toggleSkillFolder"
-                                                @open-file="openSkillFile"
-                                            />
-                                        </ul>
-                                        <p v-else class="ttas-empty ttas-file-empty">{{ tr('noFilesFoundForSkill') }}</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="ttas-section">
-                            <div class="ttas-section-title">
-                                <i class="fa-solid fa-box-archive"></i>
-                                <h4>{{ tr('importSkillArchive') }}</h4>
-                            </div>
-                            <div class="ttas-toolbar">
-                                <button type="button" class="menu_button menu_button_icon" @click="pickAndPreviewSkillImport">
-                                    <i class="fa-solid fa-file-import"></i>
-                                    <span>{{ tr('import') }}</span>
-                                </button>
-                                <button type="button" class="menu_button menu_button_icon" @click="installSkillImport" :disabled="!skillImportPreview">
-                                    <i class="fa-solid fa-box-archive"></i>
-                                    <span>{{ tr('install') }}</span>
-                                </button>
-                                <select v-if="skillImportHasConflict" v-model="skillImportConflictStrategy">
-                                    <option value="skip">{{ tr('skipConflict') }}</option>
-                                    <option value="replace">{{ tr('replaceConflict') }}</option>
-                                </select>
-                            </div>
-                            <div v-if="skillImportPath" class="ttas-import-path">
-                                <i class="fa-solid fa-file-zipper"></i>
-                                <span>{{ skillImportPath }}</span>
-                            </div>
-                            <div v-if="skillImportPreview" class="ttas-import-preview">
-                                <div class="ttas-import-summary">
-                                    <div>
-                                        <span>{{ tr('name') }}</span>
-                                        <strong>{{ skillImportPreviewSkill.name }}</strong>
-                                    </div>
-                                    <div>
-                                        <span>{{ tr('conflict') }}</span>
-                                        <strong>{{ skillImportConflictText }}</strong>
-                                    </div>
-                                    <div>
-                                        <span>{{ tr('files') }}</span>
-                                        <strong>{{ tr('fileCount', { count: skillImportPreviewSkill.fileCount }) }}</strong>
-                                    </div>
-                                    <div>
-                                        <span>{{ tr('size') }}</span>
-                                        <strong>{{ tr('byteCount', { count: skillImportPreviewSkill.totalBytes }) }}</strong>
-                                    </div>
-                                </div>
-                                <div v-if="skillImportWarnings.length > 0" class="ttas-warning-list">
-                                    <strong>{{ tr('importWarnings', { count: skillImportWarnings.length }) }}</strong>
-                                    <ul>
-                                        <li v-for="warning in skillImportWarnings" :key="warning">{{ warning }}</li>
-                                    </ul>
-                                </div>
-                                <details class="ttas-details">
-                                    <summary>{{ tr('importDetails') }}</summary>
-                                    <pre class="ttas-json">{{ prettyJson(skillImportPreview) }}</pre>
-                                </details>
                             </div>
                         </div>
                     </section>

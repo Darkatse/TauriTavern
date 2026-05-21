@@ -76,7 +76,7 @@ materialize input into .staging
 
 导出：
 
-- `api.skill.export({ name })` 返回 `{ fileName, contentBase64, sha256 }`。
+- `api.skill.export({ scope, name })` 返回 `{ fileName, contentBase64, sha256 }`；`scope` 省略时按全局 Skill 处理。
 - `.ttskill` 内只包含 Skill 文件本身，不写入会改变内容 hash 的诊断 sidecar。
 
 ## Agent 读取

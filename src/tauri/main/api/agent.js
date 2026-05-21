@@ -3,6 +3,7 @@
 import { buildAgentPromptSnapshot } from './agent-prompt-snapshot.js';
 import { attachHostCommitBridge } from './agent-chat-commit-bridge.js';
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../scripts/tauritavern/agent/agent-system-settings.js';
+import { emitAgentProfilesChanged } from '../../../scripts/tauritavern/agent/agent-profile-events.js';
 
 const DEFAULT_EVENT_POLL_MS = 500;
 
@@ -196,12 +197,16 @@ function createAgentApi({ safeInvoke }) {
         if (!isPlainObject(profile)) {
             throw new Error('agent.profile_required: profile must be an object');
         }
-        return safeInvoke('save_agent_profile', { dto: { profile } });
+        const result = await safeInvoke('save_agent_profile', { dto: { profile } });
+        emitAgentProfilesChanged();
+        return result;
     }
 
     async function deleteProfile(input) {
         const profileId = requireProfileId(input?.profileId ?? input?.profile_id ?? input);
-        return safeInvoke('delete_agent_profile', { dto: { profileId } });
+        const result = await safeInvoke('delete_agent_profile', { dto: { profileId } });
+        emitAgentProfilesChanged();
+        return result;
     }
 
     return {
