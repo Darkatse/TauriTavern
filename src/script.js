@@ -6239,7 +6239,6 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
     return startAndWaitForAgentRun({
         generationType: type,
         profileId,
-        persistBaseStateId: resolveAgentPersistBaseStateIdForGeneration(type),
         promptSnapshot: {
             contextPolicy: agentContextPolicy,
             chatCompletionPayload,
@@ -6254,35 +6253,6 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         },
         options: { stream: false, presentation: 'foreground' },
     });
-}
-
-function resolveAgentPersistBaseStateIdForGeneration(type) {
-    const scanStartIndex = type === 'swipe' ? chat.length - 2 : chat.length - 1;
-    for (let i = scanStartIndex; i >= 0; i--) {
-        const message = chat[i];
-        if (!message || message.is_user || message.is_system) {
-            continue;
-        }
-
-        const metadata = message.extra?.tauritavern?.agent;
-        if (!metadata) {
-            continue;
-        }
-
-        const persistStateStatus = String(metadata.persistStateStatus || '').trim();
-        if (persistStateStatus === 'not_committed') {
-            continue;
-        }
-        if (persistStateStatus && persistStateStatus !== 'committed') {
-            throw new Error(`agent.persist_state_status_invalid: Agent result at chat message ${i} has invalid persistStateStatus`);
-        }
-        if (typeof metadata.persistStateId !== 'string' || !metadata.persistStateId.trim()) {
-            throw new Error(`agent.persist_state_missing: Agent result at chat message ${i} has no persistStateId`);
-        }
-        return metadata.persistStateId.trim();
-    }
-
-    return null;
 }
 
 function collectAgentPersistStateIdsFromMessage(message) {

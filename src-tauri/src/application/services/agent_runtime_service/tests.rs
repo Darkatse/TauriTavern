@@ -117,6 +117,7 @@ async fn agent_loop_writes_artifact_and_completes() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -317,6 +318,7 @@ async fn agent_loop_stores_tool_audit_files_with_hashed_call_id_paths() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -493,6 +495,7 @@ async fn agent_loop_retries_retryable_model_errors() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -635,6 +638,7 @@ async fn agent_loop_does_not_retry_non_retryable_model_errors() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -724,6 +728,7 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -880,6 +885,7 @@ async fn finish_promotes_persistent_workspace_projection() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -1035,6 +1041,7 @@ async fn foreground_run_commits_chat_message_before_finish() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -1206,6 +1213,7 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -1432,6 +1440,7 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -1665,6 +1674,7 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -1825,6 +1835,7 @@ async fn foreground_run_without_commit_still_fails_after_drift_recovery_exhausts
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -1948,6 +1959,7 @@ async fn foreground_run_with_commit_becomes_partial_success_when_persistent_comm
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -2117,6 +2129,7 @@ async fn foreground_finish_before_commit_returns_recoverable_error() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -2276,6 +2289,7 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -2425,6 +2439,7 @@ async fn workspace_patch_requires_full_read_state() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -2525,6 +2540,7 @@ async fn dispatcher_searches_and_reads_current_chat_messages() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -2617,6 +2633,216 @@ async fn dispatcher_searches_and_reads_current_chat_messages() {
 }
 
 #[tokio::test]
+async fn agent_input_context_excludes_swipe_target_from_history_and_persist_base() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-input-context-{}",
+        Uuid::new_v4().simple()
+    ));
+    tokio::fs::create_dir_all(&root).await.expect("create root");
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let chat_repository = test_chat_repository(&root);
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository,
+        chat_repository.clone(),
+        chat_repository.clone(),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(vec![])),
+        test_profile_service(&root),
+    );
+    save_character_payload(
+        &chat_repository,
+        &root,
+        "alice",
+        "session",
+        &[
+            json!({
+                "chat_metadata": {},
+                "user_name": "unused",
+                "character_name": "unused",
+            }),
+            json!({
+                "name": "User",
+                "is_user": true,
+                "is_system": false,
+                "mes": "hello",
+                "extra": {},
+            }),
+            json!({
+                "name": "Alice",
+                "is_user": false,
+                "is_system": false,
+                "mes": "visible assistant",
+                "extra": {
+                    "tauritavern": {
+                        "agent": {
+                            "persistStateStatus": "committed",
+                            "persistStateId": "state_visible"
+                        }
+                    }
+                },
+            }),
+            json!({
+                "name": "Alice",
+                "is_user": false,
+                "is_system": false,
+                "mes": "old swipe target",
+                "extra": {
+                    "tauritavern": {
+                        "agent": {
+                            "persistStateStatus": "committed",
+                            "persistStateId": "state_hidden"
+                        }
+                    }
+                },
+            }),
+        ],
+    )
+    .await;
+
+    let context = service
+        .resolve_agent_run_input_context(
+            &AgentChatRef::Character {
+                character_id: "alice".to_string(),
+                file_name: "session".to_string(),
+            },
+            "swipe",
+        )
+        .await
+        .expect("resolve input context");
+
+    assert_eq!(context.input_message_count, 2);
+    assert_eq!(
+        context.persist_base_state_id,
+        Some("state_visible".to_string())
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn dispatcher_chat_tools_hide_messages_after_run_input_boundary() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-chat-boundary-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let chat_repository = test_chat_repository(&root);
+    let run = AgentRun {
+        id: "run_chat_boundary_test".to_string(),
+        workspace_id: "chat_boundary_test".to_string(),
+        stable_chat_id: "stable_chat_boundary_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "alice".to_string(),
+            file_name: "session".to_string(),
+        },
+        generation_type: "swipe".to_string(),
+        profile_id: None,
+        persist_base_state_id: None,
+        input_message_count: Some(2),
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    save_character_payload(
+        &chat_repository,
+        &root,
+        "alice",
+        "session",
+        &[
+            json!({
+                "chat_metadata": {},
+                "user_name": "unused",
+                "character_name": "unused",
+            }),
+            json!({
+                "name": "User",
+                "is_user": true,
+                "is_system": false,
+                "send_date": "2026-01-01T00:00:00.000Z",
+                "mes": "hello",
+                "extra": {},
+            }),
+            json!({
+                "name": "Alice",
+                "is_user": false,
+                "is_system": false,
+                "send_date": "2026-01-01T00:00:01.000Z",
+                "mes": "the blue lantern is hidden under the bridge",
+                "extra": {},
+            }),
+            json!({
+                "name": "Alice",
+                "is_user": false,
+                "is_system": false,
+                "send_date": "2026-01-01T00:00:02.000Z",
+                "mes": "zirconium old swipe target",
+                "extra": {},
+            }),
+        ],
+    )
+    .await;
+
+    let profile = test_resolved_profile(&root).await;
+    let dispatcher = AgentToolDispatcher::new(
+        repository.clone(),
+        chat_repository.clone(),
+        chat_repository,
+        repository,
+        test_skill_service(&root),
+    );
+    let mut session = AgentToolSession::default();
+
+    let hidden_search_call = AgentToolCall {
+        id: "call_hidden_search".to_string(),
+        name: "chat.search".to_string(),
+        arguments: json!({ "query": "zirconium" }),
+        provider_metadata: Value::Null,
+    };
+    let hidden_search = dispatcher
+        .dispatch(&run.id, &hidden_search_call, &mut session, &profile)
+        .await
+        .expect("dispatch hidden search");
+    assert!(!hidden_search.result.is_error);
+    assert_eq!(hidden_search.result.structured["hits"], json!([]));
+
+    let visible_search_call = AgentToolCall {
+        id: "call_visible_search".to_string(),
+        name: "chat.search".to_string(),
+        arguments: json!({ "query": "blue lantern", "scan_limit": 1 }),
+        provider_metadata: Value::Null,
+    };
+    let visible_search = dispatcher
+        .dispatch(&run.id, &visible_search_call, &mut session, &profile)
+        .await
+        .expect("dispatch visible search");
+    assert!(!visible_search.result.is_error);
+    assert_eq!(visible_search.result.structured["hits"][0]["index"], 1);
+
+    let hidden_read_call = AgentToolCall {
+        id: "call_hidden_read".to_string(),
+        name: "chat.read_messages".to_string(),
+        arguments: json!({ "messages": [{ "index": 2 }] }),
+        provider_metadata: Value::Null,
+    };
+    let hidden_read = dispatcher
+        .dispatch(&run.id, &hidden_read_call, &mut session, &profile)
+        .await
+        .expect("dispatch hidden read");
+    assert!(hidden_read.result.is_error);
+    assert_eq!(
+        hidden_read.result.error_code.as_deref(),
+        Some("chat.message_not_found")
+    );
+    assert!(hidden_read.result.content.contains("total messages: 2"));
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn dispatcher_searches_visible_workspace_files_and_reads_char_ranges() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-workspace-search-{}",
@@ -2634,6 +2860,7 @@ async fn dispatcher_searches_visible_workspace_files_and_reads_char_ranges() {
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
@@ -2808,6 +3035,7 @@ async fn dispatcher_progressively_reads_worldinfo_activation_from_run_snapshot()
         generation_type: "normal".to_string(),
         profile_id: None,
         persist_base_state_id: None,
+        input_message_count: None,
         presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),

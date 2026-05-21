@@ -1,7 +1,8 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, MAX_SEARCH_SCAN_LIMIT, parse_role, role_as_str,
+    DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, MAX_SEARCH_SCAN_LIMIT, parse_role, raw_total_messages,
+    role_as_str, visible_total_messages,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::common::{
@@ -42,7 +43,7 @@ pub(in crate::application::services::agent_tools) async fn search(
             ));
         }
     };
-    let search_query = match parse_search_query(args, query) {
+    let mut search_query = match parse_search_query(args, query.clone()) {
         Ok(query) => query,
         Err(message) => {
             return Ok((
@@ -53,6 +54,16 @@ pub(in crate::application::services::agent_tools) async fn search(
     };
 
     let run = run_repository.load_run(run_id).await?;
+    if run.input_message_count.is_some() {
+        let raw_total =
+            raw_total_messages(chat_repository, group_chat_repository, &run.chat_ref).await?;
+        let visible_total = visible_total_messages(&run, raw_total)?;
+        let Some(bounded_query) = constrain_search_query(search_query, raw_total, visible_total)
+        else {
+            return Ok(empty_result(call, &query));
+        };
+        search_query = bounded_query;
+    }
     let hits = match &run.chat_ref {
         AgentChatRef::Character {
             character_id,
@@ -100,6 +111,63 @@ pub(in crate::application::services::agent_tools) async fn search(
         },
         AgentToolEffect::None,
     ))
+}
+
+fn constrain_search_query(
+    mut query: ChatMessageSearchQuery,
+    raw_total: usize,
+    visible_total: usize,
+) -> Option<ChatMessageSearchQuery> {
+    if visible_total == 0 {
+        return None;
+    }
+
+    let excluded_tail = raw_total.saturating_sub(visible_total);
+    let mut filters = query.filters.take().unwrap_or(ChatMessageSearchFilters {
+        role: None,
+        start_index: None,
+        end_index: None,
+        scan_limit: None,
+    });
+    if filters
+        .start_index
+        .is_some_and(|start| start >= visible_total)
+    {
+        return None;
+    }
+    let visible_end = visible_total - 1;
+    filters.end_index = Some(
+        filters
+            .end_index
+            .map(|end| end.min(visible_end))
+            .unwrap_or(visible_end),
+    );
+    if matches!((filters.start_index, filters.end_index), (Some(start), Some(end)) if start > end) {
+        return None;
+    }
+    if let Some(scan_limit) = filters.scan_limit {
+        filters.scan_limit = Some(scan_limit.min(visible_total).saturating_add(excluded_tail));
+    }
+    query.filters = Some(filters);
+    Some(query)
+}
+
+fn empty_result(call: &AgentToolCall, query: &str) -> (AgentToolResult, AgentToolEffect) {
+    (
+        AgentToolResult {
+            call_id: call.id.clone(),
+            name: call.name.clone(),
+            content: render_content(query, &[]),
+            structured: json!({
+                "query": query,
+                "hits": [],
+            }),
+            is_error: false,
+            error_code: None,
+            resource_refs: Vec::new(),
+        },
+        AgentToolEffect::None,
+    )
 }
 
 fn parse_search_query(

@@ -93,15 +93,34 @@ impl AgentRuntimeService {
         let stable_chat_id = validate_stable_chat_id(&dto.stable_chat_id)?;
         let run_id = format!("run_{}", Uuid::new_v4().simple());
         let workspace_id = workspace_id_for_stable_chat_id(&dto.chat_ref, &stable_chat_id)?;
+        let input_context = self
+            .resolve_agent_run_input_context(&dto.chat_ref, &generation_type)
+            .await?;
+        if let Some(requested_state_id) = dto.persist_base_state_id.as_deref() {
+            let requested_state_id = requested_state_id.trim();
+            if requested_state_id.is_empty() {
+                return Err(ApplicationError::ValidationError(
+                    "agent.persist_base_state_id_empty: persistBaseStateId cannot be empty"
+                        .to_string(),
+                ));
+            }
+            if input_context.persist_base_state_id.as_deref() != Some(requested_state_id) {
+                return Err(ApplicationError::ValidationError(
+                    "agent.persist_base_state_mismatch: requested persistBaseStateId does not match the current chat history"
+                        .to_string(),
+                ));
+            }
+        }
         let now = Utc::now();
         let run = AgentRun {
             id: run_id.clone(),
             workspace_id: workspace_id.clone(),
             stable_chat_id: stable_chat_id.clone(),
-            chat_ref: dto.chat_ref,
+            chat_ref: dto.chat_ref.clone(),
             generation_type: generation_type.clone(),
             profile_id: Some(resolved_profile.id.as_str().to_string()),
-            persist_base_state_id: dto.persist_base_state_id,
+            persist_base_state_id: input_context.persist_base_state_id,
+            input_message_count: Some(input_context.input_message_count),
             presentation,
             status: AgentRunStatus::Created,
             created_at: now,

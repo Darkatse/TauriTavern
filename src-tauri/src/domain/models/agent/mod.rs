@@ -69,6 +69,8 @@ pub struct AgentRun {
     pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persist_base_state_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_message_count: Option<usize>,
     pub presentation: AgentRunPresentation,
     pub status: AgentRunStatus,
     pub created_at: DateTime<Utc>,

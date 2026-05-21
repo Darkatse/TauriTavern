@@ -313,6 +313,7 @@ Agent 读取历史必须优先使用后端 chat repository/windowed payload/sear
 
 - `chat.search` 只能搜索当前 run 绑定的聊天；模型只提供 `query` 与可选过滤参数。
 - `chat.read_messages` 使用 0-based message index；JSONL header 不计入 index。
+- 两个工具必须读取 run 创建时冻结的输入历史前缀；`swipe` / `regenerate` 的目标楼层和本 run 后续写入楼层不得对当前 run 可见。
 - 长消息读取必须支持字符范围，不能强行把整条超长消息塞回 prompt。
 - 搜索/读取结果可以返回 snippet、text slice 与 stable ref，但不能扩大前端常驻 chat window。
 

@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 
 use super::{
     MAX_FULL_MESSAGE_CHARS, MAX_MESSAGE_RANGE_CHARS, MAX_MESSAGES_PER_READ, MAX_TOTAL_READ_CHARS,
-    role_as_str,
+    raw_total_messages, role_as_str, visible_total_messages,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::common::{object_args, tool_error};
@@ -63,6 +63,31 @@ pub(in crate::application::services::agent_tools) async fn read_messages(
     };
 
     let run = run_repository.load_run(run_id).await?;
+    let run_visible_total = if run.input_message_count.is_some() {
+        let raw_total =
+            raw_total_messages(chat_repository, group_chat_repository, &run.chat_ref).await?;
+        Some(visible_total_messages(&run, raw_total)?)
+    } else {
+        None
+    };
+    if let Some(visible_total) = run_visible_total {
+        if let Some(request) = requests
+            .iter()
+            .find(|request| request.index >= visible_total)
+        {
+            return Ok((
+                tool_error(
+                    call,
+                    "chat.message_not_found",
+                    &format!(
+                        "message index {} does not exist in this chat; total messages: {}",
+                        request.index, visible_total
+                    ),
+                ),
+                AgentToolEffect::None,
+            ));
+        }
+    }
     let indices = requests
         .iter()
         .map(|request| request.index)
@@ -92,6 +117,13 @@ pub(in crate::application::services::agent_tools) async fn read_messages(
         }
         Err(error) => return Err(error.into()),
     };
+    let visible_total = match run_visible_total {
+        Some(visible_total) => {
+            visible_total_messages(&run, read.total_messages)?;
+            visible_total
+        }
+        None => visible_total_messages(&run, read.total_messages)?,
+    };
 
     let found_indices = read
         .messages
@@ -110,7 +142,7 @@ pub(in crate::application::services::agent_tools) async fn read_messages(
                 "chat.message_not_found",
                 &format!(
                     "message index {} does not exist in this chat; total messages: {}",
-                    missing[0], read.total_messages
+                    missing[0], visible_total
                 ),
             ),
             AgentToolEffect::None,
@@ -157,7 +189,7 @@ pub(in crate::application::services::agent_tools) async fn read_messages(
         .iter()
         .map(|message| message.ref_id.clone())
         .collect::<Vec<_>>();
-    let content = render_content(read.total_messages, &rendered);
+    let content = render_content(visible_total, &rendered);
 
     Ok((
         AgentToolResult {
@@ -165,7 +197,7 @@ pub(in crate::application::services::agent_tools) async fn read_messages(
             name: call.name.clone(),
             content,
             structured: json!({
-                "totalMessages": read.total_messages,
+                "totalMessages": visible_total,
                 "messages": rendered.iter().map(structured_message).collect::<Vec<_>>(),
             }),
             is_error: false,

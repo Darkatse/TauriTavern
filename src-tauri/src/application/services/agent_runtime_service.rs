@@ -22,6 +22,7 @@ mod commit;
 mod commit_ledger;
 mod error_payload;
 mod executor;
+mod input_context;
 mod journal;
 mod lifecycle;
 mod loop_runner;
@@ -55,6 +56,8 @@ pub struct AgentRuntimeService {
     run_repository: Arc<dyn AgentRunRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
     checkpoint_repository: Arc<dyn CheckpointRepository>,
+    chat_repository: Arc<dyn ChatRepository>,
+    group_chat_repository: Arc<dyn GroupChatRepository>,
     model_gateway: Arc<dyn AgentModelGateway>,
     profile_service: Arc<AgentProfileService>,
     skill_service: Arc<SkillService>,
@@ -80,8 +83,8 @@ impl AgentRuntimeService {
         let tool_registry = BuiltinAgentToolRegistry::phase2c();
         let tool_dispatcher = AgentToolDispatcher::new(
             run_repository.clone(),
-            chat_repository,
-            group_chat_repository,
+            chat_repository.clone(),
+            group_chat_repository.clone(),
             workspace_repository.clone(),
             skill_service.clone(),
         );
@@ -89,6 +92,8 @@ impl AgentRuntimeService {
             run_repository,
             workspace_repository,
             checkpoint_repository,
+            chat_repository,
+            group_chat_repository,
             model_gateway,
             profile_service,
             skill_service,
