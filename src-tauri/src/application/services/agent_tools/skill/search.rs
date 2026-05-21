@@ -55,6 +55,16 @@ pub(in crate::application::services::agent_tools) async fn search(
             AgentToolEffect::None,
         ));
     }
+    let Some(scope) = session.effective_skill_scope(name) else {
+        return Ok((
+            tool_error(
+                call,
+                "skill.not_visible",
+                &format!("Skill `{name}` is not installed in the active Skill scopes."),
+            ),
+            AgentToolEffect::None,
+        ));
+    };
 
     let limit = match optional_usize_arg(args, "limit") {
         Ok(limit) => limit.unwrap_or(DEFAULT_SEARCH_LIMIT),
@@ -125,6 +135,7 @@ pub(in crate::application::services::agent_tools) async fn search(
         .map(str::to_string);
     let search = match skill_service
         .search_skill_files(SkillSearchRequest {
+            scope,
             name: name.to_string(),
             query: query.to_string(),
             path,

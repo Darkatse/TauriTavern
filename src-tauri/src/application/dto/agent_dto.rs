@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::domain::models::agent::profile::{AgentProfileDefinition, AgentProfileSummary};
+use crate::domain::models::agent::profile::{
+    AgentPresetRef, AgentProfileDefinition, AgentProfileSummary,
+};
 use crate::domain::models::agent::{
     AgentChatRef, AgentRunEvent, AgentRunPresentation, AgentRunStatus, AgentToolSpec,
 };
@@ -23,7 +25,18 @@ pub struct AgentStartRunDto {
     #[serde(default)]
     pub generation_intent: Option<Value>,
     #[serde(default)]
+    pub skill_scope_refs: AgentSkillScopeRefsDto,
+    #[serde(default)]
     pub options: AgentStartRunOptionsDto,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSkillScopeRefsDto {
+    #[serde(default)]
+    pub preset: Option<AgentPresetRef>,
+    #[serde(default)]
+    pub character_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

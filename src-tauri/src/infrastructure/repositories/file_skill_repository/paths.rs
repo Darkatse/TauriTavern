@@ -1,4 +1,7 @@
+use sha2::{Digest, Sha256};
+
 use crate::domain::errors::DomainError;
+use crate::domain::models::skill::{SkillScope, SkillScopeFilter};
 
 pub(super) fn validate_skill_name(raw: &str) -> Result<String, DomainError> {
     let value = raw.trim();
@@ -26,6 +29,87 @@ pub(super) fn validate_skill_name(raw: &str) -> Result<String, DomainError> {
         ));
     }
     Ok(value.to_string())
+}
+
+pub(super) fn validate_skill_scope(scope: &SkillScope) -> Result<(), DomainError> {
+    match scope {
+        SkillScope::Global => Ok(()),
+        SkillScope::Preset { api_id, name } => {
+            validate_scope_text(api_id, "preset api_id")?;
+            validate_scope_text(name, "preset name")
+        }
+        SkillScope::Profile { profile_id } => validate_profile_scope_id(profile_id),
+        SkillScope::Character { character_id } => validate_scope_text(character_id, "character id"),
+    }
+}
+
+pub(super) fn validate_skill_scope_filter(filter: &SkillScopeFilter) -> Result<(), DomainError> {
+    match filter {
+        SkillScopeFilter::All => Ok(()),
+        SkillScopeFilter::Global => validate_skill_scope(&SkillScope::Global),
+        SkillScopeFilter::Preset { api_id, name } => validate_skill_scope(&SkillScope::Preset {
+            api_id: api_id.clone(),
+            name: name.clone(),
+        }),
+        SkillScopeFilter::Profile { profile_id } => validate_skill_scope(&SkillScope::Profile {
+            profile_id: profile_id.clone(),
+        }),
+        SkillScopeFilter::Character { character_id } => {
+            validate_skill_scope(&SkillScope::Character {
+                character_id: character_id.clone(),
+            })
+        }
+    }
+}
+
+pub(super) fn skill_scope_storage_dir(scope: &SkillScope) -> Result<String, DomainError> {
+    validate_skill_scope(scope)?;
+    Ok(match scope {
+        SkillScope::Global => "global".to_string(),
+        SkillScope::Preset { .. } => format!("preset_{}", scope_digest(scope)),
+        SkillScope::Profile { .. } => format!("profile_{}", scope_digest(scope)),
+        SkillScope::Character { .. } => format!("character_{}", scope_digest(scope)),
+    })
+}
+
+fn scope_digest(scope: &SkillScope) -> String {
+    let digest = Sha256::digest(scope.stable_key().as_bytes());
+    let mut output = String::with_capacity(16);
+    for byte in &digest[..8] {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+fn validate_scope_text(raw: &str, label: &str) -> Result<(), DomainError> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Err(DomainError::InvalidData(format!("{label} cannot be empty")));
+    }
+    if value.contains('\0') {
+        return Err(DomainError::InvalidData(format!(
+            "{label} cannot contain NUL"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_profile_scope_id(raw: &str) -> Result<(), DomainError> {
+    validate_scope_text(raw, "profile id")?;
+    if raw.len() > 128 {
+        return Err(DomainError::InvalidData(
+            "profile id must be <= 128 characters".to_string(),
+        ));
+    }
+    if !raw.bytes().all(|byte| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+    }) {
+        return Err(DomainError::InvalidData(
+            "profile id must use lowercase ASCII letters, digits, '-' or '_'".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn normalize_skill_path(raw: &str) -> Result<String, DomainError> {
@@ -97,3 +181,5 @@ pub(super) fn normalize_optional_string(value: Option<&str>) -> Option<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_string)
 }
+
+const HEX: &[u8; 16] = b"0123456789abcdef";

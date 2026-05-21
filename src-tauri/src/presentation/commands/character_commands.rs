@@ -10,6 +10,7 @@ use crate::application::dto::character_dto::{
     ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto, MergeCharacterCardDataDto,
     RenameCharacterDto, UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
+use crate::domain::models::skill::{SkillScope, SkillScopeRetargetRequest};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -176,11 +177,32 @@ pub async fn rename_character(
         dto.old_name, dto.new_name
     ));
 
-    app_state
+    let old_character_id = dto.old_name.clone();
+    let renamed = app_state
         .character_service
         .rename_character(dto)
         .await
-        .map_err(map_command_error("Failed to rename character"))
+        .map_err(map_command_error("Failed to rename character"))?;
+
+    let new_character_id = character_id_from_avatar(&renamed.avatar)?;
+    if old_character_id != new_character_id {
+        app_state
+            .skill_service
+            .retarget_scope(SkillScopeRetargetRequest {
+                from_scope: SkillScope::Character {
+                    character_id: old_character_id,
+                },
+                to_scope: SkillScope::Character {
+                    character_id: new_character_id,
+                },
+            })
+            .await
+            .map_err(map_command_error(
+                "Failed to retarget Agent Skills linked to character",
+            ))?;
+    }
+
+    Ok(renamed)
 }
 
 #[tauri::command]
@@ -288,4 +310,24 @@ pub async fn clear_character_cache(
 
 fn character_skill_source_id(name: &str) -> String {
     format!("character:{}", name.trim())
+}
+
+fn character_id_from_avatar(avatar: &str) -> Result<String, CommandError> {
+    let file_name = avatar
+        .trim()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    let id = file_name
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(file_name)
+        .trim();
+    if id.is_empty() {
+        return Err(CommandError::BadRequest(
+            "Character avatar did not resolve to a character id".to_string(),
+        ));
+    }
+    Ok(id.to_string())
 }

@@ -20,7 +20,11 @@ use crate::application::services::agent_identity::{
 };
 use crate::application::services::agent_profile_service::AgentProfileResolveInput;
 use crate::application::services::agent_workspace_lifecycle_service::AgentRunActivity;
-use crate::domain::models::agent::{AgentRun, AgentRunEventLevel, AgentRunStatus, WorkspacePath};
+use crate::domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
+use crate::domain::models::agent::{
+    AgentChatRef, AgentRun, AgentRunEventLevel, AgentRunStatus, WorkspacePath,
+};
+use crate::domain::models::skill::{SkillIndexEntry, SkillScope};
 use crate::domain::repositories::agent_run_repository::AgentRunEventReadQuery;
 
 impl AgentRuntimeService {
@@ -34,13 +38,13 @@ impl AgentRuntimeService {
                     .to_string(),
             ));
         }
-        let Some(prompt_snapshot) = dto.prompt_snapshot else {
+        let Some(prompt_snapshot) = dto.prompt_snapshot.as_ref() else {
             return Err(ApplicationError::ValidationError(
                 "agent.prompt_snapshot_required: Agent tool loop requires a concrete prompt snapshot"
                     .to_string(),
             ));
         };
-        let request = request_from_prompt_snapshot(&prompt_snapshot)?;
+        let request = request_from_prompt_snapshot(prompt_snapshot)?;
         reject_external_tool_request(&request.payload)?;
 
         let generation_type = dto.generation_type.trim().to_string();
@@ -57,7 +61,8 @@ impl AgentRuntimeService {
                 known_tools: self.tool_registry.specs(),
             })
             .await?;
-        validate_prompt_snapshot_context_policy(&prompt_snapshot, &resolved_profile)?;
+        validate_prompt_snapshot_context_policy(prompt_snapshot, &resolved_profile)?;
+        let prompt_snapshot = prompt_snapshot.clone();
         let presentation = dto
             .options
             .presentation
@@ -80,6 +85,11 @@ impl AgentRuntimeService {
             ));
         }
         resolved_profile.run.presentation = presentation;
+        let skill_scope_order = resolve_run_skill_scopes(&dto, &resolved_profile)?;
+        let effective_skills = self
+            .skill_service
+            .resolve_effective_skills(&skill_scope_order, &resolved_profile.skills)
+            .await?;
         let stable_chat_id = validate_stable_chat_id(&dto.stable_chat_id)?;
         let run_id = format!("run_{}", Uuid::new_v4().simple());
         let workspace_id = workspace_id_for_stable_chat_id(&dto.chat_ref, &stable_chat_id)?;
@@ -121,6 +131,16 @@ impl AgentRuntimeService {
             }),
         )
         .await?;
+        self.event(
+            &run_id,
+            AgentRunEventLevel::Info,
+            "skill_scopes_resolved",
+            json!({
+                "scopes": skill_scope_order,
+                "effectiveSkills": skill_event_summary(&effective_skills),
+            }),
+        )
+        .await?;
         if let Some(generation_intent) = dto.generation_intent {
             self.event(
                 &run_id,
@@ -146,6 +166,7 @@ impl AgentRuntimeService {
                     prompt_snapshot,
                     request,
                     resolved_profile,
+                    effective_skills,
                     cancel_receiver,
                 )
                 .await;
@@ -254,6 +275,68 @@ impl AgentRuntimeService {
             sha256: file.sha256,
         })
     }
+}
+
+fn resolve_run_skill_scopes(
+    dto: &AgentStartRunDto,
+    profile: &ResolvedAgentProfile,
+) -> Result<Vec<SkillScope>, ApplicationError> {
+    let mut scopes = vec![SkillScope::Global];
+
+    if let Some(preset) = dto.skill_scope_refs.preset.as_ref().or_else(|| {
+        if profile.preset.mode == AgentPresetBindingMode::Ref {
+            profile.preset.ref_.as_ref()
+        } else {
+            None
+        }
+    }) {
+        scopes.push(SkillScope::Preset {
+            api_id: preset.api_id.clone(),
+            name: preset.name.clone(),
+        });
+    }
+
+    scopes.push(SkillScope::Profile {
+        profile_id: profile.id.as_str().to_string(),
+    });
+
+    let chat_character_id = match &dto.chat_ref {
+        AgentChatRef::Character { character_id, .. } => Some(character_id.as_str()),
+        AgentChatRef::Group { .. } => None,
+    };
+    let explicit_character_id = dto
+        .skill_scope_refs
+        .character_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let (Some(explicit), Some(chat)) = (explicit_character_id, chat_character_id) {
+        if explicit != chat {
+            return Err(ApplicationError::ValidationError(format!(
+                "agent.skill_scope_character_mismatch: skillScopeRefs.characterId `{explicit}` does not match chat character `{chat}`"
+            )));
+        }
+    }
+    if let Some(character_id) = explicit_character_id.or(chat_character_id) {
+        scopes.push(SkillScope::Character {
+            character_id: character_id.to_string(),
+        });
+    }
+
+    Ok(scopes)
+}
+
+fn skill_event_summary(skills: &[SkillIndexEntry]) -> Vec<serde_json::Value> {
+    skills
+        .iter()
+        .map(|skill| {
+            json!({
+                "name": skill.name.as_str(),
+                "scope": &skill.scope,
+                "installedHash": skill.installed_hash.as_str(),
+            })
+        })
+        .collect()
 }
 
 #[async_trait::async_trait]

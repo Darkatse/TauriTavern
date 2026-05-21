@@ -2,6 +2,7 @@
 
 import { buildAgentPromptSnapshot } from './agent-prompt-snapshot.js';
 import { attachHostCommitBridge } from './agent-chat-commit-bridge.js';
+import { DEFAULT_AGENT_PROFILE_ID } from '../../../scripts/tauritavern/agent/agent-system-settings.js';
 
 const DEFAULT_EVENT_POLL_MS = 500;
 
@@ -16,7 +17,7 @@ const DEFAULT_EVENT_POLL_MS = 500;
  */
 function createAgentApi({ safeInvoke }) {
     async function startRunWithPromptSnapshot(input) {
-        const dto = await normalizePromptSnapshotRunInput(input);
+        const dto = await normalizePromptSnapshotRunInput(input, { safeInvoke });
         const handle = await safeInvoke('start_agent_run', { dto });
         attachHostCommitBridge({ runId: handle?.runId, safeInvoke, readWorkspaceFile, subscribe });
         return handle;
@@ -273,7 +274,7 @@ function normalizeAgentRunPresentation(value) {
     return presentation;
 }
 
-async function normalizePromptSnapshotRunInput(input) {
+async function normalizePromptSnapshotRunInput(input, { safeInvoke }) {
     if (!input || typeof input !== 'object') {
         throw new Error('Agent startRunWithPromptSnapshot input is required');
     }
@@ -288,13 +289,106 @@ async function normalizePromptSnapshotRunInput(input) {
         throw new Error('stableChatId is required');
     }
 
+    const skillScopeRefs = await resolveSkillScopeRefsForRun(input, safeInvoke);
+
     return {
         ...input,
         chatRef,
         stableChatId,
+        skillScopeRefs,
         persistBaseStateId: normalizeOptionalString(input.persistBaseStateId),
         options: normalizeAgentRunOptions(input.options, input.presentation),
     };
+}
+
+async function resolveSkillScopeRefsForRun(input, safeInvoke) {
+    const refs = normalizeSkillScopeRefs(input.skillScopeRefs ?? input.skill_scope_refs);
+    if (refs.preset) {
+        return refs;
+    }
+
+    const profile = await loadRunProfile(input.profileId ?? input.profile_id, safeInvoke);
+    if (profile?.preset?.mode !== 'currentPromptSnapshot') {
+        return refs;
+    }
+
+    return {
+        ...refs,
+        preset: resolveCurrentPresetRef(),
+    };
+}
+
+async function loadRunProfile(profileId, safeInvoke) {
+    const resolvedProfileId = normalizeOptionalString(profileId) || DEFAULT_AGENT_PROFILE_ID;
+    const result = await safeInvoke('load_agent_profile', {
+        dto: {
+            profileId: resolvedProfileId,
+        },
+    });
+    const profile = result?.profile;
+    if (!profile) {
+        throw new Error(`agent.profile_not_found: Agent Profile '${resolvedProfileId}' was not found`);
+    }
+    return profile;
+}
+
+function normalizeSkillScopeRefs(value) {
+    if (value == null) {
+        return {};
+    }
+    if (!isPlainObject(value)) {
+        throw new Error('agent.skill_scope_refs_invalid: skillScopeRefs must be an object');
+    }
+
+    const refs = {};
+    const preset = normalizeOptionalPresetRef(value.preset);
+    if (preset) {
+        refs.preset = preset;
+    }
+    const characterId = normalizeOptionalString(value.characterId ?? value.character_id);
+    if (characterId) {
+        refs.characterId = characterId;
+    }
+    return refs;
+}
+
+function normalizeOptionalPresetRef(value) {
+    if (value == null) {
+        return undefined;
+    }
+    if (!isPlainObject(value)) {
+        throw new Error('agent.skill_scope_refs_preset_invalid: skillScopeRefs.preset must be an object');
+    }
+    const apiId = normalizeOptionalString(value.apiId ?? value.api_id);
+    const name = normalizeOptionalString(value.name);
+    if (!apiId || !name) {
+        throw new Error('agent.skill_scope_refs_preset_invalid: skillScopeRefs.preset requires apiId and name');
+    }
+    return { apiId, name };
+}
+
+function resolveCurrentPresetRef() {
+    const context = window.SillyTavern?.getContext?.();
+    if (!context || typeof context !== 'object') {
+        throw new Error('agent.current_preset_context_unavailable: SillyTavern context is required to resolve the current preset');
+    }
+    const presetManager = context.getPresetManager?.();
+    if (!presetManager) {
+        throw new Error('agent.current_preset_manager_unavailable: current preset manager is unavailable');
+    }
+
+    const selectedPreset = String(presetManager.getSelectedPreset?.() ?? '').trim();
+    if (selectedPreset === 'gui') {
+        throw new Error('agent.current_preset_unsaved: CurrentPromptSnapshot Agent runs require a saved preset to resolve preset-scoped Skills');
+    }
+
+    const apiId = normalizeOptionalString(presetManager.apiId);
+    const name = normalizeOptionalString(presetManager.getSelectedPresetName?.());
+    if (!apiId || !name) {
+        throw new Error('agent.current_preset_ref_invalid: current preset did not resolve apiId and name');
+    }
+
+    return { apiId, name };
 }
 
 async function resolveStableChatId(chatRef) {

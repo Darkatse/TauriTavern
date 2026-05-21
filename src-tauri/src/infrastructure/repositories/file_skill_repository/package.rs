@@ -67,6 +67,7 @@ pub(super) fn validate_skill_root(
     }
 
     let entry = SkillIndexEntry {
+        scope: Default::default(),
         name,
         description: frontmatter.description,
         display_name: sidecar

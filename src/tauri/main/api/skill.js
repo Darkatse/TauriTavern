@@ -185,6 +185,43 @@ function normalizeConflictStrategy(value) {
 
 /**
  * @param {unknown} value
+ * @param {string} label
+ */
+function normalizeSkillScope(value, label = 'scope') {
+    if (value === null || value === undefined) {
+        return undefined;
+    }
+
+    const scope = requirePlainObject(value, label);
+    const kind = requireNonEmptyString(scope.kind, `${label}.kind`);
+    if (kind === 'global') {
+        return { kind };
+    }
+    if (kind === 'preset') {
+        return {
+            kind,
+            apiId: requireNonEmptyString(scope.apiId ?? scope.api_id, `${label}.apiId`),
+            name: requireNonEmptyString(scope.name, `${label}.name`),
+        };
+    }
+    if (kind === 'profile') {
+        return {
+            kind,
+            profileId: requireNonEmptyString(scope.profileId ?? scope.profile_id, `${label}.profileId`),
+        };
+    }
+    if (kind === 'character') {
+        return {
+            kind,
+            characterId: requireNonEmptyString(scope.characterId ?? scope.character_id, `${label}.characterId`),
+        };
+    }
+
+    throw new Error(`Unsupported Skill scope kind: ${kind}`);
+}
+
+/**
+ * @param {unknown} value
  */
 function normalizeSkillInstallRequest(value) {
     const request = requirePlainObject(value, 'skill install request');
@@ -199,7 +236,28 @@ function normalizeSkillInstallRequest(value) {
         output.conflictStrategy = conflictStrategy;
     }
 
+    const targetScope = normalizeSkillScope(request.targetScope ?? request.target_scope, 'targetScope');
+    if (targetScope !== undefined) {
+        output.targetScope = targetScope;
+    }
+
     return output;
+}
+
+/**
+ * @param {unknown} value
+ */
+function normalizeSkillScopeRetargetRequest(value) {
+    const request = requirePlainObject(value, 'Skill scope retarget request');
+    const fromScope = normalizeSkillScope(request.fromScope ?? request.from_scope, 'fromScope');
+    const toScope = normalizeSkillScope(request.toScope ?? request.to_scope, 'toScope');
+    if (!fromScope || !toScope) {
+        throw new Error('fromScope and toScope are required');
+    }
+    return {
+        fromScope,
+        toScope,
+    };
 }
 
 function normalizePickedImportArchivePath(value) {
@@ -416,6 +474,12 @@ function createSkillApi({
         return safeInvoke('delete_skill', { name });
     }
 
+    async function retargetScope(request) {
+        return safeInvoke('retarget_skill_scope', {
+            request: normalizeSkillScopeRetargetRequest(request),
+        });
+    }
+
     return {
         list,
         listFiles,
@@ -428,6 +492,7 @@ function createSkillApi({
         exportSkill,
         delete: deleteSkill,
         deleteSkill,
+        retargetScope,
     };
 }
 

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::domain::models::skill::{SkillIndexEntry, SkillScope};
 use crate::domain::repositories::workspace_repository::WorkspaceFile;
 
 #[derive(Debug, Clone)]
@@ -14,9 +15,17 @@ pub struct AgentToolSession {
     total_calls: usize,
     calls_per_tool: HashMap<String, usize>,
     skill_read_chars: usize,
+    effective_skills: Vec<SkillIndexEntry>,
 }
 
 impl AgentToolSession {
+    pub fn new(effective_skills: Vec<SkillIndexEntry>) -> Self {
+        Self {
+            effective_skills,
+            ..Self::default()
+        }
+    }
+
     pub fn remember_file(&mut self, file: &WorkspaceFile, full_read: bool) {
         self.read_state.insert(
             file.path.as_str().to_string(),
@@ -50,5 +59,16 @@ impl AgentToolSession {
 
     pub fn remember_skill_read_chars(&mut self, chars: usize) {
         self.skill_read_chars += chars;
+    }
+
+    pub fn effective_skills(&self) -> &[SkillIndexEntry] {
+        &self.effective_skills
+    }
+
+    pub fn effective_skill_scope(&self, name: &str) -> Option<SkillScope> {
+        self.effective_skills
+            .iter()
+            .find(|skill| skill.name == name)
+            .map(|skill| skill.scope.clone())
     }
 }

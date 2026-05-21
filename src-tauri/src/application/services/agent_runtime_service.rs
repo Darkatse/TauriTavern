@@ -57,6 +57,7 @@ pub struct AgentRuntimeService {
     checkpoint_repository: Arc<dyn CheckpointRepository>,
     model_gateway: Arc<dyn AgentModelGateway>,
     profile_service: Arc<AgentProfileService>,
+    skill_service: Arc<SkillService>,
     tool_registry: BuiltinAgentToolRegistry,
     tool_dispatcher: AgentToolDispatcher,
     active_runs: RwLock<HashMap<String, watch::Sender<bool>>>,
@@ -82,7 +83,7 @@ impl AgentRuntimeService {
             chat_repository,
             group_chat_repository,
             workspace_repository.clone(),
-            skill_service,
+            skill_service.clone(),
         );
         Self {
             run_repository,
@@ -90,6 +91,7 @@ impl AgentRuntimeService {
             checkpoint_repository,
             model_gateway,
             profile_service,
+            skill_service,
             tool_registry,
             tool_dispatcher,
             active_runs: RwLock::new(HashMap::new()),

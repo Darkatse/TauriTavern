@@ -2,9 +2,98 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
+pub enum SkillScope {
+    Global,
+    Preset { api_id: String, name: String },
+    Profile { profile_id: String },
+    Character { character_id: String },
+}
+
+impl Default for SkillScope {
+    fn default() -> Self {
+        Self::Global
+    }
+}
+
+impl SkillScope {
+    pub fn stable_key(&self) -> String {
+        match self {
+            Self::Global => "global".to_string(),
+            Self::Preset { api_id, name } => format!("preset\0{api_id}\0{name}"),
+            Self::Profile { profile_id } => format!("profile\0{profile_id}"),
+            Self::Character { character_id } => format!("character\0{character_id}"),
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Self::Global => "global".to_string(),
+            Self::Preset { api_id, name } => format!("preset:{api_id}:{name}"),
+            Self::Profile { profile_id } => format!("profile:{profile_id}"),
+            Self::Character { character_id } => format!("character:{character_id}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
+pub enum SkillScopeFilter {
+    All,
+    Global,
+    Preset { api_id: String, name: String },
+    Profile { profile_id: String },
+    Character { character_id: String },
+}
+
+impl Default for SkillScopeFilter {
+    fn default() -> Self {
+        Self::Global
+    }
+}
+
+impl SkillScopeFilter {
+    pub fn matches(&self, scope: &SkillScope) -> bool {
+        match self {
+            Self::All => true,
+            Self::Global => matches!(scope, SkillScope::Global),
+            Self::Preset { api_id, name } => matches!(
+                scope,
+                SkillScope::Preset {
+                    api_id: scope_api_id,
+                    name: scope_name,
+                } if scope_api_id == api_id && scope_name == name
+            ),
+            Self::Profile { profile_id } => matches!(
+                scope,
+                SkillScope::Profile {
+                    profile_id: scope_profile_id,
+                } if scope_profile_id == profile_id
+            ),
+            Self::Character { character_id } => matches!(
+                scope,
+                SkillScope::Character {
+                    character_id: scope_character_id,
+                } if scope_character_id == character_id
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillIndexEntry {
+    #[serde(default)]
+    pub scope: SkillScope,
     pub name: String,
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,12 +184,15 @@ pub enum SkillInstallConflictStrategy {
 pub struct SkillInstallRequest {
     pub input: SkillImportInput,
     #[serde(default)]
+    pub target_scope: SkillScope,
+    #[serde(default)]
     pub conflict_strategy: Option<SkillInstallConflictStrategy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillInstallResult {
+    pub scope: SkillScope,
     pub name: String,
     pub action: SkillInstallAction,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -162,6 +254,8 @@ pub struct SkillInlineFile {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillReadRequest {
+    #[serde(default)]
+    pub scope: SkillScope,
     pub name: String,
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -177,6 +271,7 @@ pub struct SkillReadRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillReadResult {
+    pub scope: SkillScope,
     pub name: String,
     pub path: String,
     pub content: String,
@@ -196,6 +291,8 @@ pub struct SkillReadResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillSearchRequest {
+    #[serde(default)]
+    pub scope: SkillScope,
     pub name: String,
     pub query: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -220,6 +317,7 @@ pub struct SkillSearchHit {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillSearchResult {
+    pub scope: SkillScope,
     pub name: String,
     pub query: String,
     pub hits: Vec<SkillSearchHit>,
@@ -235,6 +333,32 @@ pub struct SkillExportResult {
     pub file_name: String,
     pub bytes: Vec<u8>,
     pub sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillMoveRequest {
+    pub name: String,
+    pub from_scope: SkillScope,
+    pub to_scope: SkillScope,
+    #[serde(default)]
+    pub conflict_strategy: Option<SkillInstallConflictStrategy>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillScopeRetargetRequest {
+    pub from_scope: SkillScope,
+    pub to_scope: SkillScope,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillScopeRetargetResult {
+    pub moved: usize,
+    pub merged: usize,
+    /// Number of Skill index entries whose source_refs were rewritten.
+    pub source_refs_updated: usize,
 }
 
 fn default_inline_encoding() -> String {

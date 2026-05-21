@@ -1,25 +1,31 @@
 use super::FileSkillRepository;
-use super::fs_ops::{activate_package_dir, cleanup_dir};
+use super::fs_ops::{
+    cleanup_dir, copy_skill_dir_to_empty_target, prepare_skill_dir_replacement,
+    rollback_prepared_skill_dir, rollback_prepared_skill_dir_replacement,
+};
+use super::index::sort_index;
 use super::materialize::PreparedImport;
 use super::package::{ValidatedSkill, validate_skill_root};
 use super::source_refs::merge_source_refs;
 use crate::domain::errors::DomainError;
 use crate::domain::models::skill::{
     SkillImportConflict, SkillImportConflictKind, SkillInstallAction, SkillInstallConflictStrategy,
-    SkillInstallResult,
+    SkillInstallResult, SkillScope,
 };
 
 impl FileSkillRepository {
     pub(super) async fn preview_prepared(
         &self,
         prepared: &PreparedImport,
+        target_scope: SkillScope,
     ) -> Result<ValidatedSkill, DomainError> {
         let mut validated = validate_skill_root(&prepared.package_root, prepared.source.clone())?;
+        validated.entry.scope = target_scope;
+        validated.preview.skill = validated.entry.clone();
         let index = self.load_index().await?;
-        let installed = index
-            .skills
-            .iter()
-            .find(|skill| skill.name == validated.entry.name);
+        let installed = index.skills.iter().find(|skill| {
+            skill.scope == validated.entry.scope && skill.name == validated.entry.name
+        });
         validated.preview.conflict = match installed {
             None => SkillImportConflict {
                 kind: SkillImportConflictKind::New,
@@ -45,11 +51,16 @@ impl FileSkillRepository {
         validated: ValidatedSkill,
         strategy: Option<SkillInstallConflictStrategy>,
     ) -> Result<SkillInstallResult, DomainError> {
-        let mut index = self.load_index().await?;
-        let existing_position = index
-            .skills
-            .iter()
-            .position(|skill| skill.name == validated.entry.name);
+        let mut index = match self.load_index().await {
+            Ok(index) => index,
+            Err(error) => {
+                cleanup_dir(&prepared.cleanup_root);
+                return Err(error);
+            }
+        };
+        let existing_position = index.skills.iter().position(|skill| {
+            skill.scope == validated.entry.scope && skill.name == validated.entry.name
+        });
 
         match validated.preview.conflict.kind {
             SkillImportConflictKind::Same => {
@@ -62,13 +73,17 @@ impl FileSkillRepository {
                         index.skills[position].source_refs.sort_by(|left, right| {
                             left.kind.cmp(&right.kind).then(left.id.cmp(&right.id))
                         });
-                        self.save_index(&index).await?;
+                        if let Err(error) = self.save_index(&index).await {
+                            cleanup_dir(&prepared.cleanup_root);
+                            return Err(error);
+                        }
                         Some(index.skills[position].clone())
                     }
                     None => None,
                 };
                 cleanup_dir(&prepared.cleanup_root);
                 return Ok(SkillInstallResult {
+                    scope: validated.entry.scope,
                     name: validated.entry.name,
                     action: SkillInstallAction::AlreadyInstalled,
                     skill,
@@ -78,6 +93,7 @@ impl FileSkillRepository {
                 Some(SkillInstallConflictStrategy::Skip) => {
                     cleanup_dir(&prepared.cleanup_root);
                     return Ok(SkillInstallResult {
+                        scope: validated.entry.scope,
                         name: validated.entry.name,
                         action: SkillInstallAction::Skipped,
                         skill: existing_position.map(|position| index.skills[position].clone()),
@@ -95,21 +111,70 @@ impl FileSkillRepository {
             SkillImportConflictKind::New => {}
         }
 
-        let target = self.installed_root().join(&validated.entry.name);
-        let replaced = target.exists();
-        activate_package_dir(&prepared.package_root, &target)?;
-        cleanup_dir(&prepared.cleanup_root);
-
+        let target = match self.installed_scope_root(&validated.entry.scope) {
+            Ok(scope_root) => scope_root.join(&validated.entry.name),
+            Err(error) => {
+                cleanup_dir(&prepared.cleanup_root);
+                return Err(error);
+            }
+        };
+        if let Some(parent) = target.parent() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                cleanup_dir(&prepared.cleanup_root);
+                return Err(DomainError::InternalError(format!(
+                    "Failed to create Skill scope directory '{}': {}",
+                    parent.display(),
+                    error
+                )));
+            }
+        }
         match existing_position {
             Some(position) => index.skills[position] = validated.entry.clone(),
             None => index.skills.push(validated.entry.clone()),
         }
-        index
-            .skills
-            .sort_by(|left, right| left.name.cmp(&right.name));
-        self.save_index(&index).await?;
+        sort_index(&mut index);
+
+        let replaced = existing_position.is_some();
+        if replaced {
+            let replacement = match prepare_skill_dir_replacement(
+                &prepared.package_root,
+                &target,
+                &validated.entry.name,
+            ) {
+                Ok(replacement) => replacement,
+                Err(error) => {
+                    cleanup_dir(&prepared.cleanup_root);
+                    return Err(error);
+                }
+            };
+            if let Err(error) = self.save_index(&index).await {
+                let error = rollback_prepared_skill_dir_replacement(&replacement, error);
+                cleanup_dir(&prepared.cleanup_root);
+                return Err(error);
+            }
+            if let Err(error) = replacement.discard_backup() {
+                cleanup_dir(&prepared.cleanup_root);
+                return Err(committed_cleanup_error("install_skill_import", error));
+            }
+        } else {
+            if let Err(error) = copy_skill_dir_to_empty_target(
+                &prepared.package_root,
+                &target,
+                &validated.entry.name,
+            ) {
+                cleanup_dir(&prepared.cleanup_root);
+                return Err(error);
+            }
+            if let Err(error) = self.save_index(&index).await {
+                let error = rollback_prepared_skill_dir(&target, error);
+                cleanup_dir(&prepared.cleanup_root);
+                return Err(error);
+            }
+        }
+        cleanup_dir(&prepared.cleanup_root);
 
         Ok(SkillInstallResult {
+            scope: validated.entry.scope.clone(),
             name: validated.entry.name.clone(),
             action: if replaced {
                 SkillInstallAction::Replaced
@@ -119,4 +184,10 @@ impl FileSkillRepository {
             skill: Some(validated.entry),
         })
     }
+}
+
+fn committed_cleanup_error(operation: &str, error: DomainError) -> DomainError {
+    DomainError::InternalError(format!(
+        "{operation} committed but failed to clean up Skill directories: {error}"
+    ))
 }

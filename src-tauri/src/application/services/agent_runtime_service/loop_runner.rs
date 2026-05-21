@@ -14,6 +14,7 @@ use crate::domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelResponse,
     AgentModelRole, AgentRunEventLevel, AgentRunStatus, AgentToolResult, WorkspacePath,
 };
+use crate::domain::models::skill::SkillIndexEntry;
 
 /// How many in-loop drift recovery attempts to make per run before
 /// surrendering to the existing #55 fail-fast path. One attempt is
@@ -29,10 +30,11 @@ impl AgentRuntimeService {
         run_id: &str,
         mut request: AgentModelRequest,
         profile: &ResolvedAgentProfile,
+        effective_skills: &[SkillIndexEntry],
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<Option<usize>, ApplicationError> {
-        let mut tool_session = AgentToolSession::default();
+        let mut tool_session = AgentToolSession::new(effective_skills.to_vec());
         let mut commit_count = 0_usize;
         // Issue #64: counter for soft drift recovery — see
         // `DRIFT_RECOVERY_MAX_ATTEMPTS` above. Persisted across rounds so a

@@ -35,7 +35,9 @@ use crate::domain::models::agent::{
     WorkspacePath, WorkspacePersistentChangeSet,
 };
 use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
-use crate::domain::models::skill::{SkillImportInput, SkillInlineFile, SkillInstallRequest};
+use crate::domain::models::skill::{
+    SkillImportInput, SkillInlineFile, SkillInstallRequest, SkillScope,
+};
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunRepository,
 };
@@ -2704,6 +2706,7 @@ async fn dispatcher_searches_skills_and_reads_skill_ranges() {
     let skill_repository = Arc::new(FileSkillRepository::new(root.join("skills")));
     skill_repository
         .install_import(SkillInstallRequest {
+            target_scope: SkillScope::Global,
             input: SkillImportInput::InlineFiles {
                 files: vec![
                     SkillInlineFile {
@@ -2731,14 +2734,18 @@ async fn dispatcher_searches_skills_and_reads_skill_ranges() {
         .expect("install skill");
     let skill_service = Arc::new(SkillService::new(skill_repository));
     let profile = test_resolved_profile(&root).await;
+    let effective_skills = skill_service
+        .resolve_effective_skills(&[SkillScope::Global], &profile.skills)
+        .await
+        .expect("resolve effective skills");
     let dispatcher = AgentToolDispatcher::new(
         repository.clone(),
         test_chat_repository(&root),
         test_chat_repository(&root),
         repository,
-        skill_service,
+        skill_service.clone(),
     );
-    let mut session = AgentToolSession::default();
+    let mut session = AgentToolSession::new(effective_skills);
 
     let search_call = AgentToolCall {
         id: "call_skill_search".to_string(),

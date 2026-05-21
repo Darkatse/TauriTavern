@@ -8,7 +8,8 @@ use tauri::State;
 use crate::app::AppState;
 use crate::domain::models::skill::{
     SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry, SkillInstallRequest,
-    SkillInstallResult, SkillReadRequest, SkillReadResult,
+    SkillInstallResult, SkillMoveRequest, SkillReadRequest, SkillReadResult, SkillScope,
+    SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult,
 };
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -23,13 +24,14 @@ pub struct SkillExportPayload {
 
 #[tauri::command]
 pub async fn list_skills(
+    scope: Option<SkillScopeFilter>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<SkillIndexEntry>, CommandError> {
     log_command("list_skills");
 
     app_state
         .skill_service
-        .list_skills()
+        .list_skills(scope.unwrap_or_default())
         .await
         .map_err(map_command_error("Failed to list Agent Skills"))
 }
@@ -37,13 +39,14 @@ pub async fn list_skills(
 #[tauri::command]
 pub async fn list_skill_files(
     name: String,
+    scope: Option<SkillScope>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<SkillFileRef>, CommandError> {
     log_command(format!("list_skill_files {}", name));
 
     app_state
         .skill_service
-        .list_skill_files(&name)
+        .list_skill_files(scope.unwrap_or_default(), &name)
         .await
         .map_err(map_command_error("Failed to list Agent Skill files"))
 }
@@ -51,13 +54,14 @@ pub async fn list_skill_files(
 #[tauri::command]
 pub async fn preview_skill_import(
     input: SkillImportInput,
+    target_scope: Option<SkillScope>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<SkillImportPreview, CommandError> {
     log_command("preview_skill_import");
 
     app_state
         .skill_service
-        .preview_import(input)
+        .preview_import(input, target_scope.unwrap_or_default())
         .await
         .map_err(map_command_error("Failed to preview Agent Skill import"))
 }
@@ -80,6 +84,7 @@ pub async fn install_skill_import(
 pub async fn read_skill_file(
     name: String,
     path: String,
+    scope: Option<SkillScope>,
     max_chars: Option<usize>,
     start_line: Option<usize>,
     line_count: Option<usize>,
@@ -91,6 +96,7 @@ pub async fn read_skill_file(
     app_state
         .skill_service
         .read_skill_file(SkillReadRequest {
+            scope: scope.unwrap_or_default(),
             name,
             path,
             start_line,
@@ -105,13 +111,14 @@ pub async fn read_skill_file(
 #[tauri::command]
 pub async fn export_skill(
     name: String,
+    scope: Option<SkillScope>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<SkillExportPayload, CommandError> {
     log_command(format!("export_skill {}", name));
 
     let exported = app_state
         .skill_service
-        .export_skill(&name)
+        .export_skill(scope.unwrap_or_default(), &name)
         .await
         .map_err(map_command_error("Failed to export Agent Skill"))?;
 
@@ -125,13 +132,46 @@ pub async fn export_skill(
 #[tauri::command]
 pub async fn delete_skill(
     name: String,
+    scope: Option<SkillScope>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     log_command(format!("delete_skill {}", name));
 
     app_state
         .skill_service
-        .delete_skill(&name)
+        .delete_skill(scope.unwrap_or_default(), &name)
         .await
         .map_err(map_command_error("Failed to delete Agent Skill"))
+}
+
+#[tauri::command]
+pub async fn move_skill(
+    request: SkillMoveRequest,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<SkillInstallResult, CommandError> {
+    log_command(format!("move_skill {}", request.name));
+
+    app_state
+        .skill_service
+        .move_skill(request)
+        .await
+        .map_err(map_command_error("Failed to move Agent Skill"))
+}
+
+#[tauri::command]
+pub async fn retarget_skill_scope(
+    request: SkillScopeRetargetRequest,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<SkillScopeRetargetResult, CommandError> {
+    log_command(format!(
+        "retarget_skill_scope {} -> {}",
+        request.from_scope.label(),
+        request.to_scope.label()
+    ));
+
+    app_state
+        .skill_service
+        .retarget_scope(request)
+        .await
+        .map_err(map_command_error("Failed to retarget Agent Skill scope"))
 }

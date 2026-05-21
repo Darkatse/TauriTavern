@@ -286,6 +286,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::skill_commands::read_skill_file,
         super::skill_commands::export_skill,
         super::skill_commands::delete_skill,
+        super::skill_commands::move_skill,
+        super::skill_commands::retarget_skill_scope,
         // Chat completion commands
         super::chat_completion_commands::get_chat_completions_status,
         super::chat_completion_commands::generate_chat_completion,

@@ -39,6 +39,7 @@ import {
     textgenerationwebui_preset_names,
     textgenerationwebui_presets,
 } from './textgen-settings.js';
+import { retargetPresetSkillsAfterRename } from './tauritavern/agent/skill-scope-sync.js';
 import { download, ensurePlainObject, equalsIgnoreCaseAndAccents, getSanitizedFilename, parseJsonFile, waitUntilCondition } from './utils.js';
 
 const presetManagers = {};
@@ -508,6 +509,11 @@ class PresetManager {
         }
         try {
             await this.savePreset(newName);
+            await retargetPresetSkillsAfterRename({
+                apiId: this.apiId,
+                oldName,
+                newName,
+            });
             await this.deletePreset(oldName);
         } catch (error) {
             toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Preset could not be renamed`);

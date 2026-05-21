@@ -10,7 +10,8 @@ use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
-use crate::domain::models::agent::{AgentRunEventLevel, AgentRunStatus};
+use crate::domain::models::agent::{AgentRunEventLevel, AgentRunStatus, WorkspacePath};
+use crate::domain::models::skill::SkillIndexEntry;
 
 impl AgentRuntimeService {
     pub(super) async fn execute_agent_loop_run(
@@ -19,6 +20,7 @@ impl AgentRuntimeService {
         prompt_snapshot: Value,
         request: ChatCompletionGenerateRequestDto,
         resolved_profile: ResolvedAgentProfile,
+        effective_skills: Vec<SkillIndexEntry>,
         mut cancel: AgentCancelReceiver,
     ) {
         let mut commit_ledger = RunCommitLedger::default();
@@ -28,6 +30,7 @@ impl AgentRuntimeService {
                 prompt_snapshot,
                 request,
                 resolved_profile,
+                effective_skills,
                 &mut commit_ledger,
                 &mut cancel,
             )
@@ -101,12 +104,25 @@ impl AgentRuntimeService {
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
         let mut commit_ledger = RunCommitLedger::default();
+        let effective_skills = self
+            .skill_service
+            .resolve_effective_skills(
+                &[
+                    crate::domain::models::skill::SkillScope::Global,
+                    crate::domain::models::skill::SkillScope::Profile {
+                        profile_id: resolved_profile.id.as_str().to_string(),
+                    },
+                ],
+                &resolved_profile.skills,
+            )
+            .await?;
         let result = self
             .execute_agent_loop_run_body(
                 run_id,
                 prompt_snapshot,
                 request,
                 resolved_profile,
+                effective_skills,
                 &mut commit_ledger,
                 cancel,
             )
@@ -130,6 +146,7 @@ impl AgentRuntimeService {
         prompt_snapshot: Value,
         request: ChatCompletionGenerateRequestDto,
         resolved_profile: ResolvedAgentProfile,
+        effective_skills: Vec<SkillIndexEntry>,
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
@@ -170,6 +187,18 @@ impl AgentRuntimeService {
             .await?;
         }
         self.ensure_not_cancelled(cancel)?;
+        let resolved_skills = serde_json::to_string_pretty(&effective_skills).map_err(|error| {
+            ApplicationError::ValidationError(format!(
+                "agent.resolved_skills_serialize_failed: {error}"
+            ))
+        })?;
+        self.workspace_repository
+            .write_text(
+                run_id,
+                &WorkspacePath::parse("input/resolved_skills.json")?,
+                &resolved_skills,
+            )
+            .await?;
 
         let visible_tools = self.tool_registry.visible_specs(&resolved_profile)?;
         let request = prepare_agent_tool_request(request, &visible_tools, run_id)?;
@@ -193,15 +222,21 @@ impl AgentRuntimeService {
         .await?;
         self.ensure_not_cancelled(cancel)?;
 
-        self
-            .run_tool_loop(run_id, request, &resolved_profile, commit_ledger, cancel)
-            .await?
-            .ok_or_else(|| {
-                ApplicationError::ValidationError(format!(
-                    "agent.max_tool_rounds_exceeded: workspace.finish was not called within {} rounds",
-                    resolved_profile.tools.max_rounds
-                ))
-            })?;
+        self.run_tool_loop(
+            run_id,
+            request,
+            &resolved_profile,
+            &effective_skills,
+            commit_ledger,
+            cancel,
+        )
+        .await?
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "agent.max_tool_rounds_exceeded: workspace.finish was not called within {} rounds",
+                resolved_profile.tools.max_rounds
+            ))
+        })?;
         self.ensure_not_cancelled(cancel)?;
 
         self.finish_run(run_id, commit_ledger, cancel).await?;

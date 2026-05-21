@@ -3,19 +3,28 @@ use async_trait::async_trait;
 use crate::domain::errors::DomainError;
 use crate::domain::models::skill::{
     SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
-    SkillInstallRequest, SkillInstallResult, SkillReadRequest, SkillReadResult, SkillSearchRequest,
-    SkillSearchResult,
+    SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest, SkillReadResult,
+    SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult,
+    SkillSearchRequest, SkillSearchResult,
 };
 
 #[async_trait]
 pub trait SkillRepository: Send + Sync {
-    async fn list_skills(&self) -> Result<Vec<SkillIndexEntry>, DomainError>;
+    async fn list_skills(
+        &self,
+        scope_filter: SkillScopeFilter,
+    ) -> Result<Vec<SkillIndexEntry>, DomainError>;
 
-    async fn list_skill_files(&self, name: &str) -> Result<Vec<SkillFileRef>, DomainError>;
+    async fn list_skill_files(
+        &self,
+        scope: SkillScope,
+        name: &str,
+    ) -> Result<Vec<SkillFileRef>, DomainError>;
 
     async fn preview_import(
         &self,
         input: SkillImportInput,
+        target_scope: SkillScope,
     ) -> Result<SkillImportPreview, DomainError>;
 
     async fn install_import(
@@ -33,9 +42,23 @@ pub trait SkillRepository: Send + Sync {
         request: SkillSearchRequest,
     ) -> Result<SkillSearchResult, DomainError>;
 
-    async fn export_skill(&self, name: &str) -> Result<SkillExportResult, DomainError>;
+    async fn export_skill(
+        &self,
+        scope: SkillScope,
+        name: &str,
+    ) -> Result<SkillExportResult, DomainError>;
 
-    async fn delete_skill(&self, name: &str) -> Result<(), DomainError>;
+    async fn delete_skill(&self, scope: SkillScope, name: &str) -> Result<(), DomainError>;
+
+    async fn move_skill(
+        &self,
+        request: SkillMoveRequest,
+    ) -> Result<SkillInstallResult, DomainError>;
+
+    async fn retarget_scope(
+        &self,
+        request: SkillScopeRetargetRequest,
+    ) -> Result<SkillScopeRetargetResult, DomainError>;
 
     async fn delete_skills_for_source(
         &self,

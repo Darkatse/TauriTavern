@@ -138,6 +138,7 @@ export {};
  *   | 'rename_chat'
  *   | 'rename_group_chat'
  *   | 'rename_secret'
+ *   | 'retarget_skill_scope'
  *   | 'restore_preset'
  *   | 'restore_settings_snapshot'
  *   | 'rotate_secret'

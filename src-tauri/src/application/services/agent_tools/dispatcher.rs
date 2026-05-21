@@ -107,7 +107,7 @@ impl AgentToolDispatcher {
             world_info::WORLDINFO_READ_ACTIVATED => {
                 world_info::read_activated(self.workspace_repository.as_ref(), run_id, call).await?
             }
-            skill::SKILL_LIST => skill::list(self.skill_service.as_ref(), call, profile).await?,
+            skill::SKILL_LIST => skill::list(call, session, profile).await?,
             skill::SKILL_SEARCH => {
                 skill::search(self.skill_service.as_ref(), call, session, profile).await?
             }

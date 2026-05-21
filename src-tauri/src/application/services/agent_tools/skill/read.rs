@@ -86,6 +86,16 @@ pub(in crate::application::services::agent_tools) async fn read(
             AgentToolEffect::None,
         ));
     }
+    let Some(scope) = session.effective_skill_scope(name) else {
+        return Ok((
+            tool_error(
+                call,
+                "skill.not_visible",
+                &format!("Skill `{name}` is not installed in the active Skill scopes."),
+            ),
+            AgentToolEffect::None,
+        ));
+    };
     let remaining = profile
         .skills
         .max_read_chars_per_run
@@ -130,6 +140,7 @@ pub(in crate::application::services::agent_tools) async fn read(
 
     let read = match skill_service
         .read_skill_file(SkillReadRequest {
+            scope,
             name: name.to_string(),
             path: path.to_string(),
             start_line,

@@ -1,7 +1,5 @@
 use serde_json::Value;
 
-use super::FileSkillRepository;
-use super::fs_ops::delete_installed_skill_dir;
 use super::paths::normalize_source_string;
 use crate::domain::errors::DomainError;
 use crate::domain::models::skill::SkillSourceRef;
@@ -62,46 +60,7 @@ pub(super) fn merge_source_refs(
     }
 }
 
-pub(super) async fn delete_skills_for_source(
-    repository: &FileSkillRepository,
-    source_kind: &str,
-    source_id: &str,
-) -> Result<Vec<String>, DomainError> {
-    let source_kind = normalize_source_string(source_kind, "source kind")?;
-    let source_id = normalize_source_string(source_id, "source id")?;
-    let mut index = repository.load_index().await?;
-    let mut next_skills = Vec::with_capacity(index.skills.len());
-    let mut deleted = Vec::new();
-    let mut changed = false;
-
-    for mut skill in index.skills {
-        let original_len = skill.source_refs.len();
-        skill
-            .source_refs
-            .retain(|source| source.kind != source_kind || source.id != source_id);
-
-        if skill.source_refs.len() == original_len {
-            next_skills.push(skill);
-            continue;
-        }
-
-        changed = true;
-        if skill.source_refs.is_empty() {
-            delete_installed_skill_dir(
-                &repository.installed_root().join(&skill.name),
-                &skill.name,
-            )?;
-            deleted.push(skill.name);
-        } else {
-            next_skills.push(skill);
-        }
-    }
-
-    if changed {
-        next_skills.sort_by(|left, right| left.name.cmp(&right.name));
-        index.skills = next_skills;
-        repository.save_index(&index).await?;
-    }
-
-    Ok(deleted)
+pub(super) fn sort_dedup_source_refs(source_refs: &mut Vec<SkillSourceRef>) {
+    source_refs.sort_by(|left, right| left.kind.cmp(&right.kind).then(left.id.cmp(&right.id)));
+    source_refs.dedup_by(|left, right| left.kind == right.kind && left.id == right.id);
 }

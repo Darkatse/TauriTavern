@@ -1,21 +1,21 @@
 use serde_json::json;
 
 use super::super::dispatcher::AgentToolEffect;
+use super::super::session::AgentToolSession;
 use crate::application::errors::ApplicationError;
-use crate::application::services::skill_service::SkillService;
 use crate::domain::models::agent::profile::{AgentSkillPolicy, ResolvedAgentProfile};
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 
 pub(in crate::application::services::agent_tools) async fn list(
-    skill_service: &SkillService,
     call: &AgentToolCall,
+    session: &AgentToolSession,
     profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let skills = skill_service
-        .list_skills()
-        .await?
-        .into_iter()
+    let skills = session
+        .effective_skills()
+        .iter()
         .filter(|skill| skill_is_visible(&profile.skills, skill.name.as_str()))
+        .cloned()
         .collect::<Vec<_>>();
     let content = if skills.is_empty() {
         "No Agent Skills are visible in the current profile.".to_string()

@@ -6,12 +6,13 @@ use super::paths::{normalize_skill_path, validate_skill_name};
 use super::{DEFAULT_READ_MAX_CHARS, FileSkillRepository, MAX_READ_CHARS};
 use crate::domain::errors::DomainError;
 use crate::domain::models::skill::{
-    SkillFileKind, SkillFileRef, SkillReadRequest, SkillReadResult, SkillSearchHit,
+    SkillFileKind, SkillFileRef, SkillReadRequest, SkillReadResult, SkillScope, SkillSearchHit,
     SkillSearchRequest, SkillSearchResult,
 };
 use crate::domain::text_search::PreparedTextSearch;
 
 struct SkillTextFile {
+    scope: SkillScope,
     name: String,
     path: String,
     content: String,
@@ -48,10 +49,12 @@ pub(super) async fn read_skill_file(
         )));
     }
 
-    let file = read_skill_text_file(repository, &request.name, &request.path).await?;
+    let file =
+        read_skill_text_file(repository, &request.scope, &request.name, &request.path).await?;
     let selected = select_text(&file.content, &request, requested_chars)?;
 
     Ok(SkillReadResult {
+        scope: file.scope,
         name: file.name,
         path: file.path,
         content: selected.content,
@@ -86,7 +89,9 @@ pub(super) async fn search_skill_files(
         ));
     }
 
-    let skill_root = repository.installed_skill_root(&name).await?;
+    let skill_root = repository
+        .installed_skill_root(&request.scope, &name)
+        .await?;
     let files = collect_skill_files(&skill_root)?;
     let path_filter = request
         .path
@@ -117,7 +122,7 @@ pub(super) async fn search_skill_files(
             skipped_files += 1;
             continue;
         }
-        let file = read_text_file_at(&skill_root, &name, &file_ref)?;
+        let file = read_text_file_at(&skill_root, &request.scope, &name, &file_ref)?;
         searched_files += 1;
         hits.extend(
             search
@@ -154,6 +159,7 @@ pub(super) async fn search_skill_files(
         .sum::<usize>();
 
     Ok(SkillSearchResult {
+        scope: request.scope,
         name,
         query: query.to_string(),
         hits,
@@ -166,12 +172,13 @@ pub(super) async fn search_skill_files(
 
 async fn read_skill_text_file(
     repository: &FileSkillRepository,
+    scope: &SkillScope,
     name: &str,
     path: &str,
 ) -> Result<SkillTextFile, DomainError> {
     let name = validate_skill_name(name)?;
     let path = normalize_skill_path(path)?;
-    let skill_root = repository.installed_skill_root(&name).await?;
+    let skill_root = repository.installed_skill_root(scope, &name).await?;
     let file_ref = SkillFileRef {
         path,
         kind: SkillFileKind::Text,
@@ -179,11 +186,12 @@ async fn read_skill_text_file(
         size_bytes: 0,
         sha256: String::new(),
     };
-    read_text_file_at(&skill_root, &name, &file_ref)
+    read_text_file_at(&skill_root, scope, &name, &file_ref)
 }
 
 fn read_text_file_at(
     skill_root: &PathBuf,
+    scope: &SkillScope,
     name: &str,
     file_ref: &SkillFileRef,
 ) -> Result<SkillTextFile, DomainError> {
@@ -246,6 +254,7 @@ fn read_text_file_at(
     let sha256 = sha256_hex(&bytes);
 
     Ok(SkillTextFile {
+        scope: scope.clone(),
         name: name.to_string(),
         path: path.clone(),
         content,
