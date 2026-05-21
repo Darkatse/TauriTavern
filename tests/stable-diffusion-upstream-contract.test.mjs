@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
-const REPO_ROOT = path.resolve(new URL('..', import.meta.url).pathname);
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const sdSourcePath = path.join(REPO_ROOT, 'src', 'scripts', 'extensions', 'stable-diffusion', 'index.js');
 
 const sdSource = await readFile(sdSourcePath, 'utf8');

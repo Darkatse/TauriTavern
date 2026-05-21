@@ -70,9 +70,9 @@ function assertRetryRuntime(runtime) {
 
 async function defaultRetryRuntime() {
     const [script, groupChats, router] = await Promise.all([
-        import('../../../script.js'),
-        import('../../group-chats.js'),
-        import('./agent-generation-router.js'),
+        import(/* webpackIgnore: true */ '/script.js'),
+        import(/* webpackIgnore: true */ '/scripts/group-chats.js'),
+        import(/* webpackIgnore: true */ '/scripts/tauritavern/agent/agent-generation-router.js'),
     ]);
     return {
         Generate: script.Generate,

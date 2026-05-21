@@ -1,4 +1,4 @@
-import { gzip } from '/lib.js';
+import { gzip } from '../lib.js';
 
 /**
  * @type {RequestCompressionConfig}

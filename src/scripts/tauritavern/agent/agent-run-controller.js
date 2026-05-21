@@ -57,14 +57,14 @@ function errorFromRollbackFailure(error, terminalEvent) {
     return wrapped;
 }
 
-// Lazy-load the SillyTavern vendor module so tests can inject a fake script
-// surface via __setAgentRunRollbackScriptForTests without dragging the whole
-// chat runtime into the unit-test sandbox.
+// Lazy-load the SillyTavern vendor module so tests and the agent-system bundle
+// can use this controller without pulling the whole chat runtime into their
+// module graphs.
 async function loadRollbackScript() {
     if (rollbackScriptOverride) {
         return rollbackScriptOverride;
     }
-    return import('../../../script.js');
+    return import(/* webpackIgnore: true */ '/script.js');
 }
 
 export function __setAgentRunRollbackScriptForTests(script) {

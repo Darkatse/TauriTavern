@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import webpack from 'webpack';
@@ -5,6 +7,62 @@ import webpack from 'webpack';
 // Get the directory name of the current module
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const cacheEnvironment = `${process.platform}-${process.arch}-node${process.versions.node.split('.')[0]}`;
+
+const commonCacheInputs = [
+  'webpack.config.js',
+  'package.json',
+  'pnpm-lock.yaml',
+];
+
+const libraryCacheInputs = [
+  ...commonCacheInputs,
+  'src/lib.js',
+  'src/lib-bundle-core.js',
+  'src/lib-bundle-optional.js',
+];
+
+const agentSystemCacheInputs = [
+  ...commonCacheInputs,
+  'src/scripts/extensions/agent-system/src/index.js',
+  'src/scripts/tauritavern/agent/agent-run-controller.js',
+  'src/scripts/tauritavern/agent/agent-run-retry.js',
+];
+
+function resolveRepoPath(file) {
+  return path.resolve(__dirname, file);
+}
+
+function buildCacheVersion(name, inputFiles) {
+  const hash = crypto.createHash('sha256');
+  hash.update(`name=${name}\n`);
+  hash.update(`platform=${process.platform}\n`);
+  hash.update(`arch=${process.arch}\n`);
+  hash.update(`node=${process.versions.node}\n`);
+  hash.update(`webpack=${webpack.version}\n`);
+
+  for (const file of inputFiles) {
+    hash.update(`file=${file}\n`);
+    hash.update(fs.readFileSync(resolveRepoPath(file)));
+    hash.update('\n');
+  }
+
+  return hash.digest('hex');
+}
+
+function createFilesystemCache(name, inputFiles) {
+  return {
+    type: 'filesystem',
+    name,
+    cacheDirectory: path.resolve(__dirname, '.cache/webpack', cacheEnvironment, name),
+    version: buildCacheVersion(name, inputFiles),
+    buildDependencies: {
+      config: [__filename],
+      inputs: inputFiles.map(resolveRepoPath),
+    },
+  };
+}
 
 const sharedResolve = {
   extensions: ['.js'],
@@ -40,12 +98,10 @@ const sharedPerformance = {
 };
 
 const coreConfig = {
+  name: 'vendor-libs',
   mode: 'production',
   target: ['web', 'es2020'],
-  cache: {
-    type: 'filesystem',
-    cacheDirectory: path.resolve(__dirname, '.cache/webpack'),
-  },
+  cache: createFilesystemCache('vendor-libs', libraryCacheInputs),
   entry: {
     'lib.core': './src/lib-bundle-core.js',
     'lib.optional': './src/lib-bundle-optional.js',
@@ -66,12 +122,11 @@ const coreConfig = {
 };
 
 const agentSystemConfig = {
+  name: 'agent-system',
+  dependencies: ['vendor-libs'],
   mode: 'production',
   target: ['web', 'es2020'],
-  cache: {
-    type: 'filesystem',
-    cacheDirectory: path.resolve(__dirname, '.cache/webpack-agent-system'),
-  },
+  cache: createFilesystemCache('agent-system', agentSystemCacheInputs),
   entry: {
     index: './src/scripts/extensions/agent-system/src/index.js',
   },
