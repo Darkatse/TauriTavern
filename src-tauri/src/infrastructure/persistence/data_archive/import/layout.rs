@@ -6,7 +6,7 @@ use crate::domain::errors::DomainError;
 
 use super::archive::{self, ArchiveFormat};
 use crate::infrastructure::persistence::data_archive::shared::{
-    collect_user_handles_from_components, is_user_root_marker, path_components,
+    is_user_handle_marker, is_user_root_marker, path_components,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +94,7 @@ pub fn scan_archive_layout(
 
     let candidates = candidate_stats
         .iter()
-        .filter_map(|(prefix, stats)| eval_prefix(prefix, stats))
+        .flat_map(|(prefix, stats)| eval_prefix(prefix, stats))
         .collect::<Vec<_>>();
 
     let chosen = choose_candidate(&candidates)?;
@@ -155,9 +155,27 @@ fn record_prefix_candidate(
     collect_user_handles_from_components(remainder, &mut stats.source_users);
 }
 
-fn eval_prefix(prefix_components: &[String], stats: &PrefixStats) -> Option<PrefixEval> {
+fn collect_user_handles_from_components(
+    components: &[String],
+    user_handles: &mut BTreeSet<String>,
+) {
+    if components.len() < 2 {
+        return;
+    }
+
+    let handle = &components[0];
+    if is_user_root_marker(handle) {
+        return;
+    }
+
+    if is_user_handle_marker(&components[1]) {
+        user_handles.insert(handle.clone());
+    }
+}
+
+fn eval_prefix(prefix_components: &[String], stats: &PrefixStats) -> Vec<PrefixEval> {
     if !stats.has_any {
-        return None;
+        return Vec::new();
     }
 
     let has_data_root_feature = stats.has_root_tauritavern || stats.has_global_extensions;
@@ -165,87 +183,124 @@ fn eval_prefix(prefix_components: &[String], stats: &PrefixStats) -> Option<Pref
         .last()
         .is_some_and(|value| value == "data");
 
-    if stats.has_user_root_marker_at_root
-        && (has_data_root_feature || !stats.source_users.is_empty())
-    {
-        return None;
+    let mut candidates = Vec::new();
+    if has_data_root_feature || (prefix_last_is_data && !stats.source_users.is_empty()) {
+        candidates.push(build_prefix_eval(
+            prefix_components,
+            LayoutKind::DataRoot,
+            stats,
+        ));
+        if stats.has_user_root_marker_at_root {
+            candidates.push(build_prefix_eval(
+                prefix_components,
+                LayoutKind::UserRoot,
+                stats,
+            ));
+        }
+        return candidates;
     }
 
-    let kind = if has_data_root_feature || (prefix_last_is_data && !stats.source_users.is_empty()) {
-        LayoutKind::DataRoot
-    } else if !stats.source_users.is_empty() {
-        LayoutKind::UserHandleRoot
-    } else if stats.has_user_root_marker_at_root {
-        LayoutKind::UserRoot
-    } else {
-        return None;
-    };
+    if !stats.source_users.is_empty() {
+        candidates.push(build_prefix_eval(
+            prefix_components,
+            LayoutKind::UserHandleRoot,
+            stats,
+        ));
+    }
 
+    if stats.has_user_root_marker_at_root {
+        candidates.push(build_prefix_eval(
+            prefix_components,
+            LayoutKind::UserRoot,
+            stats,
+        ));
+    }
+
+    candidates
+}
+
+fn build_prefix_eval(
+    prefix_components: &[String],
+    kind: LayoutKind,
+    stats: &PrefixStats,
+) -> PrefixEval {
     let mut prefix_path = PathBuf::new();
     for component in prefix_components {
         prefix_path.push(component);
     }
 
-    Some(PrefixEval {
+    PrefixEval {
         prefix_components: prefix_components.to_vec(),
         prefix_path,
         kind,
         source_users: stats.source_users.clone(),
         entries_under_prefix: stats.entries_under_prefix,
-    })
+    }
 }
 
 fn choose_candidate(candidates: &[PrefixEval]) -> Result<PrefixEval, DomainError> {
-    let data_roots = candidates
-        .iter()
-        .filter(|candidate| candidate.kind == LayoutKind::DataRoot)
-        .cloned()
-        .collect::<Vec<_>>();
-    if data_roots.len() > 1 {
-        return Err(DomainError::InvalidData(
-            "Archive layout is ambiguous".to_string(),
-        ));
-    }
-    if data_roots.len() == 1 {
-        let chosen = data_roots[0].clone();
-        assert_no_recognized_entries_outside_prefix(&chosen, candidates)?;
-        return Ok(chosen);
-    }
+    assert_no_same_prefix_kind_conflicts(candidates)?;
 
-    let user_handles = candidates
-        .iter()
-        .filter(|candidate| candidate.kind == LayoutKind::UserHandleRoot)
-        .cloned()
-        .collect::<Vec<_>>();
-    if user_handles.len() > 1 {
-        return Err(DomainError::InvalidData(
-            "Archive layout is ambiguous".to_string(),
-        ));
-    }
-    if user_handles.len() == 1 {
-        let chosen = user_handles[0].clone();
-        assert_no_recognized_entries_outside_prefix(&chosen, candidates)?;
-        return Ok(chosen);
-    }
+    for kind in [
+        LayoutKind::DataRoot,
+        LayoutKind::UserHandleRoot,
+        LayoutKind::UserRoot,
+    ] {
+        let kind_candidates = candidates
+            .iter()
+            .filter(|candidate| candidate.kind == kind)
+            .collect::<Vec<_>>();
+        if kind_candidates.is_empty() {
+            continue;
+        }
 
-    let user_roots = candidates
-        .iter()
-        .filter(|candidate| candidate.kind == LayoutKind::UserRoot)
-        .cloned()
-        .collect::<Vec<_>>();
-    if user_roots.len() > 1 {
-        return Err(DomainError::InvalidData(
-            "Archive layout is ambiguous".to_string(),
-        ));
-    }
-    if user_roots.len() == 1 {
-        let chosen = user_roots[0].clone();
+        let chosen = choose_covering_candidate(&kind_candidates)?;
         assert_no_recognized_entries_outside_prefix(&chosen, candidates)?;
         return Ok(chosen);
     }
 
     Err(DomainError::InvalidData(
         "Archive does not contain a recognizable data directory".to_string(),
+    ))
+}
+
+fn assert_no_same_prefix_kind_conflicts(candidates: &[PrefixEval]) -> Result<(), DomainError> {
+    for (index, candidate) in candidates.iter().enumerate() {
+        if candidates.iter().skip(index + 1).any(|other| {
+            other.prefix_components == candidate.prefix_components && other.kind != candidate.kind
+        }) {
+            return Err(DomainError::InvalidData(
+                "Archive layout is ambiguous".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn choose_covering_candidate(candidates: &[&PrefixEval]) -> Result<PrefixEval, DomainError> {
+    if candidates.len() == 1 {
+        return Ok((*candidates[0]).clone());
+    }
+
+    let covering_candidates = candidates
+        .iter()
+        .filter(|candidate| {
+            candidates.iter().all(|other| {
+                other.prefix_components == candidate.prefix_components
+                    || other
+                        .prefix_components
+                        .starts_with(&candidate.prefix_components)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if covering_candidates.len() == 1 {
+        return Ok((**covering_candidates[0]).clone());
+    }
+
+    Err(DomainError::InvalidData(
+        "Archive layout is ambiguous".to_string(),
     ))
 }
 
@@ -440,6 +495,29 @@ mod tests {
     }
 
     #[test]
+    fn detects_user_root_layout_with_marker_named_content_paths() {
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
+        let zip_path = root.join("fixture.zip");
+        fs::create_dir_all(&root).expect("create root");
+
+        write_zip(
+            &zip_path,
+            &[
+                ("characters/a.json", b"{}"),
+                ("chats/characters/session.jsonl", b"{}"),
+                ("assets/worlds/cover.png", b"image"),
+            ],
+        );
+
+        let layout = scan_archive_layout(&zip_path, &|| false).expect("scan layout");
+        assert_eq!(layout.kind, LayoutKind::UserRoot);
+        assert!(layout.source_prefix.as_os_str().is_empty());
+
+        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
+    }
+
+    #[test]
     fn detects_single_file_settings_layout() {
         let root =
             std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
@@ -472,6 +550,48 @@ mod tests {
             layout.source_prefix,
             PathBuf::from("BackupRoot").join("data")
         );
+
+        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn rejects_mixed_user_root_and_user_handle_root_at_same_prefix() {
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
+        let zip_path = root.join("fixture.zip");
+        fs::create_dir_all(&root).expect("create root");
+
+        write_zip(
+            &zip_path,
+            &[
+                ("characters/a.json", b"{}"),
+                ("default-user/characters/b.json", b"{}"),
+            ],
+        );
+
+        let error = scan_archive_layout(&zip_path, &|| false).unwrap_err();
+        assert!(matches!(error, DomainError::InvalidData(_)));
+
+        crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn rejects_mixed_data_root_and_user_root_at_same_prefix() {
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-layout-{}", rand::random::<u64>()));
+        let zip_path = root.join("fixture.zip");
+        fs::create_dir_all(&root).expect("create root");
+
+        write_zip(
+            &zip_path,
+            &[
+                ("_tauritavern/state.json", b"{}"),
+                ("characters/a.json", b"{}"),
+            ],
+        );
+
+        let error = scan_archive_layout(&zip_path, &|| false).unwrap_err();
+        assert!(matches!(error, DomainError::InvalidData(_)));
 
         crate::infrastructure::persistence::data_archive::shared::cleanup_directory_sync(&root);
     }

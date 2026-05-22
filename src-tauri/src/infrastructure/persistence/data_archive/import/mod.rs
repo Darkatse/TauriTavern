@@ -714,6 +714,70 @@ mod tests {
     }
 
     #[test]
+    fn import_supports_sillytavern_native_user_backup_layout() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-native-user-backup-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.zip");
+
+        fs::create_dir_all(&workspace_root).expect("create workspace");
+        write_zip(
+            &archive_path,
+            &[
+                ("settings.json", br#"{ "setting": true }"#),
+                ("characters/Alice.json", br#"{ "name": "Alice" }"#),
+                ("chats/characters/session.jsonl", b"chat"),
+                ("groups/group.json", br#"{ "id": "group" }"#),
+                ("group chats/group-session.jsonl", b"group chat"),
+                ("assets/worlds/cover.png", b"image"),
+            ],
+        );
+
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        let is_cancelled = || false;
+
+        run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &is_cancelled,
+        )
+        .expect("import archive");
+
+        assert!(
+            data_root
+                .join("default-user")
+                .join("settings.json")
+                .is_file(),
+            "settings.json should map into default-user"
+        );
+        assert!(
+            data_root
+                .join("default-user")
+                .join("chats")
+                .join("characters")
+                .join("session.jsonl")
+                .is_file(),
+            "marker-like chat paths should remain user-root content"
+        );
+        assert!(
+            data_root
+                .join("default-user")
+                .join("assets")
+                .join("worlds")
+                .join("cover.png")
+                .is_file(),
+            "marker-like asset paths should remain user-root content"
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
     fn import_supports_settings_single_file() {
         let root = std::env::temp_dir().join(format!(
             "tauritavern-data-archive-settings-{}",

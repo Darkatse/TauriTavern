@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path};
@@ -264,19 +263,4 @@ pub fn progress_percent(processed: u64, total: u64, min: f32, max: f32) -> f32 {
 
 pub fn internal_error(context: &str, error: impl std::fmt::Display) -> DomainError {
     DomainError::InternalError(format!("{}: {}", context, error))
-}
-
-pub fn collect_user_handles_from_components(
-    components: &[String],
-    user_handles: &mut BTreeSet<String>,
-) {
-    if components.len() < 2 {
-        return;
-    }
-
-    let handle = components[0].clone();
-    let second = components[1].as_str();
-    if is_user_handle_marker(second) {
-        user_handles.insert(handle);
-    }
 }
