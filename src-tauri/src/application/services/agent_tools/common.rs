@@ -1,4 +1,6 @@
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
+
+use super::structured::{ToolErrorStructured, structured_value};
 
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 
@@ -67,12 +69,7 @@ pub(super) fn tool_error(call: &AgentToolCall, error_code: &str, message: &str) 
         call_id: call.id.clone(),
         name: call.name.clone(),
         content: message.to_string(),
-        structured: json!({
-            "error": {
-                "code": error_code,
-                "message": message,
-            }
-        }),
+        structured: structured_value(ToolErrorStructured::new(error_code, message)),
         is_error: true,
         error_code: Some(error_code.to_string()),
         resource_refs: Vec::new(),

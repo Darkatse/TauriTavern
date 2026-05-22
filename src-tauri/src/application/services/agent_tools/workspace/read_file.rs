@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde::Serialize;
 
 use super::args::{
     classify_workspace_io_error, ensure_visible_workspace_path, object_args, optional_usize_arg,
@@ -10,9 +10,24 @@ use super::{MAX_PARTIAL_READ_CHARS, MAX_READ_BYTES, MAX_READ_LINES};
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
+use crate::domain::text_metrics::TextMetrics;
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
+use super::super::structured::{TextRangeMetricsPayload, structured_value};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceReadFileStructured<'a> {
+    path: &'a str,
+    sha256: &'a str,
+    total_lines: usize,
+    start_line: usize,
+    end_line: usize,
+    #[serde(flatten)]
+    range: TextRangeMetricsPayload,
+    full_read: bool,
+}
 
 pub(in crate::application::services::agent_tools) async fn read_file(
     workspace_repository: &dyn WorkspaceRepository,
@@ -153,7 +168,8 @@ pub(in crate::application::services::agent_tools) async fn read_file(
 
     let lines = split_lines_for_display(&file.text);
     let total_lines = lines.len();
-    let total_chars = file.text.chars().count();
+    let total_metrics = TextMetrics::from_text(&file.text);
+    let total_chars = total_metrics.chars;
     if uses_char_range {
         return read_char_range(
             call,
@@ -161,7 +177,7 @@ pub(in crate::application::services::agent_tools) async fn read_file(
             file,
             start_char.unwrap_or(0),
             max_chars,
-            total_chars,
+            total_metrics,
         );
     }
     if start_line > total_lines.max(1) {
@@ -182,8 +198,8 @@ pub(in crate::application::services::agent_tools) async fn read_file(
                 call,
                 "workspace.read_too_large",
                 &format!(
-                    "file is too large for a full read: {} bytes, {} lines. Use start_line and line_count.",
-                    file.bytes, total_lines
+                    "file is too large for a full read: {} chars, {} lines. Use start_line and line_count.",
+                    total_chars, total_lines
                 ),
             ),
             AgentToolEffect::None,
@@ -241,14 +257,21 @@ pub(in crate::application::services::agent_tools) async fn read_file(
     } else {
         start_char_offset + selected_chars
     };
+    let selected_text = selected.join("\n");
+    let selected_metrics = TextMetrics::from_text(&selected_text);
     session.remember_file(&file, full_read);
 
     let content = format!(
-        "{} lines {}-{} of {}, sha256 {}\n{}",
+        "{} lines {}-{} of {}, chars {}-{} of {}, words {} of {}, sha256 {}\n{}",
         file.path.as_str(),
         if total_lines == 0 { 0 } else { start_line },
         if total_lines == 0 { 0 } else { end_line },
         total_lines,
+        start_char_offset,
+        end_char_offset,
+        total_chars,
+        selected_metrics.words,
+        total_metrics.words,
         file.sha256,
         format_lines_with_numbers(&selected, start_line),
     );
@@ -258,17 +281,19 @@ pub(in crate::application::services::agent_tools) async fn read_file(
             call_id: call.id.clone(),
             name: call.name.clone(),
             content,
-            structured: json!({
-                "path": file.path.as_str(),
-                "bytes": file.bytes,
-                "sha256": file.sha256.as_str(),
-                "totalLines": total_lines,
-                "totalChars": total_chars,
-                "startLine": if total_lines == 0 { 0 } else { start_line },
-                "endLine": if total_lines == 0 { 0 } else { end_line },
-                "startChar": start_char_offset,
-                "endChar": end_char_offset,
-                "fullRead": full_read,
+            structured: structured_value(WorkspaceReadFileStructured {
+                path: file.path.as_str(),
+                sha256: file.sha256.as_str(),
+                total_lines,
+                start_line: if total_lines == 0 { 0 } else { start_line },
+                end_line: if total_lines == 0 { 0 } else { end_line },
+                range: TextRangeMetricsPayload::new(
+                    selected_metrics,
+                    total_metrics,
+                    start_char_offset,
+                    end_char_offset,
+                ),
+                full_read,
             }),
             is_error: false,
             error_code: None,
@@ -284,8 +309,9 @@ fn read_char_range(
     file: crate::domain::repositories::workspace_repository::WorkspaceFile,
     start_char: usize,
     max_chars: Option<usize>,
-    total_chars: usize,
+    total_metrics: TextMetrics,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
+    let total_chars = total_metrics.chars;
     if total_chars > 0 && start_char >= total_chars {
         return Ok((
             tool_error(
@@ -315,21 +341,20 @@ fn read_char_range(
         .skip(start_char)
         .take(end_char.saturating_sub(start_char))
         .collect::<String>();
+    let selected_metrics = TextMetrics::from_text(&text);
     let full_read = start_char == 0 && end_char == total_chars;
     session.remember_file(&file, full_read);
 
     let content = format!(
-        "{} chars {}-{} of {}, sha256 {}{}\n{}",
+        "{} chars {}-{} of {}, words {} of {}, sha256 {}{}\n{}",
         file.path.as_str(),
         start_char,
         end_char,
         total_chars,
+        selected_metrics.words,
+        total_metrics.words,
         file.sha256,
-        if end_char < total_chars {
-            " (truncated)"
-        } else {
-            ""
-        },
+        if !full_read { " (truncated)" } else { "" },
         text
     );
 
@@ -338,17 +363,19 @@ fn read_char_range(
             call_id: call.id.clone(),
             name: call.name.clone(),
             content,
-            structured: json!({
-                "path": file.path.as_str(),
-                "bytes": file.bytes,
-                "sha256": file.sha256.as_str(),
-                "totalLines": split_lines_for_display(&file.text).len(),
-                "totalChars": total_chars,
-                "startLine": 0,
-                "endLine": 0,
-                "startChar": start_char,
-                "endChar": end_char,
-                "fullRead": full_read,
+            structured: structured_value(WorkspaceReadFileStructured {
+                path: file.path.as_str(),
+                sha256: file.sha256.as_str(),
+                total_lines: split_lines_for_display(&file.text).len(),
+                start_line: 0,
+                end_line: 0,
+                range: TextRangeMetricsPayload::new(
+                    selected_metrics,
+                    total_metrics,
+                    start_char,
+                    end_char,
+                ),
+                full_read,
             }),
             is_error: false,
             error_code: None,

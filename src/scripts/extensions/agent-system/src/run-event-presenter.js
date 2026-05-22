@@ -1,4 +1,5 @@
 import { displayToolName } from './run-tool-labels.js';
+import { textMetricFields, textMetricsSummary } from './run-text-metrics.js';
 import { presentAgentRunFailure } from '../../../tauritavern/agent/agent-error-presenter.js';
 
 const DISPLAY_EVENT_TYPES = new Set([
@@ -81,10 +82,10 @@ export function timelineItemsFromEvents(events) {
 
     return events
         .filter((event) => shouldShowEvent(event, completedToolCalls, resolvedCommits))
-        .map(presentRunEvent);
+        .map((event) => presentRunEvent(event, events));
 }
 
-export function presentRunEvent(event) {
+export function presentRunEvent(event, allEvents = []) {
     const type = String(event?.type || '');
     const payload = plainObject(event?.payload) ? event.payload : {};
     const meta = EVENT_META[type] || {
@@ -105,7 +106,7 @@ export function presentRunEvent(event) {
         kind: eventKind(type, payload, meta.kind),
         titleKey: meta.titleKey,
         titleParams: eventTitleParams(type, payload),
-        summary: eventSummary(type, payload),
+        summary: eventSummary(type, payload, allEvents),
         rawEvent: event,
     };
 }
@@ -117,13 +118,18 @@ export function buildEventDetailTargets(item, allEvents) {
     const seenPaths = new Set();
     const seenReasoningRounds = new Set();
 
-    const addFile = (labelKey, path) => {
+    const addFile = (labelKey, path, metricsSource = null) => {
         const normalized = String(path || '').trim();
         if (!normalized || seenPaths.has(normalized)) {
             return;
         }
         seenPaths.add(normalized);
-        targets.push({ type: 'file', labelKey, path: normalized });
+        targets.push({
+            type: 'file',
+            labelKey,
+            path: normalized,
+            ...textMetricFields(metricsSource),
+        });
     };
     const addModelReasoning = (round) => {
         const normalized = Number(round);
@@ -162,7 +168,7 @@ export function buildEventDetailTargets(item, allEvents) {
         || event?.type === 'workspace_patch_applied'
         || event?.type === 'chat_commit_requested'
         || event?.type === 'chat_commit_completed') {
-        addFile('timelineWorkspaceFile', payload.path);
+        addFile('timelineWorkspaceFile', payload.path, event.payload);
     }
 
     return targets;
@@ -183,7 +189,7 @@ function buildPatchDiffTarget(event, events) {
         path,
         argumentsRef,
         replacements: payload.replacements,
-        bytes: payload.bytes,
+        ...textMetricFields(payload),
         errorKey: path && argumentsRef ? '' : 'timelinePatchDiffSourceMissing',
         errorParams: { path },
     };
@@ -281,7 +287,11 @@ function modelTurnHasReasoning(events, round) {
         }
         const payload = plainObject(event?.payload) ? event.payload : {};
         return Number(payload.round) === round
-            && (payload.hasReasoning === true || Number(payload.reasoningBytes) > 0);
+            && (
+                payload.hasReasoning === true
+                || Number(payload.reasoningChars) > 0
+                || Number(payload.reasoningWords) > 0
+            );
     });
 }
 
@@ -308,12 +318,15 @@ function eventTitleParams(type, payload) {
     }
 }
 
-function eventSummary(type, payload) {
+function eventSummary(type, payload, allEvents) {
     switch (type) {
         case 'tool_call_requested':
             return payload.callId || '';
         case 'tool_call_completed':
-            return resourceSummary(payload.resourceRefs) || elapsedSummary(payload.elapsedMs);
+            return textMetricsSummary(payload.displayMetrics)
+                || textMetricsSummary(payload)
+                || resourceSummary(payload.resourceRefs)
+                || elapsedSummary(payload.elapsedMs);
         case 'tool_call_failed':
             return payload.message || payload.errorCode || '';
         case 'workspace_file_written':
@@ -323,7 +336,7 @@ function eventSummary(type, payload) {
         case 'chat_commit_requested':
             return commitSummary(payload);
         case 'chat_commit_completed':
-            return payload.messageId ? `message ${payload.messageId}` : payload.mode || '';
+            return commitCompletedSummary(payload, allEvents);
         case 'chat_commit_failed':
             return payload.message || '';
         case 'persistent_changes_committed':
@@ -376,8 +389,9 @@ function toolKind(name) {
 
 function fileSummary(payload) {
     const parts = [];
-    if (payload.bytes != null) {
-        parts.push(`${payload.bytes} bytes`);
+    const metrics = textMetricsSummary(payload);
+    if (metrics) {
+        parts.push(metrics);
     }
     if (payload.replacements != null) {
         parts.push(`${payload.replacements} replacements`);
@@ -386,8 +400,24 @@ function fileSummary(payload) {
 }
 
 function commitSummary(payload) {
-    const parts = [payload.mode, payload.reason, payload.bytes != null ? `${payload.bytes} bytes` : ''];
+    const parts = [payload.mode, payload.reason, textMetricsSummary(payload)];
     return parts.filter(Boolean).join(' | ');
+}
+
+function commitCompletedSummary(payload, events) {
+    const parts = [payload.messageId ? `message ${payload.messageId}` : payload.mode || ''];
+    const requested = findCommitRequestedEvent(events, payload.commitId);
+    parts.push(textMetricsSummary(payload) || textMetricsSummary(requested?.payload));
+    return parts.filter(Boolean).join(' | ');
+}
+
+function findCommitRequestedEvent(events, commitId) {
+    const normalized = String(commitId || '').trim();
+    if (!normalized) {
+        return null;
+    }
+    return events.find((event) => event?.type === 'chat_commit_requested'
+        && String(event?.payload?.commitId || '') === normalized) || null;
 }
 
 function resourceSummary(resourceRefs) {

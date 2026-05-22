@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde::Serialize;
 
 use super::args::{
     classify_workspace_io_error, ensure_writable_workspace_path, object_args, parse_workspace_path,
@@ -8,9 +8,20 @@ use super::policy::workspace_access_policy;
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
+use crate::domain::text_metrics::TextMetrics;
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
+use super::super::structured::{TextMetricsPayload, structured_value};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceWriteFileStructured<'a> {
+    path: &'a str,
+    #[serde(flatten)]
+    metrics: TextMetricsPayload,
+    sha256: &'a str,
+}
 
 pub(in crate::application::services::agent_tools) async fn write_file(
     workspace_repository: &dyn WorkspaceRepository,
@@ -60,15 +71,21 @@ pub(in crate::application::services::agent_tools) async fn write_file(
         },
     };
     session.remember_file(&file, true);
+    let metrics = TextMetrics::from_text(&file.text);
 
     let result = AgentToolResult {
         call_id: call.id.clone(),
         name: call.name.clone(),
-        content: format!("Wrote {} bytes to {}.", file.bytes, file.path.as_str()),
-        structured: json!({
-            "path": file.path.as_str(),
-            "bytes": file.bytes,
-            "sha256": file.sha256.as_str(),
+        content: format!(
+            "Wrote {} chars / {} words to {}.",
+            metrics.chars,
+            metrics.words,
+            file.path.as_str()
+        ),
+        structured: structured_value(WorkspaceWriteFileStructured {
+            path: file.path.as_str(),
+            metrics: metrics.into(),
+            sha256: file.sha256.as_str(),
         }),
         is_error: false,
         error_code: None,

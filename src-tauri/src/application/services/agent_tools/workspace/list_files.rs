@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde::Serialize;
 
 use super::args::{
     ensure_visible_workspace_path, object_args, optional_list_path_arg, optional_usize_arg,
@@ -13,6 +13,21 @@ use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 use crate::domain::repositories::workspace_repository::{WorkspaceEntryKind, WorkspaceRepository};
 
 use super::super::dispatcher::AgentToolEffect;
+use super::super::structured::structured_value;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceListFilesStructured<'a> {
+    entries: Vec<WorkspaceListEntryStructured<'a>>,
+    truncated: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceListEntryStructured<'a> {
+    path: &'a str,
+    kind: &'static str,
+}
 
 pub(in crate::application::services::agent_tools) async fn list_files(
     workspace_repository: &dyn WorkspaceRepository,
@@ -81,15 +96,12 @@ pub(in crate::application::services::agent_tools) async fn list_files(
     let entries = list
         .entries
         .iter()
-        .map(|entry| {
-            json!({
-                "path": entry.path.as_str(),
-                "kind": match entry.kind {
-                    WorkspaceEntryKind::File => "file",
-                    WorkspaceEntryKind::Directory => "directory",
-                },
-                "bytes": entry.bytes,
-            })
+        .map(|entry| WorkspaceListEntryStructured {
+            path: entry.path.as_str(),
+            kind: match entry.kind {
+                WorkspaceEntryKind::File => "file",
+                WorkspaceEntryKind::Directory => "directory",
+            },
         })
         .collect::<Vec<_>>();
     let content = render_file_list(&list);
@@ -99,9 +111,9 @@ pub(in crate::application::services::agent_tools) async fn list_files(
             call_id: call.id.clone(),
             name: call.name.clone(),
             content,
-            structured: json!({
-                "entries": entries,
-                "truncated": list.truncated,
+            structured: structured_value(WorkspaceListFilesStructured {
+                entries,
+                truncated: list.truncated,
             }),
             is_error: false,
             error_code: None,

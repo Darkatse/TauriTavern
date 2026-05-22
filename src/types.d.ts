@@ -129,13 +129,15 @@ type TauriTavernAgentModelTurn = {
     };
     assistant: {
         text: string;
-        bytes: number;
+        totalChars: number;
+        totalWords: number;
         truncated: boolean;
     };
     reasoning: Array<{
         source: string;
         text: string;
-        bytes: number;
+        totalChars: number;
+        totalWords: number;
         truncated: boolean;
     }>;
     toolCalls: Array<{
@@ -279,7 +281,7 @@ type TauriTavernAgentApi = {
     readWorkspaceFile: (input: {
         runId: string;
         path: string;
-    }) => Promise<{ path: string; text: string; bytes: number; sha256: string }>;
+    }) => Promise<{ path: string; text: string; chars: number; words: number; sha256: string }>;
     readModelTurn: (input: {
         runId: string;
         round: number;
@@ -406,7 +408,9 @@ type TauriTavernSkillReadResult = {
     path: string;
     content: string;
     chars: number;
+    words: number;
     totalChars: number;
+    totalWords: number;
     startChar: number;
     endChar: number;
     totalLines: number;

@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde::Serialize;
 
 use super::args::{
     ensure_visible_workspace_path, object_args, optional_list_path_arg, optional_usize_arg,
@@ -13,12 +13,39 @@ use crate::domain::models::agent::{AgentToolCall, AgentToolResult, WorkspacePath
 use crate::domain::repositories::workspace_repository::{
     WorkspaceEntryKind, WorkspaceFile, WorkspaceRepository,
 };
+use crate::domain::text_metrics::TextMetrics;
 use crate::domain::text_search::PreparedTextSearch;
 
 use super::super::dispatcher::AgentToolEffect;
+use super::super::structured::{TextMetricsPayload, structured_value};
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
 const DEFAULT_SEARCH_CONTEXT_LINES: usize = 2;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceSearchFilesStructured<'a> {
+    query: &'a str,
+    hits: Vec<WorkspaceSearchHitStructured<'a>>,
+    searched_files: usize,
+    skipped_files: usize,
+    truncated: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceSearchHitStructured<'a> {
+    path: &'a str,
+    score: f32,
+    start_line: usize,
+    end_line: usize,
+    snippet: &'a str,
+    #[serde(flatten)]
+    metrics: TextMetricsPayload,
+    sha256: &'a str,
+    #[serde(rename = "ref")]
+    ref_id: &'a str,
+}
 
 struct WorkspaceSearchHit {
     path: String,
@@ -26,7 +53,8 @@ struct WorkspaceSearchHit {
     start_line: usize,
     end_line: usize,
     snippet: String,
-    bytes: u64,
+    chars: usize,
+    words: usize,
     sha256: String,
     ref_id: String,
 }
@@ -131,6 +159,7 @@ pub(in crate::application::services::agent_tools) async fn search_files(
     for file in files {
         hits.extend(search.search(&file.text).into_iter().map(|hit| {
             let path = file.path.as_str().to_string();
+            let metrics = TextMetrics::from_text(&hit.snippet);
             WorkspaceSearchHit {
                 ref_id: format!("workspace:{path}#L{}-L{}", hit.start_line, hit.end_line),
                 path,
@@ -138,7 +167,8 @@ pub(in crate::application::services::agent_tools) async fn search_files(
                 start_line: hit.start_line,
                 end_line: hit.end_line,
                 snippet: hit.snippet,
-                bytes: file.bytes,
+                chars: metrics.chars,
+                words: metrics.words,
                 sha256: file.sha256.clone(),
             }
         }));
@@ -164,12 +194,12 @@ pub(in crate::application::services::agent_tools) async fn search_files(
             call_id: call.id.clone(),
             name: call.name.clone(),
             content,
-            structured: json!({
-                "query": query,
-                "hits": hits.iter().map(structured_hit).collect::<Vec<_>>(),
-                "searchedFiles": searched_files,
-                "skippedFiles": 0,
-                "truncated": traversal_truncated || hit_truncated,
+            structured: structured_value(WorkspaceSearchFilesStructured {
+                query,
+                hits: hits.iter().map(structured_hit).collect(),
+                searched_files,
+                skipped_files: 0,
+                truncated: traversal_truncated || hit_truncated,
             }),
             is_error: false,
             error_code: None,
@@ -256,15 +286,18 @@ fn render_content(query: &str, hits: &[WorkspaceSearchHit], truncated: bool) -> 
     content
 }
 
-fn structured_hit(hit: &WorkspaceSearchHit) -> serde_json::Value {
-    json!({
-        "path": hit.path,
-        "score": hit.score,
-        "startLine": hit.start_line,
-        "endLine": hit.end_line,
-        "snippet": hit.snippet,
-        "bytes": hit.bytes,
-        "sha256": hit.sha256,
-        "ref": hit.ref_id,
-    })
+fn structured_hit(hit: &WorkspaceSearchHit) -> WorkspaceSearchHitStructured<'_> {
+    WorkspaceSearchHitStructured {
+        path: hit.path.as_str(),
+        score: hit.score,
+        start_line: hit.start_line,
+        end_line: hit.end_line,
+        snippet: hit.snippet.as_str(),
+        metrics: TextMetricsPayload {
+            chars: hit.chars,
+            words: hit.words,
+        },
+        sha256: hit.sha256.as_str(),
+        ref_id: hit.ref_id.as_str(),
+    }
 }

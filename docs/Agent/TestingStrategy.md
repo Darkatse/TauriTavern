@@ -143,7 +143,7 @@ stream true is rejected
 foreground finish before workspace.commit returns recoverable tool error
 workspace.commit append without prior commit creates the run message
 subscribe polling can read events in seq order
-readWorkspaceFile returns UTF-8 text, bytes, sha256
+readWorkspaceFile returns UTF-8 text, chars, words, sha256
 readModelTurn returns assistant text, visible reasoning, tool calls, provider summary
 workspace_list_files accepts omitted/empty/dot path as workspace root
 workspace_search_files searches only visible roots and returns snippets

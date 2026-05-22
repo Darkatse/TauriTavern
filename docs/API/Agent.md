@@ -229,7 +229,8 @@ type AgentReadWorkspaceFileInput = {
 type AgentWorkspaceFile = {
   path: string;
   text: string;
-  bytes: number;
+  chars: number;
+  words: number;
   sha256: string;
 };
 ```
@@ -259,13 +260,15 @@ type AgentModelTurn = {
   };
   assistant: {
     text: string;
-    bytes: number;
+    totalChars: number;
+    totalWords: number;
     truncated: boolean;
   };
   reasoning: Array<{
     source: string;
     text: string;
-    bytes: number;
+    totalChars: number;
+    totalWords: number;
     truncated: boolean;
   }>;
   toolCalls: Array<{
@@ -275,6 +278,8 @@ type AgentModelTurn = {
   }>;
 };
 ```
+
+`assistant.text` 与 `reasoning[].text` 会按 `maxChars` 截断；`totalChars` / `totalWords` 始终表示截断前完整文本的字词统计。
 
 `round` 必须大于 0。`maxChars` 省略时由后端使用默认上限；传入时必须大于 0。
 

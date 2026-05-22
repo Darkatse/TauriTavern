@@ -1,9 +1,16 @@
-use serde_json::json;
+use serde::Serialize;
 
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 
 use super::super::dispatcher::AgentToolEffect;
+use super::super::structured::structured_value;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceFinishStructured<'a> {
+    reason: Option<&'a str>,
+}
 
 pub(in crate::application::services::agent_tools) fn finish(
     call: &AgentToolCall,
@@ -13,8 +20,10 @@ pub(in crate::application::services::agent_tools) fn finish(
         call_id: call.id.clone(),
         name: call.name.clone(),
         content: "Finished the Agent run.".to_string(),
-        structured: json!({
-            "reason": args.and_then(|args| args.get("reason")).and_then(serde_json::Value::as_str),
+        structured: structured_value(WorkspaceFinishStructured {
+            reason: args
+                .and_then(|args| args.get("reason"))
+                .and_then(serde_json::Value::as_str),
         }),
         is_error: false,
         error_code: None,

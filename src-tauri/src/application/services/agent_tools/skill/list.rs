@@ -1,10 +1,19 @@
-use serde_json::json;
+use serde::Serialize;
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::profile::{AgentSkillPolicy, ResolvedAgentProfile};
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
+use crate::domain::models::skill::SkillIndexEntry;
+
+use super::super::structured::structured_value;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillListStructured {
+    skills: Vec<SkillIndexEntry>,
+}
 
 pub(in crate::application::services::agent_tools) async fn list(
     call: &AgentToolCall,
@@ -48,7 +57,7 @@ pub(in crate::application::services::agent_tools) async fn list(
             call_id: call.id.clone(),
             name: call.name.clone(),
             content,
-            structured: json!({ "skills": skills }),
+            structured: structured_value(SkillListStructured { skills }),
             is_error: false,
             error_code: None,
             resource_refs: Vec::new(),

@@ -1,5 +1,6 @@
 import { displayToolName } from './run-tool-labels.js';
 import { translateAgentSystem as tr } from './i18n.js';
+import { textMetricsSummary, totalTextMetricsSummary } from './run-text-metrics.js';
 import { presentAgentRunFailure } from '../../../tauritavern/agent/agent-error-presenter.js';
 
 const DETAIL_TEXT_LIMIT = 40000;
@@ -81,6 +82,10 @@ export function formatPatchDiffDetail(target, file) {
     ];
     if (target.replacements != null) {
         fields.push(field(tr('timelineDetailFieldReplacements'), target.replacements));
+    }
+    const metrics = textMetricsSummary(target);
+    if (metrics) {
+        fields.push(field(tr('timelineDetailFieldTextMetrics'), metrics));
     }
     if (args.replace_all === true) {
         fields.push(field(tr('timelineDetailFieldReplaceAll'), tr('timelineDetailStatusYes')));
@@ -253,6 +258,11 @@ function addToolResultSummaryFields(fields, result, structured) {
     if (Array.isArray(structured.hits)) {
         fields.push(field(tr('timelineDetailFieldMatches'), String(structured.hits.length)));
     }
+
+    const metrics = textMetricsSummary(structured);
+    if (metrics) {
+        fields.push(field(tr('timelineDetailFieldTextMetrics'), metrics));
+    }
 }
 
 function primaryTarget(result, structured) {
@@ -300,10 +310,12 @@ function toolContentForDisplay(result) {
 }
 
 function formatTextFileSection(target, file, text) {
+    const metrics = textMetricsSummary(target) || textMetricsSummary(file);
+    const fields = metrics ? [field(tr('timelineDetailFieldTextMetrics'), metrics)] : [];
     return {
         labelKey: target.labelKey,
         path: file?.path || target.path,
-        fields: [],
+        fields,
         blocks: [
             textBlock('timelineContent', text),
         ],
@@ -315,10 +327,12 @@ function renderHits(hits) {
         const path = hit.path || hit.ref || hit.refId || 'result';
         const range = hit.startLine && hit.endLine ? ` L${hit.startLine}-L${hit.endLine}` : '';
         const score = Number.isFinite(Number(hit.score)) ? ` score ${Number(hit.score).toFixed(2)}` : '';
+        const metrics = textMetricsSummary(hit);
+        const metric = metrics ? ` ${metrics}` : '';
         const snippet = typeof hit.snippet === 'string' && hit.snippet.trim()
             ? `\n${indentLines(hit.snippet.trim())}`
             : '';
-        return `${index + 1}. ${path}${range}${score}${snippet}`;
+        return `${index + 1}. ${path}${range}${score}${metric}${snippet}`;
     }).join('\n\n');
 }
 
@@ -423,8 +437,9 @@ function reasoningMeta(item) {
     if (typeof item?.source === 'string' && item.source.trim()) {
         parts.push(item.source.trim());
     }
-    if (Number.isFinite(Number(item?.bytes)) && Number(item.bytes) > 0) {
-        parts.push(tr('timelineBytes', { count: Number(item.bytes) }));
+    const metrics = totalTextMetricsSummary(item);
+    if (metrics) {
+        parts.push(metrics);
     }
     return parts.join(' · ');
 }

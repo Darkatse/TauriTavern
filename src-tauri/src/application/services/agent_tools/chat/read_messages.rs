@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use serde_json::{Map, Value, json};
+use serde::Serialize;
+use serde_json::{Map, Value};
 
 use super::{
     MAX_FULL_MESSAGE_CHARS, MAX_MESSAGE_RANGE_CHARS, MAX_MESSAGES_PER_READ, MAX_TOTAL_READ_CHARS,
@@ -14,6 +15,30 @@ use crate::domain::models::agent::{AgentChatRef, AgentToolCall, AgentToolResult}
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::chat_repository::{ChatMessageReadItem, ChatRepository};
 use crate::domain::repositories::group_chat_repository::GroupChatRepository;
+use crate::domain::text_metrics::TextMetrics;
+
+use super::super::structured::{TextRangeMetricsPayload, structured_value};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatReadMessagesStructured<'a> {
+    total_messages: usize,
+    messages: Vec<ChatReadMessageStructured<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatReadMessageStructured<'a> {
+    index: usize,
+    role: &'static str,
+    name: Option<&'a str>,
+    send_date: Option<&'a str>,
+    #[serde(flatten)]
+    range: TextRangeMetricsPayload,
+    text: &'a str,
+    #[serde(rename = "ref")]
+    ref_id: &'a str,
+}
 
 #[derive(Debug, Clone)]
 struct MessageRequest {
@@ -29,7 +54,10 @@ struct RenderedMessage {
     send_date: Option<String>,
     start_char: usize,
     end_char: usize,
+    chars: usize,
     total_chars: usize,
+    words: usize,
+    total_words: usize,
     truncated: bool,
     text: String,
     ref_id: String,
@@ -169,7 +197,7 @@ pub(in crate::application::services::agent_tools) async fn read_messages(
                 ));
             }
         };
-        total_returned_chars += item.text.chars().count();
+        total_returned_chars += item.chars;
         if total_returned_chars > MAX_TOTAL_READ_CHARS {
             return Ok((
                 tool_error(
@@ -196,9 +224,9 @@ pub(in crate::application::services::agent_tools) async fn read_messages(
             call_id: call.id.clone(),
             name: call.name.clone(),
             content,
-            structured: json!({
-                "totalMessages": visible_total,
-                "messages": rendered.iter().map(structured_message).collect::<Vec<_>>(),
+            structured: structured_value(ChatReadMessagesStructured {
+                total_messages: visible_total,
+                messages: rendered.iter().map(structured_message).collect(),
             }),
             is_error: false,
             error_code: None,
@@ -279,7 +307,8 @@ fn render_message(
     message: &ChatMessageReadItem,
     request: &MessageRequest,
 ) -> Result<RenderedMessage, String> {
-    let total_chars = message.text.chars().count();
+    let total_metrics = TextMetrics::from_text(&message.text);
+    let total_chars = total_metrics.chars;
     let start_char = request.start_char.unwrap_or(0);
     if total_chars > 0 && start_char >= total_chars {
         return Err(format!(
@@ -306,7 +335,8 @@ fn render_message(
         .unwrap_or_else(|| total_chars.saturating_sub(start_char));
     let end_char = start_char.saturating_add(requested).min(total_chars);
     let text = slice_chars(&message.text, start_char, end_char);
-    let truncated = end_char < total_chars;
+    let selected_metrics = TextMetrics::from_text(&text);
+    let truncated = start_char > 0 || end_char < total_chars;
 
     Ok(RenderedMessage {
         index: message.index,
@@ -315,7 +345,10 @@ fn render_message(
         send_date: message.send_date.clone(),
         start_char,
         end_char,
+        chars: selected_metrics.chars,
         total_chars,
+        words: selected_metrics.words,
+        total_words: total_metrics.words,
         truncated,
         text,
         ref_id: format!(
@@ -338,7 +371,7 @@ fn render_content(total_messages: usize, messages: &[RenderedMessage]) -> String
     );
     for message in messages {
         content.push_str(&format!(
-            "\n\nmessage {} {}{} chars {}-{} of {} ref {}",
+            "\n\nmessage {} {}{} chars {}-{} of {}, words {} of {}, ref {}",
             message.index,
             message.role,
             message
@@ -349,6 +382,8 @@ fn render_content(total_messages: usize, messages: &[RenderedMessage]) -> String
             message.start_char,
             message.end_char,
             message.total_chars,
+            message.words,
+            message.total_words,
             message.ref_id
         ));
         if let Some(send_date) = &message.send_date {
@@ -363,17 +398,25 @@ fn render_content(total_messages: usize, messages: &[RenderedMessage]) -> String
     content
 }
 
-fn structured_message(message: &RenderedMessage) -> Value {
-    json!({
-        "index": message.index,
-        "role": message.role,
-        "name": message.name.as_deref(),
-        "sendDate": message.send_date.as_deref(),
-        "startChar": message.start_char,
-        "endChar": message.end_char,
-        "totalChars": message.total_chars,
-        "truncated": message.truncated,
-        "text": message.text.as_str(),
-        "ref": message.ref_id.as_str(),
-    })
+fn structured_message(message: &RenderedMessage) -> ChatReadMessageStructured<'_> {
+    ChatReadMessageStructured {
+        index: message.index,
+        role: message.role,
+        name: message.name.as_deref(),
+        send_date: message.send_date.as_deref(),
+        range: TextRangeMetricsPayload::new(
+            TextMetrics {
+                chars: message.chars,
+                words: message.words,
+            },
+            TextMetrics {
+                chars: message.total_chars,
+                words: message.total_words,
+            },
+            message.start_char,
+            message.end_char,
+        ),
+        text: message.text.as_str(),
+        ref_id: message.ref_id.as_str(),
+    }
 }

@@ -160,6 +160,10 @@ async fn installs_inline_skill_and_reads_file() {
         .await
         .expect("read skill file");
     assert_eq!(read.content, "hello");
+    assert_eq!(read.chars, 5);
+    assert_eq!(read.words, 1);
+    assert_eq!(read.total_chars, 5);
+    assert_eq!(read.total_words, 1);
     assert_eq!(read.resource_ref, "skills/test-skill/references/a.md");
 
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
@@ -194,6 +198,9 @@ async fn reads_skill_file_ranges() {
         .await
         .expect("read line range");
     assert_eq!(line.content, "blue lantern");
+    assert_eq!(line.chars, 12);
+    assert_eq!(line.words, 2);
+    assert_eq!(line.total_words, 4);
     assert_eq!(line.start_line, 2);
     assert_eq!(line.end_line, 2);
     assert!(line.truncated);
@@ -211,6 +218,9 @@ async fn reads_skill_file_ranges() {
         .await
         .expect("read char range");
     assert_eq!(chars.content, "blue");
+    assert_eq!(chars.chars, 4);
+    assert_eq!(chars.words, 1);
+    assert_eq!(chars.total_words, 4);
     assert_eq!(chars.start_char, 6);
     assert_eq!(chars.end_char, 10);
 

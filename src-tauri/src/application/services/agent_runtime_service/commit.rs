@@ -20,6 +20,7 @@ use crate::domain::models::agent::{
     AgentChatCommitMode, AgentRun, AgentRunEventLevel, AgentRunStatus, AgentToolCall,
     AgentToolResult, ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
 };
+use crate::domain::text_metrics::TextMetrics;
 
 impl AgentRuntimeService {
     pub async fn resolve_chat_commit(
@@ -202,6 +203,7 @@ impl AgentRuntimeService {
 
         self.transition_status(run_id, AgentRunStatus::AwaitingHostCommit)
             .await?;
+        let file_metrics = TextMetrics::from_text(&file.text);
         self.event(
             run_id,
             AgentRunEventLevel::Info,
@@ -219,7 +221,8 @@ impl AgentRuntimeService {
                 "path": file.path.as_str(),
                 "mode": mode,
                 "reason": reason.as_deref(),
-                "bytes": file.bytes,
+                "chars": file_metrics.chars,
+                "words": file_metrics.words,
                 "sha256": file.sha256.as_str(),
                 "checkpointId": checkpoint.id.as_str(),
             }),
@@ -278,6 +281,8 @@ impl AgentRuntimeService {
                             "path": path.as_str(),
                             "mode": mode,
                             "messageId": result.message_id.as_deref(),
+                            "chars": file_metrics.chars,
+                            "words": file_metrics.words,
                         }),
                         is_error: false,
                         error_code: None,
@@ -347,7 +352,7 @@ impl AgentRuntimeService {
                 "stateId": persistent_changes.state_id,
                 "baseStateId": persistent_changes.base_state_id,
                 "changeCount": persistent_changes.changes.len(),
-                "changes": &persistent_changes.changes,
+                "changes": persistent_change_payloads(&persistent_changes),
             }),
         )
         .await?;
@@ -426,7 +431,7 @@ impl AgentRuntimeService {
                 "stateId": persistent_changes.state_id.as_str(),
                 "baseStateId": persistent_changes.base_state_id.as_deref(),
                 "changeCount": persistent_changes.changes.len(),
-                "changes": &persistent_changes.changes,
+                "changes": persistent_change_payloads(persistent_changes),
             }),
         )
         .await?;
@@ -495,6 +500,20 @@ impl AgentRuntimeService {
             .await
             .retain(|_, pending| pending.run_id != run_id);
     }
+}
+
+fn persistent_change_payloads(changes: &WorkspacePersistentChangeSet) -> Vec<Value> {
+    changes
+        .changes
+        .iter()
+        .map(|change| {
+            json!({
+                "path": change.path.as_str(),
+                "kind": change.kind,
+                "sha256": change.sha256.as_str(),
+            })
+        })
+        .collect()
 }
 
 fn recoverable_tool_error(

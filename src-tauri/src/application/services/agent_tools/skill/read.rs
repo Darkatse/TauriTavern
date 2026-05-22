@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde::Serialize;
 
 use super::super::common::{
     object_args, optional_usize_arg, required_trimmed_string_arg, tool_error,
@@ -11,6 +11,23 @@ use crate::application::services::skill_service::SkillService;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 use crate::domain::models::skill::SkillReadRequest;
+use crate::domain::text_metrics::TextMetrics;
+
+use super::super::structured::{TextRangeMetricsPayload, structured_value};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillReadStructured<'a> {
+    name: &'a str,
+    path: &'a str,
+    sha256: &'a str,
+    #[serde(flatten)]
+    range: TextRangeMetricsPayload,
+    total_lines: usize,
+    start_line: usize,
+    end_line: usize,
+    resource_ref: &'a str,
+}
 
 pub(in crate::application::services::agent_tools) async fn read(
     skill_service: &SkillService,
@@ -168,8 +185,9 @@ pub(in crate::application::services::agent_tools) async fn read(
     session.remember_skill_read_chars(read.chars);
 
     let content = format!(
-        "{} chars from {}, sha256 {}{}{}\n{}",
+        "{} chars / {} words from {}, sha256 {}{}{}\n{}",
         read.chars,
+        read.words,
         read.resource_ref.as_str(),
         read.sha256.as_str(),
         if read.truncated { " (truncated)" } else { "" },
@@ -191,20 +209,26 @@ pub(in crate::application::services::agent_tools) async fn read(
             call_id: call.id.clone(),
             name: call.name.clone(),
             content,
-            structured: json!({
-                "name": read.name.as_str(),
-                "path": read.path.as_str(),
-                "bytes": read.bytes,
-                "sha256": read.sha256.as_str(),
-                "chars": read.chars,
-                "totalChars": read.total_chars,
-                "startChar": read.start_char,
-                "endChar": read.end_char,
-                "totalLines": read.total_lines,
-                "startLine": read.start_line,
-                "endLine": read.end_line,
-                "truncated": read.truncated,
-                "resourceRef": read.resource_ref.as_str(),
+            structured: structured_value(SkillReadStructured {
+                name: read.name.as_str(),
+                path: read.path.as_str(),
+                sha256: read.sha256.as_str(),
+                range: TextRangeMetricsPayload::new(
+                    TextMetrics {
+                        chars: read.chars,
+                        words: read.words,
+                    },
+                    TextMetrics {
+                        chars: read.total_chars,
+                        words: read.total_words,
+                    },
+                    read.start_char,
+                    read.end_char,
+                ),
+                total_lines: read.total_lines,
+                start_line: read.start_line,
+                end_line: read.end_line,
+                resource_ref: read.resource_ref.as_str(),
             }),
             is_error: false,
             error_code: None,

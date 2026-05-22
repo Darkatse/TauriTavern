@@ -146,7 +146,8 @@ pub struct AgentReadModelTurnDto {
 pub struct AgentWorkspaceFileDto {
     pub path: String,
     pub text: String,
-    pub bytes: u64,
+    pub chars: usize,
+    pub words: usize,
     pub sha256: String,
 }
 
@@ -176,7 +177,8 @@ pub struct AgentModelTurnProviderDto {
 #[serde(rename_all = "camelCase")]
 pub struct AgentModelTurnTextDto {
     pub text: String,
-    pub bytes: usize,
+    pub total_chars: usize,
+    pub total_words: usize,
     pub truncated: bool,
 }
 
@@ -185,7 +187,8 @@ pub struct AgentModelTurnTextDto {
 pub struct AgentModelTurnReasoningDto {
     pub source: String,
     pub text: String,
-    pub bytes: usize,
+    pub total_chars: usize,
+    pub total_words: usize,
     pub truncated: bool,
 }
 

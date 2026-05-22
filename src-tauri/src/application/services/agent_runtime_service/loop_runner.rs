@@ -15,6 +15,7 @@ use crate::domain::models::agent::{
     AgentModelRole, AgentRunEventLevel, AgentRunStatus, AgentToolResult, WorkspacePath,
 };
 use crate::domain::models::skill::SkillIndexEntry;
+use crate::domain::text_metrics::TextMetrics;
 
 /// How many in-loop drift recovery attempts to make per run before
 /// surrendering to the existing #55 fail-fast path. One attempt is
@@ -91,10 +92,9 @@ impl AgentRuntimeService {
                     json!(model_response_path.as_str()),
                 );
                 object.insert("toolCallCount".to_string(), json!(tool_calls.len()));
-                object.insert(
-                    "textBytes".to_string(),
-                    json!(extract_response_text(&response).as_bytes().len()),
-                );
+                let text_metrics = TextMetrics::from_text(extract_response_text(&response));
+                object.insert("textChars".to_string(), json!(text_metrics.chars));
+                object.insert("textWords".to_string(), json!(text_metrics.words));
                 payload
             })
             .await?;
@@ -183,13 +183,15 @@ impl AgentRuntimeService {
                     .await?;
                 match &outcome.effect {
                     AgentToolEffect::WorkspaceFileWritten { file } => {
+                        let metrics = TextMetrics::from_text(&file.text);
                         self.checkpoint_workspace_file(
                             run_id,
                             "tool_workspace_write",
                             "workspace_file_written",
                             json!({
                                 "path": file.path.as_str(),
-                                "bytes": file.bytes,
+                                "chars": metrics.chars,
+                                "words": metrics.words,
                                 "sha256": file.sha256.as_str(),
                             }),
                             file.path.clone(),
@@ -203,13 +205,15 @@ impl AgentRuntimeService {
                     } => {
                         self.transition_status(run_id, AgentRunStatus::ApplyingWorkspacePatch)
                             .await?;
+                        let metrics = TextMetrics::from_text(&file.text);
                         self.checkpoint_workspace_file(
                             run_id,
                             "tool_workspace_patch",
                             "workspace_patch_applied",
                             json!({
                                 "path": file.path.as_str(),
-                                "bytes": file.bytes,
+                                "chars": metrics.chars,
+                                "words": metrics.words,
                                 "oldSha256": old_sha256,
                                 "sha256": file.sha256.as_str(),
                                 "replacements": replacements,
@@ -287,6 +291,7 @@ impl AgentRuntimeService {
             .workspace_repository
             .write_text(run_id, &path, text)
             .await?;
+        let metrics = TextMetrics::from_text(&file.text);
         self.checkpoint_workspace_file(
             run_id,
             "direct_output_capture",
@@ -294,7 +299,8 @@ impl AgentRuntimeService {
             json!({
                 "round": round,
                 "path": file.path.as_str(),
-                "bytes": file.bytes,
+                "chars": metrics.chars,
+                "words": metrics.words,
                 "sha256": file.sha256.as_str(),
                 "modelResponsePath": model_response_path,
             }),
@@ -351,12 +357,16 @@ impl AgentRuntimeService {
                 run_id,
                 AgentRunEventLevel::Debug,
                 "context_tool_result_hydrated",
-                json!({
-                    "round": round,
-                    "callId": result.call_id.as_str(),
-                    "path": file.path.as_str(),
-                    "bytes": file.bytes,
-                }),
+                {
+                    let metrics = TextMetrics::from_text(&file.text);
+                    json!({
+                        "round": round,
+                        "callId": result.call_id.as_str(),
+                        "path": file.path.as_str(),
+                        "chars": metrics.chars,
+                        "words": metrics.words,
+                    })
+                },
             )
             .await?;
             hydrated.push(result);

@@ -234,7 +234,7 @@ workspace.create_checkpoint
 - 只能读 visible resource。
 - 支持 `start_line` / `line_count` 行范围，也支持 `start_char` / `max_chars` 字符范围；两种范围不能混用。
 - 完整读取会记录 read-state；部分读取只用于定位和理解，不解锁 `workspace.apply_patch`。
-- 受 byte、line 与 partial char 上限控制。
+- 受内部 byte 上限、line 与 partial char 上限控制。
 
 `workspace.write_file`
 

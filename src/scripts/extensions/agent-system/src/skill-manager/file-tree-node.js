@@ -24,6 +24,9 @@ export const SkillFileTreeNode = {
         tr(key, params) {
             return tr(key, params);
         },
+        fileKindLabel(kind) {
+            return tr(kind === 'binary' ? 'skillFileKindBinary' : 'skillFileKindText');
+        },
     },
     template: `
         <li class="ttas-file-tree-item" :class="'ttas-file-tree-' + node.type">
@@ -48,7 +51,7 @@ export const SkillFileTreeNode = {
             >
                 <i class="fa-solid" :class="node.file.kind === 'binary' ? 'fa-file' : 'fa-file-lines'"></i>
                 <span>{{ node.name }}</span>
-                <small>{{ tr('byteCount', { count: node.file.sizeBytes }) }}</small>
+                <small>{{ fileKindLabel(node.file.kind) }}</small>
             </button>
             <ul v-if="node.type === 'folder' && isFolderOpen(node)" class="ttas-file-tree">
                 <SkillFileTreeNode

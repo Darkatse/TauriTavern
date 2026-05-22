@@ -199,7 +199,6 @@ impl WorkspaceRepository for FileAgentRepository {
                 entries.push(WorkspaceEntry {
                     path: workspace_path_from_run_dir(&run_dir, &dir)?,
                     kind: WorkspaceEntryKind::File,
-                    bytes: Some(metadata.len()),
                 });
                 continue;
             }
@@ -251,7 +250,6 @@ impl WorkspaceRepository for FileAgentRepository {
                     entries.push(WorkspaceEntry {
                         path,
                         kind: WorkspaceEntryKind::Directory,
-                        bytes: None,
                     });
                     if level < depth {
                         stack.push((child, level + 1));
@@ -260,7 +258,6 @@ impl WorkspaceRepository for FileAgentRepository {
                     entries.push(WorkspaceEntry {
                         path,
                         kind: WorkspaceEntryKind::File,
-                        bytes: Some(metadata.len()),
                     });
                 }
             }

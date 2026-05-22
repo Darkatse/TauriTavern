@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde::Serialize;
 
 use super::args::{
     classify_workspace_io_error, ensure_writable_workspace_path, object_args, optional_bool_arg,
@@ -8,9 +8,22 @@ use super::policy::workspace_access_policy;
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
+use crate::domain::text_metrics::TextMetrics;
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
+use super::super::structured::{TextMetricsPayload, structured_value};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceApplyPatchStructured<'a> {
+    path: &'a str,
+    #[serde(flatten)]
+    metrics: TextMetricsPayload,
+    old_sha256: &'a str,
+    sha256: &'a str,
+    replacements: usize,
+}
 
 pub(in crate::application::services::agent_tools) async fn apply_patch(
     workspace_repository: &dyn WorkspaceRepository,
@@ -169,21 +182,24 @@ pub(in crate::application::services::agent_tools) async fn apply_patch(
         },
     };
     session.remember_file(&file, true);
+    let metrics = TextMetrics::from_text(&file.text);
 
     let result = AgentToolResult {
         call_id: call.id.clone(),
         name: call.name.clone(),
         content: format!(
-            "Patched {} with {} replacement(s).",
+            "Patched {} with {} replacement(s); file now has {} chars / {} words.",
             file.path.as_str(),
-            matches
+            matches,
+            metrics.chars,
+            metrics.words
         ),
-        structured: json!({
-            "path": file.path.as_str(),
-            "bytes": file.bytes,
-            "oldSha256": old_sha256,
-            "sha256": file.sha256.as_str(),
-            "replacements": matches,
+        structured: structured_value(WorkspaceApplyPatchStructured {
+            path: file.path.as_str(),
+            metrics: metrics.into(),
+            old_sha256: old_sha256.as_str(),
+            sha256: file.sha256.as_str(),
+            replacements: matches,
         }),
         is_error: false,
         error_code: None,

@@ -4,6 +4,7 @@ mod dispatcher;
 mod registry;
 mod session;
 mod skill;
+mod structured;
 mod workspace;
 mod world_info;
 

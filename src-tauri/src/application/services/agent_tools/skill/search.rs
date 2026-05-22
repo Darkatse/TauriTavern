@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde::Serialize;
 
 use super::super::common::{
     object_args, optional_usize_arg, required_trimmed_string_arg, tool_error,
@@ -10,12 +10,42 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::skill_service::SkillService;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
-use crate::domain::models::skill::SkillSearchRequest;
+use crate::domain::models::skill::{SkillSearchHit, SkillSearchRequest};
+use crate::domain::text_metrics::TextMetrics;
+
+use super::super::structured::{TextMetricsPayload, structured_value};
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
 const MAX_SEARCH_LIMIT: usize = 50;
 const DEFAULT_CONTEXT_LINES: usize = 2;
 const MAX_CONTEXT_LINES: usize = 5;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillSearchStructured<'a> {
+    name: &'a str,
+    query: &'a str,
+    hits: Vec<SkillSearchHitStructured<'a>>,
+    searched_files: usize,
+    skipped_files: usize,
+    truncated: bool,
+    returned_chars: usize,
+    returned_words: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillSearchHitStructured<'a> {
+    path: &'a str,
+    score: f32,
+    start_line: usize,
+    end_line: usize,
+    snippet: &'a str,
+    #[serde(flatten)]
+    metrics: TextMetricsPayload,
+    sha256: &'a str,
+    resource_ref: &'a str,
+}
 
 pub(in crate::application::services::agent_tools) async fn search(
     skill_service: &SkillService,
@@ -179,14 +209,20 @@ pub(in crate::application::services::agent_tools) async fn search(
         .iter()
         .map(|hit| hit.resource_ref.clone())
         .collect::<Vec<_>>();
-    let structured = json!({
-        "name": search.name,
-        "query": search.query,
-        "hits": search.hits,
-        "searchedFiles": search.searched_files,
-        "skippedFiles": search.skipped_files,
-        "truncated": search.truncated,
-        "returnedChars": search.returned_chars,
+    let returned_words = search
+        .hits
+        .iter()
+        .map(|hit| TextMetrics::from_text(&hit.snippet).words)
+        .sum::<usize>();
+    let structured = structured_value(SkillSearchStructured {
+        name: search.name.as_str(),
+        query: search.query.as_str(),
+        hits: search.hits.iter().map(structured_hit).collect(),
+        searched_files: search.searched_files,
+        skipped_files: search.skipped_files,
+        truncated: search.truncated,
+        returned_chars: search.returned_chars,
+        returned_words,
     });
     Ok((
         AgentToolResult {
@@ -200,6 +236,20 @@ pub(in crate::application::services::agent_tools) async fn search(
         },
         AgentToolEffect::None,
     ))
+}
+
+fn structured_hit(hit: &SkillSearchHit) -> SkillSearchHitStructured<'_> {
+    let metrics = TextMetrics::from_text(&hit.snippet);
+    SkillSearchHitStructured {
+        path: hit.path.as_str(),
+        score: hit.score,
+        start_line: hit.start_line,
+        end_line: hit.end_line,
+        snippet: hit.snippet.as_str(),
+        metrics: metrics.into(),
+        sha256: hit.sha256.as_str(),
+        resource_ref: hit.resource_ref.as_str(),
+    }
 }
 
 fn render_content(search: &crate::domain::models::skill::SkillSearchResult) -> String {

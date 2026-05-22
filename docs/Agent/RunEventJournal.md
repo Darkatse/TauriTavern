@@ -248,7 +248,7 @@ workspace_file_deleted
 workspace_rollback_completed
 ```
 
-Workspace event 不应内联大文件全文。应记录 path、sha256、bytes、patch ref。
+Workspace event 不应内联大文件全文。面向 Agent/UI 的 payload 应记录 path、sha256、chars、words、patch ref；字节数仅保留在文件系统、checkpoint、hash 等内部实现边界。
 
 ### 4.3 Context
 
@@ -289,11 +289,14 @@ model_failed
   "round": 1,
   "modelResponsePath": "model-responses/round-001.json",
   "toolCallCount": 1,
-  "textBytes": 26,
+  "textChars": 26,
+  "textWords": 5,
   "hasAssistantText": true,
-  "assistantTextBytes": 26,
+  "assistantTextChars": 26,
+  "assistantTextWords": 5,
   "hasReasoning": true,
-  "reasoningBytes": 30
+  "reasoningChars": 30,
+  "reasoningWords": 6
 }
 ```
 
@@ -349,7 +352,7 @@ checkpoint_pruned
 diff_created
 ```
 
-Checkpoint event must include checkpoint id、reason、file count、bytes。
+Checkpoint event must include checkpoint id、reason、file count and internal storage metadata. UI-facing timeline payloads should expose text metrics as chars/words, not raw byte counts.
 
 ### 4.7 Plan / Profile
 

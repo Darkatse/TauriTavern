@@ -25,7 +25,6 @@ pub enum WorkspaceEntryKind {
 pub struct WorkspaceEntry {
     pub path: WorkspacePath,
     pub kind: WorkspaceEntryKind,
-    pub bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone)]

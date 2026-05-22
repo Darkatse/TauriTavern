@@ -1,4 +1,5 @@
-use serde_json::{Map, Value, json};
+use serde::Serialize;
+use serde_json::{Map, Value};
 
 use super::{
     DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, MAX_SEARCH_SCAN_LIMIT, parse_role, raw_total_messages,
@@ -16,6 +17,29 @@ use crate::domain::repositories::chat_repository::{
     ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery, ChatRepository,
 };
 use crate::domain::repositories::group_chat_repository::GroupChatRepository;
+use crate::domain::text_metrics::TextMetrics;
+
+use super::super::structured::{TextMetricsPayload, structured_value};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatSearchStructured<'a> {
+    query: &'a str,
+    hits: Vec<ChatSearchHitStructured<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatSearchHitStructured<'a> {
+    index: usize,
+    role: &'static str,
+    score: f32,
+    snippet: &'a str,
+    #[serde(flatten)]
+    metrics: TextMetricsPayload,
+    #[serde(rename = "ref")]
+    ref_id: String,
+}
 
 pub(in crate::application::services::agent_tools) async fn search(
     run_repository: &dyn AgentRunRepository,
@@ -101,9 +125,9 @@ pub(in crate::application::services::agent_tools) async fn search(
             call_id: call.id.clone(),
             name: call.name.clone(),
             content,
-            structured: json!({
-                "query": search_query.query,
-                "hits": hits.iter().map(structured_hit).collect::<Vec<_>>(),
+            structured: structured_value(ChatSearchStructured {
+                query: search_query.query.as_str(),
+                hits: hits.iter().map(structured_hit).collect(),
             }),
             is_error: false,
             error_code: None,
@@ -158,9 +182,9 @@ fn empty_result(call: &AgentToolCall, query: &str) -> (AgentToolResult, AgentToo
             call_id: call.id.clone(),
             name: call.name.clone(),
             content: render_content(query, &[]),
-            structured: json!({
-                "query": query,
-                "hits": [],
+            structured: structured_value(ChatSearchStructured {
+                query,
+                hits: Vec::new(),
             }),
             is_error: false,
             error_code: None,
@@ -245,12 +269,14 @@ fn render_content(query: &str, hits: &[ChatMessageSearchHit]) -> String {
     content
 }
 
-fn structured_hit(hit: &ChatMessageSearchHit) -> Value {
-    json!({
-        "index": hit.index,
-        "role": role_as_str(hit.role),
-        "score": hit.score,
-        "snippet": hit.snippet,
-        "ref": format!("chat:current#{}", hit.index),
-    })
+fn structured_hit(hit: &ChatMessageSearchHit) -> ChatSearchHitStructured<'_> {
+    let metrics = TextMetrics::from_text(&hit.snippet);
+    ChatSearchHitStructured {
+        index: hit.index,
+        role: role_as_str(hit.role),
+        score: hit.score,
+        snippet: hit.snippet.as_str(),
+        metrics: metrics.into(),
+        ref_id: format!("chat:current#{}", hit.index),
+    }
 }

@@ -873,17 +873,36 @@ test('Agent run event presenter keeps timeline projection focused', async () => 
         payload: {
             round: 2,
             path: 'output/direct_output.md',
-            bytes: 32,
+            chars: 32,
+            words: 6,
         },
     };
     assert.equal(presenter.isDisplayableRunEvent(directOutputEvent), true);
     const directOutputItem = presenter.presentRunEvent(directOutputEvent);
     assert.equal(directOutputItem.titleKey, 'timelineEventDirectOutputCaptured');
     assert.deepEqual(directOutputItem.titleParams, { path: 'output/direct_output.md' });
-    assert.equal(directOutputItem.summary, '32 bytes');
+    assert.equal(directOutputItem.summary, '32 chars / 6 words');
+
+    const readCompletedEvent = {
+        seq: 7,
+        id: 'evt-read-completed',
+        runId: 'run-1',
+        type: 'tool_call_completed',
+        level: 'info',
+        payload: {
+            callId: 'call-read',
+            name: 'workspace.read_file',
+            displayMetrics: {
+                chars: 48,
+                words: 9,
+            },
+            resourceRefs: ['output/main.md'],
+        },
+    };
+    assert.equal(presenter.presentRunEvent(readCompletedEvent).summary, '48 chars / 9 words');
 
     const partialEvent = {
-        seq: 7,
+        seq: 8,
         id: 'evt-partial',
         runId: 'run-1',
         type: 'run_partial_success',
@@ -902,6 +921,35 @@ test('Agent run event presenter keeps timeline projection focused', async () => 
     assert.equal(partialItem.tone, 'warn');
     assert.equal(partialItem.summary, '1 committed message preserved');
 
+    const commitRequestedEvent = {
+        seq: 9,
+        id: 'evt-commit-requested',
+        runId: 'run-1',
+        type: 'chat_commit_requested',
+        payload: {
+            commitId: 'commit-1',
+            path: 'output/main.md',
+            mode: 'replace',
+            chars: 64,
+            words: 12,
+        },
+    };
+    const commitCompletedEvent = {
+        seq: 10,
+        id: 'evt-commit-completed',
+        runId: 'run-1',
+        type: 'chat_commit_completed',
+        payload: {
+            commitId: 'commit-1',
+            path: 'output/main.md',
+            mode: 'replace',
+            messageId: '4',
+        },
+    };
+    const commitItems = presenter.timelineItemsFromEvents([commitRequestedEvent, commitCompletedEvent]);
+    assert.deepEqual(commitItems.map(item => item.type), ['chat_commit_completed']);
+    assert.equal(commitItems[0].summary, 'message 4 | 64 chars / 12 words');
+
     const projected = presenter.timelineItemsFromEvents([
         debugEvent,
         toolEvent,
@@ -917,7 +965,7 @@ test('Agent run event presenter keeps timeline projection focused', async () => 
             id: 'evt-write',
             runId: 'run-1',
             type: 'workspace_file_written',
-            payload: { path: 'output/main.md', bytes: 12 },
+            payload: { path: 'output/main.md', chars: 12, words: 2 },
         },
         directOutputEvent,
     ]);
@@ -967,7 +1015,7 @@ test('Agent run event presenter derives lazy detail targets from journal refs', 
         id: 'evt-write',
         runId: 'run-1',
         type: 'workspace_file_written',
-        payload: { path: 'output/main.md', bytes: 12 },
+        payload: { path: 'output/main.md', chars: 12, words: 2 },
     };
     const writeTargets = presenter.buildEventDetailTargets(
         presenter.presentRunEvent(writeEvent),
@@ -977,13 +1025,15 @@ test('Agent run event presenter derives lazy detail targets from journal refs', 
     assert.deepEqual(writeTargets.map(target => [target.type, target.labelKey, target.path || '']), [
         ['file', 'timelineWorkspaceFile', 'output/main.md'],
     ]);
+    assert.equal(writeTargets[0].chars, 12);
+    assert.equal(writeTargets[0].words, 2);
 
     const directOutputEvent = {
         seq: 4,
         id: 'evt-direct-output',
         runId: 'run-1',
         type: 'direct_output_captured',
-        payload: { path: 'output/direct_output.md', bytes: 32 },
+        payload: { path: 'output/direct_output.md', chars: 32, words: 6 },
     };
     const directOutputTargets = presenter.buildEventDetailTargets(
         presenter.presentRunEvent(directOutputEvent),
@@ -993,6 +1043,8 @@ test('Agent run event presenter derives lazy detail targets from journal refs', 
     assert.deepEqual(directOutputTargets.map(target => [target.type, target.labelKey, target.path || '']), [
         ['file', 'timelineWorkspaceFile', 'output/direct_output.md'],
     ]);
+    assert.equal(directOutputTargets[0].chars, 32);
+    assert.equal(directOutputTargets[0].words, 6);
 
     const patchRequested = {
         seq: 5,
@@ -1021,7 +1073,7 @@ test('Agent run event presenter derives lazy detail targets from journal refs', 
         id: 'evt-patch',
         runId: 'run-1',
         type: 'workspace_patch_applied',
-        payload: { path: 'output/main.md', bytes: 24, replacements: 1 },
+        payload: { path: 'output/main.md', chars: 24, words: 4, replacements: 1 },
     };
     const patchTargets = presenter.buildEventDetailTargets(
         presenter.presentRunEvent(patchEvent),
@@ -1032,6 +1084,10 @@ test('Agent run event presenter derives lazy detail targets from journal refs', 
         ['patchDiff', 'timelinePatchDiff', 'output/main.md', 'tool-args/call-2.json'],
         ['file', 'timelineWorkspaceFile', 'output/main.md', ''],
     ]);
+    assert.equal(patchTargets[0].chars, 24);
+    assert.equal(patchTargets[0].words, 4);
+    assert.equal(patchTargets[1].chars, 24);
+    assert.equal(patchTargets[1].words, 4);
 });
 
 test('Agent run event presenter keeps model turns out of timeline and exposes reasoning lazily', async () => {
@@ -1048,7 +1104,8 @@ test('Agent run event presenter keeps model turns out of timeline and exposes re
             modelResponsePath: 'model-responses/round-002.json',
             toolCallCount: 1,
             hasReasoning: true,
-            reasoningBytes: 30,
+            reasoningChars: 30,
+            reasoningWords: 5,
         },
     };
     const toolEvent = {
@@ -1085,7 +1142,8 @@ test('Agent run event presenter restores reasoning for collapsed side-effect eve
         payload: {
             round: 7,
             hasReasoning: true,
-            reasoningBytes: 48,
+            reasoningChars: 48,
+            reasoningWords: 8,
         },
     };
     const writeCompleted = {
@@ -1105,7 +1163,7 @@ test('Agent run event presenter restores reasoning for collapsed side-effect eve
         id: 'evt-write',
         runId: 'run-1',
         type: 'workspace_file_written',
-        payload: { path: 'output/main.md', bytes: 12 },
+        payload: { path: 'output/main.md', chars: 12, words: 2 },
     };
     const commitRequestedTool = {
         seq: 4,
@@ -1160,7 +1218,7 @@ test('Agent run event presenter restores reasoning for collapsed side-effect eve
         id: 'evt-patch',
         runId: 'run-1',
         type: 'workspace_patch_applied',
-        payload: { path: 'output/main.md', bytes: 24, replacements: 1 },
+        payload: { path: 'output/main.md', chars: 24, words: 4, replacements: 1 },
     };
     const finishCompleted = {
         seq: 9,
@@ -1215,17 +1273,20 @@ test('Agent run detail formatter renders tool result details without raw JSON sh
         { labelKey: 'timelineToolResult', path: 'tool-results/call-1.json' },
         {
             path: 'tool-results/call-1.json',
-            bytes: 248,
+            chars: 248,
+            words: 32,
             sha256: '0123456789abcdef0123456789abcdef',
             text: JSON.stringify({
                 callId: 'call-1',
                 name: 'workspace.read_file',
-                content: 'output/main.md lines 1-2 of 2, sha256 abc\n1 hello\n2 world',
+                content: 'output/main.md lines 1-2 of 2, chars 0-11 of 11, words 2 of 2, sha256 abc\n1 hello\n2 world',
                 structured: {
                     path: 'output/main.md',
                     totalLines: 2,
                     startLine: 1,
                     endLine: 2,
+                    chars: 11,
+                    words: 2,
                     fullRead: true,
                 },
                 isError: false,
@@ -1243,6 +1304,7 @@ test('Agent run detail formatter renders tool result details without raw JSON sh
         { label: 'Operation', value: 'reading a file' },
         { label: 'Target', value: 'output/main.md' },
         { label: 'Range', value: 'full file' },
+        { label: 'Text', value: '11 chars / 2 words' },
     ]);
 });
 
@@ -1255,6 +1317,8 @@ test('Agent run detail formatter renders apply_patch arguments as red green diff
             path: 'output/main.md',
             argumentsRef: 'tool-args/call-2.json',
             replacements: 1,
+            chars: 24,
+            words: 4,
         },
         {
             path: 'tool-args/call-2.json',
@@ -1270,6 +1334,7 @@ test('Agent run detail formatter renders apply_patch arguments as red green diff
     assert.deepEqual(section.fields, [
         { label: 'Target', value: 'output/main.md' },
         { label: 'Replacements', value: '1' },
+        { label: 'Text', value: '24 chars / 4 words' },
     ]);
     assert.deepEqual(section.blocks[0].rows, [
         { type: 'context', oldLine: 1, newLine: 1, marker: ' ', text: 'alpha' },
@@ -1278,6 +1343,32 @@ test('Agent run detail formatter renders apply_patch arguments as red green diff
         { type: 'context', oldLine: 3, newLine: 3, marker: ' ', text: 'omega' },
     ]);
     assert.equal(section.blocks[0].meta, '+1 / -1');
+});
+
+test('Agent run detail formatter shows workspace file text metrics', async () => {
+    const { formatDetailFile } = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
+    const section = formatDetailFile(
+        {
+            labelKey: 'timelineWorkspaceFile',
+            path: 'output/main.md',
+            chars: 12,
+            words: 2,
+        },
+        {
+            path: 'output/main.md',
+            chars: 15,
+            words: 3,
+            sha256: 'abc',
+            text: 'hello world',
+        },
+    );
+
+    assert.equal(section.labelKey, 'timelineWorkspaceFile');
+    assert.deepEqual(section.fields, [
+        { label: 'Text', value: '12 chars / 2 words' },
+    ]);
+    assert.equal(section.blocks[0].labelKey, 'timelineContent');
+    assert.equal(section.blocks[0].text, 'hello world');
 });
 
 test('Agent run detail formatter renders model turn display DTO', async () => {
@@ -1296,13 +1387,15 @@ test('Agent run detail formatter renders model turn display DTO', async () => {
             },
             assistant: {
                 text: 'I will inspect the workspace.',
-                bytes: 29,
+                totalChars: 29,
+                totalWords: 5,
                 truncated: false,
             },
             reasoning: [{
                 source: 'reasoning_content',
                 text: 'Need to inspect the workspace.',
-                bytes: 30,
+                totalChars: 30,
+                totalWords: 5,
                 truncated: true,
             }],
             toolCalls: [{
@@ -1325,7 +1418,7 @@ test('Agent run detail formatter renders model turn display DTO', async () => {
     assert.equal(section.blocks[0].truncated, true);
     assert.equal(section.blocks[0].kind, 'reasoning');
     assert.equal(section.blocks[0].defaultOpen, false);
-    assert.equal(section.blocks[0].meta, 'reasoning_content · 30 bytes');
+    assert.equal(section.blocks[0].meta, 'reasoning_content · 30 chars / 5 words');
     assert.match(section.blocks[0].text, /Need to inspect/);
 });
 

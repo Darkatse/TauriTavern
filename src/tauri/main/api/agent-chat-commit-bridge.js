@@ -260,6 +260,8 @@ function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commit
 
     const previousAgent = message.extra?.tauritavern?.agent;
     const previousCommits = Array.isArray(previousAgent?.commits) ? previousAgent.commits : [];
+    const chars = requireNonNegativeInteger(file?.chars, 'chars');
+    const words = requireNonNegativeInteger(file?.words, 'words');
     const commit = {
         seq: commitSeq,
         commitId: payload.commitId,
@@ -267,7 +269,8 @@ function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commit
         path: file.path,
         mode: normalizeCommitMode(payload.mode),
         reason: typeof payload.reason === 'string' ? payload.reason : undefined,
-        bytes: file.bytes,
+        chars,
+        words,
         sha256: file.sha256,
     };
     const rollback = (() => {
@@ -283,7 +286,7 @@ function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commit
     const extra = {
         tauritavern: {
             agent: {
-                version: 1,
+                version: 2,
                 runId: payload.runId,
                 workspaceId: payload.workspaceId,
                 stableChatId: payload.stableChatId,
@@ -298,7 +301,8 @@ function mergeAgentCommitExtraIntoMessage(chat, messageId, payload, file, commit
                 artifacts: [{
                     path: file.path,
                     target: 'message_body',
-                    bytes: file.bytes,
+                    chars,
+                    words,
                     sha256: file.sha256,
                 }],
             },
@@ -341,6 +345,14 @@ function mergePersistentStateExtraIntoMessage(chat, messageId, payload, stateId)
     if (Array.isArray(message.swipe_info) && Number.isInteger(swipeId) && message.swipe_info[swipeId]) {
         message.swipe_info[swipeId].extra = structuredClone(message.extra);
     }
+}
+
+function requireNonNegativeInteger(value, key) {
+    const number = Number(value);
+    if (!Number.isInteger(number) || number < 0) {
+        throw new Error(`agent.host_workspace_file_invalid: ${key} must be a non-negative integer`);
+    }
+    return number;
 }
 
 async function assertCurrentChat(expectedRef, expectedStableChatId = null) {

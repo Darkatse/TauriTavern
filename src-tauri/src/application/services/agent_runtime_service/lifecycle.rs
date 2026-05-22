@@ -26,6 +26,7 @@ use crate::domain::models::agent::{
 };
 use crate::domain::models::skill::{SkillIndexEntry, SkillScope};
 use crate::domain::repositories::agent_run_repository::AgentRunEventReadQuery;
+use crate::domain::text_metrics::TextMetrics;
 
 impl AgentRuntimeService {
     pub async fn start_run(
@@ -287,10 +288,12 @@ impl AgentRuntimeService {
             .read_text(&dto.run_id, &path)
             .await?;
 
+        let metrics = TextMetrics::from_text(&file.text);
         Ok(AgentWorkspaceFileDto {
             path: file.path.as_str().to_string(),
             text: file.text,
-            bytes: file.bytes,
+            chars: metrics.chars,
+            words: metrics.words,
             sha256: file.sha256,
         })
     }

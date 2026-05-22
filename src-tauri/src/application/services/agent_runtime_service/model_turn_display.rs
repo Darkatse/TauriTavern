@@ -8,6 +8,7 @@ use crate::application::dto::agent_dto::{
 };
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::{AgentModelContentPart, AgentModelResponse, WorkspacePath};
+use crate::domain::text_metrics::TextMetrics;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,19 +66,27 @@ pub(super) fn model_response_path(round: usize) -> Result<WorkspacePath, Applica
 }
 
 pub(super) fn model_turn_event_summary(response: &AgentModelResponse) -> Value {
-    let reasoning_bytes = response
+    let assistant_metrics = TextMetrics::from_text(&response.text);
+    let reasoning_metrics = response
         .message
         .parts
         .iter()
         .filter_map(reasoning_text)
-        .map(|text| text.as_bytes().len())
-        .sum::<usize>();
+        .map(TextMetrics::from_text)
+        .fold(TextMetrics { chars: 0, words: 0 }, |total, metrics| {
+            TextMetrics {
+                chars: total.chars + metrics.chars,
+                words: total.words + metrics.words,
+            }
+        });
 
     json!({
         "hasAssistantText": !response.text.trim().is_empty(),
-        "assistantTextBytes": response.text.as_bytes().len(),
-        "hasReasoning": reasoning_bytes > 0,
-        "reasoningBytes": reasoning_bytes,
+        "assistantTextChars": assistant_metrics.chars,
+        "assistantTextWords": assistant_metrics.words,
+        "hasReasoning": reasoning_metrics.chars > 0,
+        "reasoningChars": reasoning_metrics.chars,
+        "reasoningWords": reasoning_metrics.words,
     })
 }
 
@@ -151,7 +160,8 @@ fn reasoning_dto(
         source: string_field(provider_metadata, "source")
             .unwrap_or_else(|| "reasoning_content".to_string()),
         text: display.text,
-        bytes: display.bytes,
+        total_chars: display.total_chars,
+        total_words: display.total_words,
         truncated: display.truncated,
     })
 }
@@ -166,11 +176,12 @@ fn reasoning_text(part: &AgentModelContentPart) -> Option<&str> {
 }
 
 fn text_dto(text: &str, max_chars: usize) -> AgentModelTurnTextDto {
-    let bytes = text.as_bytes().len();
+    let metrics = TextMetrics::from_text(text);
     let (text, truncated) = truncate_chars(text, max_chars);
     AgentModelTurnTextDto {
         text,
-        bytes,
+        total_chars: metrics.chars,
+        total_words: metrics.words,
         truncated,
     }
 }

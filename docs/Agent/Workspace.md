@@ -327,7 +327,7 @@ checkpoints/
       ...
 ```
 
-`checkpoint.json`：
+`checkpoint.json` 是内部实现元数据，不作为 Agent/UI payload；其中的 `bytes` 仅服务于存储体积、清理与完整性边界：
 
 ```json
 {

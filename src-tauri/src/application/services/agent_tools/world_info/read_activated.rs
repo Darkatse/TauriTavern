@@ -1,4 +1,5 @@
-use serde_json::{Map, Value, json};
+use serde::Serialize;
+use serde_json::{Map, Value};
 
 use super::{
     MAX_WORLDINFO_ENTRIES_PER_READ, MAX_WORLDINFO_ENTRY_RANGE_CHARS,
@@ -9,6 +10,60 @@ use crate::application::services::agent_tools::common::{object_args, tool_error}
 use crate::application::services::agent_tools::dispatcher::AgentToolEffect;
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult, WorkspacePath};
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
+use crate::domain::text_metrics::TextMetrics;
+
+use super::super::structured::{
+    TextRangeMetricsPayload, TextTotalMetricsPayload, structured_value,
+};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorldInfoIndexStructured<'a> {
+    mode: &'static str,
+    timestamp_ms: Option<i64>,
+    trigger: Option<&'a str>,
+    total_entries: usize,
+    entries: Vec<WorldInfoIndexEntryStructured<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorldInfoIndexEntryStructured<'a> {
+    world: &'a str,
+    uid: &'a str,
+    display_name: Option<&'a str>,
+    constant: bool,
+    position: Option<&'a str>,
+    #[serde(flatten)]
+    metrics: TextTotalMetricsPayload,
+    #[serde(rename = "ref")]
+    ref_id: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorldInfoContentStructured<'a> {
+    mode: &'static str,
+    timestamp_ms: Option<i64>,
+    trigger: Option<&'a str>,
+    total_entries: usize,
+    entries: Vec<WorldInfoContentEntryStructured<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorldInfoContentEntryStructured<'a> {
+    world: &'a str,
+    uid: &'a str,
+    display_name: Option<&'a str>,
+    constant: bool,
+    position: Option<&'a str>,
+    #[serde(flatten)]
+    range: TextRangeMetricsPayload,
+    content: &'a str,
+    #[serde(rename = "ref")]
+    ref_id: &'a str,
+}
 
 enum ReadActivatedRequest {
     Index,
@@ -28,6 +83,7 @@ struct ActivatedEntry {
     constant: bool,
     position: Option<String>,
     content: String,
+    metrics: TextMetrics,
     ref_id: String,
 }
 
@@ -39,7 +95,10 @@ struct RenderedEntry {
     position: Option<String>,
     start_char: usize,
     end_char: usize,
+    chars: usize,
     total_chars: usize,
+    words: usize,
+    total_words: usize,
     truncated: bool,
     content: String,
     ref_id: String,
@@ -226,6 +285,7 @@ fn normalize_entry(index: usize, entry: &Value) -> Result<ActivatedEntry, Applic
             invalid_activation_snapshot(format!("entries[{index}].content must be a string"))
         })?
         .to_string();
+    let metrics = TextMetrics::from_text(&content);
 
     Ok(ActivatedEntry {
         world,
@@ -243,6 +303,7 @@ fn normalize_entry(index: usize, entry: &Value) -> Result<ActivatedEntry, Applic
             .and_then(Value::as_str)
             .map(str::to_string),
         content,
+        metrics,
         ref_id,
     })
 }
@@ -262,12 +323,12 @@ fn build_index_result(
         call_id: call.id.clone(),
         name: call.name.clone(),
         content,
-        structured: json!({
-            "mode": "index",
-            "timestampMs": batch.get("timestampMs").and_then(Value::as_i64),
-            "trigger": batch.get("trigger").and_then(Value::as_str),
-            "totalEntries": entries.len(),
-            "entries": entries.iter().map(index_entry).collect::<Vec<_>>(),
+        structured: structured_value(WorldInfoIndexStructured {
+            mode: "index",
+            timestamp_ms: batch.get("timestampMs").and_then(Value::as_i64),
+            trigger: batch.get("trigger").and_then(Value::as_str),
+            total_entries: entries.len(),
+            entries: entries.iter().map(index_entry).collect(),
         }),
         is_error: false,
         error_code: None,
@@ -296,7 +357,7 @@ fn build_content_result(
         };
         let item = render_entry(entry, request)
             .map_err(|message| ("worldinfo.invalid_entry_range", message))?;
-        total_returned_chars += item.content.chars().count();
+        total_returned_chars += item.chars;
         if total_returned_chars > MAX_WORLDINFO_TOTAL_READ_CHARS {
             return Err((
                 "worldinfo.read_too_large",
@@ -318,12 +379,12 @@ fn build_content_result(
         call_id: call.id.clone(),
         name: call.name.clone(),
         content,
-        structured: json!({
-            "mode": "content",
-            "timestampMs": batch.get("timestampMs").and_then(Value::as_i64),
-            "trigger": batch.get("trigger").and_then(Value::as_str),
-            "totalEntries": entries.len(),
-            "entries": rendered.iter().map(content_entry).collect::<Vec<_>>(),
+        structured: structured_value(WorldInfoContentStructured {
+            mode: "content",
+            timestamp_ms: batch.get("timestampMs").and_then(Value::as_i64),
+            trigger: batch.get("trigger").and_then(Value::as_str),
+            total_entries: entries.len(),
+            entries: rendered.iter().map(content_entry).collect(),
         }),
         is_error: false,
         error_code: None,
@@ -335,7 +396,7 @@ fn render_entry(
     entry: &ActivatedEntry,
     request: &EntryContentRequest,
 ) -> Result<RenderedEntry, String> {
-    let total_chars = entry.content.chars().count();
+    let total_chars = entry.metrics.chars;
     let start_char = request.start_char.unwrap_or(0);
     if total_chars > 0 && start_char >= total_chars {
         return Err(format!(
@@ -358,6 +419,7 @@ fn render_entry(
         .unwrap_or_else(|| total_chars.saturating_sub(start_char));
     let end_char = start_char.saturating_add(requested).min(total_chars);
     let content = slice_chars(&entry.content, start_char, end_char);
+    let selected_metrics = TextMetrics::from_text(&content);
 
     Ok(RenderedEntry {
         world: entry.world.clone(),
@@ -367,8 +429,11 @@ fn render_entry(
         position: entry.position.clone(),
         start_char,
         end_char,
+        chars: selected_metrics.chars,
         total_chars,
-        truncated: end_char < total_chars,
+        words: selected_metrics.words,
+        total_words: entry.metrics.words,
+        truncated: start_char > 0 || end_char < total_chars,
         content,
         ref_id: entry.ref_id.clone(),
     })
@@ -386,12 +451,13 @@ fn render_index_content(entries: &[ActivatedEntry]) -> String {
     );
     for (index, entry) in entries.iter().enumerate() {
         content.push_str(&format!(
-            "\n{}. {} | {} | world={} | chars={}",
+            "\n{}. {} | {} | world={} | chars={} | words={}",
             index + 1,
             entry.ref_id,
             display_label(entry),
             entry.world,
-            entry.content.chars().count()
+            entry.metrics.chars,
+            entry.metrics.words
         ));
         if let Some(position) = &entry.position {
             content.push_str(&format!(" | position={position}"));
@@ -411,13 +477,15 @@ fn render_content_entries(entries: &[RenderedEntry]) -> String {
     );
     for entry in entries {
         content.push_str(&format!(
-            "\n\n{} | {} | world={} | chars {}-{} of {}",
+            "\n\n{} | {} | world={} | chars {}-{} of {} | words {} of {}",
             entry.ref_id,
             display_label_rendered(entry),
             entry.world,
             entry.start_char,
             entry.end_char,
-            entry.total_chars
+            entry.total_chars,
+            entry.words,
+            entry.total_words
         ));
         if let Some(position) = &entry.position {
             content.push_str(&format!(" | position={position}"));
@@ -431,32 +499,40 @@ fn render_content_entries(entries: &[RenderedEntry]) -> String {
     content
 }
 
-fn index_entry(entry: &ActivatedEntry) -> Value {
-    json!({
-        "world": entry.world.as_str(),
-        "uid": entry.uid.as_str(),
-        "displayName": entry.display_name.as_deref(),
-        "constant": entry.constant,
-        "position": entry.position.as_deref(),
-        "totalChars": entry.content.chars().count(),
-        "ref": entry.ref_id.as_str(),
-    })
+fn index_entry(entry: &ActivatedEntry) -> WorldInfoIndexEntryStructured<'_> {
+    WorldInfoIndexEntryStructured {
+        world: entry.world.as_str(),
+        uid: entry.uid.as_str(),
+        display_name: entry.display_name.as_deref(),
+        constant: entry.constant,
+        position: entry.position.as_deref(),
+        metrics: entry.metrics.into(),
+        ref_id: entry.ref_id.as_str(),
+    }
 }
 
-fn content_entry(entry: &RenderedEntry) -> Value {
-    json!({
-        "world": entry.world.as_str(),
-        "uid": entry.uid.as_str(),
-        "displayName": entry.display_name.as_deref(),
-        "constant": entry.constant,
-        "position": entry.position.as_deref(),
-        "startChar": entry.start_char,
-        "endChar": entry.end_char,
-        "totalChars": entry.total_chars,
-        "truncated": entry.truncated,
-        "content": entry.content.as_str(),
-        "ref": entry.ref_id.as_str(),
-    })
+fn content_entry(entry: &RenderedEntry) -> WorldInfoContentEntryStructured<'_> {
+    WorldInfoContentEntryStructured {
+        world: entry.world.as_str(),
+        uid: entry.uid.as_str(),
+        display_name: entry.display_name.as_deref(),
+        constant: entry.constant,
+        position: entry.position.as_deref(),
+        range: TextRangeMetricsPayload::new(
+            TextMetrics {
+                chars: entry.chars,
+                words: entry.words,
+            },
+            TextMetrics {
+                chars: entry.total_chars,
+                words: entry.total_words,
+            },
+            entry.start_char,
+            entry.end_char,
+        ),
+        content: entry.content.as_str(),
+        ref_id: entry.ref_id.as_str(),
+    }
 }
 
 fn display_label(entry: &ActivatedEntry) -> &str {

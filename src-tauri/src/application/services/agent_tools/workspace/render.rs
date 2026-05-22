@@ -47,13 +47,7 @@ pub(super) fn render_file_list(list: &WorkspaceFileList) -> String {
         .iter()
         .map(|entry| match entry.kind {
             WorkspaceEntryKind::Directory => format!("{}/", entry.path.as_str()),
-            WorkspaceEntryKind::File => {
-                format!(
-                    "{} ({} bytes)",
-                    entry.path.as_str(),
-                    entry.bytes.unwrap_or(0)
-                )
-            }
+            WorkspaceEntryKind::File => entry.path.as_str().to_string(),
         })
         .collect::<Vec<_>>();
     if list.truncated {

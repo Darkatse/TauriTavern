@@ -1,11 +1,10 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use serde_json::json;
-
 use super::chat;
 use super::session::AgentToolSession;
 use super::skill;
+use super::structured::{ToolErrorStructured, structured_value};
 use super::workspace;
 use super::world_info;
 use crate::application::errors::ApplicationError;
@@ -136,23 +135,24 @@ impl AgentToolDispatcher {
                 workspace::commit(self.workspace_repository.as_ref(), run_id, call, profile).await?
             }
             workspace::WORKSPACE_FINISH => workspace::finish(call)?,
-            other => (
-                AgentToolResult {
-                    call_id: call.id.clone(),
-                    name: call.name.clone(),
-                    content: format!("Unknown or unavailable tool `{other}`."),
-                    structured: json!({
-                        "error": {
-                            "code": "agent.tool_denied",
-                            "message": format!("Unknown or unavailable tool `{other}`."),
-                        }
-                    }),
-                    is_error: true,
-                    error_code: Some("agent.tool_denied".to_string()),
-                    resource_refs: Vec::new(),
-                },
-                AgentToolEffect::None,
-            ),
+            other => {
+                let message = format!("Unknown or unavailable tool `{other}`.");
+                (
+                    AgentToolResult {
+                        call_id: call.id.clone(),
+                        name: call.name.clone(),
+                        content: message.clone(),
+                        structured: structured_value(ToolErrorStructured::new(
+                            "agent.tool_denied",
+                            &message,
+                        )),
+                        is_error: true,
+                        error_code: Some("agent.tool_denied".to_string()),
+                        resource_refs: Vec::new(),
+                    },
+                    AgentToolEffect::None,
+                )
+            }
         };
 
         Ok(AgentToolDispatchOutcome {

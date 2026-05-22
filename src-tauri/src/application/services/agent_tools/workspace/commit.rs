@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde::Serialize;
 
 use super::args::{
     ensure_visible_workspace_path, object_args, parse_workspace_path, required_trimmed_string_arg,
@@ -11,6 +11,15 @@ use crate::domain::models::agent::{AgentChatCommitMode, AgentToolCall, AgentTool
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 
 use super::super::dispatcher::AgentToolEffect;
+use super::super::structured::structured_value;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceCommitStructured<'a> {
+    path: &'a str,
+    mode: AgentChatCommitMode,
+    reason: Option<&'a str>,
+}
 
 pub(in crate::application::services::agent_tools) async fn commit(
     workspace_repository: &dyn WorkspaceRepository,
@@ -58,10 +67,10 @@ pub(in crate::application::services::agent_tools) async fn commit(
                 path.as_str(),
                 mode
             ),
-            structured: json!({
-                "path": path.as_str(),
-                "mode": mode,
-                "reason": reason,
+            structured: structured_value(WorkspaceCommitStructured {
+                path: path.as_str(),
+                mode,
+                reason: reason.as_deref(),
             }),
             is_error: false,
             error_code: None,

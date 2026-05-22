@@ -9,6 +9,7 @@ use crate::domain::models::skill::{
     SkillFileKind, SkillFileRef, SkillReadRequest, SkillReadResult, SkillScope, SkillSearchHit,
     SkillSearchRequest, SkillSearchResult,
 };
+use crate::domain::text_metrics::TextMetrics;
 use crate::domain::text_search::PreparedTextSearch;
 
 struct SkillTextFile {
@@ -24,7 +25,9 @@ struct SkillTextFile {
 struct SelectedText {
     content: String,
     chars: usize,
+    words: usize,
     total_chars: usize,
+    total_words: usize,
     start_char: usize,
     end_char: usize,
     total_lines: usize,
@@ -59,7 +62,9 @@ pub(super) async fn read_skill_file(
         path: file.path,
         content: selected.content,
         chars: selected.chars,
+        words: selected.words,
         total_chars: selected.total_chars,
+        total_words: selected.total_words,
         start_char: selected.start_char,
         end_char: selected.end_char,
         total_lines: selected.total_lines,
@@ -287,7 +292,7 @@ fn select_text(
         ));
     }
 
-    let total_chars = text.chars().count();
+    let total_metrics = TextMetrics::from_text(text);
     let lines = if text.is_empty() {
         Vec::new()
     } else {
@@ -296,18 +301,19 @@ fn select_text(
     let total_lines = lines.len();
 
     if uses_char_range {
-        return select_char_range(text, total_chars, total_lines, request, max_chars);
+        return select_char_range(text, total_metrics, total_lines, request, max_chars);
     }
-    select_line_range(total_chars, &lines, request, max_chars)
+    select_line_range(total_metrics, &lines, request, max_chars)
 }
 
 fn select_char_range(
     text: &str,
-    total_chars: usize,
+    total_metrics: TextMetrics,
     total_lines: usize,
     request: &SkillReadRequest,
     max_chars: usize,
 ) -> Result<SelectedText, DomainError> {
+    let total_chars = total_metrics.chars;
     let start_char = request.start_char.unwrap_or(0);
     if total_chars > 0 && start_char >= total_chars {
         return Err(DomainError::InvalidData(format!(
@@ -322,11 +328,13 @@ fn select_char_range(
 
     let end_char = start_char.saturating_add(max_chars).min(total_chars);
     let content = slice_chars(text, start_char, end_char);
-    let chars = content.chars().count();
+    let selected_metrics = TextMetrics::from_text(&content);
     Ok(SelectedText {
         content,
-        chars,
+        chars: selected_metrics.chars,
+        words: selected_metrics.words,
         total_chars,
+        total_words: total_metrics.words,
         start_char,
         end_char,
         total_lines,
@@ -337,11 +345,12 @@ fn select_char_range(
 }
 
 fn select_line_range(
-    total_chars: usize,
+    total_metrics: TextMetrics,
     lines: &[&str],
     request: &SkillReadRequest,
     max_chars: usize,
 ) -> Result<SelectedText, DomainError> {
+    let total_chars = total_metrics.chars;
     let total_lines = lines.len();
     let start_line = request.start_line.unwrap_or(1);
     if start_line > total_lines.max(1) {
@@ -363,6 +372,7 @@ fn select_line_range(
     let selected_total_chars = selected.chars().count();
     let returned_chars = selected_total_chars.min(max_chars);
     let content = selected.chars().take(returned_chars).collect::<String>();
+    let selected_metrics = TextMetrics::from_text(&content);
     let start_char = if start_line <= 1 {
         0
     } else {
@@ -371,12 +381,14 @@ fn select_line_range(
             .map(|line| line.chars().count() + 1)
             .sum()
     };
-    let end_char = start_char + content.chars().count();
+    let end_char = start_char + selected_metrics.chars;
 
     Ok(SelectedText {
         content,
-        chars: returned_chars,
+        chars: selected_metrics.chars,
+        words: selected_metrics.words,
         total_chars,
+        total_words: total_metrics.words,
         start_char,
         end_char,
         total_lines,

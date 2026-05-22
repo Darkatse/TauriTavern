@@ -191,7 +191,7 @@ AgentModelContentPart {
 - 该回填只影响 model request，不改变实际 workspace/journal 真相。
 - hydration 会写 `context_tool_result_hydrated` debug event。
 
-这样避免模型/provider 切换后只看到 `Wrote N bytes...` 而丢失刚写入的真实文本。
+这样避免模型/provider 切换后只看到写入摘要而丢失刚写入的真实文本；面向模型与 UI 的摘要统一使用 chars/words，字节数只保留在内部存储与完整性边界。
 
 ## Workspace 与 Commit
 

@@ -227,17 +227,33 @@ async fn agent_loop_writes_artifact_and_completes() {
         .await
         .expect("read model turn");
     assert_eq!(model_turn.assistant.text, "I will write the artifact.");
-    assert_eq!(model_turn.assistant.bytes, 26);
+    assert_eq!(model_turn.assistant.total_chars, 26);
+    assert_eq!(model_turn.assistant.total_words, 5);
     assert!(!model_turn.assistant.truncated);
     assert_eq!(model_turn.reasoning.len(), 1);
     assert_eq!(
         model_turn.reasoning[0].text,
         "Need to create output/main.md."
     );
+    assert_eq!(model_turn.reasoning[0].total_chars, 30);
+    assert_eq!(model_turn.reasoning[0].total_words, 6);
     assert_eq!(model_turn.reasoning[0].source, "reasoning_content");
     assert_eq!(model_turn.tool_calls.len(), 1);
     assert_eq!(model_turn.tool_calls[0].call_id, "call_write");
     assert_eq!(model_turn.tool_calls[0].name, "workspace.write_file");
+
+    let truncated_model_turn = service
+        .read_model_turn(AgentReadModelTurnDto {
+            run_id: run.id.clone(),
+            round: 1,
+            max_chars: 4,
+        })
+        .await
+        .expect("read truncated model turn");
+    assert_eq!(truncated_model_turn.assistant.text, "I wi");
+    assert_eq!(truncated_model_turn.assistant.total_chars, 26);
+    assert_eq!(truncated_model_turn.assistant.total_words, 5);
+    assert!(truncated_model_turn.assistant.truncated);
 
     let model_requests = model_gateway_probe.requests().await;
     let second_request = model_requests.get(1).expect("second model request");
@@ -286,7 +302,8 @@ async fn agent_loop_writes_artifact_and_completes() {
         .expect("model completed event");
     assert_eq!(model_completed.payload["hasAssistantText"], json!(true));
     assert_eq!(model_completed.payload["hasReasoning"], json!(true));
-    assert_eq!(model_completed.payload["assistantTextBytes"], json!(26));
+    assert_eq!(model_completed.payload["assistantTextChars"], json!(26));
+    assert_eq!(model_completed.payload["assistantTextWords"], json!(5));
 
     let tool_requested = events
         .iter()
@@ -2627,6 +2644,10 @@ async fn dispatcher_searches_and_reads_current_chat_messages() {
         read.result.structured["messages"][0]["text"],
         "blue lantern"
     );
+    assert_eq!(read.result.structured["messages"][0]["chars"], 12);
+    assert_eq!(read.result.structured["messages"][0]["words"], 2);
+    assert_eq!(read.result.structured["messages"][0]["totalWords"], 8);
+    assert_eq!(read.result.structured["messages"][0]["truncated"], true);
     assert_eq!(read.result.resource_refs[0], "chat:current#1:chars=4..16");
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
@@ -2919,6 +2940,10 @@ async fn dispatcher_searches_visible_workspace_files_and_reads_char_ranges() {
     assert!(read.result.content.contains("blue lantern"));
     assert_eq!(read.result.structured["startChar"], 6);
     assert_eq!(read.result.structured["endChar"], 18);
+    assert_eq!(read.result.structured["chars"], 12);
+    assert_eq!(read.result.structured["words"], 2);
+    assert_eq!(read.result.structured["totalWords"], 7);
+    assert_eq!(read.result.structured["truncated"], true);
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -3013,6 +3038,10 @@ async fn dispatcher_searches_skills_and_reads_skill_ranges() {
     );
     assert_eq!(read.result.structured["startLine"], 2);
     assert_eq!(read.result.structured["endLine"], 2);
+    assert_eq!(read.result.structured["chars"], 29);
+    assert_eq!(read.result.structured["words"], 5);
+    assert_eq!(read.result.structured["totalWords"], 7);
+    assert_eq!(read.result.structured["truncated"], true);
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -3103,6 +3132,7 @@ async fn dispatcher_progressively_reads_worldinfo_activation_from_run_snapshot()
         index.result.structured["entries"][0]["totalChars"],
         "The bridge has a hidden blue lantern.".chars().count()
     );
+    assert_eq!(index.result.structured["entries"][0]["totalWords"], 7);
     assert!(
         index.result.structured["entries"][0]
             .get("content")
@@ -3136,8 +3166,41 @@ async fn dispatcher_progressively_reads_worldinfo_activation_from_run_snapshot()
     assert_eq!(read.result.structured["entries"][0]["content"], "bridge");
     assert_eq!(read.result.structured["entries"][0]["startChar"], 4);
     assert_eq!(read.result.structured["entries"][0]["endChar"], 10);
+    assert_eq!(read.result.structured["entries"][0]["chars"], 6);
+    assert_eq!(read.result.structured["entries"][0]["words"], 1);
+    assert_eq!(read.result.structured["entries"][0]["totalWords"], 7);
     assert_eq!(read.result.structured["entries"][0]["truncated"], true);
     assert_eq!(read.result.resource_refs[0], "worldinfo:lorebook#7");
+
+    let suffix_read_call = AgentToolCall {
+        id: "call_worldinfo_suffix_read".to_string(),
+        name: "worldinfo.read_activated".to_string(),
+        arguments: json!({
+            "entries": [{
+                "ref": "worldinfo:lorebook#7",
+                "start_char": 4
+            }]
+        }),
+        provider_metadata: Value::Null,
+    };
+    let suffix_read = dispatcher
+        .dispatch(&run.id, &suffix_read_call, &mut session, &profile)
+        .await
+        .expect("dispatch worldinfo suffix read");
+
+    assert!(!suffix_read.result.is_error);
+    assert_eq!(
+        suffix_read.result.structured["entries"][0]["endChar"],
+        "The bridge has a hidden blue lantern.".chars().count()
+    );
+    assert_eq!(
+        suffix_read.result.structured["entries"][0]["content"],
+        "bridge has a hidden blue lantern."
+    );
+    assert_eq!(
+        suffix_read.result.structured["entries"][0]["truncated"],
+        true
+    );
 
     let missing_ref_call = AgentToolCall {
         id: "call_worldinfo_missing".to_string(),
