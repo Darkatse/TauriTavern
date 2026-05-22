@@ -38,8 +38,9 @@ const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
 const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
 const MINIMAX_API_BASE: &str = "https://api.minimax.io/v1";
 const MINIMAX_API_BASE_CN: &str = "https://api.minimaxi.com/v1";
-const OPENROUTER_REFERER: &str = "https://tauritavern.client";
+const OPENROUTER_REFERER: &str = "https://tauritavern.github.io";
 const OPENROUTER_TITLE: &str = "TauriTavern";
+const OPENROUTER_CATEGORIES: &str = "roleplay,general-chat";
 
 const ZAI_ENDPOINT_CODING: &str = "coding";
 const MINIMAX_ENDPOINT_CN: &str = "cn";
@@ -567,7 +568,15 @@ fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String>
     }
     if source == ChatCompletionSource::OpenRouter {
         headers.insert("HTTP-Referer".to_string(), OPENROUTER_REFERER.to_string());
+        headers.insert(
+            "X-OpenRouter-Title".to_string(),
+            OPENROUTER_TITLE.to_string(),
+        );
         headers.insert("X-Title".to_string(), OPENROUTER_TITLE.to_string());
+        headers.insert(
+            "X-OpenRouter-Categories".to_string(),
+            OPENROUTER_CATEGORIES.to_string(),
+        );
     }
 
     headers
@@ -618,9 +627,9 @@ mod tests {
     use super::super::additional_parameters::AdditionalParameters;
     use super::{
         ApiConfigHints, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, MINIMAX_API_BASE,
-        MINIMAX_API_BASE_CN, OPENROUTER_API_BASE, ZAI_API_BASE_CODING, default_base_url,
-        resolve_generate_api_config, resolve_status_api_config, source_extra_headers,
-        supports_reverse_proxy,
+        MINIMAX_API_BASE_CN, OPENROUTER_API_BASE, OPENROUTER_CATEGORIES, OPENROUTER_REFERER,
+        OPENROUTER_TITLE, ZAI_API_BASE_CODING, default_base_url, resolve_generate_api_config,
+        resolve_status_api_config, source_extra_headers, supports_reverse_proxy,
     };
 
     struct TestSecretRepository {
@@ -772,10 +781,24 @@ mod tests {
     }
 
     #[test]
-    fn openrouter_uses_referer_headers() {
+    fn openrouter_uses_app_attribution_headers() {
         let headers = source_extra_headers(ChatCompletionSource::OpenRouter);
-        assert!(headers.contains_key("HTTP-Referer"));
-        assert!(headers.contains_key("X-Title"));
+        assert_eq!(
+            headers.get("HTTP-Referer").map(String::as_str),
+            Some(OPENROUTER_REFERER)
+        );
+        assert_eq!(
+            headers.get("X-OpenRouter-Title").map(String::as_str),
+            Some(OPENROUTER_TITLE)
+        );
+        assert_eq!(
+            headers.get("X-Title").map(String::as_str),
+            Some(OPENROUTER_TITLE)
+        );
+        assert_eq!(
+            headers.get("X-OpenRouter-Categories").map(String::as_str),
+            Some(OPENROUTER_CATEGORIES)
+        );
     }
 
     #[test]
