@@ -347,6 +347,7 @@ import { applyStreamFadeIn } from './scripts/util/stream-fadein.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { createGenerationIdleGate } from './scripts/util/generation-idle-gate.js';
+import { shouldUnblockGenerationAfterUnhandledError } from './scripts/util/generation-lifecycle.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 import { MacroEnvBuilder } from './scripts/macros/engine/MacroEnvBuilder.js';
 import { MacroEngine } from './scripts/macros/engine/MacroEngine.js';
@@ -4803,9 +4804,25 @@ export async function Generate(type, options = {}, dryRun = false) {
     enterGeneration();
     try {
         return await GenerateInternal(type, options, dryRun);
+    } catch (error) {
+        cleanupGenerationAfterUnhandledError(type, dryRun);
+        throw error;
     } finally {
         exitGeneration();
     }
+}
+
+function cleanupGenerationAfterUnhandledError(type, dryRun) {
+    if (!shouldUnblockGenerationAfterUnhandledError({
+        dryRun,
+        isSendPress: is_send_press,
+        isBodyGenerating: document.body.dataset.generating === 'true',
+        isGroupGenerating: is_group_generating,
+    })) {
+        return;
+    }
+
+    unblockGeneration(type);
 }
 
 async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, agentMode = false, agentProfileId = null, agentContextPolicy = null, agentSystemPrompt = null } = {}, dryRun = false) {
