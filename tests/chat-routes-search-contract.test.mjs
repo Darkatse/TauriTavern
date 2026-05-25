@@ -20,7 +20,7 @@ function createSearchRouteHarness({ group = null } = {}) {
                 return group;
             }
             return [{
-                file_name: 'session',
+                file_name: 'session.jsonl',
                 file_size: 1024,
                 message_count: 7,
                 preview: 'latest',
@@ -61,7 +61,7 @@ test('/api/chats/search uses summary listing for empty character query', async (
         },
     }]);
     assert.deepEqual(await response.json(), [{
-        file_name: 'session.jsonl',
+        file_name: 'session',
         file_size: '1024 bytes',
         message_count: 7,
         preview_message: 'latest',
@@ -92,7 +92,7 @@ test('/api/chats/search uses group summary listing for empty group query', async
         group: { id: 'party', chats: ['group-a', 'group-b'] },
     });
 
-    await router.handle({
+    const response = await router.handle({
         method: 'POST',
         path: '/api/chats/search',
         body: { query: '', group_id: 'party' },
@@ -111,6 +111,13 @@ test('/api/chats/search uses group summary listing for empty group query', async
             },
         },
     ]);
+    assert.deepEqual(await response.json(), [{
+        file_name: 'session',
+        file_size: '1024 bytes',
+        message_count: 7,
+        preview_message: 'latest',
+        last_mes: 1770000000000,
+    }]);
 });
 
 test('/api/chats/search preserves upstream-significant group chat id spaces', async () => {

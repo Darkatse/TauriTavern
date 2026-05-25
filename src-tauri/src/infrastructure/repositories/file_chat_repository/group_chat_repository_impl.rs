@@ -15,6 +15,7 @@ use crate::domain::repositories::chat_types::{
 };
 use crate::domain::repositories::group_chat_repository::GroupChatRepository;
 use crate::infrastructure::logging::logger;
+use crate::infrastructure::persistence::file_system::move_file_no_replace_with_fallback;
 
 use super::FileChatRepository;
 
@@ -235,9 +236,7 @@ impl GroupChatRepository for FileChatRepository {
             )));
         }
 
-        fs::rename(&old_path, &new_path).await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to rename group chat file: {}", e))
-        })?;
+        move_file_no_replace_with_fallback(&old_path, &new_path).await?;
         self.remove_summary_cache_for_path(&old_path).await;
         self.remove_summary_cache_for_path(&new_path).await;
 

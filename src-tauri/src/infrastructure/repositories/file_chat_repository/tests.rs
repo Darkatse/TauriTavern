@@ -871,6 +871,55 @@ async fn rename_chat_rejects_empty_sanitized_target_without_fallback() {
 }
 
 #[tokio::test]
+async fn rename_chat_rejects_existing_target_without_overwrite() {
+    let (repository, root) = setup_repository().await;
+
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session",
+        &payload_with_integrity("rename-source"),
+        false,
+    )
+    .await
+    .expect("save source payload");
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session-renamed",
+        &payload_with_integrity("rename-target"),
+        false,
+    )
+    .await
+    .expect("save target payload");
+
+    let error = repository
+        .rename_chat("alice", "session", "session-renamed")
+        .await
+        .expect_err("existing target should fail");
+
+    assert!(
+        matches!(error, DomainError::InvalidData(message) if message.contains("Chat already exists"))
+    );
+    assert!(
+        root.join("chats")
+            .join("alice")
+            .join("session.jsonl")
+            .exists()
+    );
+    assert!(
+        root.join("chats")
+            .join("alice")
+            .join("session-renamed.jsonl")
+            .exists()
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn rename_group_chat_returns_committed_file_stem() {
     let (repository, root) = setup_repository().await;
     let payload = payload_with_integrity("group-rename-a");
@@ -894,6 +943,51 @@ async fn rename_group_chat_returns_committed_file_stem() {
         !root
             .join("group chats")
             .join("group-session.jsonl")
+            .exists()
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn rename_group_chat_rejects_existing_target_without_overwrite() {
+    let (repository, root) = setup_repository().await;
+
+    save_group_chat_payload_from_values(
+        &repository,
+        &root,
+        "group-session",
+        &payload_with_integrity("group-rename-source"),
+        false,
+    )
+    .await
+    .expect("save source group payload");
+    save_group_chat_payload_from_values(
+        &repository,
+        &root,
+        "group-session-renamed",
+        &payload_with_integrity("group-rename-target"),
+        false,
+    )
+    .await
+    .expect("save target group payload");
+
+    let error = repository
+        .rename_group_chat_payload("group-session", "group-session-renamed")
+        .await
+        .expect_err("existing target should fail");
+
+    assert!(
+        matches!(error, DomainError::InvalidData(message) if message.contains("Group chat already exists"))
+    );
+    assert!(
+        root.join("group chats")
+            .join("group-session.jsonl")
+            .exists()
+    );
+    assert!(
+        root.join("group chats")
+            .join("group-session-renamed.jsonl")
             .exists()
     );
 

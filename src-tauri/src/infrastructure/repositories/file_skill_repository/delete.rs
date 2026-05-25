@@ -1,9 +1,8 @@
-use std::path::PathBuf;
-
 use super::FileSkillRepository;
 use super::fs_ops::{
-    PreparedSkillDirReplacement, copy_skill_dir_to_empty_target, delete_installed_skill_dir,
-    ensure_installed_skill_dir, prepare_skill_dir_replacement, rollback_prepared_skill_dir,
+    PreparedSkillDirReplacement, SkillDirCleanup, cleanup_committed_skill_dirs,
+    copy_skill_dir_to_empty_target, delete_installed_skill_dir, ensure_installed_skill_dir,
+    prepare_skill_dir_replacement, rollback_prepared_skill_dir,
     rollback_prepared_skill_dir_replacement,
 };
 use super::index::sort_index;
@@ -14,11 +13,6 @@ use crate::domain::models::skill::{
     SkillInstallAction, SkillInstallConflictStrategy, SkillInstallResult, SkillMoveRequest,
     SkillScope,
 };
-
-struct SkillDirCleanup {
-    name: String,
-    path: PathBuf,
-}
 
 pub(super) async fn delete_skill(
     repository: &FileSkillRepository,
@@ -230,19 +224,6 @@ pub(super) async fn delete_skills_for_source(
     }
 
     Ok(deleted)
-}
-
-fn cleanup_committed_skill_dirs(
-    operation: &str,
-    dirs: &[SkillDirCleanup],
-) -> Result<(), DomainError> {
-    let mut errors = Vec::new();
-    for dir in dirs {
-        if let Err(error) = delete_installed_skill_dir(&dir.path, &dir.name) {
-            errors.push(format!("{}: {}", dir.path.display(), error));
-        }
-    }
-    committed_cleanup_result(operation, errors)
 }
 
 fn cleanup_move_replace_after_commit(

@@ -6,7 +6,7 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::json_merge::merge_json_value;
 use crate::infrastructure::persistence::file_system::{
-    replace_file_with_fallback, unique_temp_path,
+    move_file_no_replace_with_fallback, replace_file_with_fallback, unique_temp_path,
 };
 
 use super::FileChatRepository;
@@ -126,14 +126,7 @@ async fn rename_store_json_entry(dir: &Path, key: &str, new_key: &str) -> Result
         )));
     }
 
-    fs::rename(&from, &to).await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to rename chat store entry {} to {}: {}",
-            from.display(),
-            to.display(),
-            error
-        ))
-    })?;
+    move_file_no_replace_with_fallback(&from, &to).await?;
 
     Ok(())
 }

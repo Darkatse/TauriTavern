@@ -7,6 +7,11 @@ use super::MAX_SINGLE_FILE_BYTES;
 use super::paths::normalize_skill_path;
 use crate::domain::errors::DomainError;
 
+pub(super) struct SkillDirCleanup {
+    pub(super) name: String,
+    pub(super) path: PathBuf,
+}
+
 pub(super) fn copy_dir_contents(source: &Path, destination: &Path) -> Result<(), DomainError> {
     fs::create_dir_all(destination).map_err(|error| {
         DomainError::InternalError(format!(
@@ -82,6 +87,12 @@ pub(super) fn copy_skill_dir_to_empty_target(
     target: &Path,
     name: &str,
 ) -> Result<(), DomainError> {
+    if target.starts_with(source) {
+        return Err(DomainError::InvalidData(format!(
+            "Skill target directory cannot be inside source directory: {}",
+            target.display()
+        )));
+    }
     if target.exists() {
         return Err(DomainError::InvalidData(format!(
             "Skill target directory already exists without an index entry: {}",
@@ -98,19 +109,14 @@ pub(super) fn copy_skill_dir_to_empty_target(
 pub(super) struct PreparedSkillDirReplacement {
     target: PathBuf,
     backup: PathBuf,
+    name: String,
 }
 
 impl PreparedSkillDirReplacement {
     pub(super) fn rollback(&self) -> Result<(), DomainError> {
         remove_dir_if_exists(&self.target)?;
-        fs::rename(&self.backup, &self.target).map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to restore Skill directory backup '{}' -> '{}': {}",
-                self.backup.display(),
-                self.target.display(),
-                error
-            ))
-        })
+        copy_skill_dir_to_empty_target(&self.backup, &self.target, &self.name)?;
+        remove_dir_if_exists(&self.backup)
     }
 
     pub(super) fn discard_backup(&self) -> Result<(), DomainError> {
@@ -133,33 +139,40 @@ pub(super) fn prepare_skill_dir_replacement(
         Uuid::new_v4().simple()
     ));
 
-    fs::rename(target, &backup).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to move existing Skill '{}' to backup '{}': {}",
-            target.display(),
-            backup.display(),
-            error
-        ))
-    })?;
+    copy_skill_dir_to_empty_target(target, &backup, name)?;
+    if let Err(error) = remove_dir_if_exists(target) {
+        return Err(match remove_dir_if_exists(&backup) {
+            Ok(()) => error,
+            Err(cleanup_error) => DomainError::InternalError(format!(
+                "{}; additionally failed to clean up Skill directory backup '{}': {}",
+                error,
+                backup.display(),
+                cleanup_error
+            )),
+        });
+    }
+
+    let replacement = PreparedSkillDirReplacement {
+        target: target.to_path_buf(),
+        backup,
+        name: name.to_string(),
+    };
 
     if let Err(error) = copy_dir_contents(source, target) {
         let cleanup_error = cleanup_after_copy_error(target, name, error);
-        return Err(match fs::rename(&backup, target) {
+        return Err(match replacement.rollback() {
             Ok(()) => cleanup_error,
             Err(restore_error) => DomainError::InternalError(format!(
                 "{}; additionally failed to restore Skill directory backup '{}' -> '{}': {}",
                 cleanup_error,
-                backup.display(),
+                replacement.backup.display(),
                 target.display(),
                 restore_error
             )),
         });
     }
 
-    Ok(PreparedSkillDirReplacement {
-        target: target.to_path_buf(),
-        backup,
-    })
+    Ok(replacement)
 }
 
 pub(super) fn ensure_installed_skill_dir(path: &Path, name: &str) -> Result<(), DomainError> {
@@ -197,6 +210,19 @@ pub(super) fn delete_installed_skill_dir(path: &Path, name: &str) -> Result<(), 
             error
         ))
     })
+}
+
+pub(super) fn cleanup_committed_skill_dirs(
+    operation: &str,
+    dirs: &[SkillDirCleanup],
+) -> Result<(), DomainError> {
+    let mut errors = Vec::new();
+    for dir in dirs {
+        if let Err(error) = delete_installed_skill_dir(&dir.path, &dir.name) {
+            errors.push(format!("{}: {}", dir.path.display(), error));
+        }
+    }
+    committed_cleanup_result(operation, errors)
 }
 
 pub(super) fn remove_dir_if_exists(path: &Path) -> Result<(), DomainError> {
@@ -268,5 +294,16 @@ fn cleanup_after_copy_error(target: &Path, name: &str, error: DomainError) -> Do
             "{}; additionally failed to clean up prepared Skill directory for '{}': {}",
             error, name, cleanup_error
         )),
+    }
+}
+
+fn committed_cleanup_result(operation: &str, errors: Vec<String>) -> Result<(), DomainError> {
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(DomainError::InternalError(format!(
+            "{operation} committed but failed to clean up Skill directories: {}",
+            errors.join("; ")
+        )))
     }
 }

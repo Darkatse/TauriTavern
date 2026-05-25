@@ -1,8 +1,13 @@
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tokio::fs as tokio_fs;
 
+use super::fs_ops::{
+    SkillDirCleanup, cleanup_committed_skill_dirs, copy_skill_dir_to_empty_target,
+    ensure_installed_skill_dir, rollback_prepared_skill_dirs,
+};
 use super::paths::{validate_skill_name, validate_skill_scope};
 use super::{FileSkillRepository, INDEX_VERSION};
 use crate::domain::errors::DomainError;
@@ -116,8 +121,13 @@ impl FileSkillRepository {
         &self,
         mut index: SkillIndexFile,
     ) -> Result<SkillIndexFile, DomainError> {
+        let mut prepared_targets: Vec<PathBuf> = Vec::new();
+        let mut legacy_dirs = Vec::new();
+
         for skill in &mut index.skills {
-            validate_skill_name(&skill.name)?;
+            if let Err(error) = validate_skill_name(&skill.name) {
+                return Err(rollback_prepared_skill_dirs(&prepared_targets, error));
+            }
             skill.scope = SkillScope::Global;
             let old_root = self.installed_root().join(&skill.name);
             let new_scope_root = self.installed_scope_root(&SkillScope::Global)?;
@@ -127,49 +137,66 @@ impl FileSkillRepository {
 
             match (old_exists, new_exists) {
                 (true, false) => {
-                    tokio_fs::create_dir_all(&new_scope_root)
-                        .await
-                        .map_err(|error| {
-                            DomainError::InternalError(format!(
-                                "Failed to create global Skill scope directory '{}': {}",
-                                new_scope_root.display(),
-                                error
-                            ))
-                        })?;
-                    tokio_fs::rename(&old_root, &new_root)
-                        .await
-                        .map_err(|error| {
-                            DomainError::InternalError(format!(
-                                "Failed to migrate Skill '{}' into global scope: {}",
-                                skill.name, error
-                            ))
-                        })?;
+                    if let Err(error) = ensure_installed_skill_dir(&old_root, &skill.name) {
+                        return Err(rollback_prepared_skill_dirs(&prepared_targets, error));
+                    }
+                    if let Err(error) =
+                        copy_skill_dir_to_empty_target(&old_root, &new_root, &skill.name)
+                    {
+                        let migration_error = DomainError::InternalError(format!(
+                            "Failed to migrate Skill '{}' into global scope: {}",
+                            skill.name, error
+                        ));
+                        return Err(rollback_prepared_skill_dirs(
+                            &prepared_targets,
+                            migration_error,
+                        ));
+                    }
+                    prepared_targets.push(new_root);
+                    legacy_dirs.push(SkillDirCleanup {
+                        name: skill.name.clone(),
+                        path: old_root,
+                    });
                 }
                 (false, true) => {
-                    return Err(DomainError::InvalidData(format!(
-                        "Skill index v1 is partially migrated for '{}'",
+                    if let Err(error) = ensure_installed_skill_dir(&new_root, &skill.name) {
+                        return Err(rollback_prepared_skill_dirs(&prepared_targets, error));
+                    }
+                    tracing::warn!(
+                        "Skill index v1 migration found '{}' already under global scope while the legacy directory is missing; treating it as a completed prior move",
                         skill.name
-                    )));
+                    );
                 }
                 (true, true) => {
-                    return Err(DomainError::InvalidData(format!(
-                        "Skill index v1 migration target already exists for '{}'",
-                        skill.name
-                    )));
+                    return Err(rollback_prepared_skill_dirs(
+                        &prepared_targets,
+                        DomainError::InvalidData(format!(
+                            "Skill index v1 migration target already exists for '{}'",
+                            skill.name
+                        )),
+                    ));
                 }
                 (false, false) => {
-                    return Err(DomainError::NotFound(format!(
-                        "Skill directory not found during v1 migration: {}",
-                        skill.name
-                    )));
+                    return Err(rollback_prepared_skill_dirs(
+                        &prepared_targets,
+                        DomainError::NotFound(format!(
+                            "Skill directory not found during v1 migration: {}",
+                            skill.name
+                        )),
+                    ));
                 }
             }
         }
 
         index.version = INDEX_VERSION;
         sort_index(&mut index);
-        validate_index(&index)?;
-        self.save_index(&index).await?;
+        if let Err(error) = validate_index(&index) {
+            return Err(rollback_prepared_skill_dirs(&prepared_targets, error));
+        }
+        if let Err(error) = self.save_index(&index).await {
+            return Err(rollback_prepared_skill_dirs(&prepared_targets, error));
+        }
+        cleanup_committed_skill_dirs("migrate_v1_index", &legacy_dirs)?;
         Ok(index)
     }
 }

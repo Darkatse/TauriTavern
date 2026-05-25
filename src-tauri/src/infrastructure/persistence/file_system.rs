@@ -4,6 +4,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::io;
 use std::path::{Path, PathBuf};
 use tokio::fs::{self as tokio_fs, create_dir_all, read_to_string};
+use tokio::io as tokio_io;
 use uuid::Uuid;
 
 /// Represents the application data directory structure
@@ -231,49 +232,267 @@ pub fn unique_temp_path(target_path: &Path, fallback_file_name: &str) -> PathBuf
     target_path.with_file_name(format!("{}.{}.tmp", file_name, Uuid::new_v4()))
 }
 
+async fn optional_metadata(path: &Path) -> Result<Option<std::fs::Metadata>, DomainError> {
+    match tokio_fs::symlink_metadata(path).await {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(DomainError::InternalError(format!(
+            "Failed to read file metadata {:?}: {}",
+            path, error
+        ))),
+    }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn optional_metadata_sync(path: &Path) -> Result<Option<std::fs::Metadata>, DomainError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(DomainError::InternalError(format!(
+            "Failed to read file metadata {:?}: {}",
+            path, error
+        ))),
+    }
+}
+
+struct CopyFileNoReplaceError {
+    error: std::io::Error,
+    target_created: bool,
+}
+
+async fn copy_file_no_replace(
+    source_path: &Path,
+    target_path: &Path,
+) -> Result<(), CopyFileNoReplaceError> {
+    let mut source =
+        tokio_fs::File::open(source_path)
+            .await
+            .map_err(|error| CopyFileNoReplaceError {
+                error,
+                target_created: false,
+            })?;
+    let mut target = tokio_fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target_path)
+        .await
+        .map_err(|error| CopyFileNoReplaceError {
+            error,
+            target_created: false,
+        })?;
+    tokio_io::copy(&mut source, &mut target)
+        .await
+        .map_err(|error| CopyFileNoReplaceError {
+            error,
+            target_created: true,
+        })?;
+    Ok(())
+}
+
+/// Move a file without replacing an existing target.
+///
+/// The operation uses `rename` first and falls back to copy/remove when the
+/// storage backend cannot provide reliable rename semantics, which is common on
+/// Android external app storage. Ambiguous post-error states fail fast.
+pub async fn move_file_no_replace_with_fallback(
+    source_path: &Path,
+    target_path: &Path,
+) -> Result<(), DomainError> {
+    let Some(source_metadata) = optional_metadata(source_path).await? else {
+        return Err(DomainError::NotFound(format!(
+            "Source file not found: {}",
+            source_path.display()
+        )));
+    };
+    if !source_metadata.is_file() {
+        return Err(DomainError::InvalidData(format!(
+            "Source path is not a file: {}",
+            source_path.display()
+        )));
+    }
+    if optional_metadata(target_path).await?.is_some() {
+        return Err(DomainError::InvalidData(format!(
+            "Target file already exists: {}",
+            target_path.display()
+        )));
+    }
+
+    if let Some(parent) = target_path.parent() {
+        create_dir_all(parent).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to create target parent directory {:?}: {}",
+                parent, error
+            ))
+        })?;
+    }
+
+    match tokio_fs::rename(source_path, target_path).await {
+        Ok(()) => Ok(()),
+        Err(rename_error) => {
+            let source_after = optional_metadata(source_path).await?;
+            let target_after = optional_metadata(target_path).await?;
+
+            match (source_after, target_after) {
+                (None, Some(target_metadata)) if target_metadata.is_file() => {
+                    logger::warn(&format!(
+                        "Rename reported an error after moving file {:?} -> {:?}: {}",
+                        source_path, target_path, rename_error
+                    ));
+                    Ok(())
+                }
+                (Some(source_metadata), None) if source_metadata.is_file() => {
+                    logger::warn(&format!(
+                        "Rename failed while moving file {:?} -> {:?}: {}. Falling back to copy/remove.",
+                        source_path, target_path, rename_error
+                    ));
+                    if let Err(copy_error) = copy_file_no_replace(source_path, target_path).await {
+                        if !copy_error.target_created {
+                            return Err(DomainError::InternalError(format!(
+                                "Failed to move file {:?} -> {:?}. Rename error: {}. Copy fallback error: {}",
+                                source_path, target_path, rename_error, copy_error.error
+                            )));
+                        }
+
+                        return Err(match tokio_fs::remove_file(target_path).await {
+                            Ok(()) => DomainError::InternalError(format!(
+                                "Failed to move file {:?} -> {:?}. Rename error: {}. Copy fallback error: {}",
+                                source_path, target_path, rename_error, copy_error.error
+                            )),
+                            Err(cleanup_error)
+                                if cleanup_error.kind() == std::io::ErrorKind::NotFound =>
+                            {
+                                DomainError::InternalError(format!(
+                                    "Failed to move file {:?} -> {:?}. Rename error: {}. Copy fallback error: {}",
+                                    source_path, target_path, rename_error, copy_error.error
+                                ))
+                            }
+                            Err(cleanup_error) => DomainError::InternalError(format!(
+                                "Failed to move file {:?} -> {:?}. Rename error: {}. Copy fallback error: {}. Failed to remove partial target: {}",
+                                source_path,
+                                target_path,
+                                rename_error,
+                                copy_error.error,
+                                cleanup_error
+                            )),
+                        });
+                    }
+
+                    match tokio_fs::remove_file(source_path).await {
+                        Ok(()) => Ok(()),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                        Err(error) => Err(DomainError::InternalError(format!(
+                            "Copied file {:?} -> {:?}, but failed to remove source file: {}",
+                            source_path, target_path, error
+                        ))),
+                    }
+                }
+                (Some(_), Some(_)) => Err(DomainError::InternalError(format!(
+                    "Failed to move file {:?} -> {:?}. Rename error: {}. Source and target both exist after failure.",
+                    source_path, target_path, rename_error
+                ))),
+                (None, None) => Err(DomainError::InternalError(format!(
+                    "Failed to move file {:?} -> {:?}. Rename error: {}. Source and target are both missing after failure.",
+                    source_path, target_path, rename_error
+                ))),
+                (Some(_), None) => Err(DomainError::InvalidData(format!(
+                    "Source path is not a file after failed move: {}",
+                    source_path.display()
+                ))),
+                (None, Some(_)) => Err(DomainError::InvalidData(format!(
+                    "Target path is not a file after failed move: {}",
+                    target_path.display()
+                ))),
+            }
+        }
+    }
+}
+
 /// Replace a file using `rename`, with a copy/remove fallback for storage backends
 /// where rename is unreliable (notably Android external app storage).
 pub async fn replace_file_with_fallback(
     temp_path: &Path,
     target_path: &Path,
 ) -> Result<(), DomainError> {
+    let Some(temp_metadata) = optional_metadata(temp_path).await? else {
+        return Err(DomainError::NotFound(format!(
+            "Temp file not found: {}",
+            temp_path.display()
+        )));
+    };
+    if !temp_metadata.is_file() {
+        return Err(DomainError::InvalidData(format!(
+            "Temp path is not a file: {}",
+            temp_path.display()
+        )));
+    }
+
     match tokio_fs::rename(temp_path, target_path).await {
         Ok(()) => Ok(()),
         Err(rename_error) => {
-            logger::warn(&format!(
-                "Rename failed while replacing file {:?} -> {:?}: {}. Falling back to copy/remove.",
-                temp_path, target_path, rename_error
-            ));
+            let temp_after = optional_metadata(temp_path).await?;
+            let target_after = optional_metadata(target_path).await?;
 
-            if let Some(parent) = target_path.parent() {
-                create_dir_all(parent).await.map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to create target parent directory {:?}: {}",
-                        parent, error
-                    ))
-                })?;
-            }
-
-            let copy_result = tokio_fs::copy(temp_path, target_path).await;
-            if let Err(copy_error) = copy_result {
-                return Err(DomainError::InternalError(format!(
-                    "Failed to replace file {:?} -> {:?}. Rename error: {}. Copy fallback error: {}",
-                    temp_path, target_path, rename_error, copy_error
-                )));
-            }
-
-            match tokio_fs::remove_file(temp_path).await {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => {
+            match (temp_after, target_after) {
+                (None, Some(target_metadata)) if target_metadata.is_file() => {
                     logger::warn(&format!(
-                        "Copied file {:?} -> {:?}, but failed to remove temp file: {}",
-                        temp_path, target_path, error
+                        "Rename reported an error after replacing file {:?} -> {:?}: {}",
+                        temp_path, target_path, rename_error
                     ));
+                    Ok(())
                 }
-            }
+                (Some(temp_metadata), target_after) if temp_metadata.is_file() => {
+                    if target_after.is_some_and(|metadata| !metadata.is_file()) {
+                        return Err(DomainError::InvalidData(format!(
+                            "Target path is not a file after failed replace: {}",
+                            target_path.display()
+                        )));
+                    }
 
-            Ok(())
+                    logger::warn(&format!(
+                        "Rename failed while replacing file {:?} -> {:?}: {}. Falling back to copy/remove.",
+                        temp_path, target_path, rename_error
+                    ));
+
+                    if let Some(parent) = target_path.parent() {
+                        create_dir_all(parent).await.map_err(|error| {
+                            DomainError::InternalError(format!(
+                                "Failed to create target parent directory {:?}: {}",
+                                parent, error
+                            ))
+                        })?;
+                    }
+
+                    tokio_fs::copy(temp_path, target_path)
+                        .await
+                        .map_err(|copy_error| {
+                            DomainError::InternalError(format!(
+                                "Failed to replace file {:?} -> {:?}. Rename error: {}. Copy fallback error: {}",
+                                temp_path, target_path, rename_error, copy_error
+                            ))
+                        })?;
+
+                    match tokio_fs::remove_file(temp_path).await {
+                        Ok(()) => Ok(()),
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                        Err(error) => Err(DomainError::InternalError(format!(
+                            "Replaced file {:?} -> {:?}, but failed to remove temp file: {}",
+                            temp_path, target_path, error
+                        ))),
+                    }
+                }
+                (Some(_), _) => Err(DomainError::InvalidData(format!(
+                    "Temp path is not a file after failed replace: {}",
+                    temp_path.display()
+                ))),
+                (None, None) => Err(DomainError::InternalError(format!(
+                    "Failed to replace file {:?} -> {:?}. Rename error: {}. Temp and target are both missing after failure.",
+                    temp_path, target_path, rename_error
+                ))),
+                (None, Some(_)) => Err(DomainError::InvalidData(format!(
+                    "Target path is not a file after failed replace: {}",
+                    target_path.display()
+                ))),
+            }
         }
     }
 }
@@ -285,42 +504,84 @@ pub fn replace_file_with_fallback_sync(
     temp_path: &Path,
     target_path: &Path,
 ) -> Result<(), DomainError> {
+    let Some(temp_metadata) = optional_metadata_sync(temp_path)? else {
+        return Err(DomainError::NotFound(format!(
+            "Temp file not found: {}",
+            temp_path.display()
+        )));
+    };
+    if !temp_metadata.is_file() {
+        return Err(DomainError::InvalidData(format!(
+            "Temp path is not a file: {}",
+            temp_path.display()
+        )));
+    }
+
     match std::fs::rename(temp_path, target_path) {
         Ok(()) => Ok(()),
         Err(rename_error) => {
-            logger::warn(&format!(
-                "Rename failed while replacing file {:?} -> {:?}: {}. Falling back to copy/remove.",
-                temp_path, target_path, rename_error
-            ));
+            let temp_after = optional_metadata_sync(temp_path)?;
+            let target_after = optional_metadata_sync(target_path)?;
 
-            if let Some(parent) = target_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to create target parent directory {:?}: {}",
-                        parent, error
-                    ))
-                })?;
-            }
-
-            std::fs::copy(temp_path, target_path).map_err(|copy_error| {
-                DomainError::InternalError(format!(
-                    "Failed to replace file {:?} -> {:?}. Rename error: {}. Copy fallback error: {}",
-                    temp_path, target_path, rename_error, copy_error
-                ))
-            })?;
-
-            match std::fs::remove_file(temp_path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => {
+            match (temp_after, target_after) {
+                (None, Some(target_metadata)) if target_metadata.is_file() => {
                     logger::warn(&format!(
-                        "Copied file {:?} -> {:?}, but failed to remove temp file: {}",
-                        temp_path, target_path, error
+                        "Rename reported an error after replacing file {:?} -> {:?}: {}",
+                        temp_path, target_path, rename_error
                     ));
+                    Ok(())
                 }
-            }
+                (Some(temp_metadata), target_after) if temp_metadata.is_file() => {
+                    if target_after.is_some_and(|metadata| !metadata.is_file()) {
+                        return Err(DomainError::InvalidData(format!(
+                            "Target path is not a file after failed replace: {}",
+                            target_path.display()
+                        )));
+                    }
 
-            Ok(())
+                    logger::warn(&format!(
+                        "Rename failed while replacing file {:?} -> {:?}: {}. Falling back to copy/remove.",
+                        temp_path, target_path, rename_error
+                    ));
+
+                    if let Some(parent) = target_path.parent() {
+                        std::fs::create_dir_all(parent).map_err(|error| {
+                            DomainError::InternalError(format!(
+                                "Failed to create target parent directory {:?}: {}",
+                                parent, error
+                            ))
+                        })?;
+                    }
+
+                    std::fs::copy(temp_path, target_path).map_err(|copy_error| {
+                        DomainError::InternalError(format!(
+                            "Failed to replace file {:?} -> {:?}. Rename error: {}. Copy fallback error: {}",
+                            temp_path, target_path, rename_error, copy_error
+                        ))
+                    })?;
+
+                    match std::fs::remove_file(temp_path) {
+                        Ok(()) => Ok(()),
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                        Err(error) => Err(DomainError::InternalError(format!(
+                            "Replaced file {:?} -> {:?}, but failed to remove temp file: {}",
+                            temp_path, target_path, error
+                        ))),
+                    }
+                }
+                (Some(_), _) => Err(DomainError::InvalidData(format!(
+                    "Temp path is not a file after failed replace: {}",
+                    temp_path.display()
+                ))),
+                (None, None) => Err(DomainError::InternalError(format!(
+                    "Failed to replace file {:?} -> {:?}. Rename error: {}. Temp and target are both missing after failure.",
+                    temp_path, target_path, rename_error
+                ))),
+                (None, Some(_)) => Err(DomainError::InvalidData(format!(
+                    "Target path is not a file after failed replace: {}",
+                    target_path.display()
+                ))),
+            }
         }
     }
 }
@@ -492,6 +753,192 @@ mod tests {
             .expect("remove temp root");
     }
 
+    #[tokio::test]
+    async fn replace_file_with_fallback_rejects_missing_temp() {
+        let root = unique_temp_root();
+        let _ = tokio_fs::remove_dir_all(&root).await;
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create temp root");
+
+        let temp = root.join("missing.txt");
+        let target = root.join("target.txt");
+
+        let error = replace_file_with_fallback(&temp, &target)
+            .await
+            .expect_err("missing temp should fail");
+
+        assert!(matches!(
+            error,
+            DomainError::NotFound(message) if message.contains("Temp file not found")
+        ));
+        assert!(!target.exists(), "target should not be created");
+
+        tokio_fs::remove_dir_all(&root)
+            .await
+            .expect("remove temp root");
+    }
+
+    #[tokio::test]
+    async fn replace_file_with_fallback_copies_when_target_parent_is_missing() {
+        let root = unique_temp_root();
+        let _ = tokio_fs::remove_dir_all(&root).await;
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create temp root");
+
+        let temp = root.join("temp.txt");
+        let target = root.join("nested").join("target.txt");
+        tokio_fs::write(&temp, b"new")
+            .await
+            .expect("write temp file");
+
+        replace_file_with_fallback(&temp, &target)
+            .await
+            .expect("replace file through fallback");
+
+        let bytes = tokio_fs::read(&target).await.expect("read target");
+        assert_eq!(&bytes, b"new");
+        assert!(!temp.exists(), "temp file should be removed");
+
+        tokio_fs::remove_dir_all(&root)
+            .await
+            .expect("remove temp root");
+    }
+
+    #[tokio::test]
+    async fn replace_file_with_fallback_rejects_directory_target_after_failed_rename() {
+        let root = unique_temp_root();
+        let _ = tokio_fs::remove_dir_all(&root).await;
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create temp root");
+
+        let temp = root.join("temp.txt");
+        let target = root.join("target");
+        tokio_fs::write(&temp, b"new")
+            .await
+            .expect("write temp file");
+        tokio_fs::create_dir_all(&target)
+            .await
+            .expect("create target directory");
+
+        let error = replace_file_with_fallback(&temp, &target)
+            .await
+            .expect_err("directory target should fail");
+
+        assert!(
+            matches!(error, DomainError::InvalidData(message) if message.contains("Target path is not a file"))
+        );
+        assert!(temp.exists(), "temp file should remain for diagnosis");
+        assert!(target.is_dir(), "target directory should remain intact");
+
+        tokio_fs::remove_dir_all(&root)
+            .await
+            .expect("remove temp root");
+    }
+
+    #[tokio::test]
+    async fn move_file_no_replace_with_fallback_moves_file() {
+        let root = unique_temp_root();
+        let _ = tokio_fs::remove_dir_all(&root).await;
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create temp root");
+
+        let source = root.join("source.txt");
+        let target = root.join("nested").join("target.txt");
+        tokio_fs::write(&source, b"payload")
+            .await
+            .expect("write source file");
+
+        move_file_no_replace_with_fallback(&source, &target)
+            .await
+            .expect("move file");
+
+        let bytes = tokio_fs::read(&target).await.expect("read target");
+        assert_eq!(&bytes, b"payload");
+        assert!(!source.exists(), "source file should be moved/removed");
+
+        tokio_fs::remove_dir_all(&root)
+            .await
+            .expect("remove temp root");
+    }
+
+    #[tokio::test]
+    async fn move_file_no_replace_with_fallback_rejects_existing_target() {
+        let root = unique_temp_root();
+        let _ = tokio_fs::remove_dir_all(&root).await;
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create temp root");
+
+        let source = root.join("source.txt");
+        let target = root.join("target.txt");
+        tokio_fs::write(&source, b"source")
+            .await
+            .expect("write source file");
+        tokio_fs::write(&target, b"target")
+            .await
+            .expect("write target file");
+
+        let error = move_file_no_replace_with_fallback(&source, &target)
+            .await
+            .expect_err("existing target should fail");
+
+        assert!(
+            matches!(error, DomainError::InvalidData(message) if message.contains("Target file already exists"))
+        );
+        assert_eq!(
+            tokio_fs::read(&source).await.expect("read source"),
+            b"source"
+        );
+        assert_eq!(
+            tokio_fs::read(&target).await.expect("read target"),
+            b"target"
+        );
+
+        tokio_fs::remove_dir_all(&root)
+            .await
+            .expect("remove temp root");
+    }
+
+    #[tokio::test]
+    async fn copy_file_no_replace_keeps_existing_target() {
+        let root = unique_temp_root();
+        let _ = tokio_fs::remove_dir_all(&root).await;
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create temp root");
+
+        let source = root.join("source.txt");
+        let target = root.join("target.txt");
+        tokio_fs::write(&source, b"source")
+            .await
+            .expect("write source file");
+        tokio_fs::write(&target, b"target")
+            .await
+            .expect("write target file");
+
+        let error = copy_file_no_replace(&source, &target)
+            .await
+            .expect_err("existing target should fail");
+
+        assert!(!error.target_created);
+        assert_eq!(
+            tokio_fs::read(&source).await.expect("read source"),
+            b"source"
+        );
+        assert_eq!(
+            tokio_fs::read(&target).await.expect("read target"),
+            b"target"
+        );
+
+        tokio_fs::remove_dir_all(&root)
+            .await
+            .expect("remove temp root");
+    }
+
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     #[test]
     fn replace_file_with_fallback_sync_overwrites_existing_file() {
@@ -510,6 +957,50 @@ mod tests {
         let bytes = std::fs::read(&target).expect("read target");
         assert_eq!(&bytes, b"new");
         assert!(!temp.exists(), "temp file should be moved/removed");
+
+        std::fs::remove_dir_all(&root).expect("remove temp root");
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[test]
+    fn replace_file_with_fallback_sync_copies_when_target_parent_is_missing() {
+        let root = unique_temp_root();
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+
+        let temp = root.join("temp.txt");
+        let target = root.join("nested").join("target.txt");
+        std::fs::write(&temp, b"new").expect("write temp file");
+
+        replace_file_with_fallback_sync(&temp, &target).expect("replace file through fallback");
+
+        let bytes = std::fs::read(&target).expect("read target");
+        assert_eq!(&bytes, b"new");
+        assert!(!temp.exists(), "temp file should be removed");
+
+        std::fs::remove_dir_all(&root).expect("remove temp root");
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[test]
+    fn replace_file_with_fallback_sync_rejects_directory_target_after_failed_rename() {
+        let root = unique_temp_root();
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+
+        let temp = root.join("temp.txt");
+        let target = root.join("target");
+        std::fs::write(&temp, b"new").expect("write temp file");
+        std::fs::create_dir_all(&target).expect("create target directory");
+
+        let error = replace_file_with_fallback_sync(&temp, &target)
+            .expect_err("directory target should fail");
+
+        assert!(
+            matches!(error, DomainError::InvalidData(message) if message.contains("Target path is not a file"))
+        );
+        assert!(temp.exists(), "temp file should remain for diagnosis");
+        assert!(target.is_dir(), "target directory should remain intact");
 
         std::fs::remove_dir_all(&root).expect("remove temp root");
     }

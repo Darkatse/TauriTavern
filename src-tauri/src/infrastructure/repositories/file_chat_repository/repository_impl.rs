@@ -17,7 +17,9 @@ use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::chat_format_importers::{
     export_payload_to_plain_text, import_chat_payloads_from_json, import_chat_payloads_from_jsonl,
 };
-use crate::infrastructure::persistence::file_system::list_files_with_extension;
+use crate::infrastructure::persistence::file_system::{
+    list_files_with_extension, move_file_no_replace_with_fallback,
+};
 use crate::infrastructure::persistence::jsonl_utils::{
     parse_jsonl_bytes, read_jsonl_file, write_jsonl_file,
 };
@@ -217,10 +219,12 @@ impl ChatRepository for FileChatRepository {
             )));
         }
 
-        fs::rename(&old_path, &new_path).await.map_err(|e| {
-            logger::error(&format!("Failed to rename chat file: {}", e));
-            DomainError::InternalError(format!("Failed to rename chat file: {}", e))
-        })?;
+        move_file_no_replace_with_fallback(&old_path, &new_path)
+            .await
+            .map_err(|e| {
+                logger::error(&format!("Failed to rename chat file: {}", e));
+                e
+            })?;
 
         // Update cache
         let old_cache_key = self.get_cache_key(character_name, old_file_name)?;

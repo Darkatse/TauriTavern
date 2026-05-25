@@ -1537,6 +1537,202 @@ async fn migrates_v1_unscoped_index_to_global_scope() {
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
+#[tokio::test]
+async fn migrate_v1_rolls_back_prepared_global_dirs_on_later_failure() {
+    let root = temp_root("migrate-v1-rollback");
+    let first_root = root.join("installed").join("legacy-one");
+    tokio_fs::create_dir_all(&first_root)
+        .await
+        .expect("create first legacy skill");
+    tokio_fs::write(
+        first_root.join("SKILL.md"),
+        "---\nname: legacy-one\ndescription: Legacy Skill.\n---\n\n# Legacy\n",
+    )
+    .await
+    .expect("write first legacy skill");
+    tokio_fs::create_dir_all(root.join("index"))
+        .await
+        .expect("create index dir");
+    tokio_fs::write(
+        root.join("index").join("skills.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "skills": [
+                {
+                    "name": "legacy-one",
+                    "description": "Legacy Skill.",
+                    "installedHash": "legacy-one-hash",
+                    "fileCount": 1,
+                    "totalBytes": 1,
+                    "hasScripts": false,
+                    "hasBinary": false,
+                    "installedAt": Utc::now().to_rfc3339(),
+                    "sourceRefs": [],
+                },
+                {
+                    "name": "missing-legacy",
+                    "description": "Missing Legacy Skill.",
+                    "installedHash": "missing-hash",
+                    "fileCount": 1,
+                    "totalBytes": 1,
+                    "hasScripts": false,
+                    "hasBinary": false,
+                    "installedAt": Utc::now().to_rfc3339(),
+                    "sourceRefs": [],
+                },
+            ],
+        }))
+        .expect("serialize v1 index"),
+    )
+    .await
+    .expect("write v1 index");
+
+    let repository = FileSkillRepository::new(root.clone());
+    let error = repository
+        .list_skills(global_filter())
+        .await
+        .expect_err("missing second legacy directory should fail migration");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Skill directory not found during v1 migration: missing-legacy")
+    );
+    assert!(root.join("installed").join("legacy-one").exists());
+    assert!(
+        !root
+            .join("installed")
+            .join("global")
+            .join("legacy-one")
+            .exists()
+    );
+    let index_text = tokio_fs::read_to_string(root.join("index").join("skills.json"))
+        .await
+        .expect("read index");
+    assert!(index_text.contains("\"version\": 1"));
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn migrate_v1_accepts_previously_moved_global_dir() {
+    let root = temp_root("migrate-v1-previously-moved");
+    let skill_root = root.join("installed").join("global").join("legacy-skill");
+    tokio_fs::create_dir_all(&skill_root)
+        .await
+        .expect("create moved global skill");
+    tokio_fs::write(
+        skill_root.join("SKILL.md"),
+        "---\nname: legacy-skill\ndescription: Legacy Skill.\n---\n\n# Legacy\n",
+    )
+    .await
+    .expect("write moved global skill");
+    tokio_fs::create_dir_all(root.join("index"))
+        .await
+        .expect("create index dir");
+    tokio_fs::write(
+        root.join("index").join("skills.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "skills": [{
+                "name": "legacy-skill",
+                "description": "Legacy Skill.",
+                "installedHash": "legacy-hash",
+                "fileCount": 1,
+                "totalBytes": 1,
+                "hasScripts": false,
+                "hasBinary": false,
+                "installedAt": Utc::now().to_rfc3339(),
+                "sourceRefs": [],
+            }],
+        }))
+        .expect("serialize v1 index"),
+    )
+    .await
+    .expect("write v1 index");
+
+    let repository = FileSkillRepository::new(root.clone());
+    let listed = repository
+        .list_skills(global_filter())
+        .await
+        .expect("finish partial migration");
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].scope, global_scope());
+    assert!(!root.join("installed").join("legacy-skill").exists());
+    assert!(
+        root.join("installed")
+            .join("global")
+            .join("legacy-skill")
+            .exists()
+    );
+    let index_text = tokio_fs::read_to_string(root.join("index").join("skills.json"))
+        .await
+        .expect("read migrated index");
+    assert!(index_text.contains("\"version\": 2"));
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn migrate_v1_rejects_target_inside_legacy_source() {
+    let root = temp_root("migrate-v1-nested-target");
+    let skill_root = root.join("installed").join("global");
+    tokio_fs::create_dir_all(&skill_root)
+        .await
+        .expect("create legacy skill named global");
+    tokio_fs::write(
+        skill_root.join("SKILL.md"),
+        "---\nname: global\ndescription: Legacy Skill.\n---\n\n# Legacy\n",
+    )
+    .await
+    .expect("write legacy skill");
+    tokio_fs::create_dir_all(root.join("index"))
+        .await
+        .expect("create index dir");
+    tokio_fs::write(
+        root.join("index").join("skills.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "skills": [{
+                "name": "global",
+                "description": "Legacy Skill.",
+                "installedHash": "legacy-hash",
+                "fileCount": 1,
+                "totalBytes": 1,
+                "hasScripts": false,
+                "hasBinary": false,
+                "installedAt": Utc::now().to_rfc3339(),
+                "sourceRefs": [],
+            }],
+        }))
+        .expect("serialize v1 index"),
+    )
+    .await
+    .expect("write v1 index");
+
+    let repository = FileSkillRepository::new(root.clone());
+    let error = repository
+        .list_skills(global_filter())
+        .await
+        .expect_err("nested migration target should fail fast");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Skill target directory cannot be inside source directory")
+    );
+    assert!(
+        !root
+            .join("installed")
+            .join("global")
+            .join("global")
+            .exists()
+    );
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn read_rejects_symlink_escape_inside_installed_skill() {
