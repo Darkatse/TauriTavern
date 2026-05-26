@@ -4,6 +4,7 @@ import {
     eventSource,
     getRequestHeaders,
     getStoppingStrings,
+    isConnectionValidationSuspended,
     resultCheckStatus,
     saveSettingsDebounced,
     setGenerationParamsFromPreset,
@@ -871,6 +872,11 @@ export function initNovelAISettings() {
 
     $('#api_button_novel').on('click', async function (e) {
         e.stopPropagation();
+
+        if (isConnectionValidationSuspended()) {
+            return;
+        }
+
         const api_key_novel = String($('#api_key_novel').val()).trim();
 
         if (api_key_novel.length) {

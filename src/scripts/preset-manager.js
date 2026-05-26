@@ -6,6 +6,7 @@ import {
     eventSource,
     event_types,
     getRequestHeaders,
+    isConnectionValidationSuspended,
     koboldai_setting_names,
     koboldai_settings,
     main_api,
@@ -917,7 +918,7 @@ class PresetManager {
  * @returns {Promise<string>} Selected or current preset name
  */
 async function presetCommandCallback(_, name) {
-    const shouldReconnect = online_status !== 'no_connection';
+    const shouldReconnect = online_status !== 'no_connection' && !isConnectionValidationSuspended();
     const presetManager = getPresetManager();
     const allPresets = presetManager.getAllPresets();
     const currentPreset = presetManager.getSelectedPresetName();

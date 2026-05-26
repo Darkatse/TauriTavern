@@ -4,6 +4,7 @@ import {
     event_types,
     getRequestHeaders,
     getStoppingStrings,
+    isConnectionValidationSuspended,
     main_api,
     max_context,
     online_status,
@@ -944,7 +945,7 @@ export function initTextGenSettings() {
 
         $('#main_api').trigger('change');
 
-        if (!SERVER_INPUTS[type] || textgenerationwebui_settings.server_urls[type]) {
+        if (!isConnectionValidationSuspended() && (!SERVER_INPUTS[type] || textgenerationwebui_settings.server_urls[type])) {
             $('#api_button_textgenerationwebui').trigger('click');
         }
 
@@ -1094,6 +1095,10 @@ export function initTextGenSettings() {
     });
 
     $('#api_button_textgenerationwebui').on('click', async function (e) {
+        if (isConnectionValidationSuspended()) {
+            return;
+        }
+
         const keys = [
             { id: 'api_key_mancer', secret: SECRET_KEYS.MANCER },
             { id: 'api_key_vllm', secret: SECRET_KEYS.VLLM },

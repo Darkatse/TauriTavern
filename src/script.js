@@ -636,6 +636,8 @@ let is_delete_mode = false;
 let fav_ch_checked = false;
 let scrollLock = false;
 export let abortStatusCheck = new AbortController();
+// Automatic status checks are UI side effects; batch connection updates suspend them until the final state is coherent.
+let connectionValidationSuspensionDepth = 0;
 export let charDragDropHandler = null;
 export let chatDragDropHandler = null;
 
@@ -1087,6 +1089,33 @@ export function cancelStatusCheck(reason = 'Manually cancelled status check') {
     abortStatusCheck?.abort(new AbortReason(reason));
     abortStatusCheck = new AbortController();
     setOnlineStatus('no_connection');
+}
+
+/**
+ * Returns whether automatic connection validation is temporarily suspended.
+ * @returns {boolean}
+ */
+export function isConnectionValidationSuspended() {
+    return connectionValidationSuspensionDepth > 0;
+}
+
+/**
+ * Suspends automatic connection validation while a batch of connection settings is applied.
+ * @template T
+ * @param {string} reason Reason used to cancel the current status check
+ * @param {() => Promise<T>|T} callback Work to run while validation is suspended
+ * @returns {Promise<T>}
+ */
+export async function withConnectionValidationSuspended(reason, callback) {
+    connectionValidationSuspensionDepth += 1;
+    cancelStatusCheck(reason);
+
+    try {
+        return await callback();
+    } finally {
+        // Keep this scoped so failed profile applications cannot leave connection validation disabled.
+        connectionValidationSuspensionDepth -= 1;
+    }
 }
 
 export function displayOnlineStatus() {

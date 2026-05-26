@@ -1,6 +1,6 @@
 import { DOMPurify } from '../lib.js';
 import { isMobile } from './RossAscends-mods.js';
-import { amount_gen, eventSource, event_types, getRequestHeaders, max_context, online_status, setGenerationParamsFromPreset } from '../script.js';
+import { amount_gen, eventSource, event_types, getRequestHeaders, isConnectionValidationSuspended, max_context, online_status, setGenerationParamsFromPreset } from '../script.js';
 import { textgenerationwebui_settings as textgen_settings, textgen_types } from './textgen-settings.js';
 import { tokenizers } from './tokenizers.js';
 import { renderTemplateAsync } from './templates.js';
@@ -19,6 +19,13 @@ let featherlessModels = [];
 let tabbyModels = [];
 let llamacppModels = [];
 export let openRouterModels = [];
+
+// Model select handlers normally reconnect immediately; profile replay defers that to the final validation.
+function reconnectTextGenIfValidationAllowed() {
+    if (!isConnectionValidationSuspended()) {
+        $('#api_button_textgenerationwebui').trigger('click');
+    }
+}
 
 /**
  * List of OpenRouter providers.
@@ -790,7 +797,7 @@ function onFeatherlessModelSelect(modelId) {
     const model = featherlessModels.find(x => x.id === modelId);
     textgen_settings.featherless_model = modelId;
     $('#featherless_model').val(modelId);
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
     setGenerationParamsFromPreset({ max_length: model.context_length });
 }
 
@@ -820,7 +827,7 @@ document.addEventListener('DOMContentLoaded', function () {
 function onMancerModelSelect() {
     const modelId = String($('#mancer_model').val());
     textgen_settings.mancer_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
 
     const limits = mancerModels.find(x => x.id === modelId)?.limits;
     setGenerationParamsFromPreset({ max_length: limits.context });
@@ -829,7 +836,7 @@ function onMancerModelSelect() {
 function onTogetherModelSelect() {
     const modelName = String($('#model_togetherai_select').val());
     textgen_settings.togetherai_model = modelName;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
     const model = togetherModels.find(x => x.id === modelName);
     setGenerationParamsFromPreset({ max_length: model.context_length });
 }
@@ -837,7 +844,7 @@ function onTogetherModelSelect() {
 function onInfermaticAIModelSelect() {
     const modelName = String($('#model_infermaticai_select').val());
     textgen_settings.infermaticai_model = modelName;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
     const model = infermaticAIModels.find(x => x.id === modelName);
     setGenerationParamsFromPreset({ max_length: model.context_length });
 }
@@ -845,32 +852,32 @@ function onInfermaticAIModelSelect() {
 function onDreamGenModelSelect() {
     const modelName = String($('#model_dreamgen_select').val());
     textgen_settings.dreamgen_model = modelName;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
     // TODO(DreamGen): Consider retuning max_tokens from API and setting it here.
 }
 
 function onOllamaModelSelect() {
     const modelId = String($('#ollama_model').val());
     textgen_settings.ollama_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
 }
 
 function onTabbyModelSelect() {
     const modelId = String($('#tabby_model').val());
     textgen_settings.tabby_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
 }
 
 function onLlamaCppModelSelect() {
     const modelId = String($('#llamacpp_model').val());
     textgen_settings.llamacpp_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
 }
 
 function onOpenRouterModelSelect() {
     const modelId = String($('#openrouter_model').val());
     textgen_settings.openrouter_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
     const model = openRouterModels.find(x => x.id === modelId);
     syncOpenRouterProvidersForModel(modelId, '#openrouter_providers_text');
     setGenerationParamsFromPreset({ max_length: model.context_length });
@@ -879,13 +886,13 @@ function onOpenRouterModelSelect() {
 function onVllmModelSelect() {
     const modelId = String($('#vllm_model').val());
     textgen_settings.vllm_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
 }
 
 function onAphroditeModelSelect() {
     const modelId = String($('#aphrodite_model').val());
     textgen_settings.aphrodite_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
 }
 
 function getMancerModelTemplate(option) {
@@ -1030,7 +1037,7 @@ async function downloadOllamaModel() {
 
         // Force refresh the model list
         toastr.success('Download complete. Please select the model from the dropdown.');
-        $('#api_button_textgenerationwebui').trigger('click');
+        reconnectTextGenIfValidationAllowed();
     } catch (err) {
         console.error(err);
         toastr.error('Failed to download Ollama model. Please try again.');

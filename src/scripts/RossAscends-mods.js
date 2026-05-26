@@ -5,6 +5,7 @@ import {
     characters,
     online_status,
     main_api,
+    isConnectionValidationSuspended,
     is_send_press,
     max_context,
     saveSettingsDebounced,
@@ -358,6 +359,9 @@ function RA_autoconnect(PrevApi) {
     // secrets.js or script.js not loaded
     if (SECRET_KEYS === undefined || online_status === undefined) {
         setTimeout(RA_autoconnect, 100);
+        return;
+    }
+    if (isConnectionValidationSuspended()) {
         return;
     }
     if (online_status === 'no_connection' && power_user.auto_connect) {

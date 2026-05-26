@@ -1,6 +1,6 @@
 import { DOMPurify, Fuse } from '../../../lib.js';
 
-import { activateSendButtons, deactivateSendButtons, event_types, eventSource, main_api, online_status, saveSettingsDebounced } from '../../../script.js';
+import { activateSendButtons, deactivateSendButtons, event_types, eventSource, main_api, online_status, saveSettingsDebounced, withConnectionValidationSuspended } from '../../../script.js';
 import { extension_settings, getContext, renderExtensionTemplateAsync } from '../../extensions.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from '../../popup.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
@@ -15,6 +15,7 @@ import { SlashCommandScope } from '../../slash-commands/SlashCommandScope.js';
 import { collapseSpaces, getUniqueName, isFalseBoolean, isTrueBoolean, uuidv4, waitUntilCondition } from '../../utils.js';
 import { t } from '../../i18n.js';
 import { getSecretLabelById } from '../../secrets.js';
+import { connectCurrentApi } from '../../slash-commands.js';
 import { performFuzzySearch } from '/scripts/power-user.js';
 import { StreamingDisplay } from '/scripts/streaming-display.js';
 import { ConnectionManagerRequestService } from '../shared.js';
@@ -28,6 +29,10 @@ const DEFAULT_SETTINGS = {
     profiles: [],
     selectedProfile: null,
 };
+
+let profileApplicationVersion = 0;
+// Profile application replays slash commands; serialize those replays so only the newest profile validates.
+let profileApplicationQueue = Promise.resolve();
 
 // Commands that can record an empty value into the profile
 const ALLOW_EMPTY = [
@@ -397,33 +402,61 @@ async function applyConnectionProfile(profile) {
         return;
     }
 
-    // Abort any ongoing profile application
+    // Abort in-flight replay work and let the queued latest application own the final validation.
+    const applicationVersion = ++profileApplicationVersion;
     ConnectionManagerSpinner.abort();
+    const previousApplication = profileApplicationQueue;
+    const application = (async () => {
+        await previousApplication;
 
-    const mode = profile.mode;
-    const commands = mode === 'cc' ? CC_COMMANDS : TC_COMMANDS;
-    const spinner = new ConnectionManagerSpinner();
-    spinner.start();
-
-    for (const command of commands) {
-        if (spinner.isAborted()) {
+        if (applicationVersion !== profileApplicationVersion) {
             throw new Error('Profile application aborted');
         }
 
-        const argument = profile[command];
-        const allowEmpty = ALLOW_EMPTY.includes(command);
-        if (!argument && !(allowEmpty && argument === '')) {
-            continue;
-        }
-        try {
-            const args = getNamedArguments(allowEmpty ? { force: 'true' } : {});
-            await SlashCommandParser.commands[command].callback(args, argument);
-        } catch (error) {
-            console.error(`Failed to execute command: ${command} ${argument}`, error);
-        }
-    }
+        const mode = profile.mode;
+        const commands = mode === 'cc' ? CC_COMMANDS : TC_COMMANDS;
+        const spinner = new ConnectionManagerSpinner();
+        spinner.start();
 
-    spinner.stop();
+        try {
+            await withConnectionValidationSuspended('Connection profile application', async () => {
+                for (const command of commands) {
+                    if (spinner.isAborted() || applicationVersion !== profileApplicationVersion) {
+                        throw new Error('Profile application aborted');
+                    }
+
+                    const argument = profile[command];
+                    const allowEmpty = ALLOW_EMPTY.includes(command);
+                    if (!argument && !(allowEmpty && argument === '')) {
+                        continue;
+                    }
+
+                    try {
+                        const commandArgs = allowEmpty ? { force: 'true' } : {};
+                        if (command === 'api-url') {
+                            // The final connect below validates the fully applied profile once.
+                            commandArgs.connect = 'false';
+                        }
+                        const args = getNamedArguments(commandArgs);
+                        await SlashCommandParser.commands[command].callback(args, argument);
+                    } catch (error) {
+                        console.error(`Failed to execute command: ${command} ${argument}`, error);
+                    }
+                }
+            });
+        } finally {
+            spinner.stop();
+        }
+
+        if (applicationVersion === profileApplicationVersion) {
+            // Validate only after all profile fields, including custom format and secret id, have settled.
+            connectCurrentApi();
+        }
+    })();
+
+    // Keep later applications queued even when an older replay is aborted or fails.
+    profileApplicationQueue = application.catch(() => {});
+    return application;
 }
 
 /**

@@ -17,6 +17,7 @@ import {
     getMediaDisplay,
     getMediaIndex,
     getRequestHeaders,
+    isConnectionValidationSuspended,
     is_send_press,
     main_api,
     name1,
@@ -50,7 +51,7 @@ import {
 } from './prompt-injections.js';
 
 import { forceCharacterEditorTokenize, getCustomStoppingStrings, persona_description_positions, power_user } from './power-user.js';
-import { SECRET_KEYS, secret_state, writeSecret } from './secrets.js';
+import { resolveSecretKey, SECRET_KEYS, secret_state, writeSecret } from './secrets.js';
 
 import { getEventSourceStream } from './sse-stream.js';
 import {
@@ -5339,6 +5340,10 @@ function setToolReasoningControls() {
 }
 
 async function getStatusOpen() {
+    if (isConnectionValidationSuspended()) {
+        return resultCheckStatus();
+    }
+
     const noValidateSources = [
         chat_completion_sources.CLAUDE,
         chat_completion_sources.AI21,
@@ -5371,6 +5376,11 @@ async function getStatusOpen() {
         proxy_password: oai_settings.proxy_password,
         chat_completion_source: oai_settings.chat_completion_source,
     };
+    const secretKey = resolveSecretKey();
+    const activeSecret = Array.isArray(secret_state[secretKey]) ? secret_state[secretKey].find(secret => secret.active) : null;
+    if (activeSecret) {
+        data.secret_id = activeSecret.id;
+    }
 
     const validateProxySources = [
         chat_completion_sources.CLAUDE,
@@ -6926,6 +6936,10 @@ function onReverseProxyInput() {
 async function onConnectButtonClick(e) {
     e.stopPropagation();
 
+    if (isConnectionValidationSuspended()) {
+        return;
+    }
+
     /** @type {Object.<string, {key: string, selector: string, proxy?: boolean, keyless?: boolean}>} */
     const apiSourceConfig = {
         [chat_completion_sources.OPENROUTER]: { key: SECRET_KEYS.OPENROUTER, selector: '#api_key_openrouter', proxy: false },
@@ -7104,6 +7118,11 @@ async function testApiConnection() {
 }
 
 function reconnectOpenAi() {
+    if (isConnectionValidationSuspended()) {
+        cancelStatusCheck('OpenAI reconnection deferred');
+        return;
+    }
+
     if (main_api == 'openai') {
         setOnlineStatus('no_connection');
         resultCheckStatus();

@@ -130,6 +130,30 @@ test('chat completion status route forwards secret_id to Rust DTO', async () => 
     assert.equal(calls[0].args.dto.secret_id, 'profile-secret');
 });
 
+test('chat completion status frontend includes active secret id snapshot', async () => {
+    const source = await readFile(
+        new URL('../src/scripts/openai.js', import.meta.url),
+        'utf8',
+    );
+    const getStatusOpen = extractDeclaration(source, 'async function getStatusOpen');
+
+    assert.match(getStatusOpen, /const secretKey = resolveSecretKey\(\);/);
+    assert.match(getStatusOpen, /const activeSecret = Array\.isArray\(secret_state\[secretKey\]\)/);
+    assert.match(getStatusOpen, /data\.secret_id = activeSecret\.id;/);
+});
+
+test('connection manager applies profiles as a suspended validation batch', async () => {
+    const source = await readFile(
+        new URL('../src/scripts/extensions/connection-manager/index.js', import.meta.url),
+        'utf8',
+    );
+    const applyConnectionProfile = extractDeclaration(source, 'async function applyConnectionProfile');
+
+    assert.match(applyConnectionProfile, /withConnectionValidationSuspended\('Connection profile application'/);
+    assert.match(applyConnectionProfile, /if \(command === 'api-url'\) \{[\s\S]*?commandArgs\.connect = 'false';[\s\S]*?\}/);
+    assert.match(applyConnectionProfile, /connectCurrentApi\(\);/);
+});
+
 test('connection manager forwards profile secret id for completion requests', async () => {
     const chatRequests = [];
     const textRequests = [];

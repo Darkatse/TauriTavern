@@ -7,6 +7,7 @@ import {
     resultCheckStatus,
     main_api,
     online_status,
+    isConnectionValidationSuspended,
     abortStatusCheck,
     startStatusLoading,
     setGenerationParamsFromPreset,
@@ -461,6 +462,10 @@ export function initKoboldSettings() {
     });
 
     $('#api_button').on('click', function (e) {
+        if (isConnectionValidationSuspended()) {
+            return;
+        }
+
         if ($('#api_url_text').val() != '') {
             const value = formatKoboldUrl(String($('#api_url_text').val()).trim());
 

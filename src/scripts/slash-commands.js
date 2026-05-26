@@ -28,6 +28,7 @@ import {
     getOneCharacter,
     getRequestHeaders,
     getThumbnailUrl,
+    isConnectionValidationSuspended,
     is_send_press,
     main_api,
     name1,
@@ -240,6 +241,56 @@ function setupConnectAPIMap() {
     UNIQUE_APIS.push(...new Set(Object.values(CONNECT_API_MAP).map(x => x.selected)));
 }
 
+/**
+ * Gets the connection map entry for the currently selected API.
+ * @returns {ConnectAPIMap|undefined}
+ */
+function getCurrentConnectApiConfig() {
+    return Object.values(CONNECT_API_MAP).find(config => {
+        if (config.selected !== main_api) {
+            return false;
+        }
+
+        if (config.source && oai_settings.chat_completion_source !== config.source) {
+            return false;
+        }
+
+        if (config.type && textgenerationwebui_settings.type !== config.type) {
+            return false;
+        }
+
+        return true;
+    });
+}
+
+/**
+ * Triggers an API connection button unless automatic validation is suspended.
+ * Used by slash commands so profile replay can still mutate settings without probing half-applied state.
+ * @param {string} button Button selector
+ * @returns {boolean} Whether a connection was triggered
+ */
+function triggerApiConnectionButton(button) {
+    if (isConnectionValidationSuspended()) {
+        return false;
+    }
+
+    $(button).trigger('click');
+    return true;
+}
+
+/**
+ * Triggers one connection attempt for the currently selected API.
+ * @returns {boolean} Whether a connection was triggered
+ */
+export function connectCurrentApi() {
+    const apiConfig = getCurrentConnectApiConfig();
+    if (!apiConfig?.button) {
+        return false;
+    }
+
+    return triggerApiConnectionButton(apiConfig.button);
+}
+
 export function initDefaultSlashCommands() {
     eventSource.on(event_types.CHAT_CHANGED, processChatSlashCommands);
     setupConnectAPIMap();
@@ -325,18 +376,24 @@ export function initDefaultSlashCommands() {
                 connectionRequired = true;
             }
 
+            const quiet = isTrueBoolean(args?.quiet?.toString());
+            const validationSuspended = isConnectionValidationSuspended();
+
             if (connectionRequired && apiConfig.button) {
-                $(apiConfig.button).trigger('click');
+                triggerApiConnectionButton(apiConfig.button);
             }
 
-            const quiet = isTrueBoolean(args?.quiet?.toString());
-            const toast = quiet ? jQuery() : toastr.info(t`API set to ${text}, trying to connect..`);
+            const toast = quiet || validationSuspended ? jQuery() : toastr.info(t`API set to ${text}, trying to connect..`);
 
             try {
-                if (connectionRequired) {
+                if (connectionRequired && !validationSuspended) {
                     await waitUntilCondition(() => online_status !== 'no_connection', 5000, 100);
+                    console.log('Connection successful');
+                } else if (connectionRequired) {
+                    console.log('Connection deferred');
+                } else {
+                    console.log('Connection successful');
                 }
-                console.log('Connection successful');
             } catch {
                 console.log('Could not connect after 5 seconds, skipping.');
             }
@@ -6514,7 +6571,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         $('#custom_api_url_text').val(url).trigger('input');
 
         if (autoConnect) {
-            $('#api_button_openai').trigger('click');
+            triggerApiConnectionButton('#api_button_openai');
         }
 
         return url;
@@ -6540,7 +6597,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         $('#zai_endpoint').val(url).trigger('input');
 
         if (autoConnect) {
-            $('#api_button_openai').trigger('click');
+            triggerApiConnectionButton('#api_button_openai');
         }
 
         return oai_settings.zai_endpoint || ZAI_ENDPOINT.COMMON;
@@ -6566,7 +6623,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         $('#siliconflow_endpoint').val(url).trigger('input');
 
         if (autoConnect) {
-            $('#api_button_openai').trigger('click');
+            triggerApiConnectionButton('#api_button_openai');
         }
 
         return oai_settings.siliconflow_endpoint || SILICONFLOW_ENDPOINT.GLOBAL;
@@ -6592,7 +6649,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         $('#minimax_endpoint').val(url).trigger('input');
 
         if (autoConnect) {
-            $('#api_button_openai').trigger('click');
+            triggerApiConnectionButton('#api_button_openai');
         }
 
         return oai_settings.minimax_endpoint || MINIMAX_ENDPOINT.GLOBAL;
@@ -6622,7 +6679,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         $('#vertexai_region').val(url).trigger('input');
 
         if (autoConnect) {
-            $('#api_button_openai').trigger('click');
+            triggerApiConnectionButton('#api_button_openai');
         }
 
         return oai_settings.vertexai_region || defaultRegion;
@@ -6645,7 +6702,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         setTimeout(() => $('#api_url_text').trigger('blur'), 1);
 
         if (autoConnect) {
-            $('#api_button').trigger('click');
+            triggerApiConnectionButton('#api_button');
         }
 
         return kai_settings.api_server ?? '';
@@ -6688,7 +6745,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
 
     // Trigger the auto connect via connect button, if requested
     if (autoConnect) {
-        $('#api_button_textgenerationwebui').trigger('click');
+        triggerApiConnectionButton('#api_button_textgenerationwebui');
     }
 
     // We still re-acquire the value, as it might have been modified by the validation on connect
