@@ -155,6 +155,11 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::provider_metadata_commands::get_siliconflow_embedding_models,
         super::provider_metadata_commands::get_workers_ai_embedding_models,
         super::provider_metadata_commands::get_workers_ai_multimodal_models,
+        // LLM connection commands
+        super::llm_connection_commands::list_llm_connections,
+        super::llm_connection_commands::load_llm_connection,
+        super::llm_connection_commands::save_llm_connection,
+        super::llm_connection_commands::delete_llm_connection,
         // Content commands
         super::content_commands::initialize_default_content,
         super::content_commands::is_default_content_initialized,

@@ -26,6 +26,7 @@ use crate::application::services::agent_profile_service::{
 use crate::application::services::agent_tools::{
     AgentToolDispatcher, AgentToolEffect, AgentToolSession, BuiltinAgentToolRegistry,
 };
+use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::skill_service::SkillService;
 use crate::domain::errors::DomainError;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
@@ -50,6 +51,7 @@ use crate::domain::repositories::workspace_repository::{
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
 use crate::infrastructure::repositories::file_chat_repository::FileChatRepository;
+use crate::infrastructure::repositories::file_llm_connection_repository::FileLlmConnectionRepository;
 use crate::infrastructure::repositories::file_skill_repository::FileSkillRepository;
 
 #[test]
@@ -85,6 +87,7 @@ async fn resolves_agent_system_prompt_through_runtime_boundary() {
         test_skill_service(&root),
         Arc::new(MockAgentModelGateway::new(vec![])),
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     );
 
     let prompt = service
@@ -171,6 +174,7 @@ async fn agent_loop_writes_artifact_and_completes() {
         test_skill_service(&root),
         model_gateway,
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     );
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -396,6 +400,7 @@ async fn agent_loop_stores_tool_audit_files_with_hashed_call_id_paths() {
         test_skill_service(&root),
         model_gateway,
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     );
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -571,6 +576,7 @@ async fn agent_loop_retries_retryable_model_errors() {
         test_skill_service(&root),
         model_gateway,
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     );
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -676,6 +682,7 @@ async fn agent_loop_does_not_retry_non_retryable_model_errors() {
         test_skill_service(&root),
         model_gateway,
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     );
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -829,6 +836,7 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
         test_skill_service(&root),
         model_gateway,
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     );
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -964,6 +972,7 @@ async fn finish_promotes_persistent_workspace_projection() {
         test_skill_service(&root),
         model_gateway,
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     );
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -1120,6 +1129,7 @@ async fn foreground_run_commits_chat_message_before_finish() {
         test_skill_service(&root),
         model_gateway,
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     ));
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -1307,6 +1317,7 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
         test_skill_service(&root),
         model_gateway,
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     ));
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -1539,6 +1550,7 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
         test_skill_service(&root),
         model_gateway.clone(),
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     ));
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -1754,6 +1766,7 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
         test_skill_service(&root),
         model_gateway.clone(),
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     ));
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -1888,6 +1901,7 @@ async fn foreground_run_without_commit_still_fails_after_drift_recovery_exhausts
         test_skill_service(&root),
         model_gateway,
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     );
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -2044,6 +2058,7 @@ async fn foreground_run_with_commit_becomes_partial_success_when_persistent_comm
         test_skill_service(&root),
         model_gateway,
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     ));
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -2224,6 +2239,7 @@ async fn foreground_finish_before_commit_returns_recoverable_error() {
         test_skill_service(&root),
         model_gateway,
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     ));
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -2374,6 +2390,7 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
         test_skill_service(&root),
         model_gateway,
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     );
     let request = ChatCompletionGenerateRequestDto {
         payload: json!({
@@ -2671,6 +2688,7 @@ async fn agent_input_context_excludes_swipe_target_from_history_and_persist_base
         test_skill_service(&root),
         Arc::new(MockAgentModelGateway::new(vec![])),
         test_profile_service(&root),
+        test_llm_connection_service(&root),
     );
     save_character_payload(
         &chat_repository,
@@ -3307,6 +3325,12 @@ fn test_profile_service(root: &Path) -> Arc<AgentProfileService> {
         Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles"))),
         Arc::new(NullPresetRepository),
     ))
+}
+
+fn test_llm_connection_service(root: &Path) -> Arc<LlmConnectionService> {
+    Arc::new(LlmConnectionService::new(Arc::new(
+        FileLlmConnectionRepository::new(root.join("llm-connections")),
+    )))
 }
 
 async fn test_resolved_profile(root: &Path) -> ResolvedAgentProfile {

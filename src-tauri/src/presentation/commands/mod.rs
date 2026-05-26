@@ -24,6 +24,7 @@ pub mod image_metadata_commands;
 #[cfg(target_os = "ios")]
 pub mod ios_file_bridge_commands;
 pub mod lan_sync_commands;
+pub mod llm_connection_commands;
 pub mod native_regex_commands;
 pub mod preset_commands;
 pub mod provider_metadata_commands;

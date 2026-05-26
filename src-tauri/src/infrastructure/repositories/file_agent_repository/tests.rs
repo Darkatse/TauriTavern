@@ -116,6 +116,8 @@ fn sample_resolved_profile(manifest: &WorkspaceManifest) -> ResolvedAgentProfile
         },
         model: AgentModelBinding {
             mode: AgentModelBindingMode::CurrentPromptSnapshot,
+            connection_ref: None,
+            model_id: None,
         },
         run: AgentRunPolicy {
             presentation: AgentRunPresentation::Background,

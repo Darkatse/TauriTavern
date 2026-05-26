@@ -17,6 +17,7 @@ use crate::application::services::group_chat_service::GroupChatService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::image_metadata_service::ImageMetadataService;
 use crate::application::services::lan_sync_service::LanSyncService;
+use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::native_regex_service::NativeRegexService;
 use crate::application::services::preset_service::PresetService;
 use crate::application::services::provider_metadata_service::ProviderMetadataService;
@@ -63,6 +64,7 @@ pub struct AppState {
     pub agent_profile_service: Arc<AgentProfileService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
+    pub llm_connection_service: Arc<LlmConnectionService>,
     pub provider_metadata_service: Arc<ProviderMetadataService>,
     pub tokenization_service: Arc<TokenizationService>,
     pub stable_diffusion_service: Arc<StableDiffusionService>,
@@ -116,6 +118,7 @@ impl AppState {
             agent_profile_service: services.agent_profile_service,
             agent_runtime_service: services.agent_runtime_service,
             chat_completion_service: services.chat_completion_service,
+            llm_connection_service: services.llm_connection_service,
             provider_metadata_service: services.provider_metadata_service,
             tokenization_service: services.tokenization_service,
             stable_diffusion_service: services.stable_diffusion_service,

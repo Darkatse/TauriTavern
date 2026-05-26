@@ -23,6 +23,7 @@ use crate::application::services::group_chat_service::GroupChatService;
 use crate::application::services::group_service::GroupService;
 use crate::application::services::image_metadata_service::ImageMetadataService;
 use crate::application::services::lan_sync_service::LanSyncService;
+use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::native_regex_service::NativeRegexService;
 use crate::application::services::preset_service::PresetService;
 use crate::application::services::provider_metadata_service::ProviderMetadataService;
@@ -57,6 +58,7 @@ use crate::domain::repositories::extension_store_repository::ExtensionStoreRepos
 use crate::domain::repositories::group_chat_repository::GroupChatRepository;
 use crate::domain::repositories::group_repository::GroupRepository;
 use crate::domain::repositories::image_metadata_repository::ImageMetadataRepository;
+use crate::domain::repositories::llm_connection_repository::LlmConnectionRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::domain::repositories::prompt_cache_repository::PromptCacheRepository;
 use crate::domain::repositories::provider_metadata_repository::ProviderMetadataRepository;
@@ -98,6 +100,7 @@ use crate::infrastructure::repositories::file_extension_repository::FileExtensio
 use crate::infrastructure::repositories::file_extension_store_repository::FileExtensionStoreRepository;
 use crate::infrastructure::repositories::file_group_repository::FileGroupRepository;
 use crate::infrastructure::repositories::file_image_metadata_repository::FileImageMetadataRepository;
+use crate::infrastructure::repositories::file_llm_connection_repository::FileLlmConnectionRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
 use crate::infrastructure::repositories::file_prompt_cache_repository::FilePromptCacheRepository;
 use crate::infrastructure::repositories::file_quick_reply_repository::FileQuickReplyRepository;
@@ -132,6 +135,7 @@ pub(super) struct AppServices {
     pub agent_profile_service: Arc<AgentProfileService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
+    pub llm_connection_service: Arc<LlmConnectionService>,
     pub provider_metadata_service: Arc<ProviderMetadataService>,
     pub tokenization_service: Arc<TokenizationService>,
     pub stable_diffusion_service: Arc<StableDiffusionService>,
@@ -169,6 +173,7 @@ struct AppRepositories {
     agent_profile_repository: Arc<dyn AgentProfileRepository>,
     agent_run_repository: Arc<dyn AgentRunRepository>,
     agent_workspace_lifecycle_repository: Arc<dyn AgentWorkspaceLifecycleRepository>,
+    llm_connection_repository: Arc<dyn LlmConnectionRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
     checkpoint_repository: Arc<dyn CheckpointRepository>,
     chat_completion_repository: Arc<dyn ChatCompletionRepository>,
@@ -238,6 +243,9 @@ pub(super) async fn build_services(
         repositories.quick_reply_repository.clone(),
     ));
     let skill_service = Arc::new(SkillService::new(repositories.skill_repository.clone()));
+    let llm_connection_service = Arc::new(LlmConnectionService::new(
+        repositories.llm_connection_repository.clone(),
+    ));
     let agent_profile_service = Arc::new(AgentProfileService::new(
         repositories.agent_profile_repository.clone(),
         repositories.preset_repository.clone(),
@@ -265,6 +273,7 @@ pub(super) async fn build_services(
             chat_completion_service.clone(),
         )),
         agent_profile_service.clone(),
+        llm_connection_service.clone(),
     ));
     let agent_workspace_lifecycle_service = Arc::new(AgentWorkspaceLifecycleService::new(
         repositories.agent_workspace_lifecycle_repository.clone(),
@@ -359,6 +368,7 @@ pub(super) async fn build_services(
         agent_profile_service,
         agent_runtime_service,
         chat_completion_service,
+        llm_connection_service,
         provider_metadata_service,
         tokenization_service,
         stable_diffusion_service,
@@ -481,6 +491,9 @@ fn build_repositories(
     let agent_profile_repository: Arc<dyn AgentProfileRepository> = Arc::new(
         FileAgentProfileRepository::new(data_root.join("_tauritavern").join("agent-profiles")),
     );
+    let llm_connection_repository: Arc<dyn LlmConnectionRepository> = Arc::new(
+        FileLlmConnectionRepository::new(data_root.join("_tauritavern").join("llm-connections")),
+    );
 
     let file_agent_repository = Arc::new(FileAgentRepository::new(
         data_root.join("_tauritavern").join("agent-workspaces"),
@@ -547,6 +560,7 @@ fn build_repositories(
         agent_profile_repository,
         agent_run_repository,
         agent_workspace_lifecycle_repository,
+        llm_connection_repository,
         workspace_repository,
         checkpoint_repository,
         chat_completion_repository,

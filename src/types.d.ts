@@ -179,7 +179,9 @@ type TauriTavernAgentProfileDefinition = {
         required?: boolean;
     };
     model: {
-        mode: 'currentPromptSnapshot';
+        mode: 'currentPromptSnapshot' | 'connectionRef';
+        connectionRef?: string;
+        modelId?: string;
     };
     run: {
         presentation: TauriTavernAgentRunPresentation;

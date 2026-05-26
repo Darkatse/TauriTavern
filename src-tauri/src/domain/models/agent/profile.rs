@@ -153,12 +153,17 @@ pub struct AgentPresetRef {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentModelBinding {
     pub mode: AgentModelBindingMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum AgentModelBindingMode {
     CurrentPromptSnapshot,
+    ConnectionRef,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -19,6 +19,7 @@ pub mod group_chat_service;
 pub mod group_service;
 pub mod image_metadata_service;
 pub mod lan_sync_service;
+pub mod llm_connection_service;
 pub mod native_regex_service;
 pub mod preset_service;
 pub mod provider_metadata_service;

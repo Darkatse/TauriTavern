@@ -9,7 +9,7 @@ use super::prompt_snapshot::{prepare_agent_tool_request, request_summary};
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
-use crate::domain::models::agent::profile::ResolvedAgentProfile;
+use crate::domain::models::agent::profile::{AgentModelBindingMode, ResolvedAgentProfile};
 use crate::domain::models::agent::{AgentRunEventLevel, AgentRunStatus, WorkspacePath};
 use crate::domain::models::skill::SkillIndexEntry;
 
@@ -200,6 +200,11 @@ impl AgentRuntimeService {
             )
             .await?;
 
+        let mut request = request;
+        self.resolve_model_binding(run_id, &resolved_profile, &mut request)
+            .await?;
+        self.ensure_not_cancelled(cancel)?;
+
         let visible_tools = self.tool_registry.visible_specs(&resolved_profile)?;
         let request = prepare_agent_tool_request(request, &visible_tools, run_id)?;
         self.transition_status(run_id, AgentRunStatus::AssemblingContext)
@@ -240,6 +245,68 @@ impl AgentRuntimeService {
         self.ensure_not_cancelled(cancel)?;
 
         self.finish_run(run_id, commit_ledger, cancel).await?;
+        Ok(())
+    }
+
+    async fn resolve_model_binding(
+        &self,
+        run_id: &str,
+        profile: &ResolvedAgentProfile,
+        request: &mut ChatCompletionGenerateRequestDto,
+    ) -> Result<(), ApplicationError> {
+        match profile.model.mode {
+            AgentModelBindingMode::CurrentPromptSnapshot => {
+                self.event(
+                    run_id,
+                    AgentRunEventLevel::Info,
+                    "agent_model_binding_resolved",
+                    json!({
+                        "mode": "currentPromptSnapshot",
+                        "chatCompletionSource": request
+                            .payload
+                            .get("chat_completion_source")
+                            .and_then(Value::as_str),
+                        "customApiFormat": request
+                            .payload
+                            .get("custom_api_format")
+                            .and_then(Value::as_str),
+                        "modelId": request.payload.get("model").and_then(Value::as_str),
+                    }),
+                )
+                .await?;
+            }
+            AgentModelBindingMode::ConnectionRef => {
+                let connection_ref = profile.model.connection_ref.as_deref().ok_or_else(|| {
+                    ApplicationError::ValidationError(
+                        "agent.model_connection_ref_required: model.connectionRef is required when model.mode is connectionRef"
+                            .to_string(),
+                    )
+                })?;
+                let model_id = profile.model.model_id.as_deref().ok_or_else(|| {
+                    ApplicationError::ValidationError(
+                        "agent.model_id_required: model.modelId is required when model.mode is connectionRef"
+                            .to_string(),
+                    )
+                })?;
+                let resolved = self
+                    .llm_connection_service
+                    .apply_connection_to_payload(connection_ref, model_id, &mut request.payload)
+                    .await?;
+                let payload = serde_json::to_value(resolved).map_err(|error| {
+                    ApplicationError::ValidationError(format!(
+                        "agent.model_binding_resolved_serialize_failed: {error}"
+                    ))
+                })?;
+                self.event(
+                    run_id,
+                    AgentRunEventLevel::Info,
+                    "agent_model_binding_resolved",
+                    payload,
+                )
+                .await?;
+            }
+        }
+
         Ok(())
     }
 }

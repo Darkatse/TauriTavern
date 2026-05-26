@@ -422,6 +422,8 @@ fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> 
         },
         model: AgentModelBinding {
             mode: AgentModelBindingMode::CurrentPromptSnapshot,
+            connection_ref: None,
+            model_id: None,
         },
         run: AgentRunPolicy {
             presentation: AgentRunPresentation::Foreground,
@@ -555,7 +557,52 @@ async fn validate_preset_binding(
 
 fn validate_model_binding(binding: &AgentModelBinding) -> Result<(), ApplicationError> {
     match binding.mode {
-        AgentModelBindingMode::CurrentPromptSnapshot => Ok(()),
+        AgentModelBindingMode::CurrentPromptSnapshot => {
+            if binding
+                .connection_ref
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty())
+                || binding
+                    .model_id
+                    .as_ref()
+                    .is_some_and(|value| !value.trim().is_empty())
+            {
+                return Err(ApplicationError::ValidationError(
+                    "agent.profile_model_current_snapshot_extra_fields: connectionRef/modelId are only valid when model.mode is connectionRef"
+                        .to_string(),
+                ));
+            }
+            Ok(())
+        }
+        AgentModelBindingMode::ConnectionRef => {
+            if binding
+                .connection_ref
+                .as_ref()
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(ApplicationError::ValidationError(
+                    "agent.profile_model_connection_ref_required: model.connectionRef is required when model.mode is connectionRef"
+                        .to_string(),
+                ));
+            }
+            if binding
+                .model_id
+                .as_ref()
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(ApplicationError::ValidationError(
+                    "agent.profile_model_id_required: model.modelId is required when model.mode is connectionRef"
+                        .to_string(),
+                ));
+            }
+            Ok(())
+        }
     }
 }
 

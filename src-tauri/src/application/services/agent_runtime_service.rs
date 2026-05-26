@@ -9,6 +9,7 @@ use crate::application::services::agent_profile_service::{
     AgentProfileResolveInput, AgentProfileService, materialize_agent_system_prompt,
 };
 use crate::application::services::agent_tools::{AgentToolDispatcher, BuiltinAgentToolRegistry};
+use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::skill_service::SkillService;
 use crate::domain::models::agent::AgentToolSpec;
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
@@ -60,6 +61,7 @@ pub struct AgentRuntimeService {
     group_chat_repository: Arc<dyn GroupChatRepository>,
     model_gateway: Arc<dyn AgentModelGateway>,
     profile_service: Arc<AgentProfileService>,
+    llm_connection_service: Arc<LlmConnectionService>,
     skill_service: Arc<SkillService>,
     tool_registry: BuiltinAgentToolRegistry,
     tool_dispatcher: AgentToolDispatcher,
@@ -79,6 +81,7 @@ impl AgentRuntimeService {
         skill_service: Arc<SkillService>,
         model_gateway: Arc<dyn AgentModelGateway>,
         profile_service: Arc<AgentProfileService>,
+        llm_connection_service: Arc<LlmConnectionService>,
     ) -> Self {
         let tool_registry = BuiltinAgentToolRegistry::phase2c();
         let tool_dispatcher = AgentToolDispatcher::new(
@@ -96,6 +99,7 @@ impl AgentRuntimeService {
             group_chat_repository,
             model_gateway,
             profile_service,
+            llm_connection_service,
             skill_service,
             tool_registry,
             tool_dispatcher,
