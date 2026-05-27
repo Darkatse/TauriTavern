@@ -23,6 +23,7 @@ pub enum ChatCompletionSource {
     WorkersAi,
     Zai,
     MiniMax,
+    ClaudeAws,
 }
 
 impl ChatCompletionSource {
@@ -46,6 +47,7 @@ impl ChatCompletionSource {
             }
             "zai" | "z.ai" | "glm" => Some(Self::Zai),
             "minimax" | "mini-max" | "mini max" => Some(Self::MiniMax),
+            "claude_aws" | "claude-aws" | "bedrock" | "claude_bedrock" => Some(Self::ClaudeAws),
             _ => None,
         }
     }
@@ -68,6 +70,7 @@ impl ChatCompletionSource {
             Self::WorkersAi => "workers_ai",
             Self::Zai => "zai",
             Self::MiniMax => "minimax",
+            Self::ClaudeAws => "claude_aws",
         }
     }
 
@@ -89,6 +92,7 @@ impl ChatCompletionSource {
             Self::WorkersAi => "Cloudflare Workers AI",
             Self::Zai => "Z.AI (GLM)",
             Self::MiniMax => "MiniMax",
+            Self::ClaudeAws => "Claude on AWS Bedrock",
         }
     }
 }
@@ -231,6 +235,14 @@ mod tests {
         assert_eq!(
             ChatCompletionSource::parse("vertexai"),
             Some(ChatCompletionSource::VertexAi)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("claude_aws"),
+            Some(ChatCompletionSource::ClaudeAws)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("bedrock"),
+            Some(ChatCompletionSource::ClaudeAws)
         );
     }
 }

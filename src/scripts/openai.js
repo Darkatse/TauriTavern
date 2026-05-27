@@ -212,6 +212,7 @@ export const chat_completion_sources = {
     SILICONFLOW: 'siliconflow',
     WORKERS_AI: 'workers_ai',
     MINIMAX: 'minimax',
+    CLAUDE_AWS: 'claude_aws',
 };
 
 const manage_custom_chat_completion_models_option = '__tauritavern_manage_custom_chat_completion_models__';
@@ -246,6 +247,7 @@ const chatCompletionModelControls = {
     [chat_completion_sources.SILICONFLOW]: { selector: '#model_siliconflow_select', settingKey: 'siliconflow_model', label: 'SiliconFlow', supportsCustomModels: true },
     [chat_completion_sources.MINIMAX]: { selector: '#model_minimax_select', settingKey: 'minimax_model', label: 'MiniMax', supportsCustomModels: true },
     [chat_completion_sources.WORKERS_AI]: { selector: '#model_workers_ai_select', settingKey: 'workers_ai_model', label: 'Cloudflare Workers AI', supportsCustomModels: true },
+    [chat_completion_sources.CLAUDE_AWS]: { selector: '#model_claude_aws_select', settingKey: 'claude_aws_model', label: 'Claude on AWS Bedrock', supportsCustomModels: true },
 };
 
 export function getChatCompletionModelControl(source = oai_settings.chat_completion_source) {
@@ -357,6 +359,8 @@ export const MINIMAX_ENDPOINT = {
     CN: 'cn',
 };
 
+export const CLAUDE_AWS_REGION_DEFAULT = 'us-east-1';
+
 const sensitiveFields = [
     'reverse_proxy',
     'proxy_password',
@@ -411,6 +415,8 @@ export const settingsToUpdate = {
     siliconflow_endpoint: ['#siliconflow_endpoint', 'siliconflow_endpoint', false, true],
     minimax_model: ['#model_minimax_select', 'minimax_model', false, true],
     minimax_endpoint: ['#minimax_endpoint', 'minimax_endpoint', false, true],
+    claude_aws_model: ['#model_claude_aws_select', 'claude_aws_model', false, true],
+    claude_aws_region: ['#claude_aws_region', 'claude_aws_region', false, true],
     electronhub_model: ['#model_electronhub_select', 'electronhub_model', false, true],
     electronhub_sort_models: ['#electronhub_sort_models', 'electronhub_sort_models', false, true],
     electronhub_group_models: ['#electronhub_group_models', 'electronhub_group_models', false, true],
@@ -532,6 +538,8 @@ const default_settings = {
     siliconflow_endpoint: SILICONFLOW_ENDPOINT.GLOBAL,
     minimax_model: 'MiniMax-M2.7',
     minimax_endpoint: MINIMAX_ENDPOINT.GLOBAL,
+    claude_aws_model: 'anthropic.claude-sonnet-4-20250514-v1:0',
+    claude_aws_region: CLAUDE_AWS_REGION_DEFAULT,
     electronhub_model: 'gpt-4o-mini',
     electronhub_sort_models: 'alphabetically',
     electronhub_group_models: false,
@@ -2195,6 +2203,8 @@ export function getChatCompletionModel(settings = null) {
             return settings.siliconflow_model;
         case chat_completion_sources.MINIMAX:
             return settings.minimax_model;
+        case chat_completion_sources.CLAUDE_AWS:
+            return settings.claude_aws_model;
         case chat_completion_sources.ELECTRONHUB:
             return settings.electronhub_model;
         case chat_completion_sources.CHUTES:
@@ -2920,6 +2930,44 @@ function saveModelList(data) {
         );
 
         setModelSelectValue(chat_completion_sources.DEEPSEEK, oai_settings.deepseek_model);
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE_AWS) {
+        // Dynamic Bedrock catalog wins over the static <optgroup> placeholders
+        // in index.html. We rebuild the select from scratch and split entries
+        // into two optgroups by `source` (foundation-model vs inference-profile)
+        // so users can tell single-region IDs apart from cross-region routing
+        // profiles.
+        const select = $('#model_claude_aws_select');
+        select.empty();
+
+        const foundationModels = model_list.filter(m => m?.source === 'foundation-model');
+        const inferenceProfiles = model_list.filter(m => m?.source === 'inference-profile');
+        const ungrouped = model_list.filter(m => m?.source !== 'foundation-model' && m?.source !== 'inference-profile');
+        const appendOption = (parent, model) => {
+            parent.append(new Option(model.id, model.id));
+        };
+
+        if (foundationModels.length > 0) {
+            const group = $('<optgroup>').attr('label', 'Foundation models');
+            foundationModels.forEach(model => appendOption(group, model));
+            select.append(group);
+        }
+        if (inferenceProfiles.length > 0) {
+            const group = $('<optgroup>').attr('label', 'Cross-region inference profiles');
+            inferenceProfiles.forEach(model => appendOption(group, model));
+            select.append(group);
+        }
+        ungrouped.forEach(model => appendOption(select, model));
+
+        oai_settings.claude_aws_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.CLAUDE_AWS,
+            model_list.map(model => model.id),
+            oai_settings.claude_aws_model,
+            model_list[0]?.id || oai_settings.claude_aws_model || '',
+        );
+
+        setModelSelectValue(chat_completion_sources.CLAUDE_AWS, oai_settings.claude_aws_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.POLLINATIONS) {
@@ -3701,6 +3749,13 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.siliconflow_endpoint = settings.siliconflow_endpoint || SILICONFLOW_ENDPOINT.GLOBAL;
     }
 
+    if (settings.chat_completion_source === chat_completion_sources.CLAUDE_AWS) {
+        generate_data.claude_aws_region = (settings.claude_aws_region || CLAUDE_AWS_REGION_DEFAULT).trim();
+        generate_data.top_k = Number(settings.top_k_openai);
+        generate_data.use_sysprompt = settings.use_sysprompt;
+        generate_data.stop = getCustomStoppingStrings();
+    }
+
     if (settings.chat_completion_source === chat_completion_sources.MINIMAX) {
         generate_data.minimax_endpoint = settings.minimax_endpoint || MINIMAX_ENDPOINT.GLOBAL;
         if (Number.isFinite(generate_data.temperature)) {
@@ -3903,7 +3958,9 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
     const isCustomClaudeMessages = chat_completion_source === chat_completion_sources.CUSTOM
         && oai_settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES;
 
-    if (chat_completion_source === chat_completion_sources.CLAUDE || isCustomClaudeMessages) {
+    if (chat_completion_source === chat_completion_sources.CLAUDE
+        || chat_completion_source === chat_completion_sources.CLAUDE_AWS
+        || isCustomClaudeMessages) {
         if (show_thoughts) {
             state.reasoning += data?.delta?.thinking || '';
         }
@@ -5419,6 +5476,10 @@ async function getStatusOpen() {
         data.minimax_endpoint = oai_settings.minimax_endpoint;
     }
 
+    if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE_AWS) {
+        data.claude_aws_region = (oai_settings.claude_aws_region || CLAUDE_AWS_REGION_DEFAULT).trim();
+    }
+
     if (oai_settings.chat_completion_source === chat_completion_sources.WORKERS_AI) {
         data.workers_ai_account_id = oai_settings.workers_ai_account_id;
     }
@@ -6435,6 +6496,15 @@ async function onModelChange() {
         oai_settings.minimax_model = value;
     }
 
+    if ($(this).is('#model_claude_aws_select')) {
+        if (!value) {
+            console.debug('Null Claude on AWS Bedrock model selected. Ignoring.');
+            return;
+        }
+        console.log('Claude on AWS Bedrock model changed to', value);
+        oai_settings.claude_aws_model = value;
+    }
+
     if ($(this).is('#model_electronhub_select')) {
         if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.ELECTRONHUB, value))) {
             console.debug('Null ElectronHub model selected. Ignoring.');
@@ -6889,6 +6959,15 @@ async function onModelChange() {
         $('#temp_openai').attr('max', claude_max_temp).val(oai_settings.temp_openai).trigger('input');
     }
 
+    if (oai_settings.chat_completion_source === chat_completion_sources.CLAUDE_AWS) {
+        const maxContext = max_200k;
+        $('#openai_max_context').attr('max', maxContext);
+        oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
+        $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
+        oai_settings.temp_openai = Math.min(claude_max_temp, oai_settings.temp_openai);
+        $('#temp_openai').attr('max', claude_max_temp).val(oai_settings.temp_openai).trigger('input');
+    }
+
     if (oai_settings.chat_completion_source == chat_completion_sources.ZAI) {
         const maxContext = getZaiMaxContext(oai_settings.zai_model, oai_settings.max_context_unlocked);
         $('#openai_max_context').attr('max', maxContext);
@@ -6967,6 +7046,7 @@ async function onConnectButtonClick(e) {
         [chat_completion_sources.POLLINATIONS]: { key: SECRET_KEYS.POLLINATIONS, selector: '#api_key_pollinations', proxy: false },
         [chat_completion_sources.WORKERS_AI]: { key: SECRET_KEYS.WORKERS_AI, selector: '#api_key_workers_ai', proxy: false },
         [chat_completion_sources.MINIMAX]: { key: SECRET_KEYS.MINIMAX, selector: '#api_key_minimax', proxy: false },
+        [chat_completion_sources.CLAUDE_AWS]: { key: SECRET_KEYS.CLAUDE_AWS, selector: '#api_key_claude_aws', proxy: false },
     };
 
     // Vertex AI Express version - use API key
@@ -7049,6 +7129,9 @@ function toggleChatCompletionForms() {
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.MINIMAX) {
         $('#model_minimax_select').trigger('change');
+    }
+    else if (oai_settings.chat_completion_source == chat_completion_sources.CLAUDE_AWS) {
+        $('#model_claude_aws_select').trigger('change');
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.ELECTRONHUB) {
         $('#model_electronhub_select').trigger('change');
@@ -8283,6 +8366,10 @@ export function initOpenAI() {
         oai_settings.minimax_endpoint = String($(this).val());
         saveSettingsDebounced();
     });
+    $('#claude_aws_region').on('input', function () {
+        oai_settings.claude_aws_region = String($(this).val()).trim() || CLAUDE_AWS_REGION_DEFAULT;
+        saveSettingsDebounced();
+    });
     $('#workers_ai_account_id').on('input', function () {
         oai_settings.workers_ai_account_id = String($(this).val());
         saveSettingsDebounced();
@@ -8304,6 +8391,7 @@ export function initOpenAI() {
     $('#model_chutes_select').on('change', onModelChange);
     $('#model_siliconflow_select').on('change', onModelChange);
     $('#model_minimax_select').on('change', onModelChange);
+    $('#model_claude_aws_select').on('change', onModelChange);
     $('#model_electronhub_select').on('change', onModelChange);
     $('#model_nanogpt_select').on('change', onModelChange);
     $('#model_deepseek_select').on('change', onModelChange);

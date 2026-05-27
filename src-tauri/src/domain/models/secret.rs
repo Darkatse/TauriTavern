@@ -218,6 +218,8 @@ impl SecretKeys {
     pub const VERTEXAI_SERVICE_ACCOUNT: &'static str = "vertexai_service_account_json";
     pub const MINIMAX: &'static str = "api_key_minimax";
     pub const MINIMAX_GROUP_ID: &'static str = "minimax_group_id";
+    pub const CLAUDE_AWS: &'static str = "api_key_claude_aws";
+    pub const CLAUDE_AWS_REGION: &'static str = "claude_aws_region";
     pub const MOONSHOT: &'static str = "api_key_moonshot";
     pub const COMETAPI: &'static str = "api_key_cometapi";
     pub const ZAI: &'static str = "api_key_zai";
@@ -284,6 +286,8 @@ impl SecretKeys {
             Self::VERTEXAI_SERVICE_ACCOUNT,
             Self::MINIMAX,
             Self::MINIMAX_GROUP_ID,
+            Self::CLAUDE_AWS,
+            Self::CLAUDE_AWS_REGION,
             Self::MOONSHOT,
             Self::COMETAPI,
             Self::ZAI,

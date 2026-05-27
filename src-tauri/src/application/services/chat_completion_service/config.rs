@@ -38,6 +38,7 @@ const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
 const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
 const MINIMAX_API_BASE: &str = "https://api.minimax.io/v1";
 const MINIMAX_API_BASE_CN: &str = "https://api.minimaxi.com/v1";
+const CLAUDE_AWS_DEFAULT_REGION: &str = "us-east-1";
 const OPENROUTER_REFERER: &str = "https://tauritavern.github.io";
 const OPENROUTER_TITLE: &str = "TauriTavern";
 const OPENROUTER_CATEGORIES: &str = "roleplay,general-chat";
@@ -59,6 +60,7 @@ struct ApiConfigHints<'a> {
     workers_ai_account_id: &'a str,
     nanogpt_provider: &'a str,
     nanogpt_payg_override: bool,
+    claude_aws_region: &'a str,
     secret_id: Option<&'a str>,
 }
 
@@ -85,6 +87,7 @@ pub(super) async fn resolve_status_api_config(
             siliconflow_endpoint: dto.siliconflow_endpoint.trim(),
             minimax_endpoint: dto.minimax_endpoint.trim(),
             workers_ai_account_id: dto.workers_ai_account_id.trim(),
+            claude_aws_region: dto.claude_aws_region.trim(),
             secret_id: normalize_secret_id(dto.secret_id.as_deref()),
             ..Default::default()
         },
@@ -110,6 +113,7 @@ pub(super) async fn resolve_generate_api_config(
     let workers_ai_account_id = get_payload_string(&dto.payload, "workers_ai_account_id")?;
     let nanogpt_provider = get_payload_string(&dto.payload, "nanogpt_provider")?;
     let nanogpt_payg_override = get_payload_bool(&dto.payload, "nanogpt_payg_override")?;
+    let claude_aws_region = get_payload_string(&dto.payload, "claude_aws_region")?;
     let secret_id = get_payload_optional_string(&dto.payload, "secret_id")?;
     let additional_headers = additional_parameters.headers()?;
 
@@ -138,6 +142,7 @@ pub(super) async fn resolve_generate_api_config(
             workers_ai_account_id: &workers_ai_account_id,
             nanogpt_provider: &nanogpt_provider,
             nanogpt_payg_override,
+            claude_aws_region: &claude_aws_region,
             secret_id: secret_id.as_deref(),
         },
         ApiConfigPurpose::Generate,
@@ -376,6 +381,7 @@ fn default_base_url(
             }
         }
         ChatCompletionSource::MiniMax => minimax_base_url(hints.minimax_endpoint)?.to_string(),
+        ChatCompletionSource::ClaudeAws => claude_aws_base_url(hints.claude_aws_region),
         ChatCompletionSource::Custom => OPENAI_API_BASE.to_string(),
     };
 
@@ -399,6 +405,7 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
         ChatCompletionSource::WorkersAi => Some(SecretKeys::WORKERS_AI),
         ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
         ChatCompletionSource::MiniMax => Some(SecretKeys::MINIMAX),
+        ChatCompletionSource::ClaudeAws => Some(SecretKeys::CLAUDE_AWS),
         ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
     }
 }
@@ -452,6 +459,16 @@ fn minimax_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
             "Unsupported MiniMax endpoint: {other}"
         ))),
     }
+}
+
+fn claude_aws_base_url(region: &str) -> String {
+    let region = region.trim();
+    let region = if region.is_empty() {
+        CLAUDE_AWS_DEFAULT_REGION
+    } else {
+        region
+    };
+    format!("https://bedrock-runtime.{region}.amazonaws.com")
 }
 
 async fn resolve_vertexai_generate_api_config(
@@ -744,6 +761,28 @@ mod tests {
         .unwrap();
 
         assert_eq!(actual, ZAI_API_BASE_CODING);
+    }
+
+    #[test]
+    fn claude_aws_uses_region_specific_bedrock_runtime_host() {
+        let default_region = default_base_url(
+            ChatCompletionSource::ClaudeAws,
+            ApiConfigPurpose::Generate,
+            &ApiConfigHints::default(),
+        )
+        .unwrap();
+        assert_eq!(default_region, "https://bedrock-runtime.us-east-1.amazonaws.com");
+
+        let custom_region = default_base_url(
+            ChatCompletionSource::ClaudeAws,
+            ApiConfigPurpose::Generate,
+            &ApiConfigHints {
+                claude_aws_region: "us-west-2",
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(custom_region, "https://bedrock-runtime.us-west-2.amazonaws.com");
     }
 
     #[test]
