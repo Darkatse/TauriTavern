@@ -1,8 +1,9 @@
-use serde_json::{Map, Value};
+use serde_json::{Map, Number, Value, json};
 
 use crate::application::errors::ApplicationError;
 
 use super::claude;
+use super::shared::message_content_to_text;
 
 const BEDROCK_ANTHROPIC_VERSION: &str = "bedrock-2023-05-31";
 const BEDROCK_INVOKE_SUFFIX: &str = "invoke";
@@ -17,14 +18,14 @@ const BEDROCK_ANTHROPIC_PREFIX: &str = "anthropic.";
 
 /// Bedrock model providers. The enum is intentionally exhaustive over the
 /// providers we *recognize* — [`BedrockProvider::Other`] covers any prefix we
-/// haven't explicitly wired a payload builder for yet (Amazon Nova/Titan,
-/// Meta Llama, Mistral, Cohere, AI21, DeepSeek, etc.).
+/// haven't explicitly wired a payload builder for yet (Titan, ...).
 ///
 /// Adding a new provider here is a two-step PR: (1) extend [`detect_provider`]
 /// to surface it, (2) add a `build_<provider>` branch to [`build`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum BedrockProvider {
     Anthropic,
+    Nova,
     Other(String),
 }
 
@@ -44,8 +45,9 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
 
     match detect_provider(&model_id) {
         BedrockProvider::Anthropic => build_anthropic(payload, &model_id),
+        BedrockProvider::Nova => build_nova(payload, &model_id),
         BedrockProvider::Other(provider) => Err(ApplicationError::ValidationError(format!(
-            "AWS Bedrock provider `{provider}` is not yet wired up by TauriTavern. Currently supported: Anthropic. Pick a model id starting with `anthropic.` or any inference profile that ends in `*.anthropic.*` (e.g. us.anthropic.claude-opus-4-7). Other providers (Amazon Nova/Titan, Meta Llama, Mistral, Cohere, AI21, DeepSeek) will be added in follow-up releases."
+            "AWS Bedrock provider `{provider}` is not yet wired up by TauriTavern. Currently supported: Anthropic, Amazon Nova. Other providers (Meta Llama, Mistral, Cohere, AI21, DeepSeek) will be added in follow-up releases."
         ))),
     }
 }
@@ -91,6 +93,201 @@ fn build_anthropic(
     Ok((endpoint_path, Value::Object(request_object)))
 }
 
+/// Build an Amazon Nova invoke body. Nova accepts the *same* schema on
+/// `/model/{id}/invoke` that the Converse API uses; the chunks coming back on
+/// `/invoke-with-response-stream` are Converse-style events (`messageStart`,
+/// `contentBlockDelta`, `messageStop`, `metadata`).
+///
+/// Request body shape (per AWS Bedrock User Guide — `model-card-amazon-nova-*`,
+/// `prompt-caching.md`, and the Converse API mapping):
+/// ```json
+/// {
+///   "system": [{ "text": "..." }],
+///   "messages": [
+///     { "role": "user", "content": [{ "text": "..." }] }
+///   ],
+///   "inferenceConfig": { "maxTokens": 300, "topP": 0.1, "topK": 20, "temperature": 0.3 }
+/// }
+/// ```
+///
+/// Non-stream response:
+/// ```json
+/// { "output": { "message": { "role": "assistant", "content": [{ "text": "..." }] } },
+///   "stopReason": "end_turn", "usage": { "inputTokens": N, "outputTokens": M } }
+/// ```
+///
+/// Stream chunk (decoded base64 bytes of each EventStream frame):
+/// ```json
+/// { "contentBlockDelta": { "delta": { "text": "..." }, "contentBlockIndex": 0 } }
+/// ```
+fn build_nova(
+    payload: Map<String, Value>,
+    model_id: &str,
+) -> Result<(String, Value), ApplicationError> {
+    let (system_text, conversation) = flatten_openai_messages(payload.get("messages"));
+
+    let nova_messages: Vec<Value> = conversation
+        .into_iter()
+        .map(|FlatMessage { role, text }| {
+            let role = if role == "assistant" {
+                "assistant"
+            } else {
+                "user"
+            };
+            json!({
+                "role": role,
+                "content": [{ "text": text }],
+            })
+        })
+        .collect();
+
+    let mut body = Map::new();
+    body.insert("messages".to_string(), Value::Array(nova_messages));
+
+    if let Some(text) = system_text.filter(|value| !value.is_empty()) {
+        body.insert(
+            "system".to_string(),
+            Value::Array(vec![json!({ "text": text })]),
+        );
+    }
+
+    let inference_config = build_nova_inference_config(&payload);
+    if !inference_config.is_empty() {
+        body.insert("inferenceConfig".to_string(), Value::Object(inference_config));
+    }
+
+    Ok((
+        format!("/model/{model_id}/{BEDROCK_INVOKE_SUFFIX}"),
+        Value::Object(body),
+    ))
+}
+
+fn build_nova_inference_config(payload: &Map<String, Value>) -> Map<String, Value> {
+    let mut config = Map::new();
+
+    if let Some(max_tokens) = value_to_positive_i64(payload.get("max_tokens")) {
+        config.insert("maxTokens".to_string(), Value::Number(Number::from(max_tokens)));
+    }
+    if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64) {
+        if let Some(number) = Number::from_f64(temperature) {
+            config.insert("temperature".to_string(), Value::Number(number));
+        }
+    }
+    if let Some(top_p) = payload.get("top_p").and_then(Value::as_f64) {
+        if let Some(number) = Number::from_f64(top_p) {
+            config.insert("topP".to_string(), Value::Number(number));
+        }
+    }
+    if let Some(top_k) = value_to_positive_i64(payload.get("top_k")) {
+        config.insert("topK".to_string(), Value::Number(Number::from(top_k)));
+    }
+    if let Some(stop) = payload.get("stop").cloned().filter(|value| !value.is_null()) {
+        // Bedrock Converse-style payload accepts `stopSequences`.
+        let stops = match stop {
+            Value::Array(values) => values
+                .into_iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect::<Vec<_>>(),
+            Value::String(value) => vec![value],
+            _ => Vec::new(),
+        };
+        if !stops.is_empty() {
+            config.insert(
+                "stopSequences".to_string(),
+                Value::Array(stops.into_iter().map(Value::String).collect()),
+            );
+        }
+    }
+
+    config
+}
+
+/// Lightweight per-message representation used by every non-Anthropic builder.
+/// Provider-native shapes (Nova content blocks, Llama prompt template, Cohere
+/// chat_history, ...) are reconstructed from this flat list in each builder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct FlatMessage {
+    pub role: String,
+    pub text: String,
+}
+
+/// Flatten an OpenAI-style `messages` array into a `(system_text, [user/assistant turns])`
+/// pair. System messages are concatenated with `\n\n` and pulled out of the
+/// conversation list — every Bedrock non-Anthropic provider treats `system` as
+/// a separate top-level field (Nova `system`, Llama `<|start_header_id|>system`,
+/// Cohere `preamble`, AI21 `role:"system"`, DeepSeek prompt prefix, ...).
+///
+/// `tool` role messages are demoted to `user` text with a `[tool_result] ...`
+/// envelope. We could later add per-provider tool-call wiring, but for the
+/// initial multi-provider release we focus on plain chat.
+pub(super) fn flatten_openai_messages(
+    messages: Option<&Value>,
+) -> (Option<String>, Vec<FlatMessage>) {
+    let mut system_parts: Vec<String> = Vec::new();
+    let mut turns: Vec<FlatMessage> = Vec::new();
+
+    let Some(messages) = messages else {
+        return (None, turns);
+    };
+
+    if let Some(prompt) = messages.as_str() {
+        turns.push(FlatMessage {
+            role: "user".to_string(),
+            text: prompt.to_string(),
+        });
+        return (None, turns);
+    }
+
+    let Some(entries) = messages.as_array() else {
+        return (None, turns);
+    };
+
+    for entry in entries {
+        let Some(message) = entry.as_object() else {
+            continue;
+        };
+
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("user")
+            .trim()
+            .to_lowercase();
+        let text = message_content_to_text(message.get("content"));
+        if text.is_empty() {
+            continue;
+        }
+
+        match role.as_str() {
+            "system" | "developer" => system_parts.push(text),
+            "tool" | "function" => turns.push(FlatMessage {
+                role: "user".to_string(),
+                text: format!("[tool_result] {text}"),
+            }),
+            "assistant" => turns.push(FlatMessage {
+                role: "assistant".to_string(),
+                text,
+            }),
+            _ => turns.push(FlatMessage {
+                role: "user".to_string(),
+                text,
+            }),
+        }
+    }
+
+    let system_text = if system_parts.is_empty() {
+        None
+    } else {
+        Some(system_parts.join("\n\n"))
+    };
+
+    (system_text, turns)
+}
+
+fn value_to_positive_i64(value: Option<&Value>) -> Option<i64> {
+    value.and_then(Value::as_i64).filter(|number| *number > 0)
+}
+
 /// Detect which Bedrock provider a model id belongs to by stripping any
 /// cross-region inference-profile prefix and inspecting the next segment
 /// (`anthropic.` / `amazon.` / `meta.` / `mistral.` / `cohere.` / `ai21.` /
@@ -105,6 +302,14 @@ pub(super) fn detect_provider(model_id: &str) -> BedrockProvider {
         .next()
         .filter(|segment| !segment.is_empty())
         .unwrap_or("unknown");
+
+    // Amazon's text-output foundation/inference-profile ids are exclusively
+    // Nova (`amazon.nova-*`, `us.amazon.nova-pro-v1:0`, ...). Titan is gated
+    // behind `text-output` filters in the catalog, so we don't see it here.
+    if provider == "amazon" {
+        return BedrockProvider::Nova;
+    }
+
     BedrockProvider::Other(provider.to_string())
 }
 
@@ -148,7 +353,10 @@ pub(super) fn normalize_bedrock_model_id(raw: &str) -> String {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{BedrockProvider, build, detect_provider, normalize_bedrock_model_id};
+    use super::{
+        BedrockProvider, FlatMessage, build, detect_provider, flatten_openai_messages,
+        normalize_bedrock_model_id,
+    };
 
     #[test]
     fn bedrock_moves_model_to_url_path_and_injects_anthropic_version() {
@@ -237,17 +445,28 @@ mod tests {
     }
 
     #[test]
-    fn detect_provider_surfaces_unsupported_providers_for_clear_error() {
-        // Amazon Nova / Titan, Meta Llama, Mistral, Cohere, AI21, DeepSeek
-        // all surface as Other(<provider>) until follow-up PRs wire builders.
+    fn detect_provider_routes_amazon_models_to_nova_branch() {
+        // Every Amazon text-output id in the Bedrock catalog is Nova today
+        // (`amazon.nova-*` and its `us./global./apac.` inference-profile
+        // mirrors). Titan is filtered out by `byOutputModality=TEXT` upstream.
         assert_eq!(
             detect_provider("us.amazon.nova-pro-v1:0"),
-            BedrockProvider::Other("amazon".to_string()),
+            BedrockProvider::Nova,
         );
         assert_eq!(
-            detect_provider("amazon.titan-text-premier-v1:0"),
-            BedrockProvider::Other("amazon".to_string()),
+            detect_provider("amazon.nova-lite-v1:0"),
+            BedrockProvider::Nova,
         );
+        assert_eq!(
+            detect_provider("amazon.nova-premier-v1:0"),
+            BedrockProvider::Nova,
+        );
+    }
+
+    #[test]
+    fn detect_provider_surfaces_unsupported_providers_for_clear_error() {
+        // Meta Llama, Mistral, Cohere, AI21, DeepSeek all surface as
+        // Other(<provider>) until follow-up PRs wire builders.
         assert_eq!(
             detect_provider("us.meta.llama3-3-70b-instruct-v1:0"),
             BedrockProvider::Other("meta".to_string()),
@@ -274,7 +493,7 @@ mod tests {
     fn build_returns_clear_error_when_provider_is_not_yet_supported() {
         let payload = json!({
             "chat_completion_source": "aws_bedrock",
-            "model": "us.amazon.nova-pro-v1:0",
+            "model": "us.meta.llama3-3-70b-instruct-v1:0",
             "messages": [{ "role": "user", "content": "hi" }],
             "max_tokens": 1024,
         })
@@ -282,19 +501,127 @@ mod tests {
         .cloned()
         .expect("payload should be object");
 
-        let err = build(payload).expect_err("non-Anthropic provider must fail with a clear error");
+        let err = build(payload).expect_err("non-wired provider must fail with a clear error");
         let message = err.to_string();
         assert!(
             message.contains("not yet wired up"),
             "unexpected error: {message}",
         );
         assert!(
-            message.contains("`amazon`"),
+            message.contains("`meta`"),
             "error must name the unsupported provider: {message}",
         );
         assert!(
-            message.contains("anthropic."),
-            "error must point users at the supported prefix: {message}",
+            message.contains("Anthropic"),
+            "error must mention currently supported providers: {message}",
+        );
+    }
+
+    #[test]
+    fn build_nova_emits_converse_style_invoke_body_for_inference_profile() {
+        let payload = json!({
+            "chat_completion_source": "aws_bedrock",
+            "model": "us.amazon.nova-pro-v1:0",
+            "messages": [
+                { "role": "system", "content": "be concise" },
+                { "role": "user", "content": "hello" }
+            ],
+            "max_tokens": 256,
+            "temperature": 0.4,
+            "top_p": 0.9,
+            "top_k": 50,
+            "stop": ["###"],
+            "stream": true,
+        })
+        .as_object()
+        .cloned()
+        .expect("payload should be object");
+
+        let (endpoint_path, body) = build(payload).expect("payload should build");
+
+        assert_eq!(endpoint_path, "/model/us.amazon.nova-pro-v1:0/invoke");
+        let body = body.as_object().expect("body should be object");
+
+        // Body must not leak the routing-only fields.
+        assert!(body.get("model").is_none());
+        assert!(body.get("stream").is_none());
+
+        let system = body
+            .get("system")
+            .and_then(Value::as_array)
+            .expect("nova must lift system messages out of the conversation");
+        assert_eq!(
+            system[0].get("text").and_then(Value::as_str),
+            Some("be concise"),
+        );
+
+        let messages = body.get("messages").and_then(Value::as_array).expect("messages");
+        assert_eq!(messages.len(), 1, "system was lifted out");
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"][0]["text"], "hello");
+
+        let inference = body
+            .get("inferenceConfig")
+            .and_then(Value::as_object)
+            .expect("nova must always carry an inferenceConfig when params are present");
+        assert_eq!(inference.get("maxTokens").and_then(Value::as_i64), Some(256));
+        assert_eq!(inference.get("temperature").and_then(Value::as_f64), Some(0.4));
+        assert_eq!(inference.get("topP").and_then(Value::as_f64), Some(0.9));
+        assert_eq!(inference.get("topK").and_then(Value::as_i64), Some(50));
+        let stop = inference
+            .get("stopSequences")
+            .and_then(Value::as_array)
+            .expect("stopSequences");
+        assert_eq!(stop[0], "###");
+    }
+
+    #[test]
+    fn flatten_openai_messages_extracts_system_and_normalizes_roles() {
+        let messages = json!([
+            { "role": "system", "content": "rules apply" },
+            { "role": "developer", "content": "extra system" },
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": "hello" },
+            { "role": "tool", "content": "tool result" }
+        ]);
+
+        let (system, turns) = flatten_openai_messages(Some(&messages));
+        assert_eq!(system.as_deref(), Some("rules apply\n\nextra system"));
+        assert_eq!(
+            turns,
+            vec![
+                FlatMessage { role: "user".to_string(), text: "hi".to_string() },
+                FlatMessage { role: "assistant".to_string(), text: "hello".to_string() },
+                FlatMessage {
+                    role: "user".to_string(),
+                    text: "[tool_result] tool result".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn build_nova_falls_back_to_user_role_when_no_system_messages_present() {
+        let payload = json!({
+            "chat_completion_source": "aws_bedrock",
+            "model": "amazon.nova-micro-v1:0",
+            "messages": [{ "role": "user", "content": "hi" }],
+        })
+        .as_object()
+        .cloned()
+        .expect("payload should be object");
+
+        let (_, body) = build(payload).expect("payload should build");
+        let body = body.as_object().expect("body should be object");
+        assert!(
+            body.get("system").is_none(),
+            "system block should be omitted when no system messages exist",
+        );
+        assert_eq!(
+            body.get("messages")
+                .and_then(Value::as_array)
+                .map(|messages| messages.len()),
+            Some(1),
         );
     }
 

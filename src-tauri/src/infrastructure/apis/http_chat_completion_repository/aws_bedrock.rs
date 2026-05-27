@@ -2,7 +2,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use reqwest::RequestBuilder;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
@@ -26,6 +26,38 @@ const BEDROCK_CONTROL_PLANE_HOST_INFIX: &str = "bedrock.";
 /// `us.anthropic.claude-opus-4-7` -> provider `anthropic`).
 const BEDROCK_INFERENCE_PROFILE_PREFIXES: &[&str] =
     &["us.", "eu.", "apac.", "global.", "us-gov."];
+
+/// HTTP-side view of which Bedrock provider a request belongs to. Used to
+/// pick the right non-stream response normalizer and the right stream-chunk
+/// transformer. Kept narrowly here (separate from
+/// `payload::aws_bedrock::BedrockProvider`) so the infrastructure layer
+/// doesn't import from the application layer (Clean Architecture rule:
+/// dependencies point inward).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HttpBedrockProvider {
+    Anthropic,
+    Nova,
+    Other,
+}
+
+fn detect_http_provider(model_id: &str) -> HttpBedrockProvider {
+    match extract_provider(model_id) {
+        "anthropic" => HttpBedrockProvider::Anthropic,
+        "amazon" => HttpBedrockProvider::Nova,
+        _ => HttpBedrockProvider::Other,
+    }
+}
+
+/// Pull the model id out of a Bedrock invoke endpoint path. Returns an empty
+/// string when the path is malformed (the caller falls back to the Claude
+/// normalizer in that case, which is harmless: the request would already have
+/// failed at the application layer).
+fn extract_model_id_from_endpoint(endpoint_path: &str) -> &str {
+    let Some(rest) = endpoint_path.strip_prefix("/model/") else {
+        return "";
+    };
+    rest.rsplit_once('/').map(|(model, _)| model).unwrap_or("")
+}
 
 pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
@@ -234,7 +266,84 @@ pub(super) async fn generate(
     }
 
     let body = read_upstream_json_body(BEDROCK_PROVIDER_NAME, "generate", response).await?;
-    Ok(normalizers::normalize_claude_response(body))
+    Ok(normalize_provider_response(endpoint_path, body))
+}
+
+fn normalize_provider_response(
+    endpoint_path: &str,
+    body: Value,
+) -> ChatCompletionRepositoryGenerateResponse {
+    let model_id = extract_model_id_from_endpoint(endpoint_path);
+    match detect_http_provider(model_id) {
+        HttpBedrockProvider::Anthropic => normalizers::normalize_claude_response(body),
+        HttpBedrockProvider::Nova => {
+            normalizers::normalize_claude_response(nova_response_to_claude_shape(body))
+        }
+        // Other providers reuse the Claude normalizer for now (they fail at the
+        // application layer before reaching this point); kept for forward
+        // compatibility with custom-template overrides.
+        HttpBedrockProvider::Other => normalizers::normalize_claude_response(body),
+    }
+}
+
+/// Reshape an Amazon Nova non-stream `invoke` response into the Claude-style
+/// `{ content: [...], stop_reason, usage }` envelope that
+/// `normalize_claude_response` already understands. Doing the translation here
+/// (rather than building a parallel normalizer) keeps the OpenAI-shape choice
+/// the frontend sees identical to the Claude path.
+///
+/// Nova's response shape (Converse-style even when called via `/invoke`):
+/// ```json
+/// {
+///   "output": { "message": { "role": "assistant", "content": [{ "text": "..." }] } },
+///   "stopReason": "end_turn",
+///   "usage": { "inputTokens": N, "outputTokens": M, "totalTokens": N+M }
+/// }
+/// ```
+fn nova_response_to_claude_shape(body: Value) -> Value {
+    let mut content_blocks: Vec<Value> = Vec::new();
+    if let Some(parts) = body
+        .pointer("/output/message/content")
+        .and_then(Value::as_array)
+    {
+        for part in parts {
+            if let Some(text) = part.get("text").and_then(Value::as_str) {
+                content_blocks.push(json!({ "type": "text", "text": text }));
+            }
+        }
+    }
+
+    let stop_reason = body
+        .get("stopReason")
+        .and_then(Value::as_str)
+        .unwrap_or("end_turn")
+        .to_string();
+
+    let mut usage = Map::new();
+    if let Some(usage_value) = body.get("usage").and_then(Value::as_object) {
+        if let Some(input_tokens) = usage_value
+            .get("inputTokens")
+            .or_else(|| usage_value.get("input_tokens"))
+            .and_then(Value::as_u64)
+        {
+            usage.insert("input_tokens".to_string(), json!(input_tokens));
+        }
+        if let Some(output_tokens) = usage_value
+            .get("outputTokens")
+            .or_else(|| usage_value.get("output_tokens"))
+            .and_then(Value::as_u64)
+        {
+            usage.insert("output_tokens".to_string(), json!(output_tokens));
+        }
+    }
+
+    let mut claude_body = Map::new();
+    claude_body.insert("content".to_string(), Value::Array(content_blocks));
+    claude_body.insert("stop_reason".to_string(), Value::String(stop_reason));
+    if !usage.is_empty() {
+        claude_body.insert("usage".to_string(), Value::Object(usage));
+    }
+    Value::Object(claude_body)
 }
 
 pub(super) async fn generate_stream(
@@ -270,7 +379,8 @@ pub(super) async fn generate_stream(
         .await);
     }
 
-    forward_eventstream_response(response, sender, cancel).await
+    let provider = detect_http_provider(extract_model_id_from_endpoint(endpoint_path));
+    forward_eventstream_response(response, sender, cancel, provider).await
 }
 
 fn apply_bedrock_auth(request: RequestBuilder, config: &ChatCompletionApiConfig) -> RequestBuilder {
@@ -311,6 +421,7 @@ async fn forward_eventstream_response(
     mut response: reqwest::Response,
     sender: ChatCompletionStreamSender,
     mut cancel: ChatCompletionCancelReceiver,
+    provider: HttpBedrockProvider,
 ) -> Result<(), DomainError> {
     let mut buffer = Vec::<u8>::new();
 
@@ -338,7 +449,7 @@ async fn forward_eventstream_response(
         };
 
         buffer.extend_from_slice(&chunk);
-        drain_eventstream_messages(&mut buffer, &sender)?;
+        drain_eventstream_messages(&mut buffer, &sender, provider)?;
     }
 
     Ok(())
@@ -347,13 +458,14 @@ async fn forward_eventstream_response(
 fn drain_eventstream_messages(
     buffer: &mut Vec<u8>,
     sender: &ChatCompletionStreamSender,
+    provider: HttpBedrockProvider,
 ) -> Result<(), DomainError> {
     loop {
         match parse_next_message(buffer)? {
             ParseStep::Need => return Ok(()),
             ParseStep::Consumed { consumed, payload } => {
                 if !payload.is_empty() {
-                    if let Some(forwarded) = decode_eventstream_payload(&payload)? {
+                    if let Some(forwarded) = decode_eventstream_payload(&payload, provider)? {
                         if sender.send(forwarded).is_err() {
                             buffer.drain(..consumed);
                             return Ok(());
@@ -402,7 +514,10 @@ fn parse_next_message(buffer: &[u8]) -> Result<ParseStep, DomainError> {
     })
 }
 
-fn decode_eventstream_payload(payload: &[u8]) -> Result<Option<String>, DomainError> {
+fn decode_eventstream_payload(
+    payload: &[u8],
+    provider: HttpBedrockProvider,
+) -> Result<Option<String>, DomainError> {
     let value: Value = serde_json::from_slice(payload).map_err(|error| {
         DomainError::InternalError(format!(
             "{BEDROCK_PROVIDER_NAME} stream returned non-JSON EventStream payload: {error}",
@@ -420,7 +535,11 @@ fn decode_eventstream_payload(payload: &[u8]) -> Result<Option<String>, DomainEr
                 "{BEDROCK_PROVIDER_NAME} stream returned non-UTF-8 chunk payload: {error}",
             ))
         })?;
-        return Ok(Some(decoded));
+        // Each provider speaks its own chunk dialect on `invoke-with-response-stream`.
+        // Normalize to Anthropic-style `content_block_delta` here so the frontend
+        // dispatcher in `getStreamingReply` (path: `data.delta.text` /
+        // `data.delta.thinking`) works uniformly across every Bedrock provider.
+        return Ok(transform_chunk_for_provider(&decoded, provider));
     }
 
     if let Some(message) = value.get("message").and_then(Value::as_str) {
@@ -432,6 +551,49 @@ fn decode_eventstream_payload(payload: &[u8]) -> Result<Option<String>, DomainEr
     Ok(None)
 }
 
+fn transform_chunk_for_provider(
+    decoded: &str,
+    provider: HttpBedrockProvider,
+) -> Option<String> {
+    match provider {
+        // Anthropic already emits `{"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}`.
+        // Pass through.
+        HttpBedrockProvider::Anthropic | HttpBedrockProvider::Other => Some(decoded.to_string()),
+        HttpBedrockProvider::Nova => transform_nova_chunk_to_anthropic(decoded),
+    }
+}
+
+/// Nova streams Converse-style events. Each EventStream `bytes` chunk decodes
+/// into one of:
+///   - `{ "messageStart": { "role": "assistant" } }`
+///   - `{ "contentBlockStart": { "start": {...}, "contentBlockIndex": 0 } }`
+///   - `{ "contentBlockDelta": { "delta": { "text": "..." }, "contentBlockIndex": 0 } }`
+///   - `{ "contentBlockStop": { "contentBlockIndex": 0 } }`
+///   - `{ "messageStop": { "stopReason": "end_turn" } }`
+///   - `{ "metadata": { "usage": {...} } }`
+///
+/// Only the `contentBlockDelta.delta.text` payload carries user-visible text;
+/// every other event is dropped. The delta is rewrapped as an Anthropic
+/// `content_block_delta` text frame.
+fn transform_nova_chunk_to_anthropic(decoded: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(decoded).ok()?;
+    let delta_text = value
+        .pointer("/contentBlockDelta/delta/text")
+        .and_then(Value::as_str)?;
+    let index = value
+        .pointer("/contentBlockDelta/contentBlockIndex")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    Some(
+        json!({
+            "type": "content_block_delta",
+            "index": index,
+            "delta": { "type": "text_delta", "text": delta_text },
+        })
+        .to_string(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use base64::Engine;
@@ -440,10 +602,13 @@ mod tests {
     use tokio::sync::mpsc::unbounded_channel;
 
     use super::{
-        decode_eventstream_payload, derive_control_plane_base, drain_eventstream_messages,
-        extract_provider, inference_supports_on_demand, merge_bedrock_models, to_stream_endpoint,
-        validate_invoke_endpoint,
+        HttpBedrockProvider, decode_eventstream_payload, derive_control_plane_base,
+        detect_http_provider, drain_eventstream_messages, extract_model_id_from_endpoint,
+        extract_provider, inference_supports_on_demand, merge_bedrock_models,
+        normalize_provider_response, nova_response_to_claude_shape, to_stream_endpoint,
+        transform_nova_chunk_to_anthropic, validate_invoke_endpoint,
     };
+    use serde_json::Value;
 
     #[test]
     fn validate_invoke_endpoint_accepts_invoke_suffix() {
@@ -487,7 +652,7 @@ mod tests {
         });
         let encoded = BASE64_STANDARD.encode(inner.to_string().as_bytes());
         let payload = json!({ "bytes": encoded }).to_string();
-        let decoded = decode_eventstream_payload(payload.as_bytes())
+        let decoded = decode_eventstream_payload(payload.as_bytes(), HttpBedrockProvider::Anthropic)
             .unwrap()
             .expect("payload with bytes should decode");
         let parsed: serde_json::Value = serde_json::from_str(&decoded).unwrap();
@@ -497,14 +662,15 @@ mod tests {
     #[test]
     fn decode_eventstream_payload_returns_none_for_internal_metadata() {
         let payload = json!({ "p": "ignored" }).to_string();
-        let decoded = decode_eventstream_payload(payload.as_bytes()).unwrap();
+        let decoded =
+            decode_eventstream_payload(payload.as_bytes(), HttpBedrockProvider::Anthropic).unwrap();
         assert!(decoded.is_none(), "metadata payloads should be skipped");
     }
 
     #[test]
     fn decode_eventstream_payload_surfaces_exception_messages() {
         let payload = json!({ "message": "throttled" }).to_string();
-        let error = decode_eventstream_payload(payload.as_bytes())
+        let error = decode_eventstream_payload(payload.as_bytes(), HttpBedrockProvider::Anthropic)
             .expect_err("exception payload should fail");
         assert!(error.to_string().contains("throttled"));
     }
@@ -519,7 +685,7 @@ mod tests {
         buffer.extend_from_slice(&chunk_two);
 
         let (sender, mut receiver) = unbounded_channel::<String>();
-        drain_eventstream_messages(&mut buffer, &sender).unwrap();
+        drain_eventstream_messages(&mut buffer, &sender, HttpBedrockProvider::Anthropic).unwrap();
         assert!(buffer.is_empty());
 
         assert_eq!(receiver.try_recv().ok(), Some("first".to_string()));
@@ -533,9 +699,121 @@ mod tests {
         let mut buffer = chunk[..chunk.len() - 1].to_vec();
 
         let (sender, mut receiver) = unbounded_channel::<String>();
-        drain_eventstream_messages(&mut buffer, &sender).unwrap();
+        drain_eventstream_messages(&mut buffer, &sender, HttpBedrockProvider::Anthropic).unwrap();
         assert_eq!(buffer.len(), chunk.len() - 1, "buffer should be retained");
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn detect_http_provider_identifies_anthropic_nova_and_other_buckets() {
+        assert_eq!(
+            detect_http_provider("us.anthropic.claude-opus-4-7"),
+            HttpBedrockProvider::Anthropic,
+        );
+        assert_eq!(
+            detect_http_provider("amazon.nova-pro-v1:0"),
+            HttpBedrockProvider::Nova,
+        );
+        assert_eq!(
+            detect_http_provider("us.amazon.nova-lite-v1:0"),
+            HttpBedrockProvider::Nova,
+        );
+        assert_eq!(
+            detect_http_provider("meta.llama3-2-3b-instruct-v1:0"),
+            HttpBedrockProvider::Other,
+        );
+    }
+
+    #[test]
+    fn extract_model_id_from_endpoint_works_for_invoke_and_stream_paths() {
+        assert_eq!(
+            extract_model_id_from_endpoint("/model/us.amazon.nova-pro-v1:0/invoke"),
+            "us.amazon.nova-pro-v1:0",
+        );
+        assert_eq!(
+            extract_model_id_from_endpoint(
+                "/model/anthropic.claude-3-haiku-20240307-v1:0/invoke-with-response-stream"
+            ),
+            "anthropic.claude-3-haiku-20240307-v1:0",
+        );
+        assert_eq!(extract_model_id_from_endpoint("/chat/completions"), "");
+    }
+
+    #[test]
+    fn transform_nova_chunk_to_anthropic_extracts_content_block_delta_text() {
+        let chunk = json!({
+            "contentBlockDelta": {
+                "delta": { "text": "hello world" },
+                "contentBlockIndex": 0,
+            }
+        })
+        .to_string();
+        let rewritten = transform_nova_chunk_to_anthropic(&chunk).expect("delta chunk");
+        let parsed: Value = serde_json::from_str(&rewritten).unwrap();
+        assert_eq!(parsed["type"], "content_block_delta");
+        assert_eq!(parsed["delta"]["text"], "hello world");
+        assert_eq!(parsed["index"], 0);
+    }
+
+    #[test]
+    fn transform_nova_chunk_to_anthropic_drops_non_text_envelopes() {
+        for chunk in [
+            json!({ "messageStart": { "role": "assistant" } }).to_string(),
+            json!({ "messageStop": { "stopReason": "end_turn" } }).to_string(),
+            json!({ "metadata": { "usage": { "inputTokens": 1, "outputTokens": 1 } } })
+                .to_string(),
+        ] {
+            assert!(
+                transform_nova_chunk_to_anthropic(&chunk).is_none(),
+                "non-delta chunk should be silently dropped: {chunk}",
+            );
+        }
+    }
+
+    #[test]
+    fn nova_response_to_claude_shape_lifts_text_and_usage() {
+        let nova_body = json!({
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        { "text": "first" },
+                        { "text": "second" }
+                    ]
+                }
+            },
+            "stopReason": "end_turn",
+            "usage": { "inputTokens": 10, "outputTokens": 5, "totalTokens": 15 }
+        });
+
+        let claude_shape = nova_response_to_claude_shape(nova_body);
+        assert_eq!(claude_shape["stop_reason"], "end_turn");
+        let content = claude_shape["content"].as_array().expect("content");
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "first");
+        assert_eq!(claude_shape["usage"]["input_tokens"], 10);
+        assert_eq!(claude_shape["usage"]["output_tokens"], 5);
+    }
+
+    #[test]
+    fn normalize_provider_response_dispatches_nova_via_claude_normalizer() {
+        let nova_body = json!({
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{ "text": "hi from nova" }]
+                }
+            },
+            "stopReason": "end_turn"
+        });
+
+        let normalized =
+            normalize_provider_response("/model/us.amazon.nova-pro-v1:0/invoke", nova_body).body;
+
+        assert_eq!(normalized["object"], "chat.completion");
+        assert_eq!(normalized["choices"][0]["message"]["content"], "hi from nova");
+        assert_eq!(normalized["choices"][0]["finish_reason"], "stop");
     }
 
     #[test]
