@@ -88,6 +88,18 @@ fn optional_string(payload: &Map<String, Value>, key: &str) -> Result<String, Ap
         return Ok(String::new());
     };
 
+    // Treat JSON null the same as a missing field. Frontend presets and
+    // third-party extensions (e.g. per-chat API routers) can persist `null`
+    // into `custom_include_body` / `custom_exclude_body` / `custom_include_headers`
+    // when a slot was cleared, and our `/api/backends/chat-completions/generate`
+    // route forwards the body verbatim. Without this guard the upstream value
+    // surfaces as a confusing "must be a string" validation error even though
+    // the field is semantically absent, mirroring serde's `Option<String>`
+    // behaviour for nullable fields.
+    if value.is_null() {
+        return Ok(String::new());
+    }
+
     value.as_str().map(str::to_string).ok_or_else(|| {
         ApplicationError::ValidationError(format!(
             "Chat completion request field must be a string: {}",
@@ -146,6 +158,36 @@ mod tests {
             AdditionalParameters::from_payload(&payload).expect_err("field type should fail");
 
         assert!(error.to_string().contains("custom_include_body"));
+    }
+
+    #[test]
+    fn null_payload_fields_are_treated_as_missing() {
+        // Stale presets and third-party extensions sometimes persist a literal
+        // `null` for these slots; the HTTP boundary should accept that the same
+        // way a missing field would be accepted, instead of bubbling up a
+        // confusing "must be a string" validation error to the user.
+        let payload = json!({
+            "custom_include_body": null,
+            "custom_exclude_body": null,
+            "custom_include_headers": null,
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be an object");
+
+        let parameters = AdditionalParameters::from_payload(&payload)
+            .expect("null fields should be tolerated, not rejected as non-string");
+
+        // Empty defaults should remain after construction.
+        parameters
+            .ensure_body_overrides_do_not_touch(&["messages", "tools"])
+            .expect("absent overrides should never trip the protected-field guard");
+
+        let headers = parameters.headers().expect("headers should parse cleanly");
+        assert!(
+            headers.is_empty(),
+            "null include_headers must not produce any header entries",
+        );
     }
 
     #[test]
