@@ -1,3 +1,4 @@
+use super::agent::{agent_await_spec, agent_delegate_spec, agent_list_spec, task_return_spec};
 use super::chat::{chat_read_messages_spec, chat_search_spec};
 use super::skill::{skill_list_spec, skill_read_spec, skill_search_spec};
 use super::workspace::{
@@ -20,6 +21,10 @@ impl BuiltinAgentToolRegistry {
     pub fn phase2c() -> Self {
         Self {
             specs: vec![
+                agent_list_spec(),
+                agent_delegate_spec(),
+                agent_await_spec(),
+                task_return_spec(),
                 chat_search_spec(),
                 chat_read_messages_spec(),
                 worldinfo_read_activated_spec(),
@@ -43,6 +48,22 @@ impl BuiltinAgentToolRegistry {
 
     pub fn spec_by_name(&self, name: &str) -> Option<&AgentToolSpec> {
         self.specs.iter().find(|spec| spec.name == name)
+    }
+
+    pub fn spec_by_name_or_model_name(&self, name: &str) -> Option<&AgentToolSpec> {
+        self.specs
+            .iter()
+            .find(|spec| spec.name == name || spec.model_name == name)
+    }
+
+    pub(crate) fn apply_return_mode_context(
+        &self,
+        specs: &mut [AgentToolSpec],
+    ) -> Result<(), ApplicationError> {
+        for spec in specs {
+            apply_return_mode_context(spec)?;
+        }
+        Ok(())
     }
 
     pub fn visible_specs(
@@ -70,6 +91,54 @@ impl BuiltinAgentToolRegistry {
         }
         Ok(specs)
     }
+}
+
+fn apply_return_mode_context(spec: &mut AgentToolSpec) -> Result<(), ApplicationError> {
+    match spec.name.as_str() {
+        WORKSPACE_LIST_FILES => {
+            spec.description = "List files visible to this delegated task. Useful paths include summaries/ for your private notes, scratch/ for private temporary notes, summaries/parent/ for read-only requester notes, and summaries/agents/ for read-only notes from other delegated Agents.".to_string();
+            set_property_description(
+                spec,
+                "path",
+                "Optional task workspace path. Omit to list visible roots; use summaries/, scratch/, summaries/parent/, or summaries/agents/ when relevant.",
+            )?;
+        }
+        WORKSPACE_READ_FILE => {
+            spec.description = "Read a visible UTF-8 task workspace file with line numbers. Read-only shared notes live under summaries/parent/ and summaries/agents/.".to_string();
+            set_property_description(
+                spec,
+                "path",
+                "Visible task workspace file path. Use summaries/ for your notes, summaries/parent/ for requester notes, or summaries/agents/ for other delegated Agents.",
+            )?;
+        }
+        WORKSPACE_SEARCH_FILES => {
+            spec.description = "Search visible UTF-8 task workspace files. Use this to inspect summaries/, scratch/, summaries/parent/, summaries/agents/, or other visible read-only roots before reading exact ranges.".to_string();
+            set_property_description(
+                spec,
+                "path",
+                "Optional visible task workspace file or directory path. Omit to search all visible task paths.",
+            )?;
+        }
+        WORKSPACE_WRITE_FILE => {
+            spec.description = "Write complete UTF-8 text to your private delegated-task workspace. Writable paths are summaries/ and scratch/ only.".to_string();
+            set_property_description(
+                spec,
+                "path",
+                "Writable task path under summaries/ or scratch/. Use summaries/notes.md for durable notes and scratch/notes.md for temporary notes.",
+            )?;
+        }
+        WORKSPACE_APPLY_PATCH => {
+            spec.description = "Apply a precise single-file string replacement to your private delegated-task notes. The file must have been fully read with workspace_read_file or created by workspace_write_file in this task.".to_string();
+            set_property_description(
+                spec,
+                "path",
+                "Writable task path under summaries/ or scratch/.",
+            )?;
+        }
+        WORKSPACE_COMMIT | WORKSPACE_FINISH => {}
+        _ => {}
+    }
+    Ok(())
 }
 
 fn apply_profile_context(
@@ -227,6 +296,7 @@ fn set_property_description(
 
 #[cfg(test)]
 mod tests {
+    use super::super::agent::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_LIST, TASK_RETURN};
     use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE, WORKSPACE_WRITE_FILE};
     use super::*;
 
@@ -235,7 +305,15 @@ mod tests {
         let registry = BuiltinAgentToolRegistry::phase2c();
         let tools = registry.specs();
 
-        assert_eq!(tools[0].model_name, "chat_search");
+        assert_eq!(tools[0].model_name, "agent_list");
+        assert_eq!(tools[0].name, AGENT_LIST);
+        assert_eq!(tools[1].model_name, "agent_delegate");
+        assert_eq!(tools[1].name, AGENT_DELEGATE);
+        assert_eq!(tools[2].model_name, "agent_await");
+        assert_eq!(tools[2].name, AGENT_AWAIT);
+        assert_eq!(tools[3].model_name, "task_return");
+        assert_eq!(tools[3].name, TASK_RETURN);
+        assert_eq!(tools[4].model_name, "chat_search");
         assert_eq!(
             tools
                 .iter()
@@ -264,5 +342,32 @@ mod tests {
                 .map(|spec| spec.name.as_str()),
             Some(WORKSPACE_FINISH)
         );
+    }
+
+    #[test]
+    fn agent_tool_specs_keep_runtime_terms_out_of_model_descriptions() {
+        let registry = BuiltinAgentToolRegistry::phase2c();
+        let agent_tools = registry
+            .specs()
+            .iter()
+            .filter(|tool| {
+                matches!(
+                    tool.name.as_str(),
+                    AGENT_LIST | AGENT_DELEGATE | AGENT_AWAIT | TASK_RETURN
+                )
+            })
+            .collect::<Vec<_>>();
+
+        for tool in agent_tools {
+            let text = format!(
+                "{} {}",
+                tool.description,
+                serde_json::to_string(&tool.input_schema).expect("schema JSON")
+            );
+            assert!(!text.contains("invocation"), "{}", tool.name);
+            assert!(!text.contains("parent Agent"), "{}", tool.name);
+            assert!(!text.contains("child Agent"), "{}", tool.name);
+            assert!(!text.contains("workspace_finish"), "{}", tool.name);
+        }
     }
 }

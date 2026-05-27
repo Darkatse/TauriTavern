@@ -1,4 +1,5 @@
 // Repository interfaces
+pub mod agent_invocation_repository;
 pub mod agent_profile_repository;
 pub mod agent_run_repository;
 pub mod agent_workspace_lifecycle_repository;

@@ -1,6 +1,7 @@
 mod checkpoint_store;
 mod event_journal;
 mod fs_tree;
+mod invocation_store;
 mod lifecycle_store;
 mod paths;
 mod persistent_store;
@@ -15,6 +16,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use tokio::fs::read_to_string;
 use tokio::sync::Mutex;
 
 use crate::domain::errors::DomainError;
@@ -46,5 +48,23 @@ impl FileAgentRepository {
 
     async fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, DomainError> {
         read_json_file(path).await
+    }
+
+    async fn try_read_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, DomainError> {
+        let contents = match read_to_string(path).await {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(DomainError::InternalError(format!(
+                    "Failed to read file {}: {}",
+                    path.display(),
+                    error
+                )));
+            }
+        };
+
+        serde_json::from_str(&contents).map(Some).map_err(|error| {
+            DomainError::InvalidData(format!("Invalid JSON in {}: {}", path.display(), error))
+        })
     }
 }

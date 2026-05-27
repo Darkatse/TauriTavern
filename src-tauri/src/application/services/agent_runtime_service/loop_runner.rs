@@ -10,11 +10,14 @@ use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::{AgentToolEffect, AgentToolSession};
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
+
 use crate::domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelResponse,
-    AgentModelRole, AgentRunEventLevel, AgentRunStatus, AgentToolResult, WorkspacePath,
+    AgentInvocationExitPolicy, AgentModelContentPart, AgentModelMessage, AgentModelRequest,
+    AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunStatus, AgentToolResult,
+    WorkspacePath,
 };
 use crate::domain::models::skill::SkillIndexEntry;
+use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 use crate::domain::text_metrics::TextMetrics;
 
 /// How many in-loop drift recovery attempts to make per run before
@@ -29,6 +32,8 @@ impl AgentRuntimeService {
     pub(super) async fn run_tool_loop(
         &self,
         run_id: &str,
+        invocation_id: &str,
+        exit_policy: AgentInvocationExitPolicy,
         mut request: AgentModelRequest,
         profile: &ResolvedAgentProfile,
         effective_skills: &[SkillIndexEntry],
@@ -51,6 +56,7 @@ impl AgentRuntimeService {
                 "model_request_created",
                 json!({
                     "round": round,
+                    "invocationId": invocation_id,
                     "request": request_summary(&request),
                 }),
             )
@@ -59,6 +65,7 @@ impl AgentRuntimeService {
             let exchange = self
                 .generate_model_with_retry(
                     run_id,
+                    invocation_id,
                     round,
                     &request,
                     &profile.run.model_retry,
@@ -67,7 +74,9 @@ impl AgentRuntimeService {
                 .await?;
             self.ensure_not_cancelled(cancel)?;
             let response = exchange.response;
-            let model_response_path = self.store_model_response(run_id, round, &response).await?;
+            let model_response_path = self
+                .store_model_response(run_id, invocation_id, round, &response)
+                .await?;
             request.provider_state = exchange.provider_state;
             self.event(
                 run_id,
@@ -75,6 +84,7 @@ impl AgentRuntimeService {
                 "provider_state_updated",
                 json!({
                     "round": round,
+                    "invocationId": invocation_id,
                     "providerState": provider_state_summary(&request.provider_state),
                 }),
             )
@@ -87,6 +97,7 @@ impl AgentRuntimeService {
                     .as_object_mut()
                     .expect("model turn event summary must be a JSON object");
                 object.insert("round".to_string(), json!(round));
+                object.insert("invocationId".to_string(), json!(invocation_id));
                 object.insert(
                     "modelResponsePath".to_string(),
                     json!(model_response_path.as_str()),
@@ -141,10 +152,11 @@ impl AgentRuntimeService {
                         AgentRunEventLevel::Warn,
                         "drift_recovery_attempted",
                         json!({
-                            "attempt": drift_recovery_attempts,
-                            "maxAttempts": DRIFT_RECOVERY_MAX_ATTEMPTS,
-                            "round": round,
-                            "committedCount": committed_count,
+                        "attempt": drift_recovery_attempts,
+                        "maxAttempts": DRIFT_RECOVERY_MAX_ATTEMPTS,
+                        "round": round,
+                        "invocationId": invocation_id,
+                        "committedCount": committed_count,
                             "reasonCode": "model.tool_call_required",
                         }),
                     )
@@ -152,10 +164,10 @@ impl AgentRuntimeService {
                     self.ensure_not_cancelled(cancel)?;
                     continue;
                 }
-                return Err(ApplicationError::ValidationError(
-                    "model.tool_call_required: model must use Agent tools and finish through workspace_finish"
-                        .to_string(),
-                ));
+                return Err(ApplicationError::ValidationError(format!(
+                    "model.tool_call_required: model must use Agent tools and finish through {}",
+                    completion_tool_name(exit_policy)
+                )));
             }
 
             let assistant_message = assistant_message_for_next_turn(&response)?;
@@ -164,14 +176,17 @@ impl AgentRuntimeService {
 
             for call in tool_calls {
                 if finished {
-                    return Err(ApplicationError::ValidationError(
-                        "agent.tool_after_finish: model requested additional tools after workspace.finish".to_string(),
-                    ));
+                    return Err(ApplicationError::ValidationError(format!(
+                        "agent.tool_after_finish: model requested additional tools after {}",
+                        completion_tool_name(exit_policy)
+                    )));
                 }
 
                 let outcome = self
                     .dispatch_tool_call(
                         run_id,
+                        invocation_id,
+                        exit_policy,
                         round,
                         &call,
                         &mut tool_session,
@@ -189,6 +204,7 @@ impl AgentRuntimeService {
                             "tool_workspace_write",
                             "workspace_file_written",
                             json!({
+                                "invocationId": invocation_id,
                                 "path": file.path.as_str(),
                                 "chars": metrics.chars,
                                 "words": metrics.words,
@@ -211,6 +227,7 @@ impl AgentRuntimeService {
                             "tool_workspace_patch",
                             "workspace_patch_applied",
                             json!({
+                                "invocationId": invocation_id,
                                 "path": file.path.as_str(),
                                 "chars": metrics.chars,
                                 "words": metrics.words,
@@ -234,6 +251,7 @@ impl AgentRuntimeService {
                             AgentRunEventLevel::Info,
                             "chat_commit_recorded",
                             json!({
+                                "invocationId": invocation_id,
                                 "commitCount": commit_count,
                                 "path": path.as_str(),
                                 "mode": mode,
@@ -243,6 +261,27 @@ impl AgentRuntimeService {
                         .await?;
                     }
                     AgentToolEffect::Finish => {
+                        finished = true;
+                    }
+                    AgentToolEffect::TaskReturned {
+                        status,
+                        result_ref,
+                        summary,
+                    } => {
+                        let metrics = TextMetrics::from_text(summary);
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Info,
+                            "task_return_recorded",
+                            json!({
+                                "invocationId": invocation_id,
+                                "status": status,
+                                "resultRef": result_ref.as_str(),
+                                "summaryChars": metrics.chars,
+                                "summaryWords": metrics.words,
+                            }),
+                        )
+                        .await?;
                         finished = true;
                     }
                     AgentToolEffect::None => {}
@@ -257,15 +296,36 @@ impl AgentRuntimeService {
                     run_id,
                     AgentRunEventLevel::Info,
                     "agent_loop_finished",
-                    json!({ "commitCount": commit_count, "round": round }),
+                    json!({
+                        "commitCount": commit_count,
+                        "round": round,
+                        "invocationId": invocation_id,
+                    }),
                 )
                 .await?;
                 return Ok(Some(commit_count));
             }
 
-            let tool_results = self
-                .hydrate_recent_tool_results_for_model(run_id, round, &tool_results)
-                .await?;
+            let tool_results = if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
+                let workspace_view = self.child_workspace_view(run_id, invocation_id).await?;
+                let workspace_repository =
+                    workspace_view.repository(self.workspace_repository.as_ref());
+                self.hydrate_recent_tool_results_for_model(
+                    run_id,
+                    round,
+                    &tool_results,
+                    &workspace_repository,
+                )
+                .await?
+            } else {
+                self.hydrate_recent_tool_results_for_model(
+                    run_id,
+                    round,
+                    &tool_results,
+                    self.workspace_repository.as_ref(),
+                )
+                .await?
+            };
             append_tool_turn_to_request(&mut request, assistant_message, &tool_results)?;
             self.ensure_not_cancelled(cancel)?;
         }
@@ -316,6 +376,7 @@ impl AgentRuntimeService {
         run_id: &str,
         round: usize,
         tool_results: &[AgentToolResult],
+        workspace_repository: &dyn WorkspaceRepository,
     ) -> Result<Vec<AgentToolResult>, ApplicationError> {
         if round > 5 {
             return Ok(tool_results.to_vec());
@@ -343,8 +404,7 @@ impl AgentRuntimeService {
                 continue;
             };
             let workspace_path = WorkspacePath::parse(path)?;
-            let file = self
-                .workspace_repository
+            let file = workspace_repository
                 .read_text(run_id, &workspace_path)
                 .await?;
             result.content = format!(
@@ -373,6 +433,13 @@ impl AgentRuntimeService {
         }
 
         Ok(hydrated)
+    }
+}
+
+fn completion_tool_name(exit_policy: AgentInvocationExitPolicy) -> &'static str {
+    match exit_policy {
+        AgentInvocationExitPolicy::RunFinishAllowed => "workspace_finish",
+        AgentInvocationExitPolicy::TaskReturnRequired => "task_return",
     }
 }
 

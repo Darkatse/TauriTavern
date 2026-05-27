@@ -9,17 +9,20 @@ use super::FileAgentRepository;
 use crate::domain::errors::DomainError;
 use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
 use crate::domain::models::agent::profile::{
-    AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentModelBinding,
-    AgentModelBindingMode, AgentPresetBinding, AgentPresetBindingMode, AgentProfileId,
-    AgentProfileInstructions, AgentProfileSourceTrace, AgentRunPolicy, AgentSkillPolicy,
-    AgentToolPolicy, AgentWorkspacePolicy, ResolvedAgentOutputPolicy, ResolvedAgentProfile,
+    AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentDelegationPolicy,
+    AgentModelBinding, AgentModelBindingMode, AgentPresetBinding, AgentPresetBindingMode,
+    AgentProfileId, AgentProfileInstructions, AgentProfileSourceTrace, AgentRunPolicy,
+    AgentSkillPolicy, AgentToolPolicy, AgentWorkspacePolicy, ResolvedAgentOutputPolicy,
+    ResolvedAgentProfile,
 };
 use crate::domain::models::agent::{
-    AgentChatRef, AgentRun, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus, ArtifactSpec,
-    ArtifactTarget, CommitPolicy, WorkspaceInputManifest, WorkspaceManifest, WorkspacePath,
-    WorkspaceRootCommit, WorkspaceRootLifecycle, WorkspaceRootMount, WorkspaceRootScope,
-    WorkspaceRootSpec,
+    AgentChatRef, AgentInvocation, AgentInvocationExitPolicy, AgentInvocationKind,
+    AgentInvocationStatus, AgentRun, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
+    ArtifactSpec, ArtifactTarget, CommitPolicy, WorkspaceInputManifest, WorkspaceManifest,
+    WorkspacePath, WorkspaceRootCommit, WorkspaceRootLifecycle, WorkspaceRootMount,
+    WorkspaceRootScope, WorkspaceRootSpec,
 };
+use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunRepository,
 };
@@ -124,6 +127,7 @@ fn sample_resolved_profile(manifest: &WorkspaceManifest) -> ResolvedAgentProfile
             model_retry: Default::default(),
         },
         context: AgentContextPolicy::default(),
+        delegation: AgentDelegationPolicy::default(),
         instructions: AgentProfileInstructions {
             agent_system_prompt: None,
         },
@@ -225,6 +229,57 @@ async fn repository_round_trips_run_workspace_event_and_checkpoint() {
         .await
         .expect("checkpoint");
     assert_eq!(checkpoint.files[0].bytes, 5);
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn repository_round_trips_invocations() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_invocation");
+    repository.create_run(&run).await.expect("create run");
+
+    assert!(
+        repository
+            .try_load_invocation(&run.id, "inv_root")
+            .await
+            .expect("try load missing invocation")
+            .is_none()
+    );
+    assert!(matches!(
+        repository.load_invocation(&run.id, "inv_root").await,
+        Err(DomainError::NotFound(_))
+    ));
+
+    let now = Utc::now();
+    let invocation = AgentInvocation {
+        id: "inv_root".to_string(),
+        run_id: run.id.clone(),
+        parent_invocation_id: None,
+        profile_id: "default-writer".to_string(),
+        kind: AgentInvocationKind::Root,
+        status: AgentInvocationStatus::Running,
+        exit_policy: AgentInvocationExitPolicy::RunFinishAllowed,
+        created_at: now,
+        updated_at: now,
+    };
+    repository
+        .save_invocation(&invocation)
+        .await
+        .expect("save invocation");
+    let loaded = repository
+        .load_invocation(&run.id, "inv_root")
+        .await
+        .expect("load invocation");
+    assert_eq!(loaded.profile_id, "default-writer");
+    let loaded_optional = repository
+        .try_load_invocation(&run.id, "inv_root")
+        .await
+        .expect("try load invocation")
+        .expect("invocation exists");
+    assert_eq!(loaded_optional.profile_id, "default-writer");
+    assert_eq!(repository.list_invocations(&run.id).await.unwrap().len(), 1);
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }

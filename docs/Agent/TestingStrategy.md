@@ -54,6 +54,12 @@ tool recoverable error
 tool policy denied
 plan locked node violation
 profile switch allowed/denied
+agent.list policy filtering
+agent.delegate creates task and child invocation
+agent.await drives queued return-mode child task and renders result capsule
+task.return records result and terminates child invocation
+child invocation cannot commit, finish, or delegate
+child workspace view maps semantic summaries/scratch paths and hides physical paths
 ```
 
 关键断言：

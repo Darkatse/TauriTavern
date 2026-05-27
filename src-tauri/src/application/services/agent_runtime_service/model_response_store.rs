@@ -3,18 +3,28 @@ use serde_json::json;
 use super::AgentRuntimeService;
 use super::model_turn_display::model_response_path;
 use crate::application::errors::ApplicationError;
-use crate::domain::models::agent::{AgentModelResponse, AgentRunEventLevel, WorkspacePath};
+use crate::domain::models::agent::{
+    AgentModelResponse, AgentRunEventLevel, ROOT_AGENT_INVOCATION_ID, WorkspacePath,
+};
 
 impl AgentRuntimeService {
     pub(super) async fn store_model_response(
         &self,
         run_id: &str,
+        invocation_id: &str,
         round: usize,
         response: &AgentModelResponse,
     ) -> Result<WorkspacePath, ApplicationError> {
-        let path = model_response_path(round)?;
+        let path = if invocation_id == ROOT_AGENT_INVOCATION_ID {
+            model_response_path(round)?
+        } else {
+            WorkspacePath::parse(format!(
+                "model-responses/{invocation_id}/round-{round:03}.json"
+            ))?
+        };
         let document = json!({
             "round": round,
+            "invocationId": invocation_id,
             "response": response,
         });
         let text = serde_json::to_string_pretty(&document).map_err(|error| {
@@ -32,6 +42,7 @@ impl AgentRuntimeService {
             "model_response_stored",
             json!({
                 "round": round,
+                "invocationId": invocation_id,
                 "path": path.as_str(),
                 "responseId": response.provider_metadata.get("id"),
                 "model": response.provider_metadata.get("model"),

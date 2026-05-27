@@ -5,12 +5,16 @@ use serde_json::{Value, json};
 use super::artifacts::build_agent_manifest;
 use super::commit_ledger::RunCommitLedger;
 use super::error_payload::{run_failure_payload, run_partial_success_payload};
+use super::invocation::model_session_id;
 use super::prompt_snapshot::{prepare_agent_tool_request, request_summary};
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::profile::{AgentModelBindingMode, ResolvedAgentProfile};
-use crate::domain::models::agent::{AgentRunEventLevel, AgentRunStatus, WorkspacePath};
+use crate::domain::models::agent::{
+    AgentInvocationExitPolicy, AgentInvocationStatus, AgentRunEventLevel, AgentRunStatus,
+    ROOT_AGENT_INVOCATION_ID, WorkspacePath,
+};
 use crate::domain::models::skill::SkillIndexEntry;
 
 impl AgentRuntimeService {
@@ -50,6 +54,9 @@ impl AgentRuntimeService {
         match result {
             Ok(()) => {}
             Err(ApplicationError::Cancelled(message)) => {
+                let _ = self
+                    .finish_root_invocation(run_id, AgentInvocationStatus::Cancelled)
+                    .await;
                 self.clear_pending_host_requests_for_run(run_id).await;
                 let _ = self
                     .transition_status(run_id, AgentRunStatus::Cancelled)
@@ -65,6 +72,9 @@ impl AgentRuntimeService {
                 self.active_runs.write().await.remove(run_id);
             }
             Err(error) => {
+                let _ = self
+                    .finish_root_invocation(run_id, AgentInvocationStatus::Failed)
+                    .await;
                 self.clear_pending_host_requests_for_run(run_id).await;
                 if commit_ledger.is_empty() {
                     let _ = self.transition_status(run_id, AgentRunStatus::Failed).await;
@@ -135,8 +145,26 @@ impl AgentRuntimeService {
 
     fn close_model_session_after_run(&self, run_id: String) {
         let model_gateway = Arc::clone(&self.model_gateway);
+        let invocation_repository = Arc::clone(&self.invocation_repository);
         tauri::async_runtime::spawn(async move {
-            model_gateway.close_session(&run_id).await;
+            let session_ids = match invocation_repository.list_invocations(&run_id).await {
+                Ok(invocations) if !invocations.is_empty() => invocations
+                    .iter()
+                    .map(|invocation| model_session_id(&run_id, &invocation.id))
+                    .collect::<Vec<_>>(),
+                Ok(_) => vec![model_session_id(&run_id, ROOT_AGENT_INVOCATION_ID)],
+                Err(error) => {
+                    tracing::warn!(
+                        "Failed to list agent invocations while closing model sessions for run {}: {}",
+                        run_id,
+                        error
+                    );
+                    vec![model_session_id(&run_id, ROOT_AGENT_INVOCATION_ID)]
+                }
+            };
+            for session_id in session_ids {
+                model_gateway.close_session(&session_id).await;
+            }
         });
     }
 
@@ -167,6 +195,10 @@ impl AgentRuntimeService {
             }),
         )
         .await?;
+        self.ensure_root_invocation(run_id, &resolved_profile)
+            .await?;
+        let root_invocation = self.start_root_invocation(run_id).await?;
+        let invocation_id = root_invocation.id;
         let persistent_roots = manifest
             .roots
             .iter()
@@ -205,8 +237,12 @@ impl AgentRuntimeService {
             .await?;
         self.ensure_not_cancelled(cancel)?;
 
-        let visible_tools = self.tool_registry.visible_specs(&resolved_profile)?;
-        let request = prepare_agent_tool_request(request, &visible_tools, run_id)?;
+        let visible_tools = self.visible_tool_specs_for_invocation(
+            &resolved_profile,
+            AgentInvocationExitPolicy::RunFinishAllowed,
+        )?;
+        let request =
+            prepare_agent_tool_request(request, &visible_tools, run_id, invocation_id.as_str())?;
         self.transition_status(run_id, AgentRunStatus::AssemblingContext)
             .await?;
         self.event(
@@ -215,6 +251,7 @@ impl AgentRuntimeService {
             "context_assembled",
             json!({
                 "request": request_summary(&request),
+                "invocationId": invocation_id.as_str(),
                 "tools": &visible_tools,
                 "maxRounds": resolved_profile.tools.max_rounds,
                 "contextPolicy": &resolved_profile.context,
@@ -229,6 +266,8 @@ impl AgentRuntimeService {
 
         self.run_tool_loop(
             run_id,
+            invocation_id.as_str(),
+            AgentInvocationExitPolicy::RunFinishAllowed,
             request,
             &resolved_profile,
             &effective_skills,
@@ -248,7 +287,7 @@ impl AgentRuntimeService {
         Ok(())
     }
 
-    async fn resolve_model_binding(
+    pub(super) async fn resolve_model_binding(
         &self,
         run_id: &str,
         profile: &ResolvedAgentProfile,

@@ -9,6 +9,8 @@ use crate::domain::errors::DomainError;
 pub mod plan;
 pub mod profile;
 
+pub const ROOT_AGENT_INVOCATION_ID: &str = "inv_root";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(
     rename_all = "camelCase",
@@ -73,6 +75,98 @@ pub struct AgentRun {
     pub input_message_count: Option<usize>,
     pub presentation: AgentRunPresentation,
     pub status: AgentRunStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentInvocationKind {
+    Root,
+    Subagent,
+    Handoff,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentInvocationStatus {
+    Created,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+    Transferred,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentInvocationExitPolicy {
+    RunFinishAllowed,
+    TaskReturnRequired,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentDelegationContinuation {
+    ReturnToParent,
+    TransferControl,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentInvocation {
+    pub id: String,
+    pub run_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_invocation_id: Option<String>,
+    pub profile_id: String,
+    pub kind: AgentInvocationKind,
+    pub status: AgentInvocationStatus,
+    pub exit_policy: AgentInvocationExitPolicy,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTaskStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskBudget {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_rounds: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_calls: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskRecord {
+    pub id: String,
+    pub run_id: String,
+    pub parent_invocation_id: String,
+    pub child_invocation_id: String,
+    pub target_profile_id: String,
+    pub workspace_key: String,
+    pub continuation: AgentDelegationContinuation,
+    pub status: AgentTaskStatus,
+    #[serde(default)]
+    pub task: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<AgentTaskBudget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

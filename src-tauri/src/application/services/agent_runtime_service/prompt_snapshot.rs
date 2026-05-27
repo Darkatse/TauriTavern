@@ -7,6 +7,8 @@ use crate::domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolSpec,
 };
 
+use super::invocation::model_session_id;
+
 const AGENT_PROMPT_MARKER_FIELD: &str = "_tauritavern_agent_prompt_marker";
 
 pub(super) fn request_from_prompt_snapshot(
@@ -40,6 +42,7 @@ pub(super) fn prepare_agent_tool_request(
     mut request: ChatCompletionGenerateRequestDto,
     tools: &[AgentToolSpec],
     run_id: &str,
+    invocation_id: &str,
 ) -> Result<AgentModelRequest, ApplicationError> {
     reject_external_tool_request(&request.payload)?;
 
@@ -56,7 +59,11 @@ pub(super) fn prepare_agent_tool_request(
         messages,
         tools: tools.to_vec(),
         tool_choice: Value::String("auto".to_string()),
-        provider_state: json!({ "sessionId": run_id }),
+        provider_state: json!({
+            "sessionId": model_session_id(run_id, invocation_id),
+            "runId": run_id,
+            "invocationId": invocation_id,
+        }),
     })
 }
 
@@ -334,7 +341,8 @@ mod tests {
         }))
         .expect("request");
 
-        let request = prepare_agent_tool_request(request, &[], "run_test").expect("agent request");
+        let request = prepare_agent_tool_request(request, &[], "run_test", "inv_root")
+            .expect("agent request");
 
         assert_eq!(message_text(&request, 0), "Before Agent prompt.");
         assert_eq!(request.messages[1].role, AgentModelRole::User);
@@ -357,8 +365,8 @@ mod tests {
         }))
         .expect("request");
 
-        let error =
-            prepare_agent_tool_request(request, &[], "run_test").expect_err("marker leak fails");
+        let error = prepare_agent_tool_request(request, &[], "run_test", "inv_root")
+            .expect_err("marker leak fails");
 
         assert!(
             error

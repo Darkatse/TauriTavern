@@ -12,6 +12,7 @@ impl AgentRuntimeService {
     pub(super) async fn generate_model_with_retry(
         &self,
         run_id: &str,
+        invocation_id: &str,
         round: usize,
         request: &AgentModelRequest,
         retry: &AgentModelRetryPolicy,
@@ -26,6 +27,7 @@ impl AgentRuntimeService {
                 "model_call_attempt_started",
                 json!({
                     "round": round,
+                    "invocationId": invocation_id,
                     "attempt": attempt,
                     "maxRetries": retry.max_retries,
                 }),
@@ -51,6 +53,7 @@ impl AgentRuntimeService {
                         "model_call_attempt_failed",
                         json!({
                             "round": round,
+                            "invocationId": invocation_id,
                             "attempt": attempt,
                             "maxRetries": retry.max_retries,
                             "retryable": retryable,
@@ -70,6 +73,7 @@ impl AgentRuntimeService {
                         "model_call_retry_scheduled",
                         json!({
                             "round": round,
+                            "invocationId": invocation_id,
                             "nextAttempt": attempt + 1,
                             "intervalMs": retry.interval_ms,
                         }),

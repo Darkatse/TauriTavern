@@ -8,11 +8,15 @@ use crate::application::services::agent_model_gateway::AgentModelGateway;
 use crate::application::services::agent_profile_service::{
     AgentProfileResolveInput, AgentProfileService, materialize_agent_system_prompt,
 };
-use crate::application::services::agent_tools::{AgentToolDispatcher, BuiltinAgentToolRegistry};
+use crate::application::services::agent_tools::{
+    AGENT_AWAIT, AGENT_DELEGATE, AGENT_LIST, AgentToolDispatcher, BuiltinAgentToolRegistry,
+    TASK_RETURN,
+};
 use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::skill_service::SkillService;
-use crate::domain::models::agent::AgentToolSpec;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
+use crate::domain::models::agent::{AgentInvocationExitPolicy, AgentToolSpec};
+use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
@@ -22,9 +26,11 @@ use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 mod artifacts;
 mod commit;
 mod commit_ledger;
+mod delegation;
 mod error_payload;
 mod executor;
 mod input_context;
+mod invocation;
 mod journal;
 mod lifecycle;
 mod loop_runner;
@@ -56,6 +62,7 @@ pub(super) struct PendingPersistentStateMetadataUpdate {
 
 pub struct AgentRuntimeService {
     run_repository: Arc<dyn AgentRunRepository>,
+    invocation_repository: Arc<dyn AgentInvocationRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
     checkpoint_repository: Arc<dyn CheckpointRepository>,
     chat_repository: Arc<dyn ChatRepository>,
@@ -75,6 +82,7 @@ pub struct AgentRuntimeService {
 impl AgentRuntimeService {
     pub fn new(
         run_repository: Arc<dyn AgentRunRepository>,
+        invocation_repository: Arc<dyn AgentInvocationRepository>,
         workspace_repository: Arc<dyn WorkspaceRepository>,
         checkpoint_repository: Arc<dyn CheckpointRepository>,
         chat_repository: Arc<dyn ChatRepository>,
@@ -94,6 +102,7 @@ impl AgentRuntimeService {
         );
         Self {
             run_repository,
+            invocation_repository,
             workspace_repository,
             checkpoint_repository,
             chat_repository,
@@ -119,6 +128,40 @@ impl AgentRuntimeService {
         profile: &ResolvedAgentProfile,
     ) -> Result<Vec<AgentToolSpec>, ApplicationError> {
         self.tool_registry.visible_specs(profile)
+    }
+
+    pub(super) fn visible_tool_specs_for_invocation(
+        &self,
+        profile: &ResolvedAgentProfile,
+        exit_policy: AgentInvocationExitPolicy,
+    ) -> Result<Vec<AgentToolSpec>, ApplicationError> {
+        let mut tools = self.tool_registry.visible_specs(profile)?;
+        if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
+            tools.retain(|tool| {
+                !matches!(
+                    tool.name.as_str(),
+                    "workspace.commit"
+                        | "workspace.finish"
+                        | AGENT_LIST
+                        | AGENT_DELEGATE
+                        | AGENT_AWAIT
+                )
+            });
+            if !tools.iter().any(|tool| tool.name == TASK_RETURN) {
+                let task_return =
+                    self.tool_registry
+                        .spec_by_name(TASK_RETURN)
+                        .ok_or_else(|| {
+                            ApplicationError::ValidationError(
+                                "agent.task_return_tool_missing: task.return is not registered"
+                                    .to_string(),
+                            )
+                        })?;
+                tools.push(task_return.clone());
+            }
+            self.tool_registry.apply_return_mode_context(&mut tools)?;
+        }
+        Ok(tools)
     }
 
     pub async fn resolve_agent_system_prompt(

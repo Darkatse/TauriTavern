@@ -14,6 +14,10 @@ pub const DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN: usize = 80_000;
 pub const DEFAULT_AGENT_MODEL_MAX_RETRIES: usize = 3;
 pub const DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS: u64 = 3_000;
 pub const DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES: i64 = -1;
+pub const DEFAULT_AGENT_DELEGATION_MAX_CONCURRENT_INVOCATIONS: usize = 3;
+pub const DEFAULT_AGENT_DELEGATION_MAX_INVOCATIONS_PER_RUN: usize = 8;
+pub const DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS: usize = 8_000;
+pub const DEFAULT_AGENT_HANDOFF_MAX_DEPTH: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AgentProfileId(String);
@@ -86,6 +90,8 @@ pub struct AgentProfileDefinition {
     #[serde(default)]
     pub context: AgentContextPolicy,
     #[serde(default)]
+    pub delegation: AgentDelegationPolicy,
+    #[serde(default)]
     pub instructions: AgentProfileInstructions,
     pub tools: AgentToolPolicy,
     pub skills: AgentSkillPolicy,
@@ -108,6 +114,8 @@ pub struct ResolvedAgentProfile {
     pub run: AgentRunPolicy,
     #[serde(default)]
     pub context: AgentContextPolicy,
+    #[serde(default)]
+    pub delegation: AgentDelegationPolicy,
     pub instructions: AgentProfileInstructions,
     pub tools: AgentToolPolicy,
     pub skills: AgentSkillPolicy,
@@ -181,6 +189,35 @@ pub struct AgentContextPolicy {
     pub initial_chat_history_messages: i64,
     #[serde(default = "default_agent_include_activated_world_info")]
     pub include_activated_world_info: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentDelegationPolicy {
+    #[serde(default)]
+    pub can_delegate: bool,
+    #[serde(default)]
+    pub can_handoff: bool,
+    #[serde(default)]
+    pub callable: bool,
+    #[serde(default)]
+    pub allow_as_subagent: bool,
+    #[serde(default)]
+    pub allow_as_handoff_target: bool,
+    #[serde(default)]
+    pub allow_nested_delegation: bool,
+    #[serde(default = "default_agent_delegation_allowed_callers")]
+    pub allowed_callers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description_for_agents: Option<String>,
+    #[serde(default = "default_agent_delegation_max_concurrent_invocations")]
+    pub max_concurrent_invocations: usize,
+    #[serde(default = "default_agent_delegation_max_invocations_per_run")]
+    pub max_invocations_per_run: usize,
+    #[serde(default = "default_agent_delegation_result_budget_tokens")]
+    pub result_budget_tokens: usize,
+    #[serde(default = "default_agent_handoff_max_depth")]
+    pub max_handoff_depth: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,6 +350,26 @@ fn default_agent_include_activated_world_info() -> bool {
     true
 }
 
+fn default_agent_delegation_allowed_callers() -> Vec<String> {
+    vec!["*".to_string()]
+}
+
+fn default_agent_delegation_max_concurrent_invocations() -> usize {
+    DEFAULT_AGENT_DELEGATION_MAX_CONCURRENT_INVOCATIONS
+}
+
+fn default_agent_delegation_max_invocations_per_run() -> usize {
+    DEFAULT_AGENT_DELEGATION_MAX_INVOCATIONS_PER_RUN
+}
+
+fn default_agent_delegation_result_budget_tokens() -> usize {
+    DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS
+}
+
+fn default_agent_handoff_max_depth() -> usize {
+    DEFAULT_AGENT_HANDOFF_MAX_DEPTH
+}
+
 impl Default for AgentModelRetryPolicy {
     fn default() -> Self {
         Self {
@@ -331,15 +388,36 @@ impl Default for AgentContextPolicy {
     }
 }
 
+impl Default for AgentDelegationPolicy {
+    fn default() -> Self {
+        Self {
+            can_delegate: false,
+            can_handoff: false,
+            callable: false,
+            allow_as_subagent: false,
+            allow_as_handoff_target: false,
+            allow_nested_delegation: false,
+            allowed_callers: default_agent_delegation_allowed_callers(),
+            description_for_agents: None,
+            max_concurrent_invocations: DEFAULT_AGENT_DELEGATION_MAX_CONCURRENT_INVOCATIONS,
+            max_invocations_per_run: DEFAULT_AGENT_DELEGATION_MAX_INVOCATIONS_PER_RUN,
+            result_budget_tokens: DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS,
+            max_handoff_depth: DEFAULT_AGENT_HANDOFF_MAX_DEPTH,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{
-        AgentProfileDefinition, DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES,
-        DEFAULT_AGENT_MODEL_MAX_RETRIES, DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS,
-        DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN,
-        DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
+        AgentProfileDefinition, DEFAULT_AGENT_DELEGATION_MAX_CONCURRENT_INVOCATIONS,
+        DEFAULT_AGENT_DELEGATION_MAX_INVOCATIONS_PER_RUN,
+        DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS, DEFAULT_AGENT_HANDOFF_MAX_DEPTH,
+        DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES, DEFAULT_AGENT_MODEL_MAX_RETRIES,
+        DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL,
+        DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
     };
     use crate::domain::models::agent::plan::DEFAULT_AGENT_PLAN_BETA;
 
@@ -398,6 +476,30 @@ mod tests {
             DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES
         );
         assert!(profile.context.include_activated_world_info);
+        assert!(!profile.delegation.can_delegate);
+        assert!(!profile.delegation.can_handoff);
+        assert!(!profile.delegation.callable);
+        assert!(!profile.delegation.allow_as_subagent);
+        assert!(!profile.delegation.allow_as_handoff_target);
+        assert!(!profile.delegation.allow_nested_delegation);
+        assert_eq!(profile.delegation.allowed_callers, vec!["*"]);
+        assert!(profile.delegation.description_for_agents.is_none());
+        assert_eq!(
+            profile.delegation.max_concurrent_invocations,
+            DEFAULT_AGENT_DELEGATION_MAX_CONCURRENT_INVOCATIONS
+        );
+        assert_eq!(
+            profile.delegation.max_invocations_per_run,
+            DEFAULT_AGENT_DELEGATION_MAX_INVOCATIONS_PER_RUN
+        );
+        assert_eq!(
+            profile.delegation.result_budget_tokens,
+            DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS
+        );
+        assert_eq!(
+            profile.delegation.max_handoff_depth,
+            DEFAULT_AGENT_HANDOFF_MAX_DEPTH
+        );
         assert!(profile.instructions.agent_system_prompt.is_none());
         assert!(profile.tools.deny.is_empty());
         assert!(profile.tools.tool_descriptions.is_empty());

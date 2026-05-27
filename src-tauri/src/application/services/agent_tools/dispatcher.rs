@@ -46,6 +46,11 @@ pub enum AgentToolEffect {
         mode: AgentChatCommitMode,
         message_id: Option<String>,
     },
+    TaskReturned {
+        status: crate::domain::models::agent::AgentTaskStatus,
+        result_ref: WorkspacePath,
+        summary: String,
+    },
     Finish,
 }
 
@@ -81,6 +86,24 @@ impl AgentToolDispatcher {
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
+        self.dispatch_with_workspace_repository(
+            run_id,
+            call,
+            session,
+            profile,
+            self.workspace_repository.as_ref(),
+        )
+        .await
+    }
+
+    pub(crate) async fn dispatch_with_workspace_repository(
+        &self,
+        run_id: &str,
+        call: &AgentToolCall,
+        session: &mut AgentToolSession,
+        profile: &ResolvedAgentProfile,
+        workspace_repository: &dyn WorkspaceRepository,
+    ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
         let outcome = match call.name.as_str() {
             chat::CHAT_SEARCH => {
@@ -104,7 +127,7 @@ impl AgentToolDispatcher {
                 .await?
             }
             world_info::WORLDINFO_READ_ACTIVATED => {
-                world_info::read_activated(self.workspace_repository.as_ref(), run_id, call).await?
+                world_info::read_activated(workspace_repository, run_id, call).await?
             }
             skill::SKILL_LIST => skill::list(call, session, profile).await?,
             skill::SKILL_SEARCH => {
@@ -114,25 +137,22 @@ impl AgentToolDispatcher {
                 skill::read(self.skill_service.as_ref(), call, session, profile).await?
             }
             workspace::WORKSPACE_LIST_FILES => {
-                workspace::list_files(self.workspace_repository.as_ref(), run_id, call).await?
+                workspace::list_files(workspace_repository, run_id, call).await?
             }
             workspace::WORKSPACE_SEARCH_FILES => {
-                workspace::search_files(self.workspace_repository.as_ref(), run_id, call).await?
+                workspace::search_files(workspace_repository, run_id, call).await?
             }
             workspace::WORKSPACE_READ_FILE => {
-                workspace::read_file(self.workspace_repository.as_ref(), run_id, call, session)
-                    .await?
+                workspace::read_file(workspace_repository, run_id, call, session).await?
             }
             workspace::WORKSPACE_WRITE_FILE => {
-                workspace::write_file(self.workspace_repository.as_ref(), run_id, call, session)
-                    .await?
+                workspace::write_file(workspace_repository, run_id, call, session).await?
             }
             workspace::WORKSPACE_APPLY_PATCH => {
-                workspace::apply_patch(self.workspace_repository.as_ref(), run_id, call, session)
-                    .await?
+                workspace::apply_patch(workspace_repository, run_id, call, session).await?
             }
             workspace::WORKSPACE_COMMIT => {
-                workspace::commit(self.workspace_repository.as_ref(), run_id, call, profile).await?
+                workspace::commit(workspace_repository, run_id, call, profile).await?
             }
             workspace::WORKSPACE_FINISH => workspace::finish(call)?,
             other => {

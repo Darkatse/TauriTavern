@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use super::AgentRuntimeService;
 use super::artifacts::build_agent_manifest;
+use super::commit_ledger::RunCommitLedger;
 use crate::application::dto::agent_dto::{
     AgentReadModelTurnDto, AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
 };
@@ -29,16 +30,19 @@ use crate::application::services::agent_tools::{
 use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::skill_service::SkillService;
 use crate::domain::errors::DomainError;
-use crate::domain::models::agent::profile::ResolvedAgentProfile;
+use crate::domain::models::agent::profile::{
+    AgentDelegationPolicy, AgentProfileId, ResolvedAgentProfile,
+};
 use crate::domain::models::agent::{
-    AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentModelRole, AgentRun,
-    AgentRunEventLevel, AgentRunPresentation, AgentRunStatus, AgentToolCall, WorkspaceManifest,
-    WorkspacePath, WorkspacePersistentChangeSet,
+    AgentChatRef, AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart,
+    AgentModelRequest, AgentModelRole, AgentRun, AgentRunEventLevel, AgentRunPresentation,
+    AgentRunStatus, AgentToolCall, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
 };
 use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use crate::domain::models::skill::{
     SkillImportInput, SkillInlineFile, SkillInstallRequest, SkillScope,
 };
+use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
 use crate::domain::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunRepository,
 };
@@ -82,6 +86,7 @@ async fn resolves_agent_system_prompt_through_runtime_boundary() {
         repository.clone(),
         repository.clone(),
         repository.clone(),
+        repository.clone(),
         test_chat_repository(&root),
         test_chat_repository(&root),
         test_skill_service(&root),
@@ -100,6 +105,533 @@ async fn resolves_agent_system_prompt_through_runtime_boundary() {
     assert!(prompt.contains("tool_choice: required"));
     assert!(prompt.contains("workspace_commit"));
     assert!(prompt.contains("workspace_finish"));
+}
+
+#[tokio::test]
+async fn agent_list_returns_callable_profiles_allowed_by_delegation_policy() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-list-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let profile_service = test_profile_service(&root);
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(vec![])),
+        profile_service.clone(),
+        test_llm_connection_service(&root),
+    );
+
+    let mut callable = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    callable.id = AgentProfileId::parse("scene-editor").expect("profile id");
+    callable.display_name = "Scene Editor".to_string();
+    callable.description = Some("Edits a draft scene for continuity.".to_string());
+    callable.tools.allow.retain(|name| {
+        !matches!(
+            name.as_str(),
+            "agent.list" | "agent.delegate" | "agent.await"
+        )
+    });
+    callable.delegation = AgentDelegationPolicy {
+        callable: true,
+        allow_as_subagent: true,
+        allowed_callers: vec!["default-writer".to_string()],
+        description_for_agents: Some("Continuity editor for scene drafts.".to_string()),
+        ..Default::default()
+    };
+    profile_service
+        .save_profile(callable, service.tool_specs())
+        .await
+        .expect("save callable profile");
+
+    let mut profile = profile_service
+        .resolve_profile(AgentProfileResolveInput {
+            profile_id: None,
+            known_tools: service.tool_specs(),
+        })
+        .await
+        .expect("resolve default profile");
+    profile.run.presentation = AgentRunPresentation::Background;
+    let run = AgentRun {
+        id: "run_agent_list_test".to_string(),
+        workspace_id: "chat_agent_list_test".to_string(),
+        stable_chat_id: "stable_agent_list_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: Some(profile.id.as_str().to_string()),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &profile),
+            &json!({"messages": []}),
+            &profile,
+        )
+        .await
+        .expect("initialize run");
+
+    let call = AgentToolCall {
+        id: "call_agent_list".to_string(),
+        name: "agent.list".to_string(),
+        arguments: json!({ "purpose": "delegate" }),
+        provider_metadata: Value::Null,
+    };
+    let (_cancel_sender, mut cancel) = watch::channel(false);
+    let mut session = AgentToolSession::default();
+    let mut commit_ledger = RunCommitLedger::default();
+    let outcome = service
+        .dispatch_tool_call(
+            &run.id,
+            "inv_root",
+            AgentInvocationExitPolicy::RunFinishAllowed,
+            1,
+            &call,
+            &mut session,
+            &profile,
+            0,
+            &mut commit_ledger,
+            &mut cancel,
+        )
+        .await
+        .expect("dispatch agent.list");
+
+    assert!(!outcome.result.is_error);
+    assert_eq!(
+        outcome.result.structured["agents"][0]["profileId"],
+        "scene-editor"
+    );
+    assert_eq!(
+        outcome.result.structured["agents"][0]["operations"],
+        json!(["delegate"])
+    );
+    assert!(
+        outcome
+            .result
+            .content
+            .contains("This is a read-only list; no Agent was started.")
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn agent_delegate_await_runs_return_mode_subagent() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-subagent-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let profile_service = test_profile_service(&root);
+    let mut child_profile = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    child_profile.id = AgentProfileId::parse("scene-critic").expect("profile id");
+    child_profile.display_name = "Scene Critic".to_string();
+    child_profile.description = Some("Reviews a scene and returns concise notes.".to_string());
+    child_profile.tools.allow.retain(|name| {
+        !matches!(
+            name.as_str(),
+            "agent.list" | "agent.delegate" | "agent.await"
+        )
+    });
+    child_profile.delegation = AgentDelegationPolicy {
+        callable: true,
+        allow_as_subagent: true,
+        allowed_callers: vec!["default-writer".to_string()],
+        description_for_agents: Some("Return concise scene critique.".to_string()),
+        ..Default::default()
+    };
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_delegate_critic",
+                            "type": "function",
+                            "function": {
+                                "name": "agent_delegate",
+                                "arguments": serde_json::to_string(&json!({
+                                    "agentId": "scene-critic",
+                                    "task": {
+                                        "title": "Critique scene",
+                                        "objective": "Find one concrete improvement.",
+                                        "context": { "draft": "A quiet scene." },
+                                        "expectedOutput": { "format": "short capsule" }
+                                    },
+                                    "budget": { "maxRounds": 4, "maxToolCalls": 4 }
+                                })).unwrap()
+                            }
+                        },
+                        {
+                            "id": "call_await_critic",
+                            "type": "function",
+                            "function": {
+                                "name": "agent_await",
+                                "arguments": "{\"mode\":\"nextCompleted\",\"timeoutMs\":5000}"
+                            }
+                        }
+                    ]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_child_note",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"summaries/notes.md\",\"content\":\"Add a concrete sound or texture.\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_task_return",
+                        "type": "function",
+                        "function": {
+                            "name": "task_return",
+                            "arguments": serde_json::to_string(&json!({
+                                "summary": "The scene needs a sharper sensory anchor.",
+                                "status": "completed",
+                                "confidence": "high",
+                                "artifacts": [{
+                                    "path": "summaries/notes.md",
+                                    "kind": "markdown",
+                                    "role": "supportingNote"
+                                }],
+                                "findings": [{ "kind": "revision", "text": "Add a concrete sound or texture." }]
+                            })).unwrap()
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_parent_write",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_write_file",
+                                "arguments": "{\"path\":\"output/main.md\",\"content\":\"Parent used critic result.\"}"
+                            }
+                        },
+                        {
+                            "id": "call_parent_finish",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_finish",
+                                "arguments": "{}"
+                            }
+                        }
+                    ]
+                }
+            }]
+        }),
+    ]));
+    let model_gateway_probe = model_gateway.clone();
+
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        profile_service.clone(),
+        test_llm_connection_service(&root),
+    );
+    profile_service
+        .save_profile(child_profile, service.tool_specs())
+        .await
+        .expect("save child profile");
+    let run = AgentRun {
+        id: "run_subagent_test".to_string(),
+        workspace_id: "chat_subagent_test".to_string(),
+        stable_chat_id: "stable_subagent_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("ask a critic, then finish")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let profile = test_resolved_profile(&root).await;
+
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("agent loop");
+
+    let tasks = repository.list_tasks(&run.id).await.expect("list tasks");
+    assert_eq!(tasks.len(), 1);
+    let task = &tasks[0];
+    assert_eq!(task.target_profile_id, "scene-critic");
+    assert_eq!(task.workspace_key, "scene-critic");
+    assert_eq!(
+        task.status,
+        crate::domain::models::agent::AgentTaskStatus::Completed
+    );
+    let child_invocation = repository
+        .load_invocation(&run.id, &task.child_invocation_id)
+        .await
+        .expect("load child invocation");
+    assert_eq!(child_invocation.status, AgentInvocationStatus::Completed);
+    assert_eq!(
+        child_invocation.exit_policy,
+        AgentInvocationExitPolicy::TaskReturnRequired
+    );
+
+    let result_ref =
+        WorkspacePath::parse(task.result_ref.as_deref().expect("result ref")).expect("result path");
+    let result = repository
+        .read_text(&run.id, &result_ref)
+        .await
+        .expect("read task result");
+    let result: Value = serde_json::from_str(&result.text).expect("result JSON");
+    assert_eq!(
+        result["summary"],
+        "The scene needs a sharper sensory anchor."
+    );
+    assert_eq!(result["runtime"]["taskId"], task.id);
+    assert_eq!(
+        result["runtime"]["childInvocationId"],
+        task.child_invocation_id
+    );
+    assert_eq!(result["runtime"]["workspaceKey"], task.workspace_key);
+    assert_eq!(
+        result["summaryRef"],
+        "summaries/agents/scene-critic/result.md"
+    );
+    assert_eq!(
+        result["result"]["artifacts"][0]["path"],
+        "summaries/agents/scene-critic/notes.md"
+    );
+    assert!(result.get("targetProfileId").is_none());
+    repository
+        .read_text(
+            &run.id,
+            &WorkspacePath::parse("summaries/agents/scene-critic/notes.md").unwrap(),
+        )
+        .await
+        .expect("read child note");
+
+    let child_response = repository
+        .read_text(
+            &run.id,
+            &WorkspacePath::parse(format!(
+                "model-responses/{}/round-001.json",
+                task.child_invocation_id
+            ))
+            .unwrap(),
+        )
+        .await
+        .expect("read child model response");
+    let child_response: Value =
+        serde_json::from_str(&child_response.text).expect("child response JSON");
+    assert_eq!(child_response["invocationId"], task.child_invocation_id);
+
+    let requests = model_gateway_probe.requests().await;
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0].provider_state["invocationId"], "inv_root");
+    assert_eq!(
+        requests[1].provider_state["invocationId"],
+        task.child_invocation_id
+    );
+    assert_eq!(
+        requests[2].provider_state["invocationId"],
+        task.child_invocation_id
+    );
+    assert!(
+        requests[1]
+            .tools
+            .iter()
+            .any(|tool| tool.name == "task.return")
+    );
+    assert!(
+        !requests[1]
+            .tools
+            .iter()
+            .any(|tool| tool.name == "workspace.finish" || tool.name == "agent.delegate")
+    );
+    let child_system_prompt = requests[1]
+        .messages
+        .iter()
+        .find(|message| message.role == AgentModelRole::System)
+        .and_then(|message| {
+            message.parts.iter().find_map(|part| match part {
+                AgentModelContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+        })
+        .expect("child system prompt");
+    assert!(child_system_prompt.contains("Task workspace view"));
+    assert!(child_system_prompt.contains("summaries/parent/"));
+    assert!(child_system_prompt.contains("summaries/agents/"));
+    assert!(
+        child_system_prompt.contains("Writable workspace paths: summaries/ and scratch/ only.")
+    );
+    assert!(!child_system_prompt.contains("Visible workspace roots: output"));
+    assert!(!child_system_prompt.contains("Writable workspace roots: output"));
+    let child_write_spec = requests[1]
+        .tools
+        .iter()
+        .find(|tool| tool.name == "workspace.write_file")
+        .expect("child write spec");
+    assert!(
+        child_write_spec
+            .description
+            .contains("summaries/ and scratch/ only")
+    );
+    assert!(!child_write_spec.description.contains("output/main.md"));
+    let child_task_prompt = requests[1]
+        .messages
+        .iter()
+        .find(|message| message.role == AgentModelRole::User)
+        .and_then(|message| {
+            message.parts.iter().find_map(|part| match part {
+                AgentModelContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+        })
+        .expect("child task prompt");
+    assert!(child_task_prompt.contains("# Delegated Task"));
+    assert!(child_task_prompt.contains("## Objective"));
+    assert!(child_task_prompt.contains("## Context"));
+    assert!(child_task_prompt.contains("summaries/notes.md"));
+    assert!(child_task_prompt.contains("scratch/notes.md"));
+    assert!(child_task_prompt.contains("summaries/parent/"));
+    assert!(child_task_prompt.contains("summaries/agents/"));
+    assert!(!child_task_prompt.contains("Parent invocation"));
+    assert!(!child_task_prompt.contains("Task packet"));
+    assert!(!child_task_prompt.contains("Target Agent profile"));
+    assert!(!child_task_prompt.contains("summaries/agents/scene-critic"));
+    assert!(!child_task_prompt.contains("inv_"));
+
+    let child_write_result = requests[2]
+        .messages
+        .iter()
+        .filter(|message| message.role == AgentModelRole::Tool)
+        .filter_map(|message| message.parts.first())
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some(result),
+            _ => None,
+        })
+        .find(|result| result.name == "workspace.write_file")
+        .expect("child write result");
+    assert_eq!(child_write_result.structured["path"], "summaries/notes.md");
+
+    let parent_tool_results = requests[3]
+        .messages
+        .iter()
+        .filter(|message| message.role == AgentModelRole::Tool)
+        .filter_map(|message| message.parts.first())
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let delegate_result = parent_tool_results
+        .iter()
+        .find(|result| result.name == "agent.delegate")
+        .expect("delegate tool result");
+    assert!(delegate_result.structured.get("invocationId").is_none());
+    let await_result = parent_tool_results
+        .iter()
+        .find(|result| result.name == "agent.await")
+        .expect("await tool result");
+    let await_task = &await_result.structured["tasks"][0];
+    assert_eq!(
+        await_task["summary"],
+        "The scene needs a sharper sensory anchor."
+    );
+    assert!(await_task.get("invocationId").is_none());
+    assert!(await_task.get("resultRef").is_none());
+    assert_eq!(
+        await_task["artifacts"][0]["path"],
+        "summaries/agents/scene-critic/notes.md"
+    );
+    assert!(!await_result.content.contains("invocation"));
+    assert_eq!(requests[3].provider_state["invocationId"], "inv_root");
+
+    wait_for_closed_sessions(
+        &model_gateway_probe,
+        vec![
+            "run_subagent_test:inv_root".to_string(),
+            format!("run_subagent_test:{}", task.child_invocation_id),
+        ],
+    )
+    .await;
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
@@ -169,6 +701,7 @@ async fn agent_loop_writes_artifact_and_completes() {
         repository.clone(),
         repository.clone(),
         repository.clone(),
+        repository.clone(),
         test_chat_repository(&root),
         test_chat_repository(&root),
         test_skill_service(&root),
@@ -203,6 +736,12 @@ async fn agent_loop_writes_artifact_and_completes() {
 
     let saved = repository.load_run(&run.id).await.expect("load run");
     assert_eq!(saved.status, AgentRunStatus::Completed);
+    let root_invocation = repository
+        .load_invocation(&run.id, "inv_root")
+        .await
+        .expect("load root invocation");
+    assert_eq!(root_invocation.status, AgentInvocationStatus::Completed);
+    assert_eq!(root_invocation.profile_id, "default-writer");
 
     let artifact = repository
         .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
@@ -277,7 +816,11 @@ async fn agent_loop_writes_artifact_and_completes() {
             .contains("Full content of output/main.md")
     );
     assert!(hydrated_tool_result.content.contains("hello from loop"));
-    wait_for_closed_sessions(&model_gateway_probe, vec!["run_loop_test".to_string()]).await;
+    wait_for_closed_sessions(
+        &model_gateway_probe,
+        vec!["run_loop_test:inv_root".to_string()],
+    )
+    .await;
 
     let events = repository
         .read_events(
@@ -395,6 +938,7 @@ async fn agent_loop_stores_tool_audit_files_with_hashed_call_id_paths() {
         repository.clone(),
         repository.clone(),
         repository.clone(),
+        repository.clone(),
         test_chat_repository(&root),
         test_chat_repository(&root),
         test_skill_service(&root),
@@ -492,7 +1036,7 @@ async fn agent_loop_stores_tool_audit_files_with_hashed_call_id_paths() {
     assert_eq!(echoed_tool_result.call_id, opaque_call_id);
     wait_for_closed_sessions(
         &model_gateway_probe,
-        vec!["run_tool_audit_test".to_string()],
+        vec!["run_tool_audit_test:inv_root".to_string()],
     )
     .await;
 
@@ -568,6 +1112,7 @@ async fn agent_loop_retries_retryable_model_errors() {
     let model_gateway_probe = model_gateway.clone();
 
     let service = AgentRuntimeService::new(
+        repository.clone(),
         repository.clone(),
         repository.clone(),
         repository.clone(),
@@ -674,6 +1219,7 @@ async fn agent_loop_does_not_retry_non_retryable_model_errors() {
     )]));
     let model_gateway_probe = model_gateway.clone();
     let service = AgentRuntimeService::new(
+        repository.clone(),
         repository.clone(),
         repository.clone(),
         repository.clone(),
@@ -831,6 +1377,7 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
         repository.clone(),
         repository.clone(),
         repository.clone(),
+        repository.clone(),
         test_chat_repository(&root),
         test_chat_repository(&root),
         test_skill_service(&root),
@@ -964,6 +1511,7 @@ async fn finish_promotes_persistent_workspace_projection() {
     ]));
 
     let service = AgentRuntimeService::new(
+        repository.clone(),
         repository.clone(),
         repository.clone(),
         repository.clone(),
@@ -1121,6 +1669,7 @@ async fn foreground_run_commits_chat_message_before_finish() {
     ]));
 
     let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
         repository.clone(),
         repository.clone(),
         repository.clone(),
@@ -1309,6 +1858,7 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
     ]));
 
     let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
         repository.clone(),
         repository.clone(),
         repository.clone(),
@@ -1545,6 +2095,7 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
         repository.clone(),
         repository.clone(),
         repository.clone(),
+        repository.clone(),
         test_chat_repository(&root),
         test_chat_repository(&root),
         test_skill_service(&root),
@@ -1761,6 +2312,7 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
         repository.clone(),
         repository.clone(),
         repository.clone(),
+        repository.clone(),
         test_chat_repository(&root),
         test_chat_repository(&root),
         test_skill_service(&root),
@@ -1893,6 +2445,7 @@ async fn foreground_run_without_commit_still_fails_after_drift_recovery_exhausts
     ]));
 
     let service = AgentRuntimeService::new(
+        repository.clone(),
         repository.clone(),
         repository.clone(),
         repository.clone(),
@@ -2050,6 +2603,7 @@ async fn foreground_run_with_commit_becomes_partial_success_when_persistent_comm
     ]));
 
     let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
         repository.clone(),
         workspace_repository,
         repository.clone(),
@@ -2234,6 +2788,7 @@ async fn foreground_finish_before_commit_returns_recoverable_error() {
         repository.clone(),
         repository.clone(),
         repository.clone(),
+        repository.clone(),
         test_chat_repository(&root),
         test_chat_repository(&root),
         test_skill_service(&root),
@@ -2382,6 +2937,7 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
     ]));
 
     let service = AgentRuntimeService::new(
+        repository.clone(),
         repository.clone(),
         repository.clone(),
         repository.clone(),
@@ -2680,6 +3236,7 @@ async fn agent_input_context_excludes_swipe_target_from_history_and_persist_base
     let repository = Arc::new(FileAgentRepository::new(root.clone()));
     let chat_repository = test_chat_repository(&root);
     let service = AgentRuntimeService::new(
+        repository.clone(),
         repository.clone(),
         repository.clone(),
         repository,

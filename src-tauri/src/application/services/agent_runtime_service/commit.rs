@@ -17,8 +17,8 @@ use crate::application::services::agent_tools::{
 };
 use crate::domain::errors::DomainError;
 use crate::domain::models::agent::{
-    AgentChatCommitMode, AgentRun, AgentRunEventLevel, AgentRunStatus, AgentToolCall,
-    AgentToolResult, ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
+    AgentChatCommitMode, AgentInvocationStatus, AgentRun, AgentRunEventLevel, AgentRunStatus,
+    AgentToolCall, AgentToolResult, ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
 };
 use crate::domain::text_metrics::TextMetrics;
 
@@ -115,6 +115,7 @@ impl AgentRuntimeService {
         reason: Option<String>,
         elapsed_ms: u128,
         round: usize,
+        invocation_id: &str,
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
@@ -162,6 +163,7 @@ impl AgentRuntimeService {
                 "chat_commit_started",
                 json!({
                     "commitId": commit_id.as_str(),
+                    "invocationId": invocation_id,
                     "callId": call.id.as_str(),
                     "path": path.as_str(),
                     "mode": mode,
@@ -210,6 +212,7 @@ impl AgentRuntimeService {
             "chat_commit_requested",
             json!({
                 "commitId": commit_id,
+                "invocationId": invocation_id,
                 "callId": call.id.as_str(),
                 "runId": run.id.as_str(),
                 "workspaceId": run.workspace_id.as_str(),
@@ -256,6 +259,7 @@ impl AgentRuntimeService {
                     "chat_commit_completed",
                     json!({
                         "commitId": commit_id,
+                        "invocationId": invocation_id,
                         "callId": call.id.as_str(),
                         "path": path.as_str(),
                         "mode": mode,
@@ -303,6 +307,7 @@ impl AgentRuntimeService {
                     "chat_commit_failed",
                     json!({
                         "commitId": commit_id,
+                        "invocationId": invocation_id,
                         "callId": call.id.as_str(),
                         "path": path.as_str(),
                         "mode": mode,
@@ -376,6 +381,8 @@ impl AgentRuntimeService {
         .await?;
         self.active_runs.write().await.remove(run_id);
         self.clear_pending_host_requests_for_run(run_id).await;
+        self.finish_root_invocation(run_id, AgentInvocationStatus::Completed)
+            .await?;
 
         Ok(())
     }

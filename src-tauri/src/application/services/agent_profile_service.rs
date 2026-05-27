@@ -7,14 +7,14 @@ use crate::application::errors::ApplicationError;
 use crate::domain::models::agent::AgentToolSpec;
 use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy, DEFAULT_AGENT_PLAN_BETA};
 use crate::domain::models::agent::profile::{
-    AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentModelBinding,
-    AgentModelBindingMode, AgentOutputArtifactTarget, AgentOutputPolicy, AgentPresetBinding,
-    AgentPresetBindingMode, AgentProfileDefinition, AgentProfileId, AgentProfileInstructions,
-    AgentProfileSourceTrace, AgentProfileSummary, AgentRunPolicy, AgentSkillPolicy,
-    AgentToolDescriptionOverride, AgentToolPolicy, AgentWorkspacePolicy, DEFAULT_AGENT_PROFILE_ID,
-    DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN,
-    DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_ROUNDS, ResolvedAgentOutputPolicy,
-    ResolvedAgentProfile,
+    AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentDelegationPolicy,
+    AgentModelBinding, AgentModelBindingMode, AgentOutputArtifactTarget, AgentOutputPolicy,
+    AgentPresetBinding, AgentPresetBindingMode, AgentProfileDefinition, AgentProfileId,
+    AgentProfileInstructions, AgentProfileSourceTrace, AgentProfileSummary, AgentRunPolicy,
+    AgentSkillPolicy, AgentToolDescriptionOverride, AgentToolPolicy, AgentWorkspacePolicy,
+    DEFAULT_AGENT_PROFILE_ID, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL,
+    DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
+    DEFAULT_AGENT_TOOL_MAX_ROUNDS, ResolvedAgentOutputPolicy, ResolvedAgentProfile,
 };
 use crate::domain::models::agent::{
     AgentRunPresentation, ArtifactSpec, ArtifactTarget, CommitPolicy, WorkspacePath,
@@ -27,6 +27,10 @@ use crate::domain::repositories::preset_repository::PresetRepository;
 
 const WORKSPACE_ROOT_UNIVERSE: [&str; 5] = ["output", "scratch", "plan", "summaries", "persist"];
 const MESSAGE_BODY_ARTIFACT_TARGET: ArtifactTarget = ArtifactTarget::MessageBody;
+const AGENT_AWAIT_TOOL: &str = "agent.await";
+const AGENT_DELEGATE_TOOL: &str = "agent.delegate";
+const AGENT_LIST_TOOL: &str = "agent.list";
+const TASK_RETURN_TOOL: &str = "task.return";
 
 pub struct AgentProfileService {
     profile_repository: Arc<dyn AgentProfileRepository>,
@@ -94,6 +98,19 @@ pub fn materialize_agent_system_prompt(
         lines.push(format!(
             "- Use {} to discover visible agent skills when reusable writing, editing, planning, style, or character guidance may be helpful.",
             model_name(tools, "skill.list")
+        ));
+    }
+    if has_tool(tools, AGENT_LIST_TOOL) {
+        lines.push(format!(
+            "- Use {} to find other Agents that can help with a focused writing, critique, planning, or style task. This tool only lists Agents; it does not start any work.",
+            model_name(tools, AGENT_LIST_TOOL)
+        ));
+    }
+    if has_tool(tools, AGENT_DELEGATE_TOOL) {
+        lines.push(format!(
+            "- Use {} to ask another Agent to handle a self-contained task, then use {} to collect delegated task results before finalizing.",
+            model_name(tools, AGENT_DELEGATE_TOOL),
+            model_name(tools, AGENT_AWAIT_TOOL)
         ));
     }
     if has_tool(tools, "skill.search") {
@@ -164,37 +181,57 @@ pub fn materialize_agent_system_prompt(
         );
     }
 
-    lines.push(format!(
-        "- Visible workspace roots: {}.",
-        profile.workspace.visible_roots.join(", ")
-    ));
-    lines.push(format!(
-        "- Writable workspace roots: {}.",
-        profile.workspace.writable_roots.join(", ")
-    ));
-    lines.push(format!(
-        "- **Never** read {} before commit",
-        profile.output.message_body_path
-    ));
-    lines.push(
-        "> You may encounter: \"No visible workspace files found.\" This happens because there are no persisted files; please continue."
-            .to_string(),
-    );
-    match profile.run.presentation {
-        AgentRunPresentation::Foreground => lines.push(format!(
-            "# **Important**: Before calling {}, you **must successfully call {} at least once** so that the user can see the final chat message.",
-            model_name(tools, "workspace.finish"),
-            model_name(tools, "workspace.commit")
-        )),
-        AgentRunPresentation::Background => lines.push(format!(
-            "# Background runs may call {} without committing a chat message.",
+    if has_tool(tools, TASK_RETURN_TOOL) {
+        lines.push(
+            "- Task workspace view: write durable notes under summaries/ and temporary notes under scratch/."
+                .to_string(),
+        );
+        lines.push(
+            "- Shared notes are read-only: summaries/parent/ contains notes from the Agent that asked for this task; summaries/agents/ contains notes from other delegated Agents, when present."
+                .to_string(),
+        );
+        lines.push("- Writable workspace paths: summaries/ and scratch/ only.".to_string());
+        lines.push(format!(
+            "# **Important**: You are completing a delegated task. Return your result only by calling {} with a concise result for the requesting Agent.",
+            model_name(tools, TASK_RETURN_TOOL)
+        ));
+        lines.push(
+            "- If useful, write supporting notes under summaries/ or scratch/ as shown in the task brief, then reference those paths in task_return."
+                .to_string(),
+        );
+    } else {
+        lines.push(format!(
+            "- Visible workspace roots: {}.",
+            profile.workspace.visible_roots.join(", ")
+        ));
+        lines.push(format!(
+            "- Writable workspace roots: {}.",
+            profile.workspace.writable_roots.join(", ")
+        ));
+        lines.push(format!(
+            "- **Never** read {} before commit",
+            profile.output.message_body_path
+        ));
+        lines.push(
+            "> You may encounter: \"No visible workspace files found.\" This happens because there are no persisted files; please continue."
+                .to_string(),
+        );
+        match profile.run.presentation {
+            AgentRunPresentation::Foreground => lines.push(format!(
+                "# **Important**: Before calling {}, you **must successfully call {} at least once** so that the user can see the final chat message.",
+                model_name(tools, "workspace.finish"),
+                model_name(tools, "workspace.commit")
+            )),
+            AgentRunPresentation::Background => lines.push(format!(
+                "# Background runs may call {} without committing a chat message.",
+                model_name(tools, "workspace.finish")
+            )),
+        }
+        lines.push(format!(
+            "# **Important**: **Do not** answer directly!!! **Must finish via {}.**",
             model_name(tools, "workspace.finish")
-        )),
+        ));
     }
-    lines.push(format!(
-        "# **Important**: **Do not** answer directly!!! **Must finish via {}.**",
-        model_name(tools, "workspace.finish")
-    ));
     if has_tool(tools, "workspace.commit") && has_tool(tools, "workspace.finish") {
         lines.extend([
             String::new(),
@@ -324,6 +361,24 @@ impl AgentProfileService {
         Ok(profiles)
     }
 
+    pub async fn list_resolved_profiles(
+        &self,
+        known_tools: &[AgentToolSpec],
+    ) -> Result<Vec<ResolvedAgentProfile>, ApplicationError> {
+        let summaries = self.list_profiles().await?;
+        let mut profiles = Vec::with_capacity(summaries.len());
+        for summary in summaries {
+            profiles.push(
+                self.resolve_profile(AgentProfileResolveInput {
+                    profile_id: Some(summary.id.as_str()),
+                    known_tools,
+                })
+                .await?,
+            );
+        }
+        Ok(profiles)
+    }
+
     pub async fn load_profile(
         &self,
         profile_id: &str,
@@ -379,6 +434,7 @@ impl AgentProfileService {
         validate_instructions(&definition.instructions)?;
         validate_plan_policy(&definition.plan)?;
         validate_tool_policy(&definition.tools, known_tools)?;
+        validate_delegation_policy(&definition.delegation, &definition.tools)?;
         validate_run_policy(&definition.run, &definition.tools)?;
         validate_skill_policy(&definition.skills)?;
         validate_workspace_policy(&definition.workspace)?;
@@ -394,6 +450,7 @@ impl AgentProfileService {
             model: definition.model,
             run: definition.run,
             context: definition.context,
+            delegation: definition.delegation,
             instructions: definition.instructions,
             tools: definition.tools,
             skills: definition.skills,
@@ -433,8 +490,15 @@ fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> 
         instructions: AgentProfileInstructions {
             agent_system_prompt: None,
         },
+        delegation: AgentDelegationPolicy {
+            can_delegate: true,
+            ..Default::default()
+        },
         tools: AgentToolPolicy {
             allow: vec![
+                AGENT_LIST_TOOL.to_string(),
+                AGENT_DELEGATE_TOOL.to_string(),
+                AGENT_AWAIT_TOOL.to_string(),
                 "chat.search".to_string(),
                 "chat.read_messages".to_string(),
                 "worldinfo.read_activated".to_string(),
@@ -728,6 +792,98 @@ fn validate_tool_policy(
                 "agent.profile_tool_budget_invalid: maxCallsPerTool.{name} must be > 0"
             )));
         }
+    }
+
+    Ok(())
+}
+
+fn validate_delegation_policy(
+    policy: &AgentDelegationPolicy,
+    tools: &AgentToolPolicy,
+) -> Result<(), ApplicationError> {
+    if policy.max_concurrent_invocations == 0 {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_delegation_concurrency_invalid: delegation.maxConcurrentInvocations must be > 0"
+                .to_string(),
+        ));
+    }
+    if policy.max_invocations_per_run == 0 {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_delegation_run_budget_invalid: delegation.maxInvocationsPerRun must be > 0"
+                .to_string(),
+        ));
+    }
+    if policy.result_budget_tokens == 0 {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_delegation_result_budget_invalid: delegation.resultBudgetTokens must be > 0"
+                .to_string(),
+        ));
+    }
+    if policy.max_handoff_depth == 0 {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_handoff_depth_invalid: delegation.maxHandoffDepth must be > 0"
+                .to_string(),
+        ));
+    }
+    if policy.allowed_callers.is_empty() {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_delegation_callers_empty: delegation.allowedCallers cannot be empty"
+                .to_string(),
+        ));
+    }
+    for caller in &policy.allowed_callers {
+        if caller == "*" {
+            continue;
+        }
+        AgentProfileId::parse(caller).map_err(ApplicationError::ValidationError)?;
+    }
+    if policy
+        .description_for_agents
+        .as_ref()
+        .is_some_and(|description| description.trim().is_empty())
+    {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_delegation_description_empty: delegation.descriptionForAgents cannot be empty"
+                .to_string(),
+        ));
+    }
+
+    if !policy.callable && (policy.allow_as_subagent || policy.allow_as_handoff_target) {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_delegation_callable_required: delegation.callable must be true before allowing this profile as a subagent or handoff target"
+                .to_string(),
+        ));
+    }
+    if policy.callable && !policy.allow_as_subagent && !policy.allow_as_handoff_target {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_delegation_target_mode_required: callable profiles must allow subagent and/or handoff targeting"
+                .to_string(),
+        ));
+    }
+
+    let agent_list_visible = tools.allow.iter().any(|name| name == AGENT_LIST_TOOL)
+        && !tools.deny.iter().any(|name| name == AGENT_LIST_TOOL);
+    let agent_delegate_visible = tools.allow.iter().any(|name| name == AGENT_DELEGATE_TOOL)
+        && !tools.deny.iter().any(|name| name == AGENT_DELEGATE_TOOL);
+    let agent_await_visible = tools.allow.iter().any(|name| name == AGENT_AWAIT_TOOL)
+        && !tools.deny.iter().any(|name| name == AGENT_AWAIT_TOOL);
+    if agent_list_visible && !policy.can_delegate && !policy.can_handoff {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_agent_list_requires_delegation: agent.list requires delegation.canDelegate or delegation.canHandoff"
+                .to_string(),
+        ));
+    }
+    if (agent_delegate_visible || agent_await_visible) && !policy.can_delegate {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_agent_delegate_requires_delegation: agent.delegate/agent.await require delegation.canDelegate"
+                .to_string(),
+        ));
+    }
+    if tools.allow.iter().any(|name| name == TASK_RETURN_TOOL) {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_task_return_runtime_only: task.return is added by the runtime for child invocations and must not be listed in profile tools.allow"
+                .to_string(),
+        ));
     }
 
     Ok(())
@@ -1100,6 +1256,28 @@ mod tests {
         ));
         assert!(!prompt.contains("Use persist/"));
         assert!(!prompt.contains("must successfully call"));
+    }
+
+    #[test]
+    fn delegated_task_system_prompt_uses_task_workspace_view() {
+        let mut profile = test_profile(None, "background");
+        profile.workspace.visible_roots = vec!["output".to_string(), "persist".to_string()];
+        profile.workspace.writable_roots = vec!["output".to_string(), "persist".to_string()];
+        let tools = vec![
+            tool("workspace.write_file", "workspace_write_file"),
+            tool("task.return", "task_return"),
+        ];
+
+        let prompt = materialize_agent_system_prompt(&tools, &profile);
+
+        assert!(prompt.contains("Task workspace view"));
+        assert!(prompt.contains("summaries/parent/"));
+        assert!(prompt.contains("summaries/agents/"));
+        assert!(prompt.contains("Writable workspace paths: summaries/ and scratch/ only."));
+        assert!(!prompt.contains("- Visible workspace roots: output, persist."));
+        assert!(!prompt.contains("- Writable workspace roots: output, persist."));
+        assert!(!prompt.contains("Never"));
+        assert!(prompt.contains("task_return"));
     }
 
     fn tool(name: &str, model_name: &str) -> AgentToolSpec {

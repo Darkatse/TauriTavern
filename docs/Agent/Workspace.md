@@ -465,6 +465,17 @@ summaries/
 persist/
 ```
 
+return-mode child invocation 会获得 invocation-scoped workspace view。模型看到的是简单语义路径，runtime 在 repository adapter 层映射到物理路径：
+
+| Child-facing path | 物理路径 | 权限 | 语义 |
+| --- | --- | --- | --- |
+| `summaries/` | `summaries/agents/<workspace-key>/` | read/write | 当前子任务的持久 notes |
+| `scratch/` | `scratch/agents/<workspace-key>/` | read/write | 当前子任务的临时 notes |
+| `summaries/parent/` | 父级 `summaries/` 私有树，排除 `agents/` | read-only | 请求者留下的 notes |
+| `summaries/agents/` | `summaries/agents/` 中其他 child 的目录 | read-only | 其他 delegated Agents 的结果 notes |
+
+其中 `<workspace-key>` 优先使用 target Agent id；同一 run 重复调用同一 Agent 时追加 `-002`、`-003`。子 Agent 不需要知道 `childInvocationId` 或物理路径。`summaries/parent/agents/...` 与 `summaries/agents/<self>/...` 会作为可恢复工具错误拒绝，避免模型绕过语义视图。
+
 `persist/` 是 chat workspace 级持久 root 的 run projection：
 
 ```text

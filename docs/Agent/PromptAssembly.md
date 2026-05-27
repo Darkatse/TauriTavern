@@ -147,7 +147,7 @@ fingerprint { presetSha256, frozenRunInputSnapshotSha256 }
 - headless broker 默认不触发普通 `CHAT_COMPLETION_PROMPT_READY`；依赖该事件改写 prompt 的扩展不会参与 Agent 独立组装。
 - 动态 extension prompts 在 frozen snapshot 创建时已经物化；broker 组装阶段不会重新执行动态 filter。
 - Agent runtime 拒绝外部 `tools`、`tool_choice`、已有 `role: "tool"` 或 assistant `tool_calls`。
-- 当前多 Agent runtime-time prompt assembly 尚未落地；root run 的独立 preset/model 是已落地基础，subagent/handoff 还需要运行中 broker handshake。
+- 当前 return-mode child invocation 已有后端 task prompt、target Profile system prompt 与 model binding；但完整 runtime-time PromptAssemblyBroker handshake 尚未落地。root run 的独立 preset/model 是已落地基础，subagent/handoff 还需要 invocation-scoped broker handshake。
 
 ## 后续开发注意
 

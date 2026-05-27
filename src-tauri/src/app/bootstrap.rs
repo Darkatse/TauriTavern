@@ -43,6 +43,7 @@ use crate::application::services::user_directory_service::UserDirectoryService;
 use crate::application::services::user_service::UserService;
 use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
+use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
 use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
@@ -174,6 +175,7 @@ struct AppRepositories {
     quick_reply_repository: Arc<dyn QuickReplyRepository>,
     agent_profile_repository: Arc<dyn AgentProfileRepository>,
     agent_run_repository: Arc<dyn AgentRunRepository>,
+    agent_invocation_repository: Arc<dyn AgentInvocationRepository>,
     agent_workspace_lifecycle_repository: Arc<dyn AgentWorkspaceLifecycleRepository>,
     llm_connection_repository: Arc<dyn LlmConnectionRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
@@ -271,6 +273,7 @@ pub(super) async fn build_services(
     ));
     let agent_runtime_service = Arc::new(AgentRuntimeService::new(
         repositories.agent_run_repository.clone(),
+        repositories.agent_invocation_repository.clone(),
         repositories.workspace_repository.clone(),
         repositories.checkpoint_repository.clone(),
         repositories.chat_repository.clone(),
@@ -507,6 +510,8 @@ fn build_repositories(
         data_root.join("_tauritavern").join("agent-workspaces"),
     ));
     let agent_run_repository: Arc<dyn AgentRunRepository> = file_agent_repository.clone();
+    let agent_invocation_repository: Arc<dyn AgentInvocationRepository> =
+        file_agent_repository.clone();
     let workspace_repository: Arc<dyn WorkspaceRepository> = file_agent_repository.clone();
     let checkpoint_repository: Arc<dyn CheckpointRepository> = file_agent_repository.clone();
     let agent_workspace_lifecycle_repository: Arc<dyn AgentWorkspaceLifecycleRepository> =
@@ -567,6 +572,7 @@ fn build_repositories(
         quick_reply_repository,
         agent_profile_repository,
         agent_run_repository,
+        agent_invocation_repository,
         agent_workspace_lifecycle_repository,
         llm_connection_repository,
         workspace_repository,
