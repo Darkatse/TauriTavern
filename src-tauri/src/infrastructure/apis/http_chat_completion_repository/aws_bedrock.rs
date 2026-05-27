@@ -37,6 +37,7 @@ const BEDROCK_INFERENCE_PROFILE_PREFIXES: &[&str] =
 enum HttpBedrockProvider {
     Anthropic,
     Nova,
+    Llama,
     Other,
 }
 
@@ -44,6 +45,7 @@ fn detect_http_provider(model_id: &str) -> HttpBedrockProvider {
     match extract_provider(model_id) {
         "anthropic" => HttpBedrockProvider::Anthropic,
         "amazon" => HttpBedrockProvider::Nova,
+        "meta" => HttpBedrockProvider::Llama,
         _ => HttpBedrockProvider::Other,
     }
 }
@@ -278,6 +280,9 @@ fn normalize_provider_response(
         HttpBedrockProvider::Anthropic => normalizers::normalize_claude_response(body),
         HttpBedrockProvider::Nova => {
             normalizers::normalize_claude_response(nova_response_to_claude_shape(body))
+        }
+        HttpBedrockProvider::Llama => {
+            normalizers::normalize_claude_response(llama_response_to_claude_shape(body))
         }
         // Other providers reuse the Claude normalizer for now (they fail at the
         // application layer before reaching this point); kept for forward
@@ -560,7 +565,69 @@ fn transform_chunk_for_provider(
         // Pass through.
         HttpBedrockProvider::Anthropic | HttpBedrockProvider::Other => Some(decoded.to_string()),
         HttpBedrockProvider::Nova => transform_nova_chunk_to_anthropic(decoded),
+        HttpBedrockProvider::Llama => transform_llama_chunk_to_anthropic(decoded),
     }
+}
+
+/// Llama non-stream response shape (per AWS Bedrock User Guide
+/// `model-parameters-meta.md`):
+/// ```json
+/// { "generation": "...", "prompt_token_count": N, "generation_token_count": M, "stop_reason": "stop" }
+/// ```
+/// We translate it into a single-block Claude payload so the existing
+/// `normalize_claude_response` can fold it into an OpenAI `chat.completion`.
+/// Llama's `stop_reason` values (`stop`, `length`) already align with Claude's
+/// `end_turn` / `max_tokens` after the Claude finish-reason mapping.
+fn llama_response_to_claude_shape(body: Value) -> Value {
+    let text = body
+        .get("generation")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let stop_reason = match body.get("stop_reason").and_then(Value::as_str) {
+        Some("length") => "max_tokens".to_string(),
+        Some(other) => other.to_string(),
+        None => "end_turn".to_string(),
+    };
+
+    let mut usage = Map::new();
+    if let Some(input_tokens) = body.get("prompt_token_count").and_then(Value::as_u64) {
+        usage.insert("input_tokens".to_string(), json!(input_tokens));
+    }
+    if let Some(output_tokens) = body.get("generation_token_count").and_then(Value::as_u64) {
+        usage.insert("output_tokens".to_string(), json!(output_tokens));
+    }
+
+    let mut claude_body = Map::new();
+    claude_body.insert(
+        "content".to_string(),
+        Value::Array(vec![json!({ "type": "text", "text": text })]),
+    );
+    claude_body.insert("stop_reason".to_string(), Value::String(stop_reason));
+    if !usage.is_empty() {
+        claude_body.insert("usage".to_string(), Value::Object(usage));
+    }
+    Value::Object(claude_body)
+}
+
+/// Llama stream chunks each carry the next token group in `generation`. The
+/// terminal chunk also carries `stop_reason` so the frontend never sees
+/// `null`. We map every `generation` value (including the empty trailing one)
+/// to an Anthropic `content_block_delta` text frame.
+fn transform_llama_chunk_to_anthropic(decoded: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(decoded).ok()?;
+    let text = value.get("generation").and_then(Value::as_str)?;
+    if text.is_empty() {
+        return None;
+    }
+    Some(
+        json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "text_delta", "text": text },
+        })
+        .to_string(),
+    )
 }
 
 /// Nova streams Converse-style events. Each EventStream `bytes` chunk decodes
@@ -604,8 +671,9 @@ mod tests {
     use super::{
         HttpBedrockProvider, decode_eventstream_payload, derive_control_plane_base,
         detect_http_provider, drain_eventstream_messages, extract_model_id_from_endpoint,
-        extract_provider, inference_supports_on_demand, merge_bedrock_models,
-        normalize_provider_response, nova_response_to_claude_shape, to_stream_endpoint,
+        extract_provider, inference_supports_on_demand, llama_response_to_claude_shape,
+        merge_bedrock_models, normalize_provider_response, nova_response_to_claude_shape,
+        to_stream_endpoint, transform_llama_chunk_to_anthropic,
         transform_nova_chunk_to_anthropic, validate_invoke_endpoint,
     };
     use serde_json::Value;
@@ -705,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn detect_http_provider_identifies_anthropic_nova_and_other_buckets() {
+    fn detect_http_provider_identifies_anthropic_nova_llama_and_other_buckets() {
         assert_eq!(
             detect_http_provider("us.anthropic.claude-opus-4-7"),
             HttpBedrockProvider::Anthropic,
@@ -720,6 +788,14 @@ mod tests {
         );
         assert_eq!(
             detect_http_provider("meta.llama3-2-3b-instruct-v1:0"),
+            HttpBedrockProvider::Llama,
+        );
+        assert_eq!(
+            detect_http_provider("us.meta.llama3-3-70b-instruct-v1:0"),
+            HttpBedrockProvider::Llama,
+        );
+        assert_eq!(
+            detect_http_provider("mistral.mistral-large-2407-v1:0"),
             HttpBedrockProvider::Other,
         );
     }
@@ -794,6 +870,50 @@ mod tests {
         assert_eq!(content[0]["text"], "first");
         assert_eq!(claude_shape["usage"]["input_tokens"], 10);
         assert_eq!(claude_shape["usage"]["output_tokens"], 5);
+    }
+
+    #[test]
+    fn transform_llama_chunk_to_anthropic_extracts_generation_text() {
+        let chunk = json!({
+            "generation": " world",
+            "prompt_token_count": 10,
+            "generation_token_count": 1,
+            "stop_reason": null,
+        })
+        .to_string();
+        let rewritten = transform_llama_chunk_to_anthropic(&chunk).expect("delta chunk");
+        let parsed: Value = serde_json::from_str(&rewritten).unwrap();
+        assert_eq!(parsed["type"], "content_block_delta");
+        assert_eq!(parsed["delta"]["text"], " world");
+    }
+
+    #[test]
+    fn transform_llama_chunk_to_anthropic_drops_trailing_empty_generation() {
+        let chunk = json!({ "generation": "", "stop_reason": "stop" }).to_string();
+        assert!(transform_llama_chunk_to_anthropic(&chunk).is_none());
+    }
+
+    #[test]
+    fn llama_response_to_claude_shape_lifts_generation_text_and_token_counts() {
+        let body = json!({
+            "generation": "hello world",
+            "prompt_token_count": 12,
+            "generation_token_count": 4,
+            "stop_reason": "stop"
+        });
+        let claude_shape = llama_response_to_claude_shape(body);
+        assert_eq!(claude_shape["stop_reason"], "stop");
+        let content = claude_shape["content"].as_array().expect("content");
+        assert_eq!(content[0]["text"], "hello world");
+        assert_eq!(claude_shape["usage"]["input_tokens"], 12);
+        assert_eq!(claude_shape["usage"]["output_tokens"], 4);
+    }
+
+    #[test]
+    fn llama_response_length_stop_reason_maps_to_claude_max_tokens() {
+        let body = json!({ "generation": "...", "stop_reason": "length" });
+        let claude_shape = llama_response_to_claude_shape(body);
+        assert_eq!(claude_shape["stop_reason"], "max_tokens");
     }
 
     #[test]
