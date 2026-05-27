@@ -41,6 +41,7 @@ enum HttpBedrockProvider {
     Mistral,
     DeepSeek,
     Cohere,
+    Ai21Jamba,
     Other,
 }
 
@@ -52,6 +53,8 @@ fn detect_http_provider(model_id: &str) -> HttpBedrockProvider {
         "mistral" => HttpBedrockProvider::Mistral,
         "deepseek" => HttpBedrockProvider::DeepSeek,
         "cohere" => HttpBedrockProvider::Cohere,
+        // Jurassic-2 (`ai21.j2-*`) doesn't match `.jamba` and stays Other.
+        "ai21" if model_id.contains(".jamba") => HttpBedrockProvider::Ai21Jamba,
         _ => HttpBedrockProvider::Other,
     }
 }
@@ -298,6 +301,9 @@ fn normalize_provider_response(
         }
         HttpBedrockProvider::Cohere => {
             normalizers::normalize_claude_response(cohere_response_to_claude_shape(body))
+        }
+        HttpBedrockProvider::Ai21Jamba => {
+            normalizers::normalize_claude_response(ai21_jamba_response_to_claude_shape(body))
         }
         // Other providers reuse the Claude normalizer for now (they fail at the
         // application layer before reaching this point); kept for forward
@@ -584,6 +590,7 @@ fn transform_chunk_for_provider(
         HttpBedrockProvider::Mistral => transform_mistral_chunk_to_anthropic(decoded),
         HttpBedrockProvider::DeepSeek => transform_deepseek_chunk_to_anthropic(decoded),
         HttpBedrockProvider::Cohere => transform_cohere_chunk_to_anthropic(decoded),
+        HttpBedrockProvider::Ai21Jamba => transform_ai21_jamba_chunk_to_anthropic(decoded),
     }
 }
 
@@ -869,6 +876,96 @@ fn transform_deepseek_chunk_to_anthropic(decoded: &str) -> Option<String> {
     )
 }
 
+/// AI21 Jamba non-stream responses (per AI21 chat-completion spec /
+/// Bedrock model card `model-parameters-jamba.md`):
+///
+/// ```json
+/// { "id": "...", "choices": [{ "index": 0,
+///     "message": { "role": "assistant", "content": "..." },
+///     "finish_reason": "stop|length|content_filter" }],
+///   "usage": { "prompt_tokens": N, "completion_tokens": M } }
+/// ```
+///
+/// We lift `choices[0].message.content` into a Claude-shaped `content[].text`
+/// block, project Jamba's `finish_reason` (`length` -> `max_tokens`, `stop` /
+/// `content_filter` -> `end_turn` / `content_filter`), and forward
+/// `usage.prompt_tokens` / `usage.completion_tokens`.
+fn ai21_jamba_response_to_claude_shape(body: Value) -> Value {
+    let text = body
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_default();
+
+    let stop_reason = body
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+        .map(|value| match value {
+            "length" => "max_tokens".to_string(),
+            "stop" => "end_turn".to_string(),
+            other => other.to_string(),
+        })
+        .unwrap_or_else(|| "end_turn".to_string());
+
+    let mut usage = Map::new();
+    if let Some(usage_value) = body.get("usage").and_then(Value::as_object) {
+        if let Some(input_tokens) = usage_value.get("prompt_tokens").and_then(Value::as_u64) {
+            usage.insert("input_tokens".to_string(), json!(input_tokens));
+        }
+        if let Some(output_tokens) = usage_value
+            .get("completion_tokens")
+            .and_then(Value::as_u64)
+        {
+            usage.insert("output_tokens".to_string(), json!(output_tokens));
+        }
+    }
+
+    let mut claude_body = Map::new();
+    claude_body.insert(
+        "content".to_string(),
+        Value::Array(vec![json!({ "type": "text", "text": text })]),
+    );
+    claude_body.insert("stop_reason".to_string(), Value::String(stop_reason));
+    if !usage.is_empty() {
+        claude_body.insert("usage".to_string(), Value::Object(usage));
+    }
+    Value::Object(claude_body)
+}
+
+/// AI21 Jamba stream chunks are OpenAI-shape:
+///
+/// ```json
+/// { "id": "...", "choices": [{
+///     "index": 0,
+///     "delta": { "role": "assistant", "content": "..." },
+///     "finish_reason": null | "stop" | "length"
+/// }] }
+/// ```
+///
+/// The first chunk carries `delta.role = "assistant"` with no content; the
+/// terminal chunk has `delta = {}` (or empty content) and a `usage` summary.
+/// We extract `choices[0].delta.content`, drop empty or sentinel chunks, and
+/// rewrap as an Anthropic `content_block_delta` text frame.
+fn transform_ai21_jamba_chunk_to_anthropic(decoded: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(decoded).ok()?;
+    let text = value
+        .pointer("/choices/0/delta/content")
+        .and_then(Value::as_str)?;
+
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(
+        json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "text_delta", "text": text },
+        })
+        .to_string(),
+    )
+}
+
 /// Cohere Command R / R+ non-stream responses (per AWS Bedrock User Guide
 /// `model-parameters-cohere-command-r-plus.md`) look like:
 ///
@@ -1007,12 +1104,14 @@ mod tests {
     use tokio::sync::mpsc::unbounded_channel;
 
     use super::{
-        HttpBedrockProvider, cohere_response_to_claude_shape, decode_eventstream_payload,
-        deepseek_response_to_claude_shape, derive_control_plane_base, detect_http_provider,
-        drain_eventstream_messages, extract_model_id_from_endpoint, extract_provider,
-        inference_supports_on_demand, llama_response_to_claude_shape, merge_bedrock_models,
+        HttpBedrockProvider, ai21_jamba_response_to_claude_shape, cohere_response_to_claude_shape,
+        decode_eventstream_payload, deepseek_response_to_claude_shape,
+        derive_control_plane_base, detect_http_provider, drain_eventstream_messages,
+        extract_model_id_from_endpoint, extract_provider, inference_supports_on_demand,
+        llama_response_to_claude_shape, merge_bedrock_models,
         mistral_response_to_claude_shape, normalize_provider_response,
-        nova_response_to_claude_shape, to_stream_endpoint, transform_cohere_chunk_to_anthropic,
+        nova_response_to_claude_shape, to_stream_endpoint,
+        transform_ai21_jamba_chunk_to_anthropic, transform_cohere_chunk_to_anthropic,
         transform_deepseek_chunk_to_anthropic, transform_llama_chunk_to_anthropic,
         transform_mistral_chunk_to_anthropic, transform_nova_chunk_to_anthropic,
         validate_invoke_endpoint,
@@ -1141,6 +1240,15 @@ mod tests {
         );
         assert_eq!(
             detect_http_provider("ai21.jamba-1-5-large-v1:0"),
+            HttpBedrockProvider::Ai21Jamba,
+        );
+        assert_eq!(
+            detect_http_provider("us.ai21.jamba-instruct-v1:0"),
+            HttpBedrockProvider::Ai21Jamba,
+        );
+        // Legacy Jurassic stays Other (no `.jamba` substring).
+        assert_eq!(
+            detect_http_provider("ai21.j2-ultra-v1"),
             HttpBedrockProvider::Other,
         );
     }
@@ -1446,6 +1554,67 @@ mod tests {
             cohere_response_to_claude_shape(toxic)["stop_reason"],
             "error",
             "any error_* must collapse into Claude error",
+        );
+    }
+
+    #[test]
+    fn transform_ai21_jamba_chunk_to_anthropic_extracts_delta_content() {
+        let chunk = json!({
+            "id": "abc",
+            "choices": [{
+                "index": 0,
+                "delta": { "content": " jamba" },
+                "finish_reason": null
+            }]
+        })
+        .to_string();
+        let rewritten = transform_ai21_jamba_chunk_to_anthropic(&chunk)
+            .expect("jamba delta chunk must surface text");
+        let parsed: Value = serde_json::from_str(&rewritten).unwrap();
+        assert_eq!(parsed["type"], "content_block_delta");
+        assert_eq!(parsed["delta"]["text"], " jamba");
+    }
+
+    #[test]
+    fn transform_ai21_jamba_chunk_to_anthropic_drops_role_only_and_terminal_frames() {
+        let role_only = json!({
+            "choices": [{ "delta": { "role": "assistant" } }],
+        })
+        .to_string();
+        assert!(transform_ai21_jamba_chunk_to_anthropic(&role_only).is_none());
+
+        let terminal = json!({
+            "choices": [{ "delta": {}, "finish_reason": "stop" }],
+            "usage": { "prompt_tokens": 1, "completion_tokens": 1 }
+        })
+        .to_string();
+        assert!(transform_ai21_jamba_chunk_to_anthropic(&terminal).is_none());
+    }
+
+    #[test]
+    fn ai21_jamba_response_to_claude_shape_maps_finish_reason_and_usage() {
+        let body = json!({
+            "id": "abc",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "jamba reply" },
+                "finish_reason": "length"
+            }],
+            "usage": { "prompt_tokens": 12, "completion_tokens": 4 }
+        });
+        let shape = ai21_jamba_response_to_claude_shape(body);
+        assert_eq!(shape["content"][0]["text"], "jamba reply");
+        assert_eq!(shape["stop_reason"], "max_tokens");
+        assert_eq!(shape["usage"]["input_tokens"], 12);
+        assert_eq!(shape["usage"]["output_tokens"], 4);
+
+        let stop = json!({
+            "choices": [{ "message": { "content": "ok" }, "finish_reason": "stop" }]
+        });
+        assert_eq!(
+            ai21_jamba_response_to_claude_shape(stop)["stop_reason"],
+            "end_turn",
+            "stop must map to Claude end_turn",
         );
     }
 
