@@ -38,6 +38,7 @@ enum HttpBedrockProvider {
     Anthropic,
     Nova,
     Llama,
+    Mistral,
     Other,
 }
 
@@ -46,6 +47,7 @@ fn detect_http_provider(model_id: &str) -> HttpBedrockProvider {
         "anthropic" => HttpBedrockProvider::Anthropic,
         "amazon" => HttpBedrockProvider::Nova,
         "meta" => HttpBedrockProvider::Llama,
+        "mistral" => HttpBedrockProvider::Mistral,
         _ => HttpBedrockProvider::Other,
     }
 }
@@ -283,6 +285,9 @@ fn normalize_provider_response(
         }
         HttpBedrockProvider::Llama => {
             normalizers::normalize_claude_response(llama_response_to_claude_shape(body))
+        }
+        HttpBedrockProvider::Mistral => {
+            normalizers::normalize_claude_response(mistral_response_to_claude_shape(body))
         }
         // Other providers reuse the Claude normalizer for now (they fail at the
         // application layer before reaching this point); kept for forward
@@ -566,6 +571,7 @@ fn transform_chunk_for_provider(
         HttpBedrockProvider::Anthropic | HttpBedrockProvider::Other => Some(decoded.to_string()),
         HttpBedrockProvider::Nova => transform_nova_chunk_to_anthropic(decoded),
         HttpBedrockProvider::Llama => transform_llama_chunk_to_anthropic(decoded),
+        HttpBedrockProvider::Mistral => transform_mistral_chunk_to_anthropic(decoded),
     }
 }
 
@@ -630,6 +636,131 @@ fn transform_llama_chunk_to_anthropic(decoded: &str) -> Option<String> {
     )
 }
 
+/// Mistral on Bedrock exposes two response shapes, switched by model id:
+///
+/// - **Legacy text-completion** (7B, Mixtral, large-2402): the body is
+///   `{ "outputs": [{ "text": "...", "stop_reason": "stop" }] }`.
+/// - **Chat-completion** (large-2407+, small, medium, Pixtral): the body may
+///   be `{ "content": [{ "role": "assistant", "content": [{ "text": "..." }] }] }`
+///   (mistral-large-2407 spec) **or** `{ "choices": [{ "index":0,
+///   "message": { "role":"assistant", "content":"string" }, "stop_reason":"stop" }] }`
+///   (the generic Mistral chat-completion spec).
+///
+/// We probe each shape in turn and emit a Claude-style payload so the existing
+/// `normalize_claude_response` does the OpenAI-shape rewriting.
+fn mistral_response_to_claude_shape(body: Value) -> Value {
+    let text = if let Some(outputs) = body.get("outputs").and_then(Value::as_array) {
+        outputs
+            .iter()
+            .filter_map(|output| output.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("")
+    } else if let Some(choices) = body.get("choices").and_then(Value::as_array) {
+        choices
+            .iter()
+            .filter_map(|choice| {
+                choice
+                    .pointer("/message/content")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    } else if let Some(content) = body.get("content").and_then(Value::as_array) {
+        content
+            .iter()
+            .filter_map(|message| {
+                message
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .filter_map(|part| {
+                                part.get("text").and_then(Value::as_str).map(str::to_string)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("")
+                    })
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    } else {
+        String::new()
+    };
+
+    let stop_reason = body
+        .pointer("/choices/0/stop_reason")
+        .or_else(|| body.pointer("/outputs/0/stop_reason"))
+        .and_then(Value::as_str)
+        .map(|value| match value {
+            "length" => "max_tokens".to_string(),
+            other => other.to_string(),
+        })
+        .unwrap_or_else(|| "end_turn".to_string());
+
+    let mut usage = Map::new();
+    if let Some(usage_value) = body.get("usage").and_then(Value::as_object) {
+        if let Some(input_tokens) = usage_value
+            .get("prompt_tokens")
+            .or_else(|| usage_value.get("input_tokens"))
+            .and_then(Value::as_u64)
+        {
+            usage.insert("input_tokens".to_string(), json!(input_tokens));
+        }
+        if let Some(output_tokens) = usage_value
+            .get("completion_tokens")
+            .or_else(|| usage_value.get("output_tokens"))
+            .and_then(Value::as_u64)
+        {
+            usage.insert("output_tokens".to_string(), json!(output_tokens));
+        }
+    }
+
+    let mut claude_body = Map::new();
+    claude_body.insert(
+        "content".to_string(),
+        Value::Array(vec![json!({ "type": "text", "text": text })]),
+    );
+    claude_body.insert("stop_reason".to_string(), Value::String(stop_reason));
+    if !usage.is_empty() {
+        claude_body.insert("usage".to_string(), Value::Object(usage));
+    }
+    Value::Object(claude_body)
+}
+
+/// Mistral stream chunks come in three flavours depending on the model:
+///
+/// - Legacy text-completion: `{ "outputs": [{ "text": "...", "stop_reason": null }] }`
+/// - Chat (large-2407 spec):  `{ "content": [{ "text": "..." }] }`
+/// - Chat (chat-completion):  `{ "choices": [{ "delta": { "content": "..." } }] }`
+///
+/// We probe each one and rewrap the extracted text as an Anthropic
+/// `content_block_delta` frame. Chunks without user-visible text (final
+/// `stop_reason` markers, empty `content`, ...) are silently dropped.
+fn transform_mistral_chunk_to_anthropic(decoded: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(decoded).ok()?;
+
+    let text = value
+        .pointer("/choices/0/delta/content")
+        .and_then(Value::as_str)
+        .or_else(|| value.pointer("/content/0/text").and_then(Value::as_str))
+        .or_else(|| value.pointer("/outputs/0/text").and_then(Value::as_str))?;
+
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(
+        json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "text_delta", "text": text },
+        })
+        .to_string(),
+    )
+}
+
 /// Nova streams Converse-style events. Each EventStream `bytes` chunk decodes
 /// into one of:
 ///   - `{ "messageStart": { "role": "assistant" } }`
@@ -672,9 +803,10 @@ mod tests {
         HttpBedrockProvider, decode_eventstream_payload, derive_control_plane_base,
         detect_http_provider, drain_eventstream_messages, extract_model_id_from_endpoint,
         extract_provider, inference_supports_on_demand, llama_response_to_claude_shape,
-        merge_bedrock_models, normalize_provider_response, nova_response_to_claude_shape,
-        to_stream_endpoint, transform_llama_chunk_to_anthropic,
-        transform_nova_chunk_to_anthropic, validate_invoke_endpoint,
+        merge_bedrock_models, mistral_response_to_claude_shape, normalize_provider_response,
+        nova_response_to_claude_shape, to_stream_endpoint, transform_llama_chunk_to_anthropic,
+        transform_mistral_chunk_to_anthropic, transform_nova_chunk_to_anthropic,
+        validate_invoke_endpoint,
     };
     use serde_json::Value;
 
@@ -773,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn detect_http_provider_identifies_anthropic_nova_llama_and_other_buckets() {
+    fn detect_http_provider_identifies_every_wired_provider() {
         assert_eq!(
             detect_http_provider("us.anthropic.claude-opus-4-7"),
             HttpBedrockProvider::Anthropic,
@@ -783,19 +915,15 @@ mod tests {
             HttpBedrockProvider::Nova,
         );
         assert_eq!(
-            detect_http_provider("us.amazon.nova-lite-v1:0"),
-            HttpBedrockProvider::Nova,
-        );
-        assert_eq!(
             detect_http_provider("meta.llama3-2-3b-instruct-v1:0"),
             HttpBedrockProvider::Llama,
         );
         assert_eq!(
-            detect_http_provider("us.meta.llama3-3-70b-instruct-v1:0"),
-            HttpBedrockProvider::Llama,
+            detect_http_provider("mistral.mistral-large-2407-v1:0"),
+            HttpBedrockProvider::Mistral,
         );
         assert_eq!(
-            detect_http_provider("mistral.mistral-large-2407-v1:0"),
+            detect_http_provider("cohere.command-r-plus-v1:0"),
             HttpBedrockProvider::Other,
         );
     }
@@ -914,6 +1042,68 @@ mod tests {
         let body = json!({ "generation": "...", "stop_reason": "length" });
         let claude_shape = llama_response_to_claude_shape(body);
         assert_eq!(claude_shape["stop_reason"], "max_tokens");
+    }
+
+    #[test]
+    fn transform_mistral_chunk_to_anthropic_handles_all_three_shapes() {
+        let legacy = json!({ "outputs": [{ "text": " hi", "stop_reason": null }] }).to_string();
+        let chat_2407 = json!({ "content": [{ "text": " from" }] }).to_string();
+        let chat_openai = json!({
+            "choices": [{ "index": 0, "delta": { "content": " mistral" } }],
+        })
+        .to_string();
+
+        for (chunk, expected) in [
+            (legacy, " hi"),
+            (chat_2407, " from"),
+            (chat_openai, " mistral"),
+        ] {
+            let rewritten = transform_mistral_chunk_to_anthropic(&chunk)
+                .unwrap_or_else(|| panic!("expected delta from chunk: {chunk}"));
+            let parsed: Value = serde_json::from_str(&rewritten).unwrap();
+            assert_eq!(parsed["type"], "content_block_delta");
+            assert_eq!(parsed["delta"]["text"], expected);
+        }
+    }
+
+    #[test]
+    fn transform_mistral_chunk_to_anthropic_drops_terminal_stop_reason_chunks() {
+        let chunk = json!({ "outputs": [{ "text": "", "stop_reason": "stop" }] }).to_string();
+        assert!(transform_mistral_chunk_to_anthropic(&chunk).is_none());
+    }
+
+    #[test]
+    fn mistral_response_to_claude_shape_picks_up_text_from_each_response_dialect() {
+        let legacy = json!({
+            "outputs": [{ "text": "legacy text", "stop_reason": "stop" }]
+        });
+        let chat_2407 = json!({
+            "content": [{
+                "role": "assistant",
+                "content": [{ "text": "chat 2407 text" }]
+            }]
+        });
+        let chat_openai = json!({
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "chat openai text" },
+                "stop_reason": "length"
+            }]
+        });
+
+        let legacy_shape = mistral_response_to_claude_shape(legacy);
+        assert_eq!(legacy_shape["content"][0]["text"], "legacy text");
+        assert_eq!(legacy_shape["stop_reason"], "stop");
+
+        let chat_2407_shape = mistral_response_to_claude_shape(chat_2407);
+        assert_eq!(chat_2407_shape["content"][0]["text"], "chat 2407 text");
+
+        let chat_openai_shape = mistral_response_to_claude_shape(chat_openai);
+        assert_eq!(chat_openai_shape["content"][0]["text"], "chat openai text");
+        assert_eq!(
+            chat_openai_shape["stop_reason"], "max_tokens",
+            "length must map to Claude max_tokens",
+        );
     }
 
     #[test]
