@@ -417,6 +417,10 @@ export const settingsToUpdate = {
     minimax_endpoint: ['#minimax_endpoint', 'minimax_endpoint', false, true],
     aws_bedrock_model: ['#model_aws_bedrock_select', 'aws_bedrock_model', false, true],
     aws_bedrock_region: ['#aws_bedrock_region', 'aws_bedrock_region', false, true],
+    aws_bedrock_use_custom_template: ['#aws_bedrock_use_custom_template', 'aws_bedrock_use_custom_template', true, true],
+    aws_bedrock_custom_template: ['#aws_bedrock_custom_template', 'aws_bedrock_custom_template', false, true],
+    aws_bedrock_custom_response_path: ['#aws_bedrock_custom_response_path', 'aws_bedrock_custom_response_path', false, true],
+    aws_bedrock_custom_stream_path: ['#aws_bedrock_custom_stream_path', 'aws_bedrock_custom_stream_path', false, true],
     electronhub_model: ['#model_electronhub_select', 'electronhub_model', false, true],
     electronhub_sort_models: ['#electronhub_sort_models', 'electronhub_sort_models', false, true],
     electronhub_group_models: ['#electronhub_group_models', 'electronhub_group_models', false, true],
@@ -540,6 +544,10 @@ const default_settings = {
     minimax_endpoint: MINIMAX_ENDPOINT.GLOBAL,
     aws_bedrock_model: 'anthropic.claude-sonnet-4-20250514-v1:0',
     aws_bedrock_region: AWS_BEDROCK_REGION_DEFAULT,
+    aws_bedrock_use_custom_template: false,
+    aws_bedrock_custom_template: '',
+    aws_bedrock_custom_response_path: '',
+    aws_bedrock_custom_stream_path: '',
     electronhub_model: 'gpt-4o-mini',
     electronhub_sort_models: 'alphabetically',
     electronhub_group_models: false,
@@ -3807,6 +3815,15 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.top_k = Number(settings.top_k_openai);
         generate_data.use_sysprompt = settings.use_sysprompt;
         generate_data.stop = getCustomStoppingStrings();
+        // Custom invoke template escape hatch — only forwarded when the user
+        // has explicitly opted in so the backend can keep its automatic
+        // provider dispatch for everyone else.
+        if (settings.aws_bedrock_use_custom_template) {
+            generate_data.aws_bedrock_use_custom_template = true;
+            generate_data.aws_bedrock_custom_template = String(settings.aws_bedrock_custom_template || '');
+            generate_data.aws_bedrock_custom_response_path = String(settings.aws_bedrock_custom_response_path || '').trim();
+            generate_data.aws_bedrock_custom_stream_path = String(settings.aws_bedrock_custom_stream_path || '').trim();
+        }
     }
 
     if (settings.chat_completion_source === chat_completion_sources.MINIMAX) {
@@ -5355,6 +5372,7 @@ function loadOpenAISettings(data, settings) {
     $('#bind_preset_to_connection').prop('checked', oai_settings.bind_preset_to_connection);
     $('#openai_external_category').toggle(oai_settings.show_external_models);
     $('.reverse_proxy_warning').toggle(oai_settings.reverse_proxy !== '');
+    $('#aws_bedrock_custom_template_section').toggleClass('displayNone', !oai_settings.aws_bedrock_use_custom_template);
 
     // Don't display Service Account JSON in textarea - it's stored in backend secrets
     $('#vertexai_service_account_json').val('');
@@ -8421,6 +8439,24 @@ export function initOpenAI() {
     });
     $('#aws_bedrock_region').on('input', function () {
         oai_settings.aws_bedrock_region = String($(this).val()).trim() || AWS_BEDROCK_REGION_DEFAULT;
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_use_custom_template').on('change', function () {
+        const enabled = Boolean($(this).prop('checked'));
+        oai_settings.aws_bedrock_use_custom_template = enabled;
+        $('#aws_bedrock_custom_template_section').toggleClass('displayNone', !enabled);
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_custom_template').on('input', function () {
+        oai_settings.aws_bedrock_custom_template = String($(this).val());
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_custom_response_path').on('input', function () {
+        oai_settings.aws_bedrock_custom_response_path = String($(this).val()).trim();
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_custom_stream_path').on('input', function () {
+        oai_settings.aws_bedrock_custom_stream_path = String($(this).val()).trim();
         saveSettingsDebounced();
     });
     $('#workers_ai_account_id').on('input', function () {

@@ -30,6 +30,7 @@ use super::response_body::read_upstream_json_body;
 
 mod ai21_jamba;
 mod cohere;
+mod custom;
 mod deepseek;
 mod llama;
 mod mistral;
@@ -298,13 +299,27 @@ pub(super) async fn generate(
     }
 
     let body = read_upstream_json_body(BEDROCK_PROVIDER_NAME, "generate", response).await?;
-    Ok(normalize_provider_response(endpoint_path, body))
+    Ok(normalize_provider_response(
+        endpoint_path,
+        body,
+        config.aws_bedrock_custom_response_path.as_deref(),
+    ))
 }
 
 fn normalize_provider_response(
     endpoint_path: &str,
     body: Value,
+    custom_response_path: Option<&str>,
 ) -> ChatCompletionRepositoryGenerateResponse {
+    // Custom-template requests carry a user-supplied JSON path that overrides
+    // the automatic provider dispatch. Honour it first so the upstream model
+    // id never matters when the user has explicitly opted in.
+    if let Some(path) = custom_response_path.filter(|value| !value.is_empty()) {
+        return normalizers::normalize_claude_response(custom::response_to_claude_shape(
+            body, path,
+        ));
+    }
+
     let model_id = extract_model_id_from_endpoint(endpoint_path);
     match detect_http_provider(model_id) {
         HttpBedrockProvider::Anthropic => normalizers::normalize_claude_response(body),
@@ -367,7 +382,23 @@ pub(super) async fn generate_stream(
     }
 
     let provider = detect_http_provider(extract_model_id_from_endpoint(endpoint_path));
-    forward_eventstream_response(response, sender, cancel, provider).await
+    let stream_mode = match config
+        .aws_bedrock_custom_stream_path
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        Some(path) => StreamMode::Custom(path.to_string()),
+        None => StreamMode::Provider(provider),
+    };
+    forward_eventstream_response(response, sender, cancel, stream_mode).await
+}
+
+/// Stream-side dispatch mode used by `forward_eventstream_response`. Keeps
+/// the per-frame transform decision out of the hot path.
+#[derive(Debug, Clone)]
+enum StreamMode {
+    Provider(HttpBedrockProvider),
+    Custom(String),
 }
 
 fn apply_bedrock_auth(request: RequestBuilder, config: &ChatCompletionApiConfig) -> RequestBuilder {
@@ -408,7 +439,7 @@ async fn forward_eventstream_response(
     mut response: reqwest::Response,
     sender: ChatCompletionStreamSender,
     mut cancel: ChatCompletionCancelReceiver,
-    provider: HttpBedrockProvider,
+    mode: StreamMode,
 ) -> Result<(), DomainError> {
     let mut buffer = Vec::<u8>::new();
 
@@ -436,7 +467,7 @@ async fn forward_eventstream_response(
         };
 
         buffer.extend_from_slice(&chunk);
-        drain_eventstream_messages(&mut buffer, &sender, provider)?;
+        drain_eventstream_messages(&mut buffer, &sender, &mode)?;
     }
 
     Ok(())
@@ -445,14 +476,14 @@ async fn forward_eventstream_response(
 fn drain_eventstream_messages(
     buffer: &mut Vec<u8>,
     sender: &ChatCompletionStreamSender,
-    provider: HttpBedrockProvider,
+    mode: &StreamMode,
 ) -> Result<(), DomainError> {
     loop {
         match parse_next_message(buffer)? {
             ParseStep::Need => return Ok(()),
             ParseStep::Consumed { consumed, payload } => {
                 if !payload.is_empty() {
-                    if let Some(forwarded) = decode_eventstream_payload(&payload, provider)? {
+                    if let Some(forwarded) = decode_eventstream_payload(&payload, mode)? {
                         if sender.send(forwarded).is_err() {
                             buffer.drain(..consumed);
                             return Ok(());
@@ -503,7 +534,7 @@ fn parse_next_message(buffer: &[u8]) -> Result<ParseStep, DomainError> {
 
 fn decode_eventstream_payload(
     payload: &[u8],
-    provider: HttpBedrockProvider,
+    mode: &StreamMode,
 ) -> Result<Option<String>, DomainError> {
     let value: Value = serde_json::from_slice(payload).map_err(|error| {
         DomainError::InternalError(format!(
@@ -526,7 +557,9 @@ fn decode_eventstream_payload(
         // Normalize to Anthropic-style `content_block_delta` here so the frontend
         // dispatcher in `getStreamingReply` (path: `data.delta.text` /
         // `data.delta.thinking`) works uniformly across every Bedrock provider.
-        return Ok(transform_chunk_for_provider(&decoded, provider));
+        // Custom-template streams take precedence: the user-supplied JSON
+        // path replaces the per-provider extraction logic.
+        return Ok(transform_chunk_for_mode(&decoded, mode));
     }
 
     if let Some(message) = value.get("message").and_then(Value::as_str) {
@@ -536,6 +569,13 @@ fn decode_eventstream_payload(
     }
 
     Ok(None)
+}
+
+fn transform_chunk_for_mode(decoded: &str, mode: &StreamMode) -> Option<String> {
+    match mode {
+        StreamMode::Custom(path) => custom::transform_chunk_to_anthropic(decoded, path),
+        StreamMode::Provider(provider) => transform_chunk_for_provider(decoded, *provider),
+    }
 }
 
 fn transform_chunk_for_provider(
@@ -563,7 +603,7 @@ mod tests {
     use tokio::sync::mpsc::unbounded_channel;
 
     use super::{
-        HttpBedrockProvider, decode_eventstream_payload, derive_control_plane_base,
+        HttpBedrockProvider, StreamMode, decode_eventstream_payload, derive_control_plane_base,
         detect_http_provider, drain_eventstream_messages, extract_model_id_from_endpoint,
         extract_provider, inference_supports_on_demand, merge_bedrock_models,
         normalize_provider_response, to_stream_endpoint, validate_invoke_endpoint,
@@ -611,9 +651,12 @@ mod tests {
         });
         let encoded = BASE64_STANDARD.encode(inner.to_string().as_bytes());
         let payload = json!({ "bytes": encoded }).to_string();
-        let decoded = decode_eventstream_payload(payload.as_bytes(), HttpBedrockProvider::Anthropic)
-            .unwrap()
-            .expect("payload with bytes should decode");
+        let decoded = decode_eventstream_payload(
+            payload.as_bytes(),
+            &StreamMode::Provider(HttpBedrockProvider::Anthropic),
+        )
+        .unwrap()
+        .expect("payload with bytes should decode");
         let parsed: serde_json::Value = serde_json::from_str(&decoded).unwrap();
         assert_eq!(parsed["delta"]["text"], "hello");
     }
@@ -621,17 +664,39 @@ mod tests {
     #[test]
     fn decode_eventstream_payload_returns_none_for_internal_metadata() {
         let payload = json!({ "p": "ignored" }).to_string();
-        let decoded =
-            decode_eventstream_payload(payload.as_bytes(), HttpBedrockProvider::Anthropic).unwrap();
+        let decoded = decode_eventstream_payload(
+            payload.as_bytes(),
+            &StreamMode::Provider(HttpBedrockProvider::Anthropic),
+        )
+        .unwrap();
         assert!(decoded.is_none(), "metadata payloads should be skipped");
     }
 
     #[test]
     fn decode_eventstream_payload_surfaces_exception_messages() {
         let payload = json!({ "message": "throttled" }).to_string();
-        let error = decode_eventstream_payload(payload.as_bytes(), HttpBedrockProvider::Anthropic)
-            .expect_err("exception payload should fail");
+        let error = decode_eventstream_payload(
+            payload.as_bytes(),
+            &StreamMode::Provider(HttpBedrockProvider::Anthropic),
+        )
+        .expect_err("exception payload should fail");
         assert!(error.to_string().contains("throttled"));
+    }
+
+    #[test]
+    fn decode_eventstream_payload_custom_mode_uses_user_supplied_path() {
+        let inner = json!({ "delta": { "text": "custom-chunk" } });
+        let encoded = BASE64_STANDARD.encode(inner.to_string().as_bytes());
+        let payload = json!({ "bytes": encoded }).to_string();
+        let decoded = decode_eventstream_payload(
+            payload.as_bytes(),
+            &StreamMode::Custom("delta.text".to_string()),
+        )
+        .unwrap()
+        .expect("custom path must surface a delta");
+        let parsed: serde_json::Value = serde_json::from_str(&decoded).unwrap();
+        assert_eq!(parsed["type"], "content_block_delta");
+        assert_eq!(parsed["delta"]["text"], "custom-chunk");
     }
 
     #[test]
@@ -644,7 +709,12 @@ mod tests {
         buffer.extend_from_slice(&chunk_two);
 
         let (sender, mut receiver) = unbounded_channel::<String>();
-        drain_eventstream_messages(&mut buffer, &sender, HttpBedrockProvider::Anthropic).unwrap();
+        drain_eventstream_messages(
+            &mut buffer,
+            &sender,
+            &StreamMode::Provider(HttpBedrockProvider::Anthropic),
+        )
+        .unwrap();
         assert!(buffer.is_empty());
 
         assert_eq!(receiver.try_recv().ok(), Some("first".to_string()));
@@ -658,7 +728,12 @@ mod tests {
         let mut buffer = chunk[..chunk.len() - 1].to_vec();
 
         let (sender, mut receiver) = unbounded_channel::<String>();
-        drain_eventstream_messages(&mut buffer, &sender, HttpBedrockProvider::Anthropic).unwrap();
+        drain_eventstream_messages(
+            &mut buffer,
+            &sender,
+            &StreamMode::Provider(HttpBedrockProvider::Anthropic),
+        )
+        .unwrap();
         assert_eq!(buffer.len(), chunk.len() - 1, "buffer should be retained");
         assert!(receiver.try_recv().is_err());
     }
@@ -731,12 +806,43 @@ mod tests {
             "stopReason": "end_turn"
         });
 
-        let normalized =
-            normalize_provider_response("/model/us.amazon.nova-pro-v1:0/invoke", nova_body).body;
+        let normalized = normalize_provider_response(
+            "/model/us.amazon.nova-pro-v1:0/invoke",
+            nova_body,
+            None,
+        )
+        .body;
 
         assert_eq!(normalized["object"], "chat.completion");
         assert_eq!(normalized["choices"][0]["message"]["content"], "hi from nova");
         assert_eq!(normalized["choices"][0]["finish_reason"], "stop");
+    }
+
+    #[test]
+    fn normalize_provider_response_honours_custom_response_path_over_auto_dispatch() {
+        // Even though the model id looks like Nova, the custom-template path
+        // should bypass provider-specific normalizers entirely. We point the
+        // path at an arbitrary nested string and verify that's what surfaces.
+        let body = json!({
+            "anything": {
+                "user_defined": [
+                    { "value": "custom path wins" }
+                ]
+            }
+        });
+
+        let normalized = normalize_provider_response(
+            "/model/us.amazon.nova-pro-v1:0/invoke",
+            body,
+            Some("anything.user_defined.0.value"),
+        )
+        .body;
+
+        assert_eq!(normalized["object"], "chat.completion");
+        assert_eq!(
+            normalized["choices"][0]["message"]["content"],
+            "custom path wins",
+        );
     }
 
     #[test]

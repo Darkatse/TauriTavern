@@ -113,6 +113,16 @@ pub struct ChatCompletionApiConfig {
     pub extra_headers: HashMap<String, String>,
     pub additional_headers: HashMap<String, String>,
     pub anthropic_beta_header_mode: AnthropicBetaHeaderMode,
+    /// Optional dotted JSON path (e.g. `output.message.content.0.text`) used by
+    /// the AWS Bedrock custom-template escape hatch to lift the assistant text
+    /// out of an arbitrary non-stream response body. When set, the
+    /// infrastructure layer bypasses provider-specific normalizers and
+    /// extracts text from this path instead.
+    pub aws_bedrock_custom_response_path: Option<String>,
+    /// Same as [`aws_bedrock_custom_response_path`] but applied to each
+    /// streaming chunk JSON. Empty / missing chunks are silently dropped so
+    /// terminal sentinel events don't surface as blank deltas.
+    pub aws_bedrock_custom_stream_path: Option<String>,
 }
 
 pub type ChatCompletionStreamSender = UnboundedSender<String>;

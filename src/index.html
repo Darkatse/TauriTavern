@@ -3649,6 +3649,32 @@
                                     <option value="anthropic.claude-3-haiku-20240307-v1:0">anthropic.claude-3-haiku-20240307-v1:0</option>
                                 </optgroup>
                             </select>
+                            <div class="range-block">
+                                <label class="checkbox_label" for="aws_bedrock_use_custom_template">
+                                    <input id="aws_bedrock_use_custom_template" type="checkbox" />
+                                    <span data-i18n="Use custom invoke template (advanced)">Use custom invoke template (advanced)</span>
+                                </label>
+                                <div data-for="aws_bedrock_use_custom_template" class="neutral_warning" data-i18n="Bypasses TauriTavern's built-in providers. Use this only when targeting a Bedrock-hosted model we haven't wired yet (Titan Text, Writer, Stability, ...).">
+                                    Bypasses TauriTavern's built-in providers. Use this only when targeting a Bedrock-hosted model we haven't wired yet (Titan Text, Writer, Stability, ...).
+                                </div>
+                            </div>
+                            <div id="aws_bedrock_custom_template_section" class="displayNone">
+                                <h4 data-i18n="Custom invoke body template">Custom invoke body template</h4>
+                                <small class="opacity50p" data-i18n="JSON sent to /model/{id}/invoke. Placeholders: {{messages}}, {{system}}, {{model}}, {{max_tokens}}, {{temperature}}.">
+                                    JSON sent to /model/{id}/invoke. Placeholders: {{messages}}, {{system}}, {{model}}, {{max_tokens}}, {{temperature}}.
+                                </small>
+                                <textarea id="aws_bedrock_custom_template" class="text_pole textarea_compact" rows="6" placeholder='{"messages":{{messages}},"system":{{system}},"max_tokens":{{max_tokens}},"temperature":{{temperature}}}'></textarea>
+                                <h4 data-i18n="Response text JSON path">Response text JSON path</h4>
+                                <small class="opacity50p" data-i18n="Dotted path applied to the non-stream response body (e.g. output.message.content.0.text or generation).">
+                                    Dotted path applied to the non-stream response body (e.g. <code>output.message.content.0.text</code> or <code>generation</code>).
+                                </small>
+                                <input id="aws_bedrock_custom_response_path" class="text_pole" type="text" autocomplete="off" placeholder="output.message.content.0.text">
+                                <h4 data-i18n="Stream chunk text JSON path">Stream chunk text JSON path</h4>
+                                <small class="opacity50p" data-i18n="Dotted path applied to each streaming chunk JSON (e.g. delta.text or choices.0.delta.content).">
+                                    Dotted path applied to each streaming chunk JSON (e.g. <code>delta.text</code> or <code>choices.0.delta.content</code>).
+                                </small>
+                                <input id="aws_bedrock_custom_stream_path" class="text_pole" type="text" autocomplete="off" placeholder="delta.text">
+                            </div>
                         </div>
                         <div id="electronhub_form" data-source="electronhub">
                             <h4 data-i18n="Electron Hub API Key">Electron Hub API Key</h4>

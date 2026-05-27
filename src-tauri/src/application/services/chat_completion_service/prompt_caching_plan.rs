@@ -161,6 +161,8 @@ mod tests {
             extra_headers: HashMap::new(),
             additional_headers: HashMap::new(),
             anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
         }
     }
 

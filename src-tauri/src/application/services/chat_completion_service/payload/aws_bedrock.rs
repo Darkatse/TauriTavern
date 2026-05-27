@@ -23,6 +23,7 @@ use crate::application::errors::ApplicationError;
 mod ai21_jamba;
 mod anthropic;
 mod cohere;
+mod custom;
 mod deepseek;
 mod llama;
 mod mistral;
@@ -68,6 +69,15 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
                     .to_string(),
             )
         })?;
+
+    // Custom-template escape hatch: when explicitly enabled by the user,
+    // bypass automatic provider dispatch entirely. This lets users wire
+    // Bedrock-hosted models we don't have a first-class builder for yet
+    // (Titan Text, Writer, Stability, future variants) without waiting on a
+    // backend change.
+    if custom::is_enabled(&payload) {
+        return custom::build(payload, &model_id);
+    }
 
     match detect_provider(&model_id) {
         BedrockProvider::Anthropic => anthropic::build(payload, &model_id),
