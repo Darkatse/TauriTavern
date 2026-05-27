@@ -3,9 +3,9 @@ use serde_json::{Map, Value};
 use crate::application::errors::ApplicationError;
 use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
 
+mod aws_bedrock;
 mod chutes;
 mod claude;
-mod claude_aws;
 mod claude_messages;
 mod cohere;
 mod custom;
@@ -50,7 +50,7 @@ pub(super) fn build_payload(
         ChatCompletionSource::MiniMax => Ok(minimax::build(payload)),
         ChatCompletionSource::Custom => custom::build(payload),
         ChatCompletionSource::Claude => Ok(claude::build(payload)?),
-        ChatCompletionSource::ClaudeAws => Ok(claude_aws::build(payload)?),
+        ChatCompletionSource::AwsBedrock => Ok(aws_bedrock::build(payload)?),
         ChatCompletionSource::Makersuite => Ok(makersuite::build(payload)?),
         ChatCompletionSource::VertexAi => Ok(vertexai::build(payload)?),
     };

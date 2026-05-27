@@ -14,22 +14,31 @@ use super::HttpChatCompletionRepository;
 use super::normalizers;
 use super::response_body::read_upstream_json_body;
 
-const BEDROCK_PROVIDER_NAME: &str = "Claude on AWS Bedrock";
+const BEDROCK_PROVIDER_NAME: &str = "AWS Bedrock";
 const BEDROCK_EVENTSTREAM_CONTENT_TYPE: &str = "application/vnd.amazon.eventstream";
 const BEDROCK_INVOKE_SUFFIX: &str = "/invoke";
 const BEDROCK_STREAM_SUFFIX: &str = "/invoke-with-response-stream";
 const BEDROCK_RUNTIME_HOST_INFIX: &str = "bedrock-runtime.";
 const BEDROCK_CONTROL_PLANE_HOST_INFIX: &str = "bedrock.";
-const BEDROCK_ANTHROPIC_PROVIDER: &str = "anthropic";
+
+/// Inference-profile prefixes used by Bedrock cross-region routing. Used to
+/// extract the underlying provider name from an inference-profile id (e.g.
+/// `us.anthropic.claude-opus-4-7` -> provider `anthropic`).
+const BEDROCK_INFERENCE_PROFILE_PREFIXES: &[&str] =
+    &["us.", "eu.", "apac.", "global.", "us-gov."];
 
 pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
 ) -> Result<Value, DomainError> {
     let control_plane_base = derive_control_plane_base(&config.base_url)?;
-    let foundation_url = format!(
-        "{control_plane_base}/foundation-models?byProvider={BEDROCK_ANTHROPIC_PROVIDER}&byOutputModality=TEXT"
-    );
+    // Ask the control plane for *every* text-output foundation model the
+    // account has access to. Bedrock supports filtering by provider, but
+    // since TauriTavern wants to surface the entire catalog (with a
+    // best-effort `(unsupported)` tag in the UI for providers we haven't
+    // wired payload builders for yet), we drop the byProvider filter.
+    let foundation_url =
+        format!("{control_plane_base}/foundation-models?byOutputModality=TEXT");
     let profiles_url = format!("{control_plane_base}/inference-profiles");
 
     let client = repository.client()?;
@@ -41,7 +50,7 @@ pub(super) async fn list_models(
     let profiles = get_control_plane_json(&client, config, &profiles_url, "inference-profiles")
         .await?;
 
-    Ok(json!({ "data": merge_anthropic_models(&foundation, &profiles) }))
+    Ok(json!({ "data": merge_bedrock_models(&foundation, &profiles) }))
 }
 
 fn derive_control_plane_base(runtime_base: &str) -> Result<String, DomainError> {
@@ -108,7 +117,22 @@ fn inference_supports_on_demand(model_summary: &Value) -> bool {
         .any(|value| value.as_str() == Some("ON_DEMAND"))
 }
 
-fn merge_anthropic_models(foundation: &Value, profiles: &Value) -> Vec<Value> {
+/// Extract the provider name from a Bedrock model id by stripping any
+/// inference-profile prefix (us./eu./apac./global./us-gov.) and returning
+/// the leading dotted segment. Examples:
+/// - `anthropic.claude-3-haiku`         -> `anthropic`
+/// - `us.anthropic.claude-opus-4-7`     -> `anthropic`
+/// - `amazon.nova-pro-v1:0`             -> `amazon`
+/// - `us.meta.llama3-3-70b-instruct`    -> `meta`
+fn extract_provider(id: &str) -> &str {
+    let after_region = BEDROCK_INFERENCE_PROFILE_PREFIXES
+        .iter()
+        .find_map(|prefix| id.strip_prefix(prefix))
+        .unwrap_or(id);
+    after_region.split('.').next().unwrap_or(after_region)
+}
+
+fn merge_bedrock_models(foundation: &Value, profiles: &Value) -> Vec<Value> {
     let mut entries: Vec<Value> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
@@ -125,15 +149,14 @@ fn merge_anthropic_models(foundation: &Value, profiles: &Value) -> Vec<Value> {
             if matches!(status, Some(s) if s != "ACTIVE") {
                 continue;
             }
-            // AWS Claude 4.x foundation models (e.g. `anthropic.claude-opus-4-7`,
-            // `anthropic.claude-opus-4-6-v1`, `anthropic.claude-sonnet-4-5-...`)
-            // are tagged `INFERENCE_PROFILE` only — invoking them with the raw
-            // foundation-model id is rejected by Bedrock with:
+            // AWS Claude 4.x and many newer Nova/Llama foundation models are
+            // tagged `INFERENCE_PROFILE` only — invoking them with the raw
+            // foundation-model id is rejected by Bedrock with
             //   "Invocation of model ID ... with on-demand throughput isn't supported.
             //    Retry your request with the ID or ARN of an inference profile..."
-            // So we hide foundation entries that don't support ON_DEMAND from the
-            // dropdown; their `us./global.` inference-profile variants come back
-            // through the second response below and are surfaced instead.
+            // So we hide foundation entries that don't support ON_DEMAND from
+            // the dropdown; their `us./global.` inference-profile variants come
+            // back through the second response below and are surfaced instead.
             if !inference_supports_on_demand(item) {
                 continue;
             }
@@ -147,6 +170,7 @@ fn merge_anthropic_models(foundation: &Value, profiles: &Value) -> Vec<Value> {
                 "id": id,
                 "name": item.get("modelName").cloned().unwrap_or(Value::Null),
                 "source": "foundation-model",
+                "provider": extract_provider(id),
             }));
         }
     }
@@ -163,11 +187,6 @@ fn merge_anthropic_models(foundation: &Value, profiles: &Value) -> Vec<Value> {
             let Some(id) = item.get("inferenceProfileId").and_then(Value::as_str) else {
                 continue;
             };
-            // Only keep Anthropic inference profiles. The control-plane
-            // response contains profiles for Meta/Mistral/etc. as well.
-            if !id.contains(BEDROCK_ANTHROPIC_PROVIDER) {
-                continue;
-            }
             if !seen.insert(id.to_string()) {
                 continue;
             }
@@ -175,6 +194,7 @@ fn merge_anthropic_models(foundation: &Value, profiles: &Value) -> Vec<Value> {
                 "id": id,
                 "name": item.get("inferenceProfileName").cloned().unwrap_or(Value::Null),
                 "source": "inference-profile",
+                "provider": extract_provider(id),
             }));
         }
     }
@@ -270,7 +290,7 @@ fn validate_invoke_endpoint(endpoint_path: &str) -> Result<(), DomainError> {
         Ok(())
     } else {
         Err(DomainError::InvalidData(format!(
-            "Claude on AWS Bedrock requires an invoke endpoint path, got {endpoint_path}"
+            "AWS Bedrock requires an invoke endpoint path, got {endpoint_path}"
         )))
     }
 }
@@ -282,7 +302,7 @@ fn to_stream_endpoint(endpoint_path: &str) -> Result<String, DomainError> {
         Ok(endpoint_path.to_string())
     } else {
         Err(DomainError::InvalidData(format!(
-            "Claude on AWS Bedrock requires an invoke endpoint path, got {endpoint_path}"
+            "AWS Bedrock requires an invoke endpoint path, got {endpoint_path}"
         )))
     }
 }
@@ -421,7 +441,7 @@ mod tests {
 
     use super::{
         decode_eventstream_payload, derive_control_plane_base, drain_eventstream_messages,
-        inference_supports_on_demand, merge_anthropic_models, to_stream_endpoint,
+        extract_provider, inference_supports_on_demand, merge_bedrock_models, to_stream_endpoint,
         validate_invoke_endpoint,
     };
 
@@ -568,7 +588,26 @@ mod tests {
     }
 
     #[test]
-    fn merge_anthropic_models_combines_foundation_and_inference_profiles() {
+    fn extract_provider_strips_inference_profile_prefix_and_returns_first_segment() {
+        assert_eq!(extract_provider("anthropic.claude-3-haiku"), "anthropic");
+        assert_eq!(extract_provider("us.anthropic.claude-opus-4-7"), "anthropic");
+        assert_eq!(extract_provider("amazon.nova-pro-v1:0"), "amazon");
+        assert_eq!(
+            extract_provider("us.meta.llama3-3-70b-instruct-v1:0"),
+            "meta",
+        );
+        assert_eq!(extract_provider("mistral.mistral-large-2407-v1:0"), "mistral");
+        assert_eq!(extract_provider("cohere.command-r-plus-v1:0"), "cohere");
+        assert_eq!(extract_provider("ai21.jamba-1-5-large-v1:0"), "ai21");
+        assert_eq!(extract_provider("deepseek.r1-v1:0"), "deepseek");
+        assert_eq!(
+            extract_provider("global.anthropic.claude-opus-4-6-v1"),
+            "anthropic",
+        );
+    }
+
+    #[test]
+    fn merge_bedrock_models_lists_all_providers_and_tags_each_entry() {
         let foundation = json!({
             "modelSummaries": [
                 {
@@ -580,6 +619,18 @@ mod tests {
                 {
                     "modelId": "anthropic.claude-3-haiku-20240307-v1:0",
                     "modelName": "Claude 3 Haiku",
+                    "modelLifecycle": { "status": "ACTIVE" },
+                    "inferenceTypesSupported": ["ON_DEMAND"]
+                },
+                {
+                    "modelId": "amazon.titan-text-premier-v1:0",
+                    "modelName": "Titan Text Premier",
+                    "modelLifecycle": { "status": "ACTIVE" },
+                    "inferenceTypesSupported": ["ON_DEMAND"]
+                },
+                {
+                    "modelId": "meta.llama3-2-3b-instruct-v1:0",
+                    "modelName": "Llama 3.2 3B Instruct",
                     "modelLifecycle": { "status": "ACTIVE" },
                     "inferenceTypesSupported": ["ON_DEMAND"]
                 },
@@ -598,13 +649,13 @@ mod tests {
                     "status": "ACTIVE"
                 },
                 {
-                    "inferenceProfileId": "us.meta.llama-3-2-90b",
-                    "inferenceProfileName": "US Llama 3.2 90B",
+                    "inferenceProfileId": "us.meta.llama3-3-70b-instruct-v1:0",
+                    "inferenceProfileName": "US Llama 3.3 70B Instruct",
                     "status": "ACTIVE"
                 },
                 {
-                    "inferenceProfileId": "global.anthropic.claude-opus-4-6-v1",
-                    "inferenceProfileName": "Global Claude Opus 4.6",
+                    "inferenceProfileId": "us.amazon.nova-pro-v1:0",
+                    "inferenceProfileName": "US Nova Pro",
                     "status": "ACTIVE"
                 },
                 {
@@ -615,28 +666,59 @@ mod tests {
             ]
         });
 
-        let merged = merge_anthropic_models(&foundation, &profiles);
-        let ids: Vec<&str> = merged
+        let merged = merge_bedrock_models(&foundation, &profiles);
+        let by_id: std::collections::HashMap<&str, &serde_json::Value> = merged
             .iter()
-            .filter_map(|item| item.get("id").and_then(serde_json::Value::as_str))
+            .filter_map(|item| {
+                item.get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|id| (id, item))
+            })
             .collect();
-        // ON_DEMAND foundation model is kept.
-        assert!(ids.contains(&"anthropic.claude-3-haiku-20240307-v1:0"));
-        // 4.x foundation model is INFERENCE_PROFILE-only -> hidden (its
-        // cross-region profile variant is surfaced via /inference-profiles).
-        assert!(
-            !ids.contains(&"anthropic.claude-opus-4-7"),
-            "INFERENCE_PROFILE-only foundation models must be hidden so users don't pick a model id that Bedrock would refuse with `on-demand throughput isn't supported`",
-        );
+
+        // ON_DEMAND foundation models from every provider are kept.
+        assert!(by_id.contains_key("anthropic.claude-3-haiku-20240307-v1:0"));
+        assert!(by_id.contains_key("amazon.titan-text-premier-v1:0"));
+        assert!(by_id.contains_key("meta.llama3-2-3b-instruct-v1:0"));
+        // INFERENCE_PROFILE-only foundation entries are hidden (their
+        // cross-region profile variants surface from /inference-profiles).
+        assert!(!by_id.contains_key("anthropic.claude-opus-4-7"));
         // LEGACY models are dropped.
-        assert!(!ids.contains(&"anthropic.claude-2"));
-        // ACTIVE Anthropic profiles are kept (cross-region routing variants).
-        assert!(ids.contains(&"us.anthropic.claude-opus-4-7"));
-        assert!(ids.contains(&"global.anthropic.claude-opus-4-6-v1"));
-        // Non-Anthropic profiles are dropped.
-        assert!(!ids.contains(&"us.meta.llama-3-2-90b"));
-        // Non-ACTIVE Anthropic profiles are dropped.
-        assert!(!ids.contains(&"us.anthropic.claude-archived"));
+        assert!(!by_id.contains_key("anthropic.claude-2"));
+        // ACTIVE inference profiles for *any* provider are kept now (no more
+        // Anthropic-only filter); the UI is responsible for marking unsupported
+        // providers.
+        assert!(by_id.contains_key("us.anthropic.claude-opus-4-7"));
+        assert!(by_id.contains_key("us.meta.llama3-3-70b-instruct-v1:0"));
+        assert!(by_id.contains_key("us.amazon.nova-pro-v1:0"));
+        // Non-ACTIVE profiles are dropped.
+        assert!(!by_id.contains_key("us.anthropic.claude-archived"));
+
+        // Each entry carries its origin (foundation-model vs inference-profile)
+        // and an extracted `provider` so the frontend can group/tag.
+        let nova = by_id["us.amazon.nova-pro-v1:0"];
+        assert_eq!(
+            nova.get("source").and_then(serde_json::Value::as_str),
+            Some("inference-profile")
+        );
+        assert_eq!(
+            nova.get("provider").and_then(serde_json::Value::as_str),
+            Some("amazon")
+        );
+
+        let llama_foundation = by_id["meta.llama3-2-3b-instruct-v1:0"];
+        assert_eq!(
+            llama_foundation
+                .get("source")
+                .and_then(serde_json::Value::as_str),
+            Some("foundation-model")
+        );
+        assert_eq!(
+            llama_foundation
+                .get("provider")
+                .and_then(serde_json::Value::as_str),
+            Some("meta")
+        );
     }
 
     /// Build a synthetic EventStream frame whose payload is `{ "bytes": base64(text) }`.

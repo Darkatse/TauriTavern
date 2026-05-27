@@ -22,7 +22,7 @@ pub struct ChatCompletionStatusRequestDto {
     #[serde(default)]
     pub workers_ai_account_id: String,
     #[serde(default)]
-    pub claude_aws_region: String,
+    pub aws_bedrock_region: String,
     #[serde(default)]
     pub secret_id: Option<String>,
     #[serde(default)]

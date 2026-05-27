@@ -13,8 +13,8 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
+mod aws_bedrock;
 mod claude;
-mod claude_aws;
 mod cohere;
 mod gemini_interactions;
 mod makersuite;
@@ -507,7 +507,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             ChatCompletionSource::MiniMax => Err(DomainError::InvalidData(
                 "MiniMax does not expose dynamic model listing; status bypass belongs to the application service".to_string(),
             )),
-            ChatCompletionSource::ClaudeAws => claude_aws::list_models(self, config).await,
+            ChatCompletionSource::AwsBedrock => aws_bedrock::list_models(self, config).await,
             ChatCompletionSource::Claude => claude::list_models(self, config).await,
             ChatCompletionSource::Makersuite => makersuite::list_models(self, config).await,
             ChatCompletionSource::VertexAi => vertexai::list_models(self, config).await,
@@ -579,8 +579,8 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             ChatCompletionSource::Claude => {
                 claude::generate(self, config, endpoint_path, payload, source_name).await
             }
-            ChatCompletionSource::ClaudeAws => {
-                claude_aws::generate(self, config, endpoint_path, payload).await
+            ChatCompletionSource::AwsBedrock => {
+                aws_bedrock::generate(self, config, endpoint_path, payload).await
             }
             ChatCompletionSource::Makersuite => {
                 makersuite::generate(self, config, endpoint_path, payload).await
@@ -687,8 +687,8 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 )
                 .await
             }
-            ChatCompletionSource::ClaudeAws => {
-                claude_aws::generate_stream(self, config, endpoint_path, payload, sender, cancel)
+            ChatCompletionSource::AwsBedrock => {
+                aws_bedrock::generate_stream(self, config, endpoint_path, payload, sender, cancel)
                     .await
             }
             ChatCompletionSource::Makersuite => {
