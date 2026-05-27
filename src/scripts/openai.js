@@ -2944,17 +2944,47 @@ function saveModelList(data) {
         // Dynamic Bedrock catalog wins over the static <optgroup> placeholders
         // in index.html. The backend's list_models returns every active
         // foundation model + inference profile across all providers, each
-        // tagged with `provider` (anthropic / amazon / meta / mistral / cohere
-        // / ai21 / deepseek / ...). Only `anthropic` has a working payload
-        // builder today; non-Anthropic entries are still surfaced so users can
-        // see the full catalog, but we suffix the option label with
-        // `(unsupported)` and disable the option so picking one doesn't lead
-        // to a confusing 4xx after Send.
+        // tagged with `provider`. We have payload builders + stream/response
+        // normalizers wired for the seven providers listed below; everything
+        // else is still surfaced (so users can see the full catalog) but
+        // disabled with an `(unsupported, coming soon)` suffix so picking one
+        // doesn't lead to a confusing 4xx after Send. Two notable caveats:
+        //   - `amazon` covers Nova only; Titan-family models share the
+        //     `amazon.*` provider prefix but use the legacy Titan invoke body
+        //     and are filtered out below before the `isSupported` check.
+        //   - `ai21` covers Jamba only; legacy Jurassic-2 models
+        //     (`ai21.j2-*`) are recognised as unsupported and grey out.
         const select = $('#model_aws_bedrock_select');
         select.empty();
 
-        const SUPPORTED_PROVIDERS = new Set(['anthropic']);
-        const isSupported = (model) => SUPPORTED_PROVIDERS.has(String(model?.provider || '').toLowerCase());
+        const SUPPORTED_PROVIDERS = new Set([
+            'anthropic',
+            'amazon',
+            'meta',
+            'mistral',
+            'cohere',
+            'ai21',
+            'deepseek',
+        ]);
+        const isSupportedModel = (model) => {
+            const provider = String(model?.provider || '').toLowerCase();
+            if (!SUPPORTED_PROVIDERS.has(provider)) return false;
+            const id = String(model?.id || '').toLowerCase();
+            // Titan-family models share `amazon.*` but use the older Titan
+            // invoke body (`inputText` / `textGenerationConfig`) that the
+            // Nova builder doesn't speak. Mark them unsupported until we
+            // wire a dedicated Titan branch.
+            if (provider === 'amazon' && !id.includes('.nova') && !id.includes('amazon.nova')) {
+                return false;
+            }
+            // AI21 Jurassic-2 (`ai21.j2-*`) uses a legacy completion body;
+            // only Jamba (`ai21.jamba*`) goes through the wired builder.
+            if (provider === 'ai21' && !id.includes('.jamba')) {
+                return false;
+            }
+            return true;
+        };
+        const isSupported = isSupportedModel;
 
         const appendOption = (parent, model) => {
             const option = new Option(
@@ -2991,11 +3021,18 @@ function saveModelList(data) {
         const renderSection = (heading, entries) => {
             if (entries.length === 0) return;
             const byProvider = groupBy(entries, e => String(e.provider || 'unknown').toLowerCase());
-            // Anthropic first (supported), then the rest alphabetically — keeps
-            // the working models at the top of the dropdown.
+            // Wired providers (anthropic first, then the others alphabetically)
+            // float to the top so the working models are always visible without
+            // scrolling; unsupported providers stay at the bottom.
+            const wiredOrder = ['anthropic', 'amazon', 'meta', 'mistral', 'cohere', 'ai21', 'deepseek'];
+            const rankOf = (provider) => {
+                const wired = wiredOrder.indexOf(provider);
+                return wired >= 0 ? wired : wiredOrder.length;
+            };
             const sortedProviders = [...byProvider.keys()].sort((a, b) => {
-                if (a === 'anthropic') return -1;
-                if (b === 'anthropic') return 1;
+                const ra = rankOf(a);
+                const rb = rankOf(b);
+                if (ra !== rb) return ra - rb;
                 return a.localeCompare(b);
             });
             sortedProviders.forEach(provider => {
