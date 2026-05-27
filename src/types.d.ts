@@ -247,6 +247,36 @@ type TauriTavernAgentToolsApi = {
     list: () => Promise<{ tools: TauriTavernAgentToolSpec[] }>;
 };
 
+type TauriTavernAgentPromptAssemblyApi = {
+    prepare: (input: {
+        profileId?: string | null;
+        generationType?: string;
+        frozenRunInputSnapshot: Record<string, any>;
+        jsonSchema?: any;
+    }) => Promise<{
+        mode: 'currentPromptSnapshot' | 'frontendPromptAssembly';
+        request?: any;
+        assembly?: any;
+    }>;
+    buildSnapshot: (input: {
+        generationType?: string;
+        frozenRunInputSnapshot: Record<string, any>;
+        settings?: Record<string, any>;
+        presetSettings?: Record<string, any>;
+        modelId?: string | null;
+        profileId?: string | null;
+        agentContextPolicy?: Record<string, any>;
+        contextPolicy?: Record<string, any>;
+        agentSystemPrompt?: string | null;
+        jsonSchema?: any;
+    }) => Promise<{
+        promptSnapshot: any;
+        frozenRunInputSnapshot: any;
+        generationIntent: any;
+        assembly: any;
+    }>;
+};
+
 type TauriTavernAgentApi = {
     startRunWithPromptSnapshot: (input: {
         chatRef: TauriTavernChatRef;
@@ -254,6 +284,7 @@ type TauriTavernAgentApi = {
         generationType?: string;
         profileId?: string | null;
         promptSnapshot: any;
+        frozenRunInputSnapshot?: any;
         generationIntent?: any;
         presentation?: TauriTavernAgentRunPresentation;
         options?: { presentation?: TauriTavernAgentRunPresentation; stream?: boolean };
@@ -296,6 +327,7 @@ type TauriTavernAgentApi = {
     ) => TauriTavernHostUnsubscribe;
     profiles: TauriTavernAgentProfilesApi;
     tools: TauriTavernAgentToolsApi;
+    promptAssembly: TauriTavernAgentPromptAssemblyApi;
     approveToolCall: () => never;
     listRuns: () => never;
     readDiff: () => never;

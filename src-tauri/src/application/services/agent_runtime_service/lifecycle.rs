@@ -20,6 +20,7 @@ use crate::application::services::agent_identity::{
 };
 use crate::application::services::agent_profile_service::AgentProfileResolveInput;
 use crate::application::services::agent_workspace_lifecycle_service::AgentRunActivity;
+use crate::application::services::prompt_assembly_service::attach_frozen_run_input_snapshot;
 use crate::domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
 use crate::domain::models::agent::{
     AgentChatRef, AgentRun, AgentRunEventLevel, AgentRunStatus, WorkspacePath,
@@ -63,7 +64,10 @@ impl AgentRuntimeService {
             })
             .await?;
         validate_prompt_snapshot_context_policy(prompt_snapshot, &resolved_profile)?;
-        let prompt_snapshot = prompt_snapshot.clone();
+        let prompt_snapshot = attach_frozen_run_input_snapshot(
+            prompt_snapshot.clone(),
+            dto.frozen_run_input_snapshot.clone(),
+        )?;
         let presentation = dto
             .options
             .presentation

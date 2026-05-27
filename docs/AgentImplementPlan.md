@@ -6,20 +6,21 @@
 
 ## 1. 当前基线
 
-截至 2026-05-05，Agent 当前核心已经落地：
+截至 2026-05-27，Agent 当前核心已经落地：
 
 - Rust 后端拥有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 聊天删除会清理对应 Agent chat workspace；active run 存在时删除 fail-fast。
 - 前端 Host ABI 已挂载 `window.__TAURITAVERN__.api.agent`。
 - Agent System 扩展开关开启时，前端将普通发送、regenerate 与 overswipe 新候选生成接入 Agent；普通切换已有 swipe 候选仍保持 Legacy swipe 行为。
-- Agent 启动仍通过 `PromptSnapshot` 兼容桥进入；`GenerationIntent + ContextFrame` 尚未接管 context assembly。
-- `startRunFromLegacyGenerate()` 使用 Legacy dryRun 捕获 `chatCompletionPayload` 与本轮最终 `worldInfoActivation`。
+- Agent 启动仍通过 `PromptSnapshot` 兼容桥进入；root run 已支持 Frontend PromptAssemblyBroker 独立组装 Profile preset/model，`GenerationIntent + ContextFrame` 尚未完全接管 context assembly。
+- `startRunFromLegacyGenerate()` 使用 Legacy dryRun 捕获 `FrozenRunInputSnapshot`、当前 prompt seed 与本轮最终 `worldInfoActivation`。
 - LLM 调用复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 和取消链路。Responses WebSocket 建连已收敛到 `HttpClientPool` 的 ChatCompletion WebSocket profile。
 - Tool loop 由 Rust runtime 独占推进，不递归调用前端 `Generate()`。
 - Agent runtime 已使用 canonical model IR，不再把 OpenAI-compatible raw JSON 当作运行时事实。
 - `provider_state` 已用于 run-scoped continuation。OpenAI Responses 通过它驱动 persistent WebSocket、incremental input 与 `previous_response_id`。
 - Agent Skill repository/service、导入导出、embedded skill 导入确认、`api.skill`、`skill.list` / `skill.search` / `skill.read` 已落地。
 - Phase 3 Agent Profile 基线已落地：built-in `default-writer`、file repository、resolver、run snapshot、tool/skill/workspace/output policy、tool budget 与 max rounds。
+- Profile `preset.mode = "ref"` 可加载独立 OpenAI/chat-completion preset；`model.mode = "connectionRef"` + `modelId` 可通过 LLM Connection 解耦 preset source/model，并在 runtime 发送前再次权威覆盖 payload。
 - Profile `run.modelRetry` 已落地，默认对单次模型调用的 rate limit / transient transport-provider 错误重试 3 次，间隔 3000ms；非瞬时契约错误继续 fail-fast。
 - `instructions.agentSystemPrompt` 可完整替换默认 Agent system prompt；缺省时使用 resolved profile 默认 prompt。Preset / PromptManager 控制其位置与 role；前端在该位置 materialize Profile 内容，runtime 只消费最终 messages。`tools.toolDescriptions` 可替换 model-facing tool/property descriptions；缺省时使用默认描述。
 
@@ -43,9 +44,14 @@ api.agent.subscribe(runId, handler, options?)
 api.agent.cancel(runId)
 api.agent.readEvents(input)
 api.agent.readWorkspaceFile(input)
+api.agent.readModelTurn(input)
+api.agent.profiles.*
+api.agent.promptAssembly.prepare(input)
+api.agent.promptAssembly.buildSnapshot(input)
+api.agent.tools.list()
 ```
 
-启动输入支持可选 `profileId`。后端 Profile 管理 Tauri commands 已注册，但尚未封装到 `window.__TAURITAVERN__.api.agent`。
+启动输入支持可选 `profileId`。Profile 管理、prompt assembly broker 与 tools list 已封装到 `window.__TAURITAVERN__.api.agent`。
 
 明确不存在公共 `api.agent.startRun()` alias。
 
@@ -171,7 +177,11 @@ Tool registry 只产 canonical `AgentToolSpec`，不再暴露 OpenAI-shaped `ope
 ```text
 api.agent.startRunFromLegacyGenerate(input?)
   ↓
-Legacy Generate dryRun 捕获 chatCompletionPayload 与 worldInfoActivation
+Legacy Generate dryRun 捕获 FrozenRunInputSnapshot / current prompt seed / worldInfoActivation
+  ↓
+prepare_agent_prompt_assembly(dto)
+  ↓
+若 preset.ref：Frontend PromptAssemblyBroker 用独立 preset/model 真实组装 promptSnapshot
   ↓
 前端解析 chatRef / stableChatId
   ↓
@@ -288,10 +298,12 @@ Phase 3 基线已在 Agent tool 层接入 Skill 可见性、deny policy 与 read
 - Profile 控制 `skill.list` / `skill.search` / `skill.read` 可见性与 read budget。
 - Profile 控制 workspace roots 与 messageBody artifact。
 - `agentSystemPrompt` 内容由 Profile 独占；Preset 控制 PromptManager 中的位置与 role。
+- `preset.mode = "ref"` + Frontend PromptAssemblyBroker 已支持 root run 独立 preset 组装；`model.mode = "connectionRef"` 已支持独立 LLM Connection 与 `modelId`。
 
 仍待：
 
-- provider switch policy 与 ContextFrame 资源预算。
+- 运行中 subagent / handoff prompt assembly handshake、invocation-scoped prompt snapshot 与 provider_state。
+- 多 Agent provider/model switch policy 与 ContextFrame 资源预算。
 - preset / character author resources 复用 Skill-like 索引与 source ref 语义，不另建平行资源系统。
 - Plan node 若锁定 profile，runtime 必须拒绝模型自行切换。
 

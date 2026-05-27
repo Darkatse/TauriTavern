@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::domain::models::agent::profile::{
-    AgentPresetRef, AgentProfileDefinition, AgentProfileSummary,
+    AgentContextPolicy, AgentPresetRef, AgentProfileDefinition, AgentProfileSummary,
 };
 use crate::domain::models::agent::{
     AgentChatRef, AgentRunEvent, AgentRunPresentation, AgentRunStatus, AgentToolSpec,
@@ -22,6 +22,8 @@ pub struct AgentStartRunDto {
     pub persist_base_state_id: Option<String>,
     #[serde(default)]
     pub prompt_snapshot: Option<Value>,
+    #[serde(default)]
+    pub frozen_run_input_snapshot: Option<Value>,
     #[serde(default)]
     pub generation_intent: Option<Value>,
     #[serde(default)]
@@ -56,6 +58,71 @@ pub struct AgentResolveSystemPromptDto {
 #[serde(rename_all = "camelCase")]
 pub struct AgentResolveSystemPromptResultDto {
     pub agent_system_prompt: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPreparePromptAssemblyDto {
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default = "default_generation_type")]
+    pub generation_type: String,
+    pub frozen_run_input_snapshot: Value,
+    #[serde(default)]
+    pub json_schema: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPreparePromptAssemblyResultDto {
+    pub mode: AgentPromptAssemblyModeDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<AgentPromptAssemblyBrokerRequestDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assembly: Option<AgentPromptAssemblyRequestMetadataDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentPromptAssemblyModeDto {
+    CurrentPromptSnapshot,
+    FrontendPromptAssembly,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPromptAssemblyBrokerRequestDto {
+    pub schema_version: u32,
+    pub kind: String,
+    pub profile_id: String,
+    pub generation_type: String,
+    pub frozen_run_input_snapshot: Value,
+    pub settings: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    pub preset_ref: AgentPresetRef,
+    pub agent_context_policy: AgentContextPolicy,
+    pub agent_system_prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub json_schema: Option<Value>,
+    pub fingerprint: AgentPromptAssemblyFingerprintDto,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPromptAssemblyFingerprintDto {
+    pub preset_sha256: String,
+    pub frozen_run_input_snapshot_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPromptAssemblyRequestMetadataDto {
+    pub schema_version: u32,
+    pub engine: String,
+    pub profile_id: String,
+    pub preset_ref: AgentPresetRef,
+    pub fingerprint: AgentPromptAssemblyFingerprintDto,
 }
 
 #[derive(Debug, Clone, Deserialize)]

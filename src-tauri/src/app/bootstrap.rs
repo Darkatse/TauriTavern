@@ -26,6 +26,7 @@ use crate::application::services::lan_sync_service::LanSyncService;
 use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::native_regex_service::NativeRegexService;
 use crate::application::services::preset_service::PresetService;
+use crate::application::services::prompt_assembly_service::PromptAssemblyService;
 use crate::application::services::provider_metadata_service::ProviderMetadataService;
 use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
@@ -133,6 +134,7 @@ pub(super) struct AppServices {
     pub preset_service: Arc<PresetService>,
     pub quick_reply_service: Arc<QuickReplyService>,
     pub agent_profile_service: Arc<AgentProfileService>,
+    pub prompt_assembly_service: Arc<PromptAssemblyService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub llm_connection_service: Arc<LlmConnectionService>,
@@ -250,6 +252,11 @@ pub(super) async fn build_services(
         repositories.agent_profile_repository.clone(),
         repositories.preset_repository.clone(),
     ));
+    let prompt_assembly_service = Arc::new(PromptAssemblyService::new(
+        agent_profile_service.clone(),
+        repositories.preset_repository.clone(),
+        llm_connection_service.clone(),
+    ));
     let chat_completion_service = Arc::new(ChatCompletionService::new(
         repositories.chat_completion_repository,
         repositories.secret_repository.clone(),
@@ -366,6 +373,7 @@ pub(super) async fn build_services(
         preset_service,
         quick_reply_service,
         agent_profile_service,
+        prompt_assembly_service,
         agent_runtime_service,
         chat_completion_service,
         llm_connection_service,

@@ -363,6 +363,9 @@ class PromptManager {
         // The current token handler instance
         this.tokenHandler = null;
 
+        // Optional substitution hook for isolated/headless prompt assembly.
+        this.substituteParams = null;
+
         // Token usage of last dry run
         this.tokenUsage = 0;
 
@@ -1399,13 +1402,14 @@ class PromptManager {
     preparePrompt(prompt, original = null) {
         const groupMembers = this.getActiveGroupCharacters();
         const preparedPrompt = new Prompt(prompt);
+        const substitute = typeof this.substituteParams === 'function' ? this.substituteParams : substituteParams;
 
         if (typeof original === 'string') {
-            if (0 < groupMembers.length) preparedPrompt.content = substituteParams(prompt.content ?? '', { original, groupOverride: groupMembers.join(', ') });
-            else preparedPrompt.content = substituteParams(prompt.content, { original });
+            if (0 < groupMembers.length) preparedPrompt.content = substitute(prompt.content ?? '', { original, groupOverride: groupMembers.join(', ') });
+            else preparedPrompt.content = substitute(prompt.content, { original });
         } else {
-            if (0 < groupMembers.length) preparedPrompt.content = substituteParams(prompt.content ?? '', { groupOverride: groupMembers.join(', ') });
-            else preparedPrompt.content = substituteParams(prompt.content);
+            if (0 < groupMembers.length) preparedPrompt.content = substitute(prompt.content ?? '', { groupOverride: groupMembers.join(', ') });
+            else preparedPrompt.content = substitute(prompt.content);
         }
 
         return preparedPrompt;

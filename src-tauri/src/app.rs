@@ -20,6 +20,7 @@ use crate::application::services::lan_sync_service::LanSyncService;
 use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::native_regex_service::NativeRegexService;
 use crate::application::services::preset_service::PresetService;
+use crate::application::services::prompt_assembly_service::PromptAssemblyService;
 use crate::application::services::provider_metadata_service::ProviderMetadataService;
 use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
@@ -62,6 +63,7 @@ pub struct AppState {
     pub preset_service: Arc<PresetService>,
     pub quick_reply_service: Arc<QuickReplyService>,
     pub agent_profile_service: Arc<AgentProfileService>,
+    pub prompt_assembly_service: Arc<PromptAssemblyService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
     pub llm_connection_service: Arc<LlmConnectionService>,
@@ -116,6 +118,7 @@ impl AppState {
             preset_service: services.preset_service,
             quick_reply_service: services.quick_reply_service,
             agent_profile_service: services.agent_profile_service,
+            prompt_assembly_service: services.prompt_assembly_service,
             agent_runtime_service: services.agent_runtime_service,
             chat_completion_service: services.chat_completion_service,
             llm_connection_service: services.llm_connection_service,

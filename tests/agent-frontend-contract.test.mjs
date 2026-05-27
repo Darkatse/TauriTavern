@@ -206,6 +206,50 @@ test('Agent generation router uses the global toggle for normal regenerate and s
     );
 });
 
+test('FrozenRunInputSnapshot stores materialized extension prompts and macro context', async () => {
+    const frozen = await importFresh('src/scripts/tauritavern/agent/frozen-run-input-snapshot.js');
+    const extensionPrompts = await frozen.snapshotExtensionPromptsForFrozenRun({
+        active: {
+            value: 'Visible prompt',
+            position: 1,
+            depth: 2,
+            scan: true,
+            role: 0,
+            filter: () => true,
+        },
+        inactive: {
+            value: 'Hidden prompt',
+            position: 1,
+            depth: 2,
+            scan: true,
+            role: 0,
+            filter: async () => false,
+        },
+    });
+
+    assert.deepEqual(extensionPrompts, {
+        active: {
+            value: 'Visible prompt',
+            position: 1,
+            depth: 2,
+            scan: true,
+            role: 0,
+        },
+    });
+
+    const snapshot = frozen.buildFrozenRunInputSnapshot({
+        generationType: 'swipe',
+        promptInputs: { type: 'swipe', extensionPrompts },
+        worldInfoActivation: { entries: [] },
+        macroContext: { names: { user: 'User', char: 'Char' } },
+    });
+    const normalized = frozen.normalizeFrozenRunInputSnapshot(snapshot);
+
+    assert.equal(normalized.generationType, 'swipe');
+    assert.equal(normalized.macroContext.names.char, 'Char');
+    assert.equal(Object.hasOwn(normalized.promptInputs.extensionPrompts.active, 'filter'), false);
+});
+
 test('/trigger routes Agent generation fail-fast without Legacy fallback', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'src/scripts/slash-commands.js'), 'utf8');
     const start = source.indexOf('async function triggerGenerationCallback');
@@ -699,7 +743,7 @@ test('PromptManager materializes reserved Agent prompts at PromptManager positio
     assert.doesNotMatch(promptManagerSource, /case 'agentSystemPrompt':/);
 
     assert.match(openAiSource, /populateAgentSystemPrompt/);
-    assert.match(openAiSource, /Message\.fromPromptAsync\(materializedPrompt\)/);
+    assert.match(openAiSource, /Message\.fromPromptAsync\(materializedPrompt,\s*assemblyRuntime\.tokenHandler\)/);
     assert.doesNotMatch(openAiSource, /_tauritavern_agent_prompt_marker/);
     assert.doesNotMatch(openAiSource, /populateAgentSystemPromptMarker/);
     assert.doesNotMatch(openAiSource, /populateAgentResults/);

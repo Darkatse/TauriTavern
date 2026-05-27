@@ -108,6 +108,40 @@ test('api.agent.tools lists canonical tool specs', async () => {
     ]);
 });
 
+test('api.agent.promptAssembly prepares backend broker requests', async () => {
+    const { calls, agent } = await installHarness();
+    const frozenRunInputSnapshot = {
+        schemaVersion: 1,
+        kind: 'tauritavern.agentFrozenRunInputSnapshot',
+        generationType: 'swipe',
+        promptInputs: { type: 'swipe', messages: [] },
+        worldInfoActivation: { entries: [] },
+        macroContext: { names: { user: 'User', char: 'Char' } },
+    };
+
+    assert.ok(agent.promptAssembly);
+    await agent.promptAssembly.prepare({
+        profileId: 'writer',
+        generationType: 'swipe',
+        frozenRunInputSnapshot,
+        jsonSchema: { type: 'object' },
+    });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'prepare_agent_prompt_assembly',
+            args: {
+                dto: {
+                    profileId: 'writer',
+                    generationType: 'swipe',
+                    frozenRunInputSnapshot,
+                    jsonSchema: { type: 'object' },
+                },
+            },
+        },
+    ]);
+});
+
 test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid input', async () => {
     const { calls, agent } = await installHarness();
 

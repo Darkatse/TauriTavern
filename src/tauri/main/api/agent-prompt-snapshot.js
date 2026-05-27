@@ -1,6 +1,5 @@
 // @ts-check
 
-import { normalizeWorldInfoActivationBatch } from '../../../scripts/tauritavern/agent/world-info-activation.js';
 import {
     loadAgentContextPolicy,
     normalizeAgentContextPolicy,
@@ -9,14 +8,15 @@ import {
     loadResolvedAgentSystemPrompt,
     normalizeAgentSystemPrompt,
 } from '../../../scripts/tauritavern/agent/agent-system-prompt.js';
+import { normalizeFrozenRunInputSnapshot } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
 
 const LEGACY_DRY_RUN_SOURCE = 'legacy-generate-dry-run';
 
 /**
  * @param {{ generationType?: string; generateOptions?: Record<string, any>; profileId?: string; agentContextPolicy?: Record<string, any>; agentSystemPrompt?: string }} input
- * @returns {Promise<{ promptSnapshot: { contextPolicy: any; chatCompletionPayload: any; worldInfoActivation?: any }; generationIntent: any }>}
+ * @returns {Promise<{ currentPromptSnapshotSeed: any; frozenRunInputSnapshot: any; generationIntent: any }>}
  */
-export async function buildAgentPromptSnapshot(input = {}) {
+export async function buildAgentPromptSnapshotSeed(input = {}) {
     const generationType = normalizeGenerationType(input.generationType);
     const generateOptions = normalizeGenerateOptions(input.generateOptions);
     const agentContextPolicy = input.agentContextPolicy
@@ -31,7 +31,7 @@ export async function buildAgentPromptSnapshot(input = {}) {
         throw new Error('agent.phase2b_chat_completion_required: Agent Phase 2B requires the OpenAI/chat-completion frontend path');
     }
 
-    const { generateData, worldInfoActivation } = await captureAgentDryRun(script, generationType, {
+    const { generateData } = await captureAgentDryRun(script, generationType, {
         ...generateOptions,
         agentMode: true,
         agentContextPolicy,
@@ -40,7 +40,41 @@ export async function buildAgentPromptSnapshot(input = {}) {
     const messages = generateData?.prompt;
     assertMessagesReady(messages);
     assertNoExternalToolTurns(messages);
+    const frozenRunInputSnapshot = normalizeFrozenRunInputSnapshot(generateData.frozenRunInputSnapshot);
 
+    return {
+        currentPromptSnapshotSeed: {
+            generationType,
+            contextPolicy: agentContextPolicy,
+            messages: structuredClone(messages),
+            jsonSchema: generateOptions.jsonSchema ?? null,
+            worldInfoActivation: frozenRunInputSnapshot.worldInfoActivation ?? null,
+        },
+        frozenRunInputSnapshot,
+        generationIntent: {
+            source: LEGACY_DRY_RUN_SOURCE,
+            generationType,
+        },
+    };
+}
+
+/**
+ * @param {{ generationType?: string; generateOptions?: Record<string, any>; profileId?: string; agentContextPolicy?: Record<string, any>; agentSystemPrompt?: string }} input
+ * @returns {Promise<{ promptSnapshot: { contextPolicy: any; chatCompletionPayload: any; worldInfoActivation?: any }; frozenRunInputSnapshot: any; generationIntent: any }>}
+ */
+export async function buildAgentPromptSnapshot(input = {}) {
+    return materializeCurrentPromptSnapshot(await buildAgentPromptSnapshotSeed(input));
+}
+
+export async function materializeCurrentPromptSnapshot(input) {
+    const seed = input?.currentPromptSnapshotSeed;
+    if (!seed || typeof seed !== 'object' || Array.isArray(seed)) {
+        throw new Error('agent.current_prompt_snapshot_seed_required: currentPromptSnapshotSeed must be an object');
+    }
+    const generationType = normalizeGenerationType(seed.generationType);
+    const messages = seed.messages;
+    assertMessagesReady(messages);
+    assertNoExternalToolTurns(messages);
     const openai = await import('../../../scripts/openai.js');
     const model = openai.getChatCompletionModel(openai.oai_settings);
     if (!model) {
@@ -53,7 +87,7 @@ export async function buildAgentPromptSnapshot(input = {}) {
         generationType,
         structuredClone(messages),
         {
-            jsonSchema: generateOptions.jsonSchema ?? null,
+            jsonSchema: seed.jsonSchema ?? null,
             agentMode: true,
         },
     );
@@ -63,10 +97,11 @@ export async function buildAgentPromptSnapshot(input = {}) {
 
     return {
         promptSnapshot: {
-            contextPolicy: agentContextPolicy,
+            contextPolicy: seed.contextPolicy,
             chatCompletionPayload: payload,
-            ...(worldInfoActivation ? { worldInfoActivation } : {}),
+            ...(seed.worldInfoActivation ? { worldInfoActivation: seed.worldInfoActivation } : {}),
         },
+        frozenRunInputSnapshot: input.frozenRunInputSnapshot,
         generationIntent: {
             source: LEGACY_DRY_RUN_SOURCE,
             generationType,
@@ -92,32 +127,24 @@ function normalizeGenerateOptions(value) {
 
 async function captureAgentDryRun(script, generationType, generateOptions) {
     let generateData = null;
-    let worldInfoActivation = null;
     const generateListener = (capturedGenerateData, dryRun) => {
         if (dryRun === true) {
             generateData = capturedGenerateData;
         }
     };
-    const worldInfoListener = (payload) => {
-        if (payload?.isDryRun === true && payload?.isFinal === true) {
-            worldInfoActivation = normalizeWorldInfoActivationBatch(payload);
-        }
-    };
 
     script.eventSource.on(script.event_types.GENERATE_AFTER_DATA, generateListener);
-    script.eventSource.on(script.event_types.WORLDINFO_SCAN_DONE, worldInfoListener);
     try {
         await script.Generate(generationType, generateOptions, true);
     } finally {
         script.eventSource.removeListener(script.event_types.GENERATE_AFTER_DATA, generateListener);
-        script.eventSource.removeListener(script.event_types.WORLDINFO_SCAN_DONE, worldInfoListener);
     }
 
     if (!generateData || typeof generateData !== 'object' || Array.isArray(generateData)) {
         throw new Error('agent.prompt_snapshot_missing: dryRun did not emit generate_after_data');
     }
 
-    return { generateData, worldInfoActivation };
+    return { generateData };
 }
 
 function assertMessagesReady(messages) {

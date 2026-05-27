@@ -59,6 +59,11 @@ import {
     normalizeAgentContextPolicy,
 } from './scripts/tauritavern/agent/agent-context-policy.js';
 import { normalizeAgentSystemPrompt } from './scripts/tauritavern/agent/agent-system-prompt.js';
+import {
+    buildFrozenRunInputSnapshot,
+    normalizeFrozenRunInputSnapshot,
+    snapshotExtensionPromptsForFrozenRun,
+} from './scripts/tauritavern/agent/frozen-run-input-snapshot.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -3998,6 +4003,76 @@ export function getCharacterCardFields({ chid = undefined } = {}) {
     };
 }
 
+function buildAgentPromptMacroContext(promptInputs = {}) {
+    const fields = getCharacterCardFields();
+    const charName = String(promptInputs.name2 ?? name2 ?? '');
+    const userName = String(name1 ?? '');
+    const mesExamplesRaw = String(fields.mesExamples ?? '');
+
+    return {
+        schemaVersion: 1,
+        names: {
+            user: userName,
+            char: charName,
+            group: getAgentPromptMacroGroupValue({ currentChar: charName, includeMuted: true }),
+            groupNotMuted: getAgentPromptMacroGroupValue({ currentChar: charName, includeMuted: false }),
+            notChar: getAgentPromptMacroGroupValue({
+                currentChar: charName,
+                filterOutChar: true,
+                includeUser: userName,
+            }),
+        },
+        character: {
+            charPrompt: String(fields.system || promptInputs.systemPromptOverride || ''),
+            charInstruction: String(fields.jailbreak || promptInputs.jailbreakPromptOverride || ''),
+            charJailbreak: String(fields.jailbreak || promptInputs.jailbreakPromptOverride || ''),
+            description: String(promptInputs.charDescription ?? fields.description ?? ''),
+            personality: String(promptInputs.charPersonality ?? fields.personality ?? ''),
+            scenario: String(promptInputs.scenario ?? fields.scenario ?? ''),
+            persona: String(fields.persona ?? ''),
+            personaPosition: Number(power_user.persona_description_position),
+            mesExamplesRaw,
+            mesExamples: parseMesExamples(mesExamplesRaw, false).join(''),
+            charDepthPrompt: String(fields.charDepthPrompt ?? ''),
+            creatorNotes: String(fields.creatorNotes ?? ''),
+            version: String(fields.version ?? ''),
+            firstMessage: String(fields.firstMessage ?? ''),
+            alternateGreetings: Array.isArray(fields.alternateGreetings)
+                ? fields.alternateGreetings.map(value => String(value ?? ''))
+                : [],
+        },
+        system: {
+            model: String(getGeneratingModel() ?? ''),
+        },
+    };
+}
+
+function getAgentPromptMacroGroupValue({
+    currentChar = '',
+    includeMuted = false,
+    filterOutChar = false,
+    includeUser = null,
+} = {}) {
+    if (!selected_group) {
+        return filterOutChar ? String(includeUser ?? '') : String(currentChar ?? '');
+    }
+
+    const group = groups.find(x => x && x.id === selected_group);
+    const members = Array.isArray(group?.members) ? group.members : [];
+    const disabledMembers = Array.isArray(group?.disabled_members) ? group.disabled_members : [];
+    const names = members
+        .filter(id => includeMuted || !disabledMembers.includes(id))
+        .map(id => characters.find(character => character && character.avatar === id)?.name)
+        .filter(name => typeof name === 'string' && name)
+        .filter(name => !filterOutChar || name !== currentChar);
+
+    if (includeUser) {
+        names.push(String(includeUser));
+    }
+
+    return names.join(', ');
+}
+
 /**
  * Parses an examples string.
  * @param {string} examplesStr
@@ -5922,14 +5997,17 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             break;
         }
         case 'openai': {
-            let [prompt, counts] = await prepareOpenAIMessages({
+            const extensionPromptSnapshot = agentMode
+                ? await snapshotExtensionPromptsForFrozenRun(extension_prompts)
+                : extension_prompts;
+            const promptInputs = {
                 name2: name2,
                 charDescription: description,
                 charPersonality: personality,
                 scenario: scenario,
                 worldInfoBefore: promptWorldInfoBefore,
                 worldInfoAfter: promptWorldInfoAfter,
-                extensionPrompts: extension_prompts,
+                extensionPrompts: extensionPromptSnapshot,
                 bias: promptBias,
                 type: type,
                 quietPrompt: quiet_prompt,
@@ -5939,10 +6017,21 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 jailbreakPromptOverride: jailbreak,
                 messages: oaiMessages,
                 messageExamples: oaiMessageExamples,
+            };
+            let [prompt, counts] = await prepareOpenAIMessages({
+                ...promptInputs,
                 agentMode,
                 agentSystemPrompt: resolvedAgentSystemPrompt,
             }, dryRun);
             generate_data = { prompt: prompt };
+            if (agentMode) {
+                generate_data.frozenRunInputSnapshot = buildFrozenRunInputSnapshot({
+                    generationType: type,
+                    promptInputs,
+                    worldInfoActivation,
+                    macroContext: buildAgentPromptMacroContext(promptInputs),
+                });
+            }
 
             // TODO: move these side-effects somewhere else, so this switch-case solely sets generate_data
             // counts will return false if the user has not enabled the token breakdown feature
@@ -5971,7 +6060,6 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 jsonSchema,
                 profileId: agentProfileId,
                 agentContextPolicy: resolvedAgentContextPolicy,
-                worldInfoActivation,
             });
         } finally {
             unblockGeneration(type);
@@ -6253,7 +6341,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
 }
 //MARK: Generate() ends
 
-async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema, profileId, agentContextPolicy, worldInfoActivation }) {
+async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema, profileId, agentContextPolicy }) {
     if (main_api !== 'openai') {
         throw new Error('agent.chat_completion_required: Agent Mode currently requires the OpenAI/chat-completion path');
     }
@@ -6266,39 +6354,83 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         throw new Error('agent.context_policy_required: Agent Mode did not resolve an Agent context policy');
     }
 
-    const model = getChatCompletionModel(oai_settings);
-    if (!model) {
-        throw new Error('agent.model_required: current chat-completion source did not resolve a model');
-    }
-
-    const { generate_data: chatCompletionPayload } = await createGenerationParameters(
-        oai_settings,
-        model,
-        type,
-        structuredClone(messages),
-        { jsonSchema, agentMode: true },
-    );
-
-    assertAgentPromptSnapshotHasNoExternalTools(chatCompletionPayload);
-    await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, chatCompletionPayload);
-
-    return startAndWaitForAgentRun({
+    const frozenRunInputSnapshot = normalizeFrozenRunInputSnapshot(generateData.frozenRunInputSnapshot);
+    const promptAssembly = await prepareAgentPromptAssemblyForRun({
         generationType: type,
         profileId,
-        promptSnapshot: {
+        frozenRunInputSnapshot,
+        jsonSchema,
+    });
+    let promptSnapshot;
+    let generationIntent;
+    let runFrozenRunInputSnapshot = frozenRunInputSnapshot;
+
+    if (promptAssembly?.mode === 'currentPromptSnapshot') {
+        const model = getChatCompletionModel(oai_settings);
+        if (!model) {
+            throw new Error('agent.model_required: current chat-completion source did not resolve a model');
+        }
+
+        const { generate_data: chatCompletionPayload } = await createGenerationParameters(
+            oai_settings,
+            model,
+            type,
+            structuredClone(messages),
+            { jsonSchema, agentMode: true },
+        );
+
+        assertAgentPromptSnapshotHasNoExternalTools(chatCompletionPayload);
+        promptSnapshot = {
             contextPolicy: agentContextPolicy,
             chatCompletionPayload,
-            ...(worldInfoActivation ? { worldInfoActivation } : {}),
-        },
-        generationIntent: {
+            ...(frozenRunInputSnapshot.worldInfoActivation ? { worldInfoActivation: frozenRunInputSnapshot.worldInfoActivation } : {}),
+        };
+        generationIntent = {
             source: 'legacy-generate-live-handoff',
             generationType: type,
             chatCompletionSource: chatCompletionPayload.chat_completion_source,
             model: chatCompletionPayload.model,
             contextPolicy: agentContextPolicy,
-        },
+        };
+    } else if (promptAssembly?.mode === 'frontendPromptAssembly') {
+        const agentApi = requireAgentPromptAssemblyApi();
+        const assembled = await agentApi.buildSnapshot(promptAssembly.request);
+        promptSnapshot = assembled.promptSnapshot;
+        runFrozenRunInputSnapshot = assembled.frozenRunInputSnapshot ?? frozenRunInputSnapshot;
+        generationIntent = {
+            ...assembled.generationIntent,
+            source: 'frontend-prompt-assembly-broker',
+            parentSource: 'legacy-generate-live-handoff',
+            contextPolicy: assembled.promptSnapshot.contextPolicy,
+            promptAssembly: promptAssembly.assembly,
+        };
+    } else {
+        throw new Error('agent.prompt_assembly_mode_invalid: prepare_agent_prompt_assembly returned an unsupported mode');
+    }
+
+    await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, promptSnapshot.chatCompletionPayload);
+
+    return startAndWaitForAgentRun({
+        generationType: type,
+        profileId,
+        promptSnapshot,
+        frozenRunInputSnapshot: runFrozenRunInputSnapshot,
+        generationIntent,
         options: { stream: false, presentation: 'foreground' },
     });
+}
+
+async function prepareAgentPromptAssemblyForRun(input) {
+    const agentApi = requireAgentPromptAssemblyApi();
+    return agentApi.prepare(input);
+}
+
+function requireAgentPromptAssemblyApi() {
+    const promptAssemblyApi = window.__TAURITAVERN__?.api?.agent?.promptAssembly;
+    if (!promptAssemblyApi || typeof promptAssemblyApi.prepare !== 'function' || typeof promptAssemblyApi.buildSnapshot !== 'function') {
+        throw new Error('agent.prompt_assembly_api_unavailable: TauriTavern Agent prompt assembly API is unavailable');
+    }
+    return promptAssemblyApi;
 }
 
 function collectAgentPersistStateIdsFromMessage(message) {

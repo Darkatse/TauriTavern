@@ -12,6 +12,7 @@ use crate::application::services::agent_tools::{AgentToolDispatcher, BuiltinAgen
 use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::skill_service::SkillService;
 use crate::domain::models::agent::AgentToolSpec;
+use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
@@ -111,6 +112,13 @@ impl AgentRuntimeService {
 
     pub fn tool_specs(&self) -> &[AgentToolSpec] {
         self.tool_registry.specs()
+    }
+
+    pub fn visible_tool_specs(
+        &self,
+        profile: &ResolvedAgentProfile,
+    ) -> Result<Vec<AgentToolSpec>, ApplicationError> {
+        self.tool_registry.visible_specs(profile)
     }
 
     pub async fn resolve_agent_system_prompt(

@@ -2,7 +2,7 @@
 
 本文档是 Agent Host ABI 当前参考。它描述前端/扩展可见的稳定入口，不等同于 Rust 内部 service/repository。
 
-状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环与前端 dryRun adapter。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来设计。
+状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文以当前已落地 Host ABI 为准，并在后续章节保留 readDiff/rollback/approval/listRuns 等未来设计。
 
 `provider_state` 是 Rust 后端内部 continuation contract，不是 Host ABI。前端/扩展不应读写 `_tauritavern_provider_state`；需要诊断时通过 run events、`modelResponsePath` 与 LLM API log 观察。
 模型回合详情必须通过 `readModelTurn()` 读取后端投影 DTO；前端不解析 `model-responses/` raw JSON。
@@ -28,6 +28,17 @@ type TauriTavernAgentApi = {
   readEvents(input: AgentReadEventsInput): Promise<AgentReadEventsResult>;
   readWorkspaceFile(input: AgentReadWorkspaceFileInput): Promise<AgentWorkspaceFile>;
   readModelTurn(input: AgentReadModelTurnInput): Promise<AgentModelTurn>;
+  profiles: {
+    list(): Promise<{ profiles: AgentProfileSummary[] }>;
+    load(input: string | { profileId: string }): Promise<{ profile: AgentProfileDefinition | null }>;
+    resolveSystemPrompt(input?: string | { profileId?: string | null }): Promise<{ agentSystemPrompt: string }>;
+    save(input: AgentProfileDefinition | { profile: AgentProfileDefinition }): Promise<void>;
+    delete(input: string | { profileId: string }): Promise<void>;
+  };
+  promptAssembly: {
+    prepare(input: AgentPromptAssemblyPrepareInput): Promise<AgentPromptAssemblyPrepareResult>;
+    buildSnapshot(input: AgentPromptAssemblyBrokerRequest): Promise<AgentPromptAssemblyBuildResult>;
+  };
   tools: {
     list(): Promise<{ tools: AgentToolSpec[] }>;
   };
@@ -66,7 +77,7 @@ type AgentStartRunFromLegacyGenerateInput = {
 };
 ```
 
-`startRunFromLegacyGenerate()` 是当前前端兼容桥：它使用 Legacy `Generate(..., dryRun = true)` 捕获当前 SillyTavern prompt 语义，构造 `promptSnapshot.chatCompletionPayload`，捕获本轮 dryRun 最终 `worldInfoActivation`，再调用 `startRunWithPromptSnapshot()`。
+`startRunFromLegacyGenerate()` 是当前前端兼容桥：它使用 Legacy `Generate(..., dryRun = true)` 捕获当前 SillyTavern prompt 输入语义与 `FrozenRunInputSnapshot`。若 Profile 使用独立 preset，则先通过 `promptAssembly.prepare()` / `buildSnapshot()` 复用真实 PromptManager 组装；否则物化当前 prompt snapshot，再调用 `startRunWithPromptSnapshot()`。
 
 要求：
 
@@ -89,6 +100,7 @@ type AgentStartRunWithPromptSnapshotInput = {
   generationType?: 'normal' | 'regenerate' | 'swipe' | 'continue' | 'quiet' | 'impersonate';
   profileId?: string;
   promptSnapshot: AgentPromptSnapshot;
+  frozenRunInputSnapshot?: unknown;
   generationIntent?: AgentGenerationIntent;
   workspaceMode?: 'new-run' | 'resume-run';
   resumeRunId?: string;
@@ -100,6 +112,7 @@ type AgentStartRunWithPromptSnapshotInput = {
 };
 
 type AgentPromptSnapshot = {
+  contextPolicy: unknown;
   chatCompletionPayload: unknown;
   worldInfoActivation?: {
     timestampMs: number;
@@ -134,7 +147,7 @@ type AgentRunHandle = {
 
 Public Host ABI 可以允许调用方省略 `stableChatId`，但 `api.agent.startRunWithPromptSnapshot()` 必须在调用 Rust command 前通过 `api.chat.open(chatRef).stableId()` 解析并校验。Rust command 不应自行读取 SillyTavern metadata。
 
-当前要求提供 `promptSnapshot.chatCompletionPayload`。`promptSnapshot.worldInfoActivation` 是可选字段，由 `worldinfo_read_activated` 读取；长期目标是 `generationIntent + ContextFrame`，但当前 Rust runtime 不会只凭 `generationIntent` 组装上下文。
+当前要求提供 `promptSnapshot.contextPolicy` 与 `promptSnapshot.chatCompletionPayload`。`promptSnapshot.worldInfoActivation` 是可选字段，由 `worldinfo_read_activated` 读取；`frozenRunInputSnapshot` 用于审计与后续独立 prompt assembly 复用。长期目标是 `generationIntent + ContextFrame`，但当前 Rust runtime 不会只凭 `generationIntent` 组装上下文。
 
 要求：
 
@@ -285,7 +298,13 @@ type AgentModelTurn = {
 
 该方法返回面向 UI 的白名单投影：assistant 输出、可见/摘要化 reasoning、工具调用摘要与 provider 摘要。它不会暴露完整 raw response、provider-private native continuation、签名或 encrypted reasoning。需要完整诊断时仍使用 run workspace 中的 `modelResponsePath` 与 LLM API log。
 
-## 11. tools.list
+## 11. profiles / promptAssembly / tools
+
+`profiles.*` 是当前 Agent Profile 管理入口。Profile JSON 中的 `preset.mode = "ref"` 与 `model.mode = "connectionRef"` 会影响 prompt assembly 和最终模型连接；保存时无效 schema 必须 fail-fast。
+
+`promptAssembly.prepare()` 调用 Rust `prepare_agent_prompt_assembly`，返回 `currentPromptSnapshot` 或 `frontendPromptAssembly`。`promptAssembly.buildSnapshot()` 是前端 broker：它只能使用 `frozenRunInputSnapshot` 内的 `promptInputs`、`worldInfoActivation`、`macroContext`，并调用真实 SillyTavern PromptManager 组装 `promptSnapshot.chatCompletionPayload`。该 API 是 Agent orchestration 内部边界，不是第三方扩展任意改写 prompt 的入口。
+
+### tools.list
 
 ```ts
 type AgentToolSpec = {

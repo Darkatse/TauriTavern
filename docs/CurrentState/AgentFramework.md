@@ -6,11 +6,11 @@
 
 ## 当前基线
 
-截至 2026-05-05，Agent 当前基线：
+截至 2026-05-27，Agent 当前基线：
 
 - Rust 后端已有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
-- 前端已挂载 `window.__TAURITAVERN__.api.agent` 最小 Host ABI。
-- Agent 启动仍通过 `PromptSnapshot` 兼容桥进入；`GenerationIntent + ContextFrame` 尚未接管上下文组装。
+- 前端已挂载 `window.__TAURITAVERN__.api.agent` Host ABI。
+- Agent 启动仍通过 `PromptSnapshot` 兼容桥进入；root run 已支持 Agent Profile 独立 preset 与独立 model 的 Frontend PromptAssemblyBroker 组装，`GenerationIntent + ContextFrame` 尚未完全接管上下文组装。
 - LLM 调用仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，不得绕过现有 provider、secret、日志、endpoint policy、iOS policy、prompt cache 或取消链路。Responses WebSocket 建连已收敛到 `HttpClientPool` 的 ChatCompletion WebSocket profile，见 `docs/CurrentState/NativeApiFormats.md`。
 - Agent runtime 已不再把 OpenAI-compatible raw JSON 当作内部事实；运行时使用 canonical `AgentModelRequest` / `AgentModelResponse` / `AgentModelMessage` / `AgentModelContentPart`。
 - `AgentModelGateway` 在 Agent canonical IR 与现有 `ChatCompletionGenerateRequestDto` 之间转换；provider-native metadata 作为 opaque `Native` part 保留。
@@ -18,7 +18,7 @@
 - Agent Skill 管理、导入导出、embedded skill 提示导入、`skill.list` / `skill.search` / `skill.read` 已落地。
 - Phase 3 Agent Profile 基线已落地：`profileId` 会解析为 `ResolvedAgentProfile`，驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds 与 model-facing prompt/tool descriptions。
 - PromptManager 已为 Agent Mode 提供 `agentSystemPrompt` 组装位置与 reserved no-op `agentResults` 位置标记；`agentSystemPrompt` 内容只由 Agent Profile 提供，前端在该 PromptManager index materialize，runtime 只消费最终 messages 并拒绝内部 marker 泄漏；`agentResults` 不再向模型注入历史 commit 内容。
-- Profile 仍不接管 provider/model 切换；`preset.ref` 目前只做校验/记录，不改写 prompt snapshot 或 model。
+- Profile 已能通过 `preset.mode = "ref"` 使用独立 OpenAI/chat-completion preset，并通过 `model.mode = "connectionRef"` + `modelId` 使用独立 LLM Connection。当前只覆盖 root run 启动前组装；运行中 subagent/handoff prompt assembly 仍待实现。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
 - Agent System 前端已提供 run timeline / detail panel；详情面板顶部可拖动调整高度，高度仅作为扩展 UI 偏好保存，不进入 Agent Host ABI、journal 或 Rust runtime。
@@ -35,9 +35,17 @@ api.agent.cancel(runId)
 api.agent.readEvents(input)
 api.agent.readWorkspaceFile(input)
 api.agent.readModelTurn(input)
+api.agent.promptAssembly.prepare(input)
+api.agent.promptAssembly.buildSnapshot(input)
+api.agent.profiles.list()
+api.agent.profiles.load(input)
+api.agent.profiles.resolveSystemPrompt(input?)
+api.agent.profiles.save(input)
+api.agent.profiles.delete(input)
+api.agent.tools.list()
 ```
 
-`startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` 支持可选 `profileId`。后端已注册 Profile 管理 Tauri commands（`list_agent_profiles` / `load_agent_profile` / `save_agent_profile` / `delete_agent_profile`），但尚未封装到 `window.__TAURITAVERN__.api.agent` 与 `src/types.d.ts`；正式 UI 属于后续阶段。
+`startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` 支持可选 `profileId`。Profile 管理、工具列表与 prompt assembly broker API 已封装到 `window.__TAURITAVERN__.api.agent` 与 `src/types.d.ts`；正式 UI 仍属于后续阶段。
 
 Skill 管理 API 已落地：
 
@@ -82,6 +90,8 @@ _tauritavern/agent-profiles/
 - 缺省 `profileId` 使用 built-in `default-writer`。
 - 非缺省 `profileId` 不存在时 fail-fast，不创建 run。
 - `instructions.agentSystemPrompt` 省略或为 `null` 时使用 resolved profile 默认 Agent system prompt；设置为非空字符串时完整替换默认 prompt；空白字符串 fail-fast。Preset 控制 `agentSystemPrompt` 的位置与 role，不能编辑其内容。
+- `preset.mode = "ref"` 会加载指定 OpenAI/chat-completion preset，经 Frontend PromptAssemblyBroker 真实复用 SillyTavern PromptManager 组装；`currentPromptSnapshot` / `none` 保留兼容路径。
+- `model.mode = "connectionRef"` 要求 `connectionRef` 与 `modelId`，组装阶段会把 source/model 覆盖到 prompt settings，runtime 发送前会再次以 LLM Connection 权威覆盖 payload。
 - `tools.allow` / `tools.deny` 决定模型可见工具，dispatcher 会二次拦截不可见工具。
 - `tools.toolDescriptions` 省略或为空时使用默认工具 description；设置时只替换 model-facing ToolSpec copy 的工具总 description 与参数 description。
 - `skills.visible` / `skills.deny` 控制 `skill.list`、`skill.search` 与 `skill.read`，`maxReadCharsPerCall` / `maxReadCharsPerRun` 控制 Skill 读取预算。
@@ -411,12 +421,10 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 
 ## 已知待办
 
-- 将 Agent run 接入可控 UI，而不是只靠控制台调用。
-- 建立最小 timeline/event viewer。
 - 将 `PromptSnapshot` 过渡输入逐步替换为 `GenerationIntent + ContextFrame`。
-- 将后端 Profile 管理 commands 封装到前端 Host ABI 与类型。
 - 将 Profile overlay 扩展到 preset / character resolver。
-- 明确 provider/model switch policy；当前 Profile 不切换模型。
+- 为 subagent / handoff 增加运行中 prompt assembly handshake、invocation-scoped prompt snapshot 与 provider_state。
+- 明确多 Agent provider/model switch policy；root run 的 `connectionRef` 模型绑定已经可用。
 - 实现 readDiff、rollback、listRuns、resume-run、streaming 的明确策略。
 
 ## 每次 Agent 相关变更必须更新
@@ -427,6 +435,7 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - `docs/CurrentState/AgentProviderState.md`
 - `docs/AgentImplementPlan.md`
 - `docs/Agent/LlmGateway.md`
+- `docs/Agent/PromptAssembly.md`
 - `docs/Agent/ToolSystem.md`
 - `docs/Agent/Skill.md`
 - `docs/Agent/RunEventJournal.md`

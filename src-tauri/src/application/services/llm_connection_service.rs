@@ -81,6 +81,34 @@ pub struct LlmConnectionService {
     repository: Arc<dyn LlmConnectionRepository>,
 }
 
+struct ResolvedConnectionBinding {
+    connection_ref: String,
+    connection: LlmConnectionDefinition,
+    source: ChatCompletionSource,
+    custom_api_format: Option<String>,
+    model_id: String,
+}
+
+impl ResolvedConnectionBinding {
+    fn model_binding(&self) -> ResolvedLlmModelBinding {
+        let secret_ref = secret_ref(&self.connection);
+        ResolvedLlmModelBinding {
+            mode: "connectionRef".to_string(),
+            connection_ref: self.connection_ref.clone(),
+            connection_display_name: self.connection.display_name.clone(),
+            chat_completion_source: self.source.key().to_string(),
+            custom_api_format: self.custom_api_format.clone(),
+            model_id: self.model_id.clone(),
+            secret_ref: ResolvedLlmSecretRef {
+                key: secret_ref.key.trim().to_string(),
+                id: secret_ref.id.trim().to_string(),
+                label_snapshot: trimmed_option(secret_ref.label_snapshot.as_deref())
+                    .map(str::to_string),
+            },
+        }
+    }
+}
+
 impl LlmConnectionService {
     pub fn new(repository: Arc<dyn LlmConnectionRepository>) -> Self {
         Self { repository }
@@ -132,6 +160,127 @@ impl LlmConnectionService {
         model_id: &str,
         payload: &mut Map<String, Value>,
     ) -> Result<ResolvedLlmModelBinding, ApplicationError> {
+        let resolved = self
+            .resolve_connection_binding(connection_ref, model_id)
+            .await?;
+
+        for key in CONNECTION_PAYLOAD_KEYS {
+            payload.remove(*key);
+        }
+
+        payload.insert(
+            "chat_completion_source".to_string(),
+            Value::String(resolved.source.key().to_string()),
+        );
+        payload.insert(
+            "model".to_string(),
+            Value::String(resolved.model_id.clone()),
+        );
+
+        if let Some(format) = resolved.custom_api_format.as_deref() {
+            payload.insert(
+                "custom_api_format".to_string(),
+                Value::String(format.to_string()),
+            );
+        }
+
+        if let Some(base_url) = trimmed_option(resolved.connection.endpoint.base_url.as_deref()) {
+            payload.insert(
+                "custom_url".to_string(),
+                Value::String(base_url.to_string()),
+            );
+        }
+
+        for (key, value) in &resolved.connection.endpoint.source_specific {
+            payload.insert(key.clone(), value.clone());
+        }
+
+        payload.insert(
+            "secret_id".to_string(),
+            Value::String(secret_ref(&resolved.connection).id.trim().to_string()),
+        );
+
+        if let Some(reverse_proxy) = resolved.connection.routing.reverse_proxy.as_ref() {
+            payload.insert(
+                "reverse_proxy".to_string(),
+                Value::String(reverse_proxy.url.trim().to_string()),
+            );
+        }
+
+        if let Some(value) = trimmed_option(
+            resolved
+                .connection
+                .adapter_hints
+                .prompt_post_processing
+                .as_deref(),
+        ) {
+            payload.insert(
+                "custom_prompt_post_processing".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+        if let Some(value) = trimmed_option(
+            resolved
+                .connection
+                .adapter_hints
+                .custom_include_headers
+                .as_deref(),
+        ) {
+            payload.insert(
+                "custom_include_headers".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+        if let Some(value) = trimmed_option(
+            resolved
+                .connection
+                .adapter_hints
+                .custom_include_body
+                .as_deref(),
+        ) {
+            payload.insert(
+                "custom_include_body".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+        if let Some(value) = trimmed_option(
+            resolved
+                .connection
+                .adapter_hints
+                .custom_exclude_body
+                .as_deref(),
+        ) {
+            payload.insert(
+                "custom_exclude_body".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+
+        Ok(resolved.model_binding())
+    }
+
+    pub async fn resolve_model_binding(
+        &self,
+        connection_ref: &str,
+        model_id: &str,
+    ) -> Result<ResolvedLlmModelBinding, ApplicationError> {
+        self.resolve_connection_binding(connection_ref, model_id)
+            .await
+            .map(|resolved| resolved.model_binding())
+    }
+
+    pub fn validate_connection(
+        &self,
+        connection: &LlmConnectionDefinition,
+    ) -> Result<ChatCompletionSource, ApplicationError> {
+        validate_connection(connection)
+    }
+
+    async fn resolve_connection_binding(
+        &self,
+        connection_ref: &str,
+        model_id: &str,
+    ) -> Result<ResolvedConnectionBinding, ApplicationError> {
         let connection_ref = connection_ref.trim();
         if connection_ref.is_empty() {
             return Err(ApplicationError::ValidationError(
@@ -155,101 +304,15 @@ impl LlmConnectionService {
             ))
         })?;
         let source = self.validate_connection(&connection)?;
-        let secret_ref = secret_ref(&connection);
         let custom_api_format = normalized_custom_api_format(&connection);
 
-        for key in CONNECTION_PAYLOAD_KEYS {
-            payload.remove(*key);
-        }
-
-        payload.insert(
-            "chat_completion_source".to_string(),
-            Value::String(source.key().to_string()),
-        );
-        payload.insert("model".to_string(), Value::String(model_id.to_string()));
-
-        if let Some(format) = custom_api_format.as_deref() {
-            payload.insert(
-                "custom_api_format".to_string(),
-                Value::String(format.to_string()),
-            );
-        }
-
-        if let Some(base_url) = trimmed_option(connection.endpoint.base_url.as_deref()) {
-            payload.insert(
-                "custom_url".to_string(),
-                Value::String(base_url.to_string()),
-            );
-        }
-
-        for (key, value) in &connection.endpoint.source_specific {
-            payload.insert(key.clone(), value.clone());
-        }
-
-        payload.insert(
-            "secret_id".to_string(),
-            Value::String(secret_ref.id.trim().to_string()),
-        );
-
-        if let Some(reverse_proxy) = connection.routing.reverse_proxy.as_ref() {
-            payload.insert(
-                "reverse_proxy".to_string(),
-                Value::String(reverse_proxy.url.trim().to_string()),
-            );
-        }
-
-        if let Some(value) =
-            trimmed_option(connection.adapter_hints.prompt_post_processing.as_deref())
-        {
-            payload.insert(
-                "custom_prompt_post_processing".to_string(),
-                Value::String(value.to_string()),
-            );
-        }
-        if let Some(value) =
-            trimmed_option(connection.adapter_hints.custom_include_headers.as_deref())
-        {
-            payload.insert(
-                "custom_include_headers".to_string(),
-                Value::String(value.to_string()),
-            );
-        }
-        if let Some(value) = trimmed_option(connection.adapter_hints.custom_include_body.as_deref())
-        {
-            payload.insert(
-                "custom_include_body".to_string(),
-                Value::String(value.to_string()),
-            );
-        }
-        if let Some(value) = trimmed_option(connection.adapter_hints.custom_exclude_body.as_deref())
-        {
-            payload.insert(
-                "custom_exclude_body".to_string(),
-                Value::String(value.to_string()),
-            );
-        }
-
-        Ok(ResolvedLlmModelBinding {
-            mode: "connectionRef".to_string(),
+        Ok(ResolvedConnectionBinding {
             connection_ref: id.as_str().to_string(),
-            connection_display_name: connection.display_name.clone(),
-            chat_completion_source: source.key().to_string(),
+            connection,
+            source,
             custom_api_format,
             model_id: model_id.to_string(),
-            secret_ref: ResolvedLlmSecretRef {
-                key: secret_ref.key.trim().to_string(),
-                id: secret_ref.id.trim().to_string(),
-                label_snapshot: trimmed_option(secret_ref.label_snapshot.as_deref())
-                    .map(str::to_string),
-            },
         })
-    }
-
-    pub fn validate_connection(
-        &self,
-        connection: &LlmConnectionDefinition,
-    ) -> Result<ChatCompletionSource, ApplicationError> {
-        validate_connection(connection)
     }
 }
 

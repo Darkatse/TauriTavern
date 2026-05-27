@@ -1,6 +1,7 @@
 // @ts-check
 
-import { buildAgentPromptSnapshot } from './agent-prompt-snapshot.js';
+import { buildAgentPromptSnapshotSeed } from './agent-prompt-snapshot.js';
+import { assemblePromptSnapshotForProfile, createPromptAssemblyApi } from './agent-prompt-assembly-run.js';
 import { attachHostCommitBridge } from './agent-chat-commit-bridge.js';
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../scripts/tauritavern/agent/agent-system-settings.js';
 import { emitAgentProfilesChanged } from '../../../scripts/tauritavern/agent/agent-profile-events.js';
@@ -17,6 +18,8 @@ const DEFAULT_EVENT_POLL_MS = 500;
  * @param {{ safeInvoke: (command: string, args?: any) => Promise<any> }} deps
  */
 function createAgentApi({ safeInvoke }) {
+    const promptAssembly = createPromptAssemblyApi({ safeInvoke });
+
     async function startRunWithPromptSnapshot(input) {
         const dto = await normalizePromptSnapshotRunInput(input, { safeInvoke });
         const handle = await safeInvoke('start_agent_run', { dto });
@@ -31,10 +34,17 @@ function createAgentApi({ safeInvoke }) {
 
         const generationType = normalizeGenerationType(input.generationType);
         const agentOptions = normalizeAgentRunOptions(input.options, input.presentation);
-        const snapshot = await buildAgentPromptSnapshot({
+        const legacySnapshot = await buildAgentPromptSnapshotSeed({
             generationType,
             generateOptions: input.generateOptions,
             profileId: input.profileId,
+        });
+        const snapshot = await assemblePromptSnapshotForProfile({
+            generationType,
+            profileId: input.profileId,
+            jsonSchema: input.generateOptions?.jsonSchema ?? null,
+            promptSnapshotResult: legacySnapshot,
+            promptAssembly,
         });
 
         return startRunWithPromptSnapshot({
@@ -44,6 +54,7 @@ function createAgentApi({ safeInvoke }) {
             profileId: input.profileId,
             persistBaseStateId: input.persistBaseStateId,
             promptSnapshot: snapshot.promptSnapshot,
+            frozenRunInputSnapshot: snapshot.frozenRunInputSnapshot,
             generationIntent: mergePlainObject(snapshot.generationIntent, input.generationIntent),
             options: agentOptions,
         });
@@ -228,6 +239,7 @@ function createAgentApi({ safeInvoke }) {
         tools: {
             list: listToolSpecs,
         },
+        promptAssembly,
         approveToolCall() {
             throw new Error('approveToolCall is not implemented in Agent Phase 2B');
         },

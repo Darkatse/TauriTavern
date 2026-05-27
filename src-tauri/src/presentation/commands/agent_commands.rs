@@ -8,12 +8,13 @@ use tauri::State;
 use crate::app::AppState;
 use crate::application::dto::agent_dto::{
     AgentCancelRunDto, AgentListProfilesResultDto, AgentListToolSpecsResultDto,
-    AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentProfileIdDto,
-    AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
-    AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadWorkspaceFileDto,
-    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
-    AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRunHandleDto,
-    AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
+    AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentPreparePromptAssemblyDto,
+    AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPruneChatPersistentStatesDto,
+    AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto, AgentReadEventsResultDto,
+    AgentReadModelTurnDto, AgentReadWorkspaceFileDto, AgentResolveChatCommitDto,
+    AgentResolvePersistentStateMetadataUpdateDto, AgentResolveSystemPromptDto,
+    AgentResolveSystemPromptResultDto, AgentRunHandleDto, AgentSaveProfileDto, AgentStartRunDto,
+    AgentWorkspaceFileDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
@@ -33,6 +34,37 @@ pub async fn start_agent_run(
         .start_run(dto)
         .await
         .map_err(map_command_error("Failed to start agent run"))
+}
+
+#[tauri::command]
+pub async fn prepare_agent_prompt_assembly(
+    dto: AgentPreparePromptAssemblyDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentPreparePromptAssemblyResultDto, CommandError> {
+    log_command("prepare_agent_prompt_assembly");
+
+    let profile = app_state
+        .prompt_assembly_service
+        .resolve_profile(
+            dto.profile_id.as_deref(),
+            app_state.agent_runtime_service.tool_specs(),
+        )
+        .await
+        .map_err(map_command_error(
+            "Failed to resolve agent profile for prompt assembly",
+        ))?;
+    let visible_tools = app_state
+        .agent_runtime_service
+        .visible_tool_specs(&profile)
+        .map_err(map_command_error(
+            "Failed to resolve agent prompt assembly tool surface",
+        ))?;
+
+    app_state
+        .prompt_assembly_service
+        .prepare_frontend_prompt_assembly(dto, profile, &visible_tools)
+        .await
+        .map_err(map_command_error("Failed to prepare agent prompt assembly"))
 }
 
 #[tauri::command]
