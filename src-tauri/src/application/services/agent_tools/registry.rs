@@ -368,6 +368,8 @@ mod tests {
             assert!(!text.contains("parent Agent"), "{}", tool.name);
             assert!(!text.contains("child Agent"), "{}", tool.name);
             assert!(!text.contains("workspace_finish"), "{}", tool.name);
+            assert!(!text.contains("to collect it"), "{}", tool.name);
+            assert!(!text.contains("before finalizing"), "{}", tool.name);
         }
     }
 }

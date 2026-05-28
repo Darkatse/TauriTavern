@@ -1,8 +1,8 @@
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::time::sleep;
 
 use super::rendering::render_await_content;
 use super::task_status::task_is_terminal;
@@ -18,7 +18,6 @@ use crate::domain::models::agent::{
 
 const DEFAULT_AGENT_AWAIT_TIMEOUT_MS: u64 = 120_000;
 const MAX_AGENT_AWAIT_TIMEOUT_MS: u64 = 300_000;
-const AGENT_AWAIT_POLL_INTERVAL_MS: u64 = 50;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -41,7 +40,7 @@ enum AgentAwaitMode {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AwaitTaskView {
+pub(in crate::application::services::agent_runtime_service) struct AwaitTaskView {
     task_id: String,
     agent_id: String,
     status: AgentTaskStatus,
@@ -117,30 +116,9 @@ impl AgentRuntimeService {
         )
         .await?;
 
-        if let Err(error) = self
-            .run_queued_child_tasks_for_await(
-                run_id,
-                invocation_id,
-                selected_ids.as_ref(),
-                mode,
-                cancel,
-            )
-            .await
-        {
-            if let ApplicationError::ValidationError(message) = &error {
-                if message.contains("agent.await_task_not_found") {
-                    return Ok(tool_error_outcome(
-                        call,
-                        "agent.await_task_not_found",
-                        message,
-                        started.elapsed().as_millis(),
-                    ));
-                }
-            }
-            return Err(error);
-        }
-
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        let scheduler = self.active_run_handle(run_id).await?.scheduler.clone();
+        let mut task_events = scheduler.subscribe();
         let (tasks, timed_out) = loop {
             self.ensure_not_cancelled(cancel)?;
             let tasks = match self
@@ -174,7 +152,19 @@ impl AgentRuntimeService {
             if mode == AgentAwaitMode::StatusOnly || Instant::now() >= deadline {
                 break (tasks, mode != AgentAwaitMode::StatusOnly);
             }
-            sleep(Duration::from_millis(AGENT_AWAIT_POLL_INTERVAL_MS)).await;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            tokio::select! {
+                changed = task_events.changed() => {
+                    changed.map_err(|_| ApplicationError::InternalError(format!(
+                        "agent.task_scheduler_closed: active run `{run_id}` task scheduler closed while awaiting delegated tasks"
+                    )))?;
+                }
+                _ = tokio::time::sleep(remaining) => {}
+                changed = cancel.changed() => {
+                    let _ = changed;
+                    self.ensure_not_cancelled(cancel)?;
+                }
+            }
         };
 
         let views = self.await_task_views(run_id, &tasks).await?;
@@ -216,43 +206,6 @@ impl AgentRuntimeService {
         })
     }
 
-    async fn run_queued_child_tasks_for_await(
-        &self,
-        run_id: &str,
-        invocation_id: &str,
-        selected_ids: Option<&Vec<String>>,
-        mode: AgentAwaitMode,
-        cancel: &mut AgentCancelReceiver,
-    ) -> Result<(), ApplicationError> {
-        if mode == AgentAwaitMode::StatusOnly {
-            return Ok(());
-        }
-        let tasks = self
-            .selected_child_tasks(run_id, invocation_id, selected_ids)
-            .await?;
-        if mode == AgentAwaitMode::NextCompleted
-            && tasks.iter().any(|task| task_is_terminal(task.status))
-        {
-            return Ok(());
-        }
-        for task in tasks
-            .into_iter()
-            .filter(|task| task.status == AgentTaskStatus::Queued)
-        {
-            self.run_child_task_to_terminal(
-                run_id,
-                task.id.as_str(),
-                task.child_invocation_id.as_str(),
-                cancel,
-            )
-            .await?;
-            if mode == AgentAwaitMode::NextCompleted {
-                break;
-            }
-        }
-        Ok(())
-    }
-
     async fn selected_child_tasks(
         &self,
         run_id: &str,
@@ -284,7 +237,7 @@ impl AgentRuntimeService {
         Ok(selected)
     }
 
-    async fn await_task_views(
+    pub(in crate::application::services::agent_runtime_service) async fn await_task_views(
         &self,
         run_id: &str,
         tasks: &[AgentTaskRecord],
@@ -323,6 +276,39 @@ impl AgentRuntimeService {
             });
         }
         Ok(views)
+    }
+
+    pub(in crate::application::services::agent_runtime_service) async fn completed_child_results_message(
+        &self,
+        run_id: &str,
+        invocation_id: &str,
+        seen_task_ids: &mut HashSet<String>,
+    ) -> Result<Option<String>, ApplicationError> {
+        let tasks = self
+            .invocation_repository
+            .list_tasks(run_id)
+            .await?
+            .into_iter()
+            .filter(|task| task.parent_invocation_id == invocation_id)
+            .filter(|task| task_is_terminal(task.status))
+            .filter(|task| !seen_task_ids.contains(&task.id))
+            .collect::<Vec<_>>();
+        if tasks.is_empty() {
+            return Ok(None);
+        }
+        let views = self.await_task_views(run_id, &tasks).await?;
+        for task in &tasks {
+            seen_task_ids.insert(task.id.clone());
+        }
+        let structured = json!({
+            "mode": "backgroundResults",
+            "timedOut": false,
+            "tasks": views,
+        });
+        Ok(Some(format!(
+            "Delegated task results are now available. Review them before deciding your next action.\n\n{}",
+            render_await_content(&structured)
+        )))
     }
 }
 

@@ -3,7 +3,7 @@ use std::time::Instant;
 use serde_json::{Map, Value, json};
 
 use super::rendering::render_task_return_summary;
-use super::task_status::{task_return_status, task_status_label};
+use super::task_status::{task_is_terminal, task_return_status, task_status_label};
 use super::tool_error::tool_error_outcome;
 use super::workspace_view::ChildWorkspaceView;
 use crate::application::errors::ApplicationError;
@@ -68,6 +68,14 @@ impl AgentRuntimeService {
                     "agent.task_record_missing: no task record owns child invocation `{invocation_id}`"
                 ))
             })?;
+        if task_is_terminal(task.status) {
+            return Ok(tool_error_outcome(
+                call,
+                "agent.task_already_finished",
+                "This delegated task is already finished and cannot accept another task.return.",
+                started.elapsed().as_millis(),
+            ));
+        }
         let result_ref = WorkspacePath::parse(format!("agent-results/{invocation_id}.json"))?;
         let workspace_view = ChildWorkspaceView::new(task.workspace_key.clone());
         let summary_ref = workspace_view.summary_result_path()?;
@@ -115,8 +123,8 @@ impl AgentRuntimeService {
             )
             .await?;
 
-        let task = self
-            .transition_child_task(
+        let transition = self
+            .transition_child_task_with_change(
                 run_id,
                 &task.id,
                 status,
@@ -124,6 +132,15 @@ impl AgentRuntimeService {
                 None,
             )
             .await?;
+        if !transition.changed {
+            return Ok(tool_error_outcome(
+                call,
+                "agent.task_already_finished",
+                "This delegated task is already finished and cannot accept another task.return.",
+                started.elapsed().as_millis(),
+            ));
+        }
+        let task = transition.task;
         self.event(
             run_id,
             AgentRunEventLevel::Info,

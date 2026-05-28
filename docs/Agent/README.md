@@ -25,4 +25,4 @@
 
 实时开发进度不写在本目录；请更新 `docs/CurrentState/AgentFramework.md`。
 
-截至 2026-05-28，canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill 管理与读取、workspace 读改工具循环、前端 dryRun adapter、Phase 3 Agent Profile 基线、独立 Preset 与 `model.connectionRef + modelId` 组装链路、return-mode SubAgent MVP 已落地。当前真实能力边界以 `docs/CurrentState/AgentFramework.md`、`docs/CurrentState/AgentProviderState.md`、`docs/Agent/PromptAssembly.md` 与 `docs/Agent/SubAgent.md` 为准；MCP、diff/rollback、真正后台并发、`agent.handoff`、运行中 subagent/handoff 完整 prompt assembly 与 Plan Mode runtime 仍是后续设计。
+截至 2026-05-28，canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill 管理与读取、workspace 读改工具循环、前端 dryRun adapter、Phase 3 Agent Profile 基线、独立 Preset 与 `model.connectionRef + modelId` 组装链路、return-mode SubAgent MVP、run-scoped SubAgent scheduler 基线已落地。当前真实能力边界以 `docs/CurrentState/AgentFramework.md`、`docs/CurrentState/AgentProviderState.md`、`docs/Agent/PromptAssembly.md` 与 `docs/Agent/SubAgent.md` 为准；MCP、diff/rollback、`agent.handoff`、模型可见 task cancel、运行中 subagent/handoff 完整 prompt assembly 与 Plan Mode runtime 仍是后续设计。

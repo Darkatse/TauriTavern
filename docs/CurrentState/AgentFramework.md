@@ -19,7 +19,7 @@
 - Phase 3 Agent Profile 基线已落地：`profileId` 会解析为 `ResolvedAgentProfile`，驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds 与 model-facing prompt/tool descriptions。
 - PromptManager 已为 Agent Mode 提供 `agentSystemPrompt` 组装位置与 reserved no-op `agentResults` 位置标记；`agentSystemPrompt` 内容只由 Agent Profile 提供，前端在该 PromptManager index materialize，runtime 只消费最终 messages 并拒绝内部 marker 泄漏；`agentResults` 不再向模型注入历史 commit 内容。
 - Profile 已能通过 `preset.mode = "ref"` 使用独立 OpenAI/chat-completion preset，并通过 `model.mode = "connectionRef"` + `modelId` 使用独立 LLM Connection。当前完整 PromptAssemblyBroker 组装只覆盖 root run 启动前；return-mode child invocation 会使用 target Profile 的 system prompt 与 model binding，但运行中 subagent/handoff 的完整 preset assembly handshake 仍待实现。
-- Return-mode SubAgent MVP 已落地：root/active invocation 可通过 `agent.list`、`agent.delegate`、`agent.await` 创建并收集子任务；child invocation 使用 `task.return` 结束，不能直接 `workspace.commit` 或 `workspace.finish`。当前 child task 由 `agent.await` 按需驱动执行，不是真正后台并发。
+- Return-mode SubAgent MVP 已落地：root/active invocation 可通过 `agent.list`、`agent.delegate`、`agent.await` 创建、查看或等待子任务；child invocation 使用 `task.return` 结束，不能直接 `workspace.commit` 或 `workspace.finish`。当前 child task 已由 run-scoped scheduler 后台并行执行；`agent.await` 只等待/查询结果，未显式 await 的 terminal results 会在父 Agent 下一次 tool turn 后注入下一轮模型请求。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
 - Agent System 前端已提供 run timeline / detail panel；详情面板顶部可拖动调整高度，高度仅作为扩展 UI 偏好保存，不进入 Agent Host ABI、journal 或 Rust runtime。
@@ -113,8 +113,8 @@ Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swi
 | Canonical name | Model alias | 类型 | 当前语义 |
 | --- | --- | --- | --- |
 | `agent.list` | `agent_list` | read-only | 列出当前 Profile policy 允许调用的 Agent 目录；用于软渐进式披露可委派 Agent。 |
-| `agent.delegate` | `agent_delegate` | control/mutating | 创建 return-mode 子任务与 child invocation；当前只注册 queued task，不立即后台并发执行。 |
-| `agent.await` | `agent_await` | read-only/control | 查询或收集当前 invocation 创建的 delegated task；当前会按需运行 queued child task。 |
+| `agent.delegate` | `agent_delegate` | control/mutating | 创建 return-mode 子任务与 child invocation，并提交 run-scoped scheduler 后台执行。 |
+| `agent.await` | `agent_await` | read-only/control | 查询或等待当前 invocation 创建的 delegated task；不驱动 child task 执行。 |
 | `task.return` | `task_return` | control/mutating | runtime-only child invocation 工具，提交 delegated task 结果并结束 child work。 |
 | `chat.search` | `chat_search` | read-only | 搜索当前 run 绑定的聊天。只有 `query` 必填；可选 `limit`、`role`、`start_message`、`end_message`、`scan_limit`。 |
 | `chat.read_messages` | `chat_read_messages` | read-only | 按 0-based message index 读取当前聊天消息；每项可选 `start_char`、`max_chars`。JSONL header 不计入 index。 |
@@ -128,9 +128,9 @@ Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swi
 | `workspace.write_file` | `workspace_write_file` | mutating | 写完整 UTF-8 文件；成功后记录 read-state 并创建 checkpoint。 |
 | `workspace.apply_patch` | `workspace_apply_patch` | mutating | 单文件 `old_string` / `new_string` 精确替换；要求已完整读取或由本 run 创建/修改。 |
 | `workspace.commit` | `workspace_commit` | control/mutating | 将可见 workspace 文件提交到当前聊天；无参数等价于 `replace output/main.md`，`append` 首次创建消息、后续追加同一消息。 |
-| `workspace.finish` | `workspace_finish` | control | 结束 root/active 工具循环；前台 run 必须已成功 commit，后台 run 可无 commit；return-mode child invocation 不可用。 |
+| `workspace.finish` | `workspace_finish` | control | 结束 root/active 工具循环；前台 run 必须已成功 commit，后台 run 可无 commit；return-mode child invocation 不可用；当前会取消 unfinished child tasks 而不阻塞完成。 |
 
-当前没有 MCP 工具、shell 工具、外部 extension tools、tool approval、profile routing、真正后台并发或 `agent.handoff`。
+当前没有 MCP 工具、shell 工具、外部 extension tools、tool approval、profile routing、模型可见 task cancel 或 `agent.handoff`。
 
 ## Model Gateway 当前事实
 
@@ -288,17 +288,15 @@ root/active invocation calls agent.delegate
   ↓
 create AgentTaskRecord + child AgentInvocation(TaskReturnRequired)
   ↓
-task remains queued
-  ↓
-root/active invocation calls agent.await
-  ↓
-runtime runs selected queued child invocation
+AgentTaskScheduler spawns child worker
   ↓
 child model loops with task.return-only exit policy
   ↓
 task.return writes agent-results/<child-invocation-id>.json and summaries/agents/<workspace-key>/result.md
   ↓
-agent.await returns markdown task capsule to parent invocation
+root/active invocation may call agent.await to wait for selected results
+  ↓
+otherwise terminal child results are injected after the next parent tool turn
 ```
 
 Child invocation 的模型 workspace view 与物理 workspace 分离：`summaries/` / `scratch/` 映射到该 child 私有目录，`summaries/parent/` 只读映射父级私有 summaries，`summaries/agents/` 只读映射其他 child summaries。完整契约见 `docs/Agent/SubAgent.md`。
@@ -475,7 +473,7 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - 将 `PromptSnapshot` 过渡输入逐步替换为 `GenerationIntent + ContextFrame`。
 - 将 Profile overlay 扩展到 preset / character resolver。
 - 为 return-mode subagent / handoff 增加完整运行中 prompt assembly handshake 与 invocation-scoped prompt snapshot；当前 child 已有独立 provider_state 与 model binding。
-- 实现 `agent.handoff` 与真正后台并发 scheduler。
+- 实现 `agent.handoff`、模型可见 task cancel 与更完整的 scheduler policy。
 - 明确多 Agent provider/model switch policy；root run 的 `connectionRef` 模型绑定已经可用。
 - 实现 readDiff、rollback、listRuns、resume-run、streaming 的明确策略。
 

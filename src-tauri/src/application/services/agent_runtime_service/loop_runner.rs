@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde_json::{Value, json};
 
 use super::commit_ledger::RunCommitLedger;
@@ -8,7 +10,7 @@ use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::errors::ApplicationError;
-use crate::application::services::agent_tools::{AgentToolEffect, AgentToolSession};
+use crate::application::services::agent_tools::{AGENT_AWAIT, AgentToolEffect, AgentToolSession};
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 
 use crate::domain::models::agent::{
@@ -41,6 +43,7 @@ impl AgentRuntimeService {
         cancel: &mut AgentCancelReceiver,
     ) -> Result<Option<usize>, ApplicationError> {
         let mut tool_session = AgentToolSession::new(effective_skills.to_vec());
+        let mut seen_child_result_task_ids = HashSet::new();
         let mut commit_count = 0_usize;
         // Issue #64: counter for soft drift recovery — see
         // `DRIFT_RECOVERY_MAX_ATTEMPTS` above. Persisted across rounds so a
@@ -48,8 +51,11 @@ impl AgentRuntimeService {
         // drift event.
         let mut drift_recovery_attempts: usize = 0;
         for round in 1..=profile.tools.max_rounds {
-            self.transition_status(run_id, AgentRunStatus::CallingModel)
-                .await?;
+            let updates_run_status = exit_policy == AgentInvocationExitPolicy::RunFinishAllowed;
+            if updates_run_status {
+                self.transition_status(run_id, AgentRunStatus::CallingModel)
+                    .await?;
+            }
             self.event(
                 run_id,
                 AgentRunEventLevel::Info,
@@ -124,6 +130,7 @@ impl AgentRuntimeService {
                 let direct_output_path = self
                     .capture_direct_output(
                         run_id,
+                        updates_run_status,
                         round,
                         model_response_path.as_str(),
                         &response,
@@ -201,6 +208,7 @@ impl AgentRuntimeService {
                         let metrics = TextMetrics::from_text(&file.text);
                         self.checkpoint_workspace_file(
                             run_id,
+                            updates_run_status,
                             "tool_workspace_write",
                             "workspace_file_written",
                             json!({
@@ -219,11 +227,14 @@ impl AgentRuntimeService {
                         replacements,
                         old_sha256,
                     } => {
-                        self.transition_status(run_id, AgentRunStatus::ApplyingWorkspacePatch)
-                            .await?;
+                        if updates_run_status {
+                            self.transition_status(run_id, AgentRunStatus::ApplyingWorkspacePatch)
+                                .await?;
+                        }
                         let metrics = TextMetrics::from_text(&file.text);
                         self.checkpoint_workspace_file(
                             run_id,
+                            updates_run_status,
                             "tool_workspace_patch",
                             "workspace_patch_applied",
                             json!({
@@ -326,7 +337,24 @@ impl AgentRuntimeService {
                 )
                 .await?
             };
+            remember_seen_child_results_from_await(&tool_results, &mut seen_child_result_task_ids);
             append_tool_turn_to_request(&mut request, assistant_message, &tool_results)?;
+            if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed {
+                if let Some(message) = self
+                    .completed_child_results_message(
+                        run_id,
+                        invocation_id,
+                        &mut seen_child_result_task_ids,
+                    )
+                    .await?
+                {
+                    request.messages.push(AgentModelMessage {
+                        role: AgentModelRole::User,
+                        parts: vec![AgentModelContentPart::Text { text: message }],
+                        provider_metadata: Value::Null,
+                    });
+                }
+            }
             self.ensure_not_cancelled(cancel)?;
         }
 
@@ -336,6 +364,7 @@ impl AgentRuntimeService {
     async fn capture_direct_output(
         &self,
         run_id: &str,
+        update_run_status: bool,
         round: usize,
         model_response_path: &str,
         response: &AgentModelResponse,
@@ -354,6 +383,7 @@ impl AgentRuntimeService {
         let metrics = TextMetrics::from_text(&file.text);
         self.checkpoint_workspace_file(
             run_id,
+            update_run_status,
             "direct_output_capture",
             "direct_output_captured",
             json!({
@@ -433,6 +463,36 @@ impl AgentRuntimeService {
         }
 
         Ok(hydrated)
+    }
+}
+
+fn remember_seen_child_results_from_await(
+    tool_results: &[AgentToolResult],
+    seen_task_ids: &mut HashSet<String>,
+) {
+    for result in tool_results {
+        if result.name != AGENT_AWAIT || result.is_error {
+            continue;
+        }
+        let Some(tasks) = result.structured.get("tasks").and_then(Value::as_array) else {
+            continue;
+        };
+        for task in tasks {
+            let Some(status) = task.get("status").and_then(Value::as_str) else {
+                continue;
+            };
+            if !matches!(status, "completed" | "failed" | "cancelled") {
+                continue;
+            }
+            if let Some(task_id) = task
+                .get("taskId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                seen_task_ids.insert(task_id.to_string());
+            }
+        }
     }
 }
 

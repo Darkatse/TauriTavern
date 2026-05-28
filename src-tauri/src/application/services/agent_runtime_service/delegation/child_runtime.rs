@@ -40,7 +40,7 @@ impl AgentRuntimeService {
             }))
     }
 
-    pub(super) async fn run_child_task_to_terminal(
+    pub(in crate::application::services::agent_runtime_service) async fn run_child_task_to_terminal(
         &self,
         run_id: &str,
         task_id: &str,
@@ -51,7 +51,8 @@ impl AgentRuntimeService {
             Box::pin(self.execute_child_invocation_body(run_id, task_id, invocation_id, cancel))
                 .await;
         if let Err(error) = result {
-            let task_status = if matches!(error, ApplicationError::Cancelled(_)) {
+            let was_cancelled = matches!(error, ApplicationError::Cancelled(_));
+            let task_status = if was_cancelled {
                 AgentTaskStatus::Cancelled
             } else {
                 AgentTaskStatus::Failed
@@ -62,10 +63,23 @@ impl AgentRuntimeService {
                 AgentInvocationStatus::Failed
             };
             let message = error.to_string();
-            self.transition_child_task(run_id, task_id, task_status, None, Some(message.clone()))
+            let transition = self
+                .transition_child_task_with_change(
+                    run_id,
+                    task_id,
+                    task_status,
+                    None,
+                    Some(message.clone()),
+                )
                 .await?;
+            if !transition.changed {
+                return Ok(());
+            }
             self.finish_child_invocation(run_id, invocation_id, invocation_status)
                 .await?;
+            if was_cancelled {
+                return Ok(());
+            }
             self.event(
                 run_id,
                 AgentRunEventLevel::Warn,
@@ -92,6 +106,11 @@ impl AgentRuntimeService {
         let task = self
             .transition_child_task(run_id, task_id, AgentTaskStatus::Running, None, None)
             .await?;
+        if task.status != AgentTaskStatus::Running {
+            return Err(ApplicationError::Cancelled(format!(
+                "Delegated task `{task_id}` was cancelled before it started"
+            )));
+        }
         self.start_child_invocation(run_id, invocation_id).await?;
 
         let mut profile = self

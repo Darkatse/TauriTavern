@@ -39,10 +39,13 @@ mod model_retry;
 mod model_turn;
 mod model_turn_display;
 mod prompt_snapshot;
+mod scheduler;
 mod tool_execution;
 
 #[cfg(test)]
 mod tests;
+
+use scheduler::ActiveRunHandle;
 
 pub(super) type AgentCancelReceiver = watch::Receiver<bool>;
 
@@ -73,7 +76,7 @@ pub struct AgentRuntimeService {
     skill_service: Arc<SkillService>,
     tool_registry: BuiltinAgentToolRegistry,
     tool_dispatcher: AgentToolDispatcher,
-    active_runs: RwLock<HashMap<String, watch::Sender<bool>>>,
+    active_runs: RwLock<HashMap<String, Arc<ActiveRunHandle>>>,
     active_chat_commits: RwLock<HashMap<String, PendingHostChatCommit>>,
     active_persistent_state_metadata_updates:
         RwLock<HashMap<String, PendingPersistentStateMetadataUpdate>>,

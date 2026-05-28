@@ -44,7 +44,7 @@ pub(in crate::application::services::agent_tools) fn agent_delegate_spec() -> Ag
         name: AGENT_DELEGATE.to_string(),
         model_name: MODEL_AGENT_DELEGATE.to_string(),
         title: "Agent Delegate".to_string(),
-        description: "Ask another Agent to work on a self-contained task. The result is not returned immediately; use agent_await with the returned task id to collect it.".to_string(),
+        description: "Ask another Agent to start a self-contained task. You can continue other work after delegating; use agent_await when you need a delegated result or status before deciding.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -107,7 +107,7 @@ pub(in crate::application::services::agent_tools) fn agent_await_spec() -> Agent
         name: AGENT_AWAIT.to_string(),
         model_name: MODEL_AGENT_AWAIT.to_string(),
         title: "Agent Await".to_string(),
-        description: "Check or collect results from tasks you started with agent_delegate. Use nextCompleted for the first finished task, allCompleted for all selected tasks, or statusOnly to inspect without waiting.".to_string(),
+        description: "Wait for or inspect tasks you started with agent_delegate. Use nextCompleted when one finished result is enough, allCompleted when all selected tasks are needed, or statusOnly to check progress without waiting.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -115,7 +115,7 @@ pub(in crate::application::services::agent_tools) fn agent_await_spec() -> Agent
                 "taskIds": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Optional task ids returned by agent_delegate. Omit to target all delegated tasks you started."
+                    "description": "Optional returned task handles. Omit to target all delegated tasks you started."
                 },
                 "mode": {
                     "type": "string",

@@ -130,8 +130,10 @@ impl AgentRuntimeService {
         }
 
         session.remember_tool_call(&call.name);
-        self.transition_status(run_id, AgentRunStatus::DispatchingTool)
-            .await?;
+        if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed {
+            self.transition_status(run_id, AgentRunStatus::DispatchingTool)
+                .await?;
+        }
         self.event(
             run_id,
             AgentRunEventLevel::Info,
@@ -170,8 +172,14 @@ impl AgentRuntimeService {
         let dispatch_result = if call.name == AGENT_LIST {
             self.dispatch_agent_list_tool(call, profile).await
         } else if call.name == AGENT_DELEGATE {
-            self.dispatch_agent_delegate_tool(run_id, invocation_id, call, profile, cancel)
-                .await
+            Box::pin(self.dispatch_agent_delegate_tool(
+                run_id,
+                invocation_id,
+                call,
+                profile,
+                cancel,
+            ))
+            .await
         } else if call.name == AGENT_AWAIT {
             self.dispatch_agent_await_tool(run_id, invocation_id, call, cancel)
                 .await
@@ -206,13 +214,6 @@ impl AgentRuntimeService {
                                 "Return-mode child Agent invocations must complete with task.return, not workspace.finish.",
                                 outcome.elapsed_ms,
                             )
-                        } else if self.has_pending_child_tasks(run_id, invocation_id).await? {
-                            recoverable_tool_error(
-                                call,
-                                "agent.pending_child_tasks",
-                                "One or more delegated subagent tasks are still queued or running. Use agent.await before workspace.finish.",
-                                outcome.elapsed_ms,
-                            )
                         } else if profile.run.presentation == AgentRunPresentation::Foreground
                             && commit_count == 0
                         {
@@ -223,6 +224,13 @@ impl AgentRuntimeService {
                                 outcome.elapsed_ms,
                             )
                         } else {
+                            if self.has_pending_child_tasks(run_id, invocation_id).await? {
+                                self.active_run_handle(run_id)
+                                    .await?
+                                    .scheduler
+                                    .cancel_unfinished_for_parent(invocation_id)
+                                    .await?;
+                            }
                             outcome
                         }
                     }

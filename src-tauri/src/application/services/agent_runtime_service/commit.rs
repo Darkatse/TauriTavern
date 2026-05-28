@@ -328,6 +328,7 @@ impl AgentRuntimeService {
         commit_ledger: &RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
+        self.cancel_unfinished_child_tasks(run_id).await?;
         self.transition_status(run_id, AgentRunStatus::Finishing)
             .await?;
         let run = self.run_repository.load_run(run_id).await?;

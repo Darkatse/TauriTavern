@@ -1,8 +1,8 @@
 # TauriTavern SubAgent Runtime
 
-本文档记录当前 return-mode SubAgent 的实现基线、核心契约、Agent-friendly 设计原则与代码定位。后续开发多 Agent、handoff、真正后台并发前，应先读本文。
+本文档记录当前 return-mode SubAgent 的实现基线、核心契约、Agent-friendly 设计原则与代码定位。后续开发多 Agent、handoff、task cancel 与 invocation-scoped prompt assembly 前，应先读本文。
 
-当前状态截至 2026-05-28：已实现 `agent.list`、`agent.delegate`、`agent.await` 与 return-mode child invocation 的 `task.return`。`agent.handoff` 仍是后续计划，当前没有模型可见 `agent.handoff` 工具。
+当前状态截至 2026-05-28：已实现 `agent.list`、`agent.delegate`、`agent.await`、return-mode child invocation 的 `task.return`，以及 run-scoped `ActiveRunHandle` / `AgentTaskScheduler` 后台 worker 基线。`agent.handoff` 与模型可见 task cancel 工具仍是后续计划，当前没有模型可见 `agent.handoff` / `agent.cancel_task`。
 
 ## 1. 设计目标
 
@@ -26,7 +26,7 @@ AgentRun
 
 ## 2. 当前流程
 
-当前流程是按需执行，不是真正后台并发：
+当前 return-mode SubAgent 已经由 run-scoped scheduler 在后台执行：
 
 ```text
 root Agent calls agent.delegate
@@ -35,28 +35,24 @@ runtime validates profile delegation policy
   ↓
 create AgentTaskRecord + child AgentInvocation
   ↓
-task status = queued
+AgentTaskScheduler spawns child worker
   ↓
-root Agent calls agent.await
+child invocation runs independently to task.return / failed / cancelled
   ↓
-runtime runs selected queued child invocation to terminal status
+root Agent may continue other tool work
   ↓
-child Agent calls task.return
+after the next root tool turn, completed child results are injected into the next model turn
   ↓
-runtime writes result capsule and task summary
-  ↓
-agent.await returns markdown result to root Agent
+root Agent may also call agent.await to wait for selected tasks before continuing
 ```
 
-`agent.delegate` 只注册任务，不立即 spawn 独立后台 worker。`agent.await` 会在当前 tool call 内驱动 queued child task。`nextCompleted` 模式会运行一个 queued task 并返回首个 terminal result；`allCompleted` 会依次运行 selected queued tasks。这个模型简洁、可测试、对现有 provider continuation 友好，但还不是 full background scheduler。
+`agent.delegate` 会创建 task / child invocation，并把任务提交给当前 run 的 `AgentTaskScheduler`。worker 使用独立 child invocation、独立 provider session id 与 child-only tool surface，在同一个 AgentRun 的 workspace / journal / cancel / commit 边界内运行。
 
-真正后台并发需要额外引入：
+`agent.await` 不再驱动 queued task 执行。它只查询或等待已经由 scheduler 执行的 child task：`nextCompleted` 等待首个 terminal result，`allCompleted` 等待 selected tasks 全部 terminal，`statusOnly` 立即返回当前状态。
 
-- run-scoped task scheduler / worker handle。
-- child invocation 的独立 cancel / timeout / lifecycle 管理。
-- 多 child 同时使用 model gateway 时的资源与 endpoint policy。
-- UI timeline 中 queued/running/completed 的实时订阅更新。
-- `agent.await` 从“驱动执行”变成“等待已经在后台执行的任务”。
+父 Agent 无论是否显式调用 `agent.await`，只要它创建的 child task 已经 terminal，runtime 都会在下一次父 Agent tool turn 之后，把尚未在本轮上下文中出现过的结果作为 synthetic user message 注入下一轮模型请求。这个交付状态不写入 task record；当前只在 parent loop 内用内存集合去避免重复注入。这样避免把“已交付给父 Agent”固化成长期状态，同时保持 provider continuation 顺序清晰。
+
+`workspace.finish` 当前允许在仍有 unfinished child task 时结束 root run。finish 会默认取消当前 parent 拥有的 unfinished tasks；run 收尾也会取消 run 内剩余 unfinished child tasks。这样不会因为缺少模型可见 cancel 工具或某个子任务卡住而拖长生成。
 
 ## 3. 核心模型
 
@@ -117,8 +113,8 @@ scratch/agents/<workspace-key>/
 | Canonical | Model alias | 可见范围 | 语义 |
 | --- | --- | --- | --- |
 | `agent.list` | `agent_list` | 允许 delegation 的 root/active invocation | 列出当前 Agent 可调用的 Agent 目录 |
-| `agent.delegate` | `agent_delegate` | `delegation.canDelegate = true` | 创建 return-mode 子任务 |
-| `agent.await` | `agent_await` | `delegation.canDelegate = true` | 查询或收集自己创建的子任务结果 |
+| `agent.delegate` | `agent_delegate` | `delegation.canDelegate = true` | 创建 return-mode 子任务并提交后台 worker |
+| `agent.await` | `agent_await` | `delegation.canDelegate = true` | 查询或等待自己创建的子任务结果 |
 | `task.return` | `task_return` | runtime 只注入 return-mode child invocation | 提交 delegated task 结果并结束 child work |
 
 不要把 `task.return` 写入 Profile `tools.allow`。它是 runtime-only 工具，由 `visible_tool_specs_for_invocation(..., TaskReturnRequired)` 注入。
@@ -197,7 +193,7 @@ agent-results/<child-invocation-id>.json      # runtime/audit structured result
 summaries/agents/<workspace-key>/result.md    # parent/other Agents 可读 summary
 ```
 
-`agent.await` 读取 structured result，但返回给父 Agent 的内容经过 markdown 渲染，只暴露 summary、findings、warnings、suggestedNextActions、questionsForCaller、artifacts、confidence 等 Agent 有用信息。
+`agent.await` 与后台结果自动注入都读取 structured result，但返回给父 Agent 的内容经过 markdown 渲染，只暴露 summary、findings、warnings、suggestedNextActions、questionsForCaller、artifacts、confidence 等 Agent 有用信息。
 
 ## 7. Invocation-scoped Workspace View
 
@@ -238,6 +234,8 @@ src-tauri/src/application/services/agent_runtime_service/delegation/workspace_vi
 6. child invocation 没有 chat commit 权限，避免多个 Agent 同时污染最终聊天消息。
 7. 一个 invocation 内 provider-facing tool surface 稳定，不在 loop 中途动态增删工具。
 8. 能 recover 的模型错误作为 tool error 返回；repository、journal、provider metadata、serialization 等宿主契约错误 fail-fast。
+9. `agent.await` 是需要结果或状态时的等待/查询工具，不是 delegation 后必须执行的收集步骤；调用者可以先继续其它工作。
+10. `taskId` 只作为可选的 opaque task handle；常规情况下调用者可以不传 taskIds，让 `agent.await` 面向自己启动的任务集合。
 
 如果后续新增字段或工具，先问两个问题：
 
@@ -260,6 +258,7 @@ src-tauri/src/application/services/agent_runtime_service/delegation/child_runtim
 src-tauri/src/application/services/agent_runtime_service/delegation/policy.rs
 src-tauri/src/application/services/agent_runtime_service/delegation/rendering.rs
 src-tauri/src/application/services/agent_runtime_service/delegation/workspace_view.rs
+src-tauri/src/application/services/agent_runtime_service/scheduler.rs
 src-tauri/src/application/services/agent_runtime_service/invocation.rs
 src-tauri/src/application/services/agent_runtime_service/tool_execution.rs
 ```
@@ -299,8 +298,11 @@ src-tauri/src/infrastructure/repositories/file_agent_repository/tests.rs
 重点测试应覆盖：
 
 - `agent.list` policy 过滤与 model-facing 内容。
-- `agent.delegate` 创建 task / child invocation / semantic workspace key。
-- `agent.await` 选择 task、驱动 queued child、渲染 result capsule。
+- `agent.delegate` 创建 task / child invocation / semantic workspace key，并提交 scheduler。
+- scheduler 后台运行 child worker，完成后写 terminal task / invocation 状态。
+- `agent.await` 选择 task、等待或查询 scheduler 结果、渲染 result capsule。
+- 父 Agent 下一次 tool turn 后自动收到尚未出现过的 terminal child results。
+- `workspace.finish` 会取消 unfinished child tasks，而不会被其阻塞。
 - child invocation tool surface：无 commit/finish/delegate/await，有 task.return。
 - child system prompt 与 tool descriptions 不泄露不必要 runtime 细节。
 - child workspace view 的 read/write/list/path error 映射。
@@ -311,10 +313,10 @@ src-tauri/src/infrastructure/repositories/file_agent_repository/tests.rs
 当前不是最终多 Agent runtime：
 
 - 没有 `agent.handoff`。
-- 没有真正后台并发 worker；child task 在 `agent.await` 内按需执行。
+- 没有模型可见 `agent.cancel_task`；当前只有 run cancel 与 finish 默认取消 unfinished child tasks。
 - return-mode child 默认不能 nested delegation，即使 profile schema 已有 `allowNestedDelegation` 字段。
 - child invocation 尚未完整接入 invocation-scoped frontend PromptAssemblyBroker / target preset assembly。
 - 没有跨 child 的主动通信；只能通过 `summaries/agents/` 读取其他 child 的结果 notes。
-- 没有独立的 task timeout 取消边界；取消仍沿当前 run cancel receiver 传播。
+- 没有独立的 task timeout 取消边界；child worker 使用当前 scheduler / run cancellation path。
 
 这些边界是刻意保守的。后续扩展应保持现有不变量：同一 run 边界、invocation 独立 provider_state、root/handoff 才能 commit、tool result 不写 chat、model-facing surface 以 Agent 视角设计。

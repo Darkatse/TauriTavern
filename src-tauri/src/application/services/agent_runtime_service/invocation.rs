@@ -10,6 +10,11 @@ use crate::domain::models::agent::{
     ROOT_AGENT_INVOCATION_ID,
 };
 
+pub(super) struct AgentTaskTransition {
+    pub(super) task: AgentTaskRecord,
+    pub(super) changed: bool,
+}
+
 pub(super) fn model_session_id(run_id: &str, invocation_id: &str) -> String {
     format!("{run_id}:{invocation_id}")
 }
@@ -214,6 +219,9 @@ impl AgentRuntimeService {
             .invocation_repository
             .load_invocation(run_id, invocation_id)
             .await?;
+        if invocation_is_terminal(invocation.status) {
+            return Ok(invocation);
+        }
         if invocation.status == AgentInvocationStatus::Running {
             return Ok(invocation);
         }
@@ -247,10 +255,30 @@ impl AgentRuntimeService {
         result_ref: Option<String>,
         error: Option<String>,
     ) -> Result<AgentTaskRecord, ApplicationError> {
+        Ok(self
+            .transition_child_task_with_change(run_id, task_id, status, result_ref, error)
+            .await?
+            .task)
+    }
+
+    pub(super) async fn transition_child_task_with_change(
+        &self,
+        run_id: &str,
+        task_id: &str,
+        status: AgentTaskStatus,
+        result_ref: Option<String>,
+        error: Option<String>,
+    ) -> Result<AgentTaskTransition, ApplicationError> {
         let mut task = self
             .invocation_repository
             .load_task(run_id, task_id)
             .await?;
+        if task_is_terminal_status(task.status) {
+            return Ok(AgentTaskTransition {
+                task,
+                changed: false,
+            });
+        }
         task.status = status;
         task.result_ref = result_ref;
         task.error = error;
@@ -271,7 +299,10 @@ impl AgentRuntimeService {
             }),
         )
         .await?;
-        Ok(task)
+        Ok(AgentTaskTransition {
+            task,
+            changed: true,
+        })
     }
 
     pub(super) async fn finish_child_invocation(
@@ -284,6 +315,9 @@ impl AgentRuntimeService {
             .invocation_repository
             .load_invocation(run_id, invocation_id)
             .await?;
+        if invocation_is_terminal(invocation.status) {
+            return Ok(());
+        }
         invocation.status = status;
         invocation.updated_at = Utc::now();
         self.invocation_repository
@@ -318,6 +352,16 @@ fn terminal_invocation_event_type(status: AgentInvocationStatus) -> &'static str
     }
 }
 
+fn invocation_is_terminal(status: AgentInvocationStatus) -> bool {
+    matches!(
+        status,
+        AgentInvocationStatus::Completed
+            | AgentInvocationStatus::Failed
+            | AgentInvocationStatus::Cancelled
+            | AgentInvocationStatus::Transferred
+    )
+}
+
 fn task_event_level(status: AgentTaskStatus) -> AgentRunEventLevel {
     match status {
         AgentTaskStatus::Failed | AgentTaskStatus::Cancelled => AgentRunEventLevel::Warn,
@@ -333,4 +377,11 @@ fn task_event_type(status: AgentTaskStatus) -> &'static str {
         AgentTaskStatus::Failed => "agent_task_failed",
         AgentTaskStatus::Cancelled => "agent_task_cancelled",
     }
+}
+
+fn task_is_terminal_status(status: AgentTaskStatus) -> bool {
+    matches!(
+        status,
+        AgentTaskStatus::Completed | AgentTaskStatus::Failed | AgentTaskStatus::Cancelled
+    )
 }

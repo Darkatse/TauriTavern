@@ -54,13 +54,16 @@ impl AgentRuntimeService {
     pub(super) async fn checkpoint_workspace_file(
         &self,
         run_id: &str,
+        update_run_status: bool,
         reason: &str,
         event_type: &str,
         payload: Value,
         path: WorkspacePath,
     ) -> Result<(), ApplicationError> {
-        self.transition_status(run_id, AgentRunStatus::CreatingCheckpoint)
-            .await?;
+        if update_run_status {
+            self.transition_status(run_id, AgentRunStatus::CreatingCheckpoint)
+                .await?;
+        }
         let event = self
             .event(run_id, AgentRunEventLevel::Info, event_type, payload)
             .await?;

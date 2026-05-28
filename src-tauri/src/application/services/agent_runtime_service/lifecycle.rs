@@ -176,10 +176,15 @@ impl AgentRuntimeService {
         }
 
         let (cancel_sender, cancel_receiver) = watch::channel(false);
+        let active_handle = Arc::new(super::scheduler::ActiveRunHandle::new(
+            self,
+            run_id.clone(),
+            cancel_sender,
+        ));
         self.active_runs
             .write()
             .await
-            .insert(run_id.clone(), cancel_sender);
+            .insert(run_id.clone(), active_handle);
 
         let service = self.clone();
         let background_run_id = run_id.clone();
@@ -234,10 +239,11 @@ impl AgentRuntimeService {
         )
         .await?;
 
-        let sender = self.active_runs.read().await.get(&dto.run_id).cloned();
+        let active_handle = self.active_runs.read().await.get(&dto.run_id).cloned();
 
-        let next = if let Some(sender) = sender {
-            let _ = sender.send(true);
+        let next = if let Some(handle) = active_handle {
+            let _ = handle.cancel_sender.send(true);
+            handle.scheduler.cancel_all_unfinished().await?;
             self.transition_status(&dto.run_id, AgentRunStatus::Cancelling)
                 .await?
         } else {

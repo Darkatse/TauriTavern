@@ -155,6 +155,10 @@ impl AgentRuntimeService {
             }),
         )
         .await?;
+        self.active_run_handle(run_id)
+            .await?
+            .scheduler
+            .submit(task.id.clone(), task.child_invocation_id.clone())?;
 
         let structured = json!({
             "taskId": task_id,
@@ -166,7 +170,7 @@ impl AgentRuntimeService {
                 call_id: call.id.clone(),
                 name: call.name.clone(),
                 content: format!(
-                    "Started delegated task {} with Agent {}. Use agent_await to collect the result.",
+                    "Started delegated task {} with Agent {}. You can continue other work; use agent_await only when your next decision needs this task's result or current status.",
                     structured["taskId"].as_str().unwrap_or(""),
                     target.id.as_str()
                 ),

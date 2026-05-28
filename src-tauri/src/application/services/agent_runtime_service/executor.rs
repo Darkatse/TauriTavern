@@ -54,6 +54,7 @@ impl AgentRuntimeService {
         match result {
             Ok(()) => {}
             Err(ApplicationError::Cancelled(message)) => {
+                let _ = self.cancel_unfinished_child_tasks(run_id).await;
                 let _ = self
                     .finish_root_invocation(run_id, AgentInvocationStatus::Cancelled)
                     .await;
@@ -72,6 +73,7 @@ impl AgentRuntimeService {
                 self.active_runs.write().await.remove(run_id);
             }
             Err(error) => {
+                let _ = self.cancel_unfinished_child_tasks(run_id).await;
                 let _ = self
                     .finish_root_invocation(run_id, AgentInvocationStatus::Failed)
                     .await;

@@ -107,11 +107,22 @@ pub fn materialize_agent_system_prompt(
         ));
     }
     if has_tool(tools, AGENT_DELEGATE_TOOL) {
-        lines.push(format!(
-            "- Use {} to ask another Agent to handle a self-contained task, then use {} to collect delegated task results before finalizing.",
-            model_name(tools, AGENT_DELEGATE_TOOL),
-            model_name(tools, AGENT_AWAIT_TOOL)
-        ));
+        if has_tool(tools, AGENT_AWAIT_TOOL) {
+            lines.push(format!(
+                "- Use {} to ask another Agent to handle a self-contained task. You can continue working after delegating; use {} when you need a delegated result or status before deciding.",
+                model_name(tools, AGENT_DELEGATE_TOOL),
+                model_name(tools, AGENT_AWAIT_TOOL)
+            ));
+            lines.push(
+                "- If delegated task results are provided later, review them before finalizing."
+                    .to_string(),
+            );
+        } else {
+            lines.push(format!(
+                "- Use {} to ask another Agent to handle a self-contained task. You can continue working after delegating.",
+                model_name(tools, AGENT_DELEGATE_TOOL)
+            ));
+        }
     }
     if has_tool(tools, "skill.search") {
         lines.push(format!(
@@ -1256,6 +1267,41 @@ mod tests {
         ));
         assert!(!prompt.contains("Use persist/"));
         assert!(!prompt.contains("must successfully call"));
+    }
+
+    #[test]
+    fn default_agent_system_prompt_makes_await_optional_and_decision_driven() {
+        let profile = test_profile(None, "background");
+        let tools = vec![
+            tool("agent.delegate", "agent_delegate_alias"),
+            tool("agent.await", "agent_await_alias"),
+            tool("workspace.finish", "workspace_finish_alias"),
+        ];
+
+        let prompt = materialize_agent_system_prompt(&tools, &profile);
+
+        assert!(prompt.contains("You can continue working after delegating"));
+        assert!(prompt.contains(
+            "use agent_await_alias when you need a delegated result or status before deciding"
+        ));
+        assert!(prompt.contains("If delegated task results are provided later"));
+        assert!(!prompt.contains("collect delegated task results before finalizing"));
+    }
+
+    #[test]
+    fn default_agent_system_prompt_does_not_mention_hidden_await_tool() {
+        let profile = test_profile(None, "background");
+        let tools = vec![
+            tool("agent.delegate", "agent_delegate_alias"),
+            tool("workspace.finish", "workspace_finish_alias"),
+        ];
+
+        let prompt = materialize_agent_system_prompt(&tools, &profile);
+
+        assert!(prompt.contains("Use agent_delegate_alias"));
+        assert!(prompt.contains("You can continue working after delegating"));
+        assert!(!prompt.contains("agent.await"));
+        assert!(!prompt.contains("agent_await"));
     }
 
     #[test]
