@@ -59,15 +59,17 @@ pub(super) fn render_child_task_prompt(task: &AgentTaskRecord) -> String {
 
     lines.extend([
         "## Working Notes".to_string(),
-        "If useful, write supporting notes in your private task folders:".to_string(),
-        "- summaries/notes.md for durable notes or a longer capsule".to_string(),
+        "Use workspace files only when they help complete this task:".to_string(),
+        "- summaries/notes.md for durable private notes or a longer capsule".to_string(),
         "- scratch/notes.md for temporary working notes".to_string(),
         "- summaries/parent/ for read-only notes from the Agent that asked for this task, when present"
             .to_string(),
         "- summaries/agents/ for read-only notes from other delegated Agents, when present"
             .to_string(),
+        "- shared writable roots only when the task asks for an artifact or edit there"
+            .to_string(),
         String::new(),
-        "Reference any useful note paths in task_return.".to_string(),
+        "Reference useful note or artifact paths in task_return.".to_string(),
     ]);
 
     lines.join("\n")

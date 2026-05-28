@@ -6,8 +6,9 @@ use super::args::{
 };
 use super::policy::workspace_access_policy;
 use crate::application::errors::ApplicationError;
+use crate::domain::errors::{DomainError, WorkspaceWriteConflictKind};
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
-use crate::domain::repositories::workspace_repository::WorkspaceRepository;
+use crate::domain::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
 use crate::domain::text_metrics::TextMetrics;
 
 use super::super::dispatcher::AgentToolEffect;
@@ -60,11 +61,44 @@ pub(in crate::application::services::agent_tools) async fn write_file(
     if let Err(result) = ensure_writable_workspace_path(call, &policy, &path) {
         return Ok((result, AgentToolEffect::None));
     }
+    let write_guard = match workspace_repository.read_text(run_id, &path).await {
+        Ok(current) => {
+            let Some(read_state) = session.read_state(path.as_str()) else {
+                return Ok((
+                    tool_error(
+                        call,
+                        "workspace.write_requires_read",
+                        "file already exists; read it with workspace_read_file before rewriting it",
+                    ),
+                    AgentToolEffect::None,
+                ));
+            };
+            if current.sha256 != read_state.sha256 {
+                return Ok((
+                    tool_error(
+                        call,
+                        "workspace.write_stale_file",
+                        "file changed since you last read or wrote it. Read the file again before rewriting it.",
+                    ),
+                    AgentToolEffect::None,
+                ));
+            }
+            WorkspaceWriteGuard::MustMatchSha256(read_state.sha256.clone())
+        }
+        Err(DomainError::NotFound(_)) => WorkspaceWriteGuard::MustNotExist,
+        Err(error) => match classify_workspace_io_error(call, error) {
+            Ok(result) => return Ok((result, AgentToolEffect::None)),
+            Err(error) => return Err(error.into()),
+        },
+    };
     let file = match workspace_repository
-        .write_text(run_id, &path, content)
+        .write_text_guarded(run_id, &path, content, write_guard)
         .await
     {
         Ok(file) => file,
+        Err(DomainError::WorkspaceWriteConflict { kind, .. }) => {
+            return Ok((write_conflict_error(call, kind), AgentToolEffect::None));
+        }
         Err(error) => match classify_workspace_io_error(call, error) {
             Ok(result) => return Ok((result, AgentToolEffect::None)),
             Err(error) => return Err(error.into()),
@@ -93,4 +127,30 @@ pub(in crate::application::services::agent_tools) async fn write_file(
     };
 
     Ok((result, AgentToolEffect::WorkspaceFileWritten { file }))
+}
+
+fn write_conflict_error(call: &AgentToolCall, kind: WorkspaceWriteConflictKind) -> AgentToolResult {
+    match kind {
+        WorkspaceWriteConflictKind::AlreadyExists { .. } => tool_error(
+            call,
+            "workspace.write_requires_read",
+            "file already exists; read it with workspace_read_file before rewriting it",
+        ),
+        WorkspaceWriteConflictKind::Stale {
+            actual_sha256: Some(_),
+            ..
+        } => tool_error(
+            call,
+            "workspace.write_stale_file",
+            "file changed since you last read or wrote it. Read the file again before rewriting it.",
+        ),
+        WorkspaceWriteConflictKind::Stale {
+            actual_sha256: None,
+            ..
+        } => tool_error(
+            call,
+            "workspace.write_stale_file",
+            "file changed since you last read or wrote it and is no longer present. Read the parent directory before writing again.",
+        ),
+    }
 }

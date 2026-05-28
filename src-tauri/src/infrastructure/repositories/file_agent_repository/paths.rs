@@ -1,6 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tokio::fs;
+use tokio::sync::OwnedMutexGuard;
 
 use super::FileAgentRepository;
 use crate::domain::errors::DomainError;
@@ -122,6 +124,29 @@ impl FileAgentRepository {
         }
 
         Ok(target)
+    }
+
+    pub(super) async fn acquire_workspace_write_lock(&self, path: &Path) -> OwnedMutexGuard<()> {
+        const MAX_RETAINED_LOCK_ENTRIES: usize = 4096;
+
+        let key = path.to_path_buf();
+        let lock = {
+            let mut locks = self.workspace_write_locks.lock().await;
+            if locks.len() > MAX_RETAINED_LOCK_ENTRIES {
+                locks.retain(|_, value| value.strong_count() > 0);
+            }
+
+            match locks.get(&key).and_then(|value| value.upgrade()) {
+                Some(existing) => existing,
+                None => {
+                    let created = Arc::new(tokio::sync::Mutex::new(()));
+                    locks.insert(key, Arc::downgrade(&created));
+                    created
+                }
+            }
+        };
+
+        lock.lock_owned().await
     }
 }
 

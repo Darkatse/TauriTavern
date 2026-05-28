@@ -162,7 +162,8 @@ impl AgentRuntimeService {
                         })?;
                 tools.push(task_return.clone());
             }
-            self.tool_registry.apply_return_mode_context(&mut tools)?;
+            self.tool_registry
+                .apply_return_mode_context(&mut tools, profile)?;
         }
         Ok(tools)
     }

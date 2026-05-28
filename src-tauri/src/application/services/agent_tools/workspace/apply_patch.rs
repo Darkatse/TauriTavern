@@ -6,8 +6,9 @@ use super::args::{
 };
 use super::policy::workspace_access_policy;
 use crate::application::errors::ApplicationError;
+use crate::domain::errors::{DomainError, WorkspaceWriteConflictKind};
 use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
-use crate::domain::repositories::workspace_repository::WorkspaceRepository;
+use crate::domain::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
 use crate::domain::text_metrics::TextMetrics;
 
 use super::super::dispatcher::AgentToolEffect;
@@ -132,10 +133,7 @@ pub(in crate::application::services::agent_tools) async fn apply_patch(
             tool_error(
                 call,
                 "workspace.patch_stale_file",
-                &format!(
-                    "file changed since last full read: previous sha256 {}, current sha256 {}",
-                    read_state.sha256, file.sha256
-                ),
+                "file changed since your last full read. Read the file again before patching it.",
             ),
             AgentToolEffect::None,
         ));
@@ -172,10 +170,18 @@ pub(in crate::application::services::agent_tools) async fn apply_patch(
     };
     let old_sha256 = file.sha256.clone();
     let file = match workspace_repository
-        .write_text(run_id, &path, &updated)
+        .write_text_guarded(
+            run_id,
+            &path,
+            &updated,
+            WorkspaceWriteGuard::MustMatchSha256(old_sha256.clone()),
+        )
         .await
     {
         Ok(file) => file,
+        Err(DomainError::WorkspaceWriteConflict { kind, .. }) => {
+            return Ok((patch_conflict_error(call, kind), AgentToolEffect::None));
+        }
         Err(error) => match classify_workspace_io_error(call, error) {
             Ok(result) => return Ok((result, AgentToolEffect::None)),
             Err(error) => return Err(error.into()),
@@ -214,4 +220,30 @@ pub(in crate::application::services::agent_tools) async fn apply_patch(
             old_sha256,
         },
     ))
+}
+
+fn patch_conflict_error(call: &AgentToolCall, kind: WorkspaceWriteConflictKind) -> AgentToolResult {
+    match kind {
+        WorkspaceWriteConflictKind::AlreadyExists { .. } => tool_error(
+            call,
+            "workspace.patch_stale_file",
+            "file changed before the patch could be written. Read the file again before patching it.",
+        ),
+        WorkspaceWriteConflictKind::Stale {
+            actual_sha256: Some(_),
+            ..
+        } => tool_error(
+            call,
+            "workspace.patch_stale_file",
+            "file changed before the patch could be written. Read the file again before patching it.",
+        ),
+        WorkspaceWriteConflictKind::Stale {
+            actual_sha256: None,
+            ..
+        } => tool_error(
+            call,
+            "workspace.patch_stale_file",
+            "file changed before the patch could be written and is no longer present. Read the parent directory before patching again.",
+        ),
+    }
 }

@@ -44,7 +44,7 @@ pub(in crate::application::services::agent_tools) fn agent_delegate_spec() -> Ag
         name: AGENT_DELEGATE.to_string(),
         model_name: MODEL_AGENT_DELEGATE.to_string(),
         title: "Agent Delegate".to_string(),
-        description: "Ask another Agent to start a self-contained task. You can continue other work after delegating; use agent_await when you need a delegated result or status before deciding.".to_string(),
+        description: "Ask another Agent to start a focused task. Include any workspace paths it should read or write in the task brief. You can continue other work after delegating; use agent_await when you need its result or status before deciding.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -55,7 +55,7 @@ pub(in crate::application::services::agent_tools) fn agent_delegate_spec() -> Ag
                 },
                 "task": {
                     "type": "object",
-                    "description": "Clear task brief for the selected Agent.",
+                    "description": "Clear task brief for the selected Agent. Mention relevant workspace paths when you expect it to inspect, edit, or create files.",
                     "additionalProperties": true,
                     "properties": {
                         "title": {
@@ -64,16 +64,16 @@ pub(in crate::application::services::agent_tools) fn agent_delegate_spec() -> Ag
                         },
                         "objective": {
                             "type": "string",
-                            "description": "What you need this Agent to accomplish."
+                            "description": "What you need this Agent to accomplish. Prefer the outcome over step-by-step instructions."
                         },
                         "context": {
                             "type": "object",
-                            "description": "Relevant facts, constraints, draft text, or style notes.",
+                            "description": "Relevant facts, constraints, draft text, style notes, or workspace paths such as output/section.md, plan/outline.md, or persist/story_state.md.",
                             "additionalProperties": true
                         },
                         "expectedOutput": {
                             "type": "object",
-                            "description": "Preferred answer shape, such as bullets, critique notes, scene beats, or revision suggestions.",
+                            "description": "Preferred answer shape, including whether the Agent should only return a summary or also write artifacts and reference their paths in task_return.",
                             "additionalProperties": true
                         }
                     },
@@ -164,9 +164,18 @@ pub(in crate::application::services::agent_tools) fn task_return_spec() -> Agent
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
-                            "path": { "type": "string" },
-                            "kind": { "type": "string" },
-                            "role": { "type": "string" }
+                            "path": {
+                                "type": "string",
+                                "description": "Task-visible workspace path for the artifact, such as summaries/notes.md or an assigned shared artifact path."
+                            },
+                            "kind": {
+                                "type": "string",
+                                "description": "Artifact format, such as markdown, json, or text."
+                            },
+                            "role": {
+                                "type": "string",
+                                "description": "How the requesting Agent should use this artifact, such as draft, outline, evidence, revision, or memory_update."
+                            }
                         },
                         "required": ["path", "kind", "role"]
                     }

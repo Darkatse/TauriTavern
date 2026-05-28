@@ -9,6 +9,9 @@ use super::workspace::{
 };
 use super::world_info::worldinfo_read_activated_spec;
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_workspace_scope::{
+    ReturnModeWorkspaceScope, format_model_workspace_roots,
+};
 use crate::domain::models::agent::AgentToolSpec;
 use crate::domain::models::agent::profile::{AgentToolDescriptionOverride, ResolvedAgentProfile};
 
@@ -59,9 +62,10 @@ impl BuiltinAgentToolRegistry {
     pub(crate) fn apply_return_mode_context(
         &self,
         specs: &mut [AgentToolSpec],
+        profile: &ResolvedAgentProfile,
     ) -> Result<(), ApplicationError> {
         for spec in specs {
-            apply_return_mode_context(spec)?;
+            apply_return_mode_context(spec, profile)?;
         }
         Ok(())
     }
@@ -93,26 +97,40 @@ impl BuiltinAgentToolRegistry {
     }
 }
 
-fn apply_return_mode_context(spec: &mut AgentToolSpec) -> Result<(), ApplicationError> {
+fn apply_return_mode_context(
+    spec: &mut AgentToolSpec,
+    profile: &ResolvedAgentProfile,
+) -> Result<(), ApplicationError> {
+    let scope = ReturnModeWorkspaceScope::from_profile(profile);
+    let visible_roots = format_model_workspace_roots(&scope.model_visible_roots());
+    let writable_roots = format_model_workspace_roots(&scope.model_writable_roots());
     match spec.name.as_str() {
         WORKSPACE_LIST_FILES => {
-            spec.description = "List files visible to this delegated task. Useful paths include summaries/ for your private notes, scratch/ for private temporary notes, summaries/parent/ for read-only requester notes, and summaries/agents/ for read-only notes from other delegated Agents.".to_string();
+            spec.description = format!(
+                "List files visible to this delegated task under {visible_roots}. Useful paths include summaries/ for your private notes, scratch/ for private temporary notes, summaries/parent/ for read-only requester notes, and summaries/agents/ for read-only notes from other delegated Agents."
+            );
             set_property_description(
                 spec,
                 "path",
-                "Optional task workspace path. Omit to list visible roots; use summaries/, scratch/, summaries/parent/, or summaries/agents/ when relevant.",
+                &format!(
+                    "Optional task workspace path under {visible_roots}. Omit to list visible roots."
+                ),
             )?;
         }
         WORKSPACE_READ_FILE => {
-            spec.description = "Read a visible UTF-8 task workspace file with line numbers. Read-only shared notes live under summaries/parent/ and summaries/agents/.".to_string();
+            spec.description = format!(
+                "Read a visible UTF-8 task workspace file with line numbers. Visible roots are {visible_roots}. Read-only shared notes live under summaries/parent/ and summaries/agents/."
+            );
             set_property_description(
                 spec,
                 "path",
-                "Visible task workspace file path. Use summaries/ for your notes, summaries/parent/ for requester notes, or summaries/agents/ for other delegated Agents.",
+                &format!("Visible task workspace file path under {visible_roots}."),
             )?;
         }
         WORKSPACE_SEARCH_FILES => {
-            spec.description = "Search visible UTF-8 task workspace files. Use this to inspect summaries/, scratch/, summaries/parent/, summaries/agents/, or other visible read-only roots before reading exact ranges.".to_string();
+            spec.description = format!(
+                "Search visible UTF-8 task workspace files under {visible_roots}. Use this before reading exact ranges."
+            );
             set_property_description(
                 spec,
                 "path",
@@ -120,19 +138,27 @@ fn apply_return_mode_context(spec: &mut AgentToolSpec) -> Result<(), Application
             )?;
         }
         WORKSPACE_WRITE_FILE => {
-            spec.description = "Write complete UTF-8 text to your private delegated-task workspace. Writable paths are summaries/ and scratch/ only.".to_string();
+            spec.description = format!(
+                "Write complete UTF-8 text to a writable delegated-task workspace file. Writable prefixes are {writable_roots}. Use summaries/ for durable private notes and scratch/ for temporary notes; use shared writable roots only for requested artifacts or edits."
+            );
             set_property_description(
                 spec,
                 "path",
-                "Writable task path under summaries/ or scratch/. Use summaries/notes.md for durable notes and scratch/notes.md for temporary notes.",
+                &format!(
+                    "Writable task path under {writable_roots}. Use the path requested in the task when one is provided."
+                ),
             )?;
         }
         WORKSPACE_APPLY_PATCH => {
-            spec.description = "Apply a precise single-file string replacement to your private delegated-task notes. The file must have been fully read with workspace_read_file or created by workspace_write_file in this task.".to_string();
+            spec.description = format!(
+                "Apply a precise single-file string replacement to a writable delegated-task workspace file. Writable prefixes are {writable_roots}. Fully read an existing file before editing it; if the tool reports that it changed, read it again and retry."
+            );
             set_property_description(
                 spec,
                 "path",
-                "Writable task path under summaries/ or scratch/.",
+                &format!(
+                    "Writable task path under {writable_roots}. Use the path requested in the task when one is provided."
+                ),
             )?;
         }
         WORKSPACE_COMMIT | WORKSPACE_FINISH => {}
@@ -145,8 +171,8 @@ fn apply_profile_context(
     spec: &mut AgentToolSpec,
     profile: &ResolvedAgentProfile,
 ) -> Result<(), ApplicationError> {
-    let visible_roots = model_roots(&profile.workspace.visible_roots);
-    let writable_roots = model_roots(&profile.workspace.writable_roots);
+    let visible_roots = format_model_workspace_roots(&profile.workspace.visible_roots);
+    let writable_roots = format_model_workspace_roots(&profile.workspace.writable_roots);
     let final_path = profile.output.message_body_path.as_str();
 
     match spec.name.as_str() {
@@ -227,14 +253,6 @@ fn apply_profile_context(
     }
 
     Ok(())
-}
-
-fn model_roots(roots: &[String]) -> String {
-    roots
-        .iter()
-        .map(|root| format!("{root}/"))
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {

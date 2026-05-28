@@ -52,6 +52,9 @@ impl From<DomainError> for CommandError {
             DomainError::WorkspacePathIsDirectory { path } => {
                 CommandError::BadRequest(format!("Workspace path is a directory: {path}"))
             }
+            DomainError::WorkspaceWriteConflict { kind, .. } => {
+                CommandError::BadRequest(format!("Workspace write conflict: {kind}"))
+            }
         }
     }
 }

@@ -42,6 +42,9 @@ impl From<DomainError> for ApplicationError {
             DomainError::WorkspacePathIsDirectory { path } => {
                 ApplicationError::ValidationError(format!("Workspace path is a directory: {path}"))
             }
+            DomainError::WorkspaceWriteConflict { kind, .. } => {
+                ApplicationError::ValidationError(format!("Workspace write conflict: {kind}"))
+            }
         }
     }
 }

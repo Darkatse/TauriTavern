@@ -318,7 +318,9 @@ impl AgentRuntimeService {
             }
 
             let tool_results = if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
-                let workspace_view = self.child_workspace_view(run_id, invocation_id).await?;
+                let workspace_view = self
+                    .child_workspace_view(run_id, invocation_id, profile)
+                    .await?;
                 let workspace_repository =
                     workspace_view.repository(self.workspace_repository.as_ref());
                 self.hydrate_recent_tool_results_for_model(

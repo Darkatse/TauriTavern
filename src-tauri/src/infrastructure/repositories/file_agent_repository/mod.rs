@@ -11,8 +11,9 @@ mod workspace_store;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -27,6 +28,7 @@ pub struct FileAgentRepository {
     pub(super) event_lock: Arc<Mutex<()>>,
     pub(super) checkpoint_lock: Arc<Mutex<()>>,
     pub(super) persist_lock: Arc<Mutex<()>>,
+    pub(super) workspace_write_locks: Arc<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>>,
 }
 
 impl FileAgentRepository {
@@ -36,6 +38,7 @@ impl FileAgentRepository {
             event_lock: Arc::new(Mutex::new(())),
             checkpoint_lock: Arc::new(Mutex::new(())),
             persist_lock: Arc::new(Mutex::new(())),
+            workspace_write_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

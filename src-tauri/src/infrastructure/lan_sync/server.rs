@@ -421,6 +421,10 @@ fn map_domain_error(error: DomainError) -> (StatusCode, String) {
             StatusCode::CONFLICT,
             format!("Workspace path is a directory: {path}"),
         ),
+        DomainError::WorkspaceWriteConflict { kind, .. } => (
+            StatusCode::CONFLICT,
+            format!("Workspace write conflict: {kind}"),
+        ),
     }
 }
 

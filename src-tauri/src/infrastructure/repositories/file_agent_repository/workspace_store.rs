@@ -5,13 +5,14 @@ use tokio::fs;
 use super::FileAgentRepository;
 use super::fs_tree::{workspace_file_from_text, workspace_path_from_run_dir};
 use super::paths::validate_workspace_root_path;
-use crate::domain::errors::DomainError;
+use crate::domain::errors::{DomainError, WorkspaceWriteConflictKind};
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
     AgentRun, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
 };
 use crate::domain::repositories::workspace_repository::{
     WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
+    WorkspaceWriteGuard,
 };
 use crate::infrastructure::persistence::file_system::{
     replace_file_with_fallback, unique_temp_path,
@@ -82,8 +83,21 @@ impl WorkspaceRepository for FileAgentRepository {
         path: &WorkspacePath,
         text: &str,
     ) -> Result<WorkspaceFile, DomainError> {
+        self.write_text_guarded(run_id, path, text, WorkspaceWriteGuard::Unchecked)
+            .await
+    }
+
+    async fn write_text_guarded(
+        &self,
+        run_id: &str,
+        path: &WorkspacePath,
+        text: &str,
+        guard: WorkspaceWriteGuard,
+    ) -> Result<WorkspaceFile, DomainError> {
         let target = self.safe_workspace_path(run_id, path, true).await?;
+        let _guard = self.acquire_workspace_write_lock(&target).await;
         ensure_target_is_not_directory(&target, path).await?;
+        verify_workspace_write_guard(&target, path, guard).await?;
         let temp_path = unique_temp_path(&target, "workspace.txt");
         fs::write(&temp_path, text.as_bytes())
             .await
@@ -317,6 +331,67 @@ async fn ensure_target_is_not_directory(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(DomainError::InternalError(format!(
             "Failed to inspect workspace path {}: {}",
+            target.display(),
+            error
+        ))),
+    }
+}
+
+async fn verify_workspace_write_guard(
+    target: &std::path::Path,
+    workspace_path: &WorkspacePath,
+    guard: WorkspaceWriteGuard,
+) -> Result<(), DomainError> {
+    match guard {
+        WorkspaceWriteGuard::Unchecked => Ok(()),
+        WorkspaceWriteGuard::MustNotExist => match read_existing_workspace_text(target).await? {
+            Some(text) => {
+                let current = workspace_file_from_text(workspace_path.clone(), text)?;
+                Err(DomainError::workspace_write_conflict(
+                    workspace_path.as_str(),
+                    WorkspaceWriteConflictKind::AlreadyExists {
+                        actual_sha256: current.sha256,
+                    },
+                ))
+            }
+            None => Ok(()),
+        },
+        WorkspaceWriteGuard::MustMatchSha256(expected_sha256) => {
+            match read_existing_workspace_text(target).await? {
+                Some(text) => {
+                    let current = workspace_file_from_text(workspace_path.clone(), text)?;
+                    if current.sha256 == expected_sha256 {
+                        Ok(())
+                    } else {
+                        Err(DomainError::workspace_write_conflict(
+                            workspace_path.as_str(),
+                            WorkspaceWriteConflictKind::Stale {
+                                expected_sha256,
+                                actual_sha256: Some(current.sha256),
+                            },
+                        ))
+                    }
+                }
+                None => Err(DomainError::workspace_write_conflict(
+                    workspace_path.as_str(),
+                    WorkspaceWriteConflictKind::Stale {
+                        expected_sha256,
+                        actual_sha256: None,
+                    },
+                )),
+            }
+        }
+    }
+}
+
+async fn read_existing_workspace_text(
+    target: &std::path::Path,
+) -> Result<Option<String>, DomainError> {
+    match fs::read_to_string(target).await {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(DomainError::InternalError(format!(
+            "Failed to read workspace file {} for write guard: {}",
             target.display(),
             error
         ))),

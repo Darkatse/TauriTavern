@@ -71,6 +71,10 @@ Built-in defaults
 
 Preset / PromptManager 中的 `agentSystemPrompt` 不是内容源，而是 Agent Mode 的组装位置、enabled 状态与 role 契约。前端必须先解析 Agent Profile，再在该 PromptManager index materialize 真实 Agent system prompt；Rust runtime 只消费组装后的最终 messages，并 fail-fast 拒绝内部 marker 泄漏。Legacy Generation 必须移除 Agent-only 组件，不能看到 `agentSystemPrompt` 或 Agent system prompt 内容。
 
+### 1.4 Agent-facing Delegation Description
+
+`delegation.descriptionForAgents` 是给其它 Agent 选择调用对象时看的能力说明，不是给人类管理界面的营销文案。它应该用一两句话说明“什么时候找我、给我哪些 workspace path、我会返回什么形态”，例如“审阅 `output/scene.md` 的连续性并在 `summaries/notes.md` 返回问题列表；如要求修订，可直接编辑指定 `output/` 文件”。不要写 runtime id、物理路径、CAS/overwrite policy 或内部实现细节。
+
 ## 2. Preset Agent Schema
 
 第一版可以使用 JSON-compatible schema，不必立刻引入 YAML。

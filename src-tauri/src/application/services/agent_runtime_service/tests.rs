@@ -51,7 +51,7 @@ use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::domain::repositories::skill_repository::SkillRepository;
 use crate::domain::repositories::workspace_repository::{
-    WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
+    WorkspaceFile, WorkspaceFileList, WorkspaceRepository, WorkspaceWriteGuard,
 };
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
@@ -264,6 +264,8 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
         description_for_agents: Some("Return concise scene critique.".to_string()),
         ..Default::default()
     };
+    child_profile.workspace.visible_roots = vec!["output".to_string(), "persist".to_string()];
+    child_profile.workspace.writable_roots = vec!["output".to_string()];
 
     let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
         json!({
@@ -306,14 +308,24 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
                 "message": {
                     "role": "assistant",
                     "content": null,
-                    "tool_calls": [{
-                        "id": "call_child_note",
-                        "type": "function",
-                        "function": {
-                            "name": "workspace_write_file",
-                            "arguments": "{\"path\":\"summaries/notes.md\",\"content\":\"Add a concrete sound or texture.\"}"
+                    "tool_calls": [
+                        {
+                            "id": "call_child_note",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_write_file",
+                                "arguments": "{\"path\":\"summaries/notes.md\",\"content\":\"Add a concrete sound or texture.\"}"
+                            }
+                        },
+                        {
+                            "id": "call_child_section",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_write_file",
+                                "arguments": "{\"path\":\"output/sections/scene_03.md\",\"content\":\"A quiet scene with rain tapping the glass.\"}"
+                            }
                         }
-                    }]
+                    ]
                 }
             }]
         }),
@@ -335,6 +347,10 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
                                     "path": "summaries/notes.md",
                                     "kind": "markdown",
                                     "role": "supportingNote"
+                                }, {
+                                    "path": "output/sections/scene_03.md",
+                                    "kind": "markdown",
+                                    "role": "draftSection"
                                 }],
                                 "findings": [{ "kind": "revision", "text": "Add a concrete sound or texture." }]
                             })).unwrap()
@@ -477,6 +493,10 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
         result["result"]["artifacts"][0]["path"],
         "summaries/agents/scene-critic/notes.md"
     );
+    assert_eq!(
+        result["result"]["artifacts"][1]["path"],
+        "output/sections/scene_03.md"
+    );
     assert!(result.get("targetProfileId").is_none());
     repository
         .read_text(
@@ -485,6 +505,17 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
         )
         .await
         .expect("read child note");
+    let child_section = repository
+        .read_text(
+            &run.id,
+            &WorkspacePath::parse("output/sections/scene_03.md").unwrap(),
+        )
+        .await
+        .expect("read child output section");
+    assert_eq!(
+        child_section.text,
+        "A quiet scene with rain tapping the glass."
+    );
 
     let child_response = repository
         .read_text(
@@ -538,11 +569,13 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
     assert!(child_system_prompt.contains("Task workspace view"));
     assert!(child_system_prompt.contains("summaries/parent/"));
     assert!(child_system_prompt.contains("summaries/agents/"));
+    assert!(child_system_prompt.contains(
+        "- Visible workspace roots for this task: summaries/, scratch/, output/, persist/."
+    ));
     assert!(
-        child_system_prompt.contains("Writable workspace paths: summaries/ and scratch/ only.")
+        child_system_prompt
+            .contains("- Writable workspace roots for this task: summaries/, scratch/, output/.")
     );
-    assert!(!child_system_prompt.contains("Visible workspace roots: output"));
-    assert!(!child_system_prompt.contains("Writable workspace roots: output"));
     let child_write_spec = requests[1]
         .tools
         .iter()
@@ -551,8 +584,9 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
     assert!(
         child_write_spec
             .description
-            .contains("summaries/ and scratch/ only")
+            .contains("Writable prefixes are summaries/, scratch/, output/")
     );
+    assert!(!child_write_spec.description.contains("persist/"));
     assert!(!child_write_spec.description.contains("output/main.md"));
     let child_task_prompt = requests[1]
         .messages
@@ -578,7 +612,7 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
     assert!(!child_task_prompt.contains("summaries/agents/scene-critic"));
     assert!(!child_task_prompt.contains("inv_"));
 
-    let child_write_result = requests[2]
+    let child_write_results = requests[2]
         .messages
         .iter()
         .filter(|message| message.role == AgentModelRole::Tool)
@@ -587,9 +621,19 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
             AgentModelContentPart::ToolResult { result } => Some(result),
             _ => None,
         })
-        .find(|result| result.name == "workspace.write_file")
-        .expect("child write result");
-    assert_eq!(child_write_result.structured["path"], "summaries/notes.md");
+        .filter(|result| result.name == "workspace.write_file")
+        .collect::<Vec<_>>();
+    assert_eq!(child_write_results.len(), 2);
+    assert!(
+        child_write_results
+            .iter()
+            .any(|result| result.structured["path"] == "summaries/notes.md")
+    );
+    assert!(
+        child_write_results
+            .iter()
+            .any(|result| result.structured["path"] == "output/sections/scene_03.md")
+    );
 
     let parent_tool_results = requests[3]
         .messages
@@ -622,6 +666,10 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
     assert_eq!(
         await_task["artifacts"][0]["path"],
         "summaries/agents/scene-critic/notes.md"
+    );
+    assert_eq!(
+        await_task["artifacts"][1]["path"],
+        "output/sections/scene_03.md"
     );
     assert!(!await_result.content.contains("invocation"));
     assert_eq!(requests[3].provider_state["invocationId"], "inv_root");
@@ -3548,6 +3596,126 @@ async fn workspace_patch_requires_full_read_state() {
 }
 
 #[tokio::test]
+async fn workspace_write_file_uses_session_cas_for_existing_files() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-write-cas-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_write_cas_test".to_string(),
+        workspace_id: "chat_write_cas_test".to_string(),
+        stable_chat_id: "stable_write_cas_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    let profile = test_resolved_profile(&root).await;
+    repository
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &profile),
+            &json!({"messages": []}),
+            &profile,
+        )
+        .await
+        .expect("initialize workspace");
+    repository
+        .write_text(
+            &run.id,
+            &WorkspacePath::parse("output/main.md").unwrap(),
+            "first draft",
+        )
+        .await
+        .expect("seed artifact");
+
+    let dispatcher = test_dispatcher(repository.clone(), &root);
+    let mut session = AgentToolSession::default();
+    let write_call = AgentToolCall {
+        id: "call_write".to_string(),
+        name: "workspace.write_file".to_string(),
+        arguments: json!({
+            "path": "output/main.md",
+            "content": "model rewrite",
+        }),
+        provider_metadata: Value::Null,
+    };
+
+    let without_read = dispatcher
+        .dispatch(&run.id, &write_call, &mut session, &profile)
+        .await
+        .expect("dispatch write without read");
+    assert!(without_read.result.is_error);
+    assert_eq!(
+        without_read.result.error_code.as_deref(),
+        Some("workspace.write_requires_read")
+    );
+
+    let read_call = AgentToolCall {
+        id: "call_read".to_string(),
+        name: "workspace.read_file".to_string(),
+        arguments: json!({ "path": "output/main.md" }),
+        provider_metadata: Value::Null,
+    };
+    dispatcher
+        .dispatch(&run.id, &read_call, &mut session, &profile)
+        .await
+        .expect("dispatch read");
+    repository
+        .write_text(
+            &run.id,
+            &WorkspacePath::parse("output/main.md").unwrap(),
+            "concurrent rewrite",
+        )
+        .await
+        .expect("simulate concurrent write");
+
+    let stale = dispatcher
+        .dispatch(&run.id, &write_call, &mut session, &profile)
+        .await
+        .expect("dispatch stale write");
+    assert!(stale.result.is_error);
+    assert_eq!(
+        stale.result.error_code.as_deref(),
+        Some("workspace.write_stale_file")
+    );
+    assert!(
+        stale
+            .result
+            .content
+            .contains("file changed since you last read or wrote it")
+    );
+    assert!(!stale.result.content.contains("sha256"));
+
+    dispatcher
+        .dispatch(&run.id, &read_call, &mut session, &profile)
+        .await
+        .expect("dispatch reread");
+    let written = dispatcher
+        .dispatch(&run.id, &write_call, &mut session, &profile)
+        .await
+        .expect("dispatch write after reread");
+    assert!(!written.result.is_error);
+    let artifact = repository
+        .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+        .await
+        .expect("read artifact");
+    assert_eq!(artifact.text, "model rewrite");
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn dispatcher_searches_and_reads_current_chat_messages() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-chat-tools-{}",
@@ -4569,6 +4737,18 @@ impl WorkspaceRepository for FailingPersistentCommitWorkspaceRepository {
         text: &str,
     ) -> Result<WorkspaceFile, DomainError> {
         self.inner.write_text(run_id, path, text).await
+    }
+
+    async fn write_text_guarded(
+        &self,
+        run_id: &str,
+        path: &WorkspacePath,
+        text: &str,
+        guard: WorkspaceWriteGuard,
+    ) -> Result<WorkspaceFile, DomainError> {
+        self.inner
+            .write_text_guarded(run_id, path, text, guard)
+            .await
     }
 
     async fn read_text(

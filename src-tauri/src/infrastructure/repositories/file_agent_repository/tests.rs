@@ -28,7 +28,7 @@ use crate::domain::repositories::agent_run_repository::{
 };
 use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
 use crate::domain::repositories::checkpoint_repository::CheckpointRepository;
-use crate::domain::repositories::workspace_repository::WorkspaceRepository;
+use crate::domain::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
 fn temp_root() -> PathBuf {
     std::env::temp_dir().join(format!("tauritavern-agent-repo-{}", Uuid::new_v4()))
 }
@@ -229,6 +229,58 @@ async fn repository_round_trips_run_workspace_event_and_checkpoint() {
         .await
         .expect("checkpoint");
     assert_eq!(checkpoint.files[0].bytes, 5);
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn guarded_workspace_writes_are_atomic_per_path() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_guarded_workspace_write");
+    let manifest = sample_manifest(&run);
+    let profile = sample_resolved_profile(&manifest);
+
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .initialize_run(
+            &run,
+            &manifest,
+            &serde_json::json!({"messages": []}),
+            &profile,
+        )
+        .await
+        .expect("initialize workspace");
+
+    let path = WorkspacePath::parse("output/main.md").expect("workspace path");
+    let seeded = repository
+        .write_text(&run.id, &path, "first")
+        .await
+        .expect("seed text");
+    let guard = WorkspaceWriteGuard::MustMatchSha256(seeded.sha256);
+
+    let (left, right) = tokio::join!(
+        repository.write_text_guarded(&run.id, &path, "left", guard.clone()),
+        repository.write_text_guarded(&run.id, &path, "right", guard),
+    );
+
+    let successes = [&left, &right]
+        .iter()
+        .filter(|result| result.is_ok())
+        .count();
+    let conflicts = [&left, &right]
+        .iter()
+        .filter(|result| matches!(result, Err(DomainError::WorkspaceWriteConflict { .. })))
+        .count();
+    assert_eq!(successes, 1);
+    assert_eq!(conflicts, 1);
+
+    let final_text = repository
+        .read_text(&run.id, &path)
+        .await
+        .expect("read final text")
+        .text;
+    assert!(final_text == "left" || final_text == "right");
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }

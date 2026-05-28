@@ -20,6 +20,7 @@ impl AgentRuntimeService {
         invocation_id: &str,
         call: &AgentToolCall,
         exit_policy: AgentInvocationExitPolicy,
+        workspace_view: Option<&ChildWorkspaceView>,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
         if exit_policy != AgentInvocationExitPolicy::TaskReturnRequired {
@@ -77,7 +78,11 @@ impl AgentRuntimeService {
             ));
         }
         let result_ref = WorkspacePath::parse(format!("agent-results/{invocation_id}.json"))?;
-        let workspace_view = ChildWorkspaceView::new(task.workspace_key.clone());
+        let workspace_view = workspace_view.ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "agent.child_workspace_view_missing: no workspace view for child invocation `{invocation_id}`"
+            ))
+        })?;
         let summary_ref = workspace_view.summary_result_path()?;
         let result_payload = match normalize_task_return_arguments(&call.arguments, &workspace_view)
         {

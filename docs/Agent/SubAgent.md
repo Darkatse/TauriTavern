@@ -149,6 +149,7 @@ return-mode child Agent 必须遵守更窄的执行契约：
 - 注入 `task.return`。
 - `exit_policy = TaskReturnRequired`。
 - 可使用 target Agent Profile 的 model binding 与工具预算；delegate call 可进一步收窄 `maxRounds` / `maxToolCalls`。
+- 保留 child 私有 `summaries/` / `scratch/` 语义目录；`output/`、`plan/`、`persist/` 等共享 workspace root 的可见/可写能力由 target Agent Profile 的 `workspace.visibleRoots` / `workspace.writableRoots` 决定。
 
 实现入口：
 
@@ -184,7 +185,8 @@ src-tauri/src/application/services/agent_runtime_service/delegation/rendering.rs
 - 面向子 Agent，而不是面向 runtime。
 - 使用 markdown 标题组织 `Title`、`Objective`、`Context`、`Expected Output`。
 - 不把 `taskId`、`invocationId`、`profileId`、`inside TauriTavern` 等运行时细节塞给模型。
-- 明确提示可写 `summaries/`、`scratch/`，可读 `summaries/parent/`、`summaries/agents/`。
+- 明确提示可写私有 `summaries/`、`scratch/`，可读 `summaries/parent/`、`summaries/agents/`，并可在 Profile 授权时读写共享 `output/`、`plan/`、`persist/` 等 root。
+- 只描述子 Agent 可直接操作的 virtual workspace path；共享 root 以“任务要求的 artifact / edit”呈现，不解释物理映射或 CAS 参数。
 
 `task.return` 会写两份结果：
 
@@ -205,6 +207,7 @@ return-mode child Agent 不直接看到物理路径。它看到的是 invocation
 | `scratch/` | `scratch/agents/<workspace-key>/` | read/write | 当前任务的临时 notes |
 | `summaries/parent/` | `summaries/` 中排除 `agents/` 的父级私有摘要树 | read-only | 请求者提供或留下的 notes |
 | `summaries/agents/` | `summaries/agents/` 中排除当前 child 自己 | read-only | 其他 delegated Agents 的 notes |
+| Profile 可见共享 root，例如 `output/`、`plan/`、`persist/` | 同名 run workspace path | profile 决定 | 共享草稿、计划或本 run persist projection |
 
 实现位置：
 
@@ -214,10 +217,11 @@ src-tauri/src/application/services/agent_runtime_service/delegation/workspace_vi
 
 关键规则：
 
-- child 写入只能在 `summaries/` 或 `scratch/` 的具体文件下。
+- child 永远可以写自己的私有 `summaries/` / `scratch/` 具体文件；除此之外只能写 target Profile 明确允许的共享 root 下的具体文件。
 - `summaries/parent/` 和 `summaries/agents/` 只读。
 - `summaries/parent/agents/...` 被拒绝，因为它把 parent private tree 和 sibling agent tree 混在一起。
 - `summaries/agents/<self>/...` 被拒绝，当前 child 应使用 `summaries/...` 访问自己的 notes。
+- `persist/` 仍只是本 run 的 projection；return-mode child 写入不会直接 promote，只有 root / handoff foreground owner 的 `workspace.finish` 收尾成功才会写回稳定 chat workspace。
 - NotFound / path-is-directory / denied alias 等错误会尽量转成模型输入的 virtual path，不泄露 `summaries/agents/<workspace-key>/...` 这种物理路径。
 
 这个视图是 Agent-friendly 的核心之一：小模型不应该背 invocation id 或长路径，也不应该理解 runtime 存储布局。
@@ -236,6 +240,7 @@ src-tauri/src/application/services/agent_runtime_service/delegation/workspace_vi
 8. 能 recover 的模型错误作为 tool error 返回；repository、journal、provider metadata、serialization 等宿主契约错误 fail-fast。
 9. `agent.await` 是需要结果或状态时的等待/查询工具，不是 delegation 后必须执行的收集步骤；调用者可以先继续其它工作。
 10. `taskId` 只作为可选的 opaque task handle；常规情况下调用者可以不传 taskIds，让 `agent.await` 面向自己启动的任务集合。
+11. 调用方给子任务时应传递相关 workspace path 与期望 artifact 形态；子 Agent 不需要猜 runtime 存储布局。
 
 如果后续新增字段或工具，先问两个问题：
 

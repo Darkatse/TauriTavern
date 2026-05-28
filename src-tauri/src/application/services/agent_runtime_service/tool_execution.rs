@@ -148,20 +148,22 @@ impl AgentRuntimeService {
         .await?;
 
         let child_workspace_view = if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
-            Some(self.child_workspace_view(run_id, invocation_id).await?)
+            Some(
+                self.child_workspace_view(run_id, invocation_id, profile)
+                    .await?,
+            )
         } else {
             None
         };
 
-        if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired
-            && child_workspace_view
-                .as_ref()
-                .is_some_and(|view| view.write_is_denied(call))
+        if let Some(message) = child_workspace_view
+            .as_ref()
+            .and_then(|view| view.write_denial_message(call))
         {
             let outcome = recoverable_tool_error(
                 call,
                 "agent.child_workspace_write_denied",
-                "Return-mode child Agents may write only under scratch/ or summaries/.",
+                &message,
                 started.elapsed().as_millis(),
             );
             self.record_tool_outcome(run_id, invocation_id, round, &outcome)
@@ -184,8 +186,14 @@ impl AgentRuntimeService {
             self.dispatch_agent_await_tool(run_id, invocation_id, call, cancel)
                 .await
         } else if call.name == TASK_RETURN {
-            self.dispatch_task_return_tool(run_id, invocation_id, call, exit_policy)
-                .await
+            self.dispatch_task_return_tool(
+                run_id,
+                invocation_id,
+                call,
+                exit_policy,
+                child_workspace_view.as_ref(),
+            )
+            .await
         } else if let Some(view) = child_workspace_view.as_ref() {
             let workspace_repository = view.repository(self.workspace_repository.as_ref());
             self.tool_dispatcher

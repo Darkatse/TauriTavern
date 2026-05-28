@@ -4,6 +4,9 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_workspace_scope::{
+    ReturnModeWorkspaceScope, format_model_workspace_roots,
+};
 use crate::domain::models::agent::AgentToolSpec;
 use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy, DEFAULT_AGENT_PLAN_BETA};
 use crate::domain::models::agent::profile::{
@@ -193,31 +196,41 @@ pub fn materialize_agent_system_prompt(
     }
 
     if has_tool(tools, TASK_RETURN_TOOL) {
+        let scope = ReturnModeWorkspaceScope::from_profile(profile);
+        let visible_roots = scope.model_visible_roots();
+        let writable_roots = scope.model_writable_roots();
         lines.push(
-            "- Task workspace view: write durable notes under summaries/ and temporary notes under scratch/."
+            "- Task workspace view: use summaries/ for durable private notes, scratch/ for temporary notes, and writable shared roots only for requested artifacts or edits."
                 .to_string(),
         );
         lines.push(
             "- Shared notes are read-only: summaries/parent/ contains notes from the Agent that asked for this task; summaries/agents/ contains notes from other delegated Agents, when present."
                 .to_string(),
         );
-        lines.push("- Writable workspace paths: summaries/ and scratch/ only.".to_string());
+        lines.push(format!(
+            "- Visible workspace roots for this task: {}.",
+            format_model_workspace_roots(&visible_roots)
+        ));
+        lines.push(format!(
+            "- Writable workspace roots for this task: {}.",
+            format_model_workspace_roots(&writable_roots)
+        ));
         lines.push(format!(
             "# **Important**: You are completing a delegated task. Return your result only by calling {} with a concise result for the requesting Agent.",
             model_name(tools, TASK_RETURN_TOOL)
         ));
         lines.push(
-            "- If useful, write supporting notes under summaries/ or scratch/ as shown in the task brief, then reference those paths in task_return."
+            "- If useful, write supporting notes or requested artifacts, then reference the useful paths in task_return."
                 .to_string(),
         );
     } else {
         lines.push(format!(
             "- Visible workspace roots: {}.",
-            profile.workspace.visible_roots.join(", ")
+            format_model_workspace_roots(&profile.workspace.visible_roots)
         ));
         lines.push(format!(
             "- Writable workspace roots: {}.",
-            profile.workspace.writable_roots.join(", ")
+            format_model_workspace_roots(&profile.workspace.writable_roots)
         ));
         lines.push(format!(
             "- **Never** read {} before commit",
@@ -1260,8 +1273,8 @@ mod tests {
 
         let prompt = materialize_agent_system_prompt(&tools, &profile);
 
-        assert!(prompt.contains("- Visible workspace roots: output."));
-        assert!(prompt.contains("- Writable workspace roots: output."));
+        assert!(prompt.contains("- Visible workspace roots: output/."));
+        assert!(prompt.contains("- Writable workspace roots: output/."));
         assert!(prompt.contains(
             "# Background runs may call workspace_finish_alias without committing a chat message."
         ));
@@ -1319,9 +1332,14 @@ mod tests {
         assert!(prompt.contains("Task workspace view"));
         assert!(prompt.contains("summaries/parent/"));
         assert!(prompt.contains("summaries/agents/"));
-        assert!(prompt.contains("Writable workspace paths: summaries/ and scratch/ only."));
-        assert!(!prompt.contains("- Visible workspace roots: output, persist."));
-        assert!(!prompt.contains("- Writable workspace roots: output, persist."));
+        assert!(prompt.contains(
+            "- Visible workspace roots for this task: summaries/, scratch/, output/, persist/."
+        ));
+        assert!(prompt.contains(
+            "- Writable workspace roots for this task: summaries/, scratch/, output/, persist/."
+        ));
+        assert!(!prompt.contains("- Visible workspace roots: output/, persist/."));
+        assert!(!prompt.contains("- Writable workspace roots: output/, persist/."));
         assert!(!prompt.contains("Never"));
         assert!(prompt.contains("task_return"));
     }

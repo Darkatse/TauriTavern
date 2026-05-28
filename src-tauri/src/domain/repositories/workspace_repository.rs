@@ -33,6 +33,13 @@ pub struct WorkspaceFileList {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceWriteGuard {
+    Unchecked,
+    MustNotExist,
+    MustMatchSha256(String),
+}
+
 #[async_trait]
 pub trait WorkspaceRepository: Send + Sync {
     async fn initialize_run(
@@ -50,6 +57,14 @@ pub trait WorkspaceRepository: Send + Sync {
         run_id: &str,
         path: &WorkspacePath,
         text: &str,
+    ) -> Result<WorkspaceFile, DomainError>;
+
+    async fn write_text_guarded(
+        &self,
+        run_id: &str,
+        path: &WorkspacePath,
+        text: &str,
+        guard: WorkspaceWriteGuard,
     ) -> Result<WorkspaceFile, DomainError>;
 
     async fn read_text(

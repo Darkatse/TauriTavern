@@ -473,8 +473,9 @@ return-mode child invocation 会获得 invocation-scoped workspace view。模型
 | `scratch/` | `scratch/agents/<workspace-key>/` | read/write | 当前子任务的临时 notes |
 | `summaries/parent/` | 父级 `summaries/` 私有树，排除 `agents/` | read-only | 请求者留下的 notes |
 | `summaries/agents/` | `summaries/agents/` 中其他 child 的目录 | read-only | 其他 delegated Agents 的结果 notes |
+| Profile 可见共享 root，例如 `output/`、`plan/`、`persist/` | 同名 run workspace path | profile 决定 | 共享草稿、计划或本 run persist projection |
 
-其中 `<workspace-key>` 优先使用 target Agent id；同一 run 重复调用同一 Agent 时追加 `-002`、`-003`。子 Agent 不需要知道 `childInvocationId` 或物理路径。`summaries/parent/agents/...` 与 `summaries/agents/<self>/...` 会作为可恢复工具错误拒绝，避免模型绕过语义视图。
+其中 `<workspace-key>` 优先使用 target Agent id；同一 run 重复调用同一 Agent 时追加 `-002`、`-003`。子 Agent 不需要知道 `childInvocationId` 或物理路径。`summaries/parent/agents/...` 与 `summaries/agents/<self>/...` 会作为可恢复工具错误拒绝，避免模型绕过语义视图。共享 root 的实际可见/可写权限来自 target Agent Profile 的 `workspace.visibleRoots` / `workspace.writableRoots`；return-mode child 仍不能 `workspace.commit` / `workspace.finish`。
 
 `persist/` 是 chat workspace 级持久 root 的 run projection：
 
