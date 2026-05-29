@@ -26,6 +26,18 @@ export function requireSkillApi() {
     return requireHostApi('skill');
 }
 
+export function requireLlmConnectionsApi() {
+    return requireHostApi('llmConnections');
+}
+
+export function requireSillyTavernContext() {
+    const context = window.SillyTavern?.getContext?.();
+    if (!context) {
+        throw new Error(tr('sillyTavernContextUnavailable'));
+    }
+    return context;
+}
+
 export function requireExtensionStore() {
     const store = window.__TAURITAVERN__?.api?.extension?.store;
     if (!store) {

@@ -12,6 +12,25 @@ async function importFresh(relativePath) {
     return import(url);
 }
 
+async function createAgentPanelHarness() {
+    const { createAgentSystemPanelRoot } = await importFresh('src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js');
+    const options = createAgentSystemPanelRoot({ requestClose() {} });
+    const vm = options.data();
+    for (const [name, method] of Object.entries(options.methods || {})) {
+        vm[name] = method.bind(vm);
+    }
+    for (const [name, computed] of Object.entries(options.computed || {})) {
+        Object.defineProperty(vm, name, {
+            configurable: true,
+            enumerable: true,
+            get: computed.bind(vm),
+        });
+    }
+    vm.$el = { querySelector: () => null };
+    vm.$nextTick = (callback) => callback();
+    return vm;
+}
+
 function ensureCustomEvent() {
     if (typeof globalThis.CustomEvent === 'function') {
         return;
@@ -365,6 +384,99 @@ test('Agent profile drafts keep Agent system prompt owned by the backend resolve
     assert.match(panelSource, /resolvedAgentSystemPrompt/);
 });
 
+test('Agent profile save normalization keeps delegation tools contract-shaped', async () => {
+    const {
+        defaultProfile,
+        normalizeProfileForSave,
+        profileForEdit,
+    } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
+
+    const draft = profileForEdit(defaultProfile('delegate-writer'));
+    draft.delegation.canDelegate = true;
+    draft.tools.allow.push('task.return');
+
+    const saved = normalizeProfileForSave(draft);
+    assert.equal(saved.delegation.canDelegate, true);
+    assert(saved.tools.allow.includes('agent.list'));
+    assert(saved.tools.allow.includes('agent.delegate'));
+    assert(saved.tools.allow.includes('agent.await'));
+    assert(!saved.tools.allow.includes('task.return'));
+
+    saved.delegation.canDelegate = false;
+    const disabled = normalizeProfileForSave(profileForEdit(saved));
+    assert(!disabled.tools.allow.includes('agent.list'));
+    assert(!disabled.tools.allow.includes('agent.delegate'));
+    assert(!disabled.tools.allow.includes('agent.await'));
+});
+
+test('Agent profile SubAgent toggle locks presentation to background by behavior', async () => {
+    const vm = await createAgentPanelHarness();
+    vm.draft.id = 'dual-role-writer';
+    vm.draft.run.presentation = 'foreground';
+    vm.seedMainAgentPresentation();
+
+    vm.setProfileEditMode('subagent');
+    vm.setCallableAsSubAgent(true);
+
+    assert.equal(vm.draft.delegation.callable, true);
+    assert.equal(vm.draft.delegation.allowAsSubagent, true);
+    assert.equal(vm.draft.run.presentation, 'background');
+    assert.equal(vm.isSubAgentPresentationLocked, true);
+    assert.throws(
+        () => vm.setRunPresentation('foreground'),
+        /SubAgent presentation is locked to background/,
+    );
+
+    vm.setProfileEditMode('main');
+    assert.equal(vm.draft.run.presentation, 'foreground');
+});
+
+test('Agent profile edit mode restores presentation per loaded profile', async () => {
+    const {
+        defaultProfile,
+    } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
+    const dualRole = defaultProfile('dual-role-writer');
+    dualRole.run.presentation = 'foreground';
+    dualRole.delegation.callable = true;
+    dualRole.delegation.allowAsSubagent = true;
+
+    const backgroundOnly = defaultProfile('background-consultant');
+    backgroundOnly.run.presentation = 'background';
+    backgroundOnly.delegation.callable = true;
+    backgroundOnly.delegation.allowAsSubagent = true;
+
+    const profiles = new Map([
+        [dualRole.id, dualRole],
+        [backgroundOnly.id, backgroundOnly],
+    ]);
+    installWindow({
+        agent: {
+            profiles: {
+                async load({ profileId }) {
+                    return { profile: profiles.get(profileId) };
+                },
+                async resolveSystemPrompt() {
+                    return { agentSystemPrompt: 'Resolved Agent system prompt.' };
+                },
+            },
+        },
+    });
+
+    const vm = await createAgentPanelHarness();
+    await vm.selectProfile(dualRole.id);
+    vm.setProfileEditMode('subagent');
+    assert.equal(vm.draft.run.presentation, 'background');
+    vm.setProfileEditMode('main');
+    assert.equal(vm.draft.run.presentation, 'foreground');
+
+    vm.setProfileEditMode('subagent');
+    await vm.selectProfile(backgroundOnly.id);
+    assert.equal(vm.profileEditMode, 'subagent');
+    assert.equal(vm.draft.run.presentation, 'background');
+    vm.setProfileEditMode('main');
+    assert.equal(vm.draft.run.presentation, 'background');
+});
+
 test('Agent System profile panel no longer owns legacy Skill management UI', async () => {
     const panelSource = await readFile(path.join(
         REPO_ROOT,
@@ -392,6 +504,26 @@ test('Agent System profile panel no longer owns legacy Skill management UI', asy
     assert.match(skillExtensionSource, /<SkillFileViewer/);
     assert.doesNotMatch(skillFileViewerSource, /showModal/);
     assert.doesNotMatch(skillFileViewerSource, /createApp/);
+});
+
+test('Agent System profile panel does not statically bundle main app modules', async () => {
+    const panelSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js',
+    ), 'utf8');
+    const modelTargetConnectionSource = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/model-target-connection.js',
+    ), 'utf8');
+
+    assert.doesNotMatch(panelSource, /preset-manager\.js/);
+    assert.doesNotMatch(panelSource, /extensions\.js/);
+    assert.doesNotMatch(panelSource, /script\.js/);
+    assert.doesNotMatch(modelTargetConnectionSource, /preset-manager\.js/);
+    assert.doesNotMatch(modelTargetConnectionSource, /extensions\.js/);
+    assert.doesNotMatch(modelTargetConnectionSource, /script\.js/);
+    assert.match(panelSource, /requireSillyTavernContext/);
+    assert.match(modelTargetConnectionSource, /requireSillyTavernContext/);
 });
 
 test('Skill extension resolves active scoped sections from SillyTavern context', async () => {

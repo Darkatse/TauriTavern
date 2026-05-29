@@ -44,9 +44,13 @@ api.agent.profiles.resolveSystemPrompt(input?)
 api.agent.profiles.save(input)
 api.agent.profiles.delete(input)
 api.agent.tools.list()
+api.llmConnections.list()
+api.llmConnections.load(input)
+api.llmConnections.save(input)
+api.llmConnections.delete(input)
 ```
 
-`startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` 支持可选 `profileId`。Profile 管理、工具列表与 prompt assembly broker API 已封装到 `window.__TAURITAVERN__.api.agent` 与 `src/types.d.ts`；正式 UI 仍属于后续阶段。
+`startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()` 支持可选 `profileId`。Profile 管理、工具列表与 prompt assembly broker API 已封装到 `window.__TAURITAVERN__.api.agent` 与 `src/types.d.ts`；LLM Connection 管理已封装到 `window.__TAURITAVERN__.api.llmConnections`。Agent Profile 面板已提供独立 preset / model 选择，model 选择以 Connection Manager 的 Model Target 作为 UI 输入来源，保存时物化为 Agent domain 的 LLM Connection，并在 Profile 中持久化 `connectionRef + modelId`。
 
 Skill 管理 API 已落地：
 
@@ -492,7 +496,7 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - `docs/Agent/Skill.md`
 - `docs/Agent/RunEventJournal.md`
 - `docs/Agent/TestingStrategy.md`
-- 涉及 Host ABI 时同步 `docs/API/Agent.md`、`docs/API/Skill.md`、`docs/FrontendHostContract.md`、`src/types.d.ts`
+- 涉及 Host ABI 时同步 `docs/API/Agent.md`、`docs/API/Skill.md`、`docs/API/LlmConnections.md`、`docs/FrontendHostContract.md`、`src/types.d.ts`
 
 ## 守护契约
 

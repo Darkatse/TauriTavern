@@ -2,6 +2,16 @@ import { DEFAULT_AGENT_PROFILE_ID } from '../../../tauritavern/agent/agent-syste
 
 export const DEFAULT_PROFILE_ID = DEFAULT_AGENT_PROFILE_ID;
 
+export const AGENT_DELEGATION_TOOLS = Object.freeze([
+    'agent.list',
+    'agent.delegate',
+    'agent.await',
+]);
+
+export const RUNTIME_ONLY_TOOLS = Object.freeze([
+    'task.return',
+]);
+
 export const KNOWN_TOOLS = Object.freeze([
     'chat.search',
     'chat.read_messages',

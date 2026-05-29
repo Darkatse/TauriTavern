@@ -336,6 +336,61 @@ type TauriTavernAgentApi = {
     rollback: () => never;
 };
 
+type TauriTavernLlmConnectionSummary = {
+    id: string;
+    displayName: string;
+    description?: string;
+    chatCompletionSource: string;
+    customApiFormat?: string;
+};
+
+type TauriTavernLlmConnectionDefinition = {
+    schemaVersion: number;
+    kind: 'tauritavern.llmConnection';
+    id: string;
+    displayName: string;
+    description?: string;
+    provider: {
+        chatCompletionSource: string;
+        customApiFormat?: string;
+    };
+    endpoint?: {
+        baseUrl?: string;
+        sourceSpecific?: Record<string, any>;
+    };
+    auth: {
+        secretRef: {
+            key: string;
+            id: string;
+            labelSnapshot?: string;
+        };
+    };
+    routing?: {
+        reverseProxy?: {
+            url: string;
+        };
+    };
+    adapterHints?: {
+        promptPostProcessing?: string;
+        customIncludeHeaders?: string;
+        customIncludeBody?: string;
+        customExcludeBody?: string;
+    };
+    capabilities?: {
+        streaming?: string;
+        toolCalling?: string;
+    };
+};
+
+type TauriTavernLlmConnectionsApi = {
+    list: () => Promise<{ connections: TauriTavernLlmConnectionSummary[] }>;
+    load: (input: string | { connectionId: string } | { connection_id: string }) => Promise<{
+        connection: TauriTavernLlmConnectionDefinition | null;
+    }>;
+    save: (input: TauriTavernLlmConnectionDefinition | { connection: TauriTavernLlmConnectionDefinition }) => Promise<void>;
+    delete: (input: string | { connectionId: string } | { connection_id: string }) => Promise<void>;
+};
+
 type TauriTavernSkillFileKind = 'text' | 'binary';
 
 type TauriTavernSkillImportConflictKind = 'new' | 'same' | 'different';
@@ -621,6 +676,7 @@ type TauriTavernLayoutApi = {
 type TauriTavernHostApi = {
     chat?: TauriTavernChatApi;
     agent?: TauriTavernAgentApi;
+    llmConnections?: TauriTavernLlmConnectionsApi;
     skill?: TauriTavernSkillApi;
     layout?: TauriTavernLayoutApi;
     dev?: TauriTavernDevApi;

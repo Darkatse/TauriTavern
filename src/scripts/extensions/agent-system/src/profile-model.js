@@ -1,4 +1,4 @@
-import { DEFAULT_PROFILE_ID, KNOWN_TOOLS, WORKSPACE_ROOTS } from './constants.js';
+import { AGENT_DELEGATION_TOOLS, DEFAULT_PROFILE_ID, KNOWN_TOOLS, RUNTIME_ONLY_TOOLS, WORKSPACE_ROOTS } from './constants.js';
 import { clone } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 import {
@@ -69,6 +69,120 @@ function normalizeToolDescriptions(value) {
     return normalized;
 }
 
+function normalizePresetBinding(value) {
+    const binding = isPlainObject(value) ? { ...value } : {};
+    const mode = String(binding.mode || 'currentPromptSnapshot').trim() || 'currentPromptSnapshot';
+    if (mode === 'currentPromptSnapshot' || mode === 'none') {
+        return {
+            mode,
+            required: false,
+        };
+    }
+
+    if (mode !== 'ref') {
+        throw new Error(`preset.mode is unsupported: ${mode}`);
+    }
+
+    const ref = isPlainObject(binding.ref) ? binding.ref : {};
+    return {
+        mode: 'ref',
+        ref: {
+            apiId: String(ref.apiId || '').trim(),
+            name: String(ref.name || '').trim(),
+        },
+        required: Boolean(binding.required),
+    };
+}
+
+function normalizeModelBinding(value) {
+    const binding = isPlainObject(value) ? { ...value } : {};
+    const mode = String(binding.mode || 'currentPromptSnapshot').trim() || 'currentPromptSnapshot';
+    if (mode === 'currentPromptSnapshot') {
+        return {
+            mode: 'currentPromptSnapshot',
+        };
+    }
+
+    if (mode !== 'connectionRef') {
+        throw new Error(`model.mode is unsupported: ${mode}`);
+    }
+
+    return {
+        mode: 'connectionRef',
+        connectionRef: String(binding.connectionRef || '').trim(),
+        modelId: String(binding.modelId || '').trim(),
+    };
+}
+
+function defaultDelegationPolicy() {
+    return {
+        canDelegate: false,
+        canHandoff: false,
+        callable: false,
+        allowAsSubagent: false,
+        allowAsHandoffTarget: false,
+        allowNestedDelegation: false,
+        allowedCallers: ['*'],
+        descriptionForAgents: null,
+        maxConcurrentInvocations: 3,
+        maxInvocationsPerRun: 8,
+        resultBudgetTokens: 8000,
+        maxHandoffDepth: 5,
+    };
+}
+
+function normalizeDelegationPolicy(value) {
+    const defaults = defaultDelegationPolicy();
+    const policy = isPlainObject(value) ? { ...value } : {};
+    const allowedCallers = Object.prototype.hasOwnProperty.call(policy, 'allowedCallersCsv')
+        ? parseCsv(policy.allowedCallersCsv)
+        : (Array.isArray(policy.allowedCallers) ? policy.allowedCallers.map((caller) => String(caller || '').trim()).filter(Boolean) : defaults.allowedCallers);
+    const description = String(policy.descriptionForAgents || '').trim();
+
+    return {
+        canDelegate: Boolean(policy.canDelegate),
+        canHandoff: Boolean(policy.canHandoff),
+        callable: Boolean(policy.callable),
+        allowAsSubagent: Boolean(policy.allowAsSubagent),
+        allowAsHandoffTarget: Boolean(policy.allowAsHandoffTarget),
+        allowNestedDelegation: Boolean(policy.allowNestedDelegation),
+        allowedCallers,
+        descriptionForAgents: description || null,
+        maxConcurrentInvocations: Number(policy.maxConcurrentInvocations ?? defaults.maxConcurrentInvocations),
+        maxInvocationsPerRun: Number(policy.maxInvocationsPerRun ?? defaults.maxInvocationsPerRun),
+        resultBudgetTokens: Number(policy.resultBudgetTokens ?? defaults.resultBudgetTokens),
+        maxHandoffDepth: Number(policy.maxHandoffDepth ?? defaults.maxHandoffDepth),
+    };
+}
+
+function applyDelegationToolPolicy(profile) {
+    const delegation = profile.delegation || defaultDelegationPolicy();
+    const runtimeOnly = new Set(RUNTIME_ONLY_TOOLS);
+    const allow = new Set((Array.isArray(profile.tools?.allow) ? profile.tools.allow : [])
+        .filter((tool) => !runtimeOnly.has(tool)));
+
+    if (delegation.canDelegate) {
+        for (const tool of AGENT_DELEGATION_TOOLS) {
+            allow.add(tool);
+        }
+    } else {
+        allow.delete('agent.delegate');
+        allow.delete('agent.await');
+        if (!delegation.canHandoff) {
+            allow.delete('agent.list');
+        }
+    }
+
+    const preferredOrder = [
+        ...AGENT_DELEGATION_TOOLS,
+        ...KNOWN_TOOLS,
+    ];
+    profile.tools.allow = [
+        ...preferredOrder.filter((tool) => allow.has(tool)),
+        ...[...allow].filter((tool) => !preferredOrder.includes(tool)),
+    ];
+}
+
 export function defaultProfile(id = DEFAULT_PROFILE_ID) {
     const profileId = normalizeProfileId(id) || DEFAULT_PROFILE_ID;
     const profile = {
@@ -94,6 +208,7 @@ export function defaultProfile(id = DEFAULT_PROFILE_ID) {
         context: {
             ...DEFAULT_AGENT_CONTEXT_POLICY,
         },
+        delegation: defaultDelegationPolicy(),
         instructions: {
             agentSystemPrompt: null,
         },
@@ -148,10 +263,12 @@ export function normalizeProfileForSave(profile) {
     normalized.id = normalizeProfileId(normalized.id);
     normalized.displayName = String(normalized.displayName || '').trim();
     normalized.description = String(normalized.description || '').trim();
-    normalized.preset.required = Boolean(normalized.preset.required);
+    normalized.preset = normalizePresetBinding(normalized.preset);
+    normalized.model = normalizeModelBinding(normalized.model);
     normalized.run.modelRetry.maxRetries = Number(normalized.run.modelRetry.maxRetries);
     normalized.run.modelRetry.intervalMs = Number(normalized.run.modelRetry.intervalMs);
     normalized.context = normalizeAgentContextPolicy(normalized.context);
+    normalized.delegation = normalizeDelegationPolicy(normalized.delegation);
     normalized.tools.maxRounds = Number(normalized.tools.maxRounds);
     normalized.tools.maxCallsPerRun = Number(normalized.tools.maxCallsPerRun);
     normalized.tools.toolDescriptions = normalizeToolDescriptions(normalized.tools.toolDescriptions);
@@ -162,6 +279,7 @@ export function normalizeProfileForSave(profile) {
     normalized.skills.deny = parseCsv(denyCsv);
     delete normalized.skills.visibleCsv;
     delete normalized.skills.denyCsv;
+    applyDelegationToolPolicy(normalized);
     normalized.output.artifacts = [
         {
             ...normalized.output.artifacts[0],
@@ -176,7 +294,11 @@ export function normalizeProfileForSave(profile) {
 
 export function profileForEdit(profile) {
     const draft = clone(profile);
+    draft.preset = normalizePresetBinding(draft.preset);
+    draft.model = normalizeModelBinding(draft.model);
     draft.context = normalizeAgentContextPolicy(draft.context);
+    draft.delegation = normalizeDelegationPolicy(draft.delegation);
+    draft.delegation.allowedCallersCsv = joinCsv(draft.delegation.allowedCallers);
     draft.tools.toolDescriptions = normalizeToolDescriptions(draft.tools.toolDescriptions);
     draft.skills.visibleCsv = joinCsv(draft.skills.visible);
     draft.skills.denyCsv = joinCsv(draft.skills.deny);

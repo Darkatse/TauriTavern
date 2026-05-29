@@ -1,12 +1,43 @@
-import { DEFAULT_PROFILE_ID, KNOWN_TOOLS, WORKSPACE_ROOTS } from './constants.js';
-import { confirmAction, errorText, prettyJson, requireAgentApi } from './host-api.js';
+import { AGENT_DELEGATION_TOOLS, DEFAULT_PROFILE_ID, KNOWN_TOOLS, RUNTIME_ONLY_TOOLS, WORKSPACE_ROOTS } from './constants.js';
+import { confirmAction, errorText, prettyJson, requireAgentApi, requireSillyTavernContext } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
+import {
+    findModelTargetForBinding,
+    listSavedModelTargets,
+    modelBindingFromTarget,
+    saveModelTargetAsLlmConnection,
+} from './model-target-connection.js';
 import { defaultProfile, normalizeProfileForSave, normalizeProfileId, profileForEdit } from './profile-model.js';
 import { loadSettings, patchSettings } from './settings-store.js';
 import { downloadBlobWithRuntime } from '../../../file-export.js';
 import { normalizeAgentSystemPrompt } from '../../../tauritavern/agent/agent-system-prompt.js';
 
 const PROFILE_EXPORT_CONTENT_TYPE = 'application/json';
+const CHAT_COMPLETION_PRESET_API_ID = 'openai';
+const PROFILE_TOOL_MATRIX_HIDDEN = new Set([
+    ...AGENT_DELEGATION_TOOLS,
+    ...RUNTIME_ONLY_TOOLS,
+]);
+
+const PROFILE_EDIT_MODES = Object.freeze([
+    { id: 'main', labelKey: 'mainAgent', icon: 'fa-compass-drafting' },
+    { id: 'subagent', labelKey: 'subAgent', icon: 'fa-people-arrows' },
+]);
+
+const PROFILE_SECTIONS = Object.freeze([
+    { id: 'identity', labelKey: 'identity', icon: 'fa-fingerprint', modes: ['main', 'subagent'] },
+    { id: 'binding', labelKey: 'presetAndModel', icon: 'fa-sliders', modes: ['main', 'subagent'] },
+    { id: 'main-delegation', labelKey: 'mainAgentControl', icon: 'fa-diagram-project', modes: ['main'] },
+    { id: 'subagent-access', labelKey: 'subAgentAccess', icon: 'fa-people-arrows', modes: ['subagent'] },
+    { id: 'run', labelKey: 'runPolicy', icon: 'fa-gauge-high', modes: ['main', 'subagent'] },
+    { id: 'context', labelKey: 'initialContext', icon: 'fa-layer-group', modes: ['main', 'subagent'] },
+    { id: 'prompt', labelKey: 'prompt', icon: 'fa-terminal', modes: ['main', 'subagent'] },
+    { id: 'tools', labelKey: 'capabilityMatrix', icon: 'fa-screwdriver-wrench', modes: ['main', 'subagent'] },
+    { id: 'skills', labelKey: 'skillAccess', icon: 'fa-book', modes: ['main', 'subagent'] },
+    { id: 'workspace', labelKey: 'workspaceAccess', icon: 'fa-folder-tree', modes: ['main', 'subagent'] },
+    { id: 'output', labelKey: 'outputArtifact', icon: 'fa-file-lines', modes: ['main'] },
+    { id: 'json', labelKey: 'advancedJson', icon: 'fa-code', modes: ['main', 'subagent'] },
+]);
 
 const TOOL_GROUPS = Object.freeze([
     {
@@ -64,6 +95,10 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 settings: {},
                 profiles: [],
                 selectedProfileId: DEFAULT_PROFILE_ID,
+                profileEditMode: 'main',
+                activeProfileSectionId: PROFILE_SECTIONS[0].id,
+                // Keep this UI-only so the single profile schema can serve both main and SubAgent editing views.
+                mainAgentPresentationByProfileId: {},
                 draft: profileForEdit(defaultProfile()),
                 draftJson: prettyJson(defaultProfile()),
                 resolvedAgentSystemPrompt: '',
@@ -74,6 +109,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 toolNames: [...KNOWN_TOOLS],
                 selectedToolName: KNOWN_TOOLS[0],
                 workspaceRoots: WORKSPACE_ROOTS,
+                presetOptions: [],
+                modelTargets: [],
             };
         },
         computed: {
@@ -82,6 +119,22 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             },
             isBuiltinProfile() {
                 return this.draft.id === DEFAULT_PROFILE_ID;
+            },
+            profileEditModes() {
+                return PROFILE_EDIT_MODES;
+            },
+            visibleProfileSections() {
+                return PROFILE_SECTIONS.filter((section) => section.modes.includes(this.profileEditMode));
+            },
+            profileEditModeLabel() {
+                const mode = PROFILE_EDIT_MODES.find((item) => item.id === this.profileEditMode);
+                return mode ? tr(mode.labelKey) : tr('mainAgent');
+            },
+            isSubAgentPresentationLocked() {
+                const delegation = this.draft?.delegation || {};
+                return this.profileEditMode === 'subagent'
+                    && delegation.callable
+                    && delegation.allowAsSubagent;
             },
             agentSystemPromptEditorValue() {
                 if (this.isBuiltinProfile) {
@@ -106,14 +159,29 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     : 0;
                 return [
                     {
+                        icon: 'fa-scroll',
+                        label: tr('preset'),
+                        value: this.presetSummaryLabel,
+                    },
+                    {
+                        icon: 'fa-microchip',
+                        label: tr('model'),
+                        value: this.modelSummaryLabel,
+                    },
+                    {
+                        icon: this.profileEditMode === 'subagent' ? 'fa-people-arrows' : 'fa-compass-drafting',
+                        label: tr('profileView'),
+                        value: this.profileEditModeLabel,
+                    },
+                    {
                         icon: 'fa-layer-group',
                         label: tr('presentation'),
                         value: tr(this.draft.run.presentation || 'foreground'),
                     },
                     {
-                        icon: 'fa-repeat',
-                        label: tr('maxRounds'),
-                        value: this.draft.tools.maxRounds,
+                        icon: 'fa-diagram-project',
+                        label: tr('agentCooperation'),
+                        value: this.delegationSummaryLabel,
                     },
                     {
                         icon: 'fa-screwdriver-wrench',
@@ -126,6 +194,53 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                         value: `${writableRootCount}/${visibleRootCount}`,
                     },
                 ];
+            },
+            presetSummaryLabel() {
+                const preset = this.draft?.preset || {};
+                if (preset.mode === 'ref') {
+                    return preset.ref?.name || tr('savedPreset');
+                }
+                if (preset.mode === 'none') {
+                    return tr('none');
+                }
+                return tr('currentPromptPreset');
+            },
+            delegationSummaryLabel() {
+                const delegation = this.draft?.delegation || {};
+                if (this.profileEditMode === 'subagent') {
+                    return delegation.callable && delegation.allowAsSubagent
+                        ? tr('callableSubAgent')
+                        : tr('notCallable');
+                }
+                return delegation.canDelegate ? tr('canDelegate') : tr('delegationOff');
+            },
+            availablePresetOptions() {
+                const names = [...this.presetOptions];
+                const selected = this.draft?.preset?.mode === 'ref' ? String(this.draft.preset.ref?.name || '').trim() : '';
+                if (selected && !names.includes(selected)) {
+                    names.push(selected);
+                }
+                return names;
+            },
+            modelSummaryLabel() {
+                const model = this.draft?.model || {};
+                if (model.mode !== 'connectionRef') {
+                    return tr('currentChatModel');
+                }
+                const target = this.selectedModelTarget;
+                if (target) {
+                    return target.name || target.model;
+                }
+                return model.modelId || model.connectionRef || tr('savedModel');
+            },
+            selectedModelTarget() {
+                return findModelTargetForBinding(this.modelTargets, this.draft?.model);
+            },
+            selectedModelTargetId() {
+                return this.selectedModelTarget?.id || '';
+            },
+            hasExternalModelBinding() {
+                return this.draft?.model?.mode === 'connectionRef' && !this.selectedModelTarget;
             },
             toolGroupsWithTools() {
                 const groupedTools = new Set();
@@ -181,7 +296,12 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     if (!this.tabs.some((tab) => tab.id === this.settings.activeTab)) {
                         this.settings = await patchSettings(this.settings, { activeTab: 'profiles' });
                     }
-                    await Promise.all([this.refreshToolSpecs(), this.refreshProfiles()]);
+                    await Promise.all([
+                        this.refreshToolSpecs(),
+                        this.refreshProfiles(),
+                        this.refreshPresetOptions(),
+                        this.refreshModelTargets(),
+                    ]);
                     this.selectedProfileId = this.settings.selectedProfileId || DEFAULT_PROFILE_ID;
                     await this.selectProfile(this.selectedProfileId);
                     this.initialized = true;
@@ -204,6 +324,62 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             async setTab(tab) {
                 await this.saveSettingsPatch({ activeTab: tab });
             },
+            setProfileEditMode(mode) {
+                if (!PROFILE_EDIT_MODES.some((item) => item.id === mode)) {
+                    throw new Error(`Unsupported Agent profile edit mode: ${mode}`);
+                }
+                const previousMode = this.profileEditMode;
+                if (previousMode === 'main' && mode !== 'main') {
+                    this.rememberMainAgentPresentation();
+                }
+                this.profileEditMode = mode;
+                this.applySubAgentPresentationPolicy();
+                if (mode === 'main' && previousMode !== 'main') {
+                    this.restoreMainAgentPresentation();
+                }
+                const firstSection = this.visibleProfileSections[0]?.id;
+                if (firstSection) {
+                    this.activeProfileSectionId = firstSection;
+                }
+            },
+            profilePresentationMemoryKey() {
+                return String(this.draft?.id || this.selectedProfileId || DEFAULT_PROFILE_ID).trim() || DEFAULT_PROFILE_ID;
+            },
+            rememberMainAgentPresentation() {
+                if (!this.draft?.run) {
+                    return;
+                }
+                this.mainAgentPresentationByProfileId[this.profilePresentationMemoryKey()] = this.draft.run.presentation || 'foreground';
+            },
+            seedMainAgentPresentation() {
+                this.rememberMainAgentPresentation();
+            },
+            restoreMainAgentPresentation() {
+                if (!this.draft?.run) {
+                    return;
+                }
+                this.draft.run.presentation = this.mainAgentPresentationByProfileId[this.profilePresentationMemoryKey()] || 'foreground';
+            },
+            applySubAgentPresentationPolicy() {
+                if (!this.draft?.run || !this.isSubAgentPresentationLocked) {
+                    return;
+                }
+                if (!Object.prototype.hasOwnProperty.call(this.mainAgentPresentationByProfileId, this.profilePresentationMemoryKey())) {
+                    this.seedMainAgentPresentation();
+                }
+                // Return-mode SubAgents finish through task.return, so the editor view must not leave them in foreground chat-commit mode.
+                this.draft.run.presentation = 'background';
+            },
+            scrollToProfileSection(sectionId) {
+                if (!this.visibleProfileSections.some((section) => section.id === sectionId)) {
+                    throw new Error(`Unknown Agent profile section: ${sectionId}`);
+                }
+                this.activeProfileSectionId = sectionId;
+                this.$nextTick(() => {
+                    const section = this.$el?.querySelector?.(`[data-ttas-profile-section="${sectionId}"]`);
+                    section?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+                });
+            },
             async setDefaultProfile(profileId) {
                 this.selectedProfileId = profileId;
                 await this.saveSettingsPatch({ selectedProfileId: profileId });
@@ -223,10 +399,26 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 }
                 const result = await api.list();
                 this.toolSpecs = result.tools;
-                this.toolNames = this.toolSpecs.map((tool) => tool.name);
+                this.toolNames = this.toolSpecs
+                    .map((tool) => tool.name)
+                    .filter((tool) => !PROFILE_TOOL_MATRIX_HIDDEN.has(tool));
                 if (!this.toolNames.includes(this.selectedToolName)) {
                     this.selectedToolName = this.toolNames[0];
                 }
+            },
+            async refreshPresetOptions() {
+                const manager = requireSillyTavernContext().getPresetManager?.(CHAT_COMPLETION_PRESET_API_ID);
+                if (!manager) {
+                    throw new Error(tr('presetManagerUnavailable'));
+                }
+                this.presetOptions = manager
+                    .getAllPresets()
+                    .map((name) => String(name || '').trim())
+                    .filter((name) => name && manager.findPreset(name) !== 'gui')
+                    .sort((a, b) => a.localeCompare(b));
+            },
+            async refreshModelTargets() {
+                this.modelTargets = listSavedModelTargets();
             },
             async selectProfile(profileId) {
                 const id = profileId || DEFAULT_PROFILE_ID;
@@ -240,6 +432,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 }
                 this.selectedProfileId = id;
                 this.draft = profileForEdit(result.profile);
+                this.seedMainAgentPresentation();
+                this.applySubAgentPresentationPolicy();
                 this.resolvedAgentSystemPrompt = normalizeResolvedAgentSystemPrompt(promptResult);
                 this.refreshDraftJson();
             },
@@ -250,12 +444,16 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 const parsed = JSON.parse(this.draftJson);
                 this.draft = profileForEdit(parsed);
                 this.selectedProfileId = parsed.id;
+                this.seedMainAgentPresentation();
+                this.applySubAgentPresentationPolicy();
                 this.resolvedAgentSystemPrompt = '';
             },
             newProfile() {
                 const id = this.nextProfileId('agent-profile');
                 this.selectedProfileId = id;
                 this.draft = profileForEdit(defaultProfile(id));
+                this.seedMainAgentPresentation();
+                this.applySubAgentPresentationPolicy();
                 this.resolvedAgentSystemPrompt = '';
                 this.refreshDraftJson();
             },
@@ -266,6 +464,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 copy.displayName = tr('copyDisplayName', { name: copy.displayName });
                 this.selectedProfileId = id;
                 this.draft = profileForEdit(copy);
+                this.seedMainAgentPresentation();
+                this.applySubAgentPresentationPolicy();
                 this.resolvedAgentSystemPrompt = '';
                 this.refreshDraftJson();
             },
@@ -274,6 +474,153 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     return;
                 }
                 this.draft.instructions.agentSystemPrompt = event.target.value;
+            },
+            setPresetMode(mode) {
+                if (this.isBuiltinProfile) {
+                    return;
+                }
+                if (mode === 'currentPromptSnapshot') {
+                    this.draft.preset = {
+                        mode: 'currentPromptSnapshot',
+                        required: false,
+                    };
+                    return;
+                }
+                if (mode === 'none') {
+                    this.draft.preset = {
+                        mode: 'none',
+                        required: false,
+                    };
+                    return;
+                }
+                if (mode !== 'ref') {
+                    throw new Error(`Unsupported preset mode: ${mode}`);
+                }
+
+                const name = String(this.draft.preset?.ref?.name || this.presetOptions[0] || '').trim();
+                this.draft.preset = {
+                    mode: 'ref',
+                    ref: {
+                        apiId: CHAT_COMPLETION_PRESET_API_ID,
+                        name,
+                    },
+                    required: true,
+                };
+            },
+            setPresetName(name) {
+                if (this.isBuiltinProfile) {
+                    return;
+                }
+                this.draft.preset = {
+                    mode: 'ref',
+                    ref: {
+                        apiId: CHAT_COMPLETION_PRESET_API_ID,
+                        name: String(name || '').trim(),
+                    },
+                    required: true,
+                };
+            },
+            setModelMode(mode) {
+                if (this.isBuiltinProfile) {
+                    return;
+                }
+                if (mode === 'currentPromptSnapshot') {
+                    this.draft.model = {
+                        mode: 'currentPromptSnapshot',
+                    };
+                    return;
+                }
+                if (mode !== 'connectionRef') {
+                    throw new Error(`Unsupported model mode: ${mode}`);
+                }
+                if (this.draft.model?.mode === 'connectionRef') {
+                    return;
+                }
+                const target = this.modelTargets[0];
+                if (!target) {
+                    throw new Error(tr('noSavedModelTargets'));
+                }
+                this.draft.model = modelBindingFromTarget(target);
+            },
+            setModelTarget(targetId) {
+                if (this.isBuiltinProfile) {
+                    return;
+                }
+                const target = this.modelTargets.find((item) => item.id === targetId);
+                if (!target) {
+                    throw new Error(tr('savedModelTargetNotFound', { id: targetId }));
+                }
+                this.draft.model = modelBindingFromTarget(target);
+            },
+            modelTargetBadges(target) {
+                const badges = [
+                    String(target.api || '').trim(),
+                    String(target['custom-api-format'] || '').trim(),
+                    String(target.model || '').trim(),
+                ].filter(Boolean);
+                if (target['api-url']) {
+                    badges.push(String(target['api-url']).trim());
+                }
+                return badges;
+            },
+            setCanDelegate(enabled) {
+                if (this.isBuiltinProfile) {
+                    return;
+                }
+                this.draft.delegation.canDelegate = Boolean(enabled);
+                this.syncDelegationTools();
+            },
+            setRunPresentation(presentation) {
+                if (this.isBuiltinProfile) {
+                    return;
+                }
+                if (this.isSubAgentPresentationLocked) {
+                    throw new Error('SubAgent presentation is locked to background while this profile is available as a SubAgent.');
+                }
+                if (presentation !== 'foreground' && presentation !== 'background') {
+                    throw new Error(`Unsupported Agent run presentation: ${presentation}`);
+                }
+                this.draft.run.presentation = presentation;
+                if (this.profileEditMode === 'main') {
+                    this.rememberMainAgentPresentation();
+                }
+            },
+            setCallableAsSubAgent(enabled) {
+                if (this.isBuiltinProfile) {
+                    return;
+                }
+                const isEnabled = Boolean(enabled);
+                this.draft.delegation.allowAsSubagent = isEnabled;
+                this.draft.delegation.callable = isEnabled || Boolean(this.draft.delegation.allowAsHandoffTarget);
+                if (isEnabled) {
+                    this.applySubAgentPresentationPolicy();
+                }
+            },
+            syncDelegationTools() {
+                const allow = new Set(Array.isArray(this.draft?.tools?.allow) ? this.draft.tools.allow : []);
+                if (this.draft.delegation.canDelegate) {
+                    for (const tool of AGENT_DELEGATION_TOOLS) {
+                        allow.add(tool);
+                    }
+                } else {
+                    allow.delete('agent.delegate');
+                    allow.delete('agent.await');
+                    if (!this.draft.delegation.canHandoff) {
+                        allow.delete('agent.list');
+                    }
+                }
+                const allToolNames = this.toolSpecs.map((tool) => tool.name);
+                this.draft.tools.allow = [
+                    ...allToolNames.filter((tool) => allow.has(tool)),
+                    ...[...allow].filter((tool) => !allToolNames.includes(tool)),
+                ].filter((tool) => !RUNTIME_ONLY_TOOLS.includes(tool));
+            },
+            async persistProfileModelBinding(profile) {
+                const target = findModelTargetForBinding(this.modelTargets, profile.model);
+                if (!target) {
+                    return;
+                }
+                await saveModelTargetAsLlmConnection(target);
             },
             nextProfileId(base) {
                 const normalized = normalizeProfileId(base) || 'agent-profile';
@@ -415,7 +762,12 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     }
                     allow.delete(toolName);
                 }
-                this.draft.tools.allow = this.toolNames.filter((tool) => allow.has(tool));
+                const hiddenAllowed = this.draft.tools.allow
+                    .filter((tool) => PROFILE_TOOL_MATRIX_HIDDEN.has(tool) && !RUNTIME_ONLY_TOOLS.includes(tool));
+                this.draft.tools.allow = [
+                    ...hiddenAllowed,
+                    ...this.toolNames.filter((tool) => allow.has(tool)),
+                ];
             },
             workspaceRootIcon(root) {
                 return WORKSPACE_ROOT_ICONS[root] || 'fa-folder';
@@ -427,6 +779,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.saving = true;
                 try {
                     const profile = normalizeProfileForSave(this.draft);
+                    await this.persistProfileModelBinding(profile);
                     await requireAgentApi().profiles.save({ profile });
                     await this.refreshProfiles();
                     await this.setDefaultProfile(profile.id);
@@ -533,6 +886,20 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     <small v-if="profile.description">{{ profile.description }}</small>
                                 </button>
                             </aside>
+                            <nav class="ttas-section-rail" :aria-label="tr('profileSections')">
+                                <button
+                                    v-for="section in visibleProfileSections"
+                                    :key="section.id"
+                                    type="button"
+                                    class="ttas-section-jump"
+                                    :class="{ active: activeProfileSectionId === section.id }"
+                                    :title="tr(section.labelKey)"
+                                    @click="scrollToProfileSection(section.id)"
+                                >
+                                    <i class="fa-solid" :class="section.icon"></i>
+                                    <span>{{ tr(section.labelKey) }}</span>
+                                </button>
+                            </nav>
                             <div class="ttas-editor">
                                 <label class="ttas-mobile-select ttas-field">
                                     <span>{{ tr('profiles') }}</span>
@@ -569,6 +936,19 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                             <span>{{ tr('delete') }}</span>
                                         </button>
                                     </div>
+                                    <div class="ttas-profile-mode-switch" :aria-label="tr('profileView')">
+                                        <button
+                                            v-for="mode in profileEditModes"
+                                            :key="mode.id"
+                                            type="button"
+                                            class="menu_button menu_button_icon"
+                                            :class="{ active: profileEditMode === mode.id }"
+                                            @click="setProfileEditMode(mode.id)"
+                                        >
+                                            <i class="fa-solid" :class="mode.icon"></i>
+                                            <span>{{ tr(mode.labelKey) }}</span>
+                                        </button>
+                                    </div>
                                     <div class="ttas-stat-grid">
                                         <div v-for="stat in profileStats" :key="stat.label" class="ttas-stat">
                                             <i class="fa-solid" :class="stat.icon"></i>
@@ -578,7 +958,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </div>
                                 </div>
 
-                                <div class="ttas-section">
+                                <div class="ttas-section" data-ttas-profile-section="identity">
                                     <div class="ttas-section-title">
                                         <i class="fa-solid fa-fingerprint"></i>
                                         <h4>{{ tr('identity') }}</h4>
@@ -599,7 +979,133 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </div>
                                 </div>
 
-                                <div class="ttas-section">
+                                <div class="ttas-section" data-ttas-profile-section="binding">
+                                    <div class="ttas-section-title">
+                                        <i class="fa-solid fa-sliders"></i>
+                                        <h4>{{ tr('presetAndModel') }}</h4>
+                                    </div>
+                                    <div class="ttas-form-grid">
+                                        <label class="ttas-field">
+                                            <span>{{ tr('presetSource') }}</span>
+                                            <select :value="draft.preset.mode" :disabled="isBuiltinProfile" @change="setPresetMode($event.target.value)">
+                                                <option value="currentPromptSnapshot">{{ tr('currentPromptPreset') }}</option>
+                                                <option value="ref">{{ tr('savedChatCompletionPreset') }}</option>
+                                                <option value="none">{{ tr('noPromptPreset') }}</option>
+                                            </select>
+                                        </label>
+                                        <label v-if="draft.preset.mode === 'ref'" class="ttas-field">
+                                            <span>{{ tr('savedPreset') }}</span>
+                                            <select :value="draft.preset.ref?.name || ''" :disabled="isBuiltinProfile" @change="setPresetName($event.target.value)">
+                                                <option v-if="availablePresetOptions.length === 0" value="">{{ tr('none') }}</option>
+                                                <option v-for="name in availablePresetOptions" :key="name" :value="name">{{ name }}</option>
+                                            </select>
+                                        </label>
+                                        <div v-else class="ttas-binding-status">
+                                            <i class="fa-solid fa-scroll"></i>
+                                            <strong>{{ presetSummaryLabel }}</strong>
+                                            <span>{{ tr('preset') }}</span>
+                                        </div>
+
+                                        <label class="ttas-field">
+                                            <span>{{ tr('modelSource') }}</span>
+                                            <select :value="draft.model.mode" :disabled="isBuiltinProfile" @change="setModelMode($event.target.value)">
+                                                <option value="currentPromptSnapshot">{{ tr('currentChatModel') }}</option>
+                                                <option value="connectionRef" :disabled="modelTargets.length === 0 && draft.model.mode !== 'connectionRef'">{{ tr('savedModelTarget') }}</option>
+                                            </select>
+                                        </label>
+                                        <label v-if="draft.model.mode === 'connectionRef' && modelTargets.length > 0" class="ttas-field">
+                                            <span>{{ tr('savedModel') }}</span>
+                                            <select :value="selectedModelTargetId" :disabled="isBuiltinProfile" @change="setModelTarget($event.target.value)">
+                                                <option v-if="hasExternalModelBinding" value="">{{ modelSummaryLabel }}</option>
+                                                <option v-for="target in modelTargets" :key="target.id" :value="target.id">{{ target.name || target.model }}</option>
+                                            </select>
+                                        </label>
+                                        <div v-else class="ttas-binding-status">
+                                            <i class="fa-solid fa-microchip"></i>
+                                            <strong>{{ modelSummaryLabel }}</strong>
+                                            <span>{{ tr('model') }}</span>
+                                        </div>
+
+                                        <div v-if="selectedModelTarget" class="ttas-binding-summary ttas-span-2">
+                                            <i class="fa-solid fa-plug-circle-check"></i>
+                                            <div>
+                                                <strong>{{ selectedModelTarget.name || selectedModelTarget.model }}</strong>
+                                                <div class="ttas-tool-badge-row">
+                                                    <span v-for="badge in modelTargetBadges(selectedModelTarget)" :key="badge">{{ badge }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div v-else-if="hasExternalModelBinding" class="ttas-binding-summary ttas-binding-warning ttas-span-2">
+                                            <i class="fa-solid fa-link"></i>
+                                            <div>
+                                                <strong>{{ draft.model.connectionRef }}</strong>
+                                                <span>{{ draft.model.modelId }}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div v-if="profileEditMode === 'main'" class="ttas-section" data-ttas-profile-section="main-delegation">
+                                    <div class="ttas-section-title">
+                                        <i class="fa-solid fa-diagram-project"></i>
+                                        <h4>{{ tr('mainAgentControl') }}</h4>
+                                    </div>
+                                    <div class="ttas-delegation-panel">
+                                        <label class="ttas-switch-row">
+                                            <input type="checkbox" :checked="draft.delegation.canDelegate" :disabled="isBuiltinProfile" @change="setCanDelegate($event.target.checked)" />
+                                            <span>
+                                                <strong>{{ tr('delegateToSubAgents') }}</strong>
+                                                <small>{{ tr('delegateToSubAgentsHint') }}</small>
+                                            </span>
+                                        </label>
+                                        <div v-if="draft.delegation.canDelegate" class="ttas-form-grid ttas-delegation-controls">
+                                            <label class="ttas-field">
+                                                <span>{{ tr('maxConcurrentSubAgents') }}</span>
+                                                <input class="text_pole" type="number" min="1" v-model.number="draft.delegation.maxConcurrentInvocations" :disabled="isBuiltinProfile" />
+                                            </label>
+                                            <label class="ttas-field">
+                                                <span>{{ tr('maxSubAgentTasks') }}</span>
+                                                <input class="text_pole" type="number" min="1" v-model.number="draft.delegation.maxInvocationsPerRun" :disabled="isBuiltinProfile" />
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div v-if="profileEditMode === 'subagent'" class="ttas-section" data-ttas-profile-section="subagent-access">
+                                    <div class="ttas-section-title">
+                                        <i class="fa-solid fa-people-arrows"></i>
+                                        <h4>{{ tr('subAgentAccess') }}</h4>
+                                    </div>
+                                    <div class="ttas-delegation-panel">
+                                        <label class="ttas-switch-row">
+                                            <input type="checkbox" :checked="draft.delegation.callable && draft.delegation.allowAsSubagent" :disabled="isBuiltinProfile" @change="setCallableAsSubAgent($event.target.checked)" />
+                                            <span>
+                                                <strong>{{ tr('callableSubAgentToggle') }}</strong>
+                                                <small>{{ tr('callableSubAgentHint') }}</small>
+                                            </span>
+                                        </label>
+                                        <div v-if="draft.delegation.callable && draft.delegation.allowAsSubagent" class="ttas-form-grid ttas-delegation-controls">
+                                            <label class="ttas-field ttas-span-2">
+                                                <span>{{ tr('agentFacingDescription') }}</span>
+                                                <textarea class="text_pole textarea_compact" rows="4" v-model="draft.delegation.descriptionForAgents" :disabled="isBuiltinProfile" :placeholder="draft.description"></textarea>
+                                                <small class="ttas-field-hint">
+                                                    <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                                                    <span>{{ tr('agentFacingDescriptionHint') }}</span>
+                                                </small>
+                                            </label>
+                                            <label class="ttas-field ttas-span-2">
+                                                <span>{{ tr('allowedCallers') }}</span>
+                                                <input class="text_pole" v-model="draft.delegation.allowedCallersCsv" :disabled="isBuiltinProfile" />
+                                                <small class="ttas-field-hint">
+                                                    <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                                                    <span>{{ tr('allowedCallersHint') }}</span>
+                                                </small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="ttas-section" data-ttas-profile-section="run">
                                     <div class="ttas-section-title">
                                         <i class="fa-solid fa-gauge-high"></i>
                                         <h4>{{ tr('runPolicy') }}</h4>
@@ -607,7 +1113,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     <div class="ttas-form-grid">
                                         <label class="ttas-field">
                                             <span>{{ tr('presentation') }}</span>
-                                            <select v-model="draft.run.presentation" :disabled="isBuiltinProfile">
+                                            <select :value="draft.run.presentation" :disabled="isBuiltinProfile || isSubAgentPresentationLocked" @change="setRunPresentation($event.target.value)">
                                                 <option value="foreground">{{ tr('foreground') }}</option>
                                                 <option value="background">{{ tr('background') }}</option>
                                             </select>
@@ -637,7 +1143,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </div>
                                 </div>
 
-                                <div class="ttas-section">
+                                <div class="ttas-section" data-ttas-profile-section="context">
                                     <div class="ttas-section-title">
                                         <i class="fa-solid fa-layer-group"></i>
                                         <h4>{{ tr('initialContext') }}</h4>
@@ -658,7 +1164,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </div>
                                 </div>
 
-                                <div class="ttas-section">
+                                <div class="ttas-section" data-ttas-profile-section="prompt">
                                     <div class="ttas-section-title">
                                         <i class="fa-solid fa-terminal"></i>
                                         <h4>{{ tr('prompt') }}</h4>
@@ -669,7 +1175,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </label>
                                 </div>
 
-                                <div class="ttas-section">
+                                <div class="ttas-section" data-ttas-profile-section="tools">
                                     <div class="ttas-section-title">
                                         <i class="fa-solid fa-screwdriver-wrench"></i>
                                         <h4>{{ tr('capabilityMatrix') }}</h4>
@@ -784,7 +1290,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </div>
                                 </div>
 
-                                <div class="ttas-section">
+                                <div class="ttas-section" data-ttas-profile-section="skills">
                                     <div class="ttas-section-title">
                                         <i class="fa-solid fa-book"></i>
                                         <h4>{{ tr('skillAccess') }}</h4>
@@ -809,7 +1315,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </div>
                                 </div>
 
-                                <div class="ttas-section">
+                                <div class="ttas-section" data-ttas-profile-section="workspace">
                                     <div class="ttas-section-title">
                                         <i class="fa-solid fa-folder-tree"></i>
                                         <h4>{{ tr('workspaceAccess') }}</h4>
@@ -832,7 +1338,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </div>
                                 </div>
 
-                                <div class="ttas-section">
+                                <div v-if="profileEditMode === 'main'" class="ttas-section" data-ttas-profile-section="output">
                                     <div class="ttas-section-title">
                                         <i class="fa-solid fa-file-lines"></i>
                                         <h4>{{ tr('outputArtifact') }}</h4>
@@ -849,7 +1355,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </div>
                                 </div>
 
-                                <div class="ttas-section ttas-json-section">
+                                <div class="ttas-section ttas-json-section" data-ttas-profile-section="json">
                                     <div class="ttas-pane-header">
                                         <div class="ttas-section-title">
                                             <i class="fa-solid fa-code"></i>
