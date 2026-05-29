@@ -1,8 +1,9 @@
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::policy::apply_child_invocation_policy;
 use super::rendering::render_child_task_prompt;
 use super::task_status::task_is_terminal;
+use crate::application::dto::agent_dto::AgentPromptAssemblyScopeDto;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_profile_service::{
     AgentProfileResolveInput, materialize_agent_system_prompt,
@@ -13,7 +14,7 @@ use crate::application::services::agent_runtime_service::commit_ledger::RunCommi
 use crate::application::services::agent_runtime_service::prompt_snapshot::{
     prepare_agent_tool_request, request_from_prompt_snapshot, request_summary,
 };
-use crate::domain::models::agent::profile::ResolvedAgentProfile;
+use crate::domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
 use crate::domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentRunEventLevel, AgentTaskStatus,
     WorkspacePath,
@@ -131,28 +132,57 @@ impl AgentRuntimeService {
                 "agent.invalid_prompt_snapshot: input/prompt_snapshot.json is invalid JSON: {error}"
             ))
         })?;
-        let mut request = request_from_prompt_snapshot(&prompt_snapshot)?;
-        self.resolve_model_binding(run_id, &profile, &mut request)
-            .await?;
-
         let visible_tools = self.visible_tool_specs_for_invocation(
             &profile,
             AgentInvocationExitPolicy::TaskReturnRequired,
         )?;
-        let system_prompt = materialize_agent_system_prompt(&visible_tools, &profile);
-        request.payload.insert(
-            "messages".to_string(),
-            json!([
-                {
-                    "role": "system",
-                    "content": system_prompt
+        let run = self.run_repository.load_run(run_id).await?;
+        let child_task_prompt = render_child_task_prompt(&task);
+        let child_prompt_snapshot = if profile.preset.mode == AgentPresetBindingMode::Ref {
+            self.assemble_invocation_prompt_snapshot(
+                run_id,
+                invocation_id,
+                &profile,
+                &visible_tools,
+                run.generation_type.as_str(),
+                frozen_run_input_snapshot_from_prompt_snapshot(&prompt_snapshot)?,
+                AgentPromptAssemblyScopeDto {
+                    run_id: run_id.to_string(),
+                    invocation_id: invocation_id.to_string(),
+                    invocation_kind: "subagent".to_string(),
+                    parent_invocation_id: Some(task.parent_invocation_id.clone()),
+                    task_id: Some(task.id.clone()),
+                    exit_policy: Some("taskReturnRequired".to_string()),
                 },
-                {
-                    "role": "user",
-                    "content": render_child_task_prompt(&task)
-                }
-            ]),
-        );
+                child_task_prompt.clone(),
+                cancel,
+            )
+            .await?
+        } else {
+            None
+        };
+        let mut request = if let Some(child_prompt_snapshot) = child_prompt_snapshot {
+            request_from_prompt_snapshot(&child_prompt_snapshot)?
+        } else {
+            let mut request = request_from_prompt_snapshot(&prompt_snapshot)?;
+            let system_prompt = materialize_agent_system_prompt(&visible_tools, &profile);
+            request.payload.insert(
+                "messages".to_string(),
+                json!([
+                    {
+                        "role": "system",
+                        "content": system_prompt
+                    },
+                    {
+                        "role": "user",
+                        "content": child_task_prompt
+                    }
+                ]),
+            );
+            request
+        };
+        self.resolve_model_binding(run_id, &profile, &mut request)
+            .await?;
         let request = prepare_agent_tool_request(request, &visible_tools, run_id, invocation_id)?;
         self.event(
             run_id,
@@ -219,4 +249,30 @@ impl AgentRuntimeService {
             )
             .await
     }
+}
+
+fn frozen_run_input_snapshot_from_prompt_snapshot(
+    prompt_snapshot: &Value,
+) -> Result<Value, ApplicationError> {
+    let object = prompt_snapshot_object(prompt_snapshot)?;
+    object
+        .get("frozenRunInputSnapshot")
+        .or_else(|| object.get("frozen_run_input_snapshot"))
+        .cloned()
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.child_prompt_assembly_frozen_snapshot_required: child preset prompt assembly requires frozenRunInputSnapshot in input/prompt_snapshot.json"
+                    .to_string(),
+            )
+        })
+}
+
+fn prompt_snapshot_object(
+    prompt_snapshot: &Value,
+) -> Result<&Map<String, Value>, ApplicationError> {
+    prompt_snapshot.as_object().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "agent.invalid_prompt_snapshot: prompt snapshot must be an object".to_string(),
+        )
+    })
 }

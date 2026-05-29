@@ -1083,6 +1083,7 @@ class PromptManager {
      */
     normalizeAgentPromptMarkerDefinitions() {
         this.normalizeAgentSystemPromptDefinition();
+        this.normalizeAgentTaskPromptDefinition();
         this.normalizeAgentResultsPromptDefinition();
     }
 
@@ -1109,6 +1110,19 @@ class PromptManager {
             AGENT_RESULTS_PROMPT_IDENTIFIER,
             'Agent Results',
             'agent.results_prompt_definition_missing: Agent Results marker is missing',
+        );
+    }
+
+    /**
+     * Keep Agent Task as a PromptManager position marker only.
+     *
+     * @returns {void}
+     */
+    normalizeAgentTaskPromptDefinition() {
+        this.normalizeAgentPromptMarkerDefinition(
+            AGENT_TASK_PROMPT_IDENTIFIER,
+            'Agent Task',
+            'agent.task_prompt_definition_missing: Agent Task marker is missing',
         );
     }
 
@@ -1152,6 +1166,7 @@ class PromptManager {
     ensureAgentPromptOrderReferences() {
         const agentReferences = [
             { identifier: AGENT_SYSTEM_PROMPT_IDENTIFIER, before: 'main' },
+            { identifier: AGENT_TASK_PROMPT_IDENTIFIER, before: 'chatHistory' },
             { identifier: AGENT_RESULTS_PROMPT_IDENTIFIER },
         ];
 
@@ -2162,6 +2177,7 @@ class PromptManager {
 
 const AGENT_SYSTEM_PROMPT_IDENTIFIER = 'agentSystemPrompt';
 const AGENT_RESULTS_PROMPT_IDENTIFIER = 'agentResults';
+const AGENT_TASK_PROMPT_IDENTIFIER = 'agentTask';
 const AGENT_PROMPT_ROLES = new Set(['system', 'user', 'assistant']);
 
 function normalizeAgentPromptRole(value) {
@@ -2209,6 +2225,14 @@ const chatCompletionDefaultPrompts = {
         {
             'identifier': 'chatHistory',
             'name': 'Chat History',
+            'system_prompt': true,
+            'marker': true,
+        },
+        {
+            'identifier': AGENT_TASK_PROMPT_IDENTIFIER,
+            'name': 'Agent Task',
+            'role': 'user',
+            'content': '',
             'system_prompt': true,
             'marker': true,
         },
@@ -2314,6 +2338,10 @@ const promptManagerDefaultPromptOrder = [
     },
     {
         'identifier': 'dialogueExamples',
+        'enabled': true,
+    },
+    {
+        'identifier': AGENT_TASK_PROMPT_IDENTIFIER,
         'enabled': true,
     },
     {

@@ -733,16 +733,21 @@ test('PromptManager materializes reserved Agent prompts at PromptManager positio
 
     assert.match(promptManagerSource, /const AGENT_SYSTEM_PROMPT_IDENTIFIER = 'agentSystemPrompt';/);
     assert.match(promptManagerSource, /const AGENT_RESULTS_PROMPT_IDENTIFIER = 'agentResults';/);
+    assert.match(promptManagerSource, /const AGENT_TASK_PROMPT_IDENTIFIER = 'agentTask';/);
     assert.match(promptManagerSource, /normalizeAgentPromptRole/);
     assert.match(promptManagerSource, /normalizeAgentPromptMarkerDefinitions\(\)/);
     assert.match(promptManagerSource, /normalizeAgentSystemPromptDefinition\(\)/);
+    assert.match(promptManagerSource, /normalizeAgentTaskPromptDefinition\(\)/);
     assert.match(promptManagerSource, /normalizeAgentResultsPromptDefinition\(\)/);
+    assert.match(promptManagerSource, /agent\.task_prompt_definition_missing/);
     assert.match(promptManagerSource, /agent\.results_prompt_definition_missing/);
     assert.match(promptManagerSource, /marker:\s*true/);
     assert.doesNotMatch(promptManagerSource, /existing\.enabled\s*=\s*true/);
     assert.doesNotMatch(promptManagerSource, /case 'agentSystemPrompt':/);
 
     assert.match(openAiSource, /populateAgentSystemPrompt/);
+    assert.match(openAiSource, /populateAgentTaskPrompt/);
+    assert.match(openAiSource, /agentTaskPrompt/);
     assert.match(openAiSource, /Message\.fromPromptAsync\(materializedPrompt,\s*assemblyRuntime\.tokenHandler\)/);
     assert.doesNotMatch(openAiSource, /_tauritavern_agent_prompt_marker/);
     assert.doesNotMatch(openAiSource, /populateAgentSystemPromptMarker/);

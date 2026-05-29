@@ -9,12 +9,13 @@ use crate::app::AppState;
 use crate::application::dto::agent_dto::{
     AgentCancelRunDto, AgentListProfilesResultDto, AgentListToolSpecsResultDto,
     AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentPreparePromptAssemblyDto,
-    AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPruneChatPersistentStatesDto,
-    AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto, AgentReadEventsResultDto,
-    AgentReadModelTurnDto, AgentReadWorkspaceFileDto, AgentResolveChatCommitDto,
-    AgentResolvePersistentStateMetadataUpdateDto, AgentResolveSystemPromptDto,
-    AgentResolveSystemPromptResultDto, AgentRunHandleDto, AgentSaveProfileDto, AgentStartRunDto,
-    AgentWorkspaceFileDto,
+    AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto,
+    AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
+    AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
+    AgentReadWorkspaceFileDto, AgentResolveChatCommitDto,
+    AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
+    AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRunHandleDto,
+    AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
@@ -210,6 +211,22 @@ pub async fn read_agent_model_turn(
 }
 
 #[tauri::command]
+pub async fn read_agent_prompt_assembly_request(
+    dto: AgentReadPromptAssemblyRequestDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentPromptAssemblyBrokerRequestDto, CommandError> {
+    log_command("read_agent_prompt_assembly_request");
+
+    app_state
+        .agent_runtime_service
+        .read_prompt_assembly_request(dto)
+        .await
+        .map_err(map_command_error(
+            "Failed to read agent prompt assembly request",
+        ))
+}
+
+#[tauri::command]
 pub async fn resolve_agent_chat_commit(
     dto: AgentResolveChatCommitDto,
     app_state: State<'_, Arc<AppState>>,
@@ -221,6 +238,20 @@ pub async fn resolve_agent_chat_commit(
         .resolve_chat_commit(dto)
         .await
         .map_err(map_command_error("Failed to resolve agent chat commit"))
+}
+
+#[tauri::command]
+pub async fn resolve_agent_prompt_assembly(
+    dto: AgentResolvePromptAssemblyDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("resolve_agent_prompt_assembly");
+
+    app_state
+        .agent_runtime_service
+        .resolve_prompt_assembly(dto)
+        .await
+        .map_err(map_command_error("Failed to resolve agent prompt assembly"))
 }
 
 #[tauri::command]

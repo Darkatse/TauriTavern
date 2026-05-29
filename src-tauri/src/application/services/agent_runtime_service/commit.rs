@@ -503,6 +503,10 @@ impl AgentRuntimeService {
             .write()
             .await
             .retain(|_, pending| pending.run_id != run_id);
+        self.active_prompt_assemblies
+            .write()
+            .await
+            .retain(|_, pending| pending.run_id != run_id);
         self.active_persistent_state_metadata_updates
             .write()
             .await

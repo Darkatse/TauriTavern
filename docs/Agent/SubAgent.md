@@ -2,7 +2,7 @@
 
 本文档记录当前 return-mode SubAgent 的实现基线、核心契约、Agent-friendly 设计原则与代码定位。后续开发多 Agent、handoff、task cancel 与 invocation-scoped prompt assembly 前，应先读本文。
 
-当前状态截至 2026-05-28：已实现 `agent.list`、`agent.delegate`、`agent.await`、return-mode child invocation 的 `task.return`，以及 run-scoped `ActiveRunHandle` / `AgentTaskScheduler` 后台 worker 基线。`agent.handoff` 与模型可见 task cancel 工具仍是后续计划，当前没有模型可见 `agent.handoff` / `agent.cancel_task`。
+当前状态截至 2026-05-29：已实现 `agent.list`、`agent.delegate`、`agent.await`、return-mode child invocation 的 `task.return`，run-scoped `ActiveRunHandle` / `AgentTaskScheduler` 后台 worker 基线，以及 `preset.ref` child invocation 的 invocation-scoped PromptAssemblyBroker handshake。`agent.handoff` 与模型可见 task cancel 工具仍是后续计划，当前没有模型可见 `agent.handoff` / `agent.cancel_task`。
 
 ## 1. 设计目标
 
@@ -163,16 +163,12 @@ src-tauri/src/application/services/agent_runtime_service.rs
 
 ## 6. Prompt 与 Result
 
-child invocation 当前使用同一个 run 的 `input/prompt_snapshot.json` 作为 provider payload 基底，然后：
+child invocation 先解析 target Agent Profile 并应用 child policy。随后根据 target Profile 的 preset binding 选择组装路径：
 
-1. 解析 target Agent Profile。
-2. 应用 child policy。
-3. 调用 `resolve_model_binding()` 覆盖 target profile 的模型连接。
-4. 用 target profile 的 materialized Agent system prompt 替换 messages。
-5. 用 markdown task prompt 作为 user message。
-6. 生成 child invocation 自己的 provider_state session id：`runId:invocationId`。
+- `preset.mode = ref`：runtime 从 root `input/prompt_snapshot.json` 读取 `frozenRunInputSnapshot`，注册 pending broker request，并通过轻量 `prompt_assembly_requested` 事件通知前端。前端用 `read_agent_prompt_assembly_request` 按 `assemblyId` 读取完整 request，让 PromptAssemblyBroker 使用 target Profile 的 `preset.ref`、Agent system prompt、child task prompt 与 frozen input 重新组装 child prompt snapshot。前端完成后调用 `resolve_agent_prompt_assembly` 回填；runtime 校验 `contextPolicy`，把组装结果写入 `input/invocations/<childInvocationId>/prompt_snapshot.json`，并把 request metadata / result metadata 写入 `input/invocations/<childInvocationId>/prompt_assembly.json`，再进入 child tool loop。
+- `preset.mode = currentPromptSnapshot` / `none`：保持兼容路径，使用同一个 run 的 `input/prompt_snapshot.json` 作为 provider payload 基底，并由后端替换为 target Profile 的 materialized Agent system prompt + markdown task prompt。
 
-当前 child prompt assembly 是后端 runtime MVP，不是完整的前端 PromptAssemblyBroker handshake。也就是说，运行中 subagent 尚未完整复用 target profile 的独立 preset 组装流程；这是后续 invocation-scoped prompt assembly 的工作。
+两条路径都会在进入模型前调用 `resolve_model_binding()` 覆盖 target profile 的模型连接，并生成 child invocation 自己的 provider_state session id：`runId:invocationId`。
 
 task prompt 渲染在：
 

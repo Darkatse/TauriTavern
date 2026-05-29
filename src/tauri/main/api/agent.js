@@ -3,6 +3,9 @@
 import { buildAgentPromptSnapshotSeed } from './agent-prompt-snapshot.js';
 import { assemblePromptSnapshotForProfile, createPromptAssemblyApi } from './agent-prompt-assembly-run.js';
 import { attachHostCommitBridge } from './agent-chat-commit-bridge.js';
+import { attachHostPromptAssemblyBridge } from './agent-prompt-assembly-bridge.js';
+import { createSharedRunEventSubscribe } from './agent-run-event-subscription.js';
+import { normalizeAgentRunOptions } from './agent-run-options.js';
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../scripts/tauritavern/agent/agent-system-settings.js';
 import { emitAgentProfilesChanged } from '../../../scripts/tauritavern/agent/agent-profile-events.js';
 
@@ -23,7 +26,19 @@ function createAgentApi({ safeInvoke }) {
     async function startRunWithPromptSnapshot(input) {
         const dto = await normalizePromptSnapshotRunInput(input, { safeInvoke });
         const handle = await safeInvoke('start_agent_run', { dto });
-        attachHostCommitBridge({ runId: handle?.runId, safeInvoke, readWorkspaceFile, subscribe });
+        const hostSubscribe = createSharedRunEventSubscribe(handle?.runId, subscribe);
+        attachHostCommitBridge({
+            runId: handle?.runId,
+            safeInvoke,
+            readWorkspaceFile,
+            subscribe: hostSubscribe,
+        });
+        attachHostPromptAssemblyBridge({
+            runId: handle?.runId,
+            safeInvoke,
+            promptAssembly,
+            subscribe: hostSubscribe,
+        });
         return handle;
     }
 
@@ -257,38 +272,6 @@ function createAgentApi({ safeInvoke }) {
 
 function normalizeGenerationType(value) {
     return String(value || 'normal').trim() || 'normal';
-}
-
-function normalizeAgentRunOptions(value, presentationOverride = undefined) {
-    if (value != null && !isPlainObject(value)) {
-        throw new Error('agent.options_invalid: options must be an object');
-    }
-
-    const options = value || {};
-    if (options.stream === true) {
-        throw new Error('agent.phase2b_stream_unsupported: Agent Phase 2B only supports non-streaming model calls');
-    }
-    if (Object.prototype.hasOwnProperty.call(options, 'autoCommit')) {
-        throw new Error('agent.auto_commit_removed: Agent chat commits are driven by workspace.commit');
-    }
-    const presentation = normalizeAgentRunPresentation(presentationOverride ?? options.presentation);
-
-    return {
-        ...options,
-        stream: false,
-        ...(presentation ? { presentation } : {}),
-    };
-}
-
-function normalizeAgentRunPresentation(value) {
-    if (value == null || value === '') {
-        return undefined;
-    }
-    const presentation = String(value).trim();
-    if (presentation !== 'foreground' && presentation !== 'background') {
-        throw new Error('agent.presentation_invalid: presentation must be foreground or background');
-    }
-    return presentation;
 }
 
 async function normalizePromptSnapshotRunInput(input, { safeInvoke }) {

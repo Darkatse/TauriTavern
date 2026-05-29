@@ -40,6 +40,7 @@ export async function buildPromptAssemblySnapshot(input = {}) {
         jsonSchema: request.jsonSchema,
         agentMode: true,
         agentSystemPrompt: request.agentSystemPrompt,
+        agentTaskPrompt: request.agentTaskPrompt,
     });
 
     const payload = result.chatCompletionPayload;
@@ -109,6 +110,17 @@ async function normalizePromptAssemblyRequest(input) {
         : Object.prototype.hasOwnProperty.call(input, 'agent_system_prompt')
             ? normalizeAgentSystemPrompt(input.agent_system_prompt)
             : await loadResolvedAgentSystemPrompt(profileId);
+    const agentTaskPrompt = Object.prototype.hasOwnProperty.call(input, 'agentTaskPrompt')
+        ? normalizeOptionalPrompt(input.agentTaskPrompt)
+        : Object.prototype.hasOwnProperty.call(input, 'agent_task_prompt')
+            ? normalizeOptionalPrompt(input.agent_task_prompt)
+            : null;
+    const requiredAgentPromptComponents = normalizeRequiredAgentPromptComponents(
+        input.requiredAgentPromptComponents ?? input.required_agent_prompt_components,
+    );
+    if (requiredAgentPromptComponents.includes('agentTask') && !agentTaskPrompt) {
+        throw new Error('agent.task_prompt_required: prompt assembly request requires agentTaskPrompt');
+    }
 
     return {
         generationType,
@@ -118,6 +130,8 @@ async function normalizePromptAssemblyRequest(input) {
         jsonSchema: input.jsonSchema ?? input.json_schema ?? null,
         agentContextPolicy,
         agentSystemPrompt,
+        agentTaskPrompt,
+        requiredAgentPromptComponents,
         worldInfoActivation: frozenRunInputSnapshot.worldInfoActivation,
         macroContext,
         frozenRunInputSnapshot,
@@ -148,6 +162,23 @@ function normalizeGenerationType(value) {
 function normalizeOptionalString(value) {
     const text = String(value ?? '').trim();
     return text || undefined;
+}
+
+function normalizeOptionalPrompt(value) {
+    const text = String(value ?? '');
+    return text.trim() ? text : null;
+}
+
+function normalizeRequiredAgentPromptComponents(value) {
+    if (value == null) {
+        return [];
+    }
+    if (!Array.isArray(value)) {
+        throw new Error('prompt_assembly.required_components_invalid: requiredAgentPromptComponents must be an array');
+    }
+    return value
+        .map(component => String(component || '').trim())
+        .filter(Boolean);
 }
 
 function requirePlainObject(value, message) {

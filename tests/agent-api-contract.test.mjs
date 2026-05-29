@@ -197,3 +197,141 @@ test('agent chat commit bridge detaches on partial success terminal event', asyn
     listener({ type: 'run_partial_success', payload: { preservedCommitCount: 1 } });
     assert.equal(stopped, true);
 });
+
+test('agent prompt assembly bridge reads pending request by assembly id', async () => {
+    const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-prompt-assembly-bridge.js'));
+    moduleUrl.search = `?case=prompt-assembly-request-read-${Date.now()}`;
+    const { attachHostPromptAssemblyBridge } = await import(moduleUrl.href);
+    const calls = [];
+    let listener = null;
+    let seenRequest = null;
+
+    attachHostPromptAssemblyBridge({
+        runId: 'run-prompt-assembly',
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            if (command === 'read_agent_prompt_assembly_request') {
+                return {
+                    kind: 'tauritavern.agentPromptAssemblyRequest',
+                    schemaVersion: 1,
+                    frozenRunInputSnapshot: { promptInputs: {}, worldInfoActivation: {}, macroContext: {} },
+                    settings: { chat_completion_source: 'openai', openai_model: 'test-model' },
+                };
+            }
+            return {};
+        },
+        promptAssembly: {
+            async buildSnapshot(request) {
+                seenRequest = request;
+                return {
+                    promptSnapshot: {
+                        contextPolicy: {},
+                        chatCompletionPayload: { messages: [{ role: 'user', content: 'assembled' }] },
+                    },
+                    frozenRunInputSnapshot: request.frozenRunInputSnapshot,
+                    generationIntent: { source: 'test' },
+                    assembly: { engine: 'test' },
+                };
+            },
+        },
+        subscribe(runId, handler) {
+            assert.equal(runId, 'run-prompt-assembly');
+            listener = handler;
+            return () => {};
+        },
+    });
+
+    listener({
+        type: 'prompt_assembly_requested',
+        payload: {
+            assemblyId: 'prompt_assembly_1',
+            requestKind: 'tauritavern.agentPromptAssemblyRequest',
+        },
+    });
+
+    await waitFor(() => calls.some(call => call.command === 'resolve_agent_prompt_assembly'));
+
+    assert.equal(seenRequest.kind, 'tauritavern.agentPromptAssemblyRequest');
+    assert.deepEqual(calls.map(call => call.command), [
+        'read_agent_prompt_assembly_request',
+        'resolve_agent_prompt_assembly',
+    ]);
+    assert.deepEqual(calls[0].args, {
+        dto: {
+            runId: 'run-prompt-assembly',
+            assemblyId: 'prompt_assembly_1',
+        },
+    });
+    assert.equal(calls[1].args.dto.assemblyId, 'prompt_assembly_1');
+    assert.equal(calls[1].args.dto.promptSnapshot.chatCompletionPayload.messages[0].content, 'assembled');
+});
+
+test('shared agent run event subscription fans out over one backend poller', async () => {
+    const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-run-event-subscription.js'));
+    moduleUrl.search = `?case=shared-run-event-subscription-${Date.now()}`;
+    const { createSharedRunEventSubscribe } = await import(moduleUrl.href);
+    const firstEvents = [];
+    const secondEvents = [];
+    const firstErrors = [];
+    const secondErrors = [];
+    let pollStarts = 0;
+    let pollStops = 0;
+    let dispatch = null;
+    let dispatchError = null;
+
+    const subscribe = createSharedRunEventSubscribe('run-shared', (runId, handler, options = {}) => {
+        pollStarts += 1;
+        assert.equal(runId, 'run-shared');
+        dispatch = handler;
+        dispatchError = options.onError;
+        return () => {
+            pollStops += 1;
+        };
+    });
+
+    const stopFirst = subscribe('run-shared', event => {
+        firstEvents.push(event.type);
+    }, {
+        onError(error) {
+            firstErrors.push(String(error?.message ?? error));
+        },
+    });
+    const stopSecond = subscribe('run-shared', event => {
+        secondEvents.push(event.type);
+    }, {
+        onError(error) {
+            secondErrors.push(String(error?.message ?? error));
+        },
+    });
+
+    assert.equal(pollStarts, 1);
+    dispatch({ type: 'context_assembled' });
+    dispatchError(new Error('poll failed'));
+    assert.deepEqual(firstEvents, ['context_assembled']);
+    assert.deepEqual(secondEvents, ['context_assembled']);
+    assert.deepEqual(firstErrors, ['poll failed']);
+    assert.deepEqual(secondErrors, ['poll failed']);
+
+    stopFirst();
+    assert.equal(pollStops, 0);
+    dispatch({ type: 'prompt_assembly_requested' });
+    assert.deepEqual(firstEvents, ['context_assembled']);
+    assert.deepEqual(secondEvents, ['context_assembled', 'prompt_assembly_requested']);
+
+    stopSecond();
+    assert.equal(pollStops, 1);
+    assert.throws(
+        () => subscribe('another-run', () => {}),
+        /agent\.subscribe_run_mismatch/,
+    );
+});
+
+async function waitFor(predicate) {
+    for (let i = 0; i < 20; i += 1) {
+        if (predicate()) {
+            return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    assert.fail('condition was not met');
+}

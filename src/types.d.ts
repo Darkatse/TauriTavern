@@ -268,6 +268,8 @@ type TauriTavernAgentPromptAssemblyApi = {
         agentContextPolicy?: Record<string, any>;
         contextPolicy?: Record<string, any>;
         agentSystemPrompt?: string | null;
+        agentTaskPrompt?: string | null;
+        requiredAgentPromptComponents?: string[];
         jsonSchema?: any;
     }) => Promise<{
         promptSnapshot: any;

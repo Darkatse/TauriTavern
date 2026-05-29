@@ -271,7 +271,7 @@ pub(super) async fn build_services(
         repositories.secret_repository.clone(),
         ios_policy.clone(),
     ));
-    let agent_runtime_service = Arc::new(AgentRuntimeService::new(
+    let agent_runtime_service = Arc::new(AgentRuntimeService::new_with_prompt_assembly_service(
         repositories.agent_run_repository.clone(),
         repositories.agent_invocation_repository.clone(),
         repositories.workspace_repository.clone(),
@@ -284,6 +284,7 @@ pub(super) async fn build_services(
         )),
         agent_profile_service.clone(),
         llm_connection_service.clone(),
+        prompt_assembly_service.clone(),
     ));
     let agent_workspace_lifecycle_service = Arc::new(AgentWorkspaceLifecycleService::new(
         repositories.agent_workspace_lifecycle_repository.clone(),

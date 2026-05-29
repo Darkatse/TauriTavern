@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use crate::application::dto::agent_dto::{
     AgentPreparePromptAssemblyDto, AgentPreparePromptAssemblyResultDto,
     AgentPromptAssemblyBrokerRequestDto, AgentPromptAssemblyFingerprintDto,
-    AgentPromptAssemblyModeDto, AgentPromptAssemblyRequestMetadataDto,
+    AgentPromptAssemblyModeDto, AgentPromptAssemblyRequestMetadataDto, AgentPromptAssemblyScopeDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_profile_service::{
@@ -84,6 +84,14 @@ pub struct PromptAssemblyService {
     llm_connection_service: Arc<LlmConnectionService>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentInvocationPromptAssemblyContext {
+    pub assembly_id: String,
+    pub scope: AgentPromptAssemblyScopeDto,
+    pub agent_task_prompt: Option<String>,
+    pub required_agent_prompt_components: Vec<String>,
+}
+
 impl PromptAssemblyService {
     pub fn new(
         profile_service: Arc<AgentProfileService>,
@@ -116,6 +124,33 @@ impl PromptAssemblyService {
         profile: ResolvedAgentProfile,
         visible_tools: &[AgentToolSpec],
     ) -> Result<AgentPreparePromptAssemblyResultDto, ApplicationError> {
+        self.prepare_frontend_prompt_assembly_with_context(dto, profile, visible_tools, None)
+            .await
+    }
+
+    pub async fn prepare_invocation_frontend_prompt_assembly(
+        &self,
+        dto: AgentPreparePromptAssemblyDto,
+        profile: ResolvedAgentProfile,
+        visible_tools: &[AgentToolSpec],
+        context: AgentInvocationPromptAssemblyContext,
+    ) -> Result<AgentPreparePromptAssemblyResultDto, ApplicationError> {
+        self.prepare_frontend_prompt_assembly_with_context(
+            dto,
+            profile,
+            visible_tools,
+            Some(context),
+        )
+        .await
+    }
+
+    async fn prepare_frontend_prompt_assembly_with_context(
+        &self,
+        dto: AgentPreparePromptAssemblyDto,
+        profile: ResolvedAgentProfile,
+        visible_tools: &[AgentToolSpec],
+        invocation_context: Option<AgentInvocationPromptAssemblyContext>,
+    ) -> Result<AgentPreparePromptAssemblyResultDto, ApplicationError> {
         let generation_type = normalize_generation_type(&dto.generation_type)?;
         let frozen_run_input_snapshot =
             normalize_frozen_run_input_snapshot(&dto.frozen_run_input_snapshot, &generation_type)?;
@@ -142,20 +177,43 @@ impl PromptAssemblyService {
                 let fingerprint = AgentPromptAssemblyFingerprintDto {
                     preset_sha256: sha256_value(&preset_settings)?,
                     frozen_run_input_snapshot_sha256: sha256_value(&frozen_run_input_snapshot)?,
+                    agent_task_prompt_sha256: invocation_context
+                        .as_ref()
+                        .and_then(|context| context.agent_task_prompt.as_ref())
+                        .map(|prompt| sha256_string(prompt)),
                 };
                 let metadata = AgentPromptAssemblyRequestMetadataDto {
+                    assembly_id: invocation_context
+                        .as_ref()
+                        .map(|context| context.assembly_id.clone()),
                     schema_version: PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION,
                     engine: "frontend-prompt-assembly-broker".to_string(),
                     profile_id: profile.id.as_str().to_string(),
                     preset_ref: preset_ref.clone(),
+                    scope: invocation_context
+                        .as_ref()
+                        .map(|context| context.scope.clone()),
                     fingerprint: fingerprint.clone(),
                 };
+                let agent_task_prompt = invocation_context
+                    .as_ref()
+                    .and_then(|context| context.agent_task_prompt.clone());
+                let required_agent_prompt_components = invocation_context
+                    .as_ref()
+                    .map(|context| context.required_agent_prompt_components.clone())
+                    .unwrap_or_default();
 
                 Ok(AgentPreparePromptAssemblyResultDto {
                     mode: AgentPromptAssemblyModeDto::FrontendPromptAssembly,
                     request: Some(AgentPromptAssemblyBrokerRequestDto {
                         schema_version: PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION,
                         kind: PROMPT_ASSEMBLY_REQUEST_KIND.to_string(),
+                        assembly_id: invocation_context
+                            .as_ref()
+                            .map(|context| context.assembly_id.clone()),
+                        scope: invocation_context
+                            .as_ref()
+                            .map(|context| context.scope.clone()),
                         profile_id: profile.id.as_str().to_string(),
                         generation_type,
                         frozen_run_input_snapshot,
@@ -167,6 +225,8 @@ impl PromptAssemblyService {
                             visible_tools,
                             &profile,
                         ),
+                        agent_task_prompt,
+                        required_agent_prompt_components,
                         json_schema: dto.json_schema,
                         fingerprint,
                     }),
@@ -487,8 +547,16 @@ fn sha256_value(value: &Value) -> Result<String, ApplicationError> {
     let bytes = serde_json::to_vec(value).map_err(|error| {
         ApplicationError::InternalError(format!("prompt_assembly.fingerprint_failed: {error}"))
     })?;
+    Ok(format!("sha256:{}", sha256_bytes(&bytes)))
+}
+
+fn sha256_string(value: &str) -> String {
+    format!("sha256:{}", sha256_bytes(value.as_bytes()))
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    Ok(format!("sha256:{}", hex_lower(&digest)))
+    hex_lower(&digest)
 }
 
 fn hex_lower(bytes: &[u8]) -> String {

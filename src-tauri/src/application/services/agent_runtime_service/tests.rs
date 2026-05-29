@@ -13,7 +13,9 @@ use super::AgentRuntimeService;
 use super::artifacts::build_agent_manifest;
 use super::commit_ledger::RunCommitLedger;
 use crate::application::dto::agent_dto::{
-    AgentReadModelTurnDto, AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
+    AgentPromptAssemblyScopeDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
+    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
+    AgentResolvePromptAssemblyDto,
 };
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
@@ -28,10 +30,12 @@ use crate::application::services::agent_tools::{
     AgentToolDispatcher, AgentToolEffect, AgentToolSession, BuiltinAgentToolRegistry,
 };
 use crate::application::services::llm_connection_service::LlmConnectionService;
+use crate::application::services::prompt_assembly_service::PromptAssemblyService;
 use crate::application::services::skill_service::SkillService;
 use crate::domain::errors::DomainError;
 use crate::domain::models::agent::profile::{
-    AgentDelegationPolicy, AgentProfileId, ResolvedAgentProfile,
+    AgentDelegationPolicy, AgentPresetBindingMode, AgentPresetRef, AgentProfileId,
+    ResolvedAgentProfile,
 };
 use crate::domain::models::agent::{
     AgentChatRef, AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart,
@@ -682,6 +686,285 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
         ],
     )
     .await;
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-child-prompt-assembly-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let preset_repository = Arc::new(StaticPresetRepository::openai(
+        "Child Preset",
+        json!({
+            "chat_completion_source": "openai",
+            "openai_model": "preset-model"
+        }),
+    ));
+    let profile_service = Arc::new(AgentProfileService::new(
+        Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles"))),
+        preset_repository.clone(),
+    ));
+    let llm_connection_service = test_llm_connection_service(&root);
+    let prompt_assembly_service = Arc::new(PromptAssemblyService::new(
+        profile_service.clone(),
+        preset_repository,
+        llm_connection_service.clone(),
+    ));
+    let service = Arc::new(AgentRuntimeService::new_with_prompt_assembly_service(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(vec![])),
+        profile_service.clone(),
+        llm_connection_service,
+        prompt_assembly_service,
+    ));
+    let mut child_profile = profile_service
+        .resolve_profile(AgentProfileResolveInput {
+            profile_id: None,
+            known_tools: service.tool_specs(),
+        })
+        .await
+        .expect("resolve child profile");
+    child_profile.id = AgentProfileId::parse("scene-critic").expect("profile id");
+    child_profile.preset.mode = AgentPresetBindingMode::Ref;
+    child_profile.preset.ref_ = Some(AgentPresetRef {
+        api_id: "openai".to_string(),
+        name: "Child Preset".to_string(),
+    });
+    child_profile.preset.required = true;
+    child_profile.run.presentation = AgentRunPresentation::Background;
+
+    let run = AgentRun {
+        id: "run_child_prompt_assembly_test".to_string(),
+        workspace_id: "chat_child_prompt_assembly_test".to_string(),
+        stable_chat_id: "stable_child_prompt_assembly_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    let root_profile = test_resolved_profile(&root).await;
+    let manifest = build_agent_manifest(&run, &root_profile);
+    let frozen_snapshot = json!({
+        "schemaVersion": 1,
+        "kind": "tauritavern.agentFrozenRunInputSnapshot",
+        "generationType": "normal",
+        "promptInputs": {
+            "type": "normal",
+            "messages": []
+        },
+        "worldInfoActivation": { "entries": [] },
+        "macroContext": {}
+    });
+    let root_prompt_snapshot = json!({
+        "contextPolicy": child_profile.context.clone(),
+        "frozenRunInputSnapshot": frozen_snapshot.clone(),
+        "chatCompletionPayload": {
+            "chat_completion_source": "openai",
+            "model": "parent-model",
+            "messages": prompt_messages("parent prompt")
+        }
+    });
+    repository
+        .initialize_run(&run, &manifest, &root_prompt_snapshot, &root_profile)
+        .await
+        .expect("initialize workspace");
+
+    let visible_tools = service
+        .visible_tool_specs_for_invocation(
+            &child_profile,
+            AgentInvocationExitPolicy::TaskReturnRequired,
+        )
+        .expect("visible tools");
+    let (cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let run_id = run.id.clone();
+    let service_for_task = service.clone();
+    let child_profile_for_task = child_profile.clone();
+    let visible_tools_for_task = visible_tools.clone();
+    let frozen_for_task = frozen_snapshot.clone();
+    let assembly = tokio::spawn(async move {
+        service_for_task
+            .assemble_invocation_prompt_snapshot(
+                run_id.as_str(),
+                "inv_child_prompt_assembly",
+                &child_profile_for_task,
+                &visible_tools_for_task,
+                "normal",
+                frozen_for_task,
+                AgentPromptAssemblyScopeDto {
+                    run_id: run_id.clone(),
+                    invocation_id: "inv_child_prompt_assembly".to_string(),
+                    invocation_kind: "subagent".to_string(),
+                    parent_invocation_id: Some("inv_root".to_string()),
+                    task_id: Some("task_child_prompt_assembly".to_string()),
+                    exit_policy: Some("taskReturnRequired".to_string()),
+                },
+                "# Delegated Task\n\nReview the scene.".to_string(),
+                &mut cancel_receiver,
+            )
+            .await
+    });
+
+    let payload = wait_for_event_payload(
+        repository.clone(),
+        run.id.clone(),
+        "prompt_assembly_requested",
+    )
+    .await;
+    let assembly_id = payload["assemblyId"]
+        .as_str()
+        .expect("assembly id")
+        .to_string();
+    assert_eq!(
+        payload["scope"]["invocationId"],
+        "inv_child_prompt_assembly"
+    );
+    assert_eq!(payload["scope"]["taskId"], "task_child_prompt_assembly");
+    assert!(payload.get("request").is_none());
+    assert_eq!(
+        payload["requestKind"],
+        "tauritavern.agentPromptAssemblyRequest"
+    );
+    assert_eq!(payload["requestSchemaVersion"], 1);
+    assert!(
+        payload["requestFingerprint"]["presetSha256"]
+            .as_str()
+            .expect("preset fingerprint")
+            .starts_with("sha256:")
+    );
+    let request = service
+        .read_prompt_assembly_request(AgentReadPromptAssemblyRequestDto {
+            run_id: run.id.clone(),
+            assembly_id: assembly_id.clone(),
+        })
+        .await
+        .expect("read prompt assembly request");
+    assert_eq!(request.preset_ref.name, "Child Preset");
+    assert_eq!(request.settings["openai_model"], "preset-model");
+    assert_eq!(
+        request.required_agent_prompt_components,
+        vec!["agentSystemPrompt".to_string(), "agentTask".to_string()]
+    );
+    assert!(
+        request
+            .agent_task_prompt
+            .as_deref()
+            .expect("task prompt")
+            .contains("Review the scene.")
+    );
+
+    let malformed_error = service
+        .resolve_prompt_assembly(AgentResolvePromptAssemblyDto {
+            run_id: run.id.clone(),
+            assembly_id: assembly_id.clone(),
+            prompt_snapshot: None,
+            frozen_run_input_snapshot: None,
+            generation_intent: None,
+            assembly: None,
+            error: None,
+        })
+        .await
+        .expect_err("malformed success resolve should fail before consuming pending request");
+    assert!(
+        malformed_error
+            .to_string()
+            .contains("agent.prompt_assembly_snapshot_required")
+    );
+    let request_after_malformed = service
+        .read_prompt_assembly_request(AgentReadPromptAssemblyRequestDto {
+            run_id: run.id.clone(),
+            assembly_id: assembly_id.clone(),
+        })
+        .await
+        .expect("malformed resolve must leave prompt assembly pending");
+    assert_eq!(
+        request_after_malformed.fingerprint.preset_sha256,
+        request.fingerprint.preset_sha256
+    );
+
+    service
+        .resolve_prompt_assembly(AgentResolvePromptAssemblyDto {
+            run_id: run.id.clone(),
+            assembly_id,
+            prompt_snapshot: Some(json!({
+                "contextPolicy": child_profile.context.clone(),
+                "chatCompletionPayload": {
+                    "chat_completion_source": "openai",
+                    "model": "assembled-child-model",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "Assembled child system prompt."
+                        },
+                        {
+                            "role": "user",
+                            "content": "Assembled child task prompt."
+                        }
+                    ]
+                }
+            })),
+            frozen_run_input_snapshot: Some(frozen_snapshot),
+            generation_intent: Some(json!({ "source": "test" })),
+            assembly: Some(json!({ "engine": "test" })),
+            error: None,
+        })
+        .await
+        .expect("resolve prompt assembly");
+    cancel_sender.send_replace(true);
+
+    let prompt_snapshot = assembly
+        .await
+        .expect("join assembly")
+        .expect("assemble prompt")
+        .expect("child prompt snapshot");
+    assert_eq!(
+        prompt_snapshot["chatCompletionPayload"]["messages"][1]["content"],
+        "Assembled child task prompt."
+    );
+    repository
+        .read_text(
+            &run.id,
+            &WorkspacePath::parse(
+                "input/invocations/inv_child_prompt_assembly/prompt_snapshot.json",
+            )
+            .unwrap(),
+        )
+        .await
+        .expect("stored child prompt snapshot");
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 100,
+            },
+        )
+        .await
+        .expect("read events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "prompt_assembly_completed")
+    );
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -4558,6 +4841,38 @@ async fn resolve_next_chat_commit(
         .expect("resolve chat commit");
 }
 
+async fn wait_for_event_payload(
+    repository: Arc<FileAgentRepository>,
+    run_id: String,
+    event_type: &'static str,
+) -> Value {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let events = repository
+                .read_events(
+                    &run_id,
+                    AgentRunEventReadQuery {
+                        after_seq: Some(0),
+                        before_seq: None,
+                        limit: 200,
+                    },
+                )
+                .await
+                .expect("read events");
+            if let Some(payload) = events
+                .iter()
+                .find(|event| event.event_type == event_type)
+                .map(|event| event.payload.clone())
+            {
+                return payload;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("event payload")
+}
+
 async fn resolve_next_chat_commit_and_persistent_state_update(
     service: Arc<AgentRuntimeService>,
     repository: Arc<FileAgentRepository>,
@@ -4708,6 +5023,11 @@ impl FinishCancelsDelegateModelGateway {
 
 struct NullPresetRepository;
 
+struct StaticPresetRepository {
+    name: String,
+    data: Value,
+}
+
 struct FailingPersistentCommitWorkspaceRepository {
     inner: Arc<FileAgentRepository>,
 }
@@ -4819,6 +5139,68 @@ impl PresetRepository for NullPresetRepository {
     }
 
     async fn list_presets(&self, _preset_type: &PresetType) -> Result<Vec<String>, DomainError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_default_preset(
+        &self,
+        _name: &str,
+        _preset_type: &PresetType,
+    ) -> Result<Option<DefaultPreset>, DomainError> {
+        Ok(None)
+    }
+}
+
+impl StaticPresetRepository {
+    fn openai(name: &str, data: Value) -> Self {
+        Self {
+            name: name.to_string(),
+            data,
+        }
+    }
+}
+
+#[async_trait]
+impl PresetRepository for StaticPresetRepository {
+    async fn save_preset(&self, _preset: &Preset) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn delete_preset(
+        &self,
+        _name: &str,
+        _preset_type: &PresetType,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn preset_exists(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<bool, DomainError> {
+        Ok(name == self.name && *preset_type == PresetType::OpenAI)
+    }
+
+    async fn get_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+    ) -> Result<Option<Preset>, DomainError> {
+        if name == self.name && *preset_type == PresetType::OpenAI {
+            return Ok(Some(Preset::new(
+                self.name.clone(),
+                PresetType::OpenAI,
+                self.data.clone(),
+            )));
+        }
+        Ok(None)
+    }
+
+    async fn list_presets(&self, preset_type: &PresetType) -> Result<Vec<String>, DomainError> {
+        if *preset_type == PresetType::OpenAI {
+            return Ok(vec![self.name.clone()]);
+        }
         Ok(Vec::new())
     }
 

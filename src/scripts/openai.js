@@ -120,7 +120,8 @@ const default_scenario_format = '{{scenario}}';
 const default_group_nudge_prompt = '[Write the next reply only as {{char}}.]';
 const AGENT_SYSTEM_PROMPT_IDENTIFIER = 'agentSystemPrompt';
 const AGENT_RESULTS_PROMPT_IDENTIFIER = 'agentResults';
-const AGENT_ONLY_PROMPT_IDENTIFIERS = new Set([AGENT_SYSTEM_PROMPT_IDENTIFIER, AGENT_RESULTS_PROMPT_IDENTIFIER]);
+const AGENT_TASK_PROMPT_IDENTIFIER = 'agentTask';
+const AGENT_ONLY_PROMPT_IDENTIFIERS = new Set([AGENT_SYSTEM_PROMPT_IDENTIFIER, AGENT_RESULTS_PROMPT_IDENTIFIER, AGENT_TASK_PROMPT_IDENTIFIER]);
 const default_bias_presets = {
     [default_bias]: [],
     'Anti-bond': [
@@ -1827,6 +1828,39 @@ async function populateAgentSystemPrompt(prompts, chatCompletion, agentMode, age
 }
 
 /**
+ * Materializes the invocation-scoped Agent task prompt at the PromptManager-controlled position.
+ *
+ * @param {import('./PromptManager.js').PromptCollection} prompts - PromptCollection containing all prompts.
+ * @param {ChatCompletion} chatCompletion - An instance of ChatCompletion class that will be populated with the prompts.
+ * @param {boolean} agentMode - Whether this prompt snapshot is owned by the Agent runtime.
+ * @param {string|null} agentTaskPrompt - Invocation task prompt content.
+ */
+async function populateAgentTaskPrompt(prompts, chatCompletion, agentMode, agentTaskPrompt, runtime = null) {
+    if (!agentMode) {
+        return;
+    }
+
+    const content = String(agentTaskPrompt ?? '');
+    if (!content.trim()) {
+        return;
+    }
+    if (!prompts.has(AGENT_TASK_PROMPT_IDENTIFIER)) {
+        throw new Error('agent.task_prompt_component_missing: PromptManager must include agentTask in Agent Mode when agentTaskPrompt is provided');
+    }
+
+    const prompt = prompts.get(AGENT_TASK_PROMPT_IDENTIFIER);
+    const assemblyRuntime = getPromptAssemblyRuntime(runtime);
+    const materializedPrompt = assemblyRuntime.promptManager.preparePrompt({
+        ...prompt,
+        content,
+    });
+
+    chatCompletion.add(new MessageCollection(AGENT_TASK_PROMPT_IDENTIFIER), prompts.index(AGENT_TASK_PROMPT_IDENTIFIER));
+    const message = await Message.fromPromptAsync(materializedPrompt, assemblyRuntime.tokenHandler);
+    chatCompletion.insertAtEnd(message, AGENT_TASK_PROMPT_IDENTIFIER);
+}
+
+/**
  * @param {number} position - Prompt position in the extensions object.
  * @returns {string|false} - The prompt position for prompt collection.
  */
@@ -1877,9 +1911,10 @@ export function getPromptRole(role) {
  * @param {(message: string) => void} options.attachWarning - Warning sink for attach-existing prompt issues.
  * @param {boolean} [options.agentMode] Skip legacy frontend tool registration for Agent-owned tool loops.
  * @param {string|null} [options.agentSystemPrompt] Resolved Agent system prompt content.
+ * @param {string|null} [options.agentTaskPrompt] Invocation task prompt content.
  * @returns {Promise<void>}
  */
-async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentSystemPrompt = null }, runtime = null) {
+async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentSystemPrompt = null, agentTaskPrompt = null }, runtime = null) {
     const assemblyRuntime = getPromptAssemblyRuntime(runtime);
     const activePromptManager = assemblyRuntime.promptManager;
     const settings = assemblyRuntime.settings;
@@ -1915,6 +1950,7 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
 
     chatCompletion.reserveBudget(3); // every reply is primed with <|start|>assistant<|message|>
     await populateAgentSystemPrompt(prompts, chatCompletion, agentMode, agentSystemPrompt, assemblyRuntime);
+    await populateAgentTaskPrompt(prompts, chatCompletion, agentMode, agentTaskPrompt, assemblyRuntime);
 
     // Character and world information
     await addToChatCompletion('worldInfoBefore');
@@ -2248,6 +2284,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
  * @param {string[]} content.messageExamples - An array of messages to be used as dialogue examples.
  * @param {boolean} [content.agentMode] Skip legacy frontend tool state for Agent-owned tool loops.
  * @param {string|null} [content.agentSystemPrompt] Resolved Agent system prompt content.
+ * @param {string|null} [content.agentTaskPrompt] Invocation task prompt content.
  * @param dryRun - Whether this is a live call or not.
  * @returns {Promise<(any[]|boolean)[]>} An array where the first element is the prepared chat and the second element is a boolean flag.
  */
@@ -2270,6 +2307,7 @@ export async function prepareOpenAIMessages({
     messageExamples,
     agentMode = false,
     agentSystemPrompt = null,
+    agentTaskPrompt = null,
 }, dryRun, runtime = null) {
     const assemblyRuntime = runtime
         ? getPromptAssemblyRuntime({
@@ -2317,7 +2355,7 @@ export async function prepareOpenAIMessages({
         };
 
         // Fill the chat completion with as much context as the budget allows
-        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentSystemPrompt }, assemblyRuntime);
+        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentSystemPrompt, agentTaskPrompt }, assemblyRuntime);
     } catch (error) {
         if (error instanceof TokenBudgetExceededError) {
             assemblyRuntime.showToasts && toastr.error(t`Mandatory prompts exceed the context size.`);
@@ -2374,6 +2412,7 @@ export async function assembleOpenAIChatCompletionPrompt({
     jsonSchema = null,
     agentMode = true,
     agentSystemPrompt = null,
+    agentTaskPrompt = null,
 } = {}) {
     if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
         throw new Error('prompt_assembly.settings_required: Prompt assembly requires chat-completion settings');
@@ -2411,6 +2450,7 @@ export async function assembleOpenAIChatCompletionPrompt({
         type: normalizedGenerationType,
         agentMode,
         agentSystemPrompt,
+        agentTaskPrompt,
     }, true, runtime);
 
     if (!Array.isArray(messages)) {
