@@ -112,11 +112,13 @@ function createAgentApi({ safeInvoke }) {
         if (maxChars != null && (!Number.isInteger(maxChars) || maxChars <= 0)) {
             throw new Error('maxChars must be a positive integer');
         }
+        const invocationId = String(input?.invocationId || '').trim();
 
         return safeInvoke('read_agent_model_turn', {
             dto: {
                 runId,
                 round,
+                ...(invocationId ? { invocationId } : {}),
                 ...(maxChars == null ? {} : { maxChars }),
             },
         });

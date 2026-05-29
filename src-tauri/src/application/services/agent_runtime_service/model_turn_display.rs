@@ -7,13 +7,17 @@ use crate::application::dto::agent_dto::{
     AgentModelTurnTextDto, AgentModelTurnToolCallDto, AgentReadModelTurnDto,
 };
 use crate::application::errors::ApplicationError;
-use crate::domain::models::agent::{AgentModelContentPart, AgentModelResponse, WorkspacePath};
+use crate::domain::models::agent::{
+    AgentModelContentPart, AgentModelResponse, ROOT_AGENT_INVOCATION_ID, WorkspacePath,
+};
 use crate::domain::text_metrics::TextMetrics;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredModelResponse {
     round: usize,
+    #[serde(default)]
+    invocation_id: Option<String>,
     response: AgentModelResponse,
 }
 
@@ -34,7 +38,8 @@ impl AgentRuntimeService {
             ));
         }
 
-        let path = model_response_path(dto.round)?;
+        let invocation_id = normalize_model_turn_invocation_id(dto.invocation_id.as_deref())?;
+        let path = model_response_path_for_invocation(&invocation_id, dto.round)?;
         let file = self
             .workspace_repository
             .read_text(&dto.run_id, &path)
@@ -48,6 +53,14 @@ impl AgentRuntimeService {
                 dto.round, document.round
             )));
         }
+        if let Some(stored_invocation_id) = document.invocation_id.as_deref() {
+            if stored_invocation_id != invocation_id {
+                return Err(ApplicationError::ValidationError(format!(
+                    "agent.model_response_invocation_mismatch: requested invocation {}, stored invocation {}",
+                    invocation_id, stored_invocation_id
+                )));
+            }
+        }
 
         Ok(project_model_turn(
             &dto.run_id,
@@ -59,10 +72,32 @@ impl AgentRuntimeService {
     }
 }
 
-pub(super) fn model_response_path(round: usize) -> Result<WorkspacePath, ApplicationError> {
+pub(super) fn model_response_path_for_invocation(
+    invocation_id: &str,
+    round: usize,
+) -> Result<WorkspacePath, ApplicationError> {
+    if invocation_id == ROOT_AGENT_INVOCATION_ID {
+        return Ok(WorkspacePath::parse(format!(
+            "model-responses/round-{round:03}.json"
+        ))?);
+    }
     Ok(WorkspacePath::parse(format!(
-        "model-responses/round-{round:03}.json"
+        "model-responses/{invocation_id}/round-{round:03}.json"
     ))?)
+}
+
+fn normalize_model_turn_invocation_id(value: Option<&str>) -> Result<String, ApplicationError> {
+    let invocation_id = value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(ROOT_AGENT_INVOCATION_ID);
+    if invocation_id.contains('/') || invocation_id.contains('\\') {
+        return Err(ApplicationError::ValidationError(
+            "agent.model_turn_invocation_id_invalid: invocationId must not contain path separators"
+                .to_string(),
+        ));
+    }
+    Ok(invocation_id.to_string())
 }
 
 pub(super) fn model_turn_event_summary(response: &AgentModelResponse) -> Value {

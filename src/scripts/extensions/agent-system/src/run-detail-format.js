@@ -33,6 +33,9 @@ export function formatModelTurnDetail(target, turn) {
     const fields = [
         field(tr('timelineDetailFieldRound'), turn?.round ?? target.round),
     ];
+    if (target.invocationId) {
+        fields.push(field(tr('timelineDetailFieldInvocation'), target.invocationId));
+    }
     const provider = turn?.provider || {};
     if (provider.source || provider.format) {
         fields.push(field(tr('timelineDetailFieldProvider'), [provider.source, provider.format].filter(Boolean).join(' / ')));
@@ -42,11 +45,25 @@ export function formatModelTurnDetail(target, turn) {
     }
 
     const blocks = [];
+    if (target.type === 'modelTurn' && typeof turn?.assistant?.text === 'string' && turn.assistant.text.trim()) {
+        addBlock(blocks, 'timelineAssistantText', turn.assistant.text, DETAIL_TEXT_LIMIT, turn.assistant.truncated === true, {
+            kind: 'assistant',
+            meta: textMetricsSummary({
+                chars: turn.assistant.totalChars,
+                words: turn.assistant.totalWords,
+            }),
+        });
+    }
     for (const item of Array.isArray(turn?.reasoning) ? turn.reasoning : []) {
         addBlock(blocks, 'timelineReasoning', item.text, DETAIL_TEXT_LIMIT, item.truncated === true, {
             kind: 'reasoning',
             defaultOpen: false,
             meta: reasoningMeta(item),
+        });
+    }
+    if (target.type === 'modelTurn' && Array.isArray(turn?.toolCalls) && turn.toolCalls.length > 0) {
+        addBlock(blocks, 'timelineModelToolCalls', renderModelToolCalls(turn.toolCalls), NESTED_TEXT_LIMIT, false, {
+            defaultOpen: false,
         });
     }
 
@@ -55,6 +72,54 @@ export function formatModelTurnDetail(target, turn) {
         path: target.showPath ? turn?.modelResponsePath || '' : '',
         fields,
         blocks,
+    };
+}
+
+export function formatSubAgentTaskDetail(target) {
+    const fields = [];
+    const actions = [];
+    const childInvocationId = String(target.childInvocationId || '').trim();
+
+    if (target.targetProfileId) {
+        fields.push(field(tr('timelineDetailFieldAgent'), target.targetProfileId));
+    }
+    if (target.status) {
+        fields.push(field(tr('timelineDetailFieldStatus'), target.status));
+    }
+    if (target.workspaceKey) {
+        fields.push(field(tr('timelineDetailFieldWorkspace'), target.workspaceKey));
+    }
+    if (target.taskId) {
+        fields.push(field(tr('timelineDetailFieldTask'), target.taskId));
+    }
+    if (childInvocationId) {
+        fields.push(field(tr('timelineDetailFieldInvocation'), childInvocationId));
+        actions.push({
+            kind: 'openSubAgent',
+            labelKey: 'timelineActionOpenSubAgent',
+            hintKey: 'timelineActionOpenSubAgentHint',
+            icon: 'fa-up-right-from-square',
+            invocationId: childInvocationId,
+        });
+    }
+    if (target.error) {
+        fields.push(field(tr('timelineDetailFieldErrorCode'), target.error));
+    }
+
+    const blocks = [];
+    if (target.summaryRef) {
+        addBlock(blocks, 'timelineSubAgentSummary', target.summaryRef);
+    }
+    if (target.resultRef) {
+        addBlock(blocks, 'timelineSubAgentResult', target.resultRef);
+    }
+
+    return {
+        labelKey: target.labelKey,
+        path: '',
+        fields,
+        blocks,
+        actions,
     };
 }
 
@@ -231,6 +296,14 @@ function formatToolResultSection(target, file, result) {
         fields,
         blocks,
     };
+}
+
+function renderModelToolCalls(toolCalls) {
+    return toolCalls.map((call, index) => {
+        const name = displayToolName(call.name || call.modelName);
+        const id = call.callId ? ` ${call.callId}` : '';
+        return `${index + 1}. ${name}${id}`;
+    }).join('\n');
 }
 
 function addToolResultSummaryFields(fields, result, structured) {

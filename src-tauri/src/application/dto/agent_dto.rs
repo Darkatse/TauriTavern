@@ -238,6 +238,8 @@ pub struct AgentReadWorkspaceFileDto {
 #[serde(rename_all = "camelCase")]
 pub struct AgentReadModelTurnDto {
     pub run_id: String,
+    #[serde(default)]
+    pub invocation_id: Option<String>,
     pub round: usize,
     #[serde(default = "default_model_turn_text_limit")]
     pub max_chars: usize,

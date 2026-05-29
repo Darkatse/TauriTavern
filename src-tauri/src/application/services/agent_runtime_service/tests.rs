@@ -1245,6 +1245,24 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
     let child_response: Value =
         serde_json::from_str(&child_response.text).expect("child response JSON");
     assert_eq!(child_response["invocationId"], task.child_invocation_id);
+    let child_model_turn = service
+        .read_model_turn(AgentReadModelTurnDto {
+            run_id: run.id.clone(),
+            invocation_id: Some(task.child_invocation_id.clone()),
+            round: 1,
+            max_chars: 40_000,
+        })
+        .await
+        .expect("read child model turn");
+    assert_eq!(
+        child_model_turn.model_response_path,
+        format!(
+            "model-responses/{}/round-001.json",
+            task.child_invocation_id
+        )
+    );
+    assert_eq!(child_model_turn.tool_calls.len(), 2);
+    assert_eq!(child_model_turn.tool_calls[0].name, "workspace.write_file");
 
     let requests = model_gateway_probe.requests().await;
     assert_eq!(requests.len(), 4);
@@ -2247,6 +2265,7 @@ async fn agent_loop_writes_artifact_and_completes() {
     let model_turn = service
         .read_model_turn(AgentReadModelTurnDto {
             run_id: run.id.clone(),
+            invocation_id: None,
             round: 1,
             max_chars: 40_000,
         })
@@ -2271,6 +2290,7 @@ async fn agent_loop_writes_artifact_and_completes() {
     let truncated_model_turn = service
         .read_model_turn(AgentReadModelTurnDto {
             run_id: run.id.clone(),
+            invocation_id: None,
             round: 1,
             max_chars: 4,
         })

@@ -1,8 +1,19 @@
 import { displayToolName } from './run-tool-labels.js';
+import { eventBelongsToInvocation, isRootInvocation, normalizeInvocationId } from './run-invocation-projector.js';
 import { textMetricFields, textMetricsSummary } from './run-text-metrics.js';
 import { presentAgentRunFailure } from '../../../tauritavern/agent/agent-error-presenter.js';
 
 const DISPLAY_EVENT_TYPES = new Set([
+    'agent_delegate_started',
+    'agent_invocation_started',
+    'agent_invocation_completed',
+    'agent_invocation_failed',
+    'agent_invocation_cancelled',
+    'agent_task_started',
+    'agent_task_completed',
+    'agent_task_failed',
+    'agent_task_cancelled',
+    'task_return_completed',
     'tool_call_requested',
     'tool_call_completed',
     'tool_call_failed',
@@ -23,6 +34,8 @@ const DISPLAY_EVENT_TYPES = new Set([
 export const TERMINAL_EVENT_TYPES = Object.freeze(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
 
 const SIDE_EFFECT_TOOL_COMPLETIONS = new Set([
+    'agent.delegate',
+    'task.return',
     'workspace.write_file',
     'workspace.apply_patch',
     'workspace.commit',
@@ -40,6 +53,16 @@ const SIDE_EFFECT_TOOL_BY_EVENT_TYPE = Object.freeze({
 });
 
 const EVENT_META = Object.freeze({
+    agent_delegate_started: { icon: 'fa-diagram-project', tone: 'active', kind: 'subagent', titleKey: 'timelineEventSubAgentStarted' },
+    agent_invocation_started: { icon: 'fa-circle-play', tone: 'active', kind: 'subagent', titleKey: 'timelineEventInvocationStarted' },
+    agent_invocation_completed: { icon: 'fa-circle-check', tone: 'success', kind: 'subagent', titleKey: 'timelineEventInvocationCompleted' },
+    agent_invocation_failed: { icon: 'fa-circle-exclamation', tone: 'error', kind: 'subagent', titleKey: 'timelineEventInvocationFailed' },
+    agent_invocation_cancelled: { icon: 'fa-ban', tone: 'warn', kind: 'subagent', titleKey: 'timelineEventInvocationCancelled' },
+    agent_task_started: { icon: 'fa-person-running', tone: 'active', kind: 'subagent', titleKey: 'timelineEventSubAgentTaskStarted' },
+    agent_task_completed: { icon: 'fa-circle-check', tone: 'success', kind: 'subagent', titleKey: 'timelineEventSubAgentTaskCompleted' },
+    agent_task_failed: { icon: 'fa-triangle-exclamation', tone: 'error', kind: 'subagent', titleKey: 'timelineEventSubAgentTaskFailed' },
+    agent_task_cancelled: { icon: 'fa-ban', tone: 'warn', kind: 'subagent', titleKey: 'timelineEventSubAgentTaskCancelled' },
+    task_return_completed: { icon: 'fa-reply', tone: 'success', kind: 'subagent', titleKey: 'timelineEventTaskReturned' },
     tool_call_requested: { icon: 'fa-screwdriver-wrench', tone: 'active', kind: 'tool', titleKey: 'timelineEventToolRequested' },
     tool_call_completed: { icon: 'fa-check', tone: 'success', kind: 'tool', titleKey: 'timelineEventToolCompleted' },
     tool_call_failed: { icon: 'fa-triangle-exclamation', tone: 'warn', kind: 'fail', titleKey: 'timelineEventToolFailed' },
@@ -61,9 +84,10 @@ export function isDisplayableRunEvent(event) {
     return DISPLAY_EVENT_TYPES.has(String(event?.type || ''));
 }
 
-export function timelineItemsFromEvents(events) {
+export function timelineItemsFromEvents(events, options = {}) {
     const completedToolCalls = new Set();
     const resolvedCommits = new Set();
+    const invocationId = options.invocationId == null ? null : normalizeInvocationId(options.invocationId);
 
     for (const event of events) {
         if (event?.type === 'tool_call_completed' || event?.type === 'tool_call_failed') {
@@ -81,7 +105,10 @@ export function timelineItemsFromEvents(events) {
     }
 
     return events
-        .filter((event) => shouldShowEvent(event, completedToolCalls, resolvedCommits))
+        .filter((event) => shouldShowEvent(event, completedToolCalls, resolvedCommits, {
+            ...options,
+            invocationId,
+        }))
         .map((event) => presentRunEvent(event, events));
 }
 
@@ -131,24 +158,51 @@ export function buildEventDetailTargets(item, allEvents) {
             ...textMetricFields(metricsSource),
         });
     };
-    const addModelReasoning = (round) => {
+    const addModelReasoning = (round, invocationId) => {
         const normalized = Number(round);
         if (!Number.isInteger(normalized) || normalized <= 0) {
             return;
         }
-        if (!modelTurnHasReasoning(allEvents, normalized)) {
+        const normalizedInvocationId = normalizeInvocationId(invocationId);
+        if (!modelTurnHasReasoning(allEvents, normalized, normalizedInvocationId)) {
             return;
         }
         if (seenReasoningRounds.has(normalized)) {
             return;
         }
         seenReasoningRounds.add(normalized);
-        targets.push({ type: 'modelReasoning', labelKey: 'timelineReasoning', round: normalized });
+        targets.push({
+            type: 'modelReasoning',
+            labelKey: 'timelineReasoning',
+            round: normalized,
+            ...invocationTargetFields(normalizedInvocationId),
+        });
     };
 
-    addModelReasoning(payload.round);
-    addModelReasoning(findAssociatedToolRound(event, allEvents));
+    addModelReasoning(payload.round, payload.invocationId);
+    const associatedTurn = findAssociatedToolTurn(event, allEvents);
+    addModelReasoning(associatedTurn?.round, associatedTurn?.invocationId);
     addFile('timelineArguments', payload.argumentsRef);
+
+    if (event?.type === 'agent_delegate_started'
+        || event?.type === 'agent_task_started'
+        || event?.type === 'agent_task_completed'
+        || event?.type === 'agent_task_failed'
+        || event?.type === 'agent_task_cancelled'
+        || event?.type === 'task_return_completed') {
+        targets.push({
+            type: 'subAgentTask',
+            labelKey: 'timelineSubAgent',
+            taskId: payload.taskId || '',
+            childInvocationId: payload.childInvocationId || '',
+            targetProfileId: payload.targetProfileId || '',
+            workspaceKey: payload.workspaceKey || '',
+            status: payload.status || '',
+            resultRef: payload.resultRef || '',
+            summaryRef: payload.summaryRef || '',
+            error: payload.error || '',
+        });
+    }
 
     if (event?.type === 'tool_call_completed' || event?.type === 'tool_call_failed') {
         const resultPath = findToolResultPath(allEvents, payload.callId);
@@ -161,6 +215,11 @@ export function buildEventDetailTargets(item, allEvents) {
 
     if (event?.type === 'run_failed' || event?.type === 'run_partial_success') {
         targets.push({ type: 'runFailure', labelKey: 'timelineErrorDetails', event });
+    }
+
+    if (event?.type === 'task_return_completed') {
+        addFile('timelineSubAgentSummary', payload.summaryRef);
+        addFile('timelineSubAgentResult', payload.resultRef);
     }
 
     if (event?.type === 'workspace_file_written'
@@ -195,8 +254,20 @@ function buildPatchDiffTarget(event, events) {
     };
 }
 
-function shouldShowEvent(event, completedToolCalls, resolvedCommits) {
+function shouldShowEvent(event, completedToolCalls, resolvedCommits, options = {}) {
+    if (event?.type === 'model_completed') {
+        return false;
+    }
     if (!isDisplayableRunEvent(event)) {
+        return false;
+    }
+    if (options.invocationId && !eventBelongsToInvocation(event, options.invocationId)) {
+        return false;
+    }
+    if (options.invocationId && isRootInvocation(options.invocationId) && event.type.startsWith('agent_task_')) {
+        return false;
+    }
+    if (options.invocationId && isRootInvocation(options.invocationId) && event.type.startsWith('agent_invocation_')) {
         return false;
     }
 
@@ -228,11 +299,11 @@ function findToolResultPath(events, callId) {
     return resultEvent?.payload?.path || '';
 }
 
-function findAssociatedToolRound(event, events) {
+function findAssociatedToolTurn(event, events) {
     const payload = plainObject(event?.payload) ? event.payload : {};
     const callId = String(payload.callId || '').trim();
     if (callId) {
-        return findToolEventRound(events, callId);
+        return findToolEventTurn(events, callId);
     }
 
     const toolName = SIDE_EFFECT_TOOL_BY_EVENT_TYPE[event?.type];
@@ -242,10 +313,15 @@ function findAssociatedToolRound(event, events) {
 
     const path = String(payload.path || '').trim();
     const completed = findSideEffectToolCompletion(events, event, toolName, path);
-    return completed?.payload?.round ?? null;
+    return completed
+        ? {
+            round: completed?.payload?.round,
+            invocationId: completed?.payload?.invocationId,
+        }
+        : null;
 }
 
-function findToolEventRound(events, callId) {
+function findToolEventTurn(events, callId) {
     const event = events.find((candidate) => {
         if (candidate?.type !== 'tool_call_requested'
             && candidate?.type !== 'tool_call_completed'
@@ -254,7 +330,12 @@ function findToolEventRound(events, callId) {
         }
         return String(candidate?.payload?.callId || '') === callId;
     });
-    return event?.payload?.round ?? null;
+    return event
+        ? {
+            round: event?.payload?.round,
+            invocationId: event?.payload?.invocationId,
+        }
+        : null;
 }
 
 function findSideEffectToolCompletion(events, sideEffectEvent, toolName, path) {
@@ -280,13 +361,15 @@ function findToolRequest(events, callId) {
         && String(event?.payload?.callId || '') === callId);
 }
 
-function modelTurnHasReasoning(events, round) {
+function modelTurnHasReasoning(events, round, invocationId) {
+    const normalizedInvocationId = normalizeInvocationId(invocationId);
     return events.some((event) => {
         if (event?.type !== 'model_completed') {
             return false;
         }
         const payload = plainObject(event?.payload) ? event.payload : {};
         return Number(payload.round) === round
+            && normalizeInvocationId(payload.invocationId) === normalizedInvocationId
             && (
                 payload.hasReasoning === true
                 || Number(payload.reasoningChars) > 0
@@ -297,6 +380,19 @@ function modelTurnHasReasoning(events, round) {
 
 function eventTitleParams(type, payload) {
     switch (type) {
+        case 'agent_delegate_started':
+        case 'agent_task_started':
+        case 'agent_task_completed':
+        case 'agent_task_failed':
+        case 'agent_task_cancelled':
+            return { agent: payload.targetProfileId || payload.workspaceKey || payload.childInvocationId || '' };
+        case 'agent_invocation_started':
+        case 'agent_invocation_completed':
+        case 'agent_invocation_failed':
+        case 'agent_invocation_cancelled':
+            return { agent: payload.profileId || payload.invocationId || '' };
+        case 'task_return_completed':
+            return { task: payload.taskId || '' };
         case 'tool_call_requested':
         case 'tool_call_completed':
         case 'tool_call_failed':
@@ -320,6 +416,19 @@ function eventTitleParams(type, payload) {
 
 function eventSummary(type, payload, allEvents) {
     switch (type) {
+        case 'agent_delegate_started':
+        case 'agent_task_started':
+        case 'agent_task_completed':
+        case 'agent_task_failed':
+        case 'agent_task_cancelled':
+            return [payload.status, payload.workspaceKey].filter(Boolean).join(' | ');
+        case 'agent_invocation_started':
+        case 'agent_invocation_completed':
+        case 'agent_invocation_failed':
+        case 'agent_invocation_cancelled':
+            return [payload.status, payload.kind].filter(Boolean).join(' | ');
+        case 'task_return_completed':
+            return [payload.status, payload.summaryRef || payload.resultRef].filter(Boolean).join(' | ');
         case 'tool_call_requested':
             return payload.callId || '';
         case 'tool_call_completed':
@@ -363,6 +472,9 @@ function eventKind(type, payload, fallback) {
 
 function toolKind(name) {
     const normalized = String(name || '');
+    if (normalized.startsWith('agent.') || normalized === 'task.return') {
+        return 'subagent';
+    }
     if (normalized.includes('read')) {
         return 'read';
     }
@@ -385,6 +497,11 @@ function toolKind(name) {
         return 'done';
     }
     return 'tool';
+}
+
+function invocationTargetFields(invocationId) {
+    const normalized = normalizeInvocationId(invocationId);
+    return isRootInvocation(normalized) ? {} : { invocationId: normalized };
 }
 
 function fileSummary(payload) {

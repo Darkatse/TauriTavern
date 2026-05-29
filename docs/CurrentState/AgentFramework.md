@@ -66,7 +66,7 @@ api.skill.export(input)
 
 `api.skill` 是用户/UI/扩展侧的 Skill 管理入口；Agent run 内只通过 `skill.list` / `skill.search` / `skill.read` 工具消费已安装 Skill。
 
-`readModelTurn()` 读取指定 run/round 的模型回合显示 DTO：assistant 输出、可见/摘要化 reasoning、工具调用摘要与 provider 摘要。前端 Timeline 不直接解析 `model-responses/` raw 文件。
+`readModelTurn()` 读取指定 run/round/invocation 的模型回合显示 DTO：assistant 输出、可见/摘要化 reasoning、工具调用摘要与 provider 摘要；`invocationId` 省略时读取 root invocation。前端 Timeline 不直接解析 `model-responses/` raw 文件。
 
 明确不存在公共 `api.agent.startRun()` alias。启动入口必须表达 prompt 来源：
 

@@ -256,6 +256,7 @@ type AgentWorkspaceFile = {
 ```ts
 type AgentReadModelTurnInput = {
   runId: string;
+  invocationId?: string;
   round: number;
   maxChars?: number;
 };
@@ -295,6 +296,7 @@ type AgentModelTurn = {
 `assistant.text` 与 `reasoning[].text` 会按 `maxChars` 截断；`totalChars` / `totalWords` 始终表示截断前完整文本的字词统计。
 
 `round` 必须大于 0。`maxChars` 省略时由后端使用默认上限；传入时必须大于 0。
+`invocationId` 省略时读取 root invocation；读取 SubAgent / handoff invocation 的模型回合时必须传入对应 invocation id。
 
 该方法返回面向 UI 的白名单投影：assistant 输出、可见/摘要化 reasoning、工具调用摘要与 provider 摘要。它不会暴露完整 raw response、provider-private native continuation、签名或 encrypted reasoning。需要完整诊断时仍使用 run workspace 中的 `modelResponsePath` 与 LLM API log。
 

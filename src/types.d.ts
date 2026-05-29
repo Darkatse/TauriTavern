@@ -319,6 +319,7 @@ type TauriTavernAgentApi = {
     }) => Promise<{ path: string; text: string; chars: number; words: number; sha256: string }>;
     readModelTurn: (input: {
         runId: string;
+        invocationId?: string;
         round: number;
         maxChars?: number;
     }) => Promise<TauriTavernAgentModelTurn>;

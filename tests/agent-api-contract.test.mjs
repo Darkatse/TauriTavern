@@ -145,13 +145,13 @@ test('api.agent.promptAssembly prepares backend broker requests', async () => {
 test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid input', async () => {
     const { calls, agent } = await installHarness();
 
-    await agent.readModelTurn({ runId: 'run-1', round: 2, maxChars: 12000 });
+    await agent.readModelTurn({ runId: 'run-1', invocationId: 'inv_child', round: 2, maxChars: 12000 });
     await agent.readModelTurn({ runId: 'run-1', round: 3 });
 
     assert.deepEqual(calls, [
         {
             command: 'read_agent_model_turn',
-            args: { dto: { runId: 'run-1', round: 2, maxChars: 12000 } },
+            args: { dto: { runId: 'run-1', invocationId: 'inv_child', round: 2, maxChars: 12000 } },
         },
         {
             command: 'read_agent_model_turn',

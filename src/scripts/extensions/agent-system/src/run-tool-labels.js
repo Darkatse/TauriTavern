@@ -1,6 +1,10 @@
 import { translateAgentSystem as tr } from './i18n.js';
 
 const TOOL_LABEL_KEYS = Object.freeze({
+    'agent.list': 'timelineToolAgentList',
+    'agent.delegate': 'timelineToolAgentDelegate',
+    'agent.await': 'timelineToolAgentAwait',
+    'task.return': 'timelineToolTaskReturn',
     'chat.search': 'timelineToolChatSearch',
     'chat.read_messages': 'timelineToolChatReadMessages',
     'worldinfo.read_activated': 'timelineToolWorldInfoReadActivated',

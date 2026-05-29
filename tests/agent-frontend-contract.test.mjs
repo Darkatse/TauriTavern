@@ -138,6 +138,97 @@ test('Agent run timeline resize geometry is deterministic', async () => {
     }), 380);
 });
 
+test('Agent run timeline projects SubAgent tasks without flattening child events into root', async () => {
+    const projector = await importFresh('src/scripts/extensions/agent-system/src/run-invocation-projector.js');
+    const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
+    const events = [
+        {
+            seq: 1,
+            id: 'evt-root-tool',
+            runId: 'run-1',
+            type: 'tool_call_completed',
+            payload: { invocationId: 'inv_root', callId: 'call_delegate', name: 'agent.delegate' },
+        },
+        {
+            seq: 2,
+            id: 'evt-delegate',
+            runId: 'run-1',
+            type: 'agent_delegate_started',
+            payload: {
+                taskId: 'task-1',
+                parentInvocationId: 'inv_root',
+                childInvocationId: 'inv-child',
+                targetProfileId: 'scene-critic',
+                workspaceKey: 'scene-critic',
+            },
+        },
+        {
+            seq: 3,
+            id: 'evt-task-start',
+            runId: 'run-1',
+            type: 'agent_task_started',
+            payload: {
+                taskId: 'task-1',
+                childInvocationId: 'inv-child',
+                targetProfileId: 'scene-critic',
+                status: 'running',
+            },
+        },
+        {
+            seq: 4,
+            id: 'evt-child-model',
+            runId: 'run-1',
+            type: 'model_completed',
+            payload: {
+                invocationId: 'inv-child',
+                round: 1,
+                toolCallCount: 1,
+                hasReasoning: true,
+                reasoningChars: 12,
+                reasoningWords: 2,
+            },
+        },
+        {
+            seq: 5,
+            id: 'evt-child-tool',
+            runId: 'run-1',
+            type: 'tool_call_completed',
+            payload: { invocationId: 'inv-child', callId: 'call_return', name: 'task.return' },
+        },
+        {
+            seq: 6,
+            id: 'evt-return',
+            runId: 'run-1',
+            type: 'task_return_completed',
+            payload: {
+                taskId: 'task-1',
+                childInvocationId: 'inv-child',
+                status: 'completed',
+                resultRef: 'agent-results/inv-child.json',
+                summaryRef: 'summaries/agents/scene-critic/result.md',
+            },
+        },
+    ];
+
+    const projection = projector.projectAgentInvocations(events);
+    assert.equal(projection.subAgentTasks.length, 1);
+    assert.equal(projection.subAgentTasks[0].displayName, 'scene-critic');
+    assert.equal(projection.subAgentTasks[0].status, 'completed');
+
+    const rootItems = presenter.timelineItemsFromEvents(events, { invocationId: projector.ROOT_INVOCATION_ID });
+    assert.deepEqual(rootItems.map(item => item.type), ['agent_delegate_started']);
+
+    const childItems = presenter.timelineItemsFromEvents(
+        projector.eventsForInvocation(events, 'inv-child'),
+        { invocationId: 'inv-child' },
+    );
+    assert.deepEqual(childItems.map(item => item.type), [
+        'agent_delegate_started',
+        'agent_task_started',
+        'task_return_completed',
+    ]);
+});
+
 test('Agent generation router uses the global toggle for normal regenerate and swipe', async () => {
     let stored = {
         agentModeEnabled: false,
@@ -1303,6 +1394,7 @@ test('Agent run event presenter keeps model turns out of timeline and exposes re
 
     assert.equal(presenter.isDisplayableRunEvent(modelEvent), false);
     assert.deepEqual(presenter.timelineItemsFromEvents([modelEvent]).map(item => item.type), []);
+    assert.deepEqual(presenter.timelineItemsFromEvents([modelEvent], { includeModelTurns: true }).map(item => item.type), []);
 
     const targets = presenter.buildEventDetailTargets(
         presenter.presentRunEvent(toolEvent),
@@ -1554,36 +1646,37 @@ test('Agent run detail formatter shows workspace file text metrics', async () =>
 
 test('Agent run detail formatter renders model turn display DTO', async () => {
     const { formatModelTurnDetail } = await importFresh('src/scripts/extensions/agent-system/src/run-detail-format.js');
+    const turn = {
+        runId: 'run-1',
+        round: 2,
+        modelResponsePath: 'model-responses/round-002.json',
+        provider: {
+            source: 'openai',
+            format: 'responses',
+            model: 'gpt-5',
+            responseId: 'resp_1',
+        },
+        assistant: {
+            text: 'I will inspect the workspace.',
+            totalChars: 29,
+            totalWords: 5,
+            truncated: false,
+        },
+        reasoning: [{
+            source: 'reasoning_content',
+            text: 'Need to inspect the workspace.',
+            totalChars: 30,
+            totalWords: 5,
+            truncated: true,
+        }],
+        toolCalls: [{
+            callId: 'call-1',
+            name: 'workspace.read_file',
+        }],
+    };
     const section = formatModelTurnDetail(
         { type: 'modelReasoning', labelKey: 'timelineReasoning', round: 2 },
-        {
-            runId: 'run-1',
-            round: 2,
-            modelResponsePath: 'model-responses/round-002.json',
-            provider: {
-                source: 'openai',
-                format: 'responses',
-                model: 'gpt-5',
-                responseId: 'resp_1',
-            },
-            assistant: {
-                text: 'I will inspect the workspace.',
-                totalChars: 29,
-                totalWords: 5,
-                truncated: false,
-            },
-            reasoning: [{
-                source: 'reasoning_content',
-                text: 'Need to inspect the workspace.',
-                totalChars: 30,
-                totalWords: 5,
-                truncated: true,
-            }],
-            toolCalls: [{
-                callId: 'call-1',
-                name: 'workspace.read_file',
-            }],
-        },
+        turn,
     );
 
     assert.equal(section.labelKey, 'timelineReasoning');
@@ -1601,6 +1694,7 @@ test('Agent run detail formatter renders model turn display DTO', async () => {
     assert.equal(section.blocks[0].defaultOpen, false);
     assert.equal(section.blocks[0].meta, 'reasoning_content · 30 chars / 5 words');
     assert.match(section.blocks[0].text, /Need to inspect/);
+
 });
 
 test('Agent error presenter surfaces userRetryable from run_failed payload', async () => {

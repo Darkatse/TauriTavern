@@ -1,11 +1,9 @@
 use serde_json::json;
 
 use super::AgentRuntimeService;
-use super::model_turn_display::model_response_path;
+use super::model_turn_display::model_response_path_for_invocation;
 use crate::application::errors::ApplicationError;
-use crate::domain::models::agent::{
-    AgentModelResponse, AgentRunEventLevel, ROOT_AGENT_INVOCATION_ID, WorkspacePath,
-};
+use crate::domain::models::agent::{AgentModelResponse, AgentRunEventLevel, WorkspacePath};
 
 impl AgentRuntimeService {
     pub(super) async fn store_model_response(
@@ -15,13 +13,7 @@ impl AgentRuntimeService {
         round: usize,
         response: &AgentModelResponse,
     ) -> Result<WorkspacePath, ApplicationError> {
-        let path = if invocation_id == ROOT_AGENT_INVOCATION_ID {
-            model_response_path(round)?
-        } else {
-            WorkspacePath::parse(format!(
-                "model-responses/{invocation_id}/round-{round:03}.json"
-            ))?
-        };
+        let path = model_response_path_for_invocation(invocation_id, round)?;
         let document = json!({
             "round": round,
             "invocationId": invocation_id,
