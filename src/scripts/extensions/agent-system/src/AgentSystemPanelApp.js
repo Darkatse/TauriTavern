@@ -39,6 +39,22 @@ const PROFILE_SECTIONS = Object.freeze([
     { id: 'json', labelKey: 'advancedJson', icon: 'fa-code', modes: ['main', 'subagent'] },
 ]);
 
+function isProfileEditMode(mode) {
+    return PROFILE_EDIT_MODES.some((item) => item.id === mode);
+}
+
+function firstProfileSectionIdForMode(mode) {
+    const section = PROFILE_SECTIONS.find((item) => item.modes.includes(mode));
+    if (!section) {
+        throw new Error(`Unsupported Agent profile edit mode: ${mode}`);
+    }
+    return section.id;
+}
+
+function preferredProfileEditMode(profile) {
+    return profile?.run?.directRunnable === false ? 'subagent' : 'main';
+}
+
 const TOOL_GROUPS = Object.freeze([
     {
         id: 'context',
@@ -95,9 +111,10 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 settings: {},
                 profiles: [],
                 selectedProfileId: DEFAULT_PROFILE_ID,
+                // UI-only editor view. The saved profile role is owned by run/delegation policy.
                 profileEditMode: 'main',
-                activeProfileSectionId: PROFILE_SECTIONS[0].id,
-                // Keep this UI-only so the single profile schema can serve both main and SubAgent editing views.
+                activeProfileSectionId: firstProfileSectionIdForMode('main'),
+                // Remember direct-run presentation while converting profiles to/from SubAgent-only.
                 mainAgentPresentationByProfileId: {},
                 draft: profileForEdit(defaultProfile()),
                 draftJson: prettyJson(defaultProfile()),
@@ -131,7 +148,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 return mode ? tr(mode.labelKey) : tr('mainAgent');
             },
             isSubAgentPresentationLocked() {
-                return this.isSubAgentOnly || (this.profileEditMode === 'subagent' && this.isCallableAsSubAgent);
+                return this.isSubAgentOnly;
             },
             isCallableAsSubAgent() {
                 return Boolean(this.draft?.delegation?.callable && this.draft?.delegation?.allowAsSubagent);
@@ -326,56 +343,34 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 await this.saveSettingsPatch({ activeTab: tab });
             },
             setProfileEditMode(mode) {
-                if (!PROFILE_EDIT_MODES.some((item) => item.id === mode)) {
+                if (!isProfileEditMode(mode)) {
                     throw new Error(`Unsupported Agent profile edit mode: ${mode}`);
                 }
-                const previousMode = this.profileEditMode;
-                if (previousMode === 'main' && mode !== 'main') {
-                    this.rememberMainAgentPresentation();
-                }
                 this.profileEditMode = mode;
-                this.applySubAgentPresentationPolicy();
-                if (mode === 'main' && previousMode !== 'main') {
-                    this.restoreMainAgentPresentation();
-                }
-                const firstSection = this.visibleProfileSections[0]?.id;
-                if (firstSection) {
-                    this.activeProfileSectionId = firstSection;
-                }
+                this.resetActiveProfileSection();
+            },
+            syncProfileEditModeToDraft() {
+                this.profileEditMode = preferredProfileEditMode(this.draft);
+                this.resetActiveProfileSection();
+            },
+            resetActiveProfileSection() {
+                this.activeProfileSectionId = firstProfileSectionIdForMode(this.profileEditMode);
             },
             profilePresentationMemoryKey() {
                 return String(this.draft?.id || this.selectedProfileId || DEFAULT_PROFILE_ID).trim() || DEFAULT_PROFILE_ID;
             },
             rememberMainAgentPresentation() {
-                if (!this.draft?.run) {
-                    return;
-                }
                 this.mainAgentPresentationByProfileId[this.profilePresentationMemoryKey()] = this.draft.run.presentation || 'foreground';
             },
             seedMainAgentPresentation() {
                 this.rememberMainAgentPresentation();
             },
             restoreMainAgentPresentation() {
-                if (!this.draft?.run) {
-                    return;
-                }
-                if (this.isSubAgentOnly) {
-                    return;
-                }
                 this.draft.run.presentation = this.mainAgentPresentationByProfileId[this.profilePresentationMemoryKey()] || 'foreground';
             },
-            applySubAgentPresentationPolicy() {
-                if (!this.draft?.run) {
-                    return;
-                }
-                const shouldApplySubAgentRunPolicy = this.isSubAgentOnly
-                    || (this.profileEditMode === 'subagent' && this.isCallableAsSubAgent);
-                if (!shouldApplySubAgentRunPolicy) {
-                    return;
-                }
+            applySubAgentOnlyRunPolicy() {
                 if (!this.isCallableAsSubAgent) {
-                    this.draft.run.presentation = 'background';
-                    return;
+                    throw new Error('SubAgent-only run policy requires callable SubAgent delegation.');
                 }
                 if (!Object.prototype.hasOwnProperty.call(this.mainAgentPresentationByProfileId, this.profilePresentationMemoryKey())) {
                     this.seedMainAgentPresentation();
@@ -447,7 +442,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.selectedProfileId = id;
                 this.draft = profileForEdit(result.profile);
                 this.seedMainAgentPresentation();
-                this.applySubAgentPresentationPolicy();
+                this.syncProfileEditModeToDraft();
                 this.resolvedAgentSystemPrompt = normalizeResolvedAgentSystemPrompt(promptResult);
                 this.refreshDraftJson();
             },
@@ -459,7 +454,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.draft = profileForEdit(parsed);
                 this.selectedProfileId = parsed.id;
                 this.seedMainAgentPresentation();
-                this.applySubAgentPresentationPolicy();
+                this.syncProfileEditModeToDraft();
                 this.resolvedAgentSystemPrompt = '';
             },
             newProfile() {
@@ -467,7 +462,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.selectedProfileId = id;
                 this.draft = profileForEdit(defaultProfile(id));
                 this.seedMainAgentPresentation();
-                this.applySubAgentPresentationPolicy();
+                this.syncProfileEditModeToDraft();
                 this.resolvedAgentSystemPrompt = '';
                 this.refreshDraftJson();
             },
@@ -479,7 +474,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.selectedProfileId = id;
                 this.draft = profileForEdit(copy);
                 this.seedMainAgentPresentation();
-                this.applySubAgentPresentationPolicy();
+                this.syncProfileEditModeToDraft();
                 this.resolvedAgentSystemPrompt = '';
                 this.refreshDraftJson();
             },
@@ -589,15 +584,13 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     return;
                 }
                 if (this.isSubAgentPresentationLocked) {
-                    throw new Error('Callable SubAgent profiles are locked to background presentation.');
+                    throw new Error('SubAgent-only profiles are locked to background presentation.');
                 }
                 if (presentation !== 'foreground' && presentation !== 'background') {
                     throw new Error(`Unsupported Agent run presentation: ${presentation}`);
                 }
                 this.draft.run.presentation = presentation;
-                if (this.profileEditMode === 'main') {
-                    this.rememberMainAgentPresentation();
-                }
+                this.rememberMainAgentPresentation();
             },
             setCallableAsSubAgent(enabled) {
                 if (this.isBuiltinProfile) {
@@ -607,14 +600,15 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.draft.delegation.allowAsSubagent = isEnabled;
                 this.draft.delegation.callable = isEnabled || Boolean(this.draft.delegation.allowAsHandoffTarget);
                 if (isEnabled) {
-                    this.draft.run.directRunnable = false;
-                    this.applySubAgentPresentationPolicy();
+                    this.applySubAgentOnlyRunPolicy();
+                    this.syncProfileEditModeToDraft();
                     return;
                 }
                 if (this.isSubAgentOnly) {
                     this.draft.run.directRunnable = true;
                     this.restoreMainAgentPresentation();
                 }
+                this.syncProfileEditModeToDraft();
             },
             syncDelegationTools() {
                 const allow = new Set(Array.isArray(this.draft?.tools?.allow) ? this.draft.tools.allow : []);
@@ -810,6 +804,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     } else {
                         await this.setDefaultProfile(profile.id);
                         this.draft = profileForEdit(profile);
+                        this.seedMainAgentPresentation();
+                        this.syncProfileEditModeToDraft();
                         this.refreshDraftJson();
                     }
                     this.toast(tr('agentProfileSaved'));

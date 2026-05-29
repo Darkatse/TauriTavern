@@ -553,6 +553,9 @@ test('Agent profile callable SubAgent toggle owns non-direct run semantics', asy
     vm.seedMainAgentPresentation();
 
     vm.setProfileEditMode('subagent');
+    assert.equal(vm.draft.run.directRunnable, true);
+    assert.equal(vm.draft.run.presentation, 'foreground');
+
     vm.setCallableAsSubAgent(true);
 
     assert.equal(vm.draft.delegation.callable, true);
@@ -562,16 +565,16 @@ test('Agent profile callable SubAgent toggle owns non-direct run semantics', asy
     assert.equal(vm.isSubAgentPresentationLocked, true);
     assert.throws(
         () => vm.setRunPresentation('foreground'),
-        /Callable SubAgent profiles are locked/,
+        /SubAgent-only profiles are locked/,
     );
 
     vm.setCallableAsSubAgent(false);
-    vm.setProfileEditMode('main');
+    assert.equal(vm.profileEditMode, 'main');
     assert.equal(vm.draft.run.directRunnable, true);
     assert.equal(vm.draft.run.presentation, 'foreground');
 });
 
-test('Agent profile edit mode restores presentation per loaded profile', async () => {
+test('Agent profile edit mode follows loaded profile without mutating run policy', async () => {
     const {
         defaultProfile,
     } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
@@ -615,19 +618,23 @@ test('Agent profile edit mode restores presentation per loaded profile', async (
 
     const vm = await createAgentPanelHarness();
     await vm.selectProfile(directMain.id);
+    assert.equal(vm.profileEditMode, 'main');
     vm.setProfileEditMode('subagent');
+    assert.equal(vm.draft.run.directRunnable, true);
     assert.equal(vm.draft.run.presentation, 'foreground');
     vm.setProfileEditMode('main');
     assert.equal(vm.draft.run.presentation, 'foreground');
 
     vm.setProfileEditMode('subagent');
     await vm.selectProfile(callable.id);
-    assert.equal(vm.draft.run.directRunnable, false);
-    assert.equal(vm.draft.run.presentation, 'background');
-    vm.setProfileEditMode('main');
-    assert.equal(vm.draft.run.presentation, 'background');
-
+    assert.equal(vm.profileEditMode, 'main');
+    assert.equal(vm.draft.run.directRunnable, true);
+    assert.equal(vm.draft.run.presentation, 'foreground');
     vm.setProfileEditMode('subagent');
+    assert.equal(vm.draft.run.directRunnable, true);
+    assert.equal(vm.draft.run.presentation, 'foreground');
+
+    vm.setProfileEditMode('main');
     await vm.selectProfile(backgroundOnly.id);
     assert.equal(vm.profileEditMode, 'subagent');
     assert.equal(vm.draft.run.directRunnable, false);
