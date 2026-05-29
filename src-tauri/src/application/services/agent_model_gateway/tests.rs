@@ -4,7 +4,7 @@ use super::decode::{decode_chat_completion_exchange, decode_chat_completion_resp
 use super::encode::encode_chat_completion_request;
 use super::provider_state::next_provider_state;
 use super::providers::AgentProviderAdapter;
-use super::schema::sanitize_schema_for_provider;
+use super::schema::{render_openai_tools, sanitize_schema_for_provider};
 use crate::application::services::agent_tools::BuiltinAgentToolRegistry;
 use crate::application::services::chat_completion_service::exchange::{
     ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
@@ -134,6 +134,72 @@ fn gemini_schema_sanitizer_removes_unsupported_keys_deeply() {
         sanitized["properties"]["nested"]["items"]
             .get("examples")
             .is_none()
+    );
+}
+
+#[test]
+fn gemini_schema_sanitizer_projects_nested_objects_to_agent_friendly_schema() {
+    let schema = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "agentId": { "type": "string" },
+            "task": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                    "title": { "type": "string" },
+                    "objective": { "type": "string" },
+                    "context": {
+                        "type": "object",
+                        "additionalProperties": true,
+                        "description": "Free-form task context."
+                    }
+                },
+                "required": ["objective"]
+            }
+        },
+        "required": ["agentId", "task", "missing"]
+    });
+
+    let sanitized = sanitize_schema_for_provider(&schema, AgentProviderAdapter::Gemini);
+
+    assert_eq!(sanitized["required"], json!(["agentId", "task"]));
+    assert!(sanitized["properties"]["task"].get("required").is_none());
+    assert_eq!(sanitized["properties"]["task"]["type"], "object");
+    assert_eq!(
+        sanitized["properties"]["task"]["properties"]["context"]["type"],
+        "string"
+    );
+}
+
+#[test]
+fn gemini_builtin_tool_schemas_do_not_emit_nested_required() {
+    let registry = BuiltinAgentToolRegistry::phase2c();
+    let tools = render_openai_tools(registry.specs(), AgentProviderAdapter::Gemini);
+    for tool in &tools {
+        let name = tool["function"]["name"].as_str().unwrap_or("<unknown>");
+        assert_gemini_required_shape(
+            &tool["function"]["parameters"],
+            true,
+            &format!("tool `{name}` parameters"),
+        );
+    }
+
+    let delegate = tools
+        .iter()
+        .find(|tool| tool["function"]["name"] == "agent_delegate")
+        .expect("agent_delegate tool must be present");
+    let parameters = &delegate["function"]["parameters"];
+    assert_eq!(parameters["required"], json!(["agentId", "task"]));
+    assert!(parameters["properties"]["task"].get("required").is_none());
+    assert_eq!(
+        parameters["properties"]["task"]["properties"]["context"]["type"],
+        "string"
+    );
+    assert_eq!(
+        parameters["properties"]["task"]["properties"]["expectedOutput"]["type"],
+        "string"
     );
 }
 
@@ -462,6 +528,36 @@ fn same_provider_keeps_matching_private_native_metadata() {
     let dto = encode_chat_completion_request(&request).unwrap();
     let native = dto.payload["messages"][0]["native"].as_object().unwrap();
     assert!(native.get("claude").is_some());
+}
+
+fn assert_gemini_required_shape(schema: &Value, root: bool, context: &str) {
+    let Some(object) = schema.as_object() else {
+        return;
+    };
+
+    if let Some(required) = object.get("required").and_then(Value::as_array) {
+        assert!(root, "{context} must not contain nested required arrays");
+        let properties = object
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("root required schema must declare properties");
+        for entry in required {
+            let name = entry.as_str().expect("required entries must be strings");
+            assert!(
+                properties.contains_key(name),
+                "{context} required property `{name}` is not declared"
+            );
+        }
+    }
+
+    if let Some(properties) = object.get("properties").and_then(Value::as_object) {
+        for (name, nested) in properties {
+            assert_gemini_required_shape(nested, false, &format!("{context}.{name}"));
+        }
+    }
+    if let Some(items) = object.get("items") {
+        assert_gemini_required_shape(items, false, &format!("{context}.items"));
+    }
 }
 
 fn provider_state_test_request(session_id: &str) -> AgentModelRequest {
