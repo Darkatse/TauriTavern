@@ -116,17 +116,14 @@ impl AgentRuntimeService {
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
         let mut commit_ledger = RunCommitLedger::default();
+        let run = self.run_repository.load_run(run_id).await?;
+        let scope_order = super::skill_scope::skill_scope_order_for_profile(
+            &resolved_profile,
+            &run.skill_scope_refs,
+        )?;
         let effective_skills = self
             .skill_service
-            .resolve_effective_skills(
-                &[
-                    crate::domain::models::skill::SkillScope::Global,
-                    crate::domain::models::skill::SkillScope::Profile {
-                        profile_id: resolved_profile.id.as_str().to_string(),
-                    },
-                ],
-                &resolved_profile.skills,
-            )
+            .resolve_effective_skills(&scope_order, &resolved_profile.skills)
             .await?;
         let result = self
             .execute_agent_loop_run_body(

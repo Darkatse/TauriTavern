@@ -60,6 +60,21 @@ pub enum AgentChatCommitMode {
     Append,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunSkillScopeRefs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<profile::AgentPresetRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_id: Option<String>,
+}
+
+impl AgentRunSkillScopeRefs {
+    pub fn is_empty(&self) -> bool {
+        self.preset.is_none() && self.character_id.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRun {
@@ -69,6 +84,8 @@ pub struct AgentRun {
     pub chat_ref: AgentChatRef,
     pub generation_type: String,
     pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "AgentRunSkillScopeRefs::is_empty")]
+    pub skill_scope_refs: AgentRunSkillScopeRefs,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persist_base_state_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

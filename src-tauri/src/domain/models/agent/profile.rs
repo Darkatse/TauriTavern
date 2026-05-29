@@ -150,7 +150,7 @@ pub enum AgentPresetBindingMode {
     None,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentPresetRef {
     pub api_id: String,

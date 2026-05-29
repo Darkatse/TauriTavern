@@ -48,6 +48,7 @@ fn sample_run_with_id(id: &str) -> AgentRun {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,

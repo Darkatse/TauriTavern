@@ -12,10 +12,12 @@ use uuid::Uuid;
 use super::AgentRuntimeService;
 use super::artifacts::build_agent_manifest;
 use super::commit_ledger::RunCommitLedger;
+use super::skill_scope::{resolve_run_skill_scope_refs, skill_scope_order_for_profile};
 use crate::application::dto::agent_dto::{
     AgentPromptAssemblyScopeDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
     AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
-    AgentResolvePromptAssemblyDto,
+    AgentResolvePromptAssemblyDto, AgentSkillScopeRefsDto, AgentStartRunDto,
+    AgentStartRunOptionsDto,
 };
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
@@ -40,8 +42,8 @@ use crate::domain::models::agent::profile::{
 use crate::domain::models::agent::{
     AgentChatRef, AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart,
     AgentModelRequest, AgentModelRole, AgentRun, AgentRunEventLevel, AgentRunPresentation,
-    AgentRunStatus, AgentTaskStatus, AgentToolCall, WorkspaceManifest, WorkspacePath,
-    WorkspacePersistentChangeSet,
+    AgentRunSkillScopeRefs, AgentRunStatus, AgentTaskStatus, AgentToolCall, AgentToolResult,
+    WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
 };
 use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use crate::domain::models::skill::{
@@ -177,6 +179,7 @@ async fn agent_list_returns_callable_profiles_allowed_by_delegation_policy() {
         },
         generation_type: "normal".to_string(),
         profile_id: Some(profile.id.as_str().to_string()),
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -235,6 +238,713 @@ async fn agent_list_returns_callable_profiles_allowed_by_delegation_policy() {
             .content
             .contains("This is a read-only list; no Agent was started.")
     );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn skill_scope_order_uses_invocation_preset_profile_and_run_character() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-skill-scope-order-{}",
+        Uuid::new_v4().simple()
+    ));
+    let mut profile = test_resolved_profile(&root).await;
+    profile.id = AgentProfileId::parse("scene-critic").expect("profile id");
+    profile.preset.mode = AgentPresetBindingMode::Ref;
+    profile.preset.ref_ = Some(AgentPresetRef {
+        api_id: "openai".to_string(),
+        name: "Child Preset".to_string(),
+    });
+    profile.skills.visible = vec!["scope-marker".to_string()];
+
+    let run_refs = AgentRunSkillScopeRefs {
+        preset: Some(AgentPresetRef {
+            api_id: "openai".to_string(),
+            name: "Root Preset".to_string(),
+        }),
+        character_id: Some("alice".to_string()),
+    };
+    let scopes = skill_scope_order_for_profile(&profile, &run_refs).expect("resolve scopes");
+    assert_eq!(
+        scopes,
+        vec![
+            SkillScope::Global,
+            SkillScope::Preset {
+                api_id: "openai".to_string(),
+                name: "Child Preset".to_string(),
+            },
+            SkillScope::Profile {
+                profile_id: "scene-critic".to_string(),
+            },
+            SkillScope::Character {
+                character_id: "alice".to_string(),
+            },
+        ]
+    );
+
+    let skill_repository = Arc::new(FileSkillRepository::new(root.join("skills")));
+    for (scope, label) in [
+        (SkillScope::Global, "global"),
+        (
+            SkillScope::Preset {
+                api_id: "openai".to_string(),
+                name: "Child Preset".to_string(),
+            },
+            "preset",
+        ),
+        (
+            SkillScope::Profile {
+                profile_id: "scene-critic".to_string(),
+            },
+            "profile",
+        ),
+        (
+            SkillScope::Character {
+                character_id: "alice".to_string(),
+            },
+            "character",
+        ),
+    ] {
+        skill_repository
+            .install_import(SkillInstallRequest {
+                target_scope: scope,
+                input: SkillImportInput::InlineFiles {
+                    files: vec![SkillInlineFile {
+                        path: "SKILL.md".to_string(),
+                        encoding: "utf8".to_string(),
+                        content: format!(
+                            "---\nname: scope-marker\ndescription: {label} scoped skill.\n---\n\n# {label}\n"
+                        ),
+                        media_type: None,
+                        size_bytes: None,
+                        sha256: None,
+                    }],
+                    source: json!({ "kind": "test" }),
+                },
+                conflict_strategy: None,
+            })
+            .await
+            .expect("install scoped skill");
+    }
+
+    let effective = SkillService::new(skill_repository)
+        .resolve_effective_skills(&scopes, &profile.skills)
+        .await
+        .expect("resolve effective skills");
+    assert_eq!(effective.len(), 1);
+    assert_eq!(
+        effective[0].scope,
+        SkillScope::Character {
+            character_id: "alice".to_string(),
+        }
+    );
+
+    let mismatch = resolve_run_skill_scope_refs(
+        &AgentStartRunDto {
+            chat_ref: AgentChatRef::Character {
+                character_id: "alice".to_string(),
+                file_name: "alice.png".to_string(),
+            },
+            stable_chat_id: "stable-alice".to_string(),
+            generation_type: "normal".to_string(),
+            profile_id: None,
+            persist_base_state_id: None,
+            prompt_snapshot: None,
+            frozen_run_input_snapshot: None,
+            generation_intent: None,
+            skill_scope_refs: AgentSkillScopeRefsDto {
+                preset: Some(AgentPresetRef {
+                    api_id: "openai".to_string(),
+                    name: "Root Preset".to_string(),
+                }),
+                character_id: Some("alice".to_string()),
+            },
+            options: AgentStartRunOptionsDto::default(),
+        },
+        &profile,
+    )
+    .expect_err("mismatched explicit preset should fail fast");
+    assert!(
+        mismatch
+            .to_string()
+            .contains("agent.skill_scope_preset_mismatch")
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn run_skill_scope_refs_capture_explicit_group_character_for_child_invocations() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-skill-scope-refs-{}",
+        Uuid::new_v4().simple()
+    ));
+    let mut profile = test_resolved_profile(&root).await;
+    profile.preset.mode = AgentPresetBindingMode::CurrentPromptSnapshot;
+
+    let dto = AgentStartRunDto {
+        chat_ref: AgentChatRef::Group {
+            chat_id: "group-chat".to_string(),
+        },
+        stable_chat_id: "stable-group-chat".to_string(),
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        persist_base_state_id: None,
+        prompt_snapshot: None,
+        frozen_run_input_snapshot: None,
+        generation_intent: None,
+        skill_scope_refs: AgentSkillScopeRefsDto {
+            preset: Some(AgentPresetRef {
+                api_id: "openai".to_string(),
+                name: "Current Preset".to_string(),
+            }),
+            character_id: Some("alice".to_string()),
+        },
+        options: AgentStartRunOptionsDto::default(),
+    };
+
+    let refs = resolve_run_skill_scope_refs(&dto, &profile).expect("resolve run refs");
+    assert_eq!(
+        refs,
+        AgentRunSkillScopeRefs {
+            preset: Some(AgentPresetRef {
+                api_id: "openai".to_string(),
+                name: "Current Preset".to_string(),
+            }),
+            character_id: Some("alice".to_string()),
+        }
+    );
+    let scopes = skill_scope_order_for_profile(&profile, &refs).expect("resolve scopes");
+    assert!(scopes.contains(&SkillScope::Preset {
+        api_id: "openai".to_string(),
+        name: "Current Preset".to_string(),
+    }));
+    assert!(scopes.contains(&SkillScope::Character {
+        character_id: "alice".to_string(),
+    }));
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn skill_scope_order_ignores_ambient_preset_when_profile_preset_mode_is_none() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-skill-scope-none-{}",
+        Uuid::new_v4().simple()
+    ));
+    let mut profile = test_resolved_profile(&root).await;
+    profile.preset.mode = AgentPresetBindingMode::None;
+    profile.preset.ref_ = None;
+
+    let scopes = skill_scope_order_for_profile(
+        &profile,
+        &AgentRunSkillScopeRefs {
+            preset: Some(AgentPresetRef {
+                api_id: "openai".to_string(),
+                name: "Ambient Preset".to_string(),
+            }),
+            character_id: Some("alice".to_string()),
+        },
+    )
+    .expect("resolve scopes");
+
+    assert_eq!(
+        scopes,
+        vec![
+            SkillScope::Global,
+            SkillScope::Profile {
+                profile_id: "default-writer".to_string(),
+            },
+            SkillScope::Character {
+                character_id: "alice".to_string(),
+            },
+        ]
+    );
+
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn agent_loop_inner_resolves_root_character_scoped_skills() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-root-character-skill-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let skill_repository = Arc::new(FileSkillRepository::new(root.join("skills")));
+    install_inline_skill(
+        &skill_repository,
+        SkillScope::Character {
+            character_id: "alice".to_string(),
+        },
+        "root-character",
+        "Root character voice notes.",
+        "# Root Character\n\nUse quiet, specific sensory details.",
+    )
+    .await;
+    let skill_service = Arc::new(SkillService::new(skill_repository));
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_root_skill_read",
+                        "type": "function",
+                        "function": {
+                            "name": "skill_read",
+                            "arguments": "{\"name\":\"root-character\",\"path\":\"SKILL.md\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_write_main",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_write_file",
+                                "arguments": "{\"path\":\"output/main.md\",\"content\":\"Root used character skill.\"}"
+                            }
+                        },
+                        {
+                            "id": "call_finish",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_finish",
+                                "arguments": "{}"
+                            }
+                        }
+                    ]
+                }
+            }]
+        }),
+    ]));
+    let model_gateway_probe = model_gateway.clone();
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        skill_service,
+        model_gateway,
+        test_profile_service(&root),
+        test_llm_connection_service(&root),
+    );
+    let run = AgentRun {
+        id: "run_root_character_skill_test".to_string(),
+        workspace_id: "chat_root_character_skill_test".to_string(),
+        stable_chat_id: "stable_root_character_skill_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "alice".to_string(),
+            file_name: "alice.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: AgentRunSkillScopeRefs {
+            preset: None,
+            character_id: Some("alice".to_string()),
+        },
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("read the character skill")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let mut profile = test_resolved_profile(&root).await;
+    profile.skills.visible = vec!["root-character".to_string()];
+
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("agent loop");
+
+    let requests = model_gateway_probe.requests().await;
+    assert_eq!(requests.len(), 2);
+    let root_skill_results = tool_results_from_request(&requests[1])
+        .into_iter()
+        .filter(|result| result.name == "skill.read")
+        .collect::<Vec<_>>();
+    assert_eq!(root_skill_results.len(), 1);
+    assert!(
+        root_skill_results[0]
+            .content
+            .contains("Use quiet, specific sensory details.")
+    );
+
+    let resolved_skills = repository
+        .read_text(
+            &run.id,
+            &WorkspacePath::parse("input/resolved_skills.json").unwrap(),
+        )
+        .await
+        .expect("read resolved skills");
+    let resolved_skills: Value =
+        serde_json::from_str(&resolved_skills.text).expect("resolved skills JSON");
+    assert_eq!(
+        resolved_skills[0]["scope"],
+        json!({ "kind": "character", "characterId": "alice" })
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn subagent_current_prompt_snapshot_reads_ambient_preset_and_character_skills() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-child-ambient-skills-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let skill_repository = Arc::new(FileSkillRepository::new(root.join("skills")));
+    install_inline_skill(
+        &skill_repository,
+        SkillScope::Preset {
+            api_id: "openai".to_string(),
+            name: "Root Preset".to_string(),
+        },
+        "ambient-preset",
+        "Ambient preset craft rules.",
+        "# Preset Skill\n\nUse the root preset rhythm.",
+    )
+    .await;
+    install_inline_skill(
+        &skill_repository,
+        SkillScope::Character {
+            character_id: "alice".to_string(),
+        },
+        "ambient-character",
+        "Ambient character continuity notes.",
+        "# Character Skill\n\nAlice avoids ornate metaphors.",
+    )
+    .await;
+    let skill_service = Arc::new(SkillService::new(skill_repository));
+    let profile_service = test_profile_service(&root);
+    let mut child_profile = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    child_profile.id = AgentProfileId::parse("scene-critic").expect("profile id");
+    child_profile.display_name = "Scene Critic".to_string();
+    child_profile.description = Some("Reads scoped skills before returning notes.".to_string());
+    child_profile.tools.allow.retain(|name| {
+        !matches!(
+            name.as_str(),
+            "agent.list" | "agent.delegate" | "agent.await"
+        )
+    });
+    child_profile.skills.visible = vec![
+        "ambient-preset".to_string(),
+        "ambient-character".to_string(),
+    ];
+    child_profile.delegation = AgentDelegationPolicy {
+        callable: true,
+        allow_as_subagent: true,
+        allowed_callers: vec!["default-writer".to_string()],
+        description_for_agents: Some("Use scoped skills, then return concise notes.".to_string()),
+        ..Default::default()
+    };
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_delegate_critic",
+                            "type": "function",
+                            "function": {
+                                "name": "agent_delegate",
+                                "arguments": serde_json::to_string(&json!({
+                                    "agentId": "scene-critic",
+                                    "task": {
+                                        "title": "Read scoped skills",
+                                        "objective": "Read preset and character skills before returning.",
+                                        "context": { "draft": "A quiet scene." },
+                                        "expectedOutput": { "format": "short capsule" }
+                                    },
+                                    "budget": { "maxRounds": 4, "maxToolCalls": 6 }
+                                })).unwrap()
+                            }
+                        },
+                        {
+                            "id": "call_await_critic",
+                            "type": "function",
+                            "function": {
+                                "name": "agent_await",
+                                "arguments": "{\"mode\":\"nextCompleted\",\"timeoutMs\":5000}"
+                            }
+                        }
+                    ]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_child_skill_list",
+                            "type": "function",
+                            "function": {
+                                "name": "skill_list",
+                                "arguments": "{}"
+                            }
+                        },
+                        {
+                            "id": "call_child_preset_skill",
+                            "type": "function",
+                            "function": {
+                                "name": "skill_read",
+                                "arguments": "{\"name\":\"ambient-preset\",\"path\":\"SKILL.md\"}"
+                            }
+                        },
+                        {
+                            "id": "call_child_character_skill",
+                            "type": "function",
+                            "function": {
+                                "name": "skill_read",
+                                "arguments": "{\"name\":\"ambient-character\",\"path\":\"SKILL.md\"}"
+                            }
+                        }
+                    ]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_task_return",
+                        "type": "function",
+                        "function": {
+                            "name": "task_return",
+                            "arguments": serde_json::to_string(&json!({
+                                "summary": "Scoped skills were available.",
+                                "status": "completed",
+                                "confidence": "high",
+                                "findings": [{ "kind": "skill", "text": "Read preset and character skills." }]
+                            })).unwrap()
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_parent_write",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_write_file",
+                                "arguments": "{\"path\":\"output/main.md\",\"content\":\"Parent received scoped skill notes.\"}"
+                            }
+                        },
+                        {
+                            "id": "call_parent_finish",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_finish",
+                                "arguments": "{}"
+                            }
+                        }
+                    ]
+                }
+            }]
+        }),
+    ]));
+    let model_gateway_probe = model_gateway.clone();
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        skill_service,
+        model_gateway,
+        profile_service.clone(),
+        test_llm_connection_service(&root),
+    ));
+    profile_service
+        .save_profile(child_profile, service.tool_specs())
+        .await
+        .expect("save child profile");
+    let run = AgentRun {
+        id: "run_child_ambient_skill_test".to_string(),
+        workspace_id: "chat_child_ambient_skill_test".to_string(),
+        stable_chat_id: "stable_child_ambient_skill_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "alice".to_string(),
+            file_name: "alice.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: AgentRunSkillScopeRefs {
+            preset: Some(AgentPresetRef {
+                api_id: "openai".to_string(),
+                name: "Root Preset".to_string(),
+            }),
+            character_id: Some("alice".to_string()),
+        },
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    insert_active_run_handle(&service, &run.id).await;
+
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("delegate scoped skill reading")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let profile = test_resolved_profile(&root).await;
+
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("agent loop");
+
+    let tasks = repository.list_tasks(&run.id).await.expect("list tasks");
+    assert_eq!(tasks.len(), 1);
+    let task = &tasks[0];
+    assert_eq!(task.status, AgentTaskStatus::Completed);
+
+    let requests = model_gateway_probe.requests().await;
+    assert_eq!(requests.len(), 4);
+    let child_tool_results = tool_results_from_request(&requests[2]);
+    let listed_skills = child_tool_results
+        .iter()
+        .find(|result| result.name == "skill.list")
+        .expect("skill.list result");
+    assert_eq!(
+        listed_skills.structured["skills"],
+        json!([
+            {
+                "name": "ambient-character",
+                "description": "Ambient character continuity notes."
+            },
+            {
+                "name": "ambient-preset",
+                "description": "Ambient preset craft rules."
+            }
+        ])
+    );
+    assert!(
+        child_tool_results
+            .iter()
+            .any(|result| result.name == "skill.read"
+                && result.content.contains("Use the root preset rhythm."))
+    );
+    assert!(
+        child_tool_results
+            .iter()
+            .any(|result| result.name == "skill.read"
+                && result.content.contains("Alice avoids ornate metaphors."))
+    );
+
+    let child_resolved_skills = repository
+        .read_text(
+            &run.id,
+            &WorkspacePath::parse(format!(
+                "input/invocations/{}/resolved_skills.json",
+                task.child_invocation_id
+            ))
+            .unwrap(),
+        )
+        .await
+        .expect("read child resolved skills");
+    let child_resolved_skills: Value =
+        serde_json::from_str(&child_resolved_skills.text).expect("child resolved skills JSON");
+    let resolved_scopes = child_resolved_skills
+        .as_array()
+        .expect("resolved skills array")
+        .iter()
+        .map(|skill| skill["scope"].clone())
+        .collect::<Vec<_>>();
+    assert!(resolved_scopes.contains(&json!({
+        "kind": "preset",
+        "apiId": "openai",
+        "name": "Root Preset",
+    })));
+    assert!(resolved_scopes.contains(&json!({
+        "kind": "character",
+        "characterId": "alice",
+    })));
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: Some(0),
+                before_seq: None,
+                limit: 100,
+            },
+        )
+        .await
+        .expect("read events");
+    assert!(events.iter().any(|event| {
+        event.event_type == "skill_scopes_resolved"
+            && event.payload["invocationId"] == task.child_invocation_id
+            && event.payload["refs"]["characterId"] == "alice"
+    }));
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -418,6 +1128,7 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -753,6 +1464,7 @@ async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -928,13 +1640,13 @@ async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
         })
         .await
         .expect("resolve prompt assembly");
-    cancel_sender.send_replace(true);
 
     let prompt_snapshot = assembly
         .await
         .expect("join assembly")
         .expect("assemble prompt")
         .expect("child prompt snapshot");
+    drop(cancel_sender);
     assert_eq!(
         prompt_snapshot["chatCompletionPayload"]["messages"][1]["content"],
         "Assembled child task prompt."
@@ -998,6 +1710,7 @@ async fn completed_child_results_are_added_to_next_parent_turn_once() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -1101,6 +1814,7 @@ async fn cancelled_child_task_does_not_emit_failed_event() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -1231,6 +1945,7 @@ async fn workspace_finish_cancels_unawaited_delegated_task() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -1354,6 +2069,7 @@ async fn scheduler_cancels_unfinished_child_tasks_when_parent_finishes() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -1418,6 +2134,7 @@ async fn agent_loop_writes_artifact_and_completes() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -1648,6 +2365,7 @@ async fn agent_loop_stores_tool_audit_files_with_hashed_call_id_paths() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -1827,6 +2545,7 @@ async fn agent_loop_retries_retryable_model_errors() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -1972,6 +2691,7 @@ async fn agent_loop_does_not_retry_non_retryable_model_errors() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -2064,6 +2784,7 @@ async fn agent_loop_reads_and_patches_workspace_artifact() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -2223,6 +2944,7 @@ async fn finish_promotes_persistent_workspace_projection() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -2381,6 +3103,7 @@ async fn foreground_run_commits_chat_message_before_finish() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
@@ -2555,6 +3278,7 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
@@ -2784,6 +3508,7 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
@@ -3020,6 +3745,7 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
@@ -3183,6 +3909,7 @@ async fn foreground_run_without_commit_still_fails_after_drift_recovery_exhausts
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
@@ -3309,6 +4036,7 @@ async fn foreground_run_with_commit_becomes_partial_success_when_persistent_comm
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
@@ -3481,6 +4209,7 @@ async fn foreground_finish_before_commit_returns_recoverable_error() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Foreground,
@@ -3643,6 +4372,7 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -3795,6 +4525,7 @@ async fn workspace_patch_requires_full_read_state() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -3895,6 +4626,7 @@ async fn workspace_write_file_uses_session_cas_for_existing_files() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -4016,6 +4748,7 @@ async fn dispatcher_searches_and_reads_current_chat_messages() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -4222,6 +4955,7 @@ async fn dispatcher_chat_tools_hide_messages_after_run_input_boundary() {
         },
         generation_type: "swipe".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: Some(2),
         presentation: AgentRunPresentation::Background,
@@ -4342,6 +5076,7 @@ async fn dispatcher_searches_visible_workspace_files_and_reads_char_ranges() {
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -4525,6 +5260,7 @@ async fn dispatcher_progressively_reads_worldinfo_activation_from_run_snapshot()
         },
         generation_type: "normal".to_string(),
         profile_id: None,
+        skill_scope_refs: Default::default(),
         persist_base_state_id: None,
         input_message_count: None,
         presentation: AgentRunPresentation::Background,
@@ -4732,6 +5468,19 @@ fn assert_hashed_tool_audit_path(path: &str, root: &str) {
     );
 }
 
+fn tool_results_from_request(request: &AgentModelRequest) -> Vec<&AgentToolResult> {
+    request
+        .messages
+        .iter()
+        .filter(|message| message.role == AgentModelRole::Tool)
+        .filter_map(|message| message.parts.first())
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some(result),
+            _ => None,
+        })
+        .collect()
+}
+
 struct MockAgentModelGateway {
     responses: Mutex<VecDeque<Result<Value, ApplicationError>>>,
     requests: Mutex<Vec<AgentModelRequest>>,
@@ -4750,6 +5499,35 @@ fn test_skill_service(root: &Path) -> Arc<SkillService> {
     Arc::new(SkillService::new(Arc::new(FileSkillRepository::new(
         root.join("skills"),
     ))))
+}
+
+async fn install_inline_skill(
+    skill_repository: &Arc<FileSkillRepository>,
+    scope: SkillScope,
+    name: &str,
+    description: &str,
+    body: &str,
+) {
+    skill_repository
+        .install_import(SkillInstallRequest {
+            target_scope: scope,
+            input: SkillImportInput::InlineFiles {
+                files: vec![SkillInlineFile {
+                    path: "SKILL.md".to_string(),
+                    encoding: "utf8".to_string(),
+                    content: format!(
+                        "---\nname: {name}\ndescription: {description}\n---\n\n{body}\n"
+                    ),
+                    media_type: None,
+                    size_bytes: None,
+                    sha256: None,
+                }],
+                source: json!({ "kind": "test" }),
+            },
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install inline skill");
 }
 
 fn test_chat_repository(root: &Path) -> Arc<FileChatRepository> {

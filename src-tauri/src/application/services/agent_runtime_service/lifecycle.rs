@@ -10,6 +10,9 @@ use super::prompt_snapshot::{
     reject_external_tool_request, request_from_prompt_snapshot,
     validate_prompt_snapshot_context_policy,
 };
+use super::skill_scope::{
+    resolve_run_skill_scope_refs, skill_event_summary, skill_scope_order_for_profile,
+};
 use crate::application::dto::agent_dto::{
     AgentCancelRunDto, AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
     AgentRunHandleDto, AgentStartRunDto, AgentWorkspaceFileDto,
@@ -21,11 +24,7 @@ use crate::application::services::agent_identity::{
 use crate::application::services::agent_profile_service::AgentProfileResolveInput;
 use crate::application::services::agent_workspace_lifecycle_service::AgentRunActivity;
 use crate::application::services::prompt_assembly_service::attach_frozen_run_input_snapshot;
-use crate::domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
-use crate::domain::models::agent::{
-    AgentChatRef, AgentRun, AgentRunEventLevel, AgentRunStatus, WorkspacePath,
-};
-use crate::domain::models::skill::{SkillIndexEntry, SkillScope};
+use crate::domain::models::agent::{AgentRun, AgentRunEventLevel, AgentRunStatus, WorkspacePath};
 use crate::domain::repositories::agent_run_repository::AgentRunEventReadQuery;
 use crate::domain::text_metrics::TextMetrics;
 
@@ -90,7 +89,9 @@ impl AgentRuntimeService {
             ));
         }
         resolved_profile.run.presentation = presentation;
-        let skill_scope_order = resolve_run_skill_scopes(&dto, &resolved_profile)?;
+        let skill_scope_refs = resolve_run_skill_scope_refs(&dto, &resolved_profile)?;
+        let skill_scope_order =
+            skill_scope_order_for_profile(&resolved_profile, &skill_scope_refs)?;
         let effective_skills = self
             .skill_service
             .resolve_effective_skills(&skill_scope_order, &resolved_profile.skills)
@@ -124,6 +125,7 @@ impl AgentRuntimeService {
             chat_ref: dto.chat_ref.clone(),
             generation_type: generation_type.clone(),
             profile_id: Some(resolved_profile.id.as_str().to_string()),
+            skill_scope_refs: skill_scope_refs.clone(),
             persist_base_state_id: input_context.persist_base_state_id,
             input_message_count: Some(input_context.input_message_count),
             presentation,
@@ -161,6 +163,7 @@ impl AgentRuntimeService {
             "skill_scopes_resolved",
             json!({
                 "scopes": skill_scope_order,
+                "refs": skill_scope_refs,
                 "effectiveSkills": skill_event_summary(&effective_skills),
             }),
         )
@@ -307,68 +310,6 @@ impl AgentRuntimeService {
             sha256: file.sha256,
         })
     }
-}
-
-fn resolve_run_skill_scopes(
-    dto: &AgentStartRunDto,
-    profile: &ResolvedAgentProfile,
-) -> Result<Vec<SkillScope>, ApplicationError> {
-    let mut scopes = vec![SkillScope::Global];
-
-    if let Some(preset) = dto.skill_scope_refs.preset.as_ref().or_else(|| {
-        if profile.preset.mode == AgentPresetBindingMode::Ref {
-            profile.preset.ref_.as_ref()
-        } else {
-            None
-        }
-    }) {
-        scopes.push(SkillScope::Preset {
-            api_id: preset.api_id.clone(),
-            name: preset.name.clone(),
-        });
-    }
-
-    scopes.push(SkillScope::Profile {
-        profile_id: profile.id.as_str().to_string(),
-    });
-
-    let chat_character_id = match &dto.chat_ref {
-        AgentChatRef::Character { character_id, .. } => Some(character_id.as_str()),
-        AgentChatRef::Group { .. } => None,
-    };
-    let explicit_character_id = dto
-        .skill_scope_refs
-        .character_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if let (Some(explicit), Some(chat)) = (explicit_character_id, chat_character_id) {
-        if explicit != chat {
-            return Err(ApplicationError::ValidationError(format!(
-                "agent.skill_scope_character_mismatch: skillScopeRefs.characterId `{explicit}` does not match chat character `{chat}`"
-            )));
-        }
-    }
-    if let Some(character_id) = explicit_character_id.or(chat_character_id) {
-        scopes.push(SkillScope::Character {
-            character_id: character_id.to_string(),
-        });
-    }
-
-    Ok(scopes)
-}
-
-fn skill_event_summary(skills: &[SkillIndexEntry]) -> Vec<serde_json::Value> {
-    skills
-        .iter()
-        .map(|skill| {
-            json!({
-                "name": skill.name.as_str(),
-                "scope": &skill.scope,
-                "installedHash": skill.installed_hash.as_str(),
-            })
-        })
-        .collect()
 }
 
 #[async_trait::async_trait]

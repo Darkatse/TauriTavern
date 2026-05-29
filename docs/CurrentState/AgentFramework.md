@@ -96,6 +96,7 @@ _tauritavern/agent-profiles/
 - `tools.allow` / `tools.deny` 决定模型可见工具，dispatcher 会二次拦截不可见工具。
 - `tools.toolDescriptions` 省略或为空时使用默认工具 description；设置时只替换 model-facing ToolSpec copy 的工具总 description 与参数 description。
 - `skills.visible` / `skills.deny` 控制 `skill.list`、`skill.search` 与 `skill.read`，`maxReadCharsPerCall` / `maxReadCharsPerRun` 控制 Skill 读取预算。
+- 每个 invocation 按 `global -> preset -> profile -> character` 解析 active Skill scopes。root run 会固化 ambient `skillScopeRefs`；return-mode child 使用 target Profile 的 Skill policy，并按 target preset / run ambient character 解析可读 Skill。
 - `workspace.visibleRoots` / `workspace.writableRoots` 只能收窄 root universe：`output`、`scratch`、`plan`、`summaries`、`persist`。
 - `run.presentation` 区分 `foreground` / `background`，默认 built-in profile 为前台；前台 Profile 必须暴露 `workspace.commit`。
 - `run.modelRetry` 控制单次模型调用的瞬时错误重试；默认 `maxRetries = 3`、`intervalMs = 3000`。当前只重试 rate limit / transient transport-provider 错误，不重试 prompt/schema/native metadata/tool id 等契约错误。
@@ -453,11 +454,12 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 最近一次 Rust 侧验证基线：
 
 - `cargo fmt --manifest-path src-tauri/Cargo.toml`
-- `cargo check --manifest-path src-tauri/Cargo.toml`
-- `cargo test --manifest-path src-tauri/Cargo.toml agent_runtime_service`：44 passed
+- `cargo check --manifest-path src-tauri/Cargo.toml`：1 existing dead_code warning
+- `cargo test --manifest-path src-tauri/Cargo.toml skill_scope --lib`：2 passed
+- `cargo test --manifest-path src-tauri/Cargo.toml agent_runtime_service --lib`：53 passed
 - `cargo test --manifest-path src-tauri/Cargo.toml agent_delegate_await_runs_return_mode_subagent`
 - `cargo test --manifest-path src-tauri/Cargo.toml workspace_view`
-- `cargo test --manifest-path src-tauri/Cargo.toml file_agent_repository`：9 passed
+- `cargo test --manifest-path src-tauri/Cargo.toml file_agent_repository --lib`：10 passed
 - `cargo test --manifest-path src-tauri/Cargo.toml file_agent_profile_repository`：1 passed
 - `git diff --check`
 

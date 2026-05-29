@@ -43,6 +43,7 @@ mod model_turn_display;
 mod prompt_assembly;
 mod prompt_snapshot;
 mod scheduler;
+mod skill_scope;
 mod tool_execution;
 
 #[cfg(test)]

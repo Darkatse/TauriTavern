@@ -14,10 +14,13 @@ use crate::application::services::agent_runtime_service::commit_ledger::RunCommi
 use crate::application::services::agent_runtime_service::prompt_snapshot::{
     prepare_agent_tool_request, request_from_prompt_snapshot, request_summary,
 };
+use crate::application::services::agent_runtime_service::skill_scope::{
+    skill_event_summary, skill_scope_order_for_profile,
+};
 use crate::domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
 use crate::domain::models::agent::{
-    AgentInvocationExitPolicy, AgentInvocationStatus, AgentRunEventLevel, AgentTaskStatus,
-    WorkspacePath,
+    AgentInvocationExitPolicy, AgentInvocationStatus, AgentRunEventLevel, AgentRunSkillScopeRefs,
+    AgentTaskStatus, WorkspacePath,
 };
 use crate::domain::models::skill::{SkillIndexEntry, SkillScope};
 
@@ -199,7 +202,36 @@ impl AgentRuntimeService {
         .await?;
         self.ensure_not_cancelled(cancel)?;
 
-        let effective_skills = self.resolve_child_effective_skills(&profile).await?;
+        let (skill_scope_order, effective_skills) = self
+            .resolve_child_effective_skills(&profile, &run.skill_scope_refs)
+            .await?;
+        let resolved_skills = serde_json::to_string_pretty(&effective_skills).map_err(|error| {
+            ApplicationError::ValidationError(format!(
+                "agent.resolved_skills_serialize_failed: {error}"
+            ))
+        })?;
+        self.workspace_repository
+            .write_text(
+                run_id,
+                &WorkspacePath::parse(format!(
+                    "input/invocations/{invocation_id}/resolved_skills.json"
+                ))?,
+                &resolved_skills,
+            )
+            .await?;
+        self.event(
+            run_id,
+            AgentRunEventLevel::Info,
+            "skill_scopes_resolved",
+            json!({
+                "invocationId": invocation_id,
+                "profileId": profile.id.as_str(),
+                "scopes": skill_scope_order,
+                "refs": &run.skill_scope_refs,
+                "effectiveSkills": skill_event_summary(&effective_skills),
+            }),
+        )
+        .await?;
         let mut child_commit_ledger = RunCommitLedger::default();
         self.run_tool_loop(
             run_id,
@@ -236,18 +268,14 @@ impl AgentRuntimeService {
     async fn resolve_child_effective_skills(
         &self,
         profile: &ResolvedAgentProfile,
-    ) -> Result<Vec<SkillIndexEntry>, ApplicationError> {
-        self.skill_service
-            .resolve_effective_skills(
-                &[
-                    SkillScope::Global,
-                    SkillScope::Profile {
-                        profile_id: profile.id.as_str().to_string(),
-                    },
-                ],
-                &profile.skills,
-            )
-            .await
+        refs: &AgentRunSkillScopeRefs,
+    ) -> Result<(Vec<SkillScope>, Vec<SkillIndexEntry>), ApplicationError> {
+        let scope_order = skill_scope_order_for_profile(profile, refs)?;
+        let effective_skills = self
+            .skill_service
+            .resolve_effective_skills(&scope_order, &profile.skills)
+            .await?;
+        Ok((scope_order, effective_skills))
     }
 }
 

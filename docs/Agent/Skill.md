@@ -86,6 +86,8 @@ materialize input into .staging
 - 只读。
 - 返回当前 Profile 可见的已安装 Skill 索引摘要。
 - `skills.visible` 支持具体 Skill name 或 `"*"`；`skills.deny` 优先。
+- root 与 child invocation 都使用同一套 active scope 顺序：`global -> preset -> profile -> character`。后出现的 scope 覆盖同名 Skill；Profile policy 再按 Skill name 过滤可见性。
+- return-mode child 使用 target Profile 的 `skills` policy。`preset.ref` child 使用 target Profile 的 preset scope；`currentPromptSnapshot` child 使用 root run 启动时固化的 ambient preset scope；character scope 来自 root run 固化的 ambient character ref。
 
 `skill.read`：
 
