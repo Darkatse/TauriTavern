@@ -154,6 +154,107 @@ test('connection manager applies profiles as a suspended validation batch', asyn
     assert.match(applyConnectionProfile, /connectCurrentApi\(\);/);
 });
 
+test('connection manager model targets apply only model route fields', async () => {
+    const source = await readFile(
+        new URL('../src/scripts/extensions/connection-manager/index.js', import.meta.url),
+        'utf8',
+    );
+    const applyModelTarget = extractDeclaration(source, 'async function applyModelTarget');
+
+    assert.match(applyModelTarget, /withConnectionValidationSuspended\('Model target application'/);
+    assert.match(applyModelTarget, /requireManagedCommand\('api', target\.api\)/);
+    assert.match(applyModelTarget, /requireManagedCommand\('custom-api-format', target\['custom-api-format'\]\)/);
+    assert.match(applyModelTarget, /requireManagedCommand\('custom-api-format', 'openai_compat'\)/);
+    assert.match(applyModelTarget, /requireManagedCommand\('api-url', target\['api-url'\], \{ connect: 'false', quiet: 'true' \}\)/);
+    assert.match(applyModelTarget, /executeManagedCommand\('api-url', '', \{ connect: 'false', quiet: 'true', clear: 'true' \}\)/);
+    assert.match(applyModelTarget, /requireManagedCommand\('secret-id', target\.secretRef\.id, \{ key: target\.secretRef\.key, quiet: 'true' \}\)/);
+    assert.match(applyModelTarget, /requireManagedCommand\('proxy', NO_PROXY_PRESET\)/);
+    assert.match(applyModelTarget, /requireManagedCommand\('model', target\.model, \{ quiet: 'true' \}\)/);
+    assert.doesNotMatch(applyModelTarget, /preset|stop-strings|start-reply-with|prompt-post-processing|regex-preset/);
+});
+
+test('connection manager preserves legacy profile selection contracts', async () => {
+    const source = await readFile(
+        new URL('../src/scripts/extensions/connection-manager/index.js', import.meta.url),
+        'utf8',
+    );
+    const makeItemOptionValue = extractDeclaration(source, 'function makeItemOptionValue');
+    const setSelectedItemRef = extractDeclaration(source, 'function setSelectedItemRef');
+    const normalizeConnectionManagerSettings = extractDeclaration(source, 'function normalizeConnectionManagerSettings');
+
+    assert.match(makeItemOptionValue, /kind === CONNECTION_ITEM_KIND\.PROFILE[\s\S]*?return id;/);
+    assert.match(makeItemOptionValue, /kind === CONNECTION_ITEM_KIND\.MODEL_TARGET[\s\S]*?return `\$\{kind\}:\$\{id\}`;/);
+    assert.match(setSelectedItemRef, /if \(!ref\) \{[\s\S]*?selectedProfile = null;[\s\S]*?\} else if \(ref\.kind === CONNECTION_ITEM_KIND\.PROFILE\) \{[\s\S]*?selectedProfile = ref\.id;/);
+    assert.doesNotMatch(setSelectedItemRef, /selectedProfile = ref\?\.kind/);
+    assert.doesNotMatch(normalizeConnectionManagerSettings, /selectedProfile = null/);
+});
+
+test('connection manager popup custom actions are result-driven', async () => {
+    const source = await readFile(
+        new URL('../src/scripts/extensions/connection-manager/index.js', import.meta.url),
+        'utf8',
+    );
+
+    assert.match(source, /new Popup\(template, POPUP_TYPE\.INPUT, suggestedName/);
+    assert.match(source, /popup\.result === CREATE_MODEL_TARGET_RESULT/);
+    assert.match(source, /popup\.result === POPUP_RESULT\.CUSTOM1/);
+    assert.doesNotMatch(source, /action: \(\) => \{/);
+});
+
+test('api-url slash command has explicit clear semantics for model targets', async () => {
+    const source = await readFile(
+        new URL('../src/scripts/slash-commands.js', import.meta.url),
+        'utf8',
+    );
+
+    assert.match(source, /async function setApiUrlCallback\(\{ api = null, connect = 'true', quiet = 'false', clear = 'false' \}/);
+    assert.match(source, /const isClear = isTrueBoolean\(clear\);/);
+    assert.match(source, /\$\('#custom_api_url_text'\)\.val\(''\)\.trigger\('input'\);/);
+    assert.match(source, /\$\('#api_url_text'\)\.val\(''\)\.trigger\('input'\);/);
+    assert.match(source, /\$\(inputSelector\)\.val\(''\)\.trigger\('input'\);/);
+    assert.match(source, /name: 'clear',[\s\S]*?description: t`Clear the current API URL instead of reading it when no URL is provided`/);
+});
+
+test('connection manager model target visible strings have zh translations', async () => {
+    const keys = [
+        'Name cannot be empty.',
+        'A model with the same name already exists.',
+        'A profile with the same name already exists.',
+        'Please provide a name for the new connection profile.',
+        'Save Model Only',
+        'Save only API, server URL, model, proxy, and secret.',
+        'Are you sure you want to delete the selected model?',
+        'Saved Object',
+        'Model',
+        'Model name:',
+        'Models',
+        'Connection Profiles',
+        'Rename and refresh the saved model route from the current connection settings.',
+        'Model renamed.',
+        'Connection profile reloaded',
+        'Model reloaded',
+        'Connection profile updated',
+        'Model updated',
+        'Press "Update" to record them into the profile.',
+        'Included settings list updated',
+        'Connection profile renamed.',
+        'Clear the current API URL instead of reading it when no URL is provided',
+    ];
+    const locales = [
+        ['zh-cn', '../src/locales/zh-cn.json'],
+        ['zh-tw', '../src/locales/zh-tw.json'],
+    ];
+
+    for (const [localeName, localePath] of locales) {
+        const locale = JSON.parse(await readFile(new URL(localePath, import.meta.url), 'utf8'));
+        for (const key of keys) {
+            assert.ok(Object.hasOwn(locale, key), `${localeName} is missing translation key: ${key}`);
+            assert.equal(typeof locale[key], 'string', `${localeName} translation is not a string: ${key}`);
+            assert.notEqual(locale[key].length, 0, `${localeName} translation is empty: ${key}`);
+        }
+    }
+});
+
 test('connection manager forwards profile secret id for completion requests', async () => {
     const chatRequests = [];
     const textRequests = [];

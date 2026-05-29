@@ -203,8 +203,11 @@ export const extension_settings = {
     },
     connectionManager: {
         selectedProfile: '',
+        selectedItem: null,
         /** @type {import('./extensions/connection-manager/index.js').ConnectionProfile[]} */
         profiles: [],
+        /** @type {import('./extensions/connection-manager/index.js').LlmModelTarget[]} */
+        modelTargets: [],
     },
     dice: {},
     /** @type {import('./char-data.js').RegexScriptData[]} */

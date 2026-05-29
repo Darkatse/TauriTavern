@@ -3162,6 +3162,13 @@ export function initDefaultSlashCommands() {
                 defaultValue: 'false',
                 enumList: commonEnumProviders.boolean('trueFalse')(),
             }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'clear',
+                description: t`Clear the current API URL instead of reading it when no URL is provided`,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'false',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
         ],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
@@ -6549,16 +6556,28 @@ function setPromptEntryCallback(args, targetState) {
  * @param {string?} [args.api=null] - the API name to set/get the URL for
  * @param {string?} [args.connect=true] - whether to connect to the API after setting
  * @param {string?} [args.quiet=false] - whether to suppress toasts
+ * @param {string?} [args.clear=false] - whether to clear the URL instead of reading it
  * @param {string} url - the API URL to set
  * @returns {Promise<string>}
  */
-async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false' }, url) {
+async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false', clear = 'false' }, url) {
     const isQuiet = isTrueBoolean(quiet);
     const autoConnect = isTrueBoolean(connect);
+    const isClear = isTrueBoolean(clear);
 
     // Special handling for Chat Completion Custom OpenAI compatible, that one can also support API url handling
     const isCurrentlyCustomOpenai = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.CUSTOM;
     if (api === chat_completion_sources.CUSTOM || (!api && isCurrentlyCustomOpenai)) {
+        if (isClear) {
+            $('#custom_api_url_text').val('').trigger('input');
+
+            if (autoConnect) {
+                triggerApiConnectionButton('#api_button_openai');
+            }
+
+            return '';
+        }
+
         if (!url) {
             return oai_settings.custom_url ?? '';
         }
@@ -6579,6 +6598,16 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
 
     const isCurrentlyZAI = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.ZAI;
     if (api === chat_completion_sources.ZAI || (!api && isCurrentlyZAI)) {
+        if (isClear) {
+            $('#zai_endpoint').val(ZAI_ENDPOINT.COMMON).trigger('input');
+
+            if (autoConnect) {
+                triggerApiConnectionButton('#api_button_openai');
+            }
+
+            return '';
+        }
+
         if (!url) {
             return oai_settings.zai_endpoint || ZAI_ENDPOINT.COMMON;
         }
@@ -6605,6 +6634,16 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
 
     const isCurrentlySiliconFlow = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.SILICONFLOW;
     if (api === chat_completion_sources.SILICONFLOW || (!api && isCurrentlySiliconFlow)) {
+        if (isClear) {
+            $('#siliconflow_endpoint').val(SILICONFLOW_ENDPOINT.GLOBAL).trigger('input');
+
+            if (autoConnect) {
+                triggerApiConnectionButton('#api_button_openai');
+            }
+
+            return '';
+        }
+
         if (!url) {
             return oai_settings.siliconflow_endpoint || SILICONFLOW_ENDPOINT.GLOBAL;
         }
@@ -6631,6 +6670,16 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
 
     const isCurrentlyMinimax = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.MINIMAX;
     if (api === chat_completion_sources.MINIMAX || (!api && isCurrentlyMinimax)) {
+        if (isClear) {
+            $('#minimax_endpoint').val(MINIMAX_ENDPOINT.GLOBAL).trigger('input');
+
+            if (autoConnect) {
+                triggerApiConnectionButton('#api_button_openai');
+            }
+
+            return '';
+        }
+
         if (!url) {
             return oai_settings.minimax_endpoint || MINIMAX_ENDPOINT.GLOBAL;
         }
@@ -6663,6 +6712,16 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
             .map(e => e instanceof HTMLOptionElement ? e.value : '')
             .filter(x => x);
 
+        if (isClear) {
+            $('#vertexai_region').val(defaultRegion).trigger('input');
+
+            if (autoConnect) {
+                triggerApiConnectionButton('#api_button_openai');
+            }
+
+            return '';
+        }
+
         if (!url) {
             return oai_settings.vertexai_region || defaultRegion;
         }
@@ -6688,6 +6747,18 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
     // Special handling for Kobold Classic API
     const isCurrentlyKoboldClassic = main_api === 'kobold';
     if (api === 'kobold' || (!api && isCurrentlyKoboldClassic)) {
+        if (isClear) {
+            $('#api_url_text').val('').trigger('input');
+            // trigger blur debounced, so we hide the autocomplete menu
+            setTimeout(() => $('#api_url_text').trigger('blur'), 1);
+
+            if (autoConnect) {
+                triggerApiConnectionButton('#api_button');
+            }
+
+            return '';
+        }
+
         if (!url) {
             return kai_settings.api_server ?? '';
         }
@@ -6713,12 +6784,16 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         !isQuiet && toastr.warning(t`API '${api}' is not a valid text_gen API.`);
         return '';
     }
-    if (!api && !Object.values(textgen_types).includes(textgenerationwebui_settings.type)) {
-        !isQuiet && toastr.warning(t`API '${textgenerationwebui_settings.type}' is not a valid text_gen API.`);
+    if (!api && main_api !== 'textgenerationwebui') {
+        if (isClear) {
+            return '';
+        }
+
+        !isQuiet && toastr.warning(t`API type '${main_api}' does not support setting the server URL.`);
         return '';
     }
-    if (!api && main_api !== 'textgenerationwebui') {
-        !isQuiet && toastr.warning(t`API type '${main_api}' does not support setting the server URL.`);
+    if (!api && !Object.values(textgen_types).includes(textgenerationwebui_settings.type)) {
+        !isQuiet && toastr.warning(t`API '${textgenerationwebui_settings.type}' is not a valid text_gen API.`);
         return '';
     }
     if (api && url && autoConnect && api !== textgenerationwebui_settings.type) {
@@ -6729,7 +6804,23 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
 
     const inputSelector = SERVER_INPUTS[type];
     if (!inputSelector) {
+        if (isClear) {
+            return '';
+        }
+
         !isQuiet && toastr.warning(t`API '${type}' does not have a server url input.`);
+        return '';
+    }
+
+    if (isClear) {
+        $(inputSelector).val('').trigger('input');
+        // trigger blur debounced, so we hide the autocomplete menu
+        setTimeout(() => $(inputSelector).trigger('blur'), 1);
+
+        if (autoConnect) {
+            triggerApiConnectionButton('#api_button_textgenerationwebui');
+        }
+
         return '';
     }
 
