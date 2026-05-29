@@ -1699,6 +1699,91 @@ async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
 }
 
 #[tokio::test]
+async fn direct_start_rejects_subagent_only_profile() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-subagent-only-start-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let profile_service = test_profile_service(&root);
+    let mut child_profile = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    child_profile.id = AgentProfileId::parse("subagent-only").expect("profile id");
+    child_profile.display_name = "SubAgent Only".to_string();
+    child_profile.run.presentation = AgentRunPresentation::Background;
+    child_profile.run.direct_runnable = false;
+    child_profile.tools.allow.retain(|name| {
+        !matches!(
+            name.as_str(),
+            "workspace.commit"
+                | "workspace.finish"
+                | "agent.list"
+                | "agent.delegate"
+                | "agent.await"
+        )
+    });
+    child_profile.delegation = AgentDelegationPolicy {
+        callable: true,
+        allow_as_subagent: true,
+        allowed_callers: vec!["default-writer".to_string()],
+        description_for_agents: Some("Return concise notes.".to_string()),
+        ..Default::default()
+    };
+
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(Vec::new())),
+        profile_service.clone(),
+        test_llm_connection_service(&root),
+    ));
+    profile_service
+        .save_profile(child_profile, service.tool_specs())
+        .await
+        .expect("save subagent-only profile");
+
+    let error = service
+        .start_run(AgentStartRunDto {
+            chat_ref: AgentChatRef::Character {
+                character_id: "Seraphina".to_string(),
+                file_name: "Seraphina.png".to_string(),
+            },
+            stable_chat_id: "stable_subagent_only_start".to_string(),
+            generation_type: "normal".to_string(),
+            profile_id: Some("subagent-only".to_string()),
+            persist_base_state_id: None,
+            prompt_snapshot: Some(json!({
+                "chatCompletionPayload": {
+                    "chat_completion_source": "openai",
+                    "model": "test-model",
+                    "messages": prompt_messages("direct start should be rejected")
+                }
+            })),
+            frozen_run_input_snapshot: None,
+            generation_intent: None,
+            skill_scope_refs: Default::default(),
+            options: AgentStartRunOptionsDto::default(),
+        })
+        .await
+        .expect_err("subagent-only profile must not start directly");
+
+    assert!(
+        error
+            .to_string()
+            .contains("agent.profile_not_direct_runnable")
+    );
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn completed_child_results_are_added_to_next_parent_turn_once() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-inbox-{}",

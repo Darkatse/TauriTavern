@@ -114,6 +114,25 @@ function normalizeModelBinding(value) {
     };
 }
 
+function normalizeRunPolicy(value) {
+    const policy = isPlainObject(value) ? { ...value } : {};
+    const presentation = String(policy.presentation || 'foreground').trim() || 'foreground';
+    if (presentation !== 'foreground' && presentation !== 'background') {
+        throw new Error(`run.presentation is unsupported: ${presentation}`);
+    }
+    const directRunnable = policy.directRunnable !== false;
+    const modelRetry = isPlainObject(policy.modelRetry) ? policy.modelRetry : {};
+
+    return {
+        presentation: directRunnable ? presentation : 'background',
+        directRunnable,
+        modelRetry: {
+            maxRetries: Number(modelRetry.maxRetries ?? 3),
+            intervalMs: Number(modelRetry.intervalMs ?? 3000),
+        },
+    };
+}
+
 function defaultDelegationPolicy() {
     return {
         canDelegate: false,
@@ -186,7 +205,7 @@ function applyDelegationToolPolicy(profile) {
 export function defaultProfile(id = DEFAULT_PROFILE_ID) {
     const profileId = normalizeProfileId(id) || DEFAULT_PROFILE_ID;
     const profile = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: 'tauritavern.agentProfile',
         id: profileId,
         displayName: profileId === DEFAULT_PROFILE_ID ? tr('defaultWriter') : tr('newAgentProfile'),
@@ -200,6 +219,7 @@ export function defaultProfile(id = DEFAULT_PROFILE_ID) {
         },
         run: {
             presentation: 'foreground',
+            directRunnable: true,
             modelRetry: {
                 maxRetries: 3,
                 intervalMs: 3000,
@@ -263,10 +283,10 @@ export function normalizeProfileForSave(profile) {
     normalized.id = normalizeProfileId(normalized.id);
     normalized.displayName = String(normalized.displayName || '').trim();
     normalized.description = String(normalized.description || '').trim();
+    normalized.schemaVersion = 2;
     normalized.preset = normalizePresetBinding(normalized.preset);
     normalized.model = normalizeModelBinding(normalized.model);
-    normalized.run.modelRetry.maxRetries = Number(normalized.run.modelRetry.maxRetries);
-    normalized.run.modelRetry.intervalMs = Number(normalized.run.modelRetry.intervalMs);
+    normalized.run = normalizeRunPolicy(normalized.run);
     normalized.context = normalizeAgentContextPolicy(normalized.context);
     normalized.delegation = normalizeDelegationPolicy(normalized.delegation);
     normalized.tools.maxRounds = Number(normalized.tools.maxRounds);
@@ -294,8 +314,10 @@ export function normalizeProfileForSave(profile) {
 
 export function profileForEdit(profile) {
     const draft = clone(profile);
+    draft.schemaVersion = Number(draft.schemaVersion || 1) < 2 ? 2 : Number(draft.schemaVersion);
     draft.preset = normalizePresetBinding(draft.preset);
     draft.model = normalizeModelBinding(draft.model);
+    draft.run = normalizeRunPolicy(draft.run);
     draft.context = normalizeAgentContextPolicy(draft.context);
     draft.delegation = normalizeDelegationPolicy(draft.delegation);
     draft.delegation.allowedCallersCsv = joinCsv(draft.delegation.allowedCallers);

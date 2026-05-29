@@ -419,6 +419,7 @@ profile_switch_denied
   },
   "run": {
     "presentation": "foreground",
+    "directRunnable": true,
     "modelRetry": {
       "maxRetries": 3,
       "intervalMs": 3000

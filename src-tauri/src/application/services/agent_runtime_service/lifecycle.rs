@@ -62,6 +62,12 @@ impl AgentRuntimeService {
                 known_tools: self.tool_registry.specs(),
             })
             .await?;
+        if !resolved_profile.run.direct_runnable {
+            return Err(ApplicationError::ValidationError(format!(
+                "agent.profile_not_direct_runnable: profile `{}` can only run as a delegated SubAgent",
+                resolved_profile.id.as_str()
+            )));
+        }
         validate_prompt_snapshot_context_policy(prompt_snapshot, &resolved_profile)?;
         let prompt_snapshot = attach_frozen_run_input_snapshot(
             prompt_snapshot.clone(),

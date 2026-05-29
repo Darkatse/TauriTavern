@@ -316,6 +316,52 @@ test('Agent generation router uses the global toggle for normal regenerate and s
     );
 });
 
+test('Agent generation router rejects non-direct callable profiles before direct generation', async () => {
+    installWindow({
+        extension: {
+            store: {
+                async tryGetJson() {
+                    return {
+                        found: true,
+                        value: {
+                            agentModeEnabled: true,
+                            selectedProfileId: 'subagent-only',
+                            activeTab: 'profiles',
+                            runTimelineHeightPx: null,
+                        },
+                    };
+                },
+            },
+        },
+        agent: {
+            profiles: {
+                async load({ profileId }) {
+                    assert.equal(profileId, 'subagent-only');
+                    return {
+                        profile: {
+                            run: { directRunnable: false },
+                            context: {
+                                initialChatHistoryMessages: -1,
+                                includeActivatedWorldInfo: true,
+                            },
+                        },
+                    };
+                },
+                async resolveSystemPrompt() {
+                    throw new Error('resolveSystemPrompt should not run for non-direct callable direct generation');
+                },
+            },
+        },
+    });
+
+    const router = await importFresh('src/scripts/tauritavern/agent/agent-generation-router.js');
+
+    await assert.rejects(
+        () => router.getAgentGenerationOptions({ generationType: 'normal', mainApi: 'openai' }),
+        /agent\.profile_not_direct_runnable/,
+    );
+});
+
 test('FrozenRunInputSnapshot stores materialized extension prompts and macro context', async () => {
     const frozen = await importFresh('src/scripts/tauritavern/agent/frozen-run-input-snapshot.js');
     const extensionPrompts = await frozen.snapshotExtensionPromptsForFrozenRun({
@@ -500,9 +546,9 @@ test('Agent profile save normalization keeps delegation tools contract-shaped', 
     assert(!disabled.tools.allow.includes('agent.await'));
 });
 
-test('Agent profile SubAgent toggle locks presentation to background by behavior', async () => {
+test('Agent profile callable SubAgent toggle owns non-direct run semantics', async () => {
     const vm = await createAgentPanelHarness();
-    vm.draft.id = 'dual-role-writer';
+    vm.draft.id = 'scene-consultant';
     vm.draft.run.presentation = 'foreground';
     vm.seedMainAgentPresentation();
 
@@ -511,14 +557,17 @@ test('Agent profile SubAgent toggle locks presentation to background by behavior
 
     assert.equal(vm.draft.delegation.callable, true);
     assert.equal(vm.draft.delegation.allowAsSubagent, true);
+    assert.equal(vm.draft.run.directRunnable, false);
     assert.equal(vm.draft.run.presentation, 'background');
     assert.equal(vm.isSubAgentPresentationLocked, true);
     assert.throws(
         () => vm.setRunPresentation('foreground'),
-        /SubAgent presentation is locked to background/,
+        /Callable SubAgent profiles are locked/,
     );
 
+    vm.setCallableAsSubAgent(false);
     vm.setProfileEditMode('main');
+    assert.equal(vm.draft.run.directRunnable, true);
     assert.equal(vm.draft.run.presentation, 'foreground');
 });
 
@@ -526,18 +575,23 @@ test('Agent profile edit mode restores presentation per loaded profile', async (
     const {
         defaultProfile,
     } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
-    const dualRole = defaultProfile('dual-role-writer');
-    dualRole.run.presentation = 'foreground';
-    dualRole.delegation.callable = true;
-    dualRole.delegation.allowAsSubagent = true;
+    const directMain = defaultProfile('direct-writer');
+    directMain.run.presentation = 'foreground';
+
+    const callable = defaultProfile('callable-consultant');
+    callable.run.presentation = 'foreground';
+    callable.delegation.callable = true;
+    callable.delegation.allowAsSubagent = true;
 
     const backgroundOnly = defaultProfile('background-consultant');
     backgroundOnly.run.presentation = 'background';
+    backgroundOnly.run.directRunnable = false;
     backgroundOnly.delegation.callable = true;
     backgroundOnly.delegation.allowAsSubagent = true;
 
     const profiles = new Map([
-        [dualRole.id, dualRole],
+        [directMain.id, directMain],
+        [callable.id, callable],
         [backgroundOnly.id, backgroundOnly],
     ]);
     installWindow({
@@ -552,20 +606,94 @@ test('Agent profile edit mode restores presentation per loaded profile', async (
             },
         },
     });
+    globalThis.toastr = {
+        success() {},
+        error(error) {
+            throw new Error(String(error || 'unexpected toastr error'));
+        },
+    };
 
     const vm = await createAgentPanelHarness();
-    await vm.selectProfile(dualRole.id);
+    await vm.selectProfile(directMain.id);
     vm.setProfileEditMode('subagent');
-    assert.equal(vm.draft.run.presentation, 'background');
+    assert.equal(vm.draft.run.presentation, 'foreground');
     vm.setProfileEditMode('main');
     assert.equal(vm.draft.run.presentation, 'foreground');
 
     vm.setProfileEditMode('subagent');
-    await vm.selectProfile(backgroundOnly.id);
-    assert.equal(vm.profileEditMode, 'subagent');
+    await vm.selectProfile(callable.id);
+    assert.equal(vm.draft.run.directRunnable, false);
     assert.equal(vm.draft.run.presentation, 'background');
     vm.setProfileEditMode('main');
     assert.equal(vm.draft.run.presentation, 'background');
+
+    vm.setProfileEditMode('subagent');
+    await vm.selectProfile(backgroundOnly.id);
+    assert.equal(vm.profileEditMode, 'subagent');
+    assert.equal(vm.draft.run.directRunnable, false);
+    assert.equal(vm.draft.run.presentation, 'background');
+    vm.setProfileEditMode('main');
+    assert.equal(vm.draft.run.presentation, 'background');
+});
+
+test('Agent profile save keeps non-direct callable profiles out of direct default selection', async () => {
+    const {
+        defaultProfile,
+        profileForEdit,
+    } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
+    const savedProfiles = new Map();
+    let settings = {
+        agentModeEnabled: true,
+        selectedProfileId: 'subagent-only',
+        activeTab: 'profiles',
+        runTimelineHeightPx: null,
+    };
+    installWindow({
+        extension: {
+            store: {
+                async setJson(request) {
+                    settings = request.value;
+                },
+            },
+        },
+        agent: {
+            profiles: {
+                async save({ profile }) {
+                    savedProfiles.set(profile.id, profile);
+                },
+                async list() {
+                    return {
+                        profiles: [...savedProfiles.values()].map((profile) => ({
+                            id: profile.id,
+                            displayName: profile.displayName,
+                            description: profile.description,
+                        })),
+                    };
+                },
+                async load({ profileId }) {
+                    return { profile: savedProfiles.get(profileId) };
+                },
+                async resolveSystemPrompt() {
+                    return { agentSystemPrompt: 'Resolved Agent system prompt.' };
+                },
+            },
+        },
+    });
+
+    const vm = await createAgentPanelHarness();
+    vm.settings = settings;
+    const profile = defaultProfile('subagent-only');
+    profile.tools.allow = profile.tools.allow.filter((tool) => tool !== 'workspace.finish');
+    vm.selectedProfileId = profile.id;
+    vm.draft = profileForEdit(profile);
+    vm.setProfileEditMode('subagent');
+    vm.setCallableAsSubAgent(true);
+
+    await vm.saveProfile();
+
+    assert.equal(savedProfiles.get(profile.id).run.directRunnable, false);
+    assert.equal(vm.selectedProfileId, profile.id);
+    assert.equal(settings.selectedProfileId, 'default-writer');
 });
 
 test('Agent System profile panel no longer owns legacy Skill management UI', async () => {

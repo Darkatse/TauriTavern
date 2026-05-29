@@ -134,7 +134,7 @@ fn validate_profile_file_identity(
     file_id: &AgentProfileId,
     path: &Path,
 ) -> Result<(), DomainError> {
-    if profile.schema_version != AGENT_PROFILE_SCHEMA_VERSION {
+    if !is_supported_profile_schema_version(profile.schema_version) {
         return Err(DomainError::InvalidData(format!(
             "Unsupported Agent profile schemaVersion {} in {}",
             profile.schema_version,
@@ -156,6 +156,10 @@ fn validate_profile_file_identity(
         )));
     }
     Ok(())
+}
+
+fn is_supported_profile_schema_version(version: u32) -> bool {
+    matches!(version, 1 | AGENT_PROFILE_SCHEMA_VERSION)
 }
 
 #[cfg(test)]
@@ -234,6 +238,7 @@ mod tests {
             },
             run: AgentRunPolicy {
                 presentation: AgentRunPresentation::Background,
+                direct_runnable: true,
                 model_retry: Default::default(),
             },
             context: AgentContextPolicy::default(),

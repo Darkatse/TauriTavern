@@ -416,7 +416,12 @@ impl AgentProfileService {
         if profile.is_none() && id.as_str() == DEFAULT_AGENT_PROFILE_ID {
             return Ok(Some(default_writer_profile()?));
         }
-        Ok(profile)
+        profile
+            .map(|mut profile| {
+                migrate_profile_schema(&mut profile)?;
+                Ok(profile)
+            })
+            .transpose()
     }
 
     pub async fn save_profile(
@@ -424,6 +429,7 @@ impl AgentProfileService {
         mut profile: AgentProfileDefinition,
         known_tools: &[AgentToolSpec],
     ) -> Result<(), ApplicationError> {
+        migrate_profile_schema(&mut profile)?;
         normalize_context_policy(&mut profile.context)?;
         self.resolve_definition(
             profile.clone(),
@@ -451,6 +457,7 @@ impl AgentProfileService {
         source: String,
         known_tools: &[AgentToolSpec],
     ) -> Result<ResolvedAgentProfile, ApplicationError> {
+        migrate_profile_schema(&mut definition)?;
         validate_profile_header(&definition)?;
         validate_preset_binding(&definition.preset, self.preset_repository.as_ref()).await?;
         validate_model_binding(&definition.model)?;
@@ -459,7 +466,7 @@ impl AgentProfileService {
         validate_plan_policy(&definition.plan)?;
         validate_tool_policy(&definition.tools, known_tools)?;
         validate_delegation_policy(&definition.delegation, &definition.tools)?;
-        validate_run_policy(&definition.run, &definition.tools)?;
+        validate_run_policy(&definition.run, &definition.delegation, &definition.tools)?;
         validate_skill_policy(&definition.skills)?;
         validate_workspace_policy(&definition.workspace)?;
         let output = resolve_output_policy(&definition.output, &definition.workspace)?;
@@ -508,6 +515,7 @@ fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> 
         },
         run: AgentRunPolicy {
             presentation: AgentRunPresentation::Foreground,
+            direct_runnable: true,
             model_retry: Default::default(),
         },
         context: AgentContextPolicy::default(),
@@ -595,6 +603,19 @@ fn validate_profile_header(profile: &AgentProfileDefinition) -> Result<(), Appli
         ));
     }
     Ok(())
+}
+
+fn migrate_profile_schema(profile: &mut AgentProfileDefinition) -> Result<(), ApplicationError> {
+    match profile.schema_version {
+        1 => {
+            profile.schema_version = AGENT_PROFILE_SCHEMA_VERSION;
+            Ok(())
+        }
+        AGENT_PROFILE_SCHEMA_VERSION => Ok(()),
+        version => Err(ApplicationError::ValidationError(format!(
+            "agent.profile_schema_unsupported: schemaVersion {version} is unsupported"
+        ))),
+    }
 }
 
 async fn validate_preset_binding(
@@ -779,12 +800,6 @@ fn validate_tool_policy(
             )));
         }
     }
-    if !allow.contains("workspace.finish") || deny.contains("workspace.finish") {
-        return Err(ApplicationError::ValidationError(
-            "agent.profile_finish_required: workspace.finish must be visible".to_string(),
-        ));
-    }
-
     let visible = allow.difference(&deny).copied().collect::<BTreeSet<_>>();
     if !visible.contains("workspace.write_file") {
         return Err(ApplicationError::ValidationError(
@@ -915,6 +930,7 @@ fn validate_delegation_policy(
 
 fn validate_run_policy(
     run: &AgentRunPolicy,
+    delegation: &AgentDelegationPolicy,
     tools: &AgentToolPolicy,
 ) -> Result<(), ApplicationError> {
     if run.model_retry.max_retries > 0 && run.model_retry.interval_ms == 0 {
@@ -923,17 +939,43 @@ fn validate_run_policy(
                 .to_string(),
         ));
     }
+    if !run.direct_runnable {
+        if run.presentation != AgentRunPresentation::Background {
+            return Err(ApplicationError::ValidationError(
+                "agent.profile_subagent_only_background_required: run.presentation must be background when run.directRunnable is false"
+                    .to_string(),
+            ));
+        }
+        if !delegation.callable || !delegation.allow_as_subagent {
+            return Err(ApplicationError::ValidationError(
+                "agent.profile_direct_runnable_disabled_requires_subagent: run.directRunnable=false requires delegation.callable and delegation.allowAsSubagent"
+                    .to_string(),
+            ));
+        }
+        return Ok(());
+    }
+
+    if !tool_is_visible(tools, "workspace.finish") {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_finish_required: workspace.finish must be visible for direct runnable profiles"
+                .to_string(),
+        ));
+    }
+
     if run.presentation == AgentRunPresentation::Foreground
-        && (!tools.allow.iter().any(|name| name == "workspace.commit")
-            || tools.deny.iter().any(|name| name == "workspace.commit"))
+        && !tool_is_visible(tools, "workspace.commit")
     {
         return Err(ApplicationError::ValidationError(
-            "agent.profile_commit_required: foreground profiles must expose workspace.commit"
+            "agent.profile_commit_required: foreground direct runnable profiles must expose workspace.commit"
                 .to_string(),
         ));
     }
 
     Ok(())
+}
+
+fn tool_is_visible(tools: &AgentToolPolicy, name: &str) -> bool {
+    tools.allow.iter().any(|tool| tool == name) && !tools.deny.iter().any(|tool| tool == name)
 }
 
 fn validate_tool_description_override(
@@ -1344,6 +1386,60 @@ mod tests {
         assert!(prompt.contains("task_return"));
     }
 
+    #[test]
+    fn direct_runnable_profiles_require_finish_tool() {
+        let run = crate::domain::models::agent::profile::AgentRunPolicy {
+            presentation: crate::domain::models::agent::AgentRunPresentation::Background,
+            direct_runnable: true,
+            model_retry: Default::default(),
+        };
+        let delegation = crate::domain::models::agent::profile::AgentDelegationPolicy::default();
+        let tools = test_tool_policy(&["workspace.write_file"]);
+
+        let error = super::validate_run_policy(&run, &delegation, &tools)
+            .expect_err("direct runnable profile without finish should fail");
+
+        assert!(error.to_string().contains("agent.profile_finish_required"));
+    }
+
+    #[test]
+    fn subagent_only_profiles_do_not_require_finish_tool() {
+        let run = crate::domain::models::agent::profile::AgentRunPolicy {
+            presentation: crate::domain::models::agent::AgentRunPresentation::Background,
+            direct_runnable: false,
+            model_retry: Default::default(),
+        };
+        let delegation = crate::domain::models::agent::profile::AgentDelegationPolicy {
+            callable: true,
+            allow_as_subagent: true,
+            ..Default::default()
+        };
+        let tools = test_tool_policy(&["workspace.write_file"]);
+
+        super::validate_run_policy(&run, &delegation, &tools)
+            .expect("subagent-only profile should not require workspace.finish");
+    }
+
+    #[test]
+    fn direct_runnable_false_requires_subagent_entrypoint() {
+        let run = crate::domain::models::agent::profile::AgentRunPolicy {
+            presentation: crate::domain::models::agent::AgentRunPresentation::Background,
+            direct_runnable: false,
+            model_retry: Default::default(),
+        };
+        let delegation = crate::domain::models::agent::profile::AgentDelegationPolicy::default();
+        let tools = test_tool_policy(&["workspace.write_file"]);
+
+        let error = super::validate_run_policy(&run, &delegation, &tools)
+            .expect_err("non-direct profiles need a implemented non-direct entrypoint");
+
+        assert!(
+            error
+                .to_string()
+                .contains("agent.profile_direct_runnable_disabled_requires_subagent")
+        );
+    }
+
     fn tool(name: &str, model_name: &str) -> AgentToolSpec {
         AgentToolSpec {
             name: name.to_string(),
@@ -1354,6 +1450,17 @@ mod tests {
             output_schema: None,
             annotations: json!({}),
             source: "test".to_string(),
+        }
+    }
+
+    fn test_tool_policy(allow: &[&str]) -> crate::domain::models::agent::profile::AgentToolPolicy {
+        crate::domain::models::agent::profile::AgentToolPolicy {
+            allow: allow.iter().map(|name| name.to_string()).collect(),
+            deny: Vec::new(),
+            tool_descriptions: Default::default(),
+            max_rounds: 1,
+            max_calls_per_run: 1,
+            max_calls_per_tool: Default::default(),
         }
     }
 

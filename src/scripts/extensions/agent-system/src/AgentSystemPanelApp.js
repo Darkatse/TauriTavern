@@ -131,10 +131,13 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 return mode ? tr(mode.labelKey) : tr('mainAgent');
             },
             isSubAgentPresentationLocked() {
-                const delegation = this.draft?.delegation || {};
-                return this.profileEditMode === 'subagent'
-                    && delegation.callable
-                    && delegation.allowAsSubagent;
+                return this.isSubAgentOnly || (this.profileEditMode === 'subagent' && this.isCallableAsSubAgent);
+            },
+            isCallableAsSubAgent() {
+                return Boolean(this.draft?.delegation?.callable && this.draft?.delegation?.allowAsSubagent);
+            },
+            isSubAgentOnly() {
+                return this.draft?.run?.directRunnable === false;
             },
             agentSystemPromptEditorValue() {
                 if (this.isBuiltinProfile) {
@@ -208,9 +211,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             delegationSummaryLabel() {
                 const delegation = this.draft?.delegation || {};
                 if (this.profileEditMode === 'subagent') {
-                    return delegation.callable && delegation.allowAsSubagent
-                        ? tr('callableSubAgent')
-                        : tr('notCallable');
+                    return delegation.callable && delegation.allowAsSubagent ? tr('callableSubAgent') : tr('notCallable');
                 }
                 return delegation.canDelegate ? tr('canDelegate') : tr('delegationOff');
             },
@@ -358,16 +359,29 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 if (!this.draft?.run) {
                     return;
                 }
+                if (this.isSubAgentOnly) {
+                    return;
+                }
                 this.draft.run.presentation = this.mainAgentPresentationByProfileId[this.profilePresentationMemoryKey()] || 'foreground';
             },
             applySubAgentPresentationPolicy() {
-                if (!this.draft?.run || !this.isSubAgentPresentationLocked) {
+                if (!this.draft?.run) {
+                    return;
+                }
+                const shouldApplySubAgentRunPolicy = this.isSubAgentOnly
+                    || (this.profileEditMode === 'subagent' && this.isCallableAsSubAgent);
+                if (!shouldApplySubAgentRunPolicy) {
+                    return;
+                }
+                if (!this.isCallableAsSubAgent) {
+                    this.draft.run.presentation = 'background';
                     return;
                 }
                 if (!Object.prototype.hasOwnProperty.call(this.mainAgentPresentationByProfileId, this.profilePresentationMemoryKey())) {
                     this.seedMainAgentPresentation();
                 }
-                // Return-mode SubAgents finish through task.return, so the editor view must not leave them in foreground chat-commit mode.
+                // Callable SubAgent profiles enter through TaskReturnRequired child invocations, not direct foreground chat runs.
+                this.draft.run.directRunnable = false;
                 this.draft.run.presentation = 'background';
             },
             scrollToProfileSection(sectionId) {
@@ -575,7 +589,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     return;
                 }
                 if (this.isSubAgentPresentationLocked) {
-                    throw new Error('SubAgent presentation is locked to background while this profile is available as a SubAgent.');
+                    throw new Error('Callable SubAgent profiles are locked to background presentation.');
                 }
                 if (presentation !== 'foreground' && presentation !== 'background') {
                     throw new Error(`Unsupported Agent run presentation: ${presentation}`);
@@ -593,7 +607,13 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.draft.delegation.allowAsSubagent = isEnabled;
                 this.draft.delegation.callable = isEnabled || Boolean(this.draft.delegation.allowAsHandoffTarget);
                 if (isEnabled) {
+                    this.draft.run.directRunnable = false;
                     this.applySubAgentPresentationPolicy();
+                    return;
+                }
+                if (this.isSubAgentOnly) {
+                    this.draft.run.directRunnable = true;
+                    this.restoreMainAgentPresentation();
                 }
             },
             syncDelegationTools() {
@@ -782,9 +802,16 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     await this.persistProfileModelBinding(profile);
                     await requireAgentApi().profiles.save({ profile });
                     await this.refreshProfiles();
-                    await this.setDefaultProfile(profile.id);
-                    this.draft = profileForEdit(profile);
-                    this.refreshDraftJson();
+                    if (profile.run.directRunnable === false) {
+                        if (this.settings.selectedProfileId === profile.id) {
+                            await this.saveSettingsPatch({ selectedProfileId: DEFAULT_PROFILE_ID });
+                        }
+                        await this.selectProfile(profile.id);
+                    } else {
+                        await this.setDefaultProfile(profile.id);
+                        this.draft = profileForEdit(profile);
+                        this.refreshDraftJson();
+                    }
                     this.toast(tr('agentProfileSaved'));
                 } catch (error) {
                     this.reportError(error);
@@ -1078,13 +1105,13 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     </div>
                                     <div class="ttas-delegation-panel">
                                         <label class="ttas-switch-row">
-                                            <input type="checkbox" :checked="draft.delegation.callable && draft.delegation.allowAsSubagent" :disabled="isBuiltinProfile" @change="setCallableAsSubAgent($event.target.checked)" />
+                                            <input type="checkbox" :checked="isCallableAsSubAgent" :disabled="isBuiltinProfile" @change="setCallableAsSubAgent($event.target.checked)" />
                                             <span>
                                                 <strong>{{ tr('callableSubAgentToggle') }}</strong>
                                                 <small>{{ tr('callableSubAgentHint') }}</small>
                                             </span>
                                         </label>
-                                        <div v-if="draft.delegation.callable && draft.delegation.allowAsSubagent" class="ttas-form-grid ttas-delegation-controls">
+                                        <div v-if="isCallableAsSubAgent" class="ttas-form-grid ttas-delegation-controls">
                                             <label class="ttas-field ttas-span-2">
                                                 <span>{{ tr('agentFacingDescription') }}</span>
                                                 <textarea class="text_pole textarea_compact" rows="4" v-model="draft.delegation.descriptionForAgents" :disabled="isBuiltinProfile" :placeholder="draft.description"></textarea>

@@ -145,6 +145,7 @@ scratch/agents/<workspace-key>/
 return-mode child Agent 必须遵守更窄的执行契约：
 
 - `run.presentation = background`。
+- 前端“可作为子 Agent”会写入 `run.directRunnable = false`；直接启动入口会 fail-fast，return-mode child invocation 仍可通过 `agent.delegate` 运行。
 - 移除 `workspace.commit`、`workspace.finish`。
 - 移除 `agent.list`、`agent.delegate`、`agent.await`。
 - 注入 `task.return`。

@@ -1,5 +1,5 @@
 import { loadAgentSystemSettings } from './agent-system-settings.js';
-import { loadAgentContextPolicy } from './agent-context-policy.js';
+import { agentContextPolicyForProfile } from './agent-context-policy.js';
 import { loadResolvedAgentSystemPrompt } from './agent-system-prompt.js';
 
 const AGENT_GENERATION_TYPES = new Set(['normal', 'regenerate', 'swipe']);
@@ -22,17 +22,35 @@ export async function getAgentGenerationOptions({
         selectedGroup,
     });
 
-    const [agentContextPolicy, agentSystemPrompt] = await Promise.all([
-        loadAgentContextPolicy(settings.selectedProfileId),
-        loadResolvedAgentSystemPrompt(settings.selectedProfileId),
-    ]);
+    const selectedProfile = await loadDirectRunnableProfile(settings.selectedProfileId);
+    const agentSystemPrompt = await loadResolvedAgentSystemPrompt(settings.selectedProfileId);
 
     return {
         agentMode: true,
         agentProfileId: settings.selectedProfileId,
-        agentContextPolicy,
+        agentContextPolicy: agentContextPolicyForProfile(selectedProfile),
         agentSystemPrompt,
     };
+}
+
+async function loadDirectRunnableProfile(profileId) {
+    const normalizedProfileId = String(profileId || '').trim();
+    if (!normalizedProfileId) {
+        throw new Error('agent.profile_id_required: Agent Mode requires a selected Agent profile');
+    }
+    const profileApi = window.__TAURITAVERN__?.api?.agent?.profiles;
+    if (typeof profileApi?.load !== 'function') {
+        throw new Error('agent.profile_api_unavailable: TauriTavern Agent profile API is unavailable');
+    }
+    const result = await profileApi.load({ profileId: normalizedProfileId });
+    const profile = result?.profile;
+    if (!profile) {
+        throw new Error(`agent.profile_not_found: Agent profile not found: ${normalizedProfileId}`);
+    }
+    if (profile.run?.directRunnable === false) {
+        throw new Error(`agent.profile_not_direct_runnable: Agent profile '${normalizedProfileId}' can only run as a delegated SubAgent`);
+    }
+    return profile;
 }
 
 function normalizeGenerationType(value) {

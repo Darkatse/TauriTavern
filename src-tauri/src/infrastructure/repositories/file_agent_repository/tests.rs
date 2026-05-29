@@ -125,6 +125,7 @@ fn sample_resolved_profile(manifest: &WorkspaceManifest) -> ResolvedAgentProfile
         },
         run: AgentRunPolicy {
             presentation: AgentRunPresentation::Background,
+            direct_runnable: true,
             model_retry: Default::default(),
         },
         context: AgentContextPolicy::default(),

@@ -185,6 +185,7 @@ type TauriTavernAgentProfileDefinition = {
     };
     run: {
         presentation: TauriTavernAgentRunPresentation;
+        directRunnable: boolean;
         modelRetry: {
             maxRetries: number;
             intervalMs: number;

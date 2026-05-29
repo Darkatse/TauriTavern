@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{AgentRunPresentation, ArtifactSpec};
 
-pub const AGENT_PROFILE_SCHEMA_VERSION: u32 = 1;
+pub const AGENT_PROFILE_SCHEMA_VERSION: u32 = 2;
 pub const AGENT_PROFILE_KIND: &str = "tauritavern.agentProfile";
 pub const DEFAULT_AGENT_PROFILE_ID: &str = "default-writer";
 pub const DEFAULT_AGENT_TOOL_MAX_ROUNDS: usize = 80;
@@ -18,6 +18,10 @@ pub const DEFAULT_AGENT_DELEGATION_MAX_CONCURRENT_INVOCATIONS: usize = 3;
 pub const DEFAULT_AGENT_DELEGATION_MAX_INVOCATIONS_PER_RUN: usize = 8;
 pub const DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS: usize = 8_000;
 pub const DEFAULT_AGENT_HANDOFF_MAX_DEPTH: usize = 5;
+
+fn default_agent_run_direct_runnable() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AgentProfileId(String);
@@ -178,6 +182,8 @@ pub enum AgentModelBindingMode {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentRunPolicy {
     pub presentation: AgentRunPresentation,
+    #[serde(default = "default_agent_run_direct_runnable")]
+    pub direct_runnable: bool,
     #[serde(default)]
     pub model_retry: AgentModelRetryPolicy,
 }
@@ -463,6 +469,7 @@ mod tests {
         .expect("profile with optional fields omitted");
 
         assert!(!profile.preset.required);
+        assert!(profile.run.direct_runnable);
         assert_eq!(
             profile.run.model_retry.max_retries,
             DEFAULT_AGENT_MODEL_MAX_RETRIES
