@@ -363,6 +363,30 @@ mod tests {
     }
 
     #[test]
+    fn agent_delegate_requires_objective_but_not_title() {
+        let registry = BuiltinAgentToolRegistry::phase2c();
+        let delegate = registry
+            .specs()
+            .iter()
+            .find(|spec| spec.name == AGENT_DELEGATE)
+            .expect("agent.delegate spec");
+
+        assert_eq!(
+            delegate
+                .input_schema
+                .pointer("/properties/task/required")
+                .expect("task required fields"),
+            &serde_json::json!(["objective"])
+        );
+        assert!(
+            delegate
+                .input_schema
+                .pointer("/properties/task/properties/title")
+                .is_some()
+        );
+    }
+
+    #[test]
     fn agent_tool_specs_keep_runtime_terms_out_of_model_descriptions() {
         let registry = BuiltinAgentToolRegistry::phase2c();
         let agent_tools = registry

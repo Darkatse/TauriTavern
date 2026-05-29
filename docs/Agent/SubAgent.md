@@ -125,7 +125,6 @@ scratch/agents/<workspace-key>/
 {
   "agentId": "scene-critic",
   "task": {
-    "title": "检查剧情漏洞",
     "objective": "找出当前草稿里会破坏角色动机连续性的地方。",
     "context": {},
     "expectedOutput": {}
@@ -136,6 +135,8 @@ scratch/agents/<workspace-key>/
   }
 }
 ```
+
+`task.title` 是可选展示名；只有 `task.objective` 承载必须完成的任务目标。
 
 没有 `execution`、`continuation` 或 `invocationId` 参数。工具名已经表达了 continuation：`agent.delegate` 永远是 return-to-parent。
 

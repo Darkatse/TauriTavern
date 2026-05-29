@@ -60,7 +60,7 @@ pub(in crate::application::services::agent_tools) fn agent_delegate_spec() -> Ag
                     "properties": {
                         "title": {
                             "type": "string",
-                            "description": "Short task name."
+                            "description": "Optional short task name for display. Omit it when the objective already makes the task clear."
                         },
                         "objective": {
                             "type": "string",
@@ -77,7 +77,7 @@ pub(in crate::application::services::agent_tools) fn agent_delegate_spec() -> Ag
                             "additionalProperties": true
                         }
                     },
-                    "required": ["title", "objective"]
+                    "required": ["objective"]
                 },
                 "budget": {
                     "type": "object",

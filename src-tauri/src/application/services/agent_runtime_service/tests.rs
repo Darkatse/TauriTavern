@@ -996,7 +996,6 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
                                 "arguments": serde_json::to_string(&json!({
                                     "agentId": "scene-critic",
                                     "task": {
-                                        "title": "Critique scene",
                                         "objective": "Find one concrete improvement.",
                                         "context": { "draft": "A quiet scene." },
                                         "expectedOutput": { "format": "short capsule" }

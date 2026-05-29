@@ -165,6 +165,9 @@ fn push_task_section(lines: &mut Vec<String>, title: &str, value: Option<&Value>
     if value.is_null() {
         return;
     }
+    if value.as_str().is_some_and(|value| value.trim().is_empty()) {
+        return;
+    }
     lines.push(format!("## {title}"));
     lines.push(render_markdown_value(value, 0));
     lines.push(String::new());

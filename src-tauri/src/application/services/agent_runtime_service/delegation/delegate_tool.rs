@@ -238,16 +238,43 @@ fn validate_delegate_task_packet(task: &Value) -> Result<(), String> {
     let object = task
         .as_object()
         .ok_or_else(|| "task must be an object".to_string())?;
-    for key in ["title", "objective"] {
-        let value = object
-            .get(key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| format!("task.{key} must be a non-empty string"))?;
-        if value.len() > 4_000 {
-            return Err(format!("task.{key} must be <= 4000 chars"));
-        }
+    validate_required_task_string(object, "objective")?;
+    if let Some(value) = object.get("title") {
+        validate_optional_task_string(value, "title")?;
+    }
+    Ok(())
+}
+
+fn validate_required_task_string(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<(), String> {
+    let value = object
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("task.{key} must be a non-empty string"))?;
+    validate_task_string_len(value, key)
+}
+
+fn validate_optional_task_string(value: &Value, key: &str) -> Result<(), String> {
+    if value.is_null() {
+        return Ok(());
+    }
+    let value = value
+        .as_str()
+        .ok_or_else(|| format!("task.{key} must be a string when provided"))?
+        .trim();
+    if value.is_empty() {
+        return Ok(());
+    }
+    validate_task_string_len(value, key)
+}
+
+fn validate_task_string_len(value: &str, key: &str) -> Result<(), String> {
+    if value.len() > 4_000 {
+        return Err(format!("task.{key} must be <= 4000 chars"));
     }
     Ok(())
 }
@@ -272,7 +299,9 @@ fn next_child_workspace_key<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::next_child_workspace_key;
+    use serde_json::json;
+
+    use super::{next_child_workspace_key, validate_delegate_task_packet};
 
     #[test]
     fn child_workspace_key_uses_agent_id_then_numbered_suffixes() {
@@ -285,5 +314,34 @@ mod tests {
             next_child_workspace_key("scene-critic", ["scene-critic", "scene-critic-002"]),
             "scene-critic-003"
         );
+    }
+
+    #[test]
+    fn delegate_task_packet_accepts_missing_title() {
+        let task = json!({
+            "objective": "Find one concrete improvement.",
+            "context": { "draft": "A quiet scene." }
+        });
+
+        assert!(validate_delegate_task_packet(&task).is_ok());
+    }
+
+    #[test]
+    fn delegate_task_packet_requires_objective() {
+        let error = validate_delegate_task_packet(&json!({ "title": "Critique" }))
+            .expect_err("missing objective should fail");
+
+        assert_eq!(error, "task.objective must be a non-empty string");
+    }
+
+    #[test]
+    fn delegate_task_packet_rejects_non_string_title_when_provided() {
+        let error = validate_delegate_task_packet(&json!({
+            "title": { "text": "Critique" },
+            "objective": "Find one concrete improvement."
+        }))
+        .expect_err("non-string title should fail");
+
+        assert_eq!(error, "task.title must be a string when provided");
     }
 }
