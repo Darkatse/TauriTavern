@@ -539,13 +539,6 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
     .await
     .expect("write platform metadata");
 
-    let changes = repository
-        .prepare_persistent_changes(&run.id)
-        .await
-        .expect("prepare persist changes");
-    assert_eq!(changes.changes.len(), 1);
-    assert_eq!(changes.changes[0].path, "persist/MEMORY.md");
-
     let pre_commit_run = sample_run_with_id("run_persist_before_commit");
     repository
         .create_run(&pre_commit_run)
@@ -568,10 +561,12 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         "uncommitted persist projection must not leak into another run"
     );
 
-    repository
+    let changes = repository
         .commit_persistent_changes(&run.id)
         .await
         .expect("commit persist changes");
+    assert_eq!(changes.changes.len(), 1);
+    assert_eq!(changes.changes[0].path, "persist/MEMORY.md");
     assert!(
         !root
             .join("chats")

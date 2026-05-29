@@ -81,11 +81,6 @@ pub trait WorkspaceRepository: Send + Sync {
         max_entries: usize,
     ) -> Result<WorkspaceFileList, DomainError>;
 
-    async fn prepare_persistent_changes(
-        &self,
-        run_id: &str,
-    ) -> Result<WorkspacePersistentChangeSet, DomainError>;
-
     async fn commit_persistent_changes(
         &self,
         run_id: &str,

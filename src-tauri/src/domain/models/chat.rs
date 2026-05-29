@@ -285,37 +285,6 @@ impl Chat {
         self.messages.last()
     }
 
-    /// Get the number of messages in the chat
-    #[allow(dead_code)]
-    pub fn message_count(&self) -> usize {
-        self.messages.len()
-    }
-
-    /// Get the file name for this chat
-    #[allow(dead_code)]
-    pub fn get_file_name(&self) -> String {
-        if let Some(file_name) = &self.file_name {
-            format!("{}.jsonl", file_name)
-        } else {
-            format!("{} - {}.jsonl", self.character_name, self.create_date)
-        }
-    }
-
-    /// Get a preview of the last message
-    #[allow(dead_code)]
-    pub fn get_preview(&self) -> String {
-        if let Some(last) = self.last_message() {
-            let preview = last.mes.replace("\r", " ").replace("\n", " ");
-            if preview.len() > 100 {
-                format!("{}...", &preview[0..97])
-            } else {
-                preview
-            }
-        } else {
-            "No messages".to_string()
-        }
-    }
-
     /// Get the last message date as a timestamp
     pub fn get_last_message_timestamp(&self) -> i64 {
         if let Some(last) = self.last_message() {

@@ -78,7 +78,6 @@ impl StoredSourceMetadata {
 }
 
 pub(super) struct ExtensionSourceStore {
-    root: PathBuf,
     local_root: PathBuf,
     global_root: PathBuf,
 }
@@ -88,7 +87,6 @@ impl ExtensionSourceStore {
         let local_root = root.join("local");
         let global_root = root.join("global");
         Self {
-            root,
             local_root,
             global_root,
         }
@@ -731,10 +729,5 @@ impl ExtensionSourceStore {
             remote_url: repo.canonical_remote_url(),
             installed_commit,
         }))
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn root(&self) -> &Path {
-        &self.root
     }
 }

@@ -297,13 +297,6 @@ impl WorkspaceRepository for FileAgentRepository {
         Ok(WorkspaceFileList { entries, truncated })
     }
 
-    async fn prepare_persistent_changes(
-        &self,
-        run_id: &str,
-    ) -> Result<WorkspacePersistentChangeSet, DomainError> {
-        self.compute_persistent_changes(run_id).await
-    }
-
     async fn commit_persistent_changes(
         &self,
         run_id: &str,

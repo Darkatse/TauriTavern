@@ -147,8 +147,6 @@ context_tool_result_hydrated
 agent_loop_finished
 artifact_assembled
 commit_started
-persistent_changes_prepared
-persistent_changes_prepare_failed
 commit_draft_created
 persistent_changes_committed
 persistent_changes_commit_failed
@@ -568,7 +566,6 @@ context_tool_result_hydrated
 agent_loop_finished
 artifact_assembled
 commit_started
-persistent_changes_prepared
 commit_draft_created
 persistent_changes_committed
 persistent_state_metadata_update_requested

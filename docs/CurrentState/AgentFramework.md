@@ -454,7 +454,7 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 最近一次 Rust 侧验证基线：
 
 - `cargo fmt --manifest-path src-tauri/Cargo.toml`
-- `cargo check --manifest-path src-tauri/Cargo.toml`：1 existing dead_code warning
+- `cargo check --manifest-path src-tauri/Cargo.toml`
 - `cargo test --manifest-path src-tauri/Cargo.toml skill_scope --lib`：2 passed
 - `cargo test --manifest-path src-tauri/Cargo.toml agent_runtime_service --lib`：53 passed
 - `cargo test --manifest-path src-tauri/Cargo.toml agent_delegate_await_runs_return_mode_subagent`

@@ -5869,13 +5869,6 @@ impl WorkspaceRepository for FailingPersistentCommitWorkspaceRepository {
             .await
     }
 
-    async fn prepare_persistent_changes(
-        &self,
-        run_id: &str,
-    ) -> Result<WorkspacePersistentChangeSet, DomainError> {
-        self.inner.prepare_persistent_changes(run_id).await
-    }
-
     async fn commit_persistent_changes(
         &self,
         _run_id: &str,

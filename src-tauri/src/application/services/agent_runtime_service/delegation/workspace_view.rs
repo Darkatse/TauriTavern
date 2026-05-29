@@ -260,13 +260,6 @@ impl WorkspaceRepository for ChildWorkspaceRepository<'_> {
         self.model_list_from_physical(list, requested_path.as_ref())
     }
 
-    async fn prepare_persistent_changes(
-        &self,
-        run_id: &str,
-    ) -> Result<WorkspacePersistentChangeSet, DomainError> {
-        self.inner.prepare_persistent_changes(run_id).await
-    }
-
     async fn commit_persistent_changes(
         &self,
         run_id: &str,
