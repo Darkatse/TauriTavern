@@ -5,7 +5,8 @@ export const DEFAULT_AGENT_PROFILE_ID = 'default-writer';
 
 export const DEFAULT_AGENT_SYSTEM_SETTINGS = Object.freeze({
     agentModeEnabled: false,
-    selectedProfileId: DEFAULT_AGENT_PROFILE_ID,
+    activeProfileId: DEFAULT_AGENT_PROFILE_ID,
+    editingProfileId: DEFAULT_AGENT_PROFILE_ID,
     activeTab: 'profiles',
     runTimelineHeightPx: null,
 });
@@ -19,10 +20,26 @@ function requireExtensionStore() {
 }
 
 function mergeSettings(value) {
-    return {
+    const source = value || {};
+    const legacyProfileId = normalizeProfileIdSetting(source.selectedProfileId);
+    const sourceActiveProfileId = normalizeProfileIdSetting(source.activeProfileId);
+    const merged = {
         ...DEFAULT_AGENT_SYSTEM_SETTINGS,
-        ...(value || {}),
+        ...source,
     };
+    merged.activeProfileId = sourceActiveProfileId
+        || legacyProfileId
+        || DEFAULT_AGENT_PROFILE_ID;
+    merged.editingProfileId = normalizeProfileIdSetting(source.editingProfileId)
+        || (sourceActiveProfileId ? merged.activeProfileId : legacyProfileId)
+        || merged.activeProfileId;
+    delete merged.selectedProfileId;
+    return merged;
+}
+
+function normalizeProfileIdSetting(value) {
+    const profileId = String(value || '').trim();
+    return profileId || '';
 }
 
 function emitSettingsChanged(settings) {

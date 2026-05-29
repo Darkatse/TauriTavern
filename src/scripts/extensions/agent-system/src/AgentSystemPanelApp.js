@@ -110,7 +110,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 error: '',
                 settings: {},
                 profiles: [],
-                selectedProfileId: DEFAULT_PROFILE_ID,
+                editingProfileId: DEFAULT_PROFILE_ID,
                 // UI-only editor view. The saved profile role is owned by run/delegation policy.
                 profileEditMode: 'main',
                 activeProfileSectionId: firstProfileSectionIdForMode('main'),
@@ -133,6 +133,12 @@ export function createAgentSystemPanelRoot({ requestClose }) {
         computed: {
             activeTab() {
                 return this.settings.activeTab;
+            },
+            activeProfileId() {
+                return this.settings.activeProfileId || DEFAULT_PROFILE_ID;
+            },
+            activeProfileOptions() {
+                return this.profiles.filter((profile) => profile.directRunnable !== false);
             },
             isBuiltinProfile() {
                 return this.draft.id === DEFAULT_PROFILE_ID;
@@ -320,8 +326,9 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                         this.refreshPresetOptions(),
                         this.refreshModelTargets(),
                     ]);
-                    this.selectedProfileId = this.settings.selectedProfileId || DEFAULT_PROFILE_ID;
-                    await this.selectProfile(this.selectedProfileId);
+                    await this.normalizeProfileSelections();
+                    this.editingProfileId = this.settings.editingProfileId || DEFAULT_PROFILE_ID;
+                    await this.selectProfile(this.editingProfileId, { persistEditing: false });
                     this.initialized = true;
                 } catch (error) {
                     this.reportError(error);
@@ -338,6 +345,41 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             },
             async saveSettingsPatch(patch) {
                 this.settings = await patchSettings(this.settings, patch);
+            },
+            profileExists(profileId) {
+                return this.profiles.some((profile) => profile.id === profileId);
+            },
+            profileIsDirectRunnable(profileId) {
+                const profile = this.profiles.find((item) => item.id === profileId);
+                return Boolean(profile && profile.directRunnable !== false);
+            },
+            async normalizeProfileSelections() {
+                const activeProfileId = String(this.settings.activeProfileId || DEFAULT_PROFILE_ID).trim() || DEFAULT_PROFILE_ID;
+                const editingProfileId = String(this.settings.editingProfileId || activeProfileId).trim() || activeProfileId;
+                const patch = {};
+                const activeProfileNeedsReset = !this.profileIsDirectRunnable(activeProfileId);
+                if (activeProfileNeedsReset) {
+                    patch.activeProfileId = DEFAULT_PROFILE_ID;
+                }
+                if (!this.profileExists(editingProfileId)) {
+                    patch.editingProfileId = DEFAULT_PROFILE_ID;
+                }
+                if (Object.keys(patch).length > 0) {
+                    await this.saveSettingsPatch(patch);
+                }
+                if (activeProfileNeedsReset && activeProfileId !== DEFAULT_PROFILE_ID) {
+                    this.warn(tr('activeProfileResetToDefault'));
+                }
+            },
+            async setActiveProfile(profileId) {
+                const id = String(profileId || '').trim();
+                if (!this.profileExists(id)) {
+                    throw new Error(tr('agentProfileNotFound', { id }));
+                }
+                if (!this.profileIsDirectRunnable(id)) {
+                    throw new Error(tr('agentProfileNotDirectRunnable', { id }));
+                }
+                await this.saveSettingsPatch({ activeProfileId: id });
             },
             async setTab(tab) {
                 await this.saveSettingsPatch({ activeTab: tab });
@@ -357,7 +399,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.activeProfileSectionId = firstProfileSectionIdForMode(this.profileEditMode);
             },
             profilePresentationMemoryKey() {
-                return String(this.draft?.id || this.selectedProfileId || DEFAULT_PROFILE_ID).trim() || DEFAULT_PROFILE_ID;
+                return String(this.draft?.id || this.editingProfileId || DEFAULT_PROFILE_ID).trim() || DEFAULT_PROFILE_ID;
             },
             rememberMainAgentPresentation() {
                 this.mainAgentPresentationByProfileId[this.profilePresentationMemoryKey()] = this.draft.run.presentation || 'foreground';
@@ -389,17 +431,9 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     section?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
                 });
             },
-            async setDefaultProfile(profileId) {
-                this.selectedProfileId = profileId;
-                await this.saveSettingsPatch({ selectedProfileId: profileId });
-                await this.selectProfile(profileId);
-            },
             async refreshProfiles() {
                 const result = await requireAgentApi().profiles.list();
                 this.profiles = Array.isArray(result?.profiles) ? result.profiles : [];
-                if (!this.profiles.some((profile) => profile.id === this.settings.selectedProfileId)) {
-                    this.settings.selectedProfileId = DEFAULT_PROFILE_ID;
-                }
             },
             async refreshToolSpecs() {
                 const api = requireAgentApi().tools;
@@ -429,7 +463,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             async refreshModelTargets() {
                 this.modelTargets = listSavedModelTargets();
             },
-            async selectProfile(profileId) {
+            async selectProfile(profileId, options = {}) {
                 const id = profileId || DEFAULT_PROFILE_ID;
                 const profilesApi = requireAgentApi().profiles;
                 const [result, promptResult] = await Promise.all([
@@ -439,7 +473,10 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 if (!result?.profile) {
                     throw new Error(tr('agentProfileNotFound', { id }));
                 }
-                this.selectedProfileId = id;
+                this.editingProfileId = id;
+                if (options.persistEditing !== false) {
+                    await this.saveSettingsPatch({ editingProfileId: id });
+                }
                 this.draft = profileForEdit(result.profile);
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
@@ -452,14 +489,14 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             applyDraftJson() {
                 const parsed = JSON.parse(this.draftJson);
                 this.draft = profileForEdit(parsed);
-                this.selectedProfileId = parsed.id;
+                this.editingProfileId = parsed.id;
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
                 this.resolvedAgentSystemPrompt = '';
             },
             newProfile() {
                 const id = this.nextProfileId('agent-profile');
-                this.selectedProfileId = id;
+                this.editingProfileId = id;
                 this.draft = profileForEdit(defaultProfile(id));
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
@@ -471,7 +508,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 const copy = normalizeProfileForSave(this.draft);
                 copy.id = id;
                 copy.displayName = tr('copyDisplayName', { name: copy.displayName });
-                this.selectedProfileId = id;
+                this.editingProfileId = id;
                 this.draft = profileForEdit(copy);
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
@@ -793,20 +830,18 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.saving = true;
                 try {
                     const profile = normalizeProfileForSave(this.draft);
+                    const wasActiveProfile = this.activeProfileId === profile.id;
                     await this.persistProfileModelBinding(profile);
                     await requireAgentApi().profiles.save({ profile });
                     await this.refreshProfiles();
-                    if (profile.run.directRunnable === false) {
-                        if (this.settings.selectedProfileId === profile.id) {
-                            await this.saveSettingsPatch({ selectedProfileId: DEFAULT_PROFILE_ID });
-                        }
-                        await this.selectProfile(profile.id);
-                    } else {
-                        await this.setDefaultProfile(profile.id);
-                        this.draft = profileForEdit(profile);
-                        this.seedMainAgentPresentation();
-                        this.syncProfileEditModeToDraft();
-                        this.refreshDraftJson();
+                    const settingsPatch = { editingProfileId: profile.id };
+                    if (profile.run.directRunnable === false && wasActiveProfile) {
+                        settingsPatch.activeProfileId = DEFAULT_PROFILE_ID;
+                    }
+                    await this.saveSettingsPatch(settingsPatch);
+                    await this.selectProfile(profile.id, { persistEditing: false });
+                    if (settingsPatch.activeProfileId) {
+                        this.warn(tr('activeProfileResetToDefault'));
                     }
                     this.toast(tr('agentProfileSaved'));
                 } catch (error) {
@@ -820,7 +855,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 return prettyJson(normalizeProfileForSave(this.draft)) !== prettyJson(savedProfile);
             },
             async exportSelectedProfile() {
-                const profileId = this.selectedProfileId || DEFAULT_PROFILE_ID;
+                const profileId = this.editingProfileId || DEFAULT_PROFILE_ID;
                 const result = await requireAgentApi().profiles.load({ profileId });
                 const profile = result?.profile;
                 if (!profile) {
@@ -848,7 +883,11 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 }
                 await requireAgentApi().profiles.delete({ profileId: id });
                 await this.refreshProfiles();
-                await this.setDefaultProfile(DEFAULT_PROFILE_ID);
+                await this.saveSettingsPatch({
+                    editingProfileId: DEFAULT_PROFILE_ID,
+                    ...(this.activeProfileId === id ? { activeProfileId: DEFAULT_PROFILE_ID } : {}),
+                });
+                await this.selectProfile(DEFAULT_PROFILE_ID, { persistEditing: false });
                 this.toast(tr('deletedProfile', { id }));
             },
             prettyJson(value) {
@@ -862,6 +901,9 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             },
             toast(message) {
                 toastr.success(message);
+            },
+            warn(message) {
+                toastr.warning(message);
             },
         },
         template: `
@@ -903,9 +945,24 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                     <h4>{{ tr('profiles') }}</h4>
                                     <span>{{ tr('profileCount', { count: profiles.length }) }}</span>
                                 </div>
-                                <button v-for="profile in profiles" :key="profile.id" type="button" :class="{ active: selectedProfileId === profile.id }" @click="selectProfile(profile.id)">
+                                <label class="ttas-field ttas-side-active-profile">
+                                    <span>{{ tr('activeProfile') }}</span>
+                                    <select :value="activeProfileId" @change="setActiveProfile($event.target.value)">
+                                        <option v-for="profile in activeProfileOptions" :key="profile.id" :value="profile.id">{{ profile.displayName || profile.id }}</option>
+                                    </select>
+                                </label>
+                                <button
+                                    v-for="profile in profiles"
+                                    :key="profile.id"
+                                    type="button"
+                                    :class="{ active: editingProfileId === profile.id, 'is-run-profile': activeProfileId === profile.id }"
+                                    @click="selectProfile(profile.id)"
+                                >
                                     <strong>{{ profile.displayName }}</strong>
-                                    <span>{{ profile.id }}</span>
+                                    <span>
+                                        {{ profile.id }}
+                                        <em v-if="activeProfileId === profile.id" class="ttas-active-profile-badge">{{ tr('activeProfileShort') }}</em>
+                                    </span>
                                     <small v-if="profile.description">{{ profile.description }}</small>
                                 </button>
                             </aside>
@@ -924,12 +981,20 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                 </button>
                             </nav>
                             <div class="ttas-editor">
-                                <label class="ttas-mobile-select ttas-field">
-                                    <span>{{ tr('profiles') }}</span>
-                                    <select :value="selectedProfileId" @change="selectProfile($event.target.value)">
-                                        <option v-for="profile in profiles" :key="profile.id" :value="profile.id">{{ profile.displayName }}</option>
-                                    </select>
-                                </label>
+                                <div class="ttas-mobile-profile-controls">
+                                    <label class="ttas-field">
+                                        <span>{{ tr('editingProfile') }}</span>
+                                        <select :value="editingProfileId" @change="selectProfile($event.target.value)">
+                                            <option v-for="profile in profiles" :key="profile.id" :value="profile.id">{{ profile.displayName }}</option>
+                                        </select>
+                                    </label>
+                                    <label class="ttas-field">
+                                        <span>{{ tr('activeProfile') }}</span>
+                                        <select :value="activeProfileId" @change="setActiveProfile($event.target.value)">
+                                            <option v-for="profile in activeProfileOptions" :key="profile.id" :value="profile.id">{{ profile.displayName || profile.id }}</option>
+                                        </select>
+                                    </label>
+                                </div>
 
                                 <div class="ttas-editor-hero">
                                     <div class="ttas-hero-copy">

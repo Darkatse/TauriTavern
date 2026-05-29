@@ -21,7 +21,7 @@
 - Profile 已能通过 `preset.mode = "ref"` 使用独立 OpenAI/chat-completion preset，并通过 `model.mode = "connectionRef"` + `modelId` 使用独立 LLM Connection。当前完整 PromptAssemblyBroker 组装只覆盖 root run 启动前；return-mode child invocation 会使用 target Profile 的 system prompt 与 model binding，但运行中 subagent/handoff 的完整 preset assembly handshake 仍待实现。
 - Return-mode SubAgent MVP 已落地：root/active invocation 可通过 `agent.list`、`agent.delegate`、`agent.await` 创建、查看或等待子任务；child invocation 使用 `task.return` 结束，不能直接 `workspace.commit` 或 `workspace.finish`。当前 child task 已由 run-scoped scheduler 后台并行执行；`agent.await` 只等待/查询结果，未显式 await 的 terminal results 会在父 Agent 下一次 tool turn 后注入下一轮模型请求。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
-- Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
+- Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；实际 root run 使用扩展设置中的 `activeProfileId`。Profile 面板的 `editingProfileId` 只表示当前正在编辑的配置档案，不影响生成。Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
 - Agent System 前端已提供 run timeline / detail panel；详情面板顶部可拖动调整高度，高度仅作为扩展 UI 偏好保存，不进入 Agent Host ABI、journal 或 Rust runtime。
 
 ## 当前 Host ABI
@@ -103,6 +103,7 @@ _tauritavern/agent-profiles/
 - 每个 invocation 按 `global -> preset -> profile -> character` 解析 active Skill scopes。root run 会固化 ambient `skillScopeRefs`；return-mode child 使用 target Profile 的 Skill policy，并按 target preset / run ambient character 解析可读 Skill。
 - `workspace.visibleRoots` / `workspace.writableRoots` 只能收窄 root universe：`output`、`scratch`、`plan`、`summaries`、`persist`。
 - `run.presentation` 区分 `foreground` / `background`，默认 built-in profile 为前台；`run.directRunnable` 控制 Profile 是否可被用户直接启动。直接可运行 Profile 必须暴露 `workspace.finish`，前台直接运行还必须暴露 `workspace.commit`；前端“可作为子 Agent”会将 Profile 设为 `directRunnable = false`，该模式当前要求同时允许作为 return-mode SubAgent。
+- `profiles.list()` 的 summary 暴露 `directRunnable`，Agent System UI 只允许直接可运行 Profile 成为 `activeProfileId`。保存或删除当前生效 Profile 导致其不可直接运行时，前端会把 `activeProfileId` 显式切回 built-in `default-writer`；不会把当前正在编辑的 Profile 自动设为生效。
 - `run.modelRetry` 控制单次模型调用的瞬时错误重试；默认 `maxRetries = 3`、`intervalMs = 3000`。当前只重试 rate limit / transient transport-provider 错误，不重试 prompt/schema/native metadata/tool id 等契约错误。
 - `delegation` 控制多 Agent 能力：`canDelegate` 决定当前 Agent 是否可见 `agent.delegate` / `agent.await`，`callable`、`allowAsSubagent`、`allowedCallers` 决定该 Profile 是否可被其他 Agent 作为 return-mode SubAgent 调用。`canHandoff` / `allowAsHandoffTarget` / `maxHandoffDepth` 已在 schema 中存在，但 `agent.handoff` 仍未实现。
 - `output.artifacts` 当前必须包含且只能包含一个 `messageBody` artifact；`workspace.commit` 默认发布该 artifact 的 path。

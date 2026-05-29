@@ -133,7 +133,7 @@ export function createSkillManagerPanelRoot() {
                 try {
                     const settings = await loadSettings();
                     await this.refreshProfiles();
-                    this.selectedProfileId = String(settings.selectedProfileId || this.selectedProfileId || DEFAULT_PROFILE_ID);
+                    this.selectedProfileId = String(settings.editingProfileId || this.selectedProfileId || DEFAULT_PROFILE_ID);
                     if (!this.profiles.some((profile) => profile.id === this.selectedProfileId)) {
                         this.selectedProfileId = this.profiles[0]?.id || DEFAULT_PROFILE_ID;
                     }
@@ -317,7 +317,7 @@ export function createSkillManagerPanelRoot() {
                     return;
                 }
 
-                const nextProfileId = String(settings?.selectedProfileId || DEFAULT_PROFILE_ID).trim() || DEFAULT_PROFILE_ID;
+                const nextProfileId = String(settings?.editingProfileId || DEFAULT_PROFILE_ID).trim() || DEFAULT_PROFILE_ID;
                 if (nextProfileId === this.selectedProfileId) {
                     return;
                 }

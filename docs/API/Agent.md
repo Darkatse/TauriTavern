@@ -302,7 +302,16 @@ type AgentModelTurn = {
 
 ## 11. profiles / promptAssembly / tools
 
-`profiles.*` 是当前 Agent Profile 管理入口。Profile JSON 中的 `preset.mode = "ref"` 与 `model.mode = "connectionRef"` 会影响 prompt assembly 和最终模型连接；`run.directRunnable = false` 表示该 Profile 不能直接启动，只能通过已实现的非直接入口运行（当前为 return-mode SubAgent）。前端“可作为子 Agent”会写入该非直接运行语义。保存时无效 schema 必须 fail-fast。
+`profiles.*` 是当前 Agent Profile 管理入口。`profiles.list()` 的 summary 包含 `directRunnable`，供前端区分可直接启动的 root-run Profile 与只能作为 SubAgent / handoff target 的 Profile。Profile JSON 中的 `preset.mode = "ref"` 与 `model.mode = "connectionRef"` 会影响 prompt assembly 和最终模型连接；`run.directRunnable = false` 表示该 Profile 不能直接启动，只能通过已实现的非直接入口运行（当前为 return-mode SubAgent）。前端“可作为子 Agent”会写入该非直接运行语义。保存时无效 schema 必须 fail-fast。
+
+```ts
+type AgentProfileSummary = {
+  id: string;
+  displayName: string;
+  description?: string;
+  directRunnable: boolean;
+};
+```
 
 `promptAssembly.prepare()` 调用 Rust `prepare_agent_prompt_assembly`，返回 `currentPromptSnapshot` 或 `frontendPromptAssembly`。`promptAssembly.buildSnapshot()` 是前端 broker：它只能使用 `frozenRunInputSnapshot` 内的 `promptInputs`、`worldInfoActivation`、`macroContext`，并调用真实 SillyTavern PromptManager 组装 `promptSnapshot.chatCompletionPayload`。该 API 是 Agent orchestration 内部边界，不是第三方扩展任意改写 prompt 的入口。
 

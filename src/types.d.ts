@@ -151,6 +151,7 @@ type TauriTavernAgentProfileSummary = {
     id: string;
     displayName: string;
     description?: string;
+    directRunnable: boolean;
 };
 
 type TauriTavernAgentToolSpec = {

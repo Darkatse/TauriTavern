@@ -33,8 +33,18 @@
 
 #agent_system_settings .ttas-entry {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 8px;
+    align-items: end;
+}
+
+#agent_system_settings .ttas-entry-active-profile {
+    margin: 0;
+}
+
+#agent_system_settings .ttas-entry-active-profile > span {
+    font-size: 0.76rem;
+    opacity: 0.72;
 }
 
 #agent_system_settings .menu_button,
@@ -2534,6 +2544,18 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     font-size: 0.78rem;
 }
 
+.ttas-side-active-profile {
+    padding: 8px;
+    border: 1px solid var(--ttas-border-soft);
+    border-radius: var(--ttas-radius-sm);
+    background-color: color-mix(in srgb, var(--SmartThemeBodyColor) 4%, transparent);
+}
+
+.ttas-side-active-profile > span {
+    font-size: 0.78rem;
+    opacity: 0.72;
+}
+
 .ttas-list button {
     position: relative;
     display: flex;
@@ -2572,6 +2594,10 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     background-color: var(--ttas-accent);
 }
 
+.ttas-list button.is-run-profile {
+    border-color: color-mix(in srgb, var(--ttas-accent) 36%, var(--ttas-border-soft));
+}
+
 .ttas-list strong,
 .ttas-list span,
 .ttas-list small {
@@ -2585,6 +2611,22 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 .ttas-list small {
     font-size: 0.8rem;
     opacity: 0.72;
+}
+
+.ttas-active-profile-badge {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    margin-left: 6px;
+    padding: 1px 6px;
+    color: var(--ttas-accent-strong);
+    font-size: 0.68rem;
+    font-style: normal;
+    font-weight: 700;
+    vertical-align: 1px;
+    border: 1px solid color-mix(in srgb, var(--ttas-accent) 42%, transparent);
+    border-radius: 999px;
+    background-color: var(--ttas-accent-soft);
 }
 
 .ttas-list small {
@@ -3645,7 +3687,7 @@ textarea.ttas-json {
     min-height: 340px;
 }
 
-.ttas-mobile-select {
+.ttas-mobile-profile-controls {
     display: none;
 }
 
@@ -4045,14 +4087,24 @@ textarea.ttas-json {
         font-size: 0.68rem;
     }
 
-    .ttas-mobile-select {
-        display: flex;
-    }
-
     .ttas-toolbar,
     .ttas-editor-actions {
         align-items: stretch;
         flex-direction: column;
+    }
+
+    .ttas-mobile-profile-controls {
+        display: grid;
+        gap: 8px;
+        padding: 8px;
+        border: 1px solid var(--ttas-border-soft);
+        border-radius: var(--ttas-radius);
+        background-color: var(--ttas-surface-raised);
+    }
+
+    .ttas-mobile-profile-controls .ttas-field > span {
+        font-size: 0.78rem;
+        opacity: 0.72;
     }
 
     .ttas-toolbar > *,

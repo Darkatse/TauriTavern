@@ -77,6 +77,8 @@ pub struct AgentProfileSummary {
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default = "default_agent_run_direct_runnable")]
+    pub direct_runnable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -324,6 +326,7 @@ impl AgentProfileDefinition {
             id: self.id.clone(),
             display_name: self.display_name.clone(),
             description: self.description.clone(),
+            direct_runnable: self.run.direct_runnable,
         }
     }
 }

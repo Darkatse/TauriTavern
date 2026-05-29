@@ -22,12 +22,13 @@ export async function getAgentGenerationOptions({
         selectedGroup,
     });
 
-    const selectedProfile = await loadDirectRunnableProfile(settings.selectedProfileId);
-    const agentSystemPrompt = await loadResolvedAgentSystemPrompt(settings.selectedProfileId);
+    const activeProfileId = settings.activeProfileId;
+    const selectedProfile = await loadDirectRunnableProfile(activeProfileId);
+    const agentSystemPrompt = await loadResolvedAgentSystemPrompt(activeProfileId);
 
     return {
         agentMode: true,
-        agentProfileId: settings.selectedProfileId,
+        agentProfileId: activeProfileId,
         agentContextPolicy: agentContextPolicyForProfile(selectedProfile),
         agentSystemPrompt,
     };

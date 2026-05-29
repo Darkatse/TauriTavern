@@ -89,11 +89,24 @@ test('Agent System settings use the extension store and publish changes', async 
     const loaded = await settings.loadAgentSystemSettings();
     assert.deepEqual(loaded, {
         agentModeEnabled: false,
-        selectedProfileId: 'default-writer',
+        activeProfileId: 'default-writer',
+        editingProfileId: 'default-writer',
         activeTab: 'profiles',
         runTimelineHeightPx: null,
     });
     assert.equal(writes.length, 0);
+
+    stored = {
+        agentModeEnabled: true,
+        selectedProfileId: 'legacy-writer',
+    };
+    assert.deepEqual(await settings.loadAgentSystemSettings(), {
+        agentModeEnabled: true,
+        activeProfileId: 'legacy-writer',
+        editingProfileId: 'legacy-writer',
+        activeTab: 'profiles',
+        runTimelineHeightPx: null,
+    });
 
     let emitted = null;
     const unsubscribe = settings.subscribeAgentSystemSettings((next) => {
@@ -101,13 +114,15 @@ test('Agent System settings use the extension store and publish changes', async 
     });
     const saved = await settings.saveAgentSystemSettings({
         agentModeEnabled: true,
-        selectedProfileId: 'writer',
+        activeProfileId: 'writer',
+        editingProfileId: 'editor',
     });
     unsubscribe();
 
     assert.deepEqual(saved, {
         agentModeEnabled: true,
-        selectedProfileId: 'writer',
+        activeProfileId: 'writer',
+        editingProfileId: 'editor',
         activeTab: 'profiles',
         runTimelineHeightPx: null,
     });
@@ -232,7 +247,8 @@ test('Agent run timeline projects SubAgent tasks without flattening child events
 test('Agent generation router uses the global toggle for normal regenerate and swipe', async () => {
     let stored = {
         agentModeEnabled: false,
-        selectedProfileId: 'default-writer',
+        activeProfileId: 'default-writer',
+        editingProfileId: 'default-writer',
         activeTab: 'profiles',
         runTimelineHeightPx: null,
     };
@@ -250,7 +266,7 @@ test('Agent generation router uses the global toggle for normal regenerate and s
         agent: {
             profiles: {
                 async load({ profileId }) {
-                    assert.equal(profileId, stored.selectedProfileId);
+                    assert.equal(profileId, stored.activeProfileId);
                     return {
                         profile: {
                             context: {
@@ -261,7 +277,7 @@ test('Agent generation router uses the global toggle for normal regenerate and s
                     };
                 },
                 async resolveSystemPrompt({ profileId } = {}) {
-                    assert.equal(profileId, stored.selectedProfileId);
+                    assert.equal(profileId, stored.activeProfileId);
                     return { agentSystemPrompt: 'Resolved Agent System Prompt.' };
                 },
             },
@@ -278,7 +294,7 @@ test('Agent generation router uses the global toggle for normal regenerate and s
     stored = {
         ...stored,
         agentModeEnabled: true,
-        selectedProfileId: 'writer',
+        activeProfileId: 'writer',
     };
 
     for (const generationType of ['normal', 'regenerate', 'swipe']) {
@@ -325,7 +341,8 @@ test('Agent generation router rejects non-direct callable profiles before direct
                         found: true,
                         value: {
                             agentModeEnabled: true,
-                            selectedProfileId: 'subagent-only',
+                            activeProfileId: 'subagent-only',
+                            editingProfileId: 'subagent-only',
                             activeTab: 'profiles',
                             runTimelineHeightPx: null,
                         },
@@ -597,7 +614,15 @@ test('Agent profile edit mode follows loaded profile without mutating run policy
         [callable.id, callable],
         [backgroundOnly.id, backgroundOnly],
     ]);
+    let settings = null;
     installWindow({
+        extension: {
+            store: {
+                async setJson(request) {
+                    settings = request.value;
+                },
+            },
+        },
         agent: {
             profiles: {
                 async load({ profileId }) {
@@ -611,6 +636,7 @@ test('Agent profile edit mode follows loaded profile without mutating run policy
     });
     globalThis.toastr = {
         success() {},
+        warning() {},
         error(error) {
             throw new Error(String(error || 'unexpected toastr error'));
         },
@@ -639,6 +665,7 @@ test('Agent profile edit mode follows loaded profile without mutating run policy
     assert.equal(vm.profileEditMode, 'subagent');
     assert.equal(vm.draft.run.directRunnable, false);
     assert.equal(vm.draft.run.presentation, 'background');
+    assert.equal(settings.editingProfileId, backgroundOnly.id);
     vm.setProfileEditMode('main');
     assert.equal(vm.draft.run.presentation, 'background');
 });
@@ -651,7 +678,8 @@ test('Agent profile save keeps non-direct callable profiles out of direct defaul
     const savedProfiles = new Map();
     let settings = {
         agentModeEnabled: true,
-        selectedProfileId: 'subagent-only',
+        activeProfileId: 'subagent-only',
+        editingProfileId: 'subagent-only',
         activeTab: 'profiles',
         runTimelineHeightPx: null,
     };
@@ -674,6 +702,7 @@ test('Agent profile save keeps non-direct callable profiles out of direct defaul
                             id: profile.id,
                             displayName: profile.displayName,
                             description: profile.description,
+                            directRunnable: profile.run.directRunnable,
                         })),
                     };
                 },
@@ -686,12 +715,19 @@ test('Agent profile save keeps non-direct callable profiles out of direct defaul
             },
         },
     });
+    globalThis.toastr = {
+        success() {},
+        warning() {},
+        error(error) {
+            throw new Error(String(error || 'unexpected toastr error'));
+        },
+    };
 
     const vm = await createAgentPanelHarness();
     vm.settings = settings;
     const profile = defaultProfile('subagent-only');
     profile.tools.allow = profile.tools.allow.filter((tool) => tool !== 'workspace.finish');
-    vm.selectedProfileId = profile.id;
+    vm.editingProfileId = profile.id;
     vm.draft = profileForEdit(profile);
     vm.setProfileEditMode('subagent');
     vm.setCallableAsSubAgent(true);
@@ -699,8 +735,9 @@ test('Agent profile save keeps non-direct callable profiles out of direct defaul
     await vm.saveProfile();
 
     assert.equal(savedProfiles.get(profile.id).run.directRunnable, false);
-    assert.equal(vm.selectedProfileId, profile.id);
-    assert.equal(settings.selectedProfileId, 'default-writer');
+    assert.equal(vm.editingProfileId, profile.id);
+    assert.equal(settings.activeProfileId, 'default-writer');
+    assert.equal(settings.editingProfileId, profile.id);
 });
 
 test('Agent System profile panel no longer owns legacy Skill management UI', async () => {
