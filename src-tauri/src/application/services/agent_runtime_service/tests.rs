@@ -3700,11 +3700,12 @@ async fn foreground_run_commits_chat_message_before_finish() {
 
 /// Issue #55 + #64 plus partial success: when the model commits, then
 /// drifts by replying with plain text (no tool calls), the run gives the
-/// model **one** corrective nudge. If it drifts AGAIN, the error remains
-/// visible, but the already host-confirmed chat commit is preserved and
-/// the terminal state becomes `partial_success` instead of rolling the
-/// message back. This is the failure-after-recovery path; the success path
-/// is covered by
+/// model corrective nudges while normal maxRounds budget remains. If the
+/// model keeps drifting until the final round, the error remains visible,
+/// but the already host-confirmed chat commit is preserved and the
+/// terminal state becomes `partial_success` instead of rolling the message
+/// back. This is the failure-after-recovery path; the success path is
+/// covered by
 /// [`foreground_run_recovers_from_post_commit_drift_with_nudge`].
 #[tokio::test]
 async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_required_drift() {
@@ -3770,7 +3771,7 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
             }]
         }),
         // Round 3: drift — return plain text and no tool calls. With #64
-        // this triggers ONE soft recovery attempt (a corrective `user`
+        // this triggers a soft recovery attempt (a corrective `user`
         // message gets injected); the run does not fail yet.
         json!({
             "choices": [{
@@ -3781,13 +3782,24 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
             }]
         }),
         // Round 4: stubborn drift — model ignores the nudge and replies
-        // with plain text again. Recovery budget is now exhausted, so the
-        // run records a partial success preserving the committed message.
+        // with plain text again. Because rounds remain, the loop corrects
+        // it again instead of surrendering after a single attempt.
         json!({
             "choices": [{
                 "message": {
                     "role": "assistant",
                     "content": "Sorry, here it is one more time...",
+                }
+            }]
+        }),
+        // Round 5: final-round drift. There is no remaining model round for
+        // another nudge, so the run records a partial success preserving the
+        // committed message.
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Still responding directly.",
                 }
             }]
         }),
@@ -3819,6 +3831,7 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
     let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
     let mut profile = test_resolved_profile(&root).await;
     profile.run.presentation = AgentRunPresentation::Foreground;
+    profile.tools.max_rounds = 5;
 
     let resolver = tokio::spawn(resolve_next_chat_commit(
         service.clone(),
@@ -3872,25 +3885,37 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
         "partial success must not ask the host to attach a persistent state pointer"
     );
 
-    // #64: the first drift must have produced exactly one
-    // `drift_recovery_attempted` event before we surrendered to the terminal
-    // partial-success path. If this assertion fails, the recovery attempt
-    // was bypassed — a regression of #64.
+    // #64: each non-final drift must produce a `drift_recovery_attempted`
+    // event before we surrender to the terminal partial-success path. If
+    // this assertion fails, the recovery path regressed back to a hidden
+    // one-shot budget or was bypassed entirely.
     let recovery_events: Vec<_> = events
         .iter()
         .filter(|event| event.event_type == "drift_recovery_attempted")
         .collect();
     assert_eq!(
         recovery_events.len(),
-        1,
-        "exactly one drift_recovery_attempted event must precede partial success"
+        2,
+        "each recoverable drift before the final round must emit a recovery event"
     );
     assert_eq!(recovery_events[0].level, AgentRunEventLevel::Warn);
     assert_eq!(recovery_events[0].payload["attempt"], 1);
-    assert_eq!(recovery_events[0].payload["maxAttempts"], 1);
+    assert_eq!(recovery_events[0].payload["maxAttempts"], 4);
+    assert_eq!(recovery_events[0].payload["maxRounds"], 5);
+    assert_eq!(recovery_events[0].payload["limitReason"], "max_rounds");
     assert_eq!(recovery_events[0].payload["committedCount"], 1);
     assert_eq!(
         recovery_events[0].payload["reasonCode"],
+        "model.tool_call_required"
+    );
+    assert_eq!(recovery_events[1].level, AgentRunEventLevel::Warn);
+    assert_eq!(recovery_events[1].payload["attempt"], 2);
+    assert_eq!(recovery_events[1].payload["maxAttempts"], 4);
+    assert_eq!(recovery_events[1].payload["maxRounds"], 5);
+    assert_eq!(recovery_events[1].payload["limitReason"], "max_rounds");
+    assert_eq!(recovery_events[1].payload["committedCount"], 1);
+    assert_eq!(
+        recovery_events[1].payload["reasonCode"],
         "model.tool_call_required"
     );
 
@@ -3932,7 +3957,7 @@ async fn foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_req
 
 /// Issue #64: when the model commits and then drifts (plain text, no
 /// tool calls), the loop must inject a corrective `user` reminder and
-/// give the model one more chance to call `workspace_finish`. If the
+/// give the model another chance to call `workspace_finish`. If the
 /// model complies, the run completes normally — the commit is NOT
 /// rolled back. This is the happy-path complement to
 /// [`foreground_run_keeps_committed_chat_as_partial_success_on_tool_call_required_drift`].
@@ -4054,6 +4079,7 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
     let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
     let mut profile = test_resolved_profile(&root).await;
     profile.run.presentation = AgentRunPresentation::Foreground;
+    let max_rounds = profile.tools.max_rounds;
 
     let resolver = tokio::spawn(resolve_next_chat_commit_and_persistent_state_update(
         service.clone(),
@@ -4099,7 +4125,12 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
     );
     assert_eq!(recovery_events[0].level, AgentRunEventLevel::Warn);
     assert_eq!(recovery_events[0].payload["attempt"], 1);
-    assert_eq!(recovery_events[0].payload["maxAttempts"], 1);
+    assert_eq!(
+        recovery_events[0].payload["maxAttempts"],
+        max_rounds.saturating_sub(1)
+    );
+    assert_eq!(recovery_events[0].payload["maxRounds"], max_rounds);
+    assert_eq!(recovery_events[0].payload["limitReason"], "max_rounds");
     assert_eq!(recovery_events[0].payload["committedCount"], 1);
 
     // The commit must NOT be rolled back when recovery succeeds.
@@ -4135,8 +4166,8 @@ async fn foreground_run_recovers_from_post_commit_drift_with_nudge() {
         })
         .unwrap_or("");
     assert!(
-        nudge_text.contains("drift recovery attempt 1/1"),
-        "nudge must include attempt counter; got: {nudge_text}"
+        nudge_text.contains("direct output recovery attempt 1"),
+        "nudge must include attempt counter without implying a one-shot budget; got: {nudge_text}"
     );
     assert!(
         nudge_text.contains("workspace_finish"),
@@ -4272,6 +4303,7 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
     let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
     let mut profile = test_resolved_profile(&root).await;
     profile.run.presentation = AgentRunPresentation::Foreground;
+    let max_rounds = profile.tools.max_rounds;
 
     let resolver = tokio::spawn(resolve_next_chat_commit_and_persistent_state_update(
         service.clone(),
@@ -4310,6 +4342,13 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
         .filter(|event| event.event_type == "drift_recovery_attempted")
         .collect();
     assert_eq!(recovery_events.len(), 1);
+    assert_eq!(recovery_events[0].payload["attempt"], 1);
+    assert_eq!(
+        recovery_events[0].payload["maxAttempts"],
+        max_rounds.saturating_sub(1)
+    );
+    assert_eq!(recovery_events[0].payload["maxRounds"], max_rounds);
+    assert_eq!(recovery_events[0].payload["limitReason"], "max_rounds");
     assert_eq!(recovery_events[0].payload["committedCount"], 0);
 
     let captured = repository
@@ -4338,7 +4377,7 @@ async fn foreground_run_recovers_from_no_commit_drift_with_nudge() {
 }
 
 #[tokio::test]
-async fn foreground_run_without_commit_still_fails_after_drift_recovery_exhausts() {
+async fn foreground_run_without_commit_still_fails_when_drift_recovery_hits_max_rounds() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-drift-no-commit-failure-{}",
         Uuid::new_v4().simple()
@@ -4409,6 +4448,7 @@ async fn foreground_run_without_commit_still_fails_after_drift_recovery_exhausts
     let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
     let mut profile = test_resolved_profile(&root).await;
     profile.run.presentation = AgentRunPresentation::Foreground;
+    profile.tools.max_rounds = 2;
 
     let outcome = service
         .execute_agent_loop_run_inner(
@@ -4438,11 +4478,19 @@ async fn foreground_run_without_commit_still_fails_after_drift_recovery_exhausts
         )
         .await
         .expect("read events");
-    assert!(
-        events
-            .iter()
-            .any(|event| event.event_type == "drift_recovery_attempted")
+    let recovery_events: Vec<_> = events
+        .iter()
+        .filter(|event| event.event_type == "drift_recovery_attempted")
+        .collect();
+    assert_eq!(
+        recovery_events.len(),
+        1,
+        "the first direct output should be corrected, then the final round should fail visibly"
     );
+    assert_eq!(recovery_events[0].payload["attempt"], 1);
+    assert_eq!(recovery_events[0].payload["maxAttempts"], 1);
+    assert_eq!(recovery_events[0].payload["maxRounds"], 2);
+    assert_eq!(recovery_events[0].payload["limitReason"], "max_rounds");
     assert!(
         events.iter().any(|event| {
             event.event_type == "run_failed"

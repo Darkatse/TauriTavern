@@ -232,20 +232,24 @@ run_failed
 }
 ```
 
-**Soft drift recovery**：在直接 fail-fast 之前，loop runner 会先做一次"软纠正"：当模型返回 0 tool_calls 且包含纯文本时，runtime 会把该文本捕获到当前 profile messageBody artifact 所在 root 的 `direct_output.md`（默认 `output/direct_output.md`），写入 `direct_output_captured` 与 checkpoint；随后把纯文本回复推进 history，再追加一条合成的 `user` 消息提醒它必须通过 Agent 工具继续。如果直接输出就是目标回复，应显式 `workspace_commit` 该捕获文件，再调用 `workspace_finish`；如果需要修订已提交内容，必须先 `workspace_apply_patch` / `workspace_write_file`，再 `workspace_commit`，最后 `workspace_finish`。每个 run 至多 1 次（受 `DRIFT_RECOVERY_MAX_ATTEMPTS` 控制）。每次尝试都会写一条 `drift_recovery_attempted` 事件，便于宿主 UI 给用户显示"系统正在纠正…"提示：
+**Soft drift recovery**：在直接 fail-fast 之前，loop runner 会做"软纠正"：当模型返回 0 tool_calls 且包含纯文本时，runtime 会把该文本捕获到当前 profile messageBody artifact 所在 root 的 `direct_output.md`（默认 `output/direct_output.md`），写入 `direct_output_captured` 与 checkpoint；随后把纯文本回复推进 history，再追加一条合成的 `user` 消息提醒它必须通过 Agent 工具继续。root run 如果直接输出就是目标回复，应显式 `workspace_commit` 该捕获文件，再调用 `workspace_finish`；如果需要修订已提交内容，必须先 `workspace_apply_patch` / `workspace_write_file`，再 `workspace_commit`，最后 `workspace_finish`。return-mode child 则必须用 `task_return` 结束。direct output recovery 没有独立的一次性尝试上限；只要仍有下一轮模型调用预算就继续纠偏。每次尝试都会写一条 `drift_recovery_attempted` 事件，便于宿主 UI 给用户显示"系统正在纠正…"提示：
 
 ```json
 {
   "attempt": 1,
-  "maxAttempts": 1,
+  "maxAttempts": 79,
+  "maxRounds": 80,
+  "limitReason": "max_rounds",
   "round": 9,
   "committedCount": 1,
   "reasonCode": "model.tool_call_required"
 }
 ```
 
+`maxAttempts` 是兼容字段，表示在当前 `maxRounds` 下 direct-output recovery 的理论上限；实际停止条件由 `maxRounds` / cancel 决定，而不是另一套隐藏 retry budget。
+
 - 恢复成功 → run 继续，不会发 `run_rollback_targets`，也不会写 `run_failed`
-- 恢复失败（模型再次返回 0 tool_calls）→ 若没有成功 chat commit，写 `run_failed`（`userRetryable=true`）；若已有成功 chat commit，写 `run_partial_success` 并保留输出
+- 恢复失败（模型再次返回 0 tool_calls 且已没有下一轮预算）→ 若没有成功 chat commit，写 `run_failed`（`userRetryable=true`）；若已有成功 chat commit，写 `run_partial_success` 并保留输出
 - 上述 rollback / partial-success 语义与前端入口无关；普通发送、`/trigger`、regenerate 与 overswipe 只要进入 Agent run，都必须遵守同一 journal 与 host commit 契约。
 
 ### 4.2 Workspace

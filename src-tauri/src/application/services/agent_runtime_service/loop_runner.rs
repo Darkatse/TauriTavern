@@ -21,14 +21,6 @@ use crate::domain::models::agent::{
 use crate::domain::models::skill::SkillIndexEntry;
 use crate::domain::text_metrics::TextMetrics;
 
-/// How many in-loop drift recovery attempts to make per run before
-/// surrendering to the existing #55 fail-fast path. One attempt is
-/// enough for the common case (model forgets `workspace_finish` after
-/// the final commit) without burning excessive tokens on stubborn
-/// drifters; raise this only after we have data showing repeat drifts
-/// are common AND benign.
-const DRIFT_RECOVERY_MAX_ATTEMPTS: usize = 1;
-
 impl AgentRuntimeService {
     pub(super) async fn run_tool_loop(
         &self,
@@ -44,10 +36,9 @@ impl AgentRuntimeService {
         let mut tool_session = AgentToolSession::new(effective_skills.to_vec());
         let mut seen_child_result_task_ids = HashSet::new();
         let mut commit_count = 0_usize;
-        // Issue #64: counter for soft drift recovery — see
-        // `DRIFT_RECOVERY_MAX_ATTEMPTS` above. Persisted across rounds so a
-        // single run gets at most N corrective nudges in total, not N per
-        // drift event.
+        // Counts soft drift recovery nudges for model-facing text and
+        // journal events. It is intentionally not a separate budget: the
+        // existing maxRounds loop remains the only retry boundary.
         let mut drift_recovery_attempts: usize = 0;
         for round in 1..=profile.tools.max_rounds {
             let updates_run_status = exit_policy == AgentInvocationExitPolicy::RunFinishAllowed;
@@ -116,16 +107,14 @@ impl AgentRuntimeService {
             .await?;
 
             if tool_calls.is_empty() {
-                // Issue #64: instead of failing the run immediately, give the
-                // model one chance to self-correct. The most common drift —
-                // model commits, then replies in plain text instead of
-                // calling `workspace_finish` — is a one-step contract slip,
-                // not a fundamental misunderstanding. We push the drifted
-                // assistant turn into history (so the model owns what it
-                // just said) and follow it with a synthetic `user` reminder.
-                // Multi-turn pattern is API-compatible with both Anthropic
-                // and OpenAI chat completions (no role-alternation
-                // constraint after a no-tool-use turn).
+                // Issue #64: instead of failing the run immediately, let the
+                // model self-correct while normal tool-loop rounds remain.
+                // Direct output is usually a contract slip, not a host
+                // failure. We push the drifted assistant turn into history
+                // (so the model owns what it just said) and follow it with a
+                // synthetic `user` reminder. The existing maxRounds/cancel
+                // contract is the boundary; there is no extra direct-output
+                // attempt cap.
                 let direct_output_path = self
                     .capture_direct_output(
                         run_id,
@@ -136,16 +125,15 @@ impl AgentRuntimeService {
                         profile,
                     )
                     .await?;
-                let can_recover = drift_recovery_attempts < DRIFT_RECOVERY_MAX_ATTEMPTS
-                    && round < profile.tools.max_rounds;
+                let can_recover = round < profile.tools.max_rounds;
                 if can_recover {
                     drift_recovery_attempts += 1;
                     let committed_count = commit_ledger.len();
                     let nudge_text = build_drift_recovery_nudge(
                         committed_count,
                         drift_recovery_attempts,
-                        DRIFT_RECOVERY_MAX_ATTEMPTS,
                         direct_output_path.as_ref(),
+                        exit_policy,
                     );
                     request.messages.push(response.message.clone());
                     request.messages.push(AgentModelMessage {
@@ -158,11 +146,13 @@ impl AgentRuntimeService {
                         AgentRunEventLevel::Warn,
                         "drift_recovery_attempted",
                         json!({
-                        "attempt": drift_recovery_attempts,
-                        "maxAttempts": DRIFT_RECOVERY_MAX_ATTEMPTS,
-                        "round": round,
-                        "invocationId": invocation_id,
-                        "committedCount": committed_count,
+                            "attempt": drift_recovery_attempts,
+                            "maxAttempts": drift_recovery_attempt_limit(profile.tools.max_rounds),
+                            "maxRounds": profile.tools.max_rounds,
+                            "limitReason": "max_rounds",
+                            "round": round,
+                            "invocationId": invocation_id,
+                            "committedCount": committed_count,
                             "reasonCode": "model.tool_call_required",
                         }),
                     )
@@ -421,8 +411,12 @@ fn completion_tool_name(exit_policy: AgentInvocationExitPolicy) -> &'static str 
     }
 }
 
+fn drift_recovery_attempt_limit(max_rounds: usize) -> usize {
+    max_rounds.saturating_sub(1)
+}
+
 /// Build the corrective `user` message we inject when the model returns a
-/// turn with zero tool calls. The phrasing covers both common drift modes:
+/// turn with zero tool calls. The phrasing covers the common drift modes:
 ///
 /// * **Post-commit drift** (committed_count > 0): model committed a chat
 ///   message but then replied with plain text instead of calling
@@ -432,44 +426,64 @@ fn completion_tool_name(exit_policy: AgentInvocationExitPolicy) -> &'static str 
 /// * **No-commit drift** (committed_count == 0): model bypassed the tool
 ///   workflow entirely. We tell it that every turn must use a tool until
 ///   `workspace_finish`.
+/// * **Child drift** (TaskReturnRequired): return-mode subagents cannot
+///   commit or finish the run, so we direct them back to `task_return`.
 ///
-/// The attempt counter is included so the model can see we have a hard
-/// budget; if attempt == max_attempts there is no further leniency.
 fn build_drift_recovery_nudge(
     committed_count: usize,
     attempt: usize,
-    max_attempts: usize,
     direct_output_path: Option<&WorkspacePath>,
+    exit_policy: AgentInvocationExitPolicy,
 ) -> String {
-    let direct_output_hint = direct_output_path
-        .map(|path| {
-            format!(
-                " I saved your direct text to {}. If that text is the intended reply, call workspace_commit with path \"{}\" before workspace_finish.",
-                path.as_str(),
-                path.as_str()
-            )
-        })
-        .unwrap_or_default();
+    match exit_policy {
+        AgentInvocationExitPolicy::RunFinishAllowed => {
+            let direct_output_hint = direct_output_path
+                .map(|path| {
+                    format!(
+                        " I saved your direct text to {}. If that text is the intended reply, call workspace_commit with path \"{}\" before workspace_finish.",
+                        path.as_str(),
+                        path.as_str()
+                    )
+                })
+                .unwrap_or_default();
 
-    if committed_count > 0 {
-        format!(
-            "[system reminder, drift recovery attempt {attempt}/{max_attempts}] You replied with \
-             plain text but the run is not complete. You have committed {committed_count} \
-             message(s) to the chat via workspace_commit; you MUST finalize the run by calling \
-             workspace_finish, or the run will stop as partial_success with a warning instead of \
-             clean completion. If you need to revise the committed content, update the workspace file with \
-             workspace_apply_patch or workspace_write_file, then call workspace_commit again \
-             before workspace_finish.{direct_output_hint} Do NOT repeat the content in plain text — \
-             that is treated as instruction drift."
-        )
-    } else {
-        format!(
-            "[system reminder, drift recovery attempt {attempt}/{max_attempts}] You replied with \
-             plain text, but every turn must use a tool until the run ends with workspace_finish. \
-             Inspect the workspace (workspace_list_files / workspace_read_file), produce the \
-             answer through workspace_write_file + workspace_commit, then call workspace_finish.{direct_output_hint} \
-             Do NOT answer directly in plain text."
-        )
+            if committed_count > 0 {
+                format!(
+                    "[system reminder, direct output recovery attempt {attempt}] You replied with \
+                     plain text but the run is still open. You have committed {committed_count} \
+                     message(s) to the chat via workspace_commit; complete cleanly by calling \
+                     workspace_finish. If you need to revise the committed content, update the workspace file with \
+                     workspace_apply_patch or workspace_write_file, then call workspace_commit again \
+                     before workspace_finish.{direct_output_hint} Do NOT repeat the content in plain text; \
+                     continue through Agent tools."
+                )
+            } else {
+                format!(
+                    "[system reminder, direct output recovery attempt {attempt}] You replied with \
+                     plain text, but this run must continue through Agent tools until workspace_finish. \
+                     Inspect the workspace if needed, produce the answer through workspace_write_file \
+                     and workspace_commit, then call workspace_finish.{direct_output_hint} \
+                     Do NOT answer directly in plain text."
+                )
+            }
+        }
+        AgentInvocationExitPolicy::TaskReturnRequired => {
+            let direct_output_hint = direct_output_path
+                .map(|path| {
+                    format!(
+                        " I saved your direct text to {}. If it is useful, summarize it or reference that path in task_return.artifacts.",
+                        path.as_str()
+                    )
+                })
+                .unwrap_or_default();
+            format!(
+                "[system reminder, direct output recovery attempt {attempt}] You replied with \
+                 plain text, but this delegated task must end through task_return. \
+                 Call task_return with a concise summary, status, and any useful findings, warnings, \
+                 questions, next actions, or artifact paths.{direct_output_hint} Do NOT answer directly \
+                 in plain text."
+            )
+        }
     }
 }
 
