@@ -325,6 +325,8 @@ impl AgentRuntimeService {
                         run_id,
                         invocation_id,
                         &mut seen_child_result_task_ids,
+                        profile,
+                        commit_count,
                     )
                     .await?
                 {

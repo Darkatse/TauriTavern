@@ -4,16 +4,17 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::rendering::render_await_content;
+use super::rendering::{DelegatedResultContinuationHint, render_await_content};
 use super::task_status::task_is_terminal;
 use super::tool_error::tool_error_outcome;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_runtime_service::AgentCancelReceiver;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
+use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
-    AgentRunEventLevel, AgentTaskRecord, AgentTaskStatus, AgentToolCall, AgentToolResult,
-    WorkspacePath,
+    AgentInvocationExitPolicy, AgentRunEventLevel, AgentTaskRecord, AgentTaskStatus, AgentToolCall,
+    AgentToolResult, WorkspacePath,
 };
 
 const DEFAULT_AGENT_AWAIT_TIMEOUT_MS: u64 = 120_000;
@@ -68,6 +69,8 @@ impl AgentRuntimeService {
         run_id: &str,
         invocation_id: &str,
         call: &AgentToolCall,
+        profile: &ResolvedAgentProfile,
+        committed_count: usize,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
@@ -173,7 +176,16 @@ impl AgentRuntimeService {
             "timedOut": timed_out,
             "tasks": views,
         });
-        let content = render_await_content(&structured);
+        let visible_tools = self.visible_tool_specs_for_invocation(
+            profile,
+            AgentInvocationExitPolicy::RunFinishAllowed,
+        )?;
+        let continuation_hint = DelegatedResultContinuationHint::from_parent_tools(
+            &visible_tools,
+            profile.run.presentation,
+            committed_count,
+        );
+        let content = render_await_content(&structured, Some(&continuation_hint));
         self.event(
             run_id,
             if timed_out {
@@ -283,6 +295,8 @@ impl AgentRuntimeService {
         run_id: &str,
         invocation_id: &str,
         seen_task_ids: &mut HashSet<String>,
+        profile: &ResolvedAgentProfile,
+        committed_count: usize,
     ) -> Result<Option<String>, ApplicationError> {
         let tasks = self
             .invocation_repository
@@ -305,9 +319,18 @@ impl AgentRuntimeService {
             "timedOut": false,
             "tasks": views,
         });
+        let visible_tools = self.visible_tool_specs_for_invocation(
+            profile,
+            AgentInvocationExitPolicy::RunFinishAllowed,
+        )?;
+        let continuation_hint = DelegatedResultContinuationHint::from_parent_tools(
+            &visible_tools,
+            profile.run.presentation,
+            committed_count,
+        );
         Ok(Some(format!(
             "Delegated task results are now available. Review them before deciding your next action.\n\n{}",
-            render_await_content(&structured)
+            render_await_content(&structured, Some(&continuation_hint))
         )))
     }
 }

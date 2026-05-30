@@ -183,8 +183,15 @@ impl AgentRuntimeService {
             ))
             .await
         } else if call.name == AGENT_AWAIT {
-            self.dispatch_agent_await_tool(run_id, invocation_id, call, cancel)
-                .await
+            self.dispatch_agent_await_tool(
+                run_id,
+                invocation_id,
+                call,
+                profile,
+                commit_count,
+                cancel,
+            )
+            .await
         } else if call.name == TASK_RETURN {
             self.dispatch_task_return_tool(
                 run_id,

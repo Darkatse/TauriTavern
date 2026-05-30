@@ -195,7 +195,7 @@ agent-results/<child-invocation-id>.json      # runtime/audit structured result
 summaries/agents/<workspace-key>/result.md    # parent/other Agents 可读 summary
 ```
 
-`agent.await` 与后台结果自动注入都读取 structured result，但返回给父 Agent 的内容经过 markdown 渲染，只暴露 summary、findings、warnings、suggestedNextActions、questionsForCaller、artifacts、confidence 等 Agent 有用信息。
+`agent.await` 与后台结果自动注入都读取 structured result，但返回给父 Agent 的内容经过 markdown 渲染，只暴露 summary、findings、warnings、suggestedNextActions、questionsForCaller、artifacts、confidence 等 Agent 有用信息。渲染 capsule 末尾会追加一个面向当前父 Agent 的轻量 continuation hint：提醒这些结果是上下文，不覆盖当前 Agent Profile / task；下一步仍应继续使用 Agent tools，并按当前 foreground/background 与 commit 状态通过 `workspace_commit` / `workspace_finish` 收口。这个提示属于父 Agent 语言界面，不写入 task result structured payload。
 
 ## 7. Invocation-scoped Workspace View
 
@@ -241,6 +241,7 @@ src-tauri/src/application/services/agent_runtime_service/delegation/workspace_vi
 9. `agent.await` 是需要结果或状态时的等待/查询工具，不是 delegation 后必须执行的收集步骤；调用者可以先继续其它工作。
 10. `taskId` 只作为可选的 opaque task handle；常规情况下调用者可以不传 taskIds，让 `agent.await` 面向自己启动的任务集合。
 11. 调用方给子任务时应传递相关 workspace path 与期望 artifact 形态；子 Agent 不需要猜 runtime 存储布局。
+12. 子任务结果 capsule 应帮助父 Agent 低摩擦地回到当前工具流程；不要让返回文本看起来像普通用户消息或最终 answer。
 
 如果后续新增字段或工具，先问两个问题：
 

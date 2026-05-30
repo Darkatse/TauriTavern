@@ -1423,6 +1423,17 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
         .iter()
         .find(|result| result.name == "agent.await")
         .expect("await tool result");
+    assert!(
+        await_result
+            .content
+            .contains("Treat these delegated results as context for you")
+    );
+    assert!(
+        await_result
+            .content
+            .contains("If no more work is needed, call workspace_finish")
+    );
+    assert!(await_result.content.contains("do not answer in plain text"));
     let await_task = &await_result.structured["tasks"][0];
     assert_eq!(
         await_task["summary"],
@@ -1969,9 +1980,11 @@ async fn completed_child_results_are_added_to_next_parent_turn_once() {
         .await
         .expect("complete task");
 
+    let mut profile = test_resolved_profile(&root).await;
+    profile.run.presentation = AgentRunPresentation::Foreground;
     let mut seen = HashSet::new();
     let message = service
-        .completed_child_results_message(&run.id, "inv_root", &mut seen)
+        .completed_child_results_message(&run.id, "inv_root", &mut seen, &profile, 0)
         .await
         .expect("build inbox message")
         .expect("message");
@@ -1979,10 +1992,25 @@ async fn completed_child_results_are_added_to_next_parent_turn_once() {
     assert!(message.contains("Review them before deciding your next action"));
     assert!(message.contains("The scene needs a stronger image."));
     assert!(message.contains("Revise the opening sentence."));
+    assert!(message.contains("Treat these delegated results as context for you"));
+    assert!(message.contains("call workspace_commit, then call workspace_finish"));
+    assert!(message.contains("do not answer in plain text"));
     assert!(seen.contains("task_child_inbox"));
+
+    let mut seen_after_commit = HashSet::new();
+    let post_commit_message = service
+        .completed_child_results_message(&run.id, "inv_root", &mut seen_after_commit, &profile, 1)
+        .await
+        .expect("build post-commit inbox message")
+        .expect("post-commit message");
+    assert!(post_commit_message.contains("current committed reply already accounts"));
+    assert!(
+        post_commit_message.contains("call workspace_commit again, then call workspace_finish")
+    );
+
     assert!(
         service
-            .completed_child_results_message(&run.id, "inv_root", &mut seen)
+            .completed_child_results_message(&run.id, "inv_root", &mut seen, &profile, 0)
             .await
             .expect("build second inbox message")
             .is_none()
