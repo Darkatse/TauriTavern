@@ -23,6 +23,7 @@ pub enum ChatCompletionSource {
     WorkersAi,
     Zai,
     MiniMax,
+    AwsBedrock,
 }
 
 impl ChatCompletionSource {
@@ -46,6 +47,7 @@ impl ChatCompletionSource {
             }
             "zai" | "z.ai" | "glm" => Some(Self::Zai),
             "minimax" | "mini-max" | "mini max" => Some(Self::MiniMax),
+            "aws_bedrock" | "aws-bedrock" | "aws bedrock" | "bedrock" => Some(Self::AwsBedrock),
             _ => None,
         }
     }
@@ -68,6 +70,7 @@ impl ChatCompletionSource {
             Self::WorkersAi => "workers_ai",
             Self::Zai => "zai",
             Self::MiniMax => "minimax",
+            Self::AwsBedrock => "aws_bedrock",
         }
     }
 
@@ -89,6 +92,7 @@ impl ChatCompletionSource {
             Self::WorkersAi => "Cloudflare Workers AI",
             Self::Zai => "Z.AI (GLM)",
             Self::MiniMax => "MiniMax",
+            Self::AwsBedrock => "AWS Bedrock",
         }
     }
 }
@@ -109,6 +113,16 @@ pub struct ChatCompletionApiConfig {
     pub extra_headers: HashMap<String, String>,
     pub additional_headers: HashMap<String, String>,
     pub anthropic_beta_header_mode: AnthropicBetaHeaderMode,
+    /// Optional dotted JSON path (e.g. `output.message.content.0.text`) used by
+    /// the AWS Bedrock custom-template escape hatch to lift the assistant text
+    /// out of an arbitrary non-stream response body. When set, the
+    /// infrastructure layer bypasses provider-specific normalizers and
+    /// extracts text from this path instead.
+    pub aws_bedrock_custom_response_path: Option<String>,
+    /// Same as [`aws_bedrock_custom_response_path`] but applied to each
+    /// streaming chunk JSON. Empty / missing chunks are silently dropped so
+    /// terminal sentinel events don't surface as blank deltas.
+    pub aws_bedrock_custom_stream_path: Option<String>,
 }
 
 pub type ChatCompletionStreamSender = UnboundedSender<String>;
@@ -231,6 +245,14 @@ mod tests {
         assert_eq!(
             ChatCompletionSource::parse("vertexai"),
             Some(ChatCompletionSource::VertexAi)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("aws_bedrock"),
+            Some(ChatCompletionSource::AwsBedrock)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("bedrock"),
+            Some(ChatCompletionSource::AwsBedrock)
         );
     }
 }

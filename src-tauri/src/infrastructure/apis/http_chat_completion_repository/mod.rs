@@ -13,6 +13,7 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
+mod aws_bedrock;
 mod claude;
 mod cohere;
 mod gemini_interactions;
@@ -506,6 +507,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             ChatCompletionSource::MiniMax => Err(DomainError::InvalidData(
                 "MiniMax does not expose dynamic model listing; status bypass belongs to the application service".to_string(),
             )),
+            ChatCompletionSource::AwsBedrock => aws_bedrock::list_models(self, config).await,
             ChatCompletionSource::Claude => claude::list_models(self, config).await,
             ChatCompletionSource::Makersuite => makersuite::list_models(self, config).await,
             ChatCompletionSource::VertexAi => vertexai::list_models(self, config).await,
@@ -576,6 +578,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 .map(ChatCompletionRepositoryGenerateResponse::from_body),
             ChatCompletionSource::Claude => {
                 claude::generate(self, config, endpoint_path, payload, source_name).await
+            }
+            ChatCompletionSource::AwsBedrock => {
+                aws_bedrock::generate(self, config, endpoint_path, payload).await
             }
             ChatCompletionSource::Makersuite => {
                 makersuite::generate(self, config, endpoint_path, payload).await
@@ -681,6 +686,10 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                     cancel,
                 )
                 .await
+            }
+            ChatCompletionSource::AwsBedrock => {
+                aws_bedrock::generate_stream(self, config, endpoint_path, payload, sender, cancel)
+                    .await
             }
             ChatCompletionSource::Makersuite => {
                 makersuite::generate_stream(self, config, endpoint_path, payload, sender, cancel)
@@ -798,6 +807,8 @@ mod tests {
             additional_headers: HashMap::new(),
             anthropic_beta_header_mode:
                 crate::domain::repositories::chat_completion_repository::AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
         };
 
         let request = Client::new().get("https://example.com");
@@ -827,6 +838,8 @@ mod tests {
             )]),
             anthropic_beta_header_mode:
                 crate::domain::repositories::chat_completion_repository::AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
         };
 
         let request = Client::new().get("https://example.com");

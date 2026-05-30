@@ -211,6 +211,7 @@ export const chat_completion_sources = {
     SILICONFLOW: 'siliconflow',
     WORKERS_AI: 'workers_ai',
     MINIMAX: 'minimax',
+    AWS_BEDROCK: 'aws_bedrock',
 };
 
 const manage_custom_chat_completion_models_option = '__tauritavern_manage_custom_chat_completion_models__';
@@ -245,6 +246,7 @@ const chatCompletionModelControls = {
     [chat_completion_sources.SILICONFLOW]: { selector: '#model_siliconflow_select', settingKey: 'siliconflow_model', label: 'SiliconFlow', supportsCustomModels: true },
     [chat_completion_sources.MINIMAX]: { selector: '#model_minimax_select', settingKey: 'minimax_model', label: 'MiniMax', supportsCustomModels: true },
     [chat_completion_sources.WORKERS_AI]: { selector: '#model_workers_ai_select', settingKey: 'workers_ai_model', label: 'Cloudflare Workers AI', supportsCustomModels: true },
+    [chat_completion_sources.AWS_BEDROCK]: { selector: '#model_aws_bedrock_select', settingKey: 'aws_bedrock_model', label: 'AWS Bedrock', supportsCustomModels: true },
 };
 
 export function getChatCompletionModelControl(source = oai_settings.chat_completion_source) {
@@ -356,6 +358,8 @@ export const MINIMAX_ENDPOINT = {
     CN: 'cn',
 };
 
+export const AWS_BEDROCK_REGION_DEFAULT = 'us-east-1';
+
 const sensitiveFields = [
     'reverse_proxy',
     'proxy_password',
@@ -410,6 +414,12 @@ export const settingsToUpdate = {
     siliconflow_endpoint: ['#siliconflow_endpoint', 'siliconflow_endpoint', false, true],
     minimax_model: ['#model_minimax_select', 'minimax_model', false, true],
     minimax_endpoint: ['#minimax_endpoint', 'minimax_endpoint', false, true],
+    aws_bedrock_model: ['#model_aws_bedrock_select', 'aws_bedrock_model', false, true],
+    aws_bedrock_region: ['#aws_bedrock_region', 'aws_bedrock_region', false, true],
+    aws_bedrock_use_custom_template: ['#aws_bedrock_use_custom_template', 'aws_bedrock_use_custom_template', true, true],
+    aws_bedrock_custom_template: ['#aws_bedrock_custom_template', 'aws_bedrock_custom_template', false, true],
+    aws_bedrock_custom_response_path: ['#aws_bedrock_custom_response_path', 'aws_bedrock_custom_response_path', false, true],
+    aws_bedrock_custom_stream_path: ['#aws_bedrock_custom_stream_path', 'aws_bedrock_custom_stream_path', false, true],
     electronhub_model: ['#model_electronhub_select', 'electronhub_model', false, true],
     electronhub_sort_models: ['#electronhub_sort_models', 'electronhub_sort_models', false, true],
     electronhub_group_models: ['#electronhub_group_models', 'electronhub_group_models', false, true],
@@ -531,6 +541,12 @@ const default_settings = {
     siliconflow_endpoint: SILICONFLOW_ENDPOINT.GLOBAL,
     minimax_model: 'MiniMax-M2.7',
     minimax_endpoint: MINIMAX_ENDPOINT.GLOBAL,
+    aws_bedrock_model: 'anthropic.claude-sonnet-4-20250514-v1:0',
+    aws_bedrock_region: AWS_BEDROCK_REGION_DEFAULT,
+    aws_bedrock_use_custom_template: false,
+    aws_bedrock_custom_template: '',
+    aws_bedrock_custom_response_path: '',
+    aws_bedrock_custom_stream_path: '',
     electronhub_model: 'gpt-4o-mini',
     electronhub_sort_models: 'alphabetically',
     electronhub_group_models: false,
@@ -2609,6 +2625,8 @@ export function getChatCompletionModel(settings = null) {
             return settings.siliconflow_model;
         case chat_completion_sources.MINIMAX:
             return settings.minimax_model;
+        case chat_completion_sources.AWS_BEDROCK:
+            return settings.aws_bedrock_model;
         case chat_completion_sources.ELECTRONHUB:
             return settings.electronhub_model;
         case chat_completion_sources.CHUTES:
@@ -3334,6 +3352,134 @@ function saveModelList(data) {
         );
 
         setModelSelectValue(chat_completion_sources.DEEPSEEK, oai_settings.deepseek_model);
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+        // Dynamic Bedrock catalog wins over the static <optgroup> placeholders
+        // in index.html. The backend's list_models returns every active
+        // foundation model + inference profile across all providers, each
+        // tagged with `provider`. We have payload builders + stream/response
+        // normalizers wired for the seven providers listed below; everything
+        // else is still surfaced (so users can see the full catalog) but
+        // disabled with an `(unsupported, coming soon)` suffix so picking one
+        // doesn't lead to a confusing 4xx after Send. Two notable caveats:
+        //   - `amazon` covers Nova only; Titan-family models share the
+        //     `amazon.*` provider prefix but use the legacy Titan invoke body
+        //     and are filtered out below before the `isSupported` check.
+        //   - `ai21` covers Jamba only; legacy Jurassic-2 models
+        //     (`ai21.j2-*`) are recognised as unsupported and grey out.
+        const select = $('#model_aws_bedrock_select');
+        select.empty();
+
+        const SUPPORTED_PROVIDERS = new Set([
+            'anthropic',
+            'amazon',
+            'meta',
+            'mistral',
+            'cohere',
+            'ai21',
+            'deepseek',
+        ]);
+        const isSupportedModel = (model) => {
+            const provider = String(model?.provider || '').toLowerCase();
+            if (!SUPPORTED_PROVIDERS.has(provider)) return false;
+            const id = String(model?.id || '').toLowerCase();
+            // Titan-family models share `amazon.*` but use the older Titan
+            // invoke body (`inputText` / `textGenerationConfig`) that the
+            // Nova builder doesn't speak. Mark them unsupported until we
+            // wire a dedicated Titan branch.
+            if (provider === 'amazon' && !id.includes('.nova') && !id.includes('amazon.nova')) {
+                return false;
+            }
+            // AI21 Jurassic-2 (`ai21.j2-*`) uses a legacy completion body;
+            // only Jamba (`ai21.jamba*`) goes through the wired builder.
+            if (provider === 'ai21' && !id.includes('.jamba')) {
+                return false;
+            }
+            return true;
+        };
+        const isSupported = isSupportedModel;
+
+        const appendOption = (parent, model) => {
+            const option = new Option(
+                isSupported(model) ? model.id : `${model.id}  (unsupported, coming soon)`,
+                model.id,
+            );
+            if (!isSupported(model)) {
+                option.disabled = true;
+            }
+            parent.append(option);
+        };
+
+        const groupBy = (entries, fn) => {
+            const groups = new Map();
+            entries.forEach(entry => {
+                const key = fn(entry);
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(entry);
+            });
+            return groups;
+        };
+
+        const PROVIDER_LABELS = {
+            anthropic: 'Anthropic (Claude)',
+            amazon: 'Amazon (Nova / Titan)',
+            meta: 'Meta (Llama)',
+            mistral: 'Mistral',
+            cohere: 'Cohere',
+            ai21: 'AI21',
+            deepseek: 'DeepSeek',
+        };
+        const providerLabel = (provider) => PROVIDER_LABELS[provider] || provider || 'Other';
+
+        const renderSection = (heading, entries) => {
+            if (entries.length === 0) return;
+            const byProvider = groupBy(entries, e => String(e.provider || 'unknown').toLowerCase());
+            // Wired providers (anthropic first, then the others alphabetically)
+            // float to the top so the working models are always visible without
+            // scrolling; unsupported providers stay at the bottom.
+            const wiredOrder = ['anthropic', 'amazon', 'meta', 'mistral', 'cohere', 'ai21', 'deepseek'];
+            const rankOf = (provider) => {
+                const wired = wiredOrder.indexOf(provider);
+                return wired >= 0 ? wired : wiredOrder.length;
+            };
+            const sortedProviders = [...byProvider.keys()].sort((a, b) => {
+                const ra = rankOf(a);
+                const rb = rankOf(b);
+                if (ra !== rb) return ra - rb;
+                return a.localeCompare(b);
+            });
+            sortedProviders.forEach(provider => {
+                const group = $('<optgroup>').attr(
+                    'label',
+                    `${heading} — ${providerLabel(provider)}`,
+                );
+                byProvider.get(provider).forEach(model => appendOption(group, model));
+                select.append(group);
+            });
+        };
+
+        const inferenceProfiles = model_list.filter(m => m?.source === 'inference-profile');
+        const foundationModels = model_list.filter(m => m?.source === 'foundation-model');
+        const ungrouped = model_list.filter(m => m?.source !== 'foundation-model' && m?.source !== 'inference-profile');
+
+        renderSection('Cross-region inference profiles', inferenceProfiles);
+        renderSection('Foundation models', foundationModels);
+        ungrouped.forEach(model => appendOption(select, model));
+
+        // When picking a default, prefer a *supported* model so the first run
+        // works out-of-the-box. Falls back to anything if Anthropic isn't
+        // available in the user's region.
+        const supportedIds = model_list.filter(isSupported).map(m => m.id);
+        const allIds = model_list.map(m => m.id);
+        oai_settings.aws_bedrock_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.AWS_BEDROCK,
+            allIds,
+            oai_settings.aws_bedrock_model,
+            supportedIds[0] || allIds[0] || oai_settings.aws_bedrock_model || '',
+        );
+
+        setModelSelectValue(chat_completion_sources.AWS_BEDROCK, oai_settings.aws_bedrock_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.POLLINATIONS) {
@@ -4116,6 +4262,22 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.siliconflow_endpoint = settings.siliconflow_endpoint || SILICONFLOW_ENDPOINT.GLOBAL;
     }
 
+    if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+        generate_data.aws_bedrock_region = (settings.aws_bedrock_region || AWS_BEDROCK_REGION_DEFAULT).trim();
+        generate_data.top_k = Number(settings.top_k_openai);
+        generate_data.use_sysprompt = settings.use_sysprompt;
+        generate_data.stop = getCustomStoppingStrings();
+        // Custom invoke template escape hatch — only forwarded when the user
+        // has explicitly opted in so the backend can keep its automatic
+        // provider dispatch for everyone else.
+        if (settings.aws_bedrock_use_custom_template) {
+            generate_data.aws_bedrock_use_custom_template = true;
+            generate_data.aws_bedrock_custom_template = String(settings.aws_bedrock_custom_template || '');
+            generate_data.aws_bedrock_custom_response_path = String(settings.aws_bedrock_custom_response_path || '').trim();
+            generate_data.aws_bedrock_custom_stream_path = String(settings.aws_bedrock_custom_stream_path || '').trim();
+        }
+    }
+
     if (settings.chat_completion_source === chat_completion_sources.MINIMAX) {
         generate_data.minimax_endpoint = settings.minimax_endpoint || MINIMAX_ENDPOINT.GLOBAL;
         if (Number.isFinite(generate_data.temperature)) {
@@ -4318,7 +4480,9 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
     const isCustomClaudeMessages = chat_completion_source === chat_completion_sources.CUSTOM
         && oai_settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES;
 
-    if (chat_completion_source === chat_completion_sources.CLAUDE || isCustomClaudeMessages) {
+    if (chat_completion_source === chat_completion_sources.CLAUDE
+        || chat_completion_source === chat_completion_sources.AWS_BEDROCK
+        || isCustomClaudeMessages) {
         if (show_thoughts) {
             state.reasoning += data?.delta?.thinking || '';
         }
@@ -5660,6 +5824,7 @@ function loadOpenAISettings(data, settings) {
     $('#bind_preset_to_connection').prop('checked', oai_settings.bind_preset_to_connection);
     $('#openai_external_category').toggle(oai_settings.show_external_models);
     $('.reverse_proxy_warning').toggle(oai_settings.reverse_proxy !== '');
+    $('#aws_bedrock_custom_template_section').toggleClass('displayNone', !oai_settings.aws_bedrock_use_custom_template);
 
     // Don't display Service Account JSON in textarea - it's stored in backend secrets
     $('#vertexai_service_account_json').val('');
@@ -5832,6 +5997,10 @@ async function getStatusOpen() {
 
     if (oai_settings.chat_completion_source === chat_completion_sources.MINIMAX) {
         data.minimax_endpoint = oai_settings.minimax_endpoint;
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+        data.aws_bedrock_region = (oai_settings.aws_bedrock_region || AWS_BEDROCK_REGION_DEFAULT).trim();
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.WORKERS_AI) {
@@ -6850,6 +7019,15 @@ async function onModelChange() {
         oai_settings.minimax_model = value;
     }
 
+    if ($(this).is('#model_aws_bedrock_select')) {
+        if (!value) {
+            console.debug('Null AWS Bedrock model selected. Ignoring.');
+            return;
+        }
+        console.log('AWS Bedrock model changed to', value);
+        oai_settings.aws_bedrock_model = value;
+    }
+
     if ($(this).is('#model_electronhub_select')) {
         if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.ELECTRONHUB, value))) {
             console.debug('Null ElectronHub model selected. Ignoring.');
@@ -7304,6 +7482,15 @@ async function onModelChange() {
         $('#temp_openai').attr('max', claude_max_temp).val(oai_settings.temp_openai).trigger('input');
     }
 
+    if (oai_settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+        const maxContext = max_200k;
+        $('#openai_max_context').attr('max', maxContext);
+        oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
+        $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
+        oai_settings.temp_openai = Math.min(claude_max_temp, oai_settings.temp_openai);
+        $('#temp_openai').attr('max', claude_max_temp).val(oai_settings.temp_openai).trigger('input');
+    }
+
     if (oai_settings.chat_completion_source == chat_completion_sources.ZAI) {
         const maxContext = getZaiMaxContext(oai_settings.zai_model, oai_settings.max_context_unlocked);
         $('#openai_max_context').attr('max', maxContext);
@@ -7382,6 +7569,7 @@ async function onConnectButtonClick(e) {
         [chat_completion_sources.POLLINATIONS]: { key: SECRET_KEYS.POLLINATIONS, selector: '#api_key_pollinations', proxy: false },
         [chat_completion_sources.WORKERS_AI]: { key: SECRET_KEYS.WORKERS_AI, selector: '#api_key_workers_ai', proxy: false },
         [chat_completion_sources.MINIMAX]: { key: SECRET_KEYS.MINIMAX, selector: '#api_key_minimax', proxy: false },
+        [chat_completion_sources.AWS_BEDROCK]: { key: SECRET_KEYS.AWS_BEDROCK, selector: '#api_key_aws_bedrock', proxy: false },
     };
 
     // Vertex AI Express version - use API key
@@ -7464,6 +7652,9 @@ function toggleChatCompletionForms() {
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.MINIMAX) {
         $('#model_minimax_select').trigger('change');
+    }
+    else if (oai_settings.chat_completion_source == chat_completion_sources.AWS_BEDROCK) {
+        $('#model_aws_bedrock_select').trigger('change');
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.ELECTRONHUB) {
         $('#model_electronhub_select').trigger('change');
@@ -8698,6 +8889,28 @@ export function initOpenAI() {
         oai_settings.minimax_endpoint = String($(this).val());
         saveSettingsDebounced();
     });
+    $('#aws_bedrock_region').on('input', function () {
+        oai_settings.aws_bedrock_region = String($(this).val()).trim() || AWS_BEDROCK_REGION_DEFAULT;
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_use_custom_template').on('change', function () {
+        const enabled = Boolean($(this).prop('checked'));
+        oai_settings.aws_bedrock_use_custom_template = enabled;
+        $('#aws_bedrock_custom_template_section').toggleClass('displayNone', !enabled);
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_custom_template').on('input', function () {
+        oai_settings.aws_bedrock_custom_template = String($(this).val());
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_custom_response_path').on('input', function () {
+        oai_settings.aws_bedrock_custom_response_path = String($(this).val()).trim();
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_custom_stream_path').on('input', function () {
+        oai_settings.aws_bedrock_custom_stream_path = String($(this).val()).trim();
+        saveSettingsDebounced();
+    });
     $('#workers_ai_account_id').on('input', function () {
         oai_settings.workers_ai_account_id = String($(this).val());
         saveSettingsDebounced();
@@ -8719,6 +8932,7 @@ export function initOpenAI() {
     $('#model_chutes_select').on('change', onModelChange);
     $('#model_siliconflow_select').on('change', onModelChange);
     $('#model_minimax_select').on('change', onModelChange);
+    $('#model_aws_bedrock_select').on('change', onModelChange);
     $('#model_electronhub_select').on('change', onModelChange);
     $('#model_nanogpt_select').on('change', onModelChange);
     $('#model_deepseek_select').on('change', onModelChange);

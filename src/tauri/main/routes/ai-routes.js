@@ -206,6 +206,7 @@ function getCompletionModel(payload) {
         source.moonshot_model,
         source.siliconflow_model,
         source.minimax_model,
+        source.aws_bedrock_model,
         source.zai_model,
     ];
 
@@ -639,6 +640,7 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
             siliconflow_endpoint: String(payload.siliconflow_endpoint || ''),
             minimax_endpoint: String(payload.minimax_endpoint || ''),
             workers_ai_account_id: String(payload.workers_ai_account_id || ''),
+            aws_bedrock_region: String(payload.aws_bedrock_region || ''),
             secret_id: payload.secret_id ?? null,
             bypass_status_check: Boolean(payload.bypass_status_check),
         };

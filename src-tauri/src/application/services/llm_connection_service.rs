@@ -569,6 +569,7 @@ fn expected_secret_key(
         ChatCompletionSource::WorkersAi => Ok(SecretKeys::WORKERS_AI),
         ChatCompletionSource::Zai => Ok(SecretKeys::ZAI),
         ChatCompletionSource::MiniMax => Ok(SecretKeys::MINIMAX),
+        ChatCompletionSource::AwsBedrock => Ok(SecretKeys::AWS_BEDROCK),
         ChatCompletionSource::VertexAi => unreachable!("Vertex AI handled above"),
     }
 }

@@ -38,6 +38,7 @@ const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
 const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
 const MINIMAX_API_BASE: &str = "https://api.minimax.io/v1";
 const MINIMAX_API_BASE_CN: &str = "https://api.minimaxi.com/v1";
+const AWS_BEDROCK_DEFAULT_REGION: &str = "us-east-1";
 const OPENROUTER_REFERER: &str = "https://tauritavern.github.io";
 const OPENROUTER_TITLE: &str = "TauriTavern";
 const OPENROUTER_CATEGORIES: &str = "roleplay,general-chat";
@@ -59,6 +60,14 @@ struct ApiConfigHints<'a> {
     workers_ai_account_id: &'a str,
     nanogpt_provider: &'a str,
     nanogpt_payg_override: bool,
+    aws_bedrock_region: &'a str,
+    /// Dotted JSON path applied to non-stream Bedrock responses when the
+    /// custom-invoke-template escape hatch is enabled (e.g.
+    /// `output.message.content.0.text`).
+    aws_bedrock_custom_response_path: Option<&'a str>,
+    /// Same as [`aws_bedrock_custom_response_path`] but applied to each
+    /// streaming chunk JSON (e.g. `delta.text`).
+    aws_bedrock_custom_stream_path: Option<&'a str>,
     secret_id: Option<&'a str>,
 }
 
@@ -85,6 +94,7 @@ pub(super) async fn resolve_status_api_config(
             siliconflow_endpoint: dto.siliconflow_endpoint.trim(),
             minimax_endpoint: dto.minimax_endpoint.trim(),
             workers_ai_account_id: dto.workers_ai_account_id.trim(),
+            aws_bedrock_region: dto.aws_bedrock_region.trim(),
             secret_id: normalize_secret_id(dto.secret_id.as_deref()),
             ..Default::default()
         },
@@ -110,6 +120,19 @@ pub(super) async fn resolve_generate_api_config(
     let workers_ai_account_id = get_payload_string(&dto.payload, "workers_ai_account_id")?;
     let nanogpt_provider = get_payload_string(&dto.payload, "nanogpt_provider")?;
     let nanogpt_payg_override = get_payload_bool(&dto.payload, "nanogpt_payg_override")?;
+    let aws_bedrock_region = get_payload_string(&dto.payload, "aws_bedrock_region")?;
+    let aws_bedrock_use_custom_template =
+        get_payload_bool(&dto.payload, "aws_bedrock_use_custom_template")?;
+    let aws_bedrock_custom_response_path = if aws_bedrock_use_custom_template {
+        get_payload_string(&dto.payload, "aws_bedrock_custom_response_path")?
+    } else {
+        String::new()
+    };
+    let aws_bedrock_custom_stream_path = if aws_bedrock_use_custom_template {
+        get_payload_string(&dto.payload, "aws_bedrock_custom_stream_path")?
+    } else {
+        String::new()
+    };
     let secret_id = get_payload_optional_string(&dto.payload, "secret_id")?;
     let additional_headers = additional_parameters.headers()?;
 
@@ -138,6 +161,13 @@ pub(super) async fn resolve_generate_api_config(
             workers_ai_account_id: &workers_ai_account_id,
             nanogpt_provider: &nanogpt_provider,
             nanogpt_payg_override,
+            aws_bedrock_region: &aws_bedrock_region,
+            aws_bedrock_custom_response_path: aws_bedrock_custom_path_hint(
+                &aws_bedrock_custom_response_path,
+            ),
+            aws_bedrock_custom_stream_path: aws_bedrock_custom_path_hint(
+                &aws_bedrock_custom_stream_path,
+            ),
             secret_id: secret_id.as_deref(),
         },
         ApiConfigPurpose::Generate,
@@ -178,6 +208,8 @@ async fn resolve_api_config(
                 extra_headers,
                 additional_headers,
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+                aws_bedrock_custom_response_path: None,
+                aws_bedrock_custom_stream_path: None,
             })
         }
         _ => {
@@ -208,6 +240,9 @@ async fn resolve_api_config(
             let mut extra_headers = source_extra_headers(source);
             apply_dynamic_headers(source, &hints, &mut extra_headers);
 
+            let (aws_bedrock_custom_response_path, aws_bedrock_custom_stream_path) =
+                aws_bedrock_custom_paths(source, &hints);
+
             Ok(ChatCompletionApiConfig {
                 base_url,
                 api_key,
@@ -215,9 +250,45 @@ async fn resolve_api_config(
                 extra_headers,
                 additional_headers,
                 anthropic_beta_header_mode: source_anthropic_beta_header_mode(source),
+                aws_bedrock_custom_response_path,
+                aws_bedrock_custom_stream_path,
             })
         }
     }
+}
+
+/// Trim and discard empty AWS Bedrock custom JSON paths so callers never see
+/// an empty-string hint (treated identically to "not configured").
+fn aws_bedrock_custom_path_hint(raw: &str) -> Option<&str> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+/// AWS Bedrock-only escape hatch: when the user opted into the custom invoke
+/// template, surface the optional response/stream paths from
+/// [`ApiConfigHints`] so the infrastructure layer can extract assistant text
+/// from arbitrary upstream shapes. Returns `(None, None)` for every other
+/// source.
+fn aws_bedrock_custom_paths(
+    source: ChatCompletionSource,
+    hints: &ApiConfigHints<'_>,
+) -> (Option<String>, Option<String>) {
+    if source != ChatCompletionSource::AwsBedrock {
+        return (None, None);
+    }
+    let response = hints
+        .aws_bedrock_custom_response_path
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let stream = hints
+        .aws_bedrock_custom_stream_path
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    (response, stream)
 }
 
 fn source_anthropic_beta_header_mode(source: ChatCompletionSource) -> AnthropicBetaHeaderMode {
@@ -376,6 +447,7 @@ fn default_base_url(
             }
         }
         ChatCompletionSource::MiniMax => minimax_base_url(hints.minimax_endpoint)?.to_string(),
+        ChatCompletionSource::AwsBedrock => aws_bedrock_base_url(hints.aws_bedrock_region),
         ChatCompletionSource::Custom => OPENAI_API_BASE.to_string(),
     };
 
@@ -399,6 +471,7 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
         ChatCompletionSource::WorkersAi => Some(SecretKeys::WORKERS_AI),
         ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
         ChatCompletionSource::MiniMax => Some(SecretKeys::MINIMAX),
+        ChatCompletionSource::AwsBedrock => Some(SecretKeys::AWS_BEDROCK),
         ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
     }
 }
@@ -454,6 +527,16 @@ fn minimax_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
     }
 }
 
+fn aws_bedrock_base_url(region: &str) -> String {
+    let region = region.trim();
+    let region = if region.is_empty() {
+        AWS_BEDROCK_DEFAULT_REGION
+    } else {
+        region
+    };
+    format!("https://bedrock-runtime.{region}.amazonaws.com")
+}
+
 async fn resolve_vertexai_generate_api_config(
     payload: &Map<String, Value>,
     reverse_proxy: &str,
@@ -472,6 +555,8 @@ async fn resolve_vertexai_generate_api_config(
             extra_headers,
             additional_headers,
             anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
         });
     }
 
@@ -519,6 +604,8 @@ async fn resolve_vertexai_generate_api_config(
                 extra_headers,
                 additional_headers,
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+                aws_bedrock_custom_response_path: None,
+                aws_bedrock_custom_stream_path: None,
             })
         }
         "full" => {
@@ -544,6 +631,8 @@ async fn resolve_vertexai_generate_api_config(
                 extra_headers,
                 additional_headers,
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+                aws_bedrock_custom_response_path: None,
+                aws_bedrock_custom_stream_path: None,
             })
         }
         other => Err(ApplicationError::ValidationError(format!(
@@ -744,6 +833,28 @@ mod tests {
         .unwrap();
 
         assert_eq!(actual, ZAI_API_BASE_CODING);
+    }
+
+    #[test]
+    fn aws_bedrock_uses_region_specific_bedrock_runtime_host() {
+        let default_region = default_base_url(
+            ChatCompletionSource::AwsBedrock,
+            ApiConfigPurpose::Generate,
+            &ApiConfigHints::default(),
+        )
+        .unwrap();
+        assert_eq!(default_region, "https://bedrock-runtime.us-east-1.amazonaws.com");
+
+        let custom_region = default_base_url(
+            ChatCompletionSource::AwsBedrock,
+            ApiConfigPurpose::Generate,
+            &ApiConfigHints {
+                aws_bedrock_region: "us-west-2",
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(custom_region, "https://bedrock-runtime.us-west-2.amazonaws.com");
     }
 
     #[test]
