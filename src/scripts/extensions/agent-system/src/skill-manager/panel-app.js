@@ -42,9 +42,20 @@ function emptyImportDraft() {
 function emptyScopeDialog() {
     return {
         mode: '',
+        importKind: 'archive',
         selectedSectionId: '',
         sourceSectionId: '',
         skill: null,
+    };
+}
+
+function emptySourceDialog() {
+    return {
+        mode: '',
+        sectionId: '',
+        content: '',
+        url: '',
+        loading: false,
     };
 }
 
@@ -85,6 +96,7 @@ export function createSkillManagerPanelRoot() {
                 sections: [],
                 importDraft: emptyImportDraft(),
                 scopeDialog: emptyScopeDialog(),
+                sourceDialog: emptySourceDialog(),
                 searchQuery: '',
                 preview: null,
                 previewRequestId: 0,
@@ -115,6 +127,9 @@ export function createSkillManagerPanelRoot() {
                     return this.availableScopeSections.filter((section) => section.id !== this.scopeDialog.sourceSectionId);
                 }
                 return this.availableScopeSections;
+            },
+            sourceDialogSection() {
+                return this.findSection(this.sourceDialog.sectionId);
             },
         },
         async mounted() {
@@ -295,6 +310,9 @@ export function createSkillManagerPanelRoot() {
                 if (this.scopeDialog.mode) {
                     this.closeScopeDialog();
                 }
+                if (this.sourceDialog.mode) {
+                    this.closeSourceDialog();
+                }
 
                 await Promise.all(sectionIds.map((sectionId) => this.refreshSection(sectionId)));
             },
@@ -423,7 +441,16 @@ export function createSkillManagerPanelRoot() {
                 return this.scopeDialog.mode === 'move' ? tr('selectMoveScope') : tr('selectImportScope');
             },
             scopeDialogConfirmLabel() {
-                return this.scopeDialog.mode === 'move' ? tr('moveToScope') : tr('import');
+                return this.scopeDialog.mode === 'move' ? tr('moveToScope') : tr('continue');
+            },
+            importSourceLabel(kind) {
+                if (kind === 'manual') {
+                    return tr('skillImportSourceManual');
+                }
+                if (kind === 'download') {
+                    return tr('skillImportSourceDownload');
+                }
+                return tr('skillImportSourceArchive');
             },
             resetScopeDialog() {
                 this.scopeDialog = emptyScopeDialog();
@@ -436,8 +463,11 @@ export function createSkillManagerPanelRoot() {
                 }
                 this.resetScopeDialog();
             },
-            async openImportScopeDialog() {
+            async openImportScopeDialog(importKind = 'archive') {
                 try {
+                    if (!['archive', 'manual', 'download'].includes(importKind)) {
+                        throw new Error(`Unsupported Skill import source: ${importKind}`);
+                    }
                     const target = this.availableScopeSections[0];
                     if (!target) {
                         throw new Error(tr('skillScopeUnavailable'));
@@ -445,6 +475,7 @@ export function createSkillManagerPanelRoot() {
                     this.scopeDialog = {
                         ...emptyScopeDialog(),
                         mode: 'import',
+                        importKind,
                         selectedSectionId: target.id,
                     };
                     await this.showDialog('scopeDialog', 'skillScopeDialogUnsupported');
@@ -483,6 +514,10 @@ export function createSkillManagerPanelRoot() {
 
                 this.closeScopeDialog();
                 if (request.mode === 'import') {
+                    if (request.importKind === 'manual' || request.importKind === 'download') {
+                        await this.openSourceDialog(request.importKind, target);
+                        return;
+                    }
                     await this.pickAndPreviewImport(target);
                     return;
                 }
@@ -500,6 +535,107 @@ export function createSkillManagerPanelRoot() {
                     ...this.importDraft,
                     ...patch,
                 };
+            },
+            resetSourceDialog() {
+                this.sourceDialog = emptySourceDialog();
+            },
+            closeSourceDialog() {
+                const dialog = this.$refs.sourceDialog;
+                if (typeof HTMLDialogElement !== 'undefined' && dialog instanceof HTMLDialogElement && dialog.open) {
+                    dialog.close();
+                    return;
+                }
+                this.resetSourceDialog();
+            },
+            async openSourceDialog(mode, section) {
+                if (!section?.available) {
+                    throw new Error(tr('skillScopeNotFound', { id: section?.id || '' }));
+                }
+                this.sourceDialog = {
+                    ...emptySourceDialog(),
+                    mode,
+                    sectionId: section.id,
+                };
+                await this.showDialog('sourceDialog', 'skillImportSourceDialogUnsupported');
+            },
+            sourceDialogTitle() {
+                return this.sourceDialog.mode === 'download' ? tr('downloadSkillImport') : tr('newSkillImport');
+            },
+            sourceDialogLabel() {
+                return this.sourceDialog.mode === 'download' ? tr('skillDownloadUrl') : tr('skillMdContent');
+            },
+            sourceDialogPlaceholder() {
+                return this.sourceDialog.mode === 'download' ? tr('skillDownloadUrlPlaceholder') : tr('skillMdContentPlaceholder');
+            },
+            sourceDialogConfirmLabel() {
+                return this.sourceDialog.mode === 'download' ? tr('download') : tr('confirm');
+            },
+            importInputSourceKind(input = this.importDraft.input) {
+                return String(input?.source?.kind || '').trim();
+            },
+            importDraftLoadingTitle() {
+                const kind = this.importInputSourceKind();
+                if (kind === 'manual') {
+                    return tr('newSkillImport');
+                }
+                if (kind === 'url') {
+                    return tr('downloadSkillImport');
+                }
+                return tr('importSkillArchive');
+            },
+            importDraftIcon() {
+                const kind = this.importInputSourceKind();
+                if (kind === 'manual') {
+                    return 'fa-file-circle-plus';
+                }
+                if (kind === 'url') {
+                    return 'fa-cloud-arrow-down';
+                }
+                return 'fa-file-import';
+            },
+            setSourceDialog(patch) {
+                this.sourceDialog = {
+                    ...this.sourceDialog,
+                    ...patch,
+                };
+            },
+            manualSkillImportInput(content) {
+                if (!String(content || '').trim()) {
+                    throw new Error(tr('skillMdContentRequired'));
+                }
+                return {
+                    kind: 'inlineFiles',
+                    files: [{
+                        path: 'SKILL.md',
+                        encoding: 'utf8',
+                        content,
+                        mediaType: 'text/markdown',
+                    }],
+                    source: {
+                        kind: 'manual',
+                        label: tr('skillImportSourceManual'),
+                    },
+                };
+            },
+            async confirmSourceDialog() {
+                const request = { ...this.sourceDialog };
+                const section = this.findSection(request.sectionId);
+                if (!section?.available) {
+                    throw new Error(tr('skillScopeNotFound', { id: request.sectionId }));
+                }
+
+                try {
+                    this.setSourceDialog({ loading: true });
+                    const input = request.mode === 'download'
+                        ? await requireSkillApi().downloadImport({ url: request.url })
+                        : this.manualSkillImportInput(request.content);
+                    this.closeSourceDialog();
+                    await this.previewImportInput(section, input);
+                } catch (error) {
+                    this.setSourceDialog({ loading: false });
+                    this.reportError(error);
+                    throw error;
+                }
             },
             importPreviewSkill() {
                 return this.importDraft.preview?.skill || null;
@@ -540,12 +676,25 @@ export function createSkillManagerPanelRoot() {
                     if (!input) {
                         return;
                     }
-                    this.importDraft = {
-                        ...emptyImportDraft(),
-                        input,
-                        loading: true,
-                        sectionId: section.id,
-                    };
+                    await this.previewImportInput(section, input);
+                } catch (error) {
+                    this.importDraft = emptyImportDraft();
+                    this.reportError(error);
+                    throw error;
+                }
+            },
+            async previewImportInput(section, input) {
+                if (!section.available) {
+                    throw new Error(this.sectionUnavailableText(section));
+                }
+                await this.clearImportDraft();
+                this.importDraft = {
+                    ...emptyImportDraft(),
+                    input,
+                    loading: true,
+                    sectionId: section.id,
+                };
+                try {
                     const preview = await requireSkillApi().previewImport({
                         input,
                         targetScope: section.scope,
@@ -553,7 +702,6 @@ export function createSkillManagerPanelRoot() {
                     this.setImportDraft({ preview, loading: false });
                 } catch (error) {
                     this.importDraft = emptyImportDraft();
-                    this.reportError(error);
                     throw error;
                 }
             },
@@ -845,7 +993,13 @@ export function createSkillManagerPanelRoot() {
                                 </select>
                             </label>
                             <div class="ttas-skill-toolbar-actions">
-                                <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="importDraft.loading" :title="tr('import')" :aria-label="tr('import')" @click="openImportScopeDialog">
+                                <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="importDraft.loading" :title="tr('newSkillImport')" :aria-label="tr('newSkillImport')" @click="openImportScopeDialog('manual')">
+                                    <i class="fa-solid fa-file-circle-plus"></i>
+                                </button>
+                                <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="importDraft.loading" :title="tr('downloadSkillImport')" :aria-label="tr('downloadSkillImport')" @click="openImportScopeDialog('download')">
+                                    <i class="fa-solid fa-cloud-arrow-down"></i>
+                                </button>
+                                <button type="button" class="menu_button menu_button_icon" :disabled="importDraft.loading" :title="tr('importSkillArchive')" :aria-label="tr('importSkillArchive')" @click="openImportScopeDialog('archive')">
                                     <i class="fa-solid fa-file-import"></i>
                                 </button>
                                 <button type="button" class="menu_button menu_button_icon" :title="tr('refresh')" :aria-label="tr('refresh')" @click="refreshAll">
@@ -861,10 +1015,10 @@ export function createSkillManagerPanelRoot() {
 
                     <div v-if="importDraft.loading || importDraft.preview" class="ttas-skill-import-inline ttas-skill-import-global">
                         <div class="ttas-skill-import-inline-main">
-                            <i class="fa-solid" :class="importDraft.loading ? 'fa-spinner fa-spin' : 'fa-box-archive'"></i>
+                            <i class="fa-solid" :class="importDraft.loading ? 'fa-spinner fa-spin' : importDraftIcon()"></i>
                             <div>
                                 <strong v-if="importDraft.preview">{{ importPreviewSkill().displayName || importPreviewSkill().name }}</strong>
-                                <strong v-else>{{ tr('importSkillArchive') }}</strong>
+                                <strong v-else>{{ importDraftLoadingTitle() }}</strong>
                                 <small v-if="currentImportSection">{{ tr('importTargetScope') }}: {{ tr(currentImportSection.labelKey) }} / {{ importConflictText() || tr('loadingSkillFiles') }}</small>
                             </div>
                         </div>
@@ -966,6 +1120,7 @@ export function createSkillManagerPanelRoot() {
                             <div>
                                 <strong>{{ scopeDialogTitle() }}</strong>
                                 <small v-if="scopeDialog.mode === 'move' && scopeDialog.skill">{{ skillTitle(scopeDialog.skill) }}</small>
+                                <small v-else-if="scopeDialog.mode === 'import'">{{ importSourceLabel(scopeDialog.importKind) }}</small>
                             </div>
                             <button type="button" class="menu_button menu_button_icon ttas-close-button" :title="tr('close')" :aria-label="tr('close')" @click="closeScopeDialog">
                                 <i class="fa-solid fa-xmark"></i>
@@ -994,6 +1149,52 @@ export function createSkillManagerPanelRoot() {
                             <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="!scopeDialog.selectedSectionId" @click="confirmScopeDialog">
                                 <i class="fa-solid fa-check"></i>
                                 <span>{{ scopeDialogConfirmLabel() }}</span>
+                            </button>
+                        </footer>
+                    </div>
+                </dialog>
+
+                <dialog ref="sourceDialog" class="ttas-scope-dialog ttas-skill-source-dialog" data-tt-mobile-surface="fullscreen-window" @cancel.prevent="closeSourceDialog" @close="resetSourceDialog">
+                    <div class="ttas-root ttas-scope-picker">
+                        <header class="ttas-scope-picker-head">
+                            <div>
+                                <strong>{{ sourceDialogTitle() }}</strong>
+                                <small v-if="sourceDialogSection">{{ tr('importTargetScope') }}: {{ tr(sourceDialogSection.labelKey) }}</small>
+                            </div>
+                            <button type="button" class="menu_button menu_button_icon ttas-close-button" :disabled="sourceDialog.loading" :title="tr('close')" :aria-label="tr('close')" @click="closeSourceDialog">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </header>
+                        <div class="ttas-skill-source-body">
+                            <label class="ttas-field ttas-skill-source-field">
+                                <span>{{ sourceDialogLabel() }}</span>
+                                <textarea
+                                    v-if="sourceDialog.mode === 'manual'"
+                                    v-model="sourceDialog.content"
+                                    class="text_pole textarea_compact ttas-skill-source-textarea"
+                                    rows="16"
+                                    spellcheck="false"
+                                    :disabled="sourceDialog.loading"
+                                    :placeholder="sourceDialogPlaceholder()"
+                                ></textarea>
+                                <input
+                                    v-else
+                                    v-model.trim="sourceDialog.url"
+                                    class="text_pole"
+                                    type="url"
+                                    :disabled="sourceDialog.loading"
+                                    :placeholder="sourceDialogPlaceholder()"
+                                />
+                            </label>
+                        </div>
+                        <footer class="ttas-scope-picker-actions">
+                            <button type="button" class="menu_button menu_button_icon" :disabled="sourceDialog.loading" @click="closeSourceDialog">
+                                <i class="fa-solid fa-xmark"></i>
+                                <span>{{ tr('cancel') }}</span>
+                            </button>
+                            <button type="button" class="menu_button menu_button_icon ttas-primary-button" :disabled="sourceDialog.loading" @click="confirmSourceDialog">
+                                <i class="fa-solid" :class="sourceDialog.loading ? 'fa-spinner fa-spin' : 'fa-check'"></i>
+                                <span>{{ sourceDialogConfirmLabel() }}</span>
                             </button>
                         </footer>
                     </div>

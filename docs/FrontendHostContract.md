@@ -175,7 +175,7 @@
 
 - `api.skill`：TauriTavern Agent Skill 管理 API。用于列出、预览导入、安装、读取和导出本地 Skill。
   - 详细参考见：`docs/API/Skill.md` 与 `docs/Agent/Skill.md`。
-  - 当前已落地 Host ABI：`list()`、`listFiles()`、`pickImportArchive()`、`discardPickedImport()`、`previewImport()`、`installImport()`、`readFile()`、`writeFile()`、`move()`、`export()`、`delete()`。
+  - 当前已落地 Host ABI：`list()`、`listFiles()`、`pickImportArchive()`、`discardPickedImport()`、`downloadImport()`、`previewImport()`、`installImport()`、`readFile()`、`writeFile()`、`move()`、`export()`、`delete()`。
   - Skill scope 分为 `global` / `preset` / `profile` / `character`；未显式传 scope 的历史无归属 Skill 按 `global` 处理。
   - `api.skill` 是 UI / 扩展侧管理入口，不是 Agent run 内的工具入口；模型只能通过 Rust runtime 注册的 `skill.list` / `skill.search` / `skill.read` 消费已安装 Skill。
   - Preset / Character embedded skill 导入必须经过用户确认；同名不同 hash 必须显式 skip 或 replace，不自动改名。

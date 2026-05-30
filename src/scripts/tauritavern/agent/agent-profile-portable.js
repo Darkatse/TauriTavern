@@ -3,6 +3,11 @@
 export const AGENT_MODEL_REQUIRES_CONFIGURATION = 'requiresConfiguration';
 export const AGENT_PROFILE_PACKAGE_VERSION = 1;
 
+/**
+ * @template T
+ * @param {T} value
+ * @returns {T}
+ */
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }
@@ -24,6 +29,24 @@ export function sanitizePortableAgentProfile(profile) {
 }
 
 /**
+ * @param {unknown} item
+ * @returns {Record<string, any>}
+ */
+function sanitizePortableAgentProfilePackageItem(item) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw new Error('Embedded Agent Profile item must be an object');
+    }
+    const itemRecord = /** @type {Record<string, any>} */ (item);
+    if (!itemRecord.profile || typeof itemRecord.profile !== 'object' || Array.isArray(itemRecord.profile)) {
+        throw new Error('Embedded Agent Profile item.profile must be an object');
+    }
+    return {
+        ...itemRecord,
+        profile: sanitizePortableAgentProfile(itemRecord.profile),
+    };
+}
+
+/**
  * Removes local-only model connection bindings from every profile in an
  * embedded Agent Profile package.
  *
@@ -41,17 +64,6 @@ export function sanitizePortableAgentProfilePackage(packageValue) {
     if (!Array.isArray(sanitized.items)) {
         throw new Error('Embedded Agent Profile package items must be an array');
     }
-    sanitized.items = sanitized.items.map((item) => {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) {
-            throw new Error('Embedded Agent Profile item must be an object');
-        }
-        if (!item.profile || typeof item.profile !== 'object' || Array.isArray(item.profile)) {
-            throw new Error('Embedded Agent Profile item.profile must be an object');
-        }
-        return {
-            ...item,
-            profile: sanitizePortableAgentProfile(item.profile),
-        };
-    });
+    sanitized.items = sanitized.items.map(sanitizePortableAgentProfilePackageItem);
     return sanitized;
 }

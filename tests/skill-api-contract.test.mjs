@@ -128,6 +128,44 @@ test('api.skill maps archiveBase64 command fields to Rust DTO names', async () =
     });
 });
 
+test('api.skill downloads remote SKILL.md through host command', async () => {
+    const calls = [];
+    globalThis.window = {
+        __TAURITAVERN__: { api: {} },
+    };
+
+    const { installSkillApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/skill.js')));
+    installSkillApi({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            return {
+                kind: 'inlineFiles',
+                files: [{
+                    path: 'SKILL.md',
+                    content: '---\nname: downloaded\ndescription: Use in tests.\n---\n',
+                }],
+                source: { kind: 'url', id: 'https://example.com/SKILL.md', label: 'https://example.com/SKILL.md' },
+            };
+        },
+    });
+
+    const input = await globalThis.window.__TAURITAVERN__.api.skill.downloadImport({
+        url: 'https://example.com/SKILL.md',
+    });
+
+    assert.equal(calls[0].command, 'download_skill_import_url');
+    assert.deepEqual(calls[0].args, { url: 'https://example.com/SKILL.md' });
+    assert.deepEqual(input, {
+        kind: 'inlineFiles',
+        files: [{
+            path: 'SKILL.md',
+            encoding: 'utf8',
+            content: '---\nname: downloaded\ndescription: Use in tests.\n---\n',
+        }],
+        source: { kind: 'url', id: 'https://example.com/SKILL.md', label: 'https://example.com/SKILL.md' },
+    });
+});
+
 test('api.skill lists installed skill files by skill name', async () => {
     const { calls, skill } = await installHarness();
 

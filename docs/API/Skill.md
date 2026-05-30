@@ -18,6 +18,7 @@ type TauriTavernSkillApi = {
   listFiles(options: { scope?: TauriTavernSkillScope; name: string }): Promise<TauriTavernSkillFileRef[]>;
   pickImportArchive(): Promise<TauriTavernSkillImportInput | null>;
   discardPickedImport(input?: TauriTavernSkillImportInput | null): Promise<void>;
+  downloadImport(options: { url: string }): Promise<TauriTavernSkillImportInput>;
   previewImport(options: {
     input: TauriTavernSkillImportInput;
     targetScope?: TauriTavernSkillScope;
@@ -67,6 +68,8 @@ type TauriTavernSkillApi = {
 用户取消选择时返回 `null`。实际解包、校验、hash、冲突判断与安装仍必须走 `previewImport()` / `installImport()`。
 
 移动端文件选择器可能返回宿主私有的临时归档路径。调用方如果放弃这次导入（例如关闭面板、重新选择、删除当前 Skill）必须调用 `discardPickedImport(input)` 释放该临时文件；`installImport()` 成功或失败后会自动释放对应的已选归档。
+
+`downloadImport({ url })` 由 Rust 后端下载远程 `SKILL.md`，并返回等价的 `inlineFiles` 导入输入。当前仅支持 HTTPS raw `SKILL.md` 单文件链接；完整解包、frontmatter 校验、hash、冲突判断与安装仍必须继续走 `previewImport()` / `installImport()`。
 
 ```ts
 type TauriTavernSkillImportInput =

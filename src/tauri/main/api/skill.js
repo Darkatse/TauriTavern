@@ -186,6 +186,12 @@ function createSkillApi({
         return path ? { kind: 'archiveFile', path } : null;
     }
 
+    async function downloadImport(options) {
+        const request = requirePlainObject(options, 'skill import download request');
+        const url = requireNonEmptyString(request.url, 'skill import URL');
+        return normalizeSkillImportInput(await safeInvoke('download_skill_import_url', { url }));
+    }
+
     async function previewImport(options) {
         const request = requirePlainObject(options, 'skill import preview request');
         const input = normalizeSkillImportInput(request.input);
@@ -282,6 +288,7 @@ function createSkillApi({
         listFiles,
         pickImportArchive,
         discardPickedImport,
+        downloadImport,
         previewImport,
         installImport,
         readFile,

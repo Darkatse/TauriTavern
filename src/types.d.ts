@@ -527,6 +527,7 @@ type TauriTavernSkillApi = {
     listFiles: (options: { scope?: TauriTavernSkillScope; name: string }) => Promise<TauriTavernSkillFileRef[]>;
     pickImportArchive: () => Promise<TauriTavernSkillImportInput | null>;
     discardPickedImport: (input?: TauriTavernSkillImportInput | null) => Promise<void>;
+    downloadImport: (options: { url: string }) => Promise<TauriTavernSkillImportInput>;
     previewImport: (options: {
         input: TauriTavernSkillImportInput;
         targetScope?: TauriTavernSkillScope;

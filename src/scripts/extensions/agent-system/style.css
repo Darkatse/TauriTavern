@@ -3673,6 +3673,37 @@ textarea.ttas-json {
     background-color: color-mix(in srgb, var(--SmartThemeBodyColor) 2%, transparent);
 }
 
+.ttas-skill-source-dialog {
+    width: min(680px, calc(100dvw - var(--ttas-scope-dialog-safe-left) - var(--ttas-scope-dialog-safe-right) - 28px));
+}
+
+.ttas-skill-source-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    padding: 10px;
+    overflow: auto;
+}
+
+.ttas-skill-source-field {
+    min-width: 0;
+}
+
+.ttas-skill-source-field > span {
+    font-size: 0.78rem;
+}
+
+.ttas-skill-source-textarea {
+    width: 100%;
+    min-height: 300px;
+    max-height: min(48dvh, 520px);
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    line-height: 1.42;
+    white-space: pre;
+}
+
 .ttas-skill-preview-dialog {
     --ttas-file-viewer-max-width: 760px;
     --ttas-file-viewer-max-height: 680px;

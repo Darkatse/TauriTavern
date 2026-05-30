@@ -56,6 +56,7 @@ data_root/_tauritavern/skills/
 - `inlineFiles`：Preset / 角色卡嵌入 Skill 的文件列表。
 - `directory`：本地 Skill 目录。
 - `archiveFile`：zip 包；`.ttskill` 作为历史扩展名保持导入兼容。
+- `downloadImport()`：Host API 后端下载远程 HTTPS raw `SKILL.md` 后转为 `inlineFiles`；当前不递归抓取远程目录。
 
 导入流程：
 
