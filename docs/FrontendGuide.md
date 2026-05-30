@@ -239,7 +239,7 @@ src/
 - 入口：`src/tauri/main/bootstrap.js` 中安装（仅 Tauri mobile）。
 - 触发条件：只处理“第三方顶层 surface”候选（通常为 `position: fixed` 且顶边贴近 0 的窗口/遮罩）。
 - 处理策略（两段式）：
-  - JS classifier：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对命中元素分类并输出：
+  - JS classifier：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对已跟踪候选仅监听自身生命周期属性（`class/style/hidden/open/aria-hidden`）以撤销/恢复 host-admitted contract，属性重算按 animation frame 合并；稳定的 `free-window` 只响应 inline lifecycle style（`display/visibility/position/pointer-events/cursor/touch-action`）变化，几何类 style 写入保持在拖动热路径之外；对命中元素分类并输出：
     - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`
     - `data-tt-mobile-surface-admitted="1"`（host-private sentinel）
     - `--tt-original-top=<px>`（仅 edge-window）

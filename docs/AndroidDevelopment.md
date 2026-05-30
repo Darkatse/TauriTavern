@@ -255,7 +255,7 @@ https://v2.tauri.app/develop/resources/#android
     - 观察与有界 settle window：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
     - 同源 iframe bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
     - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
-    - 策略：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对命中元素分类并输出：
+    - 策略：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对已跟踪候选仅监听自身生命周期属性（`class/style/hidden/open/aria-hidden`）以撤销/恢复 host-admitted contract，属性重算按 animation frame 合并；稳定的 `free-window` 只响应 inline lifecycle style（`display/visibility/position/pointer-events/cursor/touch-action`）变化，几何类 style 写入保持在拖动热路径之外；对命中元素分类并输出：
       - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`
       - `data-tt-mobile-surface-admitted="1"`（host-private sentinel）
       - `--tt-original-top=<px>`（仅 edge-window）

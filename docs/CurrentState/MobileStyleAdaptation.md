@@ -109,7 +109,8 @@ Android 说明：
 当前策略：
 
 - **Admission**：仅观察 `document.body` 的直系子节点新增/移除（`subtree: false`），并对带 `script_id` 的 portal root 进一步扫描其子树（JS-Slash-Runner 常见挂载形态）。
-- **判定**：对符合条件的 `position: fixed` 节点进行 surface 分类（backdrop / viewport-host / fullscreen-window / free-window / edge-window）。
+- **生命周期**：对已经进入跟踪集的候选 surface，只监听其自身 `class/style/hidden/open/aria-hidden` 属性变化，用于撤销/恢复 host-admitted contract；属性重算按 animation frame 合并。稳定的 `free-window` 只响应 inline lifecycle style（`display/visibility/position/pointer-events/cursor/touch-action`）变化，几何类 style 写入保持在拖动热路径之外；仍不做全局 subtree/style observer。
+- **判定**：对符合条件且当前可见的 `position: fixed` 节点进行 surface 分类（backdrop / viewport-host / fullscreen-window / free-window / edge-window）。
 - **输出**：不再直接写入 `top`；改为输出契约属性：
   - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`
   - `data-tt-mobile-surface-admitted="1"`（host-private sentinel，用于区分 host-admitted 与显式 opt-in；非 ABI）
@@ -118,12 +119,12 @@ Android 说明：
   - `[data-tt-mobile-surface="edge-window"]`：只修正 top
   - `[data-tt-mobile-surface="fullscreen-window"]`：修正四边并把 width/height 改成 auto（避免 `100vh` 把底部顶出屏幕）
   - `[data-tt-mobile-surface="viewport-host"]`：outer host 强制 full-bleed（不做 safe-area 收缩；safe-area contract 进入 document boundary 处理）
-  - `[data-tt-mobile-surface="free-window"]`：不接管 `top/left`（仅 admission-time 允许一次性把初始位置从 safe-area 顶部挪开）
+  - `[data-tt-mobile-surface="free-window"]`：不接管 `top/left`（仅在 surface 准入转换时允许一次性把初始位置从 safe-area 顶部挪开）
   - `[data-tt-mobile-surface="backdrop"]`：保持 full-bleed（不做 inset）
   - 备注：firewall 的 surface selector 会刻意重复 attribute 以获得足够 specificity（覆盖常见框架 scoped CSS + `!important`）
 - **排除**：明确跳过 `body/#sheld/#chat` 等核心容器（避免影响主界面）。
 - **显式 opt-in**：若节点已带 `data-tt-mobile-surface`，该控制器将尊重并不再改写（便于第三方脚本作者自我修复）。
-- **Revalidate**：停止自动高频重分类（不再监听 `style/class` 与 `visualViewport`/`resize`/`orientationchange` 噪声）；仅在节点新增/移除时对新增子树做一次 admission。`controller.revalidate()` 保留为手动兜底（debug 用）。
+- **Revalidate**：停止自动高频重分类（不监听 `visualViewport`/`resize`/`orientationchange` 噪声）；除候选 surface 自身的生命周期属性外，仅在节点新增/移除时对新增子树做 admission。`controller.revalidate()` 保留为手动兜底（debug 用）。
 
 补充：portal host 常见为全屏容器（有时 `pointer-events: none`），实际交互面板通过 portal/render 落到其内部；classifier 会优先准入真实可交互 surface（避免 host 被误当作唯一 surface）。
 

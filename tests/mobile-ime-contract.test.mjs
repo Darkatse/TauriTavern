@@ -18,12 +18,34 @@ class HTMLElementMock {
         this.className = '';
         this.parentElement = null;
         this.children = [];
+        this.isConnected = true;
+        this.hidden = false;
+        this.tabIndex = -1;
+        this.isContentEditable = false;
+        this.computedStyle = {
+            display: 'block',
+            visibility: 'visible',
+        };
 
         this.#attrs = new Map();
+        this.#clientRects = [{}];
     }
 
     /** @type {Map<string, string>} */
     #attrs;
+    /** @type {object[]} */
+    #clientRects;
+
+    getClientRects() {
+        return this.#clientRects;
+    }
+
+    setRendered(rendered) {
+        this.#clientRects = rendered ? [{}] : [];
+        this.computedStyle = rendered
+            ? { display: 'block', visibility: 'visible' }
+            : { display: 'none', visibility: 'visible' };
+    }
 
     setAttribute(name, value = '') {
         this.#attrs.set(String(name), String(value));
@@ -49,6 +71,7 @@ class HTMLElementMock {
             child.parentElement.children = child.parentElement.children.filter((node) => node !== child);
         }
         child.parentElement = this;
+        child.isConnected = true;
         this.children.push(child);
         return child;
     }
@@ -202,6 +225,10 @@ function createFocusHarness({ android = true } = {}) {
     globalThis.HTMLElement = HTMLElementMock;
     globalThis.HTMLTextAreaElement = HTMLTextAreaElementMock;
     globalThis.HTMLInputElement = HTMLInputElementMock;
+    globalThis.getComputedStyle = (target) => target.computedStyle ?? {
+        display: 'block',
+        visibility: 'visible',
+    };
 
     Object.defineProperty(globalThis, 'navigator', {
         value: android
@@ -431,6 +458,168 @@ test('focus routing ignores non-IME inputs such as checkboxes', async () => {
     assert.equal(dialog.getAttribute('data-tt-ime-surface'), null);
     assert.equal(dialog.hasAttribute('data-tt-ime-active'), false);
     assert.equal(dom.calls.length, 0);
+
+    controller.dispose();
+});
+
+test('focus routing ignores hidden IME-capable controls from reusable popup templates', async () => {
+    const dom = createFocusHarness();
+
+    const sheld = new HTMLElementMock('div');
+    sheld.id = 'sheld';
+    dom.body.appendChild(sheld);
+
+    const dialog = new HTMLElementMock('dialog');
+    dialog.className = 'popup';
+    dialog.setAttribute('open', '');
+    dom.body.appendChild(dialog);
+
+    const hiddenTextarea = new HTMLTextAreaElementMock();
+    hiddenTextarea.setRendered(false);
+    dialog.appendChild(hiddenTextarea);
+
+    const modulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-ime-surface-controller.js',
+    );
+    const { installMobileImeSurfaceController } = await importFresh(modulePath);
+
+    const controller = installMobileImeSurfaceController();
+    assert.ok(controller);
+
+    dom.emit('focusin', { target: hiddenTextarea });
+    assert.equal(dialog.getAttribute('data-tt-ime-surface'), null);
+    assert.equal(dialog.hasAttribute('data-tt-ime-active'), false);
+    assert.equal(dom.calls.length, 0);
+
+    controller.dispose();
+});
+
+test('focus routing releases fixed-shell IME ownership when focus moves to non-editable UI', async () => {
+    const dom = createFocusHarness();
+
+    const sheld = new HTMLElementMock('div');
+    sheld.id = 'sheld';
+    dom.body.appendChild(sheld);
+
+    const characterPopup = new HTMLElementMock('div');
+    characterPopup.id = 'character_popup';
+    dom.body.appendChild(characterPopup);
+
+    const editorTextarea = new HTMLTextAreaElementMock();
+    characterPopup.appendChild(editorTextarea);
+
+    const saveButton = new HTMLElementMock('div');
+    saveButton.className = 'menu_button';
+    saveButton.tabIndex = 0;
+    characterPopup.appendChild(saveButton);
+
+    const modulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-ime-surface-controller.js',
+    );
+    const { installMobileImeSurfaceController } = await importFresh(modulePath);
+
+    const controller = installMobileImeSurfaceController();
+    assert.ok(controller);
+
+    dom.emit('focusin', { target: editorTextarea });
+    assert.equal(characterPopup.getAttribute('data-tt-ime-surface'), 'fixed-shell');
+    assert.ok(characterPopup.hasAttribute('data-tt-ime-active'));
+    assert.equal(dom.calls.length, 1);
+    assert.equal(dom.calls[0], characterPopup);
+
+    dom.emit('focusin', { target: saveButton });
+    assert.equal(characterPopup.getAttribute('data-tt-ime-surface'), null);
+    assert.equal(characterPopup.hasAttribute('data-tt-ime-active'), false);
+    assert.equal(dom.calls.length, 2);
+    assert.equal(dom.calls[1], null);
+
+    controller.dispose();
+});
+
+test('command activation releases stale dialog IME ownership even when the command does not receive focus', async () => {
+    const dom = createFocusHarness();
+
+    const sheld = new HTMLElementMock('div');
+    sheld.id = 'sheld';
+    dom.body.appendChild(sheld);
+
+    const dialog = new HTMLElementMock('dialog');
+    dialog.className = 'popup';
+    dialog.setAttribute('open', '');
+    dom.body.appendChild(dialog);
+
+    const dialogTextarea = new HTMLTextAreaElementMock();
+    dialog.appendChild(dialogTextarea);
+
+    const okButton = new HTMLElementMock('div');
+    okButton.className = 'menu_button result-control';
+    okButton.setAttribute('data-result', '1');
+    dialog.appendChild(okButton);
+
+    const modulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-ime-surface-controller.js',
+    );
+    const { installMobileImeSurfaceController } = await importFresh(modulePath);
+
+    const controller = installMobileImeSurfaceController();
+    assert.ok(controller);
+
+    dom.emit('focusin', { target: dialogTextarea });
+    assert.equal(dialog.getAttribute('data-tt-ime-surface'), 'dialog');
+    assert.ok(dialog.hasAttribute('data-tt-ime-active'));
+    assert.equal(dom.calls.length, 1);
+    assert.equal(dom.calls[0], dialog);
+
+    dom.emit('pointerdown', { target: okButton });
+    assert.equal(dialog.getAttribute('data-tt-ime-surface'), null);
+    assert.equal(dialog.hasAttribute('data-tt-ime-active'), false);
+    assert.equal(dom.calls.length, 2);
+    assert.equal(dom.calls[1], null);
+
+    controller.dispose();
+});
+
+test('command activation release is scoped to upstream Popup result controls', async () => {
+    const dom = createFocusHarness();
+
+    const sheld = new HTMLElementMock('div');
+    sheld.id = 'sheld';
+    dom.body.appendChild(sheld);
+
+    const dialog = new HTMLElementMock('dialog');
+    dialog.className = 'popup';
+    dialog.setAttribute('open', '');
+    dom.body.appendChild(dialog);
+
+    const dialogTextarea = new HTMLTextAreaElementMock();
+    dialog.appendChild(dialogTextarea);
+
+    const toolbarButton = new HTMLElementMock('div');
+    toolbarButton.className = 'menu_button';
+    dialog.appendChild(toolbarButton);
+
+    const modulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-ime-surface-controller.js',
+    );
+    const { installMobileImeSurfaceController } = await importFresh(modulePath);
+
+    const controller = installMobileImeSurfaceController();
+    assert.ok(controller);
+
+    dom.emit('focusin', { target: dialogTextarea });
+    assert.equal(dialog.getAttribute('data-tt-ime-surface'), 'dialog');
+    assert.ok(dialog.hasAttribute('data-tt-ime-active'));
+    assert.equal(dom.calls.length, 1);
+    assert.equal(dom.calls[0], dialog);
+
+    dom.emit('pointerdown', { target: toolbarButton });
+    assert.equal(dialog.getAttribute('data-tt-ime-surface'), 'dialog');
+    assert.ok(dialog.hasAttribute('data-tt-ime-active'));
+    assert.equal(dom.calls.length, 1);
 
     controller.dispose();
 });

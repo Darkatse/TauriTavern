@@ -9,11 +9,32 @@ import {
 const CONTROLLER_KEY = '__TAURITAVERN_MOBILE_OVERLAY_COMPAT__';
 
 const SURFACE_SETTLE_FRAMES = 2;
+const SURFACE_ATTRIBUTE_FILTER = ['class', 'style', 'hidden', 'open', 'aria-hidden'];
+const FREE_WINDOW_SURFACE = 'free-window';
+const INLINE_SURFACE_LIFECYCLE_STYLE_PROPERTIES = [
+    'display',
+    'visibility',
+    'position',
+    'pointer-events',
+    'cursor',
+    'touch-action',
+];
 
 /** @type {WeakMap<HTMLElement, number>} */
 const surfaceSettleRemaining = new WeakMap();
 /** @type {WeakSet<HTMLElement>} */
 const settleScheduled = new WeakSet();
+/** @type {WeakMap<HTMLElement, string>} */
+const inlineSurfaceLifecycleStyleSignatures = new WeakMap();
+/** @type {WeakSet<HTMLElement>} */
+const attributeRevalidationScheduled = new WeakSet();
+
+function readInlineSurfaceLifecycleStyleSignature(element) {
+    const style = element.style;
+    return INLINE_SURFACE_LIFECYCLE_STYLE_PROPERTIES
+        .map((property) => `${property}:${String(style.getPropertyValue(property) || '').trim().toLowerCase()}`)
+        .join(';');
+}
 
 export function installMobileOverlayCompatController() {
     if (window[CONTROLLER_KEY]) {
@@ -26,6 +47,7 @@ export function installMobileOverlayCompatController() {
 
     const trackedSurfaces = new Set();
     const trackedPortals = new Map();
+    const trackedSurfaceObservers = new Map();
 
     let bodyObserver = null;
     let disposed = false;
@@ -110,6 +132,79 @@ export function installMobileOverlayCompatController() {
         scanSubtree(portalRoot, watchSurface);
     };
 
+    const revalidateSurface = (element) => {
+        if (!element.isConnected) {
+            unwatchSurface(element);
+            return;
+        }
+
+        const settling = (surfaceSettleRemaining.get(element) ?? 0) > 0;
+        applySurfaceContract(element, { settling });
+        inlineSurfaceLifecycleStyleSignatures.set(element, readInlineSurfaceLifecycleStyleSignature(element));
+    };
+
+    const scheduleAttributeRevalidation = (element) => {
+        if (disposed || attributeRevalidationScheduled.has(element)) {
+            return;
+        }
+
+        attributeRevalidationScheduled.add(element);
+        const schedule = typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame
+            : (handler) => handler();
+        schedule(() => {
+            attributeRevalidationScheduled.delete(element);
+            if (disposed) {
+                return;
+            }
+            revalidateSurface(element);
+        });
+    };
+
+    const shouldRevalidateStyleMutation = (element) => {
+        const currentSurface = String(element.getAttribute(SURFACE_ATTR) || '').trim();
+        const wasSettling = (surfaceSettleRemaining.get(element) ?? 0) > 0;
+        const previousSignature = inlineSurfaceLifecycleStyleSignatures.get(element);
+        const nextSignature = readInlineSurfaceLifecycleStyleSignature(element);
+        inlineSurfaceLifecycleStyleSignatures.set(element, nextSignature);
+
+        if (currentSurface !== FREE_WINDOW_SURFACE || wasSettling) {
+            return true;
+        }
+
+        // Stable free-window surfaces are user-positioned; only lifecycle style changes re-enter classification.
+        return previousSignature !== nextSignature;
+    };
+
+    const shouldRevalidateAttributeMutation = (element, records) => {
+        let sawStyleMutation = false;
+        for (const record of records) {
+            if (record.attributeName !== 'style') {
+                return true;
+            }
+            sawStyleMutation = true;
+        }
+
+        return sawStyleMutation && shouldRevalidateStyleMutation(element);
+    };
+
+    const watchSurfaceAttributes = (element) => {
+        if (trackedSurfaceObservers.has(element)) {
+            return;
+        }
+
+        const observer = new MutationObserver((records) => {
+            if (disposed) {
+                return;
+            }
+            if (shouldRevalidateAttributeMutation(element, records)) {
+                scheduleAttributeRevalidation(element);
+            }
+        });
+        observer.observe(element, { attributes: true, attributeFilter: SURFACE_ATTRIBUTE_FILTER });
+        trackedSurfaceObservers.set(element, observer);
+    };
+
     const unwatchPortal = (portalRoot) => {
         const observer = trackedPortals.get(portalRoot);
         if (!observer) {
@@ -141,14 +236,24 @@ export function installMobileOverlayCompatController() {
         }
 
         trackedSurfaces.add(element);
+        inlineSurfaceLifecycleStyleSignatures.set(element, readInlineSurfaceLifecycleStyleSignature(element));
+        watchSurfaceAttributes(element);
         surfaceSettleRemaining.set(element, SURFACE_SETTLE_FRAMES);
         applySurfaceContract(element, { settling: true });
+        inlineSurfaceLifecycleStyleSignatures.set(element, readInlineSurfaceLifecycleStyleSignature(element));
         scheduleSurfaceSettle(element);
     };
 
     const unwatchSurface = (element) => {
+        const observer = trackedSurfaceObservers.get(element);
+        if (observer) {
+            observer.disconnect();
+            trackedSurfaceObservers.delete(element);
+        }
         trackedSurfaces.delete(element);
         surfaceSettleRemaining.delete(element);
+        attributeRevalidationScheduled.delete(element);
+        inlineSurfaceLifecycleStyleSignatures.delete(element);
     };
 
     const scanBodyChild = (node) => {
@@ -201,6 +306,10 @@ export function installMobileOverlayCompatController() {
             scanSubtree(portalRoot, unwatchSurface);
         }
 
+        for (const observer of trackedSurfaceObservers.values()) {
+            observer.disconnect();
+        }
+        trackedSurfaceObservers.clear();
         trackedSurfaces.clear();
         // WeakMaps/Sets will be cleared by GC once the surfaces are gone.
 
@@ -221,8 +330,7 @@ export function installMobileOverlayCompatController() {
                 unwatchSurface(surface);
                 continue;
             }
-            const settling = (surfaceSettleRemaining.get(surface) ?? 0) > 0;
-            applySurfaceContract(surface, { settling });
+            revalidateSurface(surface);
         }
     };
 

@@ -313,11 +313,13 @@ body [data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
 
 body #character_popup[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
   height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+  min-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
   max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
 }
 
 body #completion_prompt_manager_popup[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
   height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+  min-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
   max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
 }
 
