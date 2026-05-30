@@ -7,8 +7,8 @@ export function normalizeAgentContextPolicy(value = {}) {
     const source = value || {};
     const initialChatHistoryMessages = Number(source.initialChatHistoryMessages ?? DEFAULT_AGENT_CONTEXT_POLICY.initialChatHistoryMessages);
 
-    if (!Number.isInteger(initialChatHistoryMessages) || initialChatHistoryMessages === 0) {
-        throw new Error('agent.context_history_invalid: initialChatHistoryMessages must be negative for full history or positive for a recent-message window');
+    if (!Number.isInteger(initialChatHistoryMessages)) {
+        throw new Error('agent.context_history_invalid: initialChatHistoryMessages must be negative for full history, zero for no initial history, or positive for a recent-message window');
     }
 
     return {
@@ -44,6 +44,9 @@ export function applyInitialChatHistoryPolicy(coreChat, policy) {
     const resolved = normalizeAgentContextPolicy(policy);
     if (resolved.initialChatHistoryMessages < 0) {
         return coreChat;
+    }
+    if (resolved.initialChatHistoryMessages === 0) {
+        return [];
     }
 
     return coreChat.slice(-resolved.initialChatHistoryMessages);

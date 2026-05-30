@@ -115,7 +115,7 @@ const DEFAULT_MESSAGES = Object.freeze({
     importWarnings: '{count} warnings',
     includeActivatedWorldInfo: 'Inject Active World Info',
     initialChatHistoryMessages: 'Initial Chat History Messages',
-    initialChatHistoryMessagesHint: 'Controls only the recent chat messages sent in the first Agent prompt. Positive values keep the latest N messages; -1 disables trimming. The Agent can still read full backend history with chat.read_messages.',
+    initialChatHistoryMessagesHint: 'Controls only the chat messages sent in the first Agent prompt. Positive values keep the latest N messages; 0 sends no initial chat history; -1 disables trimming. The Agent can still read full backend history with chat.read_messages.',
     initialContext: 'Initial Context',
     install: 'Install',
     invalidSkillFilePath: 'Invalid Skill file path: {path}',

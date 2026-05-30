@@ -39,6 +39,7 @@ export async function buildPromptAssemblySnapshot(input = {}) {
         macroContext: request.macroContext,
         jsonSchema: request.jsonSchema,
         agentMode: true,
+        agentContextPolicy: request.agentContextPolicy,
         agentSystemPrompt: request.agentSystemPrompt,
         agentTaskPrompt: request.agentTaskPrompt,
     });

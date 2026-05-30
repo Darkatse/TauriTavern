@@ -66,7 +66,7 @@
     "agent_system.importWarnings": "{count} 条警告",
     "agent_system.includeActivatedWorldInfo": "注入激活世界书",
     "agent_system.initialChatHistoryMessages": "初始聊天历史楼数",
-    "agent_system.initialChatHistoryMessagesHint": "只控制首次发送给 Agent 的最近聊天楼数；正数保留最近 N 楼，-1 禁用裁剪。Agent 仍可通过 chat.read_messages 读取后端全量聊天记录。",
+    "agent_system.initialChatHistoryMessagesHint": "只控制首次发送给 Agent 的聊天楼数；正数保留最近 N 楼，0 不发送初始聊天历史，-1 禁用裁剪。Agent 仍可通过 chat.read_messages 读取后端全量聊天记录。",
     "agent_system.initialContext": "初始上下文",
     "agent_system.install": "安装",
     "agent_system.invalidSkillFilePath": "SKILLS文件路径无效：{path}",

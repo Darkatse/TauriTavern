@@ -32,6 +32,7 @@ import {
 import { getGroupNames, selected_group } from './group-chats.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { allowlistSettingAllows, getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
+import { applyInitialChatHistoryPolicy } from './tauritavern/agent/agent-context-policy.js';
 
 import {
     chatCompletionDefaultPrompts,
@@ -1948,11 +1949,12 @@ export function getPromptRole(role) {
  * @param {object} options.extensionPrompts - Frozen/materialized extension prompt snapshot.
  * @param {(message: string) => void} options.attachWarning - Warning sink for attach-existing prompt issues.
  * @param {boolean} [options.agentMode] Skip legacy frontend tool registration for Agent-owned tool loops.
+ * @param {object|null} [options.agentContextPolicy] Agent initial prompt context policy.
  * @param {string|null} [options.agentSystemPrompt] Resolved Agent system prompt content.
  * @param {string|null} [options.agentTaskPrompt] Invocation task prompt content.
  * @returns {Promise<void>}
  */
-async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentSystemPrompt = null, agentTaskPrompt = null }, runtime = null) {
+async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentContextPolicy = null, agentSystemPrompt = null, agentTaskPrompt = null }, runtime = null) {
     const assemblyRuntime = getPromptAssemblyRuntime(runtime);
     const activePromptManager = assemblyRuntime.promptManager;
     const settings = assemblyRuntime.settings;
@@ -1960,6 +1962,8 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
 
     if (!agentMode) {
         removeAgentOnlyPrompts(prompts);
+    } else {
+        messages = applyInitialChatHistoryPolicy(messages, agentContextPolicy);
     }
 
     // Helper function for preparing a prompt, that already exists within the prompt collection, for completion
@@ -2321,6 +2325,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
  * @param {object[]} content.messages - An array of messages to be used as chat history.
  * @param {string[]} content.messageExamples - An array of messages to be used as dialogue examples.
  * @param {boolean} [content.agentMode] Skip legacy frontend tool state for Agent-owned tool loops.
+ * @param {object|null} [content.agentContextPolicy] Agent initial prompt context policy.
  * @param {string|null} [content.agentSystemPrompt] Resolved Agent system prompt content.
  * @param {string|null} [content.agentTaskPrompt] Invocation task prompt content.
  * @param dryRun - Whether this is a live call or not.
@@ -2344,6 +2349,7 @@ export async function prepareOpenAIMessages({
     messages,
     messageExamples,
     agentMode = false,
+    agentContextPolicy = null,
     agentSystemPrompt = null,
     agentTaskPrompt = null,
 }, dryRun, runtime = null) {
@@ -2393,7 +2399,7 @@ export async function prepareOpenAIMessages({
         };
 
         // Fill the chat completion with as much context as the budget allows
-        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentSystemPrompt, agentTaskPrompt }, assemblyRuntime);
+        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentContextPolicy, agentSystemPrompt, agentTaskPrompt }, assemblyRuntime);
     } catch (error) {
         if (error instanceof TokenBudgetExceededError) {
             assemblyRuntime.showToasts && toastr.error(t`Mandatory prompts exceed the context size.`);
@@ -2449,6 +2455,7 @@ export async function assembleOpenAIChatCompletionPrompt({
     macroContext = null,
     jsonSchema = null,
     agentMode = true,
+    agentContextPolicy = null,
     agentSystemPrompt = null,
     agentTaskPrompt = null,
 } = {}) {
@@ -2487,6 +2494,7 @@ export async function assembleOpenAIChatCompletionPrompt({
         ...promptInputs,
         type: normalizedGenerationType,
         agentMode,
+        agentContextPolicy,
         agentSystemPrompt,
         agentTaskPrompt,
     }, true, runtime);

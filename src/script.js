@@ -54,10 +54,7 @@ import {
     startAndWaitForAgentRun,
 } from './scripts/tauritavern/agent/agent-run-controller.js';
 import { agentErrorMessage } from './scripts/tauritavern/agent/agent-error-presenter.js';
-import {
-    applyInitialChatHistoryPolicy,
-    normalizeAgentContextPolicy,
-} from './scripts/tauritavern/agent/agent-context-policy.js';
+import { normalizeAgentContextPolicy } from './scripts/tauritavern/agent/agent-context-policy.js';
 import { normalizeAgentSystemPrompt } from './scripts/tauritavern/agent/agent-system-prompt.js';
 import {
     buildFrozenRunInputSnapshot,
@@ -5271,9 +5268,6 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     const fullContextCoreChat = coreChat;
-    const promptCoreChat = agentMode
-        ? applyInitialChatHistoryPolicy(fullContextCoreChat, resolvedAgentContextPolicy)
-        : fullContextCoreChat;
 
     // Adjust token limit for Horde
     let adjustedParams;
@@ -5542,11 +5536,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     let oaiMessageExamples = [];
 
     if (main_api === 'openai') {
-        if (agentMode) {
-            oaiMessages = setOpenAIMessages(promptCoreChat);
-        } else {
-            oaiMessages = setOpenAIMessages(coreChat);
-        }
+        oaiMessages = setOpenAIMessages(coreChat);
         oaiMessageExamples = setOpenAIMessageExamples(mesExamplesArray);
     }
 
@@ -6021,6 +6011,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             let [prompt, counts] = await prepareOpenAIMessages({
                 ...promptInputs,
                 agentMode,
+                agentContextPolicy: resolvedAgentContextPolicy,
                 agentSystemPrompt: resolvedAgentSystemPrompt,
             }, dryRun);
             generate_data = { prompt: prompt };

@@ -490,6 +490,48 @@ test('Agent generation router rejects unconfigured profiles before direct genera
     );
 });
 
+test('Agent context policy supports empty initial prompt history', async () => {
+    const contextPolicy = await importFresh('src/scripts/tauritavern/agent/agent-context-policy.js');
+    const chat = [
+        { role: 'user', content: 'oldest' },
+        { role: 'assistant', content: 'middle' },
+        { role: 'user', content: 'latest' },
+    ];
+
+    assert.deepEqual(contextPolicy.normalizeAgentContextPolicy({
+        initialChatHistoryMessages: 0,
+        includeActivatedWorldInfo: true,
+    }), {
+        initialChatHistoryMessages: 0,
+        includeActivatedWorldInfo: true,
+    });
+    assert.deepEqual(contextPolicy.applyInitialChatHistoryPolicy(chat, {
+        initialChatHistoryMessages: 0,
+        includeActivatedWorldInfo: true,
+    }), []);
+    assert.deepEqual(contextPolicy.applyInitialChatHistoryPolicy(chat, {
+        initialChatHistoryMessages: 2,
+        includeActivatedWorldInfo: true,
+    }), chat.slice(-2));
+    assert.equal(contextPolicy.applyInitialChatHistoryPolicy(chat, {
+        initialChatHistoryMessages: -1,
+        includeActivatedWorldInfo: true,
+    }), chat);
+});
+
+test('Agent history window is applied at PromptManager assembly boundary', async () => {
+    const [scriptSource, openaiSource, brokerSource] = await Promise.all([
+        readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src/scripts/openai.js'), 'utf8'),
+        readFile(path.join(REPO_ROOT, 'src/tauri/main/api/agent-prompt-assembly.js'), 'utf8'),
+    ]);
+
+    assert.doesNotMatch(scriptSource, /promptCoreChat/);
+    assert.match(scriptSource, /oaiMessages\s*=\s*setOpenAIMessages\(coreChat\)/);
+    assert.match(openaiSource, /applyInitialChatHistoryPolicy\(messages,\s*agentContextPolicy\)/);
+    assert.match(brokerSource, /agentContextPolicy:\s*request\.agentContextPolicy/);
+});
+
 test('FrozenRunInputSnapshot stores materialized extension prompts and macro context', async () => {
     const frozen = await importFresh('src/scripts/tauritavern/agent/frozen-run-input-snapshot.js');
     const extensionPrompts = await frozen.snapshotExtensionPromptsForFrozenRun({

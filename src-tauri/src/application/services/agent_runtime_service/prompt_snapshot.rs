@@ -427,6 +427,24 @@ mod tests {
             .expect("matching truncated context policy should pass");
     }
 
+    #[test]
+    fn empty_initial_history_context_policy_is_valid_snapshot_contract() {
+        let mut profile = test_profile(None);
+        profile.context.initial_chat_history_messages = 0;
+        let prompt_snapshot = json!({
+            "contextPolicy": {
+                "initialChatHistoryMessages": 0,
+                "includeActivatedWorldInfo": true
+            },
+            "chatCompletionPayload": {
+                "messages": [{ "role": "system", "content": "Materialized Agent System Prompt." }]
+            }
+        });
+
+        validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
+            .expect("matching empty-history context policy should pass");
+    }
+
     fn message_text(request: &AgentModelRequest, index: usize) -> &str {
         match &request.messages[index].parts[0] {
             AgentModelContentPart::Text { text } => text.as_str(),

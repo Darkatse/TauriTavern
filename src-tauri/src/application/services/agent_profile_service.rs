@@ -764,12 +764,6 @@ fn validate_model_binding(binding: &AgentModelBinding) -> Result<(), Application
 }
 
 fn normalize_context_policy(policy: &mut AgentContextPolicy) -> Result<(), ApplicationError> {
-    if policy.initial_chat_history_messages == 0 {
-        return Err(ApplicationError::ValidationError(
-            "agent.profile_context_history_invalid: context.initialChatHistoryMessages must be negative for full history or positive for a recent-message window"
-                .to_string(),
-        ));
-    }
     if policy.initial_chat_history_messages < 0 {
         policy.initial_chat_history_messages = -1;
     }
@@ -1314,7 +1308,7 @@ mod tests {
 
     use crate::domain::models::agent::AgentToolSpec;
     use crate::domain::models::agent::profile::{
-        AgentModelBinding, AgentModelBindingMode, ResolvedAgentProfile,
+        AgentContextPolicy, AgentModelBinding, AgentModelBindingMode, ResolvedAgentProfile,
     };
 
     use super::materialize_agent_system_prompt;
@@ -1395,6 +1389,30 @@ mod tests {
                 .to_string()
                 .contains("agent.profile_model_requires_configuration_extra_fields")
         );
+    }
+
+    #[test]
+    fn context_policy_allows_empty_initial_history_window() {
+        let mut policy = AgentContextPolicy {
+            initial_chat_history_messages: 0,
+            include_activated_world_info: true,
+        };
+
+        super::normalize_context_policy(&mut policy).expect("zero means no initial chat history");
+
+        assert_eq!(policy.initial_chat_history_messages, 0);
+    }
+
+    #[test]
+    fn context_policy_normalizes_negative_history_window_to_full_history() {
+        let mut policy = AgentContextPolicy {
+            initial_chat_history_messages: -42,
+            include_activated_world_info: true,
+        };
+
+        super::normalize_context_policy(&mut policy).expect("negative values normalize");
+
+        assert_eq!(policy.initial_chat_history_messages, -1);
     }
 
     #[test]
