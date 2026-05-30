@@ -88,7 +88,7 @@ fn map_reasoning_effort(value: &str) -> Result<&'static str, ApplicationError> {
         "low" => Ok("minimal"),
         "medium" => Ok("low"),
         "high" => Ok("medium"),
-        "max" => Ok("high"),
+        "max" | "xhigh" => Ok("high"),
         other => Err(ApplicationError::ValidationError(format!(
             "Unsupported NanoGPT reasoning_effort: {other}"
         ))),
@@ -162,6 +162,27 @@ mod tests {
                 .and_then(|reasoning| reasoning.get("effort"))
                 .and_then(Value::as_str),
             Some("minimal")
+        );
+    }
+
+    #[test]
+    fn nanogpt_payload_maps_xhigh_like_max() {
+        let payload = json!({
+            "chat_completion_source": "nanogpt",
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build must succeed");
+        assert_eq!(
+            upstream
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str),
+            Some("high")
         );
     }
 

@@ -16,6 +16,7 @@ mod minimax;
 mod moonshot;
 mod nanogpt;
 mod openai;
+mod openai_reasoning;
 mod openai_responses;
 mod openrouter;
 mod prompt_post_processing;

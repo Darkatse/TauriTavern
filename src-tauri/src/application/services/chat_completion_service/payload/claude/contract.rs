@@ -33,6 +33,7 @@ const CLAUDE_OUTPUT_EFFORT_MODEL_PREFIXES: &[&str] = &[
     "claude-sonnet-4-6",
     "claude-opus-4-5",
 ];
+const CLAUDE_XHIGH_OUTPUT_EFFORT_MODEL_PREFIXES: &[&str] = &["claude-opus-4-8", "claude-opus-4-7"];
 const CLAUDE_ASSISTANT_PREFILL_EXACT_MODELS: &[&str] = &["claude-opus-4", "claude-sonnet-4"];
 const CLAUDE_ASSISTANT_PREFILL_MODEL_PREFIXES: &[&str] = &[
     "claude-3-7",
@@ -67,6 +68,7 @@ pub(super) struct ClaudeModelContract {
     pub(super) sampling: ClaudeSamplingMode,
     pub(super) thinking: ClaudeThinkingMode,
     pub(super) supports_output_effort: bool,
+    pub(super) supports_xhigh_output_effort: bool,
     pub(super) supports_assistant_prefill: bool,
 }
 
@@ -81,6 +83,11 @@ impl ClaudeModelContract {
                 &model,
                 &[],
                 CLAUDE_OUTPUT_EFFORT_MODEL_PREFIXES,
+            ),
+            supports_xhigh_output_effort: matches_claude_model(
+                &model,
+                &[],
+                CLAUDE_XHIGH_OUTPUT_EFFORT_MODEL_PREFIXES,
             ),
             supports_assistant_prefill: matches_claude_model(
                 &model,

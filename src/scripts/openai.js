@@ -322,6 +322,7 @@ export const reasoning_effort_types = {
     high: 'high',
     min: 'min',
     max: 'max',
+    xhigh: 'xhigh',
 };
 
 export const verbosity_levels = {
@@ -3900,6 +3901,46 @@ function getReasoningEffort(settings = null, model = null) {
     }
 
     function resolveReasoningEffort() {
+        function resolveMaximumReasoningEffort() {
+            if (settings.chat_completion_source === chat_completion_sources.DEEPSEEK || settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+                return reasoning_effort_types.max;
+            }
+            return reasoning_effort_types.high;
+        }
+
+        function isOpenAiXHighReasoningModel(modelName) {
+            const normalizedModel = String(modelName ?? '').trim().toLowerCase();
+            if (/^gpt-5\.1-codex-max(?:$|-)/.test(normalizedModel)) {
+                return true;
+            }
+
+            const gpt5MinorMatch = /^gpt-5\.(\d+)/.exec(normalizedModel);
+            if (gpt5MinorMatch) {
+                return Number(gpt5MinorMatch[1]) >= 2;
+            }
+
+            const gptMajorMatch = /^gpt-(\d+)/.exec(normalizedModel);
+            return gptMajorMatch ? Number(gptMajorMatch[1]) > 5 : false;
+        }
+
+        function isCustomOpenAiReasoningFormat() {
+            const customApiFormat = settings.custom_api_format || custom_api_formats.OPENAI_COMPAT;
+            return [custom_api_formats.OPENAI_COMPAT, custom_api_formats.OPENAI_RESPONSES].includes(customApiFormat);
+        }
+
+        function supportsXHighReasoningEffort() {
+            if ([chat_completion_sources.OPENAI, chat_completion_sources.AZURE_OPENAI].includes(settings.chat_completion_source)) {
+                return isOpenAiXHighReasoningModel(model);
+            }
+            if (settings.chat_completion_source === chat_completion_sources.CUSTOM && isCustomOpenAiReasoningFormat()) {
+                return isOpenAiXHighReasoningModel(model);
+            }
+            if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+                return /(?:^|\.)claude-opus-4-(?:7|8)(?:\b|-)/.test(model);
+            }
+            return false;
+        }
+
         switch (settings.reasoning_effort) {
             case reasoning_effort_types.auto:
                 return undefined;
@@ -3908,9 +3949,11 @@ function getReasoningEffort(settings = null, model = null) {
                     ? reasoning_effort_types.min
                     : reasoning_effort_types.low;
             case reasoning_effort_types.max:
-                return settings.chat_completion_source === chat_completion_sources.DEEPSEEK
-                    ? reasoning_effort_types.max
-                    : reasoning_effort_types.high;
+                return resolveMaximumReasoningEffort();
+            case reasoning_effort_types.xhigh:
+                return supportsXHighReasoningEffort()
+                    ? reasoning_effort_types.xhigh
+                    : resolveMaximumReasoningEffort();
             default:
                 return settings.reasoning_effort;
         }

@@ -243,4 +243,43 @@ mod tests {
             "Opus 4.7 must surface output_config.effort",
         );
     }
+
+    #[test]
+    fn bedrock_claude_maps_xhigh_by_normalized_model_contract() {
+        let xhigh_payload = json!({
+            "chat_completion_source": "aws_bedrock",
+            "model": "us.anthropic.claude-opus-4-7",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "max_tokens": 4096,
+            "reasoning_effort": "xhigh",
+        })
+        .as_object()
+        .cloned()
+        .expect("payload should be object");
+
+        let (_endpoint_path, body) = build(xhigh_payload).expect("payload should build");
+        assert_eq!(
+            body.pointer("/output_config/effort")
+                .and_then(Value::as_str),
+            Some("xhigh")
+        );
+
+        let max_payload = json!({
+            "chat_completion_source": "aws_bedrock",
+            "model": "global.anthropic.claude-opus-4-6-v1",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "max_tokens": 4096,
+            "reasoning_effort": "xhigh",
+        })
+        .as_object()
+        .cloned()
+        .expect("payload should be object");
+
+        let (_endpoint_path, body) = build(max_payload).expect("payload should build");
+        assert_eq!(
+            body.pointer("/output_config/effort")
+                .and_then(Value::as_str),
+            Some("max")
+        );
+    }
 }

@@ -22,6 +22,7 @@ enum ClaudeReasoningEffort {
     Medium,
     High,
     Max,
+    XHigh,
 }
 
 impl ClaudeReasoningEffort {
@@ -40,7 +41,8 @@ impl ClaudeReasoningEffort {
             "low" => Ok(Some(Self::Low)),
             "medium" => Ok(Some(Self::Medium)),
             "high" => Ok(Some(Self::High)),
-            "max" => Ok(Some(Self::Max)),
+            "max" | "maximum" => Ok(Some(Self::Max)),
+            "xhigh" => Ok(Some(Self::XHigh)),
             other => Err(ApplicationError::ValidationError(format!(
                 "Unsupported Claude reasoning_effort: {other}"
             ))),
@@ -54,7 +56,7 @@ impl ClaudeReasoningEffort {
             Self::Low => max_tokens.saturating_mul(10) / 100,
             Self::Medium => max_tokens.saturating_mul(25) / 100,
             Self::High => max_tokens.saturating_mul(50) / 100,
-            Self::Max => max_tokens.saturating_mul(95) / 100,
+            Self::Max | Self::XHigh => max_tokens.saturating_mul(95) / 100,
         };
 
         budget_tokens = budget_tokens.max(CLAUDE_THINKING_MIN_TOKENS);
@@ -65,12 +67,14 @@ impl ClaudeReasoningEffort {
         budget_tokens
     }
 
-    fn as_adaptive_effort(self) -> &'static str {
+    fn as_output_effort(self, contract: ClaudeModelContract) -> &'static str {
         match self {
             Self::Min | Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
             Self::Max => "max",
+            Self::XHigh if contract.supports_xhigh_output_effort => "xhigh",
+            Self::XHigh => "max",
         }
     }
 }
@@ -271,6 +275,14 @@ fn build_claude_payload_inner(
                     request.remove("temperature");
                     request.remove("top_p");
                     request.remove("top_k");
+                    if contract.supports_output_effort {
+                        request.insert(
+                            "output_config".to_string(),
+                            json!({
+                                "effort": reasoning_effort.as_output_effort(contract),
+                            }),
+                        );
+                    }
                 }
             }
             ClaudeThinkingMode::ManualOrAdaptive | ClaudeThinkingMode::AdaptiveOnly => {
@@ -283,7 +295,7 @@ fn build_claude_payload_inner(
                         request.insert(
                             "output_config".to_string(),
                             json!({
-                                "effort": reasoning_effort.as_adaptive_effort(),
+                                "effort": reasoning_effort.as_output_effort(contract),
                             }),
                         );
                     }

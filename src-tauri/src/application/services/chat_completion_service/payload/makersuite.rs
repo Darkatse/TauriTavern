@@ -883,7 +883,7 @@ fn calculate_google_budget_tokens(
         let level = match effort.as_str() {
             "auto" => return None,
             "min" | "low" | "medium" => "low",
-            "high" | "max" => "high",
+            "high" | "max" | "xhigh" => "high",
             _ => return None,
         };
         return Some(GoogleThinkingBudget::Level(level));
@@ -895,7 +895,7 @@ fn calculate_google_budget_tokens(
             "min" => "minimal",
             "low" => "low",
             "medium" => "medium",
-            "high" | "max" => "high",
+            "high" | "max" | "xhigh" => "high",
             _ => return None,
         };
         return Some(GoogleThinkingBudget::Level(level));
@@ -908,7 +908,7 @@ fn calculate_google_budget_tokens(
             "low" => max_tokens.saturating_mul(10) / 100,
             "medium" => max_tokens.saturating_mul(25) / 100,
             "high" => max_tokens.saturating_mul(50) / 100,
-            "max" => max_tokens,
+            "max" | "xhigh" => max_tokens,
             _ => return None,
         };
 
@@ -924,7 +924,7 @@ fn calculate_google_budget_tokens(
             "low" => max_tokens.saturating_mul(10) / 100,
             "medium" => max_tokens.saturating_mul(25) / 100,
             "high" => max_tokens.saturating_mul(50) / 100,
-            "max" => max_tokens,
+            "max" | "xhigh" => max_tokens,
             _ => return None,
         };
 
@@ -940,7 +940,7 @@ fn calculate_google_budget_tokens(
             "low" => max_tokens.saturating_mul(10) / 100,
             "medium" => max_tokens.saturating_mul(25) / 100,
             "high" => max_tokens.saturating_mul(50) / 100,
-            "max" => max_tokens,
+            "max" | "xhigh" => max_tokens,
             _ => return None,
         };
 
@@ -1036,6 +1036,27 @@ mod tests {
             "low"
         );
         assert!(thinking.get("thinkingBudget").is_none());
+    }
+
+    #[test]
+    fn makersuite_xhigh_behaves_like_max() {
+        let payload = json!({
+            "model": "gemini-2.5-pro",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8000,
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(
+            upstream
+                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
+                .and_then(Value::as_i64),
+            Some(8000)
+        );
     }
 
     #[test]

@@ -160,6 +160,11 @@ fn validate_claude_output_config(
             "Unsupported Claude adaptive effort: {effort}"
         )));
     }
+    if effort == "xhigh" && !contract.supports_xhigh_output_effort {
+        return Err(ApplicationError::ValidationError(format!(
+            "Claude model `{model}` does not support `output_config.effort=xhigh`"
+        )));
+    }
 
     Ok(())
 }

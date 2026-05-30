@@ -52,6 +52,32 @@ fn claude_manual_reasoning_uses_legacy_thinking_and_clears_sampling() {
 }
 
 #[test]
+fn claude_opus_4_5_uses_legacy_thinking_with_output_effort() {
+    let mut payload = claude_payload("claude-opus-4-5");
+    payload.insert("max_tokens".to_string(), json!(4096));
+    payload.insert("reasoning_effort".to_string(), json!("xhigh"));
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+
+    assert_eq!(
+        body.get("thinking")
+            .and_then(Value::as_object)
+            .and_then(|thinking| thinking.get("type"))
+            .and_then(Value::as_str),
+        Some("enabled")
+    );
+    assert_eq!(
+        body.get("output_config")
+            .and_then(Value::as_object)
+            .and_then(|config| config.get("effort"))
+            .and_then(Value::as_str),
+        Some("max"),
+        "Opus 4.5 supports output effort, but not xhigh"
+    );
+}
+
+#[test]
 fn claude_rejects_assistant_prefill_for_models_that_removed_it() {
     for model in ["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6"] {
         let mut payload = claude_payload(model);
@@ -578,6 +604,73 @@ fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
             "{model} should not use legacy budget_tokens"
         );
     }
+}
+
+#[test]
+fn claude_adaptive_reasoning_supports_xhigh_only_on_opus_4_7_and_4_8() {
+    for model in ["claude-opus-4-7", "claude-opus-4-8"] {
+        let mut payload = claude_payload(model);
+        payload.insert("reasoning_effort".to_string(), json!("xhigh"));
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert_eq!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("type"))
+                .and_then(Value::as_str),
+            Some("adaptive")
+        );
+        assert_eq!(
+            body.get("output_config")
+                .and_then(Value::as_object)
+                .and_then(|config| config.get("effort"))
+                .and_then(Value::as_str),
+            Some("xhigh"),
+            "{model} should forward xhigh"
+        );
+    }
+
+    for model in ["claude-opus-4-6", "claude-sonnet-4-6"] {
+        let mut payload = claude_payload(model);
+        payload.insert("reasoning_effort".to_string(), json!("xhigh"));
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert_eq!(
+            body.get("output_config")
+                .and_then(Value::as_object)
+                .and_then(|config| config.get("effort"))
+                .and_then(Value::as_str),
+            Some("max"),
+            "{model} should treat unsupported xhigh as max"
+        );
+    }
+}
+
+#[test]
+fn claude_validation_rejects_passthrough_xhigh_on_non_xhigh_models() {
+    let request = json!({
+        "model": "claude-opus-4-6",
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+        "thinking": {
+            "type": "adaptive",
+            "display": "omitted"
+        },
+        "output_config": {
+            "effort": "xhigh"
+        },
+        "max_tokens": 4096
+    });
+
+    let error = super::validate_request(&request).expect_err("xhigh should be model gated");
+    assert!(
+        error
+            .to_string()
+            .contains("does not support `output_config.effort=xhigh`")
+    );
 }
 
 #[test]

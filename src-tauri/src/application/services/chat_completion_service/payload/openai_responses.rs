@@ -5,6 +5,7 @@ use serde_json::{Map, Number, Value, json};
 use crate::application::errors::ApplicationError;
 use crate::domain::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 
+use super::openai_reasoning::normalize_openai_reasoning_effort;
 use super::shared::message_content_to_text;
 use super::tool_calls::message_tool_call_id;
 
@@ -84,15 +85,12 @@ fn build_openai_responses_payload(
     if let Some(reasoning_effort) = payload
         .get("reasoning_effort")
         .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("auto"))
+        .and_then(|value| normalize_openai_reasoning_effort(value, model))
     {
-        let effort = if reasoning_effort.eq_ignore_ascii_case("min") {
-            "minimal"
-        } else {
-            reasoning_effort
-        };
-        request.insert("reasoning".to_string(), json!({ "effort": effort }));
+        request.insert(
+            "reasoning".to_string(),
+            json!({ "effort": reasoning_effort.as_ref() }),
+        );
     }
 
     if let Some(verbosity) = payload
@@ -665,6 +663,67 @@ mod tests {
             include
                 .iter()
                 .any(|value| value == "reasoning.encrypted_content")
+        );
+    }
+
+    #[test]
+    fn openai_responses_payload_normalizes_xhigh_reasoning_effort() {
+        let supported = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "openai_responses",
+            "model": "gpt-5.1-codex-max",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+        let (_endpoint, upstream) = build(supported).expect("build should succeed");
+        assert_eq!(
+            upstream
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str),
+            Some("xhigh")
+        );
+
+        let unsupported = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "openai_responses",
+            "model": "gpt-5.1",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+        let (_endpoint, upstream) = build(unsupported).expect("build should succeed");
+        assert_eq!(
+            upstream
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn openai_responses_payload_maps_project_maximum_to_openai_high() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "openai_responses",
+            "model": "gpt-5.2",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "reasoning_effort": "max"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(
+            upstream
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str),
+            Some("high")
         );
     }
 
