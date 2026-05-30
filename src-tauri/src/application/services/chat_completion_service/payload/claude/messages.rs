@@ -86,7 +86,11 @@ pub(super) fn convert_messages(
         match role.as_str() {
             "assistant" => {
                 let tool_calls = extract_openai_tool_calls(message.get("tool_calls"));
-                let content_blocks = if !tool_calls.is_empty() {
+                let content_blocks = if let Some(native_content) =
+                    message_native_claude_content(message)
+                {
+                    native_content
+                } else if !tool_calls.is_empty() {
                     if use_tools {
                         convert_openai_tool_calls_to_claude_blocks(&tool_calls)
                     } else {
@@ -155,6 +159,15 @@ pub(super) fn convert_messages(
     }
 
     Ok((converted, system_parts))
+}
+
+fn message_native_claude_content(message: &serde_json::Map<String, Value>) -> Option<Vec<Value>> {
+    message
+        .get("native")?
+        .get("claude")?
+        .get("content")?
+        .as_array()
+        .cloned()
 }
 
 fn prefix_name(text: &str, name: Option<&str>) -> String {

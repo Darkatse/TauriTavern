@@ -1,6 +1,7 @@
 // @ts-check
 
-import { addCopyToCodeBlocks, chat, characters, eventSource, event_types, getCurrentChatId, messageFormatting, this_chid } from '../../../script.js';
+import { addCopyToCodeBlocks, chat, characters, eventSource, event_types, getCurrentChatId, getMessageFormattingRegexContext, messageFormatting, this_chid } from '../../../script.js';
+import { getRegexedStringBatchAsync } from '../../extensions/regex/engine.js';
 import { replaceMesTextHtmlWithRuntimePolicy } from '../message/mes-text-write.js';
 
 /** @type {ReturnType<typeof createRegexRefreshCoordinator> | null} */
@@ -21,12 +22,14 @@ function createRegexRefreshCoordinator() {
     /** @type {ReturnType<typeof setTimeout> | null} */
     let debounceTimeoutId = null;
 
-    /** @type {{ resolve: (value?: unknown) => void }[]} */
+    /** @type {{ resolve: (value?: unknown) => void, reject: (reason?: unknown) => void }[]} */
     const waiters = [];
 
     /** @type {{ messageId: number; message: any; element: HTMLElement }[]} */
     let queue = [];
     let queueIndex = 0;
+    /** @type {Map<number, string>} */
+    let regexedTextByMessageId = new Map();
 
     let scheduled = false;
     let running = false;
@@ -52,8 +55,8 @@ function createRegexRefreshCoordinator() {
 
         triggerFlush();
 
-        return new Promise((resolve) => {
-            waiters.push({ resolve });
+        return new Promise((resolve, reject) => {
+            waiters.push({ resolve, reject });
         });
     }
 
@@ -101,11 +104,11 @@ function createRegexRefreshCoordinator() {
         scheduled = true;
 
         if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(run, { timeout: 1000 });
+            requestIdleCallback((deadline) => void run(deadline), { timeout: 1000 });
             return;
         }
 
-        requestAnimationFrame(() => run(null));
+        requestAnimationFrame(() => void run(null));
     }
 
     function collectQueue() {
@@ -134,15 +137,59 @@ function createRegexRefreshCoordinator() {
         return next;
     }
 
+    async function prepareRegexedTexts() {
+        regexedTextByMessageId = new Map();
+
+        /** @type {{ rawString: string; placement: number; params: { characterOverride: any; isMarkdown: boolean; depth: number } }[]} */
+        const regexRequests = [];
+        /** @type {number[]} */
+        const messageIds = [];
+
+        for (const entry of queue) {
+            const message = entry.message;
+            if (entry.messageId === 0 || message?.is_system) {
+                continue;
+            }
+
+            const text = message?.extra?.display_text ?? message.mes;
+            const { placement, depth } = getMessageFormattingRegexContext(message.is_user, entry.messageId, false);
+            regexRequests.push({
+                rawString: text,
+                placement,
+                params: {
+                    characterOverride: message.name,
+                    isMarkdown: true,
+                    depth,
+                },
+            });
+            messageIds.push(entry.messageId);
+        }
+
+        if (regexRequests.length === 0) {
+            return;
+        }
+
+        const regexedTexts = await getRegexedStringBatchAsync(regexRequests);
+        regexedTexts.forEach((text, index) => {
+            const messageId = messageIds[index];
+            if (messageId === undefined) {
+                throw new Error(`RegexRefreshCoordinator: missing native regex result owner at index ${index}`);
+            }
+
+            regexedTextByMessageId.set(messageId, text);
+        });
+    }
+
     /**
      * @param {{ messageId: number; message: any; element: HTMLElement }} entry
      */
     function refreshMessage(entry) {
         const message = entry.message;
-        const text = message?.extra?.display_text ?? message.mes;
+        const hasRegexedText = regexedTextByMessageId.has(entry.messageId);
+        const text = hasRegexedText ? regexedTextByMessageId.get(entry.messageId) : (message?.extra?.display_text ?? message.mes);
         replaceMesTextHtmlWithRuntimePolicy(
             entry.element,
-            messageFormatting(text, message.name, message.is_system, message.is_user, entry.messageId, {}, false),
+            messageFormatting(text, message.name, message.is_system, message.is_user, entry.messageId, {}, false, { skipRegex: hasRegexedText }),
         );
         addCopyToCodeBlocks(entry.element);
     }
@@ -150,23 +197,58 @@ function createRegexRefreshCoordinator() {
     /**
      * @param {IdleDeadline | null} deadline
      */
-    function run(deadline) {
+    async function run(deadline) {
         scheduled = false;
 
-        if (!running) {
-            if (!cycleRequested) {
+        try {
+            if (!running) {
+                if (!cycleRequested) {
+                    resolveWaiters();
+                    return;
+                }
+
+                cycleRequested = false;
+                running = true;
+                queue = collectQueue();
+                pendingChatReloadEvents ||= queue.length > 0;
+                queueIndex = 0;
+                await prepareRegexedTexts();
+            }
+
+            if (queue.length === 0) {
+                finishCycle();
+                if (cycleRequested) {
+                    schedule();
+                    return;
+                }
+                notifyChatReloadEventsIfNeeded();
                 resolveWaiters();
                 return;
             }
 
-            cycleRequested = false;
-            running = true;
-            queue = collectQueue();
-            pendingChatReloadEvents ||= queue.length > 0;
-            queueIndex = 0;
-        }
+            const start = performance.now();
+            const budgetMs = 8;
 
-        if (queue.length === 0) {
+            while (queueIndex < queue.length) {
+                const entry = queue[queueIndex];
+                queueIndex += 1;
+
+                refreshMessage(/** @type {{ messageId: number; message: any; element: HTMLElement }} */ (entry));
+
+                if (deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() < 1) {
+                    break;
+                }
+
+                if (performance.now() - start > budgetMs) {
+                    break;
+                }
+            }
+
+            if (queueIndex < queue.length) {
+                schedule();
+                return;
+            }
+
             finishCycle();
             if (cycleRequested) {
                 schedule();
@@ -174,45 +256,19 @@ function createRegexRefreshCoordinator() {
             }
             notifyChatReloadEventsIfNeeded();
             resolveWaiters();
-            return;
+        } catch (error) {
+            finishCycle();
+            cycleRequested = false;
+            rejectWaiters(error);
+            throw error;
         }
-
-        const start = performance.now();
-        const budgetMs = 8;
-
-        while (queueIndex < queue.length) {
-            const entry = queue[queueIndex];
-            queueIndex += 1;
-
-            refreshMessage(/** @type {{ messageId: number; message: any; element: HTMLElement }} */ (entry));
-
-            if (deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() < 1) {
-                break;
-            }
-
-            if (performance.now() - start > budgetMs) {
-                break;
-            }
-        }
-
-        if (queueIndex < queue.length) {
-            schedule();
-            return;
-        }
-
-        finishCycle();
-        if (cycleRequested) {
-            schedule();
-            return;
-        }
-        notifyChatReloadEventsIfNeeded();
-        resolveWaiters();
     }
 
     function finishCycle() {
         running = false;
         queue = [];
         queueIndex = 0;
+        regexedTextByMessageId = new Map();
     }
 
     function resolveWaiters() {
@@ -227,6 +283,20 @@ function createRegexRefreshCoordinator() {
         const toResolve = waiters.splice(0, waiters.length);
         for (const waiter of toResolve) {
             waiter.resolve();
+        }
+    }
+
+    /**
+     * @param {unknown} error
+     */
+    function rejectWaiters(error) {
+        if (waiters.length === 0) {
+            return;
+        }
+
+        const toReject = waiters.splice(0, waiters.length);
+        for (const waiter of toReject) {
+            waiter.reject(error);
         }
     }
 

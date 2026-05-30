@@ -52,6 +52,32 @@ fn claude_manual_reasoning_uses_legacy_thinking_and_clears_sampling() {
 }
 
 #[test]
+fn claude_opus_4_5_uses_legacy_thinking_with_output_effort() {
+    let mut payload = claude_payload("claude-opus-4-5");
+    payload.insert("max_tokens".to_string(), json!(4096));
+    payload.insert("reasoning_effort".to_string(), json!("xhigh"));
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+
+    assert_eq!(
+        body.get("thinking")
+            .and_then(Value::as_object)
+            .and_then(|thinking| thinking.get("type"))
+            .and_then(Value::as_str),
+        Some("enabled")
+    );
+    assert_eq!(
+        body.get("output_config")
+            .and_then(Value::as_object)
+            .and_then(|config| config.get("effort"))
+            .and_then(Value::as_str),
+        Some("max"),
+        "Opus 4.5 supports output effort, but not xhigh"
+    );
+}
+
+#[test]
 fn claude_rejects_assistant_prefill_for_models_that_removed_it() {
     for model in ["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6"] {
         let mut payload = claude_payload(model);
@@ -243,6 +269,52 @@ fn claude_tool_calls_and_results_are_structured() {
 }
 
 #[test]
+fn claude_native_content_blocks_are_replayed() {
+    let payload = json!({
+        "model": "claude-sonnet-4-20250514",
+        "messages": [{
+            "role": "assistant",
+            "content": "",
+            "native": {
+                "claude": {
+                    "content": [
+                        { "type": "thinking", "thinking": "plan", "signature": "sig_thinking" },
+                        { "type": "tool_use", "id": "call_1", "name": "weather", "input": { "city": "Paris" } }
+                    ]
+                }
+            },
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": "weather", "arguments": "{\"city\":\"Paris\"}" }
+            }]
+        }],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "weather",
+                "description": "get weather",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }]
+    })
+    .as_object()
+    .cloned()
+    .expect("payload must be object");
+
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let blocks = upstream
+        .pointer("/messages/0/content")
+        .and_then(Value::as_array)
+        .expect("assistant native content should be replayed");
+
+    assert_eq!(blocks[0]["type"], "thinking");
+    assert_eq!(blocks[0]["signature"], "sig_thinking");
+    assert_eq!(blocks[1]["type"], "tool_use");
+    assert_eq!(blocks[1]["id"], "call_1");
+}
+
+#[test]
 fn claude_tool_calls_are_text_when_tools_disabled() {
     let payload = json!({
         "model": "claude-3-5-sonnet-latest",
@@ -421,16 +493,18 @@ fn claude_full_sampling_models_keep_temperature_top_p_and_top_k() {
 }
 
 #[test]
-fn claude_sampling_free_models_reject_non_default_sampling_params() {
+fn claude_sampling_free_models_drop_non_default_sampling_params() {
     let mut payload = claude_payload("claude-opus-4-7");
     payload.insert("temperature".to_string(), json!(0.7));
+    payload.insert("top_p".to_string(), json!(0.9));
+    payload.insert("top_k".to_string(), json!(40));
 
-    let error = build(payload).expect_err("build should fail");
-    assert!(
-        error
-            .to_string()
-            .contains("does not support non-default sampling parameters: temperature")
-    );
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+
+    assert!(body.get("temperature").is_none());
+    assert!(body.get("top_p").is_none());
+    assert!(body.get("top_k").is_none());
 }
 
 #[test]
@@ -449,16 +523,17 @@ fn claude_sampling_free_models_ignore_default_sampling_params() {
 }
 
 #[test]
-fn claude_future_models_do_not_inherit_sampling_or_prefill_support() {
+fn claude_opus_4_8_drops_sampling_and_rejects_prefill() {
     let mut sampling_payload = claude_payload("claude-opus-4-8");
     sampling_payload.insert("temperature".to_string(), json!(0.7));
+    sampling_payload.insert("top_p".to_string(), json!(0.9));
+    sampling_payload.insert("top_k".to_string(), json!(40));
 
-    let sampling_error = build(sampling_payload).expect_err("build should fail");
-    assert!(
-        sampling_error
-            .to_string()
-            .contains("does not support non-default sampling parameters: temperature")
-    );
+    let (_, upstream) = build(sampling_payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+    assert!(body.get("temperature").is_none());
+    assert!(body.get("top_p").is_none());
+    assert!(body.get("top_k").is_none());
 
     let mut prefill_payload = claude_payload("claude-opus-4-8");
     prefill_payload.insert("assistant_prefill".to_string(), json!("prefill"));
@@ -472,8 +547,8 @@ fn claude_future_models_do_not_inherit_sampling_or_prefill_support() {
 }
 
 #[test]
-fn claude_future_models_do_not_inherit_legacy_or_adaptive_reasoning_support() {
-    let mut payload = claude_payload("claude-opus-4-8");
+fn claude_unknown_models_do_not_inherit_reasoning_support() {
+    let mut payload = claude_payload("claude-opus-4-9");
     payload.insert("reasoning_effort".to_string(), json!("medium"));
 
     let error = build(payload).expect_err("build should fail");
@@ -486,42 +561,115 @@ fn claude_future_models_do_not_inherit_legacy_or_adaptive_reasoning_support() {
 
 #[test]
 fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
-    let mut payload = claude_payload("claude-opus-4-7");
-    payload.insert("reasoning_effort".to_string(), json!("high"));
-    payload.insert("include_reasoning".to_string(), json!(true));
+    for model in ["claude-opus-4-7", "claude-opus-4-8"] {
+        let mut payload = claude_payload(model);
+        payload.insert("reasoning_effort".to_string(), json!("high"));
+        payload.insert("include_reasoning".to_string(), json!(true));
 
-    let (_, upstream) = build(payload).expect("build should succeed");
-    let body = upstream.as_object().expect("body must be object");
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
 
-    assert_eq!(
-        body.get("thinking")
-            .and_then(Value::as_object)
-            .and_then(|thinking| thinking.get("type"))
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-        "adaptive"
-    );
-    assert_eq!(
-        body.get("thinking")
-            .and_then(Value::as_object)
-            .and_then(|thinking| thinking.get("display"))
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-        "summarized"
-    );
-    assert_eq!(
-        body.get("output_config")
-            .and_then(Value::as_object)
-            .and_then(|config| config.get("effort"))
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-        "high"
-    );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("type"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "adaptive",
+            "{model} should use adaptive thinking"
+        );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("display"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "summarized",
+            "{model} should request summarized reasoning"
+        );
+        assert_eq!(
+            body.get("output_config")
+                .and_then(Value::as_object)
+                .and_then(|config| config.get("effort"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "high",
+            "{model} should map reasoning_effort to output_config.effort"
+        );
+        assert!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("budget_tokens"))
+                .is_none(),
+            "{model} should not use legacy budget_tokens"
+        );
+    }
+}
+
+#[test]
+fn claude_adaptive_reasoning_supports_xhigh_only_on_opus_4_7_and_4_8() {
+    for model in ["claude-opus-4-7", "claude-opus-4-8"] {
+        let mut payload = claude_payload(model);
+        payload.insert("reasoning_effort".to_string(), json!("xhigh"));
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert_eq!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("type"))
+                .and_then(Value::as_str),
+            Some("adaptive")
+        );
+        assert_eq!(
+            body.get("output_config")
+                .and_then(Value::as_object)
+                .and_then(|config| config.get("effort"))
+                .and_then(Value::as_str),
+            Some("xhigh"),
+            "{model} should forward xhigh"
+        );
+    }
+
+    for model in ["claude-opus-4-6", "claude-sonnet-4-6"] {
+        let mut payload = claude_payload(model);
+        payload.insert("reasoning_effort".to_string(), json!("xhigh"));
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+
+        assert_eq!(
+            body.get("output_config")
+                .and_then(Value::as_object)
+                .and_then(|config| config.get("effort"))
+                .and_then(Value::as_str),
+            Some("max"),
+            "{model} should treat unsupported xhigh as max"
+        );
+    }
+}
+
+#[test]
+fn claude_validation_rejects_passthrough_xhigh_on_non_xhigh_models() {
+    let request = json!({
+        "model": "claude-opus-4-6",
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+        "thinking": {
+            "type": "adaptive",
+            "display": "omitted"
+        },
+        "output_config": {
+            "effort": "xhigh"
+        },
+        "max_tokens": 4096
+    });
+
+    let error = super::validate_request(&request).expect_err("xhigh should be model gated");
     assert!(
-        body.get("thinking")
-            .and_then(Value::as_object)
-            .and_then(|thinking| thinking.get("budget_tokens"))
-            .is_none()
+        error
+            .to_string()
+            .contains("does not support `output_config.effort=xhigh`")
     );
 }
 

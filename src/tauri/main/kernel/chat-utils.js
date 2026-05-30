@@ -1,23 +1,23 @@
 // @ts-check
 
-/** @param {string} fileName */
+/** @param {unknown} fileName */
 export function ensureJsonl(fileName) {
-    const value = String(fileName || '');
+    const value = String(fileName ?? '');
     if (!value) {
         return value;
     }
 
-    return value.endsWith('.jsonl') ? value : `${value}.jsonl`;
+    return /\.jsonl$/.test(value) ? value : `${value}.jsonl`;
 }
 
-/** @param {string} fileName */
+/** @param {unknown} fileName */
 export function stripJsonl(fileName) {
-    const value = String(fileName || '').trim();
+    const value = String(fileName ?? '');
     if (!value) {
         return '';
     }
 
-    return value.replace(/\.jsonl$/i, '');
+    return value.replace(/\.jsonl$/, '');
 }
 
 /**

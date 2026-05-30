@@ -1,8 +1,7 @@
 use crate::domain::errors::DomainError;
-use crate::domain::models::background::{
-    Background, BackgroundAsset, BackgroundImageMetadataIndex,
-};
+use crate::domain::models::background::BackgroundAsset;
 use crate::domain::repositories::background_repository::BackgroundRepository;
+use crate::domain::repositories::image_metadata_repository::ImageMetadataRepository;
 use crate::infrastructure::logging::logger;
 use std::path::Path;
 use std::sync::Arc;
@@ -10,18 +9,19 @@ use std::sync::Arc;
 /// Service for managing background images
 pub struct BackgroundService {
     repository: Arc<dyn BackgroundRepository>,
+    image_metadata_repository: Arc<dyn ImageMetadataRepository>,
 }
 
 impl BackgroundService {
     /// Create a new BackgroundService instance
-    pub fn new(repository: Arc<dyn BackgroundRepository>) -> Self {
-        Self { repository }
-    }
-
-    /// Get all background images
-    pub async fn get_all_backgrounds(&self) -> Result<Vec<Background>, DomainError> {
-        logger::debug("BackgroundService: Getting all backgrounds");
-        self.repository.get_all_backgrounds().await
+    pub fn new(
+        repository: Arc<dyn BackgroundRepository>,
+        image_metadata_repository: Arc<dyn ImageMetadataRepository>,
+    ) -> Self {
+        Self {
+            repository,
+            image_metadata_repository,
+        }
     }
 
     /// Delete a background image by filename
@@ -38,7 +38,10 @@ impl BackgroundService {
             ));
         }
 
-        self.repository.delete_background(filename).await
+        self.repository.delete_background(filename).await?;
+        self.image_metadata_repository
+            .remove_background_metadata(filename)
+            .await
     }
 
     /// Rename a background image
@@ -67,6 +70,9 @@ impl BackgroundService {
 
         self.repository
             .rename_background(old_filename, new_filename)
+            .await?;
+        self.image_metadata_repository
+            .rename_background_metadata(old_filename, new_filename)
             .await
     }
 
@@ -144,20 +150,5 @@ impl BackgroundService {
         self.repository
             .read_background_thumbnail(filename, animated)
             .await
-    }
-
-    pub async fn get_all_background_metadata(
-        &self,
-        prefix: Option<&str>,
-    ) -> Result<BackgroundImageMetadataIndex, DomainError> {
-        logger::debug("BackgroundService: Getting all background metadata");
-        let mut metadata = self.repository.get_all_background_metadata().await?;
-
-        let prefix = prefix.unwrap_or_default().trim();
-        if !prefix.is_empty() {
-            metadata.images.retain(|key, _| key.starts_with(prefix));
-        }
-
-        Ok(metadata)
     }
 }

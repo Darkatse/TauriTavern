@@ -11,6 +11,8 @@ use crate::domain::models::preset::PresetType;
 use crate::infrastructure::logging::logger;
 use crate::presentation::errors::CommandError;
 
+const SKILL_SOURCE_KIND_PRESET: &str = "preset";
+
 /// Save a preset
 #[tauri::command]
 pub async fn save_preset(
@@ -94,6 +96,27 @@ pub async fn delete_preset(
             logger::error(&format!("Failed to delete preset: {}", e));
             CommandError::from(e)
         })?;
+
+    let source_id = preset_skill_source_id(preset_type.to_api_id(), &dto.name);
+    let deleted_skills = app_state
+        .skill_service
+        .delete_skills_for_source(SKILL_SOURCE_KIND_PRESET, &source_id)
+        .await
+        .map_err(|e| {
+            logger::error(&format!(
+                "Failed to delete Agent Skills linked to preset '{}': {}",
+                dto.name, e
+            ));
+            CommandError::from(e)
+        })?;
+    if !deleted_skills.is_empty() {
+        logger::info(&format!(
+            "Deleted {} Agent Skill(s) linked to preset '{}': {}",
+            deleted_skills.len(),
+            dto.name,
+            deleted_skills.join(", ")
+        ));
+    }
 
     logger::info(&format!("Preset deleted successfully: {}", dto.name));
     Ok(())
@@ -217,6 +240,18 @@ pub async fn delete_openai_preset(
         .await
     {
         Ok(()) => {
+            let source_id = preset_skill_source_id(PresetType::OpenAI.to_api_id(), &dto.name);
+            if let Err(e) = app_state
+                .skill_service
+                .delete_skills_for_source(SKILL_SOURCE_KIND_PRESET, &source_id)
+                .await
+            {
+                logger::error(&format!(
+                    "Failed to delete Agent Skills linked to OpenAI preset '{}': {}",
+                    dto.name, e
+                ));
+                return Ok(DeleteOpenAIPresetResponseDto::error());
+            }
             logger::info(&format!("OpenAI preset deleted successfully: {}", dto.name));
             Ok(DeleteOpenAIPresetResponseDto::success())
         }
@@ -225,6 +260,10 @@ pub async fn delete_openai_preset(
             Ok(DeleteOpenAIPresetResponseDto::error())
         }
     }
+}
+
+fn preset_skill_source_id(api_id: &str, name: &str) -> String {
+    format!("preset:{}:{}", api_id.trim(), name.trim())
 }
 
 /// List presets of a specific type

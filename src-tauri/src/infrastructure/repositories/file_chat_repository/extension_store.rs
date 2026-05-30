@@ -6,7 +6,7 @@ use tokio::fs;
 use crate::domain::errors::DomainError;
 use crate::domain::json_merge::merge_json_value;
 use crate::infrastructure::persistence::file_system::{
-    replace_file_with_fallback, unique_temp_path,
+    move_file_no_replace_with_fallback, replace_file_with_fallback, unique_temp_path,
 };
 
 use super::FileChatRepository;
@@ -126,14 +126,7 @@ async fn rename_store_json_entry(dir: &Path, key: &str, new_key: &str) -> Result
         )));
     }
 
-    fs::rename(&from, &to).await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to rename chat store entry {} to {}: {}",
-            from.display(),
-            to.display(),
-            error
-        ))
-    })?;
+    move_file_no_replace_with_fallback(&from, &to).await?;
 
     Ok(())
 }
@@ -145,10 +138,11 @@ impl FileChatRepository {
             .join(integrity)
     }
 
-    fn group_chat_store_root(&self, chat_id: &str) -> PathBuf {
-        self.group_chats_dir
+    fn group_chat_store_root(&self, chat_id: &str) -> Result<PathBuf, DomainError> {
+        Ok(self
+            .group_chats_dir
             .join(".tauritavern")
-            .join(Self::strip_jsonl_extension(chat_id))
+            .join(Self::normalize_jsonl_file_stem(chat_id)?))
     }
 
     async fn resolve_character_chat_store_dir(
@@ -158,7 +152,7 @@ impl FileChatRepository {
         namespace: &str,
     ) -> Result<PathBuf, DomainError> {
         let namespace = validate_store_component(namespace, "namespace")?;
-        let chat_path = self.get_chat_path(character_name, file_name);
+        let chat_path = self.get_chat_path(character_name, file_name)?;
         let integrity = read_chat_integrity_slug(&chat_path).await?;
         Ok(self
             .character_chat_store_root(character_name, &integrity)
@@ -171,7 +165,7 @@ impl FileChatRepository {
         namespace: &str,
     ) -> Result<PathBuf, DomainError> {
         let namespace = validate_store_component(namespace, "namespace")?;
-        Ok(self.group_chat_store_root(chat_id).join(namespace))
+        Ok(self.group_chat_store_root(chat_id)?.join(namespace))
     }
 
     pub(super) async fn get_character_chat_store_json_value(

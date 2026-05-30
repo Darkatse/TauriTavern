@@ -141,10 +141,9 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
 
         const preferredName = archive instanceof File && archive.name
             ? archive.name
-            : 'data.zip';
+            : 'data.archive';
         const fileInfo = await context.materializeUploadFile(archive, {
             preferredName,
-            preferredExtension: 'zip',
         });
 
         return startImportJobFromFileInfo(fileInfo);

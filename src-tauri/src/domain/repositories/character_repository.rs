@@ -15,6 +15,9 @@ pub trait CharacterRepository: Send + Sync {
     /// Find all characters in the repository
     async fn find_all(&self, shallow: bool) -> Result<Vec<Character>, DomainError>;
 
+    /// List stored character avatar filenames without reading card metadata.
+    async fn list_avatar_filenames(&self) -> Result<Vec<String>, DomainError>;
+
     /// Delete a character by its file name (without extension)
     async fn delete(&self, name: &str, delete_chats: bool) -> Result<(), DomainError>;
 
@@ -32,6 +35,9 @@ pub trait CharacterRepository: Send + Sync {
 
     /// Rename a character
     async fn rename(&self, old_name: &str, new_name: &str) -> Result<Character, DomainError>;
+
+    /// Duplicate a character card file from the stored source PNG bytes.
+    async fn duplicate(&self, name: &str) -> Result<Character, DomainError>;
 
     /// Import a character from a file
     async fn import_character(

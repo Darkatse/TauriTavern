@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::fs::{self, File};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::chat::parse_message_timestamp_value;
+use crate::domain::models::chat::{parse_message_timestamp_value, strip_jsonl_extension};
 use crate::domain::repositories::chat_repository::ChatSearchResult;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::list_files_with_extension;
@@ -18,6 +18,7 @@ use super::FileChatRepository;
 const INDEX_SCHEMA_VERSION: u32 = 1;
 const FINGERPRINT_WORDS: usize = 64; // 4096 bits
 const MAX_SEARCH_CACHE_ENTRIES: usize = 128;
+const SUMMARY_SCAN_BUFFER_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) struct FileSignature {
@@ -126,6 +127,20 @@ pub(super) struct SummaryCacheEntry {
     pub signature: FileSignature,
     pub summary: ChatSearchResult,
     pub fingerprint: Option<SearchFingerprint>,
+}
+
+struct SummaryFileScan {
+    line_count: usize,
+    first_non_empty: Option<String>,
+    last_non_empty: Option<String>,
+    fingerprint: Option<SearchFingerprint>,
+}
+
+#[derive(Default)]
+struct SummaryLineByteScan {
+    line_count: usize,
+    first_non_empty: Option<Vec<u8>>,
+    last_non_empty: Option<Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -513,18 +528,18 @@ impl FileChatRepository {
         if let Some(chat_ids) = chat_ids {
             let id_set: HashSet<String> = chat_ids
                 .iter()
-                .map(|id| Self::strip_jsonl_extension(id).to_string())
+                .map(|id| strip_jsonl_extension(id).to_string())
                 .collect();
 
             let mut descriptors = Vec::new();
             for id in id_set {
-                let path = self.get_group_chat_path(&id);
+                let path = self.get_group_chat_path(&id)?;
                 if !path.exists() {
                     continue;
                 }
                 descriptors.push(ChatFileDescriptor {
                     character_name: String::new(),
-                    file_name: Self::normalize_jsonl_file_name(&id),
+                    file_name: Self::normalize_jsonl_file_name(&id)?,
                     path,
                 });
             }
@@ -635,7 +650,7 @@ impl FileChatRepository {
     ) -> Result<ChatSearchResult, DomainError> {
         self.ensure_directory_exists().await?;
 
-        let path = self.get_chat_path(character_name, file_name);
+        let path = self.get_chat_path(character_name, file_name)?;
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Chat not found: {}/{}",
@@ -645,7 +660,7 @@ impl FileChatRepository {
 
         let descriptor = ChatFileDescriptor {
             character_name: character_name.to_string(),
-            file_name: Self::normalize_jsonl_file_name(file_name),
+            file_name: Self::normalize_jsonl_file_name(file_name)?,
             path,
         };
 
@@ -659,7 +674,7 @@ impl FileChatRepository {
     ) -> Result<ChatSearchResult, DomainError> {
         self.ensure_directory_exists().await?;
 
-        let path = self.get_group_chat_path(chat_id);
+        let path = self.get_group_chat_path(chat_id)?;
         if !path.exists() {
             return Err(DomainError::NotFound(format!(
                 "Group chat not found: {}",
@@ -669,7 +684,7 @@ impl FileChatRepository {
 
         let descriptor = ChatFileDescriptor {
             character_name: String::new(),
-            file_name: Self::normalize_jsonl_file_name(chat_id),
+            file_name: Self::normalize_jsonl_file_name(chat_id)?,
             path,
         };
 
@@ -778,60 +793,22 @@ impl FileChatRepository {
         signature: FileSignature,
         include_fingerprint: bool,
     ) -> Result<SummaryCacheEntry, DomainError> {
-        let file = File::open(path).await.map_err(|error| {
-            DomainError::InternalError(format!("Failed to open chat file {:?}: {}", path, error))
-        })?;
-        let mut reader = BufReader::new(file);
+        let scan = if include_fingerprint {
+            Self::scan_chat_summary_lines_with_fingerprint(path, fallback_file_name).await?
+        } else {
+            Self::scan_chat_summary_lines_without_fingerprint(path).await?
+        };
 
-        let mut line_count: usize = 0;
-        let mut first_non_empty: Option<String> = None;
-        let mut last_non_empty = String::new();
-        let mut has_last_non_empty = false;
-        let mut fingerprint = include_fingerprint.then(SearchFingerprint::new);
-        if let Some(value) = fingerprint.as_mut() {
-            value.add_text(Self::strip_jsonl_extension(fallback_file_name));
-        }
-
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let bytes_read = reader.read_line(&mut line).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to read chat file {:?}: {}",
-                    path, error
-                ))
-            })?;
-            if bytes_read == 0 {
-                break;
-            }
-
-            let line_text = line.trim_end_matches(|ch| ch == '\r' || ch == '\n');
-            if line_text.trim().is_empty() {
-                continue;
-            }
-
-            line_count += 1;
-            if first_non_empty.is_none() {
-                first_non_empty = Some(line_text.to_string());
-            }
-            if let Some(value) = fingerprint.as_mut() {
-                value.add_text(line_text);
-            }
-            last_non_empty.clear();
-            last_non_empty.push_str(line_text);
-            has_last_non_empty = true;
-        }
-
-        let header = first_non_empty
+        let header = scan
+            .first_non_empty
             .as_deref()
             .and_then(|line| serde_json::from_str::<Value>(line).ok())
             .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-        let last_message = if has_last_non_empty {
-            serde_json::from_str::<Value>(&last_non_empty)
-                .unwrap_or_else(|_| Value::Object(serde_json::Map::new()))
-        } else {
-            Value::Object(serde_json::Map::new())
-        };
+        let last_message = scan
+            .last_non_empty
+            .as_deref()
+            .and_then(|line| serde_json::from_str::<Value>(line).ok())
+            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
 
         let character_name = header
             .get("character_name")
@@ -856,7 +833,7 @@ impl FileChatRepository {
             });
 
         let metadata = header.get("chat_metadata").cloned();
-        let message_count = line_count.saturating_sub(1);
+        let message_count = scan.line_count.saturating_sub(1);
         let preview = last_message
             .get("mes")
             .and_then(Value::as_str)
@@ -873,7 +850,7 @@ impl FileChatRepository {
             signature,
             summary: ChatSearchResult {
                 character_name,
-                file_name: Self::normalize_jsonl_file_name(fallback_file_name),
+                file_name: Self::normalize_jsonl_file_name(fallback_file_name)?,
                 file_size: signature.size,
                 message_count,
                 preview,
@@ -881,8 +858,176 @@ impl FileChatRepository {
                 chat_id,
                 chat_metadata: metadata,
             },
-            fingerprint,
+            fingerprint: scan.fingerprint,
         })
+    }
+
+    async fn scan_chat_summary_lines_with_fingerprint(
+        path: &Path,
+        fallback_file_name: &str,
+    ) -> Result<SummaryFileScan, DomainError> {
+        let file = File::open(path).await.map_err(|error| {
+            DomainError::InternalError(format!("Failed to open chat file {:?}: {}", path, error))
+        })?;
+        let mut reader = BufReader::new(file);
+
+        let mut line_count: usize = 0;
+        let mut first_non_empty: Option<String> = None;
+        let mut last_non_empty = String::new();
+        let mut has_last_non_empty = false;
+        let mut fingerprint = SearchFingerprint::new();
+        fingerprint.add_text(strip_jsonl_extension(fallback_file_name));
+
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let bytes_read = reader.read_line(&mut line).await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to read chat file {:?}: {}",
+                    path, error
+                ))
+            })?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            let line_text = line.trim_end_matches(|ch| ch == '\r' || ch == '\n');
+            if line_text.trim().is_empty() {
+                continue;
+            }
+
+            line_count += 1;
+            if first_non_empty.is_none() {
+                first_non_empty = Some(line_text.to_string());
+            }
+            fingerprint.add_text(line_text);
+            last_non_empty.clear();
+            last_non_empty.push_str(line_text);
+            has_last_non_empty = true;
+        }
+
+        Ok(SummaryFileScan {
+            line_count,
+            first_non_empty,
+            last_non_empty: has_last_non_empty.then_some(last_non_empty),
+            fingerprint: Some(fingerprint),
+        })
+    }
+
+    async fn scan_chat_summary_lines_without_fingerprint(
+        path: &Path,
+    ) -> Result<SummaryFileScan, DomainError> {
+        let bytes = Self::scan_summary_line_bytes(path).await?;
+
+        Ok(SummaryFileScan {
+            line_count: bytes.line_count,
+            first_non_empty: Self::decode_summary_line(
+                path,
+                "first non-empty chat line",
+                bytes.first_non_empty.as_deref(),
+            )?,
+            last_non_empty: Self::decode_summary_line(
+                path,
+                "last non-empty chat line",
+                bytes.last_non_empty.as_deref(),
+            )?,
+            fingerprint: None,
+        })
+    }
+
+    async fn scan_summary_line_bytes(path: &Path) -> Result<SummaryLineByteScan, DomainError> {
+        let mut file = File::open(path).await.map_err(|error| {
+            DomainError::InternalError(format!("Failed to open chat file {:?}: {}", path, error))
+        })?;
+
+        let mut buffer = vec![0u8; SUMMARY_SCAN_BUFFER_BYTES];
+        let mut current_line = Vec::new();
+        let mut scan = SummaryLineByteScan::default();
+
+        loop {
+            let bytes_read = file.read(&mut buffer).await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to read chat file {:?}: {}",
+                    path, error
+                ))
+            })?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            for &byte in &buffer[..bytes_read] {
+                if byte == b'\n' {
+                    Self::finish_summary_line(path, &mut scan, &mut current_line)?;
+                    continue;
+                }
+
+                current_line.push(byte);
+            }
+        }
+
+        if !current_line.is_empty() {
+            Self::finish_summary_line(path, &mut scan, &mut current_line)?;
+        }
+
+        Ok(scan)
+    }
+
+    fn finish_summary_line(
+        path: &Path,
+        scan: &mut SummaryLineByteScan,
+        current_line: &mut Vec<u8>,
+    ) -> Result<(), DomainError> {
+        let mut line = std::mem::take(current_line);
+        Self::trim_trailing_carriage_returns(&mut line);
+        let is_empty = std::str::from_utf8(&line)
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to decode chat line in chat file {:?}: {}",
+                    path, error
+                ))
+            })?
+            .trim()
+            .is_empty();
+
+        if is_empty {
+            line.clear();
+            *current_line = line;
+            return Ok(());
+        }
+
+        scan.line_count += 1;
+        if scan.first_non_empty.is_none() {
+            scan.first_non_empty = Some(line.clone());
+        }
+        if let Some(mut reusable) = scan.last_non_empty.replace(line) {
+            reusable.clear();
+            *current_line = reusable;
+        }
+        Ok(())
+    }
+
+    fn trim_trailing_carriage_returns(line: &mut Vec<u8>) {
+        while line.last() == Some(&b'\r') {
+            line.pop();
+        }
+    }
+
+    fn decode_summary_line(
+        path: &Path,
+        line_name: &str,
+        line: Option<&[u8]>,
+    ) -> Result<Option<String>, DomainError> {
+        line.map(|bytes| {
+            std::str::from_utf8(bytes)
+                .map(ToString::to_string)
+                .map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Failed to decode {} in chat file {:?}: {}",
+                        line_name, path, error
+                    ))
+                })
+        })
+        .transpose()
     }
 
     fn preview_message_text(message: &str) -> String {

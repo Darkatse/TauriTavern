@@ -10,12 +10,13 @@ async function importFresh(modulePath) {
     return import(url);
 }
 
-test('transport: normalizeChatFileName strips .jsonl and trims', async () => {
+test('transport: normalizeChatFileName strips only upstream lowercase .jsonl suffix', async () => {
     const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/transport.js'));
     const { normalizeChatFileName } = mod;
 
-    assert.equal(normalizeChatFileName('  hello.jsonl  '), 'hello');
-    assert.equal(normalizeChatFileName('world.JSONL'), 'world');
+    assert.equal(normalizeChatFileName('  hello.jsonl'), '  hello');
+    assert.equal(normalizeChatFileName('world.JSONL'), 'world.JSONL');
+    assert.equal(normalizeChatFileName('world.JSONL.jsonl'), 'world.JSONL');
     assert.equal(normalizeChatFileName('already-normalized'), 'already-normalized');
     assert.equal(normalizeChatFileName(''), '');
     assert.equal(normalizeChatFileName(null), '');

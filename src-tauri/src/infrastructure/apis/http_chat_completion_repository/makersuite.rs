@@ -3,11 +3,13 @@ use serde_json::{Value, json};
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
 use super::normalizers;
+use super::response_body::read_upstream_json_body;
 
 const GEMINI_API_VERSION: &str = "v1beta";
 
@@ -21,11 +23,11 @@ pub(super) async fn list_models(
     let request = client.get(url).header(ACCEPT, "application/json");
     let request = apply_gemini_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request
-        .send()
-        .await
-        .map_err(|error| DomainError::InternalError(format!("Status request failed: {error}")))?;
+    let response = request.send().await.map_err(|error| {
+        HttpChatCompletionRepository::map_transport_error("Status request failed", error)
+    })?;
 
     if !response.status().is_success() {
         return Err(HttpChatCompletionRepository::map_error_response(
@@ -36,9 +38,7 @@ pub(super) async fn list_models(
         .await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse models JSON: {error}"))
-    })?;
+    let body = read_upstream_json_body("Google Gemini", "list_models", response).await?;
 
     let models = body
         .get("models")
@@ -78,7 +78,7 @@ pub(super) async fn generate(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
-) -> Result<Value, DomainError> {
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let payload_object = payload.as_object().ok_or_else(|| {
         DomainError::InvalidData("Gemini payload must be a JSON object".to_string())
     })?;
@@ -106,9 +106,10 @@ pub(super) async fn generate(
 
     let request = apply_gemini_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {
@@ -120,9 +121,7 @@ pub(super) async fn generate(
         .await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
-    })?;
+    let body = read_upstream_json_body("Google Gemini", "generate", response).await?;
 
     Ok(normalizers::normalize_gemini_response(body))
 }
@@ -163,9 +162,10 @@ pub(super) async fn generate_stream(
     let request = apply_gemini_stream_auth(request, config);
 
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {
@@ -289,7 +289,10 @@ mod tests {
             api_key: "saved-secret".to_string(),
             authorization_header: Some("Bearer override".to_string()),
             extra_headers: HashMap::new(),
+            additional_headers: HashMap::new(),
             anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
         };
 
         let request = Client::new().get("https://example.com");

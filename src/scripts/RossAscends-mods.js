@@ -5,6 +5,7 @@ import {
     characters,
     online_status,
     main_api,
+    isConnectionValidationSuspended,
     is_send_press,
     max_context,
     saveSettingsDebounced,
@@ -360,6 +361,9 @@ function RA_autoconnect(PrevApi) {
         setTimeout(RA_autoconnect, 100);
         return;
     }
+    if (isConnectionValidationSuspended()) {
+        return;
+    }
     if (online_status === 'no_connection' && power_user.auto_connect) {
         switch (main_api) {
             case 'kobold':
@@ -410,6 +414,9 @@ function RA_autoconnect(PrevApi) {
                     || (secret_state[SECRET_KEYS.COMETAPI] && oai_settings.chat_completion_source == chat_completion_sources.COMETAPI)
                     || (secret_state[SECRET_KEYS.ZAI] && oai_settings.chat_completion_source == chat_completion_sources.ZAI)
                     || (secret_state[SECRET_KEYS.POLLINATIONS] && oai_settings.chat_completion_source === chat_completion_sources.POLLINATIONS)
+                    || (secret_state[SECRET_KEYS.WORKERS_AI] && oai_settings.chat_completion_source == chat_completion_sources.WORKERS_AI)
+                    || (secret_state[SECRET_KEYS.MINIMAX] && oai_settings.chat_completion_source == chat_completion_sources.MINIMAX)
+                    || (secret_state[SECRET_KEYS.AWS_BEDROCK] && oai_settings.chat_completion_source == chat_completion_sources.AWS_BEDROCK)
                     || (isValidUrl(oai_settings.custom_url) && oai_settings.chat_completion_source == chat_completion_sources.CUSTOM)
                     || (secret_state[SECRET_KEYS.AZURE_OPENAI] && oai_settings.chat_completion_source == chat_completion_sources.AZURE_OPENAI)
                 ) {

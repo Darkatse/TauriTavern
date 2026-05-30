@@ -1,4 +1,13 @@
 {
     "Toggle Fullscreen": "Toggle Fullscreen",
-    "GitHub has rate-limited your requests. Please try again later, or change your network and try again.": "GitHub has rate-limited your requests. Please try again later, or change your network and try again."
+    "GitHub has rate-limited your requests. Please try again later, or change your network and try again.": "GitHub has rate-limited your requests. Please try again later, or change your network and try again.",
+    "agent.error.run_failed": "Agent run failed",
+    "agent.error.model_tool_call_required.message": "The model skipped the Agent tool flow and tried to answer directly. No chat message was committed. Try regenerating; if this keeps happening, reduce the context or use a model with stronger tool calling.",
+    "agent.error.model_tool_call_required.summary": "The model skipped the Agent tool flow; no message was committed.",
+    "agent.error.tool_after_finish.message": "The model requested more tools after workspace.finish, which breaks the Agent contract. No chat message was committed. Try regenerating; if this persists, lower the temperature or pick a model that obeys workspace.finish.",
+    "agent.error.tool_after_finish.summary": "The model kept calling tools after workspace.finish; no message was committed.",
+    "agent.error.max_tool_rounds_exceeded.message": "The Agent loop exceeded the configured maximum tool rounds before calling workspace.finish. No chat message was committed. Try regenerating with a tighter prompt, or raise the round budget in the profile.",
+    "agent.error.max_tool_rounds_exceeded.summary": "Tool round budget exhausted; no message was committed.",
+    "agent.error.profile_model_requires_configuration.message": "This Agent profile needs a local model selection before it can run. Open Agent System, choose a saved model target for the profile, then run it again.",
+    "agent.error.profile_model_requires_configuration.summary": "Agent profile needs a local model selection."
 }

@@ -6,17 +6,17 @@
         </div>
         <div class="inline-drawer-content">
             <small class="extensions_info"
-                data-i18n="Import a SillyTavern data zip archive and migrate it to TauriTavern.">
-                Import a SillyTavern data zip archive and migrate it to TauriTavern.
+                data-i18n="Import a SillyTavern data archive (zip, tar, tar.gz, or tgz) and migrate it to TauriTavern.">
+                Import a SillyTavern data archive (zip, tar, tar.gz, or tgz) and migrate it to TauriTavern.
             </small>
             <small class="extensions_info" data-i18n="Imported user handles are normalized to default-user.">
                 Imported user handles are normalized to default-user.
             </small>
             <div class="flex-container flexGap5">
                 <button id="data_migration_import_button" class="menu_button menu_button_icon"
-                    data-i18n="Import Data Zip">
+                    data-i18n="Import Data Archive">
                     <i class="fa-solid fa-file-import"></i>
-                    <span>Import Data Zip</span>
+                    <span>Import Data Archive</span>
                 </button>
                 <button id="data_migration_export_button" class="menu_button menu_button_icon"
                     data-i18n="Export Current Data">
@@ -29,7 +29,9 @@
                     <span>Cancel Migration</span>
                 </button>
             </div>
-            <input id="data_migration_import_input" type="file" accept=".zip,application/zip" hidden />
+            <input id="data_migration_import_input" type="file"
+                accept=".zip,.tar,.tar.gz,.tgz,application/zip,application/gzip,application/x-gzip,application/x-tar,application/octet-stream"
+                hidden />
             <small id="data_migration_status" class="extensions_info"></small>
             <div id="data_migration_export_actions" class="flex-container flexGap5" style="display:none;">
                 <button id="data_migration_reveal_export_button" class="menu_button menu_button_icon"

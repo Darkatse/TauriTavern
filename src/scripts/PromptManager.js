@@ -363,6 +363,9 @@ class PromptManager {
         // The current token handler instance
         this.tokenHandler = null;
 
+        // Optional substitution hook for isolated/headless prompt assembly.
+        this.substituteParams = null;
+
         // Token usage of last dry run
         this.tokenUsage = 0;
 
@@ -1036,6 +1039,8 @@ class PromptManager {
 
         // Add identifiers if there are none assigned to a prompt
         this.serviceSettings.prompts.forEach(prompt => prompt && (prompt.identifier = prompt.identifier ?? this.getUuidv4()));
+        this.normalizeAgentPromptMarkerDefinitions();
+        this.ensureAgentPromptOrderReferences();
 
         if (this.activeCharacter) {
             const promptReferences = this.getPromptOrderForCharacter(this.activeCharacter);
@@ -1069,6 +1074,126 @@ class PromptManager {
                 this.log(`Missing system prompt: ${defaultPrompt.identifier}. Added default.`);
             }
         });
+    }
+
+    /**
+     * Keep reserved Agent prompts as PromptManager position markers only.
+     *
+     * @returns {void}
+     */
+    normalizeAgentPromptMarkerDefinitions() {
+        this.normalizeAgentSystemPromptDefinition();
+        this.normalizeAgentTaskPromptDefinition();
+        this.normalizeAgentResultsPromptDefinition();
+    }
+
+    /**
+     * Keep Agent System Prompt as a PromptManager position marker only.
+     *
+     * @returns {void}
+     */
+    normalizeAgentSystemPromptDefinition() {
+        this.normalizeAgentPromptMarkerDefinition(
+            AGENT_SYSTEM_PROMPT_IDENTIFIER,
+            'Agent System Prompt',
+            'agent.system_prompt_definition_missing: Agent System Prompt marker is missing',
+        );
+    }
+
+    /**
+     * Keep Agent Results as a reserved no-op PromptManager position marker.
+     *
+     * @returns {void}
+     */
+    normalizeAgentResultsPromptDefinition() {
+        this.normalizeAgentPromptMarkerDefinition(
+            AGENT_RESULTS_PROMPT_IDENTIFIER,
+            'Agent Results',
+            'agent.results_prompt_definition_missing: Agent Results marker is missing',
+        );
+    }
+
+    /**
+     * Keep Agent Task as a PromptManager position marker only.
+     *
+     * @returns {void}
+     */
+    normalizeAgentTaskPromptDefinition() {
+        this.normalizeAgentPromptMarkerDefinition(
+            AGENT_TASK_PROMPT_IDENTIFIER,
+            'Agent Task',
+            'agent.task_prompt_definition_missing: Agent Task marker is missing',
+        );
+    }
+
+    /**
+     * Canonicalize a reserved Agent prompt marker.
+     *
+     * @param {string} identifier
+     * @param {string} name
+     * @param {string} missingError
+     * @returns {void}
+     */
+    normalizeAgentPromptMarkerDefinition(identifier, name, missingError) {
+        const prompt = this.getPromptById(identifier);
+        if (!prompt) {
+            throw new Error(missingError);
+        }
+
+        Object.assign(prompt, {
+            identifier,
+            name,
+            role: normalizeAgentPromptRole(prompt.role),
+            content: '',
+            system_prompt: true,
+            marker: true,
+        });
+        delete prompt.forbid_overrides;
+        delete prompt.injection_position;
+        delete prompt.injection_depth;
+        delete prompt.injection_order;
+        delete prompt.injection_trigger;
+        delete prompt.attach_role;
+        delete prompt.attach_index;
+        delete prompt.attach_side;
+    }
+
+    /**
+     * Ensure old presets expose Agent-only prompt references to preset authors.
+     *
+     * @returns {void}
+     */
+    ensureAgentPromptOrderReferences() {
+        const agentReferences = [
+            { identifier: AGENT_SYSTEM_PROMPT_IDENTIFIER, before: 'main' },
+            { identifier: AGENT_TASK_PROMPT_IDENTIFIER, before: 'chatHistory' },
+            { identifier: AGENT_RESULTS_PROMPT_IDENTIFIER },
+        ];
+
+        for (const promptOrder of this.serviceSettings.prompt_order) {
+            for (const reference of agentReferences) {
+                const existing = promptOrder.order.find(entry => entry.identifier === reference.identifier);
+                if (existing) {
+                    continue;
+                }
+
+                const entry = {
+                    identifier: reference.identifier,
+                    enabled: true,
+                };
+                const beforeIndex = reference.before
+                    ? promptOrder.order.findIndex(entry => entry.identifier === reference.before)
+                    : -1;
+
+                if (beforeIndex === -1) {
+                    promptOrder.order.push(entry);
+                    this.log(`Missing prompt order reference: ${reference.identifier}. Added at the end.`);
+                } else {
+                    promptOrder.order.splice(beforeIndex, 0, entry);
+                    this.log(`Missing prompt order reference: ${reference.identifier}. Added before ${reference.before}.`);
+                }
+            }
+        }
     }
 
     /**
@@ -1292,13 +1417,14 @@ class PromptManager {
     preparePrompt(prompt, original = null) {
         const groupMembers = this.getActiveGroupCharacters();
         const preparedPrompt = new Prompt(prompt);
+        const substitute = typeof this.substituteParams === 'function' ? this.substituteParams : substituteParams;
 
         if (typeof original === 'string') {
-            if (0 < groupMembers.length) preparedPrompt.content = substituteParams(prompt.content ?? '', { original, groupOverride: groupMembers.join(', ') });
-            else preparedPrompt.content = substituteParams(prompt.content, { original });
+            if (0 < groupMembers.length) preparedPrompt.content = substitute(prompt.content ?? '', { original, groupOverride: groupMembers.join(', ') });
+            else preparedPrompt.content = substitute(prompt.content, { original });
         } else {
-            if (0 < groupMembers.length) preparedPrompt.content = substituteParams(prompt.content ?? '', { groupOverride: groupMembers.join(', ') });
-            else preparedPrompt.content = substituteParams(prompt.content);
+            if (0 < groupMembers.length) preparedPrompt.content = substitute(prompt.content ?? '', { groupOverride: groupMembers.join(', ') });
+            else preparedPrompt.content = substitute(prompt.content);
         }
 
         return preparedPrompt;
@@ -1912,6 +2038,8 @@ class PromptManager {
             throw new Error('Prompt order strategy not supported.');
         }
 
+        this.normalizeAgentPromptMarkerDefinitions();
+        this.ensureAgentPromptOrderReferences();
         toastr.success(t`Prompt import complete.`);
         this.saveServiceSettings().then(() => this.render());
     }
@@ -2047,8 +2175,26 @@ class PromptManager {
     }
 }
 
+const AGENT_SYSTEM_PROMPT_IDENTIFIER = 'agentSystemPrompt';
+const AGENT_RESULTS_PROMPT_IDENTIFIER = 'agentResults';
+const AGENT_TASK_PROMPT_IDENTIFIER = 'agentTask';
+const AGENT_PROMPT_ROLES = new Set(['system', 'user', 'assistant']);
+
+function normalizeAgentPromptRole(value) {
+    const role = String(value || '').trim().toLowerCase();
+    return AGENT_PROMPT_ROLES.has(role) ? role : 'system';
+}
+
 const chatCompletionDefaultPrompts = {
     'prompts': [
+        {
+            'name': 'Agent System Prompt',
+            'system_prompt': true,
+            'role': 'system',
+            'content': '',
+            'identifier': AGENT_SYSTEM_PROMPT_IDENTIFIER,
+            'marker': true,
+        },
         {
             'name': 'Main Prompt',
             'system_prompt': true,
@@ -2079,6 +2225,22 @@ const chatCompletionDefaultPrompts = {
         {
             'identifier': 'chatHistory',
             'name': 'Chat History',
+            'system_prompt': true,
+            'marker': true,
+        },
+        {
+            'identifier': AGENT_TASK_PROMPT_IDENTIFIER,
+            'name': 'Agent Task',
+            'role': 'user',
+            'content': '',
+            'system_prompt': true,
+            'marker': true,
+        },
+        {
+            'identifier': AGENT_RESULTS_PROMPT_IDENTIFIER,
+            'name': 'Agent Results',
+            'role': 'system',
+            'content': '',
             'system_prompt': true,
             'marker': true,
         },
@@ -2135,6 +2297,10 @@ const promptManagerDefaultPromptOrders = {
 
 const promptManagerDefaultPromptOrder = [
     {
+        'identifier': AGENT_SYSTEM_PROMPT_IDENTIFIER,
+        'enabled': true,
+    },
+    {
         'identifier': 'main',
         'enabled': true,
     },
@@ -2175,11 +2341,19 @@ const promptManagerDefaultPromptOrder = [
         'enabled': true,
     },
     {
+        'identifier': AGENT_TASK_PROMPT_IDENTIFIER,
+        'enabled': true,
+    },
+    {
         'identifier': 'chatHistory',
         'enabled': true,
     },
     {
         'identifier': 'jailbreak',
+        'enabled': true,
+    },
+    {
+        'identifier': AGENT_RESULTS_PROMPT_IDENTIFIER,
         'enabled': true,
     },
 ];

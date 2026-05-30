@@ -18,13 +18,19 @@ use self::cache::MemoryCache;
 pub struct FileCharacterRepository {
     characters_dir: PathBuf,
     chats_dir: PathBuf,
+    thumbnails_avatar_dir: PathBuf,
     default_avatar_path: PathBuf,
     memory_cache: Arc<Mutex<MemoryCache>>,
 }
 
 impl FileCharacterRepository {
     /// Create a new `FileCharacterRepository`.
-    pub fn new(characters_dir: PathBuf, chats_dir: PathBuf, default_avatar_path: PathBuf) -> Self {
+    pub fn new(
+        characters_dir: PathBuf,
+        chats_dir: PathBuf,
+        thumbnails_avatar_dir: PathBuf,
+        default_avatar_path: PathBuf,
+    ) -> Self {
         let memory_cache = Arc::new(Mutex::new(MemoryCache::new(
             100,
             Duration::from_secs(30 * 60),
@@ -33,6 +39,7 @@ impl FileCharacterRepository {
         Self {
             characters_dir,
             chats_dir,
+            thumbnails_avatar_dir,
             default_avatar_path,
             memory_cache,
         }

@@ -698,7 +698,7 @@
                                         </span>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,claude,aimlapi,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,siliconflow,electronhub,chutes,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,zai">
+                                <div class="range-block" data-source="openai,claude,aws_bedrock,aimlapi,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,siliconflow,minimax,electronhub,chutes,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,zai,workers_ai">
                                     <div class="range-block-title" data-i18n="Temperature">
                                         Temperature
                                     </div>
@@ -711,7 +711,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,aimlapi,openrouter,custom,cohere,perplexity,groq,siliconflow,mistralai,electronhub,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,chutes">
+                                <div class="range-block" data-source="openai,aimlapi,openrouter,custom,cohere,perplexity,groq,siliconflow,mistralai,electronhub,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,chutes,workers_ai">
                                     <div class="range-block-title" data-i18n="Frequency Penalty">
                                         Frequency Penalty
                                     </div>
@@ -724,7 +724,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,aimlapi,openrouter,custom,cohere,perplexity,groq,siliconflow,mistralai,electronhub,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,chutes">
+                                <div class="range-block" data-source="openai,aimlapi,openrouter,custom,cohere,perplexity,groq,siliconflow,mistralai,electronhub,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,chutes,workers_ai">
                                     <div class="range-block-title" data-i18n="Presence Penalty">
                                         Presence Penalty
                                     </div>
@@ -737,7 +737,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="claude,aimlapi,openrouter,makersuite,vertexai,cohere,perplexity,electronhub,chutes,nanogpt">
+                                <div class="range-block" data-source="claude,aws_bedrock,aimlapi,openrouter,makersuite,vertexai,cohere,perplexity,electronhub,chutes,nanogpt,workers_ai">
                                     <div class="range-block-title" data-i18n="Top K">
                                         Top K
                                     </div>
@@ -750,7 +750,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,claude,aimlapi,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,siliconflow,electronhub,chutes,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,zai">
+                                <div class="range-block" data-source="openai,claude,aws_bedrock,aimlapi,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,siliconflow,minimax,electronhub,chutes,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,zai,workers_ai">
                                     <div class="range-block-title" data-i18n="Top P">
                                         Top P
                                     </div>
@@ -763,7 +763,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openrouter,nanogpt,chutes">
+                                <div class="range-block" data-source="openrouter,nanogpt,chutes,workers_ai">
                                     <div class="range-block-title" data-i18n="Repetition Penalty">
                                         Repetition Penalty
                                     </div>
@@ -987,7 +987,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,openrouter,mistralai,custom,cohere,groq,electronhub,chutes,nanogpt,xai,pollinations,aimlapi,makersuite,vertexai,azure_openai">
+                                <div class="range-block" data-source="openai,openrouter,mistralai,custom,cohere,groq,electronhub,chutes,nanogpt,xai,pollinations,aimlapi,makersuite,vertexai,azure_openai,workers_ai">
                                     <div class="range-block-title justifyLeft" data-i18n="Seed">
                                         Seed
                                     </div>
@@ -1270,8 +1270,8 @@
                                             <span data-i18n="Top K">Top K</span>
                                             <div class="fa-solid fa-circle-info opacity50p" title="Top K sets a maximum amount of top tokens that can be chosen from.&#13;E.g Top K is 20, this means only the 20 highest ranking tokens will be kept (regardless of their probabilities being diverse or limited).&#13;Set to 0 (or -1, depending on your backend) to disable." data-i18n="[title]Top_K_desc"></div>
                                         </small>
-                                        <input class="neo-range-slider" type="range" id="top_k_textgenerationwebui" name="volume" min="-1" max="200" step="1">
-                                        <input class="neo-range-input" type="number" min="-1" max="200" step="1" data-for="top_k_textgenerationwebui" id="top_k_counter_textgenerationwebui">
+                                        <input class="neo-range-slider" type="range" id="top_k_textgenerationwebui" name="volume" min="-1" max="500" step="1">
+                                        <input class="neo-range-input" type="number" min="-1" max="500" step="1" data-for="top_k_textgenerationwebui" id="top_k_counter_textgenerationwebui">
                                     </div>
                                     <div data-tg-samplers="top_p" class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
                                         <small>
@@ -1401,7 +1401,7 @@
                                         <input class="neo-range-input" type="number" min="0" max="20" step="1" data-for="max_tokens_second_textgenerationwebui" id="max_tokens_second_counter_textgenerationwebui">
                                     </div>
 
-                                    <div data-tg-type="koboldcpp, llamacpp, tabby" id="adaptive_p_block" class="wide100p">
+                                    <div data-tg-type="koboldcpp, llamacpp, ooba, tabby" id="adaptive_p_block" class="wide100p">
                                         <h4 class="wide100p textAlignCenter">
                                             <label data-i18n="Adaptive-P">Adaptive-P</label>
                                             <a href="https://github.com/MrJackSpade/adaptive-p-docs" target="_blank">
@@ -1832,6 +1832,7 @@
                                             <div data-name="tfs" draggable="true"><span>Tail Free Sampling</span><small></small></div>
                                             <div data-name="top_a" draggable="true"><span>Top A</span><small></small></div>
                                             <div data-name="min_p" draggable="true"><span>Min P</span><small></small></div>
+                                            <div data-name="adaptive_p" draggable="true"><span>Adaptive-P</span><small></small></div>
                                             <div data-name="mirostat" draggable="true"><span>Mirostat</span><small></small></div>
                                             <div data-name="xtc" draggable="true"><span>XTC</span><small></small></div>
                                             <div data-name="encoder_repetition_penalty" draggable="true"><span>Encoder Repetition Penalty</span><small></small></div>
@@ -1970,7 +1971,7 @@
                                             </span>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="claude,makersuite,vertexai">
+                                    <div class="range-block" data-source="claude,aws_bedrock,makersuite,vertexai">
                                         <label for="use_sysprompt" class="checkbox_label widthFreeExpand">
                                             <input id="use_sysprompt" type="checkbox" />
                                             <span>
@@ -1983,7 +1984,7 @@
                                             </span>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="makersuite,vertexai,aimlapi,openrouter,claude,xai,electronhub,chutes,nanogpt">
+                                    <div class="range-block" data-source="makersuite,vertexai,aimlapi,openrouter,claude,electronhub,chutes,nanogpt">
                                         <label for="openai_enable_web_search" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_enable_web_search" type="checkbox" />
                                             <span data-i18n="Enable web search">Enable web search</span>
@@ -1997,7 +1998,7 @@
                                             </b>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="openai,cohere,mistralai,custom,claude,aimlapi,openrouter,groq,siliconflow,deepseek,makersuite,vertexai,ai21,xai,pollinations,moonshot,fireworks,cometapi,electronhub,chutes,azure_openai,zai,nanogpt">
+                                    <div class="range-block" data-source="openai,cohere,mistralai,custom,claude,aws_bedrock,aimlapi,openrouter,groq,siliconflow,minimax,deepseek,makersuite,vertexai,ai21,xai,pollinations,moonshot,fireworks,cometapi,electronhub,chutes,azure_openai,zai,nanogpt,workers_ai">
                                         <label for="openai_function_calling" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_function_calling" type="checkbox" />
                                             <span data-i18n="Enable function calling">Enable function calling</span>
@@ -2011,8 +2012,46 @@
                                             <span data-i18n="enable_functions_desc_3">Can be utilized by various extensions to provide additional functionality.</span>
                                             <strong data-i18n="enable_functions_desc_4">Not supported when Prompt Post-Processing with "no tools" is used!</strong>
                                         </div>
+                                        <div id="tool_call_recurse_limit_block" class="range-block wide100p">
+                                            <div class="range-block-title">
+                                                <small data-i18n="Tool Call Recurse Limit">Tool Call Recurse Limit</small>
+                                                <div class="fa-solid fa-circle-info opacity50p margin5" data-i18n="[title]Maximum number of tool call recursion steps per generation." title="Maximum number of tool call recursion steps per generation."></div>
+                                            </div>
+                                            <div class="range-block-range-and-counter">
+                                                <div class="range-block-range">
+                                                    <input type="range" id="tool_call_recurse_limit" name="tool_call_recurse_limit" min="1" max="50" step="1">
+                                                </div>
+                                                <div class="range-block-counter">
+                                                    <input type="number" min="1" max="50" step="1" data-for="tool_call_recurse_limit" id="tool_call_recurse_limit_counter">
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div class="range-block" data-source="openai,aimlapi,openrouter,mistralai,makersuite,vertexai,claude,custom,xai,pollinations,moonshot,cohere,cometapi,nanogpt,electronhub,azure_openai,zai,siliconflow,chutes">
+                                    <div class="range-block" data-source="openrouter,custom">
+                                        <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10">
+                                            <div class="flex-container oneline-dropdown">
+                                                <label for="tool_reasoning_mode" data-i18n="Interleaved Thinking">
+                                                    Interleaved Thinking
+                                                </label>
+                                                <select id="tool_reasoning_mode">
+                                                    <option data-i18n="Disabled" value="disabled">Disabled</option>
+                                                    <option data-i18n="Since Last User Message" value="since_last_user">Since Last User Message</option>
+                                                    <option data-i18n="Active Tool Chain" value="active_chain">Active Tool Chain</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="toggle-description justifyLeft">
+                                            <span data-i18n="openrouter_interleaved_thinking_hint">
+                                                Sends reasoning from preceding assistant turns with tool-call requests to maintain interleaved thinking context.
+                                            </span>
+                                        </div>
+                                        <div id="openrouter_interleaved_thinking_disabled_hint" class="toggle-description justifyLeft" style="display:none;">
+                                            <em data-i18n="Enable &quot;Request model reasoning&quot; to use Interleaved Thinking.">
+                                                Enable "Request model reasoning" to use Interleaved Thinking.
+                                            </em>
+                                        </div>
+                                    </div>
+                                    <div class="range-block" data-source="openai,aimlapi,openrouter,mistralai,makersuite,vertexai,claude,aws_bedrock,custom,xai,pollinations,moonshot,cohere,cometapi,nanogpt,electronhub,azure_openai,zai,siliconflow,chutes,workers_ai">
                                         <label for="openai_media_inlining" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_media_inlining" type="checkbox" />
                                             <span data-i18n="Send inline media">Send inline media</span>
@@ -2036,7 +2075,7 @@
                                             <strong data-source="makersuite,vertexai" data-i18n="video_inlining_hint_4">Videos must be less than 20 MB and under 1 minute long.</strong>
                                             <strong data-source="makersuite,vertexai" data-i18n="audio_inlining_hint_2">Audio must be less than 20 MB.</strong>
                                         </div>
-                                        <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,xai,pollinations,cohere,cometapi,nanogpt,moonshot,aimlapi,openrouter,mistralai,electronhub,azure_openai,zai,siliconflow,chutes,makersuite,vertexai">
+                                        <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,xai,pollinations,cohere,cometapi,nanogpt,moonshot,aimlapi,openrouter,mistralai,electronhub,azure_openai,zai,siliconflow,chutes,makersuite,vertexai,workers_ai">
                                             <div class="flex-container oneline-dropdown">
                                                 <label for="openai_inline_image_quality" data-i18n="Inline Image Quality">
                                                     Inline Image Quality
@@ -2097,7 +2136,7 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="deepseek,aimlapi,openrouter,custom,claude,xai,makersuite,vertexai,pollinations,moonshot,mistralai,fireworks,cometapi,electronhub,chutes,azure_openai,nanogpt,zai">
+                                    <div class="range-block" data-source="deepseek,aimlapi,openrouter,custom,claude,aws_bedrock,xai,makersuite,vertexai,pollinations,moonshot,mistralai,fireworks,cometapi,electronhub,chutes,azure_openai,nanogpt,zai,workers_ai">
                                         <label for="openai_show_thoughts" class="checkbox_label widthFreeExpand">
                                             <input id="openai_show_thoughts" type="checkbox" />
                                             <span data-i18n="Request model reasoning">Request model reasoning</span>
@@ -2111,7 +2150,7 @@
                                             </strong>
                                         </div>
                                     </div>
-                                    <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,claude,xai,makersuite,vertexai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek">
+                                    <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,claude,aws_bedrock,xai,makersuite,vertexai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek">
                                         <div class="flex-container oneline-dropdown" title="Constrains effort on reasoning for reasoning models.&#10;Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning in a response." data-i18n="[title]Constrains effort on reasoning for reasoning models.">
                                             <label for="openai_reasoning_effort">
                                                 <span data-i18n="Reasoning Effort">Reasoning Effort</span>
@@ -2124,15 +2163,19 @@
                                                 <option data-i18n="openai_reasoning_effort_medium" value="medium">Medium</option>
                                                 <option data-i18n="openai_reasoning_effort_high" value="high">High</option>
                                                 <option data-i18n="openai_reasoning_effort_maximum" value="max">Maximum</option>
+                                                <option data-i18n="openai_reasoning_effort_xhigh" value="xhigh">XHigh</option>
                                             </select>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="OpenAI-style options: low, medium, high. Minimum and maximum are aliased to low and high. Auto does not send an effort level.">
-                                                OpenAI-style options: low, medium, high. Minimum and maximum are aliased to low and high. Auto does not send an effort level.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="OpenAI-style options: low, medium, high, and xhigh where supported. Minimum maps to minimal or low; Maximum maps to high. XHigh maps to high when unsupported. Auto does not send an effort level.">
+                                                OpenAI-style options: low, medium, high, and xhigh where supported. Minimum maps to minimal or low; Maximum maps to high. XHigh maps to high when unsupported. Auto does not send an effort level.
                                             </div>
                                             <div class="toggle-description justifyLeft marginBot5" data-source="deepseek">
                                                 DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="claude" data-i18n="Allocates a portion of the response length for thinking (min: 1024 tokens, low: 10%, medium: 25%, high: 50%, max: 95%), but minimum 1024 tokens. Auto does not request thinking.">
-                                                Allocates a portion of the response length for thinking (min: 1024 tokens, low: 10%, medium: 25%, high: 50%, max: 95%), but minimum 1024 tokens. Auto does not request thinking.
+                                            <strong class="toggle-description justifyLeft marginBot5" data-source="openrouter">
+                                                Request model reasoning = Off with Reasoning Effort = Minimum disables reasoning entirely on models that support that, but can cause errors with some models.
+                                            </strong>
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock" data-i18n="Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on Claude Opus 4.7/4.8; otherwise it behaves like Maximum. Auto does not request thinking.">
+                                                Claude options: legacy thinking maps effort to a token budget; adaptive thinking maps effort to output_config.effort. XHigh is sent only on Claude Opus 4.7/4.8; otherwise it behaves like Maximum. Auto does not request thinking.
                                             </div>
                                             <div class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai">
                                                 <span data-i18n="Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.">
@@ -2159,6 +2202,9 @@
                                             <div class="toggle-description justifyLeft marginBot5" data-i18n="Constrains the verbosity of the model's response.">
                                                 Constrains the verbosity of the model's response.
                                             </div>
+                                            <strong class="toggle-description justifyLeft marginBot5" data-source="claude">
+                                                On Opus 4.6 / Sonnet 4.6, a non-automatic Reasoning Effort takes precedence over Verbosity.
+                                            </strong>
                                         </div>
                                     </div>
                                     <div class="range-block" data-source="claude">
@@ -2419,7 +2465,8 @@
                                     <small data-i18n="Click Authorize below or get the key from">
                                         Click "Authorize" below or get the key from </small> <a target="_blank" href="https://openrouter.ai/keys/">OpenRouter</a>.
                                     <br>
-                                    <a href="https://openrouter.ai/account" target="_blank" data-i18n="View Remaining Credits">View Remaining Credits</a>
+                                    <a href="https://openrouter.ai/settings/credits" target="_blank" class="openrouter_view_credits" data-i18n="View Remaining Credits">View Remaining Credits</a>
+                                    <span class="openrouter_credits_display marginLeft5"></span>
                                 </div>
                                 <div class="flex-container">
                                     <input id="api_key_openrouter-tg" name="api_key_openrouter" class="text_pole flex1 api_key_openrouter" value="" type="text" autocomplete="off">
@@ -2437,10 +2484,13 @@
                                     </select>
                                 </div>
                                 <div>
-                                    <h4 data-i18n="Model Providers">Model Providers</h4>
+                                    <h4>
+                                        <span data-i18n="Model Providers">Model Providers</span>
+                                        <i id="openrouter_provider_warning_text" class="fa-solid fa-circle-exclamation displayNone" title="Deselect inapplicable provider(s) or select an applicable provider to avoid a 404 error."></i>
+                                    </h4>
                                     <select id="openrouter_providers_text" class="openrouter_providers" multiple>
                                     </select>
-                                    <label class="checkbox_label" data-tg-samplers="openrouter_allow_fallbacks" data-i18n="[title]Automatically chooses an alternative provider if chosen providers can't serve your request." for="openrouter_allow_fallbacks_textgenerationwebui" title="Automatically chooses an alternative provider if chosen providers can't serve your request.">
+                                    <label class="checkbox_label" data-i18n="[title]Automatically chooses an alternative provider if chosen providers can't serve your request." for="openrouter_allow_fallbacks_textgenerationwebui" title="Automatically chooses an alternative provider if chosen providers can't serve your request.">
                                         <input id="openrouter_allow_fallbacks_textgenerationwebui" type="checkbox" />
                                         <span data-i18n="Allow fallback providers">Allow fallback providers</span>
                                     </label>
@@ -2865,9 +2915,11 @@
                             <optgroup>
                                 <option value="ai21">AI21</option>
                                 <option value="aimlapi">AI/ML API</option>
+                                <option value="aws_bedrock">AWS Bedrock</option>
                                 <option value="azure_openai">Azure OpenAI</option>
                                 <option value="chutes">Chutes</option>
                                 <option value="claude">Claude</option>
+                                <option value="workers_ai">Cloudflare Workers AI</option>
                                 <option value="cohere">Cohere</option>
                                 <!-- Temporarily disabled. -->
                                 <!-- <option value="cometapi">CometAPI</option> -->
@@ -2878,6 +2930,7 @@
                                 <option value="makersuite">Google AI Studio</option>
                                 <option value="vertexai">Google Vertex AI</option>
                                 <option value="mistralai">MistralAI</option>
+                                <option value="minimax">MiniMax</option>
                                 <option value="moonshot">Moonshot AI</option>
                                 <option value="nanogpt">NanoGPT</option>
                                 <option value="openrouter">OpenRouter</option>
@@ -3002,6 +3055,21 @@
                             <div>
                                 <h4 data-i18n="OpenAI Model">OpenAI Model</h4>
                                 <select id="model_openai_select">
+                                    <optgroup label="GPT-5.5">
+                                        <option value="gpt-5.5">gpt-5.5</option>
+                                        <option value="gpt-5.5-2026-04-23">gpt-5.5-2026-04-23</option>
+                                    </optgroup>
+                                    <optgroup label="GPT-5.4">
+                                        <option value="gpt-5.4">gpt-5.4</option>
+                                        <option value="gpt-5.4-2026-03-05">gpt-5.4-2026-03-05</option>
+                                        <option value="gpt-5.4-mini">gpt-5.4-mini</option>
+                                        <option value="gpt-5.4-mini-2026-03-17">gpt-5.4-mini-2026-03-17</option>
+                                        <option value="gpt-5.4-nano">gpt-5.4-nano</option>
+                                        <option value="gpt-5.4-nano-2026-03-17">gpt-5.4-nano-2026-03-17</option>
+                                    </optgroup>
+                                    <optgroup label="GPT-5.3">
+                                        <option value="gpt-5.3-chat-latest">gpt-5.3-chat-latest</option>
+                                    </optgroup>
                                     <optgroup label="GPT-5.2">
                                         <option value="gpt-5.2">gpt-5.2</option>
                                         <option value="gpt-5.2-2025-12-11">gpt-5.2-2025-12-11</option>
@@ -3111,6 +3179,7 @@
                                 <h4 data-i18n="Claude Model">Claude Model</h4>
                                 <select id="model_claude_select">
                                     <optgroup label="Versions">
+                                        <option value="claude-opus-4-8">claude-opus-4-8</option>
                                         <option value="claude-opus-4-7">claude-opus-4-7</option>
                                         <option value="claude-opus-4-6">claude-opus-4-6</option>
                                         <option value="claude-opus-4-5">claude-opus-4-5</option>
@@ -3145,7 +3214,8 @@
                                 <small data-i18n="Click Authorize below or get the key from">
                                     Click "Authorize" below or get the key from </small> <a target="_blank" href="https://openrouter.ai/keys/">OpenRouter</a>.
                                 <br>
-                                <a href="https://openrouter.ai/account" target="_blank" data-i18n="View Remaining Credits">View Remaining Credits</a>
+                                <a href="https://openrouter.ai/settings/credits" target="_blank" class="openrouter_view_credits" data-i18n="View Remaining Credits">View Remaining Credits</a>
+                                <span class="openrouter_credits_display marginLeft5"></span>
                             </div>
                             <div class="flex-container">
                                 <input id="api_key_openrouter" name="api_key_openrouter" class="text_pole flex1 api_key_openrouter" value="" type="text" autocomplete="off">
@@ -3164,38 +3234,11 @@
                                 <input id="openrouter_use_fallback" type="checkbox" />
                                 <span data-i18n="Allow fallback models">Allow fallback models</span>
                             </label>
-                            <div class="marginTopBot5">
-                                <div class="inline-drawer wide100p">
-                                    <div class="inline-drawer-toggle inline-drawer-header">
-                                        <b data-i18n="OpenRouter Model Sorting">OpenRouter Model Sorting</b>
-                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                                    </div>
-                                    <div class="inline-drawer-content m-b-1">
-                                        <div class="marginTopBot5">
-                                            <label for="openrouter_sort_models" class="checkbox_label">
-                                                <select id="openrouter_sort_models">
-                                                    <option data-i18n="Alphabetically" value="alphabetically">Alphabetically</option>
-                                                    <option data-i18n="Price" value="pricing.prompt">Price (cheapest)</option>
-                                                    <option data-i18n="Context Size" value="context_length">Context Size</option>
-                                                </select>
-                                            </label>
-                                        </div>
-                                        <div class="marginTopBot5">
-                                            <label for="openrouter_group_models" class="checkbox_label">
-                                                <input id="openrouter_group_models" type="checkbox" />
-                                                <span data-i18n="Group by vendors">Group by vendors</span>
-                                            </label>
-                                            <div class="toggle-description justifyLeft wide100p">
-                                                <span data-i18n="Group by vendors Description">
-                                                    Put OpenAI models in one group, Anthropic models in other group, etc. Can be combined with sorting.
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
                             <div>
-                                <h4 data-i18n="Model Providers">Model Providers</h4>
+                                <h4>
+                                    <span data-i18n="Model Providers">Model Providers</span>
+                                    <i id="openrouter_provider_warning_chat" class="fa-solid fa-circle-exclamation displayNone" title="Deselect inapplicable provider(s) or select an applicable provider to avoid a 404 error."></i>
+                                </h4>
                                 <select id="openrouter_providers_chat" class="openrouter_providers" multiple>
                                 </select>
                                 <label class="checkbox_label marginTopBot5" for="openrouter_allow_fallbacks" data-i18n="[title]Automatically chooses an alternative provider if chosen providers can't serve your request." title="Automatically chooses an alternative provider if chosen providers can't serve your request.">
@@ -3270,6 +3313,8 @@
                                 <select id="model_google_select">
                                     <optgroup label="Gemini 3.1">
                                         <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+                                        <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview</option>
+                                        <option value="gemini-3.1-flash-image-preview">gemini-3.1-flash-image-preview</option>
                                     </optgroup>
                                     <optgroup label="Gemini 3.0">
                                         <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
@@ -3308,6 +3353,8 @@
                                         <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
                                     </optgroup>
                                     <optgroup label="Gemma">
+                                        <option value="gemma-4-31b-it">gemma-4-31b-it</option>
+                                        <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
                                         <option value="gemma-3n-e4b-it">gemma-3n-e4b-it</option>
                                         <option value="gemma-3n-e2b-it">gemma-3n-e2b-it</option>
                                         <option value="gemma-3-27b-it">gemma-3-27b-it</option>
@@ -3446,6 +3493,8 @@
                                     <!-- data-mode="full" is for models that require a service account -->
                                     <optgroup label="Gemini 3.1">
                                         <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+                                        <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview</option>
+                                        <option value="gemini-3.1-flash-image-preview">gemini-3.1-flash-image-preview</option>
                                     </optgroup>
                                     <optgroup label="Gemini 3.0">
                                         <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
@@ -3518,10 +3567,116 @@
                             <div data-for="api_key_siliconflow" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you click 'Connect'.">
                                 For privacy reasons, your API key will be hidden after you click 'Connect'.
                             </div>
+                            <h4 data-i18n="SiliconFlow Endpoint">SiliconFlow Endpoint</h4>
+                            <select id="siliconflow_endpoint">
+                                <option value="global" data-i18n="Global (siliconflow.com)">Global (siliconflow.com)</option>
+                                <option value="cn" data-i18n="China (siliconflow.cn)">China (siliconflow.cn)</option>
+                            </select>
                             <h4>SiliconFlow Model</h4>
                             <select id="model_siliconflow_select">
                                 <option value="" data-i18n="-- Connect to the API --">-- Connect to the API --</option>
                             </select>
+                        </div>
+                        <div id="minimax_form" data-source="minimax">
+                            <h4 data-i18n="MiniMax API Key">MiniMax API Key</h4>
+                            <div class="flex-container">
+                                <input id="api_key_minimax" name="api_key_minimax" class="text_pole flex1" value="" type="text" autocomplete="off">
+                                <div title="Manage API keys" data-i18n="[title]Manage API keys" class="menu_button fa-solid fa-key fa-fw manage-api-keys" data-key="api_key_minimax"></div>
+                            </div>
+                            <div data-for="api_key_minimax" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you click 'Connect'.">
+                                For privacy reasons, your API key will be hidden after you click 'Connect'.
+                            </div>
+                            <h4 data-i18n="MiniMax Endpoint">MiniMax Endpoint</h4>
+                            <select id="minimax_endpoint">
+                                <option value="global" data-i18n="Global (minimax.io)">Global (minimax.io)</option>
+                                <option value="cn" data-i18n="China (minimaxi.com)">China (minimaxi.com)</option>
+                            </select>
+                            <h4 data-i18n="MiniMax Model">MiniMax Model</h4>
+                            <select id="model_minimax_select">
+                                <option value="MiniMax-M2.7">MiniMax-M2.7</option>
+                                <option value="MiniMax-M2.7-highspeed">MiniMax-M2.7-highspeed</option>
+                                <option value="MiniMax-M2.5">MiniMax-M2.5</option>
+                                <option value="MiniMax-M2.5-highspeed">MiniMax-M2.5-highspeed</option>
+                                <option value="MiniMax-M2.1">MiniMax-M2.1</option>
+                                <option value="MiniMax-M2.1-highspeed">MiniMax-M2.1-highspeed</option>
+                                <option value="MiniMax-M2">MiniMax-M2</option>
+                                <option value="M2-her">M2-her</option>
+                            </select>
+                        </div>
+                        <div id="aws_bedrock_form" data-source="aws_bedrock">
+                            <h4 data-i18n="AWS Bedrock API Key">AWS Bedrock API Key</h4>
+                            <div class="flex-container">
+                                <input id="api_key_aws_bedrock" name="api_key_aws_bedrock" class="text_pole flex1" value="" type="text" autocomplete="off">
+                                <div title="Manage API keys" data-i18n="[title]Manage API keys" class="menu_button fa-solid fa-key fa-fw manage-api-keys" data-key="api_key_aws_bedrock"></div>
+                            </div>
+                            <div data-for="api_key_aws_bedrock" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you click 'Connect'.">
+                                For privacy reasons, your API key will be hidden after you click 'Connect'.
+                            </div>
+                            <div data-for="api_key_aws_bedrock" class="neutral_warning" data-i18n="Generate a long-term Amazon Bedrock API key from the IAM console (User → Security credentials → API keys for Amazon Bedrock). The key is sent as Authorization: Bearer ...">
+                                Generate a long-term Amazon Bedrock API key from the IAM console (User → Security credentials → API keys for Amazon Bedrock). The key is sent as Authorization: Bearer ...
+                            </div>
+                            <h4 data-i18n="AWS Region">AWS Region</h4>
+                            <input id="aws_bedrock_region" name="aws_bedrock_region" class="text_pole" value="us-east-1" type="text" autocomplete="off" placeholder="us-east-1">
+                            <h4 data-i18n="Bedrock Model ID">Bedrock Model ID</h4>
+                            <small class="opacity50p" data-i18n="The list below is a fallback. After Connect succeeds, the live Bedrock catalog for your region replaces these options.">
+                                The list below is a fallback. After Connect succeeds, the live Bedrock catalog for your region replaces these options.
+                            </small>
+                            <select id="model_aws_bedrock_select">
+                                <optgroup label="Cross-region inference profiles — US (recommended for Claude 4.x)">
+                                    <option value="us.anthropic.claude-opus-4-7">us.anthropic.claude-opus-4-7</option>
+                                    <option value="us.anthropic.claude-opus-4-6-v1">us.anthropic.claude-opus-4-6-v1</option>
+                                    <option value="us.anthropic.claude-opus-4-5-20251101-v1:0">us.anthropic.claude-opus-4-5-20251101-v1:0</option>
+                                    <option value="us.anthropic.claude-opus-4-1-20250805-v1:0">us.anthropic.claude-opus-4-1-20250805-v1:0</option>
+                                    <option value="us.anthropic.claude-opus-4-20250514-v1:0">us.anthropic.claude-opus-4-20250514-v1:0</option>
+                                    <option value="us.anthropic.claude-sonnet-4-6">us.anthropic.claude-sonnet-4-6</option>
+                                    <option value="us.anthropic.claude-sonnet-4-5-20250929-v1:0">us.anthropic.claude-sonnet-4-5-20250929-v1:0</option>
+                                    <option value="us.anthropic.claude-sonnet-4-20250514-v1:0">us.anthropic.claude-sonnet-4-20250514-v1:0</option>
+                                    <option value="us.anthropic.claude-haiku-4-5-20251001-v1:0">us.anthropic.claude-haiku-4-5-20251001-v1:0</option>
+                                </optgroup>
+                                <optgroup label="Cross-region inference profiles — Global">
+                                    <option value="global.anthropic.claude-opus-4-7">global.anthropic.claude-opus-4-7</option>
+                                    <option value="global.anthropic.claude-opus-4-6-v1">global.anthropic.claude-opus-4-6-v1</option>
+                                    <option value="global.anthropic.claude-opus-4-5-20251101-v1:0">global.anthropic.claude-opus-4-5-20251101-v1:0</option>
+                                    <option value="global.anthropic.claude-sonnet-4-6">global.anthropic.claude-sonnet-4-6</option>
+                                    <option value="global.anthropic.claude-sonnet-4-5-20250929-v1:0">global.anthropic.claude-sonnet-4-5-20250929-v1:0</option>
+                                    <option value="global.anthropic.claude-haiku-4-5-20251001-v1:0">global.anthropic.claude-haiku-4-5-20251001-v1:0</option>
+                                </optgroup>
+                                <optgroup label="Foundation models — Claude 3.x (ON_DEMAND)">
+                                    <option value="anthropic.claude-3-7-sonnet-20250219-v1:0">anthropic.claude-3-7-sonnet-20250219-v1:0</option>
+                                    <option value="anthropic.claude-3-5-sonnet-20241022-v2:0">anthropic.claude-3-5-sonnet-20241022-v2:0</option>
+                                    <option value="anthropic.claude-3-5-sonnet-20240620-v1:0">anthropic.claude-3-5-sonnet-20240620-v1:0</option>
+                                    <option value="anthropic.claude-3-5-haiku-20241022-v1:0">anthropic.claude-3-5-haiku-20241022-v1:0</option>
+                                    <option value="anthropic.claude-3-opus-20240229-v1:0">anthropic.claude-3-opus-20240229-v1:0</option>
+                                    <option value="anthropic.claude-3-sonnet-20240229-v1:0">anthropic.claude-3-sonnet-20240229-v1:0</option>
+                                    <option value="anthropic.claude-3-haiku-20240307-v1:0">anthropic.claude-3-haiku-20240307-v1:0</option>
+                                </optgroup>
+                            </select>
+                            <div class="range-block">
+                                <label class="checkbox_label" for="aws_bedrock_use_custom_template">
+                                    <input id="aws_bedrock_use_custom_template" type="checkbox" />
+                                    <span data-i18n="Use custom invoke template (advanced)">Use custom invoke template (advanced)</span>
+                                </label>
+                                <div data-for="aws_bedrock_use_custom_template" class="neutral_warning" data-i18n="Bypasses TauriTavern's built-in providers. Use this only when targeting a Bedrock-hosted model we haven't wired yet (Titan Text, Writer, Stability, ...).">
+                                    Bypasses TauriTavern's built-in providers. Use this only when targeting a Bedrock-hosted model we haven't wired yet (Titan Text, Writer, Stability, ...).
+                                </div>
+                            </div>
+                            <div id="aws_bedrock_custom_template_section" class="displayNone">
+                                <h4 data-i18n="Custom invoke body template">Custom invoke body template</h4>
+                                <small class="opacity50p" data-i18n="JSON sent to /model/{id}/invoke. Placeholders: {{messages}}, {{system}}, {{model}}, {{max_tokens}}, {{temperature}}.">
+                                    JSON sent to /model/{id}/invoke. Placeholders: {{messages}}, {{system}}, {{model}}, {{max_tokens}}, {{temperature}}.
+                                </small>
+                                <textarea id="aws_bedrock_custom_template" class="text_pole textarea_compact" rows="6" placeholder='{"messages":{{messages}},"system":{{system}},"max_tokens":{{max_tokens}},"temperature":{{temperature}}}'></textarea>
+                                <h4 data-i18n="Response text JSON path">Response text JSON path</h4>
+                                <small class="opacity50p" data-i18n="Dotted path applied to the non-stream response body (e.g. output.message.content.0.text or generation).">
+                                    Dotted path applied to the non-stream response body (e.g. <code>output.message.content.0.text</code> or <code>generation</code>).
+                                </small>
+                                <input id="aws_bedrock_custom_response_path" class="text_pole" type="text" autocomplete="off" placeholder="output.message.content.0.text">
+                                <h4 data-i18n="Stream chunk text JSON path">Stream chunk text JSON path</h4>
+                                <small class="opacity50p" data-i18n="Dotted path applied to each streaming chunk JSON (e.g. delta.text or choices.0.delta.content).">
+                                    Dotted path applied to each streaming chunk JSON (e.g. <code>delta.text</code> or <code>choices.0.delta.content</code>).
+                                </small>
+                                <input id="aws_bedrock_custom_stream_path" class="text_pole" type="text" autocomplete="off" placeholder="delta.text">
+                            </div>
                         </div>
                         <div id="electronhub_form" data-source="electronhub">
                             <h4 data-i18n="Electron Hub API Key">Electron Hub API Key</h4>
@@ -3540,37 +3695,6 @@
                                 <select id="model_electronhub_select">
                                     <option value="" data-i18n="-- Connect to the API --">-- Connect to the API --</option>
                                 </select>
-                            </div>
-                            <div class="marginTopBot5">
-                                <div class="inline-drawer wide100p">
-                                    <div class="inline-drawer-toggle inline-drawer-header">
-                                        <b data-i18n="Electron Hub Model Sorting">Electron Hub Model Sorting</b>
-                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                                    </div>
-                                    <div class="inline-drawer-content m-b-1">
-                                        <div class="marginTopBot5">
-                                            <label for="electronhub_sort_models" class="checkbox_label">
-                                                <select id="electronhub_sort_models">
-                                                    <option data-i18n="Alphabetically" value="alphabetically">Alphabetically</option>
-                                                    <option data-i18n="Input Price" value="pricing.input">Input Price (cheapest)</option>
-                                                    <option data-i18n="Output Price" value="pricing.output">Output Price (cheapest)</option>
-                                                    <option data-i18n="Context Size" value="context_length">Context Size</option>
-                                                </select>
-                                            </label>
-                                        </div>
-                                        <div class="marginTopBot5">
-                                            <label for="electronhub_group_models" class="checkbox_label">
-                                                <input id="electronhub_group_models" type="checkbox" />
-                                                <span data-i18n="Group by vendors">Group by vendors</span>
-                                            </label>
-                                            <div class="toggle-description justifyLeft wide100p">
-                                                <span data-i18n="Group by vendors Description">
-                                                    Put OpenAI models in one group, Anthropic models in other group, etc. Can be combined with sorting.
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
                         </div>
                         <div id="chutes_form" data-source="chutes">
@@ -3591,29 +3715,11 @@
                                     <option value="" data-i18n="-- Connect to the API --">-- Connect to the API --</option>
                                 </select>
                             </div>
-                            <div class="marginTopBot5">
-                                <div class="inline-drawer wide100p">
-                                    <div class="inline-drawer-toggle inline-drawer-header">
-                                        <b data-i18n="Chutes Model Sorting">Chutes Model Sorting</b>
-                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                                    </div>
-                                    <div class="inline-drawer-content m-b-1">
-                                        <div class="marginTopBot5">
-                                            <label for="chutes_sort_models" class="checkbox_label">
-                                                <select id="chutes_sort_models">
-                                                    <option data-i18n="Alphabetically" value="alphabetically">Alphabetically</option>
-                                                    <option data-i18n="Input Price" value="pricing.input">Input Price (cheapest)</option>
-                                                    <option data-i18n="Output Price" value="pricing.output">Output Price (cheapest)</option>
-                                                    <option data-i18n="Context Size" value="context_length">Context Size</option>
-                                                </select>
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
                         </div>
                         <div id="nanogpt_form" data-source="nanogpt">
                             <h4 data-i18n="NanoGPT API Key">NanoGPT API Key</h4>
+                            <a href="https://nano-gpt.com/balance" target="_blank" rel="noopener noreferrer" class="nanogpt_view_credits" data-i18n="View Remaining Credits">View Remaining Credits</a>
+                            <span class="nanogpt_credits_display marginLeft5"></span>
                             <div class="flex-container">
                                 <input id="api_key_nanogpt" name="api_key_nanogpt" class="text_pole flex1" value="" type="text" autocomplete="off">
                                 <div title="Manage API keys" data-i18n="[title]Manage API keys" class="menu_button fa-solid fa-key fa-fw manage-api-keys" data-key="api_key_nanogpt"></div>
@@ -3624,6 +3730,39 @@
                             <div>
                                 <h4 data-i18n="NanoGPT Model">NanoGPT Model</h4>
                                 <select id="model_nanogpt_select">
+                                    <option value="" data-i18n="-- Connect to the API --">-- Connect to the API --</option>
+                                </select>
+                            </div>
+                            <div>
+                                <h4>
+                                    <span data-i18n="Model Providers">Model Providers</span>
+                                    <i id="nanogpt_provider_warning" class="fa-solid fa-circle-exclamation displayNone" title="Deselect inapplicable provider(s) or select an applicable provider to avoid a 404 error."></i>
+                                </h4>
+                                <select id="nanogpt_provider">
+                                    <option value="" data-i18n="Auto">Auto</option>
+                                </select>
+                                <label class="checkbox_label marginTopBot5" for="nanogpt_payg_override" data-i18n="[title]Force NanoGPT pay-as-you-go billing for this request." title="Force NanoGPT pay-as-you-go billing for this request.">
+                                    <input id="nanogpt_payg_override" type="checkbox" />
+                                    <span data-i18n="Use pay-as-you-go billing">Use pay-as-you-go billing</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div id="workers_ai_form" data-source="workers_ai">
+                            <h4><a href="https://dash.cloudflare.com/?to=/:account/ai/workers-ai/api-quick-start" target="_blank" rel="noopener noreferrer" data-i18n="Cloudflare Workers AI API Key">Cloudflare Workers AI API Key</a></h4>
+                            <div class="flex-container">
+                                <input id="api_key_workers_ai" name="api_key_workers_ai" class="text_pole flex1" value="" type="text" autocomplete="off">
+                                <div title="Manage API keys" data-i18n="[title]Manage API keys" class="menu_button fa-solid fa-key fa-fw manage-api-keys" data-key="api_key_workers_ai"></div>
+                            </div>
+                            <div data-for="api_key_workers_ai" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you click 'Connect'.">
+                                For privacy reasons, your API key will be hidden after you click 'Connect'.
+                            </div>
+                            <h4><a href="https://dash.cloudflare.com/?to=/:account/workers-and-pages" target="_blank" rel="noopener noreferrer" data-i18n="Cloudflare Account ID">Cloudflare Account ID</a></h4>
+                            <div class="flex-container">
+                                <input id="workers_ai_account_id" class="text_pole flex1" value="" type="text" autocomplete="off" placeholder="e.g. 023e105f4ecef8ad9ca31a8372d0c353" data-i18n="[placeholder]e.g. 023e105f4ecef8ad9ca31a8372d0c353">
+                            </div>
+                            <div>
+                                <h4 data-i18n="Workers AI Model">Workers AI Model</h4>
+                                <select id="model_workers_ai_select">
                                     <option value="" data-i18n="-- Connect to the API --">-- Connect to the API --</option>
                                 </select>
                             </div>
@@ -3893,6 +4032,9 @@
                             </select>
                             <h4 data-i18n="Z.AI Model">Z.AI Model</h4>
                             <select id="model_zai_select">
+                                <option value="glm-5-turbo">glm-5-turbo</option>
+                                <option value="glm-5v-turbo">glm-5v-turbo</option>
+                                <option value="glm-5.1">glm-5.1</option>
                                 <option value="glm-5">glm-5</option>
                                 <option value="glm-4.7">glm-4.7</option>
                                 <option value="glm-4.7-flash">glm-4.7-flash</option>
@@ -3954,6 +4096,37 @@
                                 <small data-i18n="The underlying model of your deployment. This is detected automatically when you connect.">The underlying model of your deployment. This is detected automatically when you connect.</small>
                             </div>
                         </div>
+                        <div id="model_sorting_form" data-source="openrouter,chutes,electronhub,nanogpt,aimlapi">
+                            <div class="inline-drawer wide100p">
+                                <div class="inline-drawer-toggle inline-drawer-header">
+                                    <b data-i18n="Model Sorting">Model Sorting</b>
+                                    <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                </div>
+                                <div class="inline-drawer-content m-b-1">
+                                    <div class="marginTopBot5">
+                                        <label for="cc_sort_models" class="checkbox_label">
+                                            <select id="cc_sort_models">
+                                                <option data-i18n="Alphabetically" value="alphabetically">Alphabetically</option>
+                                                <option data-i18n="Prompt Price (cheapest)" value="pricing.prompt">Prompt Price (cheapest)</option>
+                                                <option data-i18n="Completion Price (cheapest)" value="pricing.completion">Completion Price (cheapest)</option>
+                                                <option data-i18n="Context Size" value="context_length">Context Size</option>
+                                            </select>
+                                        </label>
+                                    </div>
+                                    <div class="marginTopBot5">
+                                        <label for="cc_group_models" class="checkbox_label">
+                                            <input id="cc_group_models" type="checkbox" />
+                                            <span data-i18n="Group by vendors">Group by vendors</span>
+                                        </label>
+                                        <div class="toggle-description justifyLeft wide100p">
+                                            <span data-i18n="Group by vendors Description">
+                                                Put OpenAI models in one group, Anthropic models in other group, etc. Can be combined with sorting.
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                         <div id="prompt_post_processing_form">
                             <h4>
                                 <span data-i18n="Prompt Post-Processing">
@@ -3981,7 +4154,7 @@
                         <div class="flex-container flex">
                             <div id="api_button_openai" class="api_button menu_button menu_button_icon" type="submit" data-i18n="Connect">Connect</div>
                             <div class="api_loading menu_button menu_button_icon" data-i18n="Cancel">Cancel</div>
-                            <div data-source="custom" id="customize_additional_parameters" class="menu_button menu_button_icon" data-i18n="Additional Parameters">Additional Parameters</div>
+                            <div id="customize_additional_parameters" class="menu_button menu_button_icon" data-i18n="Additional Parameters">Additional Parameters</div>
                             <div data-source="openrouter" class="menu_button menu_button_icon openrouter_authorize" title="Get your OpenRouter API token using OAuth flow. You will be redirected to openrouter.ai" data-i18n="Authorize;[title]Get your OpenRouter API token using OAuth flow. You will be redirected to openrouter.ai">Authorize</div>
                             <div id="test_api_button" class="menu_button menu_button_icon" title="Verifies your API connection by sending a short test message. Be aware that you'll be credited for it!" data-i18n="Test Message;[title]Verifies your API connection by sending a short test message. Be aware that you'll be credited for it!">Test Message</div>
                         </div>
@@ -4333,7 +4506,7 @@
                                         <small data-i18n="First User Prefix">First User Prefix</small>
                                         <textarea id="instruct_first_input_sequence" data-macros class="text_pole textarea_compact autoSetHeight"></textarea>
                                     </div>
-                                    <div class="flexAuto" title="Inserted before the last User's message." data-i18n="[title]instruct_last_input_sequence">
+                                    <div class="flexAuto" title="Inserted before the last User's message or as a last prompt line when generating an impersonation." data-i18n="[title]instruct_last_input_sequence">
                                         <small data-i18n="Last User Prefix">Last User Prefix</small>
                                         <textarea id="instruct_last_input_sequence" data-macros class="text_pole wide100p textarea_compact autoSetHeight"></textarea>
                                     </div>
@@ -4743,7 +4916,7 @@
                             <input type="file" id="world_import_file" accept=".json,.lorebook,.png" name="avatar" hidden>
                             <div id="world_create_button" class="menu_button menu_button_icon">
                                 <i class="fa-solid fa-globe"></i>
-                                <span data-i18n="New">New</span>
+                                <span data-i18n="Create">Create</span>
                             </div>
                             <small data-i18n="or">or</small>
                             <select id="world_editor_select">
@@ -5579,6 +5752,10 @@
                             <i class="fa-solid fa-wand-magic"></i>
                             <span data-i18n="Auto-select">Auto-select</span>
                         </div>
+                        <button id="bg_add_folder_button" class="menu_button menu_button_icon" data-i18n="[title]New Folder" title="New Folder">
+                            <i class="fa-solid fa-folder-plus"></i>
+                            <span data-i18n="New Folder">New Folder</span>
+                        </button>
                         <label for="add_bg_button" id="add_background_button_top" class="menu_button menu_button_icon" data-i18n="[title]Add a new background" title="Add a new background">
                             <i class="fa-solid fa-upload"></i>
                             <span data-i18n="Add Background">Add Background</span>
@@ -5603,6 +5780,14 @@
                             <a href="#bg_chat_tab" data-i18n="Chat">Chat</a>
                         </li>
                         <div class="heading-controls">
+                            <button id="bg_group_add_to_folder_button" class="menu_button menu_button_icon" style="display:none;" data-i18n="[title]Add selected backgrounds to folder" title="Add selected backgrounds to folder">
+                                <i class="fa-solid fa-folder-tree"></i>
+                                <span data-i18n="Add to Folder">Add to Folder</span>
+                            </button>
+                            <button id="bg_selection_mode_button" class="menu_button menu_button_icon" data-i18n="[title]Select backgrounds for bulk folder actions" title="Select backgrounds for bulk folder actions">
+                                <i class="fa-solid fa-edit"></i>
+                                <span id="bg_group_select_count" style="display:none;"></span>
+                            </button>
                             <button id="bg_thumb_zoom_out" class="menu_button menu_button_icon" title="Make thumbnails smaller" data-i18n="[title]Make thumbnails smaller">
                                 <i class="fa-solid fa-minus"></i>
                             </button>
@@ -5612,6 +5797,19 @@
                         </div>
                     </ul>
                     <div id="bg_global_tab" class="bg_tab_panel">
+                        <div id="bg_folder_breadcrumb" class="bg_folder_breadcrumb" style="display:none;">
+                            <button id="bg_back_to_folders" class="menu_button menu_button_icon">
+                                <i class="fa-solid fa-arrow-left"></i>
+                                <span data-i18n="Back">Back</span>
+                            </button>
+                            <span id="bg_current_folder_name" class="bg_current_folder_name"></span>
+                            <span class="expander"></span>
+                            <button id="bg_folder_remove_selected_button" class="menu_button menu_button_icon" style="display:none;" data-i18n="[title]Remove selected backgrounds from this folder" title="Remove selected backgrounds from this folder">
+                                <i class="fa-solid fa-folder-minus"></i>
+                                <span data-i18n="Remove from Folder">Remove from Folder</span>
+                            </button>
+                        </div>
+                        <div id="bg_folder_grid" class="bg_list bg_folder_grid"></div>
                         <div id="bg_menu_content" class="bg_list"></div>
                     </div>
                     <div id="bg_chat_tab" class="bg_tab_panel">
@@ -5678,6 +5876,7 @@
                         <div id="caption_container" class="extension_container"></div>
                         <div id="idle_container" class="extension_container"></div>
                         <div id="summarize_container" class="extension_container"></div>
+                        <div id="agent_system_container" class="extension_container"></div>
                         <div id="hypebot_container" class="extension_container"></div>
                         <div id="regex_container" class="extension_container"></div>
                         <div id="vectors_container" class="extension_container"></div>
@@ -5779,12 +5978,18 @@
                                     <div class="persona_controls_buttons_block buttons_block">
                                         <div id="persona_rename_button" class="menu_button fa-solid fa-pencil" title="Rename Persona" data-i18n="[title]Rename Persona"></div>
                                         <div id="sync_name_button" class="menu_button fa-solid fa-sync" title="Click to set user name for all messages" data-i18n="[title]Click to set user name for all messages"></div>
-                                        <div id="persona_lore_button" class="menu_button fa-solid fa-globe" title="Persona Lore&#10;Alt+Click to open the lorebook" data-i18n="[title]Persona Lore Alt+Click to open the lorebook"></div>
+                                        <div id="persona_lore_button" class="menu_button fa-solid fa-globe" title="Persona Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to Persona Lorebook' popup" data-i18n="[title]persona_lore_button_title"></div>
 
                                         <div id="persona_set_image_button" class="menu_button fa-solid fa-image" title="Change Persona Image" data-i18n="[title]Change Persona Image"></div>
                                         <div id="persona_duplicate_button" class="menu_button fa-solid fa-clone" title="Duplicate Persona" data-i18n="[title]Duplicate Persona"></div>
                                         <div id="persona_delete_button" class="menu_button fa-solid fa-skull red_button" title="Delete Persona" data-i18n="[title]Delete Persona"></div>
                                     </div>
+                                    <label class="flex1 height100p" for="persona-management-dropdown">
+                                        <select id="persona-management-dropdown" class="text_pole">
+                                            <option value="default" disabled selected data-i18n="More...">More...</option>
+                                            <option id="persona_lorebook_link" data-i18n="Link to Persona Lorebook">Link to Persona Lorebook</option>
+                                        </select>
+                                    </label>
                                 </div>
 
                                 <h4 class="flex-container alignItemsBaseline">
@@ -5950,8 +6155,8 @@
                                                 <div id="favorite_button" class="menu_button fa-solid fa-star" title="Add to Favorites" data-i18n="[title]Add to Favorites"></div>
                                                 <input type="hidden" id="fav_checkbox" name="fav" />
                                                 <div id="advanced_div" class="menu_button fa-solid fa-book " title="Advanced Definitions" data-i18n="[title]Advanced Definition"></div>
-                                                <div id="world_button" class="menu_button fa-solid fa-globe" title="Character Lore&#10;&#10;Click to load&#10;Shift-click to open 'Link to World Info' popup" data-i18n="[title]world_button_title"></div>
-                                                <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;Alt+Click to open the lorebook" data-i18n="[title]Chat Lore Alt+Click to open the lorebook"></div>
+                                                <div id="world_button" class="menu_button fa-solid fa-globe" title="Character Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to World Info' popup" data-i18n="[title]world_button_title"></div>
+                                                <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to Chat Lorebook' popup" data-i18n="[title]chat_lorebook_button_title"></div>
                                                 <div id="char_connections_button" class="menu_button fa-solid fa-face-smile" title="Connected Personas" data-i18n="[title]Connected Personas"></div>
                                                 <div id="export_button" class="menu_button fa-solid fa-file-export " title="Export and Download" data-i18n="[title]Export and Download"></div>
                                                 <!-- <div id="set_chat_character_settings" class="menu_button fa-solid fa-scroll" title="Set a chat scenario override"></div> -->
@@ -6102,8 +6307,14 @@
                                 <div id="group-metadata-controls" class="marginTopBot5">
                                     <div class="flex-container wide100p">
                                         <input id="rm_group_chat_name" class="text_pole flex1" type="text" name="chat_name" data-i18n="[placeholder]Chat Name (Optional)" placeholder="Chat Name (Optional)" />
-                                        <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore" data-i18n="[title]Chat Lore"></div>
+                                        <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to Chat Lorebook' popup" data-i18n="[title]chat_lorebook_button_title"></div>
                                     </div>
+                                    <label class="flex1 height100p" for="group-chat-lorebook-dropdown">
+                                        <select id="group-chat-lorebook-dropdown" class="text_pole">
+                                            <option value="default" disabled selected data-i18n="More...">More...</option>
+                                            <option id="group_chat_lorebook_link" data-i18n="Link to Chat Lorebook">Link to Chat Lorebook</option>
+                                        </select>
+                                    </label>
                                     <div id="group_tags_div" class="wide100p">
                                         <div class="tag_controls">
                                             <input id="groupTagInput" class="text_pole textarea_compact tag_input flex1 margin0" data-i18n="[placeholder]Search / Create Tags" placeholder="Search / Create tags" />
@@ -6583,8 +6794,32 @@
                     <div data-action="copy" class="jg-button jg-copy fa-solid fa-file-arrow-up" data-i18n="[title]Copy to global backgrounds" title="Copy to global backgrounds"></div>
                     <div data-action="edit" class="jg-button jg-edit fa-solid fa-pen-to-square fa-fw pointer" data-i18n="[title]Rename Background" title="Rename Background"></div>
                     <div data-action="delete" class="jg-button jg-delete fa-solid fa-trash-can fa-fw pointer" data-i18n="[title]Delete Background" title="Delete Background"></div>
+                    <div data-action="folder" class="jg-button jg-folder fa-solid fa-folder fa-fw pointer" data-i18n="[title]Add to folder" title="Add to folder"></div>
+                    <div data-action="set-cover" class="jg-button jg-set-cover fa-solid fa-image fa-fw pointer" data-i18n="[title]Set as folder cover" title="Set as folder cover"></div>
                 </div>
                 <div class="BGSampleTitle"></div>
+            </div>
+        </div>
+        <div id="bg_folder_tile_template" class="template_element">
+            <div class="bg_folder_tile" data-folder-id="">
+                <div class="bg_folder_tile_cover"></div>
+                <div class="bg_folder_tile_overlay">
+                    <i class="fa-solid fa-folder"></i>
+                    <span class="bg_folder_tile_name"></span>
+                </div>
+                <div class="mobile-only-menu-toggle">
+                    <i class="fa-solid fa-ellipsis-vertical"></i>
+                </div>
+                <div class="bg_folder_tile_menu jg-menu">
+                    <div data-action="rename-folder" class="jg-button fa-solid fa-pen-to-square fa-fw pointer" data-i18n="[title]Rename folder" title="Rename folder"></div>
+                    <div data-action="delete-folder" class="jg-button fa-solid fa-trash-can fa-fw pointer" data-i18n="[title]Delete folder" title="Delete folder"></div>
+                </div>
+            </div>
+        </div>
+        <div id="bg_new_folder_template" class="template_element">
+            <div class="bg_folder_tile bg_new_folder_tile">
+                <i class="fa-solid fa-folder-plus fa-2x"></i>
+                <span data-i18n="New Folder">New Folder</span>
             </div>
         </div>
         <!-- templates for JS to reuse when needed -->
@@ -6637,7 +6872,7 @@
                                 <small class="chat_file_size select_chat_block_filename_item"></small>
                                 <small class="chat_messages_num select_chat_block_filename_item"></small>
                             </div>
-                            <div class="flex-container gap10px">
+                            <div class="select_chat_actions flex-container gap10px">
                                 <div title="Export JSONL chat file" data-format="jsonl" class="exportRawChatButton opacity50p hoverglow fa-solid fa-file-export" data-i18n="[title]Export JSONL chat file"></div>
                                 <div title="Download chat as plain text document" data-format="txt" class="exportChatButton opacity50p hoverglow fa-solid fa-file-lines" data-i18n="[title]Download chat as plain text document"></div>
                                 <div title="Delete chat file" file_name="" class="PastChat_cross opacity50p hoverglow fa-solid fa-skull" data-i18n="[title]Delete chat file"></div>
@@ -7301,6 +7536,7 @@
                                 <div title="Toggle media display style" class="mes_button mes_media_gallery fa-solid fa-photo-film" data-i18n="[title]Toggle media display style"></div>
                                 <div title="Toggle media display style" class="mes_button mes_media_list fa-solid fa-table-cells-large" data-i18n="[title]Toggle media display style"></div>
                                 <div title="Embed file or image" class="mes_button mes_embed fa-solid fa-paperclip" data-i18n="[title]Embed file or image"></div>
+                                <div title="Jump to swipe history" class="mes_button mes_swipe_picker fa-solid fa-bookmark" data-i18n="[title]Jump to swipe history" style="display: none;"></div>
                                 <div title="Create checkpoint" class="mes_button mes_create_bookmark fa-regular fa-solid fa-flag-checkered" data-i18n="[title]Create checkpoint"></div>
                                 <div title="Create branch" class="mes_button mes_create_branch fa-regular fa-code-branch" data-i18n="[title]Create Branch"></div>
                                 <div title="Copy" class="mes_button mes_copy fa-solid fa-copy " data-i18n="[title]Copy"></div>

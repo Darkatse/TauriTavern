@@ -12,6 +12,7 @@ const SURFACE_KIND = /** @type {const} */ ({
 const FIXED_SHELL_ROOT_SELECTOR = [
     '#character_popup',
     '#completion_prompt_manager_popup',
+    '#select_chat_popup',
     '#top-settings-holder > .drawer > .drawer-content.openDrawer:not(.fillLeft):not(.fillRight)',
     '.drawer-content.openDrawer',
     '#floatingPrompt',
@@ -48,8 +49,29 @@ const IME_INPUT_TYPES = new Set([
     'number',
 ]);
 
+const IME_RELEASE_CONTROL_SELECTOR = '.result-control';
+
+function isRenderedForIme(element) {
+    if (!element.isConnected || element.hidden) {
+        return false;
+    }
+
+    const style = getComputedStyle(element);
+    const display = String(style.display || '').trim().toLowerCase();
+    const visibility = String(style.visibility || '').trim().toLowerCase();
+    if (display === 'none' || visibility === 'hidden' || visibility === 'collapse') {
+        return false;
+    }
+
+    return element.getClientRects().length > 0;
+}
+
 function isImeEditable(element) {
     if (!(element instanceof HTMLElement)) {
+        return false;
+    }
+
+    if (!isRenderedForIme(element)) {
         return false;
     }
 
@@ -74,6 +96,19 @@ function isImeEditable(element) {
     }
 
     return element.isContentEditable;
+}
+
+function isImeReleaseCommand(element) {
+    if (!(element instanceof HTMLElement)) {
+        return false;
+    }
+
+    if (isImeEditable(element)) {
+        return false;
+    }
+
+    const command = element.closest(IME_RELEASE_CONTROL_SELECTOR);
+    return command instanceof HTMLElement && !isImeEditable(command);
 }
 
 function resolveImeSurfaceRoot(editable) {
@@ -166,7 +201,9 @@ export function installMobileImeSurfaceController() {
 
     const onFocusIn = (event) => {
         const target = event.target;
+        // Focus owns IME routing; non-editable focus releases the mobile lift.
         if (!isImeEditable(target)) {
+            applyRouting(null);
             return;
         }
         applyRouting(/** @type {HTMLElement} */ (target));
@@ -182,13 +219,27 @@ export function installMobileImeSurfaceController() {
         });
     };
 
+    const onPointerDown = (event) => {
+        const target = event.target;
+        if (!activeSurface && desiredImeTarget === null) {
+            return;
+        }
+        // Pointer release is scoped to Popup result controls that can activate without focus.
+        if (!isImeReleaseCommand(target)) {
+            return;
+        }
+        applyRouting(null);
+    };
+
     document.addEventListener('focusin', onFocusIn, true);
     document.addEventListener('focusout', onFocusOut, true);
+    document.addEventListener('pointerdown', onPointerDown, true);
 
     return {
         dispose() {
             document.removeEventListener('focusin', onFocusIn, true);
             document.removeEventListener('focusout', onFocusOut, true);
+            document.removeEventListener('pointerdown', onPointerDown, true);
         },
     };
 }

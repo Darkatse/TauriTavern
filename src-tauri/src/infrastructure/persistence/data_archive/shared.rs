@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path};
@@ -72,10 +71,10 @@ pub const COPY_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 pub const FILE_IO_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 pub const PROGRESS_REPORT_MIN_DELTA: f32 = 0.5;
 
-pub fn validate_zip_entry_limits(
+pub fn validate_archive_entry_limits(
     entry_name: &str,
     uncompressed_size: u64,
-    compressed_size: u64,
+    compressed_size: Option<u64>,
     total_uncompressed_bytes: &mut u64,
 ) -> Result<(), DomainError> {
     if uncompressed_size > MAX_ENTRY_UNCOMPRESSED_BYTES {
@@ -85,14 +84,16 @@ pub fn validate_zip_entry_limits(
         )));
     }
 
-    if compressed_size > 0
-        && uncompressed_size > COMPRESSION_RATIO_MIN_BYTES
-        && uncompressed_size / compressed_size > MAX_COMPRESSION_RATIO
-    {
-        return Err(DomainError::InvalidData(format!(
-            "Archive entry compression ratio is suspicious: {}",
-            entry_name
-        )));
+    if let Some(compressed_size) = compressed_size {
+        if compressed_size > 0
+            && uncompressed_size > COMPRESSION_RATIO_MIN_BYTES
+            && uncompressed_size / compressed_size > MAX_COMPRESSION_RATIO
+        {
+            return Err(DomainError::InvalidData(format!(
+                "Archive entry compression ratio is suspicious: {}",
+                entry_name
+            )));
+        }
     }
 
     *total_uncompressed_bytes = total_uncompressed_bytes.saturating_add(uncompressed_size);
@@ -100,6 +101,28 @@ pub fn validate_zip_entry_limits(
         return Err(DomainError::InvalidData(format!(
             "Archive uncompressed size exceeds limit (>{} bytes)",
             MAX_TOTAL_UNCOMPRESSED_BYTES
+        )));
+    }
+
+    Ok(())
+}
+
+pub fn validate_archive_compression_ratio(
+    format_name: &str,
+    uncompressed_size: u64,
+    compressed_size: Option<u64>,
+) -> Result<(), DomainError> {
+    let Some(compressed_size) = compressed_size else {
+        return Ok(());
+    };
+
+    if compressed_size > 0
+        && uncompressed_size > COMPRESSION_RATIO_MIN_BYTES
+        && uncompressed_size / compressed_size > MAX_COMPRESSION_RATIO
+    {
+        return Err(DomainError::InvalidData(format!(
+            "Archive compression ratio is suspicious: {}",
+            format_name
         )));
     }
 
@@ -152,7 +175,7 @@ pub fn read_directory_sorted(path: &Path) -> Result<Vec<fs::DirEntry>, DomainErr
     Ok(entries)
 }
 
-pub fn copy_stream_with_cancel<R: Read, W: Write>(
+pub fn copy_stream_with_cancel<R: Read + ?Sized, W: Write + ?Sized>(
     reader: &mut R,
     writer: &mut W,
     copy_buffer: &mut [u8],
@@ -240,19 +263,4 @@ pub fn progress_percent(processed: u64, total: u64, min: f32, max: f32) -> f32 {
 
 pub fn internal_error(context: &str, error: impl std::fmt::Display) -> DomainError {
     DomainError::InternalError(format!("{}: {}", context, error))
-}
-
-pub fn collect_user_handles_from_components(
-    components: &[String],
-    user_handles: &mut BTreeSet<String>,
-) {
-    if components.len() < 2 {
-        return;
-    }
-
-    let handle = components[0].clone();
-    let second = components[1].as_str();
-    if is_user_handle_marker(second) {
-        user_handles.insert(handle);
-    }
 }

@@ -3,24 +3,9 @@ use serde_json::{Map, Value};
 use crate::application::errors::ApplicationError;
 
 use super::claude;
-use super::shared::apply_custom_body_overrides;
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
-    let include_raw = payload
-        .get("custom_include_body")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let exclude_raw = payload
-        .get("custom_exclude_body")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-
-    let (endpoint, mut upstream_payload) = claude::build_passthrough(payload)?;
-    apply_custom_body_overrides(&mut upstream_payload, &include_raw, &exclude_raw)?;
-
-    Ok((endpoint, upstream_payload))
+    claude::build_passthrough(payload)
 }
 
 #[cfg(test)]
@@ -30,7 +15,7 @@ mod tests {
     use super::build;
 
     #[test]
-    fn claude_messages_exclude_runs_without_claude_contract_check() {
+    fn claude_messages_leaves_exclude_to_service_layer() {
         let payload = json!({
             "model": "claude-opus-4.6",
             "messages": [{"role": "user", "content": "hello"}],
@@ -44,7 +29,10 @@ mod tests {
         let (_endpoint, upstream) = build(payload).expect("build should succeed");
         let body = upstream.as_object().expect("body must be object");
 
-        assert!(body.get("top_p").is_none());
+        assert_eq!(
+            body.get("top_p").and_then(serde_json::Value::as_f64),
+            Some(0.8)
+        );
     }
 
     #[test]

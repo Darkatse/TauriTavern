@@ -32,10 +32,10 @@ export function getWindowedChatKey(windowState) {
     }
 
     if (windowState.kind === 'group') {
-        return `group:${String(windowState.id || '').trim()}`;
+        return `group:${String(windowState.id ?? '')}`;
     }
 
-    return `character:${String(windowState.characterName || '').trim()}|${String(windowState.avatarUrl || '').trim()}|${String(windowState.fileName || '').trim()}`;
+    return `character:${String(windowState.characterName || '').trim()}|${String(windowState.avatarUrl || '').trim()}|${String(windowState.fileName ?? '')}`;
 }
 
 export function mergeWindowedChatCursorOffset(activeCursor, nextCursor, expectedBaseOffset) {

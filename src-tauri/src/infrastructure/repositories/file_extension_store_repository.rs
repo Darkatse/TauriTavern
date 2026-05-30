@@ -220,6 +220,30 @@ async fn list_directories(dir: &Path) -> Result<Vec<String>, DomainError> {
     Ok(dirs)
 }
 
+async fn read_json_entry(path: &Path) -> Result<Option<Value>, DomainError> {
+    let bytes = match fs::read(path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(DomainError::InternalError(format!(
+                "Failed to read extension store JSON entry {}: {}",
+                path.display(),
+                error
+            )));
+        }
+    };
+
+    let value = serde_json::from_slice::<Value>(&bytes).map_err(|error| {
+        DomainError::InvalidData(format!(
+            "Extension store entry contains invalid JSON {}: {}",
+            path.display(),
+            error
+        ))
+    })?;
+
+    Ok(Some(value))
+}
+
 #[async_trait]
 impl ExtensionStoreRepository for FileExtensionStoreRepository {
     async fn get_json(
@@ -229,27 +253,22 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
         key: &str,
     ) -> Result<Value, DomainError> {
         let path = self.json_entry_path(namespace, table, key)?;
-        let bytes = fs::read(&path).await.map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                return DomainError::NotFound(format!(
-                    "Extension store JSON entry not found: {}",
-                    path.display()
-                ));
-            }
-            DomainError::InternalError(format!(
-                "Failed to read extension store JSON entry {}: {}",
-                path.display(),
-                error
-            ))
-        })?;
-
-        serde_json::from_slice::<Value>(&bytes).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Extension store entry contains invalid JSON {}: {}",
-                path.display(),
-                error
+        read_json_entry(&path).await?.ok_or_else(|| {
+            DomainError::NotFound(format!(
+                "Extension store JSON entry not found: {}",
+                path.display()
             ))
         })
+    }
+
+    async fn try_get_json(
+        &self,
+        namespace: &str,
+        table: &str,
+        key: &str,
+    ) -> Result<Option<Value>, DomainError> {
+        let path = self.json_entry_path(namespace, table, key)?;
+        read_json_entry(&path).await
     }
 
     async fn set_json(
@@ -308,23 +327,7 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
             })?;
         }
 
-        let mut current = match fs::read(&path).await {
-            Ok(bytes) => serde_json::from_slice::<Value>(&bytes).map_err(|error| {
-                DomainError::InvalidData(format!(
-                    "Extension store entry contains invalid JSON {}: {}",
-                    path.display(),
-                    error
-                ))
-            })?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Value::Null,
-            Err(error) => {
-                return Err(DomainError::InternalError(format!(
-                    "Failed to read extension store JSON entry {}: {}",
-                    path.display(),
-                    error
-                )));
-            }
-        };
+        let mut current = read_json_entry(&path).await?.unwrap_or(Value::Null);
 
         merge_json_value(&mut current, value);
 
@@ -604,6 +607,41 @@ mod tests {
 
         let keys = repo.list_json_keys("my-ext", "main").await.unwrap();
         assert_eq!(keys, vec![String::from("index")]);
+    }
+
+    #[tokio::test]
+    async fn try_get_json_distinguishes_missing_from_null_and_keeps_invalid_json_fatal() {
+        let dir = create_temp_dir();
+        let repo = FileExtensionStoreRepository::new(dir.clone());
+
+        let missing = repo
+            .try_get_json("my-ext", "main", "settings")
+            .await
+            .unwrap();
+        assert_eq!(missing, None);
+
+        repo.set_json("my-ext", "main", "settings", json!(null))
+            .await
+            .unwrap();
+
+        let existing_null = repo
+            .try_get_json("my-ext", "main", "settings")
+            .await
+            .unwrap();
+        assert_eq!(existing_null, Some(json!(null)));
+
+        let invalid_path = dir
+            .join("my-ext")
+            .join("kv")
+            .join("main")
+            .join("invalid.json");
+        std::fs::write(&invalid_path, "{").expect("write invalid json");
+
+        let error = repo
+            .try_get_json("my-ext", "main", "invalid")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid JSON"));
     }
 
     #[tokio::test]

@@ -1,7 +1,8 @@
-use std::borrow::Cow;
-
 use serde_json::{Map, Value};
 
+use super::openai_reasoning::{
+    normalize_openai_reasoning_effort, should_forward_openai_reasoning_effort,
+};
 use super::shared::{insert_if_present, message_content_to_text};
 
 const TEXT_COMPLETION_MODELS: &[&str] = &[
@@ -32,35 +33,6 @@ const TEXT_COMPLETION_MODELS: &[&str] = &[
     "code-search-ada-code-001",
 ];
 
-const OPENAI_REASONING_EFFORT_MODELS: &[&str] = &[
-    "o1",
-    "o3-mini",
-    "o3-mini-2025-01-31",
-    "o4-mini",
-    "o4-mini-2025-04-16",
-    "o3",
-    "o3-2025-04-16",
-    "gpt-5",
-    "gpt-5-2025-08-07",
-    "gpt-5-mini",
-    "gpt-5-mini-2025-08-07",
-    "gpt-5-nano",
-    "gpt-5-nano-2025-08-07",
-    "gpt-5.1",
-    "gpt-5.1-2025-11-13",
-    "gpt-5.1-chat-latest",
-    "gpt-5.2",
-    "gpt-5.2-2025-12-11",
-    "gpt-5.2-chat-latest",
-    "gpt-5.4",
-    "gpt-5.4-2026-03-05",
-    "gpt-5.4-chat-latest",
-    "gpt-5.4-mini",
-    "gpt-5.4-mini-2026-03-17",
-    "gpt-5.4-nano",
-    "gpt-5.4-nano-2026-03-17",
-];
-
 pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
     let mut payload = payload;
     let source = payload
@@ -85,7 +57,13 @@ pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
         "custom_include_headers",
         "custom_claude_prompt_caching",
         "custom_url",
+        "secret_id",
         "bypass_status_check",
+        "siliconflow_endpoint",
+        "minimax_endpoint",
+        "workers_ai_account_id",
+        "nanogpt_provider",
+        "nanogpt_payg_override",
     ] {
         payload.remove(key);
     }
@@ -171,7 +149,7 @@ fn build_chat_completion_payload(payload: &Map<String, Value>, source: &str) -> 
             if let Some(reasoning_effort) = payload
                 .get("reasoning_effort")
                 .and_then(Value::as_str)
-                .and_then(normalize_openai_reasoning_effort)
+                .and_then(|value| normalize_openai_reasoning_effort(value, model))
             {
                 request.insert(
                     "reasoning_effort".to_string(),
@@ -209,25 +187,8 @@ fn build_chat_completion_payload(payload: &Map<String, Value>, source: &str) -> 
     request
 }
 
-fn should_forward_openai_reasoning_effort(source: &str, model: &str) -> bool {
-    matches!(source, "openai" | "custom") && OPENAI_REASONING_EFFORT_MODELS.contains(&model.trim())
-}
-
 fn should_forward_openai_verbosity(source: &str, model: &str) -> bool {
     matches!(source, "openai" | "custom") && model.trim().to_ascii_lowercase().starts_with("gpt-5")
-}
-
-fn normalize_openai_reasoning_effort(value: &str) -> Option<Cow<'_, str>> {
-    let value = value.trim();
-    if value.is_empty() || value.eq_ignore_ascii_case("auto") {
-        return None;
-    }
-
-    if value.eq_ignore_ascii_case("min") {
-        return Some(Cow::Borrowed("minimal"));
-    }
-
-    Some(Cow::Borrowed(value))
 }
 
 fn map_chat_logprobs(request: &mut Map<String, Value>, payload: &Map<String, Value>) {
@@ -375,7 +336,26 @@ fn is_text_completion(payload: &Map<String, Value>) -> bool {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::build;
+    use super::{build, strip_internal_fields};
+
+    #[test]
+    fn strip_internal_fields_removes_secret_id_selector() {
+        let mut payload = json!({
+            "secret_id": "profile-secret",
+            "model": "gpt-4.1-mini"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        strip_internal_fields(&mut payload);
+
+        assert!(payload.get("secret_id").is_none());
+        assert_eq!(
+            payload.get("model").and_then(Value::as_str),
+            Some("gpt-4.1-mini")
+        );
+    }
 
     #[test]
     fn custom_payload_does_not_forward_reasoning_effort_for_non_openai_models() {
@@ -417,6 +397,61 @@ mod tests {
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
             "minimal"
+        );
+    }
+
+    #[test]
+    fn custom_payload_normalizes_xhigh_by_openai_model_support() {
+        let supported = json!({
+            "chat_completion_source": "custom",
+            "model": "gpt-5.2",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+        let (_endpoint, upstream) = build(supported);
+        let body = upstream.as_object().expect("payload must be object");
+        assert_eq!(
+            body.get("reasoning_effort").and_then(Value::as_str),
+            Some("xhigh")
+        );
+
+        let unsupported = json!({
+            "chat_completion_source": "custom",
+            "model": "gpt-5.1",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+        let (_endpoint, upstream) = build(unsupported);
+        let body = upstream.as_object().expect("payload must be object");
+        assert_eq!(
+            body.get("reasoning_effort").and_then(Value::as_str),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn custom_payload_maps_project_maximum_to_openai_high() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "model": "gpt-5.2",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "max"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload);
+        let body = upstream.as_object().expect("payload must be object");
+        assert_eq!(
+            body.get("reasoning_effort").and_then(Value::as_str),
+            Some("high")
         );
     }
 

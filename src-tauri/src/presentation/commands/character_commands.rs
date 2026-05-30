@@ -4,13 +4,17 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::application::dto::character_dto::{
-    CharacterChatDto, CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
-    ExportCharacterContentDto, ExportCharacterContentResultDto, ExportCharacterDto,
-    GetCharacterChatsDto, ImportCharacterDto, MergeCharacterCardDataDto, RenameCharacterDto,
-    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
+    BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataResultDto, CharacterChatDto,
+    CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
+    DuplicateCharacterDto, ExportCharacterContentDto, ExportCharacterContentResultDto,
+    ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto, MergeCharacterCardDataDto,
+    RenameCharacterDto, UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
+use crate::domain::models::skill::{SkillScope, SkillScopeRetargetRequest};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
+
+const SKILL_SOURCE_KIND_CHARACTER: &str = "character";
 
 #[tauri::command]
 pub async fn get_all_characters(
@@ -120,17 +124,47 @@ pub async fn merge_character_card_data(
 }
 
 #[tauri::command]
+pub async fn bulk_merge_character_card_data(
+    dto: BulkMergeCharacterCardDataDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<BulkMergeCharacterCardDataResultDto, CommandError> {
+    log_command("bulk_merge_character_card_data");
+
+    app_state
+        .character_service
+        .bulk_merge_character_card_data(dto)
+        .await
+        .map_err(map_command_error(
+            "Failed to bulk merge character card data",
+        ))
+}
+
+#[tauri::command]
 pub async fn delete_character(
     dto: DeleteCharacterDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     log_command(format!("delete_character {}", dto.name));
 
+    let name = dto.name.clone();
     app_state
         .character_service
         .delete_character(dto)
         .await
-        .map_err(map_command_error("Failed to delete character"))
+        .map_err(map_command_error("Failed to delete character"))?;
+
+    app_state
+        .skill_service
+        .delete_skills_for_source(
+            SKILL_SOURCE_KIND_CHARACTER,
+            &character_skill_source_id(&name),
+        )
+        .await
+        .map_err(map_command_error(
+            "Failed to delete Agent Skills linked to character",
+        ))?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -143,11 +177,46 @@ pub async fn rename_character(
         dto.old_name, dto.new_name
     ));
 
-    app_state
+    let old_character_id = dto.old_name.clone();
+    let renamed = app_state
         .character_service
         .rename_character(dto)
         .await
-        .map_err(map_command_error("Failed to rename character"))
+        .map_err(map_command_error("Failed to rename character"))?;
+
+    let new_character_id = character_id_from_avatar(&renamed.avatar)?;
+    if old_character_id != new_character_id {
+        app_state
+            .skill_service
+            .retarget_scope(SkillScopeRetargetRequest {
+                from_scope: SkillScope::Character {
+                    character_id: old_character_id,
+                },
+                to_scope: SkillScope::Character {
+                    character_id: new_character_id,
+                },
+            })
+            .await
+            .map_err(map_command_error(
+                "Failed to retarget Agent Skills linked to character",
+            ))?;
+    }
+
+    Ok(renamed)
+}
+
+#[tauri::command]
+pub async fn duplicate_character(
+    dto: DuplicateCharacterDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<CharacterDto, CommandError> {
+    log_command(format!("duplicate_character {}", dto.name));
+
+    app_state
+        .character_service
+        .duplicate_character(dto)
+        .await
+        .map_err(map_command_error("Failed to duplicate character"))
 }
 
 #[tauri::command]
@@ -237,4 +306,28 @@ pub async fn clear_character_cache(
         .clear_cache()
         .await
         .map_err(map_command_error("Failed to clear character cache"))
+}
+
+fn character_skill_source_id(name: &str) -> String {
+    format!("character:{}", name.trim())
+}
+
+fn character_id_from_avatar(avatar: &str) -> Result<String, CommandError> {
+    let file_name = avatar
+        .trim()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    let id = file_name
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(file_name)
+        .trim();
+    if id.is_empty() {
+        return Err(CommandError::BadRequest(
+            "Character avatar did not resolve to a character id".to_string(),
+        ));
+    }
+    Ok(id.to_string())
 }

@@ -7,11 +7,13 @@ use tokio::sync::mpsc;
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
 use super::normalizers;
+use super::response_body::read_upstream_json_body;
 
 const GEMINI_API_VERSION: &str = "v1beta";
 
@@ -360,7 +362,7 @@ pub(super) async fn generate(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-) -> Result<Value, DomainError> {
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let url = build_gemini_url(&config.base_url, endpoint_path);
 
     let client = repository.client()?;
@@ -372,9 +374,10 @@ pub(super) async fn generate(
 
     let request = apply_gemini_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {
@@ -386,9 +389,7 @@ pub(super) async fn generate(
         .await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
-    })?;
+    let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
     Ok(normalizers::normalize_gemini_interactions_response(body))
 }
@@ -413,9 +414,10 @@ pub(super) async fn generate_stream(
 
     let request = apply_gemini_stream_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {

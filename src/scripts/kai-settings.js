@@ -7,6 +7,7 @@ import {
     resultCheckStatus,
     main_api,
     online_status,
+    isConnectionValidationSuspended,
     abortStatusCheck,
     startStatusLoading,
     setGenerationParamsFromPreset,
@@ -202,6 +203,7 @@ export function getKoboldGenerationData(finalPrompt, settings, maxLength, maxCon
         mirostat_eta: (kai_flags.can_use_mirostat || isHorde) ? kai_settings.mirostat_eta : undefined,
         use_default_badwordsids: (kai_flags.can_use_default_badwordsids || isHorde) ? kai_settings.use_default_badwordsids : undefined,
         grammar: (kai_flags.can_use_grammar || isHorde) ? substituteParams(kai_settings.grammar) : undefined,
+        grammar_retain_state: (kai_flags.can_use_grammar && !!isContinue) ? true : undefined,
         sampler_seed: kai_settings.seed >= 0 ? kai_settings.seed : undefined,
         api_server: kai_settings.api_server,
     };
@@ -220,8 +222,7 @@ function tryParseStreamingError(response, decoded) {
             toastr.error(data.error.message || response.statusText, 'KoboldAI API');
             throw new Error(data);
         }
-    }
-    catch {
+    } catch {
         // No JSON. Do nothing.
     }
 }
@@ -461,6 +462,10 @@ export function initKoboldSettings() {
     });
 
     $('#api_button').on('click', function (e) {
+        if (isConnectionValidationSuspended()) {
+            return;
+        }
+
         if ($('#api_url_text').val() != '') {
             const value = formatKoboldUrl(String($('#api_url_text').val()).trim());
 

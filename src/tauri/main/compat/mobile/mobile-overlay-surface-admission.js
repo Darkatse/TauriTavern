@@ -199,7 +199,8 @@ function classifySurface(element) {
     }
 
     const display = String(computedStyle.display || '').trim().toLowerCase();
-    if (display === 'none') {
+    const visibility = String(computedStyle.visibility || '').trim().toLowerCase();
+    if (element.hidden || display === 'none' || visibility === 'hidden' || visibility === 'collapse') {
         return null;
     }
 
@@ -294,7 +295,8 @@ export function applySurfaceContract(element, { settling = false } = {}) {
     }
 
     const current = String(element.getAttribute(SURFACE_ATTR) || '').trim();
-    if (current !== surface) {
+    const surfaceChanged = current !== surface;
+    if (surfaceChanged) {
         element.setAttribute(SURFACE_ATTR, surface);
     }
     if (!element.hasAttribute(HOST_ADMITTED_ATTR)) {
@@ -303,7 +305,9 @@ export function applySurfaceContract(element, { settling = false } = {}) {
 
     if (surface === SURFACE.FreeWindow) {
         element.style.removeProperty(ORIGINAL_TOP_VAR);
-        nudgeFreeWindowOnAdmission(element);
+        if (settling && surfaceChanged) {
+            nudgeFreeWindowOnAdmission(element);
+        }
         return;
     }
 

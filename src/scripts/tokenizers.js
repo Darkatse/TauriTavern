@@ -1,7 +1,7 @@
 import { localforage } from '../lib.js';
 import { characters, event_types, eventSource, main_api, nai_settings, online_status, this_chid } from '../script.js';
 import { power_user, registerDebugFunction } from './power-user.js';
-import { chat_completion_sources, model_list, oai_settings } from './openai.js';
+import { chat_completion_sources, model_list, oai_settings as current_oai_settings } from './openai.js';
 import { groups, selected_group } from './group-chats.js';
 import { getStringHash } from './utils.js';
 import { kai_flags, kai_settings } from './kai-settings.js';
@@ -259,9 +259,19 @@ function scheduleLegacyTokenCacheCleanup() {
     setTimeout(runAsync, 0);
 }
 
-export async function saveTokenCache() {
+function isTokenCacheState(value) {
+    return Boolean(value && typeof value === 'object' && 'chatId' in value && 'cache' in value);
+}
+
+export function captureTokenCacheSaveState(chatId = resolveTokenCacheChatId()) {
+    return getTokenCacheState(chatId);
+}
+
+export async function saveTokenCache(chatIdOrState = resolveTokenCacheChatId()) {
     console.debug('Chat Completions: saving token cache');
-    const state = getTokenCacheState(resolveTokenCacheChatId());
+    const state = isTokenCacheState(chatIdOrState)
+        ? chatIdOrState
+        : getTokenCacheState(chatIdOrState);
     await flushTokenCacheState(state);
 }
 
@@ -656,7 +666,8 @@ function counterWrapperOpenAIAsync(text) {
     return countTokensOpenAIAsync(message, true);
 }
 
-export function getTokenizerModel() {
+export function getTokenizerModel(settings = null) {
+    const oai_settings = settings ?? current_oai_settings;
     // OpenAI models always provide their own tokenizer
     if (oai_settings.chat_completion_source == chat_completion_sources.OPENAI) {
         return oai_settings.openai_model;
@@ -685,6 +696,10 @@ export function getTokenizerModel() {
 
     if (oai_settings.chat_completion_source == chat_completion_sources.DEEPSEEK) {
         return deepseekTokenizer;
+    }
+
+    if (oai_settings.chat_completion_source == chat_completion_sources.MINIMAX) {
+        return turboTokenizer;
     }
 
     // And for OpenRouter (if not a site model, then it's impossible to determine the tokenizer)
@@ -809,6 +824,20 @@ export function getTokenizerModel() {
             return mistralTokenizer;
         } else if (model.includes('gpt-oss')) {
             return gpt4oTokenizer;
+        }
+    }
+
+    if (oai_settings.chat_completion_source == chat_completion_sources.WORKERS_AI && oai_settings.workers_ai_model) {
+        const model = oai_settings.workers_ai_model.toLowerCase();
+
+        if (model.includes('qwen') || model.includes('qwq')) {
+            return qwen2Tokenizer;
+        } else if (model.includes('llama')) {
+            return llama3Tokenizer;
+        } else if (model.includes('deepseek')) {
+            return deepseekTokenizer;
+        } else if (model.includes('mistral')) {
+            return mistralTokenizer;
         }
     }
 
@@ -1014,10 +1043,11 @@ export function countTokensOpenAI(messages, full = false) {
  * Returns the token count for a message using the OpenAI tokenizer.
  * @param {object[]|object} messages
  * @param {boolean} full
+ * @param {ChatCompletionSettings|null} settings Optional chat-completion settings for model-specific tokenization.
  * @returns {Promise<number>} Token count.
  */
-export async function countTokensOpenAIAsync(messages, full = false) {
-    const model = getTokenizerModel();
+export async function countTokensOpenAIAsync(messages, full = false, settings = null) {
+    const model = getTokenizerModel(settings);
     const tokenizerEndpoint = `/api/tokenizers/openai/count-batch?model=${model}`;
     const legacyTokenizerEndpoint = `/api/tokenizers/openai/count?model=${model}`;
     const cacheState = getTokenCacheState(resolveTokenCacheChatId());

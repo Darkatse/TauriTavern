@@ -49,6 +49,7 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
     let root = unique_temp_root();
     let characters_dir = root.join("characters");
     let chats_dir = root.join("chats");
+    let thumbnails_avatar_dir = root.join("thumbnails/avatar");
     let default_avatar = root.join("default.png");
 
     fs::create_dir_all(&characters_dir)
@@ -57,11 +58,19 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
     fs::create_dir_all(&chats_dir)
         .await
         .expect("create chats dir");
+    fs::create_dir_all(&thumbnails_avatar_dir)
+        .await
+        .expect("create avatar thumbnails dir");
     fs::write(&default_avatar, build_minimal_png())
         .await
         .expect("write default avatar");
 
-    let repository = FileCharacterRepository::new(characters_dir, chats_dir, default_avatar);
+    let repository = FileCharacterRepository::new(
+        characters_dir,
+        chats_dir,
+        thumbnails_avatar_dir,
+        default_avatar,
+    );
     (repository, root)
 }
 
@@ -230,6 +239,104 @@ async fn create_with_avatar_sanitizes_file_stem_like_sillytavern() {
 }
 
 #[tokio::test]
+async fn create_with_avatar_prefers_explicit_file_stem() {
+    let (repository, root) = setup_repository().await;
+
+    let mut character = Character::new(
+        "Display Name".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "Hi".to_string(),
+    );
+    character.file_name = Some("Permanent Assistant".to_string());
+
+    let created = repository
+        .create_with_avatar(&character, None, None)
+        .await
+        .expect("create character");
+
+    assert_eq!(created.avatar, "Permanent Assistant.png");
+    assert_eq!(created.file_name, Some("Permanent Assistant".to_string()));
+
+    let loaded = repository
+        .find_by_name("Permanent Assistant")
+        .await
+        .expect("load character by file stem");
+    assert_eq!(loaded.name, "Display Name");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn duplicate_copies_png_bytes_and_uses_upstream_suffix() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "name": "Display Name",
+        "description": "desc",
+        "personality": "persona",
+        "first_mes": "hello",
+        "x_custom_root": { "keep": true },
+        "data": {
+            "name": "Display Name",
+            "description": "desc",
+            "personality": "persona",
+            "first_mes": "hello",
+            "extensions": {
+                "world": "Shared Lore"
+            }
+        }
+    });
+    let source_png = write_character_data_to_png(
+        &build_distinct_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+
+    let source_path = root.join("characters").join("Alice_1.png");
+    let occupied_path = root.join("characters").join("Alice_2.png");
+    fs::write(&source_path, &source_png)
+        .await
+        .expect("write source character png");
+    fs::write(
+        &occupied_path,
+        write_character_data_to_png(
+            &build_minimal_png(),
+            &serde_json::to_string(&json!({ "name": "Occupied", "first_mes": "hi" }))
+                .expect("serialize occupied card"),
+        )
+        .expect("embed occupied card"),
+    )
+    .await
+    .expect("write occupied duplicate target");
+
+    let duplicated = repository
+        .duplicate("Alice_1")
+        .await
+        .expect("duplicate character");
+
+    assert_eq!(duplicated.avatar, "Alice_3.png");
+    assert_eq!(duplicated.file_name, Some("Alice_3".to_string()));
+
+    let duplicated_path = root.join("characters").join("Alice_3.png");
+    let duplicated_bytes = fs::read(&duplicated_path)
+        .await
+        .expect("read duplicated character png");
+    assert_eq!(duplicated_bytes, source_png);
+
+    let duplicated_json =
+        read_character_data_from_png(&duplicated_bytes).expect("extract duplicated card json");
+    let duplicated_value: serde_json::Value =
+        serde_json::from_str(&duplicated_json).expect("parse duplicated card json");
+    assert_eq!(
+        duplicated_value["x_custom_root"]["keep"].as_bool(),
+        Some(true)
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn import_png_does_not_eagerly_create_chat_file() {
     let (repository, root) = setup_repository().await;
 
@@ -297,6 +404,330 @@ async fn import_json_normalizes_preserved_file_name() {
     assert_eq!(imported.avatar, "Preserved.png");
     assert!(root.join("characters").join("Preserved.png").exists());
     assert!(!root.join("characters").join("Preserved.png.png").exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn import_png_preserves_unknown_card_fields() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "name": "Unknown Import",
+        "description": "desc",
+        "personality": "persona",
+        "scenario": "scenario",
+        "first_mes": "hello",
+        "mes_example": "",
+        "creatorcomment": "legacy creator notes",
+        "chat": "source-chat",
+        "fav": true,
+        "x_custom_root": { "nested": true },
+        "x_list": [1, 2, 3],
+        "x_string": "keep me",
+        "unknown_root_array": [{ "id": 1 }],
+        "data": {
+            "name": "Unknown Import",
+            "description": "desc",
+            "personality": "persona",
+            "scenario": "scenario",
+            "first_mes": "hello",
+            "mes_example": "",
+            "creator_notes": "canonical notes",
+            "system_prompt": "",
+            "post_history_instructions": "",
+            "tags": [],
+            "creator": "tester",
+            "character_version": "1.0",
+            "alternate_greetings": [],
+            "extensions": {
+                "talkativeness": 0.5,
+                "fav": true,
+                "world": "",
+                "depth_prompt": {
+                    "prompt": "",
+                    "depth": 4,
+                    "role": "system"
+                },
+                "tavern_helper": {
+                    "scripts": [
+                        { "id": "script-1" }
+                    ]
+                }
+            },
+            "x_data_custom": { "answer": 42 }
+        }
+    });
+
+    let source_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+    let import_path = root.join("unknown-import.png");
+    fs::write(&import_path, source_png)
+        .await
+        .expect("write import png");
+
+    let imported = repository
+        .import_character(&import_path, None)
+        .await
+        .expect("import png character");
+
+    let stored_name = imported.avatar.trim_end_matches(".png");
+    let stored_json = repository
+        .read_character_card_json(stored_name)
+        .await
+        .expect("read stored character");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse stored character");
+
+    assert_eq!(
+        stored_value.get("x_custom_root"),
+        Some(&json!({ "nested": true }))
+    );
+    assert_eq!(stored_value.get("x_list"), Some(&json!([1, 2, 3])));
+    assert_eq!(stored_value.get("x_string"), Some(&json!("keep me")));
+    assert_eq!(
+        stored_value.get("unknown_root_array"),
+        Some(&json!([{ "id": 1 }]))
+    );
+    assert_eq!(
+        stored_value.get("creatorcomment"),
+        Some(&json!("legacy creator notes"))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/x_data_custom"),
+        Some(&json!({ "answer": 42 }))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/extensions/tavern_helper/scripts/0/id"),
+        Some(&json!("script-1"))
+    );
+    assert_eq!(stored_value.get("fav"), Some(&json!(false)));
+    assert_eq!(
+        stored_value.pointer("/data/extensions/fav"),
+        Some(&json!(false))
+    );
+    assert_ne!(stored_value.get("chat"), Some(&json!("source-chat")));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn import_png_updates_create_date_without_dropping_unknown_fields() {
+    let (repository, root) = setup_repository().await;
+
+    let source_create_date = "2000-01-02T03:04:05.006Z";
+    let card_payload = json!({
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "name": "Import Date Refresh",
+        "description": "desc",
+        "first_mes": "hello",
+        "create_date": source_create_date,
+        "x_custom_root": { "survives": true },
+        "data": {
+            "name": "Import Date Refresh",
+            "description": "desc",
+            "first_mes": "hello",
+            "extensions": {
+                "talkativeness": 0.5,
+                "fav": false,
+                "tavern_helper": {
+                    "script": "keep"
+                }
+            },
+            "x_data_custom": "keep"
+        }
+    });
+
+    let source_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+    let import_path = root.join("date-refresh.png");
+    fs::write(&import_path, source_png)
+        .await
+        .expect("write import png");
+
+    let imported = repository
+        .import_character(&import_path, None)
+        .await
+        .expect("import png character");
+
+    assert_ne!(imported.create_date, source_create_date);
+    assert!(
+        DateTime::parse_from_rfc3339(&imported.create_date).is_ok(),
+        "import create_date should be RFC3339"
+    );
+
+    let stored_name = imported.avatar.trim_end_matches(".png");
+    let stored_json = repository
+        .read_character_card_json(stored_name)
+        .await
+        .expect("read stored character");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse stored character");
+
+    assert_eq!(
+        stored_value
+            .get("create_date")
+            .and_then(|value| value.as_str()),
+        Some(imported.create_date.as_str())
+    );
+    assert_eq!(
+        stored_value.pointer("/x_custom_root/survives"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/x_data_custom"),
+        Some(&json!("keep"))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/extensions/tavern_helper/script"),
+        Some(&json!("keep"))
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn import_json_preserves_unknown_card_fields() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "name": "Unknown Json Import",
+        "description": "desc",
+        "first_mes": "hello",
+        "x_custom_root": true,
+        "data": {
+            "name": "Unknown Json Import",
+            "description": "desc",
+            "first_mes": "hello",
+            "extensions": {
+                "talkativeness": 0.5,
+                "fav": false,
+                "tavern_helper": {
+                    "enabled": true
+                }
+            },
+            "x_data_custom": "data-value"
+        }
+    });
+
+    let import_path = root.join("unknown-import.json");
+    fs::write(
+        &import_path,
+        serde_json::to_vec(&card_payload).expect("serialize card"),
+    )
+    .await
+    .expect("write import json");
+
+    let imported = repository
+        .import_character(&import_path, None)
+        .await
+        .expect("import json character");
+
+    let stored_name = imported.avatar.trim_end_matches(".png");
+    let stored_json = repository
+        .read_character_card_json(stored_name)
+        .await
+        .expect("read stored character");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse stored character");
+
+    assert_eq!(stored_value.get("x_custom_root"), Some(&json!(true)));
+    assert_eq!(
+        stored_value.pointer("/data/x_data_custom"),
+        Some(&json!("data-value"))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/extensions/tavern_helper/enabled"),
+        Some(&json!(true))
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn import_v3_uses_data_fields_when_top_level_is_stale() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "name": "Stale Root Name",
+        "description": "stale root desc",
+        "personality": "stale root persona",
+        "scenario": "stale root scenario",
+        "first_mes": "stale root hello",
+        "mes_example": "stale root example",
+        "tags": ["root-tag"],
+        "talkativeness": 0.1,
+        "data": {
+            "name": "Canonical Import",
+            "description": "canonical desc",
+            "personality": "canonical persona",
+            "scenario": "canonical scenario",
+            "first_mes": "canonical hello",
+            "mes_example": "canonical example",
+            "tags": ["data-tag"],
+            "extensions": {
+                "talkativeness": 0.8,
+                "fav": false
+            }
+        }
+    });
+
+    let import_path = root.join("stale-root.json");
+    fs::write(
+        &import_path,
+        serde_json::to_vec(&card_payload).expect("serialize card"),
+    )
+    .await
+    .expect("write import json");
+
+    let imported = repository
+        .import_character(&import_path, None)
+        .await
+        .expect("import stale root character");
+
+    assert_eq!(imported.name, "Canonical Import");
+    assert_eq!(imported.description, "canonical desc");
+    assert_eq!(imported.personality, "canonical persona");
+    assert_eq!(imported.scenario, "canonical scenario");
+    assert_eq!(imported.first_mes, "canonical hello");
+    assert_eq!(imported.mes_example, "canonical example");
+    assert_eq!(imported.tags, vec!["data-tag".to_string()]);
+    assert_eq!(imported.talkativeness, 0.8);
+
+    let stored_json = repository
+        .read_character_card_json("Canonical Import")
+        .await
+        .expect("read stored character");
+    let stored_value: serde_json::Value =
+        serde_json::from_str(&stored_json).expect("parse stored character");
+
+    assert_eq!(stored_value.get("name"), Some(&json!("Canonical Import")));
+    assert_eq!(
+        stored_value.get("description"),
+        Some(&json!("canonical desc"))
+    );
+    assert_eq!(
+        stored_value.pointer("/data/description"),
+        Some(&json!("canonical desc"))
+    );
+    assert_eq!(stored_value.get("tags"), Some(&json!(["data-tag"])));
+    assert_eq!(
+        stored_value.pointer("/data/extensions/talkativeness"),
+        Some(&json!(0.8))
+    );
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -579,6 +1010,28 @@ async fn save_character_cache_exposes_real_avatar_file_name() {
 }
 
 #[tokio::test]
+async fn list_avatar_filenames_uses_directory_entries_without_card_parsing() {
+    let (repository, root) = setup_repository().await;
+
+    fs::write(root.join("characters").join("Broken.png"), b"not a card")
+        .await
+        .expect("write placeholder png");
+    fs::write(root.join("characters").join("Notes.json"), b"{}")
+        .await
+        .expect("write non-character file");
+
+    let mut avatars = repository
+        .list_avatar_filenames()
+        .await
+        .expect("list avatar filenames");
+    avatars.sort();
+
+    assert_eq!(avatars, vec!["Broken.png".to_string()]);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn find_all_shallow_preserves_runtime_fields_and_omits_character_book() {
     let (repository, root) = setup_repository().await;
 
@@ -640,6 +1093,98 @@ async fn find_all_shallow_preserves_runtime_fields_and_omits_character_book() {
     assert!(shallow.data.extensions.world.is_empty());
     assert!(shallow.data.extensions.additional.is_empty());
     assert!(shallow.data.character_book.is_none());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn v2_data_metadata_is_canonical_for_full_and_shallow_reads() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "name": "Metadata Target",
+        "description": "root desc",
+        "personality": "root persona",
+        "scenario": "root scenario",
+        "first_mes": "root hello",
+        "mes_example": "root example",
+        "creator": "root creator",
+        "creator_notes": "root notes",
+        "character_version": "1.0-root",
+        "tags": ["root-tag"],
+        "talkativeness": 0.1,
+        "fav": true,
+        "data": {
+            "name": "Metadata Target",
+            "description": "data desc",
+            "personality": "data persona",
+            "scenario": "data scenario",
+            "first_mes": "data hello",
+            "mes_example": "data example",
+            "creator_notes": "data notes",
+            "system_prompt": "",
+            "post_history_instructions": "",
+            "tags": ["data-tag"],
+            "creator": "data creator",
+            "character_version": "1.1-data",
+            "alternate_greetings": [],
+            "extensions": {
+                "talkativeness": 0.8,
+                "fav": false,
+                "world": "",
+                "depth_prompt": {
+                    "prompt": "",
+                    "depth": 4,
+                    "role": "system"
+                }
+            }
+        }
+    });
+
+    let source_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+    fs::write(
+        root.join("characters").join("MetadataTarget.png"),
+        source_png,
+    )
+    .await
+    .expect("write character png");
+
+    let full = repository
+        .find_by_name("MetadataTarget")
+        .await
+        .expect("load full character");
+    assert_eq!(full.description, "data desc");
+    assert_eq!(full.personality, "data persona");
+    assert_eq!(full.scenario, "data scenario");
+    assert_eq!(full.first_mes, "data hello");
+    assert_eq!(full.mes_example, "data example");
+    assert_eq!(full.tags, vec!["data-tag".to_string()]);
+    assert_eq!(full.talkativeness, 0.8);
+    assert!(!full.fav);
+    assert_eq!(full.creator, "data creator");
+    assert_eq!(full.creator_notes, "data notes");
+    assert_eq!(full.character_version, "1.1-data");
+
+    let shallow = repository
+        .find_all(true)
+        .await
+        .expect("load shallow character list");
+    assert_eq!(shallow.len(), 1);
+    assert_eq!(shallow[0].creator, "data creator");
+    assert_eq!(shallow[0].data.creator, "data creator");
+    assert_eq!(shallow[0].creator_notes, "data notes");
+    assert_eq!(shallow[0].data.creator_notes, "data notes");
+    assert_eq!(shallow[0].character_version, "1.1-data");
+    assert_eq!(shallow[0].data.character_version, "1.1-data");
+    assert_eq!(shallow[0].tags, vec!["data-tag".to_string()]);
+    assert_eq!(shallow[0].talkativeness, 0.8);
+    assert!(!shallow[0].fav);
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -798,6 +1343,45 @@ async fn rename_preserves_avatar_pixel_data() {
     assert_eq!(old_image.to_rgba8(), new_image.to_rgba8());
 
     assert!(!old_file_path.exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn update_avatar_invalidates_stale_thumbnail() {
+    let (repository, root) = setup_repository().await;
+
+    let character = Character::new(
+        "Avatar Target".to_string(),
+        "desc".to_string(),
+        "personality".to_string(),
+        "hello".to_string(),
+    );
+    let created = repository
+        .create_with_avatar(&character, None, None)
+        .await
+        .expect("create character");
+
+    let thumbnail_path = root.join("thumbnails/avatar").join(&created.avatar);
+    fs::write(&thumbnail_path, b"stale thumbnail")
+        .await
+        .expect("write stale thumbnail");
+
+    let replacement_path = root.join("replacement.png");
+    fs::write(&replacement_path, build_distinct_png())
+        .await
+        .expect("write replacement avatar");
+
+    repository
+        .update_avatar(&created, &replacement_path, None)
+        .await
+        .expect("update avatar");
+
+    assert!(
+        !fs::try_exists(&thumbnail_path)
+            .await
+            .expect("check thumbnail")
+    );
 
     let _ = fs::remove_dir_all(&root).await;
 }

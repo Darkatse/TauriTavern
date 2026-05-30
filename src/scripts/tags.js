@@ -16,7 +16,7 @@ import {
 import { FILTER_TYPES, FILTER_STATES, DEFAULT_FILTER_STATE, isFilterState, FilterHelper } from './filters.js';
 
 import { groupCandidatesFilter, groupMembersFilter, groups, selected_group } from './group-chats.js';
-import { download, onlyUnique, parseJsonFile, uuidv4, getSortableDelay, flashHighlight, equalsIgnoreCaseAndAccents, includesIgnoreCaseAndAccents, removeFromArray, getFreeName, debounce, findChar } from './utils.js';
+import { download, onlyUnique, parseJsonFile, uuidv4, getSortableDelay, flashHighlight, equalsIgnoreCaseAndAccents, includesIgnoreCaseAndAccents, removeFromArray, getFreeName, debounce, findChar, escapeHtml } from './utils.js';
 import { power_user } from './power-user.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
@@ -29,6 +29,7 @@ import { commonEnumProviders } from './slash-commands/SlashCommandCommonEnumsPro
 import { renderTemplateAsync } from './templates.js';
 import { t, translate } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
+import { enumTypes, SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 
 export {
     TAG_FOLDER_TYPES,
@@ -326,7 +327,6 @@ const TAG_FOLDER_DEFAULT_TYPE = 'NONE';
  * @property {string} [folder_type] - The bogus folder type of this tag (based on `TAG_FOLDER_TYPES`)
  * @property {string} [filter_state] - The saved state of the filter chosen of this tag (based on `FILTER_STATES`)
  * @property {number} [sort_order] - A custom integer representing the sort order if tags are sorted
- * @property {number} [count] - The number of entities that have this tag assigned
  * @property {string} [color] - The background color of the tag
  * @property {string} [color2] - The foreground color of the tag
  * @property {number} [create_date] - A number representing the date when this tag was created
@@ -858,8 +858,7 @@ function addTagToMap(tagId, characterId = null) {
     if (!Array.isArray(tag_map[key])) {
         tag_map[key] = [tagId];
         return true;
-    }
-    else {
+    } else {
         if (tag_map[key].includes(tagId))
             return false;
 
@@ -885,8 +884,7 @@ function removeTagFromMap(tagId, characterId = null) {
     if (!Array.isArray(tag_map[key])) {
         tag_map[key] = [];
         return false;
-    }
-    else {
+    } else {
         const indexOf = tag_map[key].indexOf(tagId);
         tag_map[key].splice(indexOf, 1);
         return indexOf !== -1;
@@ -979,11 +977,12 @@ async function importTags(character, { importSetting = null } = {}) {
 
     const tagsToImport = tagNamesToImport.map(tag => getTag(tag, { createNew: true }));
     const added = addTagsToEntity(tagsToImport, character.avatar);
+    const tagNames = tagsToImport.map(x => escapeHtml(x.name)).join(', ');
 
     if (added) {
-        toastr.success(t`Imported tags:` + `<br />${tagsToImport.map(x => x.name).join(', ')}`, t`Importing Tags`, { escapeHtml: false });
+        toastr.success(t`Imported tags:` + `<br />${tagNames}`, t`Importing Tags`, { escapeHtml: false });
     } else {
-        toastr.error(t`Couldn't import tags:` + `<br />${tagsToImport.map(x => x.name).join(', ')}`, t`Importing Tags`, { escapeHtml: false });
+        toastr.error(t`Couldn't import tags:` + `<br />${tagNames}`, t`Importing Tags`, { escapeHtml: false });
     }
 
     return added;
@@ -1126,7 +1125,7 @@ function getTag(tagName, { createNew = false } = {}) {
 function createNewTag(tagName) {
     const existing = getTag(tagName);
     if (existing) {
-        toastr.warning(`Cannot create new tag. A tag with the name already exists:<br />${existing.name}`, 'Creating Tag', { escapeHtml: false });
+        toastr.warning(`Cannot create new tag. A tag with the name already exists:<br />${escapeHtml(existing.name)}`, 'Creating Tag', { escapeHtml: false });
         return existing;
     }
 
@@ -1766,10 +1765,11 @@ function makeTagListDraggable(tagContainer) {
  * Sorts the given tags, returning a shallow copy of it
  *
  * @param {Tag[]} tags - The tags
+ * @param {Map<string, number>} [counts=null] - Optional map of tag ID to usage count
  * @returns {Tag[]} The sorted tags
  */
-function sortTags(tags) {
-    return tags.slice().sort(compareTagsForSort);
+function sortTags(tags, counts = null) {
+    return tags.slice().sort((a, b) => compareTagsForSort(a, b, counts));
 }
 
 /**
@@ -1777,15 +1777,18 @@ function sortTags(tags) {
  *
  * @param {Tag} a - First tag
  * @param {Tag} b - Second tag
+ * @param {Map<string, number>} [counts=null] - Optional map of tag ID to usage count
  * @returns {number} The compare result
  */
-function compareTagsForSort(a, b) {
+function compareTagsForSort(a, b, counts = null) {
     // default sort: alphabetical, case insensitive
     const defaultSort = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
 
     // sort on number of entries
     if (power_user.tag_sort_mode === tag_sort_mode.BY_ENTRIES) {
-        return ((b.count || 0) - (a.count || 0)) || defaultSort;
+        const aCount = counts instanceof Map ? (counts.get(a.id) || 0) : 0;
+        const bCount = counts instanceof Map ? (counts.get(b.id) || 0) : 0;
+        return (bCount - aCount) || defaultSort;
     }
 
     // alphabetical sort
@@ -2091,7 +2094,6 @@ function onTagAsFolderClick() {
     // If folder display has changed, we have to redraw the character list, otherwise this folders state would not change
     printCharactersDebounced();
     saveSettingsDebounced();
-
 }
 
 function updateDrawTagFolder(element, tag) {
@@ -2276,18 +2278,19 @@ function copyTags(data) {
 function printViewTagList(tagContainer, empty = true) {
     if (empty) tagContainer.empty();
     const everything = Object.values(tag_map).flat();
-    const tagsWithCounts = tags.map(tag => {
-        const count = everything.filter(x => x === tag.id).length;
-        return { ...tag, count: count };
-    });
-    const sortedTags = sortTags(tagsWithCounts);
+    const counts = new Map(tags.map(tag => [tag.id, everything.filter(x => x === tag.id).length]));
+    const sortedTags = sortTags(tags, counts);
     for (const tag of sortedTags) {
-        appendViewTagToList(tagContainer, tag, tag.count);
+        const count = counts.get(tag.id) || 0;
+        appendViewTagToList(tagContainer, tag, count);
     }
 }
 
 function removeMissingTagFilters() {
     const tagIds = new Set(tags.map(tag => tag.id));
+    const assignedTagIds = new Set(Object.values(tag_map).flat());
+    const openBogusFolderIds = new Set(getOpenBogusFolders().map(tag => tag.id));
+    const isEmptyOpenBogusFolder = (tagId) => openBogusFolderIds.has(tagId) && !assignedTagIds.has(tagId);
 
     for (const helper of [groupCandidatesFilter, groupMembersFilter, entitiesFilter]) {
         const { selected, excluded } = helper.getFilterData(FILTER_TYPES.TAG);
@@ -2295,7 +2298,7 @@ function removeMissingTagFilters() {
 
         if (Array.isArray(selected)) {
             for (let i = selected.length - 1; i >= 0; i--) {
-                if (!tagIds.has(selected[i])) {
+                if (!tagIds.has(selected[i]) || isEmptyOpenBogusFolder(selected[i])) {
                     selected.splice(i, 1);
                     anyRemoved = true;
                 }
@@ -2304,7 +2307,7 @@ function removeMissingTagFilters() {
 
         if (Array.isArray(excluded)) {
             for (let i = excluded.length - 1; i >= 0; i--) {
-                if (!tagIds.has(excluded[i])) {
+                if (!tagIds.has(excluded[i]) || isEmptyOpenBogusFolder(excluded[i])) {
                     excluded.splice(i, 1);
                     anyRemoved = true;
                 }
@@ -2514,6 +2517,82 @@ function registerTagsSlashCommands() {
         </div>
     `,
     }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'tag-import',
+        /** @param {{name: string, mode: 'all'|'existing'|'none'|'ask'}} namedArgs @returns {Promise<string>} */
+        callback: async ({ name, mode }) => {
+            if (selected_group !== null) {
+                toastr.warning(t`Tag import does not support group chats.`);
+                return 'false';
+            }
+            const key = searchCharByName(name);
+            if (!key) return 'false';
+
+            // Map mode argument to tag_import_setting
+            const modeMap = {
+                'all': tag_import_setting.ALL,
+                'existing': tag_import_setting.ONLY_EXISTING,
+                'none': tag_import_setting.NONE,
+                'ask': tag_import_setting.ASK,
+            };
+            if (mode && !modeMap[mode]) {
+                toastr.warning(`Invalid tag import mode: ${mode}. Valid modes are: ${Object.keys(modeMap).join(', ')}`);
+                return 'false';
+            }
+
+            const importSetting = mode ? modeMap[mode] : null;
+            const character = findChar({ name: key });
+
+            const result = await importTags(character, { importSetting });
+            return result ? 'true' : 'false';
+        },
+        returns: t`true if any tags were imported, false otherwise`,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'name',
+                description: 'Character name - or unique character identifier (avatar key)',
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: '{{char}}',
+                enumProvider: commonEnumProviders.characters(),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'mode',
+                description: t`Import mode: "all" imports all tags, "existing" imports only existing ST tags, "none" skips import, "ask" shows the import popup (default: uses your saved setting)`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumList: [
+                    new SlashCommandEnumValue('all', t`Import all tags (create new ones if needed)`, enumTypes.enum),
+                    new SlashCommandEnumValue('existing', t`Import only existing ST tags`, enumTypes.enum),
+                    new SlashCommandEnumValue('none', t`Skip import`, enumTypes.enum),
+                    new SlashCommandEnumValue('ask', t`Show the import popup`, enumTypes.enum),
+                ],
+            }),
+        ],
+        helpString: `
+        <div>
+            ${t`Imports character card tags as SillyTavern tags for folder/filter use.`}
+        </div>
+        <div>
+            ${t`Character cards can have embedded tags (set via <code>tags</code> argument in <code>/char-create</code> or <code>/char-update</code>). This command imports those embedded tags as ST tags that can be used for filtering and organizing characters.`}
+        </div>
+        <div>
+            ${t`If no mode is specified, uses your saved tag import setting from preferences.`}
+        </div>
+        <div>
+            <strong>${t`Example:`}</strong>
+            <ul>
+                <li>
+                    <pre><code>/tag-import</code></pre>
+                    ${t`Imports tags for the current character using your default setting.`}
+                </li>
+                <li>
+                    <pre><code>/tag-import name="Alice" mode=all</code></pre>
+                    ${t`Imports all of Alice's card tags, creating new ST tags if needed.`}
+                </li>
+            </ul>
+        </div>
+        `,
+    }));
 }
 
 /**
@@ -2684,37 +2763,10 @@ function extractCharacterAvatar(avatarSrc) {
 
 function restoreSavedTagFilters() {
     try {
-        const validStates = new Set(Object.keys(FILTER_STATES));
-        const readState = (/** @type {string} */ storageKey) => {
-            const v = accountStorage.getItem(storageKey);
-            return v && validStates.has(v) ? v : null;
-        };
-
-        const favState = readState(ACTIONABLE_FILTER_STORAGE_KEYS.FAV);
-        const groupState = readState(ACTIONABLE_FILTER_STORAGE_KEYS.GROUP);
-        const folderState = readState(ACTIONABLE_FILTER_STORAGE_KEYS.FOLDER);
-
-        if (favState) {
-            ACTIONABLE_TAGS.FAV.filter_state = favState;
-            entitiesFilter.setFilterData(FILTER_TYPES.FAV, favState, true);
-        }
-
         // Load persisted filter states for all contexts (including character list)
         loadFilterStatesForContext(entitiesFilter, 'CharacterList');
         loadFilterStatesForContext(groupCandidatesFilter, 'GroupCandidates');
         loadFilterStatesForContext(groupMembersFilter, 'GroupMembers');
-        if (groupState) {
-            ACTIONABLE_TAGS.GROUP.filter_state = groupState;
-            entitiesFilter.setFilterData(FILTER_TYPES.GROUP, groupState, true);
-        }
-        if (folderState) {
-            ACTIONABLE_TAGS.FOLDER.filter_state = folderState;
-            entitiesFilter.setFilterData(FILTER_TYPES.FOLDER, folderState, true);
-        }
-
-        // Note: Regular tag filter states are now loaded from storage via loadFilterStatesForContext()
-        // The old tag.filter_state property is only maintained for backward compatibility with
-        // the main character list's actionable tags (Favorites, Groups, Folders)
     } catch (e) {
         console.warn('Failed to restore actionable filter states from account storage', e);
     }

@@ -1,18 +1,19 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use reqwest::header::AUTHORIZATION;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, RequestBuilder, StatusCode};
 use serde_json::Value;
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
-    ChatCompletionSource, ChatCompletionStreamSender,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamSender,
 };
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 
+mod aws_bedrock;
 mod claude;
 mod cohere;
 mod gemini_interactions;
@@ -20,7 +21,9 @@ mod makersuite;
 mod normalizers;
 mod openai;
 mod openai_responses;
+mod response_body;
 mod vertexai;
+mod workers_ai;
 
 #[derive(Debug, Clone, Copy)]
 struct PromptCachePerformanceUsage {
@@ -31,7 +34,7 @@ struct PromptCachePerformanceUsage {
 
 pub struct HttpChatCompletionRepository {
     http_clients: Arc<HttpClientPool>,
-    openai_responses_previous_response_id_by_call_id: Mutex<HashMap<String, String>>,
+    openai_responses_ws_sessions: openai_responses::ResponsesWsSessionPool,
 }
 
 #[derive(Default)]
@@ -117,7 +120,7 @@ impl HttpChatCompletionRepository {
     pub fn new(http_clients: Arc<HttpClientPool>) -> Self {
         Self {
             http_clients,
-            openai_responses_previous_response_id_by_call_id: Mutex::new(HashMap::new()),
+            openai_responses_ws_sessions: openai_responses::ResponsesWsSessionPool::default(),
         }
     }
 
@@ -128,6 +131,11 @@ impl HttpChatCompletionRepository {
     fn stream_client(&self) -> Result<Client, DomainError> {
         self.http_clients
             .client(HttpClientProfile::ChatCompletionStream)
+    }
+
+    fn websocket_client(&self) -> Result<(Client, u64), DomainError> {
+        self.http_clients
+            .client_with_revision(HttpClientProfile::ChatCompletionWebSocket)
     }
 
     fn build_url(base_url: &str, path: &str) -> String {
@@ -172,27 +180,51 @@ impl HttpChatCompletionRepository {
         Self::apply_extra_headers_with_filter(request, headers, |_, _| false)
     }
 
+    fn apply_additional_headers(
+        request: RequestBuilder,
+        config: &ChatCompletionApiConfig,
+    ) -> RequestBuilder {
+        Self::apply_extra_headers(request, &config.additional_headers)
+    }
+
     fn apply_extra_headers_with_filter<F>(
-        mut request: RequestBuilder,
+        request: RequestBuilder,
         headers: &HashMap<String, String>,
         mut should_skip: F,
     ) -> RequestBuilder
     where
         F: FnMut(&str, &str) -> bool,
     {
+        let mut header_map = HeaderMap::new();
+
         for (key, value) in headers {
             if should_skip(key, value) {
                 continue;
             }
 
-            if key.trim().is_empty() || value.trim().is_empty() {
+            let key = key.trim();
+            let value = value.trim();
+            if key.is_empty() || value.is_empty() {
                 continue;
             }
 
-            request = request.header(key.as_str(), value.as_str());
+            let header_name = match HeaderName::from_bytes(key.as_bytes()) {
+                Ok(header_name) => header_name,
+                Err(_) => return request.header(key, value),
+            };
+            let header_value = match HeaderValue::from_str(value) {
+                Ok(header_value) => header_value,
+                Err(_) => return request.header(header_name, value),
+            };
+
+            header_map.insert(header_name, header_value);
         }
 
-        request
+        if header_map.is_empty() {
+            request
+        } else {
+            request.headers(header_map)
+        }
     }
 
     async fn map_error_response(
@@ -202,18 +234,39 @@ impl HttpChatCompletionRepository {
     ) -> DomainError {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        let message = extract_error_message(&body, default_message);
+        Self::map_error_status(provider_name, status, &body, default_message)
+    }
+
+    fn map_error_status(
+        provider_name: &str,
+        status: StatusCode,
+        body: &str,
+        default_message: &str,
+    ) -> DomainError {
+        let message = extract_error_message(body, default_message);
 
         match status {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                 DomainError::AuthenticationError(message)
             }
             StatusCode::BAD_REQUEST => DomainError::InvalidData(message),
+            StatusCode::TOO_MANY_REQUESTS => DomainError::rate_limited(format!(
+                "{provider_name} endpoint failed with status {}: {message}",
+                status.as_u16()
+            )),
+            status if is_retryable_status(status) => DomainError::transient(format!(
+                "{provider_name} endpoint failed with status {}: {message}",
+                status.as_u16()
+            )),
             _ => DomainError::InternalError(format!(
                 "{provider_name} endpoint failed with status {}: {message}",
                 status.as_u16()
             )),
         }
+    }
+
+    fn map_transport_error(label: &str, error: reqwest::Error) -> DomainError {
+        DomainError::transient(format!("{label}: {error}"))
     }
 
     async fn stream_sse_response(
@@ -251,7 +304,7 @@ impl HttpChatCompletionRepository {
                     continue;
                 }
                 chunk = response.chunk() => {
-                    chunk.map_err(|error| DomainError::InternalError(format!(
+                    chunk.map_err(|error| DomainError::transient(format!(
                         "{provider_name} stream read failed: {error}"
                     )))?
                 }
@@ -330,6 +383,10 @@ fn payload_contains_cache_control(value: &Value) -> bool {
         Value::Array(array) => array.iter().any(payload_contains_cache_control),
         _ => false,
     }
+}
+
+fn is_retryable_status(status: StatusCode) -> bool {
+    matches!(status.as_u16(), 408 | 425 | 429 | 500 | 502 | 503 | 504)
 }
 
 fn log_prompt_cache_performance_if_present(
@@ -431,13 +488,26 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::Groq
             | ChatCompletionSource::Moonshot
             | ChatCompletionSource::Chutes
-            | ChatCompletionSource::SiliconFlow
             | ChatCompletionSource::Zai => openai::list_models(self, config, source_name).await,
+            ChatCompletionSource::SiliconFlow => {
+                openai::list_models_with_path(
+                    self,
+                    config,
+                    source_name,
+                    "/models?type=text&sub_type=chat",
+                )
+                .await
+            }
+            ChatCompletionSource::WorkersAi => workers_ai::list_models(self, config).await,
             ChatCompletionSource::Cohere => cohere::list_models(self, config).await,
             ChatCompletionSource::NanoGpt => {
                 openai::list_models_with_path(self, config, source_name, "/models?detailed=true")
                     .await
             }
+            ChatCompletionSource::MiniMax => Err(DomainError::InvalidData(
+                "MiniMax does not expose dynamic model listing; status bypass belongs to the application service".to_string(),
+            )),
+            ChatCompletionSource::AwsBedrock => aws_bedrock::list_models(self, config).await,
             ChatCompletionSource::Claude => claude::list_models(self, config).await,
             ChatCompletionSource::Makersuite => makersuite::list_models(self, config).await,
             ChatCompletionSource::VertexAi => vertexai::list_models(self, config).await,
@@ -450,7 +520,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
         payload: &Value,
-    ) -> Result<Value, DomainError> {
+    ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
         let source_name = source.display_name();
 
         match source {
@@ -462,8 +532,12 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::NanoGpt
             | ChatCompletionSource::Chutes
             | ChatCompletionSource::SiliconFlow
-            | ChatCompletionSource::Zai => {
-                openai::generate(self, config, endpoint_path, payload, source_name).await
+            | ChatCompletionSource::WorkersAi
+            | ChatCompletionSource::Zai
+            | ChatCompletionSource::MiniMax => {
+                openai::generate(self, config, endpoint_path, payload, source_name)
+                    .await
+                    .map(ChatCompletionRepositoryGenerateResponse::from_body)
             }
             ChatCompletionSource::Custom => {
                 if endpoint_path == "/responses" {
@@ -494,14 +568,19 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                     )
                     .await
                 } else {
-                    openai::generate(self, config, endpoint_path, payload, source_name).await
+                    openai::generate(self, config, endpoint_path, payload, source_name)
+                        .await
+                        .map(ChatCompletionRepositoryGenerateResponse::from_body)
                 }
             }
-            ChatCompletionSource::Cohere => {
-                cohere::generate(self, config, endpoint_path, payload).await
-            }
+            ChatCompletionSource::Cohere => cohere::generate(self, config, endpoint_path, payload)
+                .await
+                .map(ChatCompletionRepositoryGenerateResponse::from_body),
             ChatCompletionSource::Claude => {
                 claude::generate(self, config, endpoint_path, payload, source_name).await
+            }
+            ChatCompletionSource::AwsBedrock => {
+                aws_bedrock::generate(self, config, endpoint_path, payload).await
             }
             ChatCompletionSource::Makersuite => {
                 makersuite::generate(self, config, endpoint_path, payload).await
@@ -532,7 +611,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::NanoGpt
             | ChatCompletionSource::Chutes
             | ChatCompletionSource::SiliconFlow
-            | ChatCompletionSource::Zai => {
+            | ChatCompletionSource::WorkersAi
+            | ChatCompletionSource::Zai
+            | ChatCompletionSource::MiniMax => {
                 openai::generate_stream(
                     self,
                     config,
@@ -606,6 +687,10 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 )
                 .await
             }
+            ChatCompletionSource::AwsBedrock => {
+                aws_bedrock::generate_stream(self, config, endpoint_path, payload, sender, cancel)
+                    .await
+            }
             ChatCompletionSource::Makersuite => {
                 makersuite::generate_stream(self, config, endpoint_path, payload, sender, cancel)
                     .await
@@ -615,6 +700,10 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                     .await
             }
         }
+    }
+
+    async fn close_provider_session(&self, session_id: &str) {
+        self.openai_responses_ws_sessions.close(session_id).await;
     }
 }
 
@@ -657,6 +746,7 @@ mod tests {
     use reqwest::header::AUTHORIZATION;
     use tokio::sync::mpsc;
 
+    use crate::domain::errors::DomainError;
     use crate::domain::repositories::chat_completion_repository::ChatCompletionApiConfig;
 
     use super::HttpChatCompletionRepository;
@@ -714,8 +804,11 @@ mod tests {
             api_key: "saved-secret".to_string(),
             authorization_header: Some("Bearer override".to_string()),
             extra_headers: HashMap::new(),
+            additional_headers: HashMap::new(),
             anthropic_beta_header_mode:
                 crate::domain::repositories::chat_completion_repository::AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
         };
 
         let request = Client::new().get("https://example.com");
@@ -730,6 +823,65 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(values, vec!["Bearer override"]);
+    }
+
+    #[test]
+    fn additional_headers_replace_existing_header_values() {
+        let config = ChatCompletionApiConfig {
+            base_url: "https://example.com/v1".to_string(),
+            api_key: "saved-secret".to_string(),
+            authorization_header: None,
+            extra_headers: HashMap::new(),
+            additional_headers: HashMap::from([(
+                "Authorization".to_string(),
+                "Bearer final".to_string(),
+            )]),
+            anthropic_beta_header_mode:
+                crate::domain::repositories::chat_completion_repository::AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
+        };
+
+        let request = Client::new().get("https://example.com");
+        let request = HttpChatCompletionRepository::apply_openai_auth(request, &config);
+        let request = HttpChatCompletionRepository::apply_additional_headers(request, &config);
+        let request = request.build().expect("request should build");
+
+        let values = request
+            .headers()
+            .get_all(AUTHORIZATION)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, vec!["Bearer final"]);
+    }
+
+    #[test]
+    fn error_status_classification_marks_retryable_provider_failures() {
+        let rate_limited = HttpChatCompletionRepository::map_error_status(
+            "OpenAI",
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            r#"{"error":{"message":"slow down"}}"#,
+            "Generation request failed",
+        );
+        assert!(matches!(rate_limited, DomainError::RateLimited { .. }));
+
+        let gateway_timeout = HttpChatCompletionRepository::map_error_status(
+            "OpenAI",
+            reqwest::StatusCode::BAD_GATEWAY,
+            "upstream unavailable",
+            "Generation request failed",
+        );
+        assert!(matches!(gateway_timeout, DomainError::Transient(_)));
+
+        let bad_request = HttpChatCompletionRepository::map_error_status(
+            "OpenAI",
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"bad payload"}}"#,
+            "Generation request failed",
+        );
+        assert!(matches!(bad_request, DomainError::InvalidData(_)));
     }
 
     #[test]

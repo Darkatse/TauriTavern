@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use yup_oauth2::ServiceAccountAuthenticator;
 use yup_oauth2::ServiceAccountKey;
 use yup_oauth2::authenticator::Authenticator;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 use yup_oauth2::client::CustomHyperClientBuilder;
 use yup_oauth2::client::DefaultHyperClientBuilder;
 use yup_oauth2::client::HyperClientBuilder;
@@ -111,14 +111,14 @@ fn sha256_hex(input: &str) -> String {
 async fn build_service_account_authenticator(
     service_account_key: ServiceAccountKey,
 ) -> Result<DefaultAuthenticator, std::io::Error> {
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        ServiceAccountAuthenticator::with_client(service_account_key, build_android_hyper_client())
+        ServiceAccountAuthenticator::with_client(service_account_key, build_mobile_hyper_client())
             .build()
             .await
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         ServiceAccountAuthenticator::builder(service_account_key)
             .build()
@@ -126,8 +126,8 @@ async fn build_service_account_authenticator(
     }
 }
 
-#[cfg(target_os = "android")]
-fn build_android_hyper_client() -> CustomHyperClientBuilder<
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn build_mobile_hyper_client() -> CustomHyperClientBuilder<
     yup_oauth2::hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
 > {
     let root_store = rustls::RootCertStore {

@@ -1,24 +1,15 @@
 use async_trait::async_trait;
-use mime_guess::from_path;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 
 use crate::domain::errors::DomainError;
-use crate::domain::models::background::{
-    Background, BackgroundAsset, BackgroundImageMetadata, BackgroundImageMetadataIndex,
-};
+use crate::domain::models::background::BackgroundAsset;
 use crate::domain::repositories::background_repository::BackgroundRepository;
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::thumbnail_cache::{
-    invalidate_thumbnail_cache, is_animated_image, read_thumbnail_or_original,
+    invalidate_thumbnail_cache, read_thumbnail_or_original,
 };
-use crate::infrastructure::thumbnails::{
-    BACKGROUND_THUMBNAIL_HEIGHT, BACKGROUND_THUMBNAIL_WIDTH, background_thumbnail_config,
-};
-
-const THUMBNAIL_RESOLUTION: u32 = BACKGROUND_THUMBNAIL_WIDTH * BACKGROUND_THUMBNAIL_HEIGHT;
+use crate::infrastructure::thumbnails::background_thumbnail_config;
 
 /// File system implementation of the BackgroundRepository
 pub struct FileBackgroundRepository {
@@ -33,14 +24,6 @@ impl FileBackgroundRepository {
             backgrounds_dir,
             thumbnails_bg_dir,
         }
-    }
-
-    /// Check if a file is an image
-    fn is_image(&self, path: &Path) -> bool {
-        if let Some(mime) = from_path(path).first() {
-            return mime.type_() == "image";
-        }
-        false
     }
 
     fn normalize_filename(&self, filename: &str) -> Result<String, DomainError> {
@@ -68,7 +51,16 @@ impl FileBackgroundRepository {
     }
 
     async fn ensure_backgrounds_dir_exists(&self) -> Result<(), DomainError> {
-        if self.backgrounds_dir.exists() {
+        if fs::try_exists(&self.backgrounds_dir)
+            .await
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to check backgrounds directory '{}': {}",
+                    self.backgrounds_dir.display(),
+                    error
+                ))
+            })?
+        {
             return Ok(());
         }
 
@@ -90,149 +82,10 @@ impl FileBackgroundRepository {
         let thumbnail_path = self.thumbnail_cache_path(filename);
         invalidate_thumbnail_cache(&thumbnail_path).await
     }
-
-    fn round_aspect_ratio(value: f64) -> f64 {
-        (value * 10_000.0).round() / 10_000.0
-    }
-
-    fn system_time_to_timestamp_millis(time: SystemTime) -> Option<i64> {
-        let millis = time.duration_since(UNIX_EPOCH).ok()?.as_millis();
-        i64::try_from(millis).ok()
-    }
-
-    fn file_added_timestamp_millis(metadata: &std::fs::Metadata) -> i64 {
-        metadata
-            .created()
-            .ok()
-            .and_then(Self::system_time_to_timestamp_millis)
-            .or_else(|| {
-                metadata
-                    .modified()
-                    .ok()
-                    .and_then(Self::system_time_to_timestamp_millis)
-            })
-            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis())
-    }
-
-    async fn build_background_metadata(
-        &self,
-        original_path: &Path,
-    ) -> Result<Option<BackgroundImageMetadata>, DomainError> {
-        let (width, height) = match image::image_dimensions(original_path) {
-            Ok(dimensions) => dimensions,
-            Err(error) => {
-                logger::warn(&format!(
-                    "Failed to read background dimensions '{}': {}",
-                    original_path.display(),
-                    error
-                ));
-                return Ok(None);
-            }
-        };
-
-        if width == 0 || height == 0 {
-            return Ok(None);
-        }
-
-        let file_metadata = fs::metadata(original_path).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read background metadata '{}': {}",
-                original_path.display(),
-                error
-            ))
-        })?;
-
-        let is_animated = is_animated_image(original_path).await?;
-        let dominant_color = if is_animated {
-            Some("#808080".to_string())
-        } else {
-            None
-        };
-
-        Ok(Some(BackgroundImageMetadata {
-            aspect_ratio: Self::round_aspect_ratio((width as f64) / (height as f64)),
-            is_animated,
-            dominant_color,
-            added_timestamp: Self::file_added_timestamp_millis(&file_metadata),
-            thumbnail_resolution: THUMBNAIL_RESOLUTION,
-        }))
-    }
 }
 
 #[async_trait]
 impl BackgroundRepository for FileBackgroundRepository {
-    async fn get_all_backgrounds(&self) -> Result<Vec<Background>, DomainError> {
-        logger::debug(&format!(
-            "FileBackgroundRepository: Getting all backgrounds from {:?}",
-            self.backgrounds_dir
-        ));
-
-        self.ensure_backgrounds_dir_exists().await?;
-
-        let mut entries = fs::read_dir(&self.backgrounds_dir).await.map_err(|error| {
-            logger::error(&format!("Failed to read backgrounds directory: {}", error));
-            DomainError::InternalError(format!("Failed to read backgrounds directory: {}", error))
-        })?;
-
-        let mut backgrounds = Vec::new();
-        while let Some(entry) = entries.next_entry().await.map_err(|error| {
-            logger::error(&format!("Failed to read directory entry: {}", error));
-            DomainError::InternalError(format!("Failed to read directory entry: {}", error))
-        })? {
-            let path = entry.path();
-            if path.is_file() && self.is_image(&path) {
-                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                    backgrounds.push(Background::new(
-                        filename.to_string(),
-                        path.to_string_lossy().to_string(),
-                    ));
-                }
-            }
-        }
-
-        Ok(backgrounds)
-    }
-
-    async fn get_all_background_metadata(
-        &self,
-    ) -> Result<BackgroundImageMetadataIndex, DomainError> {
-        logger::debug("FileBackgroundRepository: Getting all background metadata");
-
-        self.ensure_backgrounds_dir_exists().await?;
-
-        let mut entries = fs::read_dir(&self.backgrounds_dir).await.map_err(|error| {
-            logger::error(&format!(
-                "Failed to read backgrounds directory for metadata: {}",
-                error
-            ));
-            DomainError::InternalError(format!("Failed to read backgrounds directory: {}", error))
-        })?;
-
-        let mut images = HashMap::new();
-        while let Some(entry) = entries.next_entry().await.map_err(|error| {
-            logger::error(&format!(
-                "Failed to read background metadata directory entry: {}",
-                error
-            ));
-            DomainError::InternalError(format!("Failed to read directory entry: {}", error))
-        })? {
-            let path = entry.path();
-            if !path.is_file() || !self.is_image(&path) {
-                continue;
-            }
-
-            let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-
-            if let Some(metadata) = self.build_background_metadata(&path).await? {
-                images.insert(format!("backgrounds/{}", filename), metadata);
-            }
-        }
-
-        Ok(BackgroundImageMetadataIndex { version: 1, images })
-    }
-
     async fn delete_background(&self, filename: &str) -> Result<(), DomainError> {
         logger::debug(&format!(
             "FileBackgroundRepository: Deleting background: {}",
@@ -241,7 +94,13 @@ impl BackgroundRepository for FileBackgroundRepository {
 
         let normalized = self.normalize_filename(filename)?;
         let file_path = self.backgrounds_dir.join(&normalized);
-        if !file_path.exists() {
+        if !fs::try_exists(&file_path).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to check background file '{}': {}",
+                file_path.display(),
+                error
+            ))
+        })? {
             return Err(DomainError::NotFound(format!(
                 "Background not found: {}",
                 filename
@@ -272,13 +131,25 @@ impl BackgroundRepository for FileBackgroundRepository {
         let old_path = self.backgrounds_dir.join(&old_normalized);
         let new_path = self.backgrounds_dir.join(&new_normalized);
 
-        if !old_path.exists() {
+        if !fs::try_exists(&old_path).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to check background file '{}': {}",
+                old_path.display(),
+                error
+            ))
+        })? {
             return Err(DomainError::NotFound(format!(
                 "Background not found: {}",
                 old_filename
             )));
         }
-        if new_path.exists() {
+        if fs::try_exists(&new_path).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to check background file '{}': {}",
+                new_path.display(),
+                error
+            ))
+        })? {
             return Err(DomainError::InvalidData(format!(
                 "Background already exists: {}",
                 new_filename

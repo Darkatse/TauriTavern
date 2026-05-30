@@ -4,6 +4,7 @@ import {
     event_types,
     getRequestHeaders,
     getStoppingStrings,
+    isConnectionValidationSuspended,
     main_api,
     max_context,
     online_status,
@@ -23,7 +24,7 @@ import { power_user, registerDebugFunction } from './power-user.js';
 import { getActiveManualApiSamplers, loadApiSelectedSamplers, isSamplerManualPriorityEnabled } from './samplerSelect.js';
 import { SECRET_KEYS, writeSecret } from './secrets.js';
 import { getEventSourceStream } from './sse-stream.js';
-import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, loadAphroditeModels, loadDreamGenModels, loadFeatherlessModels, loadGenericModels, loadInfermaticAIModels, loadLlamaCppModels, loadMancerModels, loadOllamaModels, loadOpenRouterModels, loadTabbyModels, loadTogetherAIModels, loadVllmModels } from './textgen-models.js';
+import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, loadAphroditeModels, loadDreamGenModels, loadFeatherlessModels, loadGenericModels, loadInfermaticAIModels, loadLlamaCppModels, loadMancerModels, loadOllamaModels, loadOpenRouterModels, loadTabbyModels, loadTogetherAIModels, loadVllmModels, updateOpenRouterProvidersWarning } from './textgen-models.js';
 import { ENCODE_TOKENIZERS, TEXTGEN_TOKENIZERS, TOKENIZER_SUPPORTED_KEY, getTextTokens, getTokenizerBestMatch, tokenizers } from './tokenizers.js';
 import { AbortReason } from './util/AbortReason.js';
 import { getSortableDelay, onlyUnique, arraysEqual, isObject } from './utils.js';
@@ -944,7 +945,7 @@ export function initTextGenSettings() {
 
         $('#main_api').trigger('change');
 
-        if (!SERVER_INPUTS[type] || textgenerationwebui_settings.server_urls[type]) {
+        if (!isConnectionValidationSuspended() && (!SERVER_INPUTS[type] || textgenerationwebui_settings.server_urls[type])) {
             $('#api_button_textgenerationwebui').trigger('click');
         }
 
@@ -1072,7 +1073,12 @@ export function initTextGenSettings() {
 
         textgenerationwebui_settings.openrouter_providers = selectedProviders;
 
+        updateOpenRouterProvidersWarning('#openrouter_providers_text');
         saveSettingsDebounced();
+    });
+
+    $('#openrouter_allow_fallbacks_textgenerationwebui').on('input', function () {
+        updateOpenRouterProvidersWarning('#openrouter_providers_text');
     });
 
     $('#openrouter_quantizations_text').on('change', function () {
@@ -1089,6 +1095,10 @@ export function initTextGenSettings() {
     });
 
     $('#api_button_textgenerationwebui').on('click', async function (e) {
+        if (isConnectionValidationSuspended()) {
+            return;
+        }
+
         const keys = [
             { id: 'api_key_mancer', secret: SECRET_KEYS.MANCER },
             { id: 'api_key_vllm', secret: SECRET_KEYS.VLLM },

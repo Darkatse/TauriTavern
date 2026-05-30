@@ -32,6 +32,7 @@ impl From<ApplicationError> for CommandError {
             ApplicationError::Unauthorized(msg) => CommandError::Unauthorized(msg),
             ApplicationError::PermissionDenied(msg) => CommandError::Unauthorized(msg),
             ApplicationError::RateLimited(msg) => CommandError::TooManyRequests(msg),
+            ApplicationError::Transient(msg) => CommandError::InternalServerError(msg),
             ApplicationError::Cancelled(msg) => CommandError::Cancelled(msg),
             ApplicationError::InternalError(msg) => CommandError::InternalServerError(msg),
         }
@@ -47,6 +48,13 @@ impl From<DomainError> for CommandError {
             DomainError::Cancelled(msg) => CommandError::Cancelled(msg),
             DomainError::InternalError(msg) => CommandError::InternalServerError(msg),
             DomainError::RateLimited { message } => CommandError::TooManyRequests(message),
+            DomainError::Transient(msg) => CommandError::InternalServerError(msg),
+            DomainError::WorkspacePathIsDirectory { path } => {
+                CommandError::BadRequest(format!("Workspace path is a directory: {path}"))
+            }
+            DomainError::WorkspaceWriteConflict { kind, .. } => {
+                CommandError::BadRequest(format!("Workspace write conflict: {kind}"))
+            }
         }
     }
 }

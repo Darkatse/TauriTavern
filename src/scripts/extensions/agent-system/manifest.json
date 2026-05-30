@@ -1,0 +1,16 @@
+{
+    "display_name": "Agent System",
+    "loading_order": 25,
+    "requires": [],
+    "optional": [],
+    "js": "dist/index.bundle.js",
+    "css": "style.css",
+    "i18n": {
+        "zh-cn": "i18n/zh-cn.json",
+        "zh-tw": "i18n/zh-tw.json"
+    },
+    "author": "TauriTavern",
+    "version": "0.1.0",
+    "description": "First-party Agent System panel for TauriTavern Agent profiles and skills.",
+    "homePage": "https://github.com/Darkatse/TauriTavern"
+}

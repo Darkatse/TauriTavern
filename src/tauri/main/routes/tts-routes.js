@@ -1,5 +1,5 @@
 import { decodeBase64ToBytes } from '../binary-utils.js';
-import { textResponse } from '../http-utils.js';
+import { safeResponseStatusText, textResponse } from '../http-utils.js';
 import { extractErrorText, resolveHostErrorResponse } from '../kernel/host-error-response.js';
 
 function normalizeRouteResponse(value) {
@@ -17,7 +17,7 @@ function normalizeRouteResponse(value) {
     const contentType = String(value.contentType || value.content_type || 'application/octet-stream').trim()
         || 'application/octet-stream';
     const bodyBase64 = String(value.bodyBase64 || value.body_base64 || '');
-    const statusText = String(value.statusText || value.status_text || '').trim();
+    const statusText = safeResponseStatusText(value.statusText || value.status_text);
 
     return {
         status: safeStatus,
@@ -68,5 +68,9 @@ export function registerTtsRoutes(router, context) {
 
     router.post('/api/tts/mimo/generate', async ({ body }) => {
         return handleTtsRoute(context, 'mimo/generate', body);
+    });
+
+    router.post('/api/minimax/generate-voice', async ({ body }) => {
+        return handleTtsRoute(context, 'minimax/generate-voice', body);
     });
 }

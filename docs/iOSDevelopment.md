@@ -71,7 +71,7 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 仅在 iOS 平台启用原生桥接：
 
 1) **Import（Document Picker）**
-   - 使用 `UIDocumentPickerViewController` 选择 `.zip`。
+   - 使用 `UIDocumentPickerViewController` 选择数据归档（当前后端支持 zip / tar / tar.gz / tgz；导出仍保持 zip）。
    - 将选中的 `file://` URL 复制到 app 内部 `archive_imports_root/incoming` staging，再启动现有 import job（job/轮询语义不变）。
 
 2) **Export（Share Sheet）**
@@ -150,6 +150,15 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 - 下载桥：`src/tauri/main/download-bridge.js`
 - 导出反馈：`src/scripts/download-feedback.js`
 - iOS share 命令：`src-tauri/src/presentation/commands/ios_file_bridge_commands.rs`
+
+### 3.6 iOS Skill 导入
+
+Skill 导入使用独立命令 `ios_pick_skill_import_archive`：
+
+- `UIDocumentPickerViewController` 允许选择 zip 或普通 data 文件，保证默认 `.zip` Skill 归档与历史 `.ttskill` 归档都可被选中；
+- Rust 命令把选中的安全作用域文件复制到 app cache/temp 下的 `tauritavern-skill-import-staging`；
+- 前端仍只收到 `{ kind: 'archiveFile', path }`，后续预览与安装继续走 Skill repository 的真实路径契约；
+- 用户放弃导入时由 `api.skill.discardPickedImport()` 清理 staged 文件，安装完成或失败后由 `installImport()` 自动清理。
 
 ## 4. WKWebView Fullscreen API（iOS 16+）
 

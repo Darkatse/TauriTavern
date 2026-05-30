@@ -20,7 +20,10 @@ pub enum ChatCompletionSource {
     NanoGpt,
     Chutes,
     SiliconFlow,
+    WorkersAi,
     Zai,
+    MiniMax,
+    AwsBedrock,
 }
 
 impl ChatCompletionSource {
@@ -39,7 +42,12 @@ impl ChatCompletionSource {
             "nanogpt" | "nano-gpt" | "nano gpt" => Some(Self::NanoGpt),
             "chutes" => Some(Self::Chutes),
             "siliconflow" | "silicon flow" => Some(Self::SiliconFlow),
+            "workers_ai" | "workers-ai" | "workers ai" | "cloudflare workers ai" => {
+                Some(Self::WorkersAi)
+            }
             "zai" | "z.ai" | "glm" => Some(Self::Zai),
+            "minimax" | "mini-max" | "mini max" => Some(Self::MiniMax),
+            "aws_bedrock" | "aws-bedrock" | "aws bedrock" | "bedrock" => Some(Self::AwsBedrock),
             _ => None,
         }
     }
@@ -59,7 +67,10 @@ impl ChatCompletionSource {
             Self::NanoGpt => "nanogpt",
             Self::Chutes => "chutes",
             Self::SiliconFlow => "siliconflow",
+            Self::WorkersAi => "workers_ai",
             Self::Zai => "zai",
+            Self::MiniMax => "minimax",
+            Self::AwsBedrock => "aws_bedrock",
         }
     }
 
@@ -78,7 +89,10 @@ impl ChatCompletionSource {
             Self::NanoGpt => "NanoGPT",
             Self::Chutes => "Chutes",
             Self::SiliconFlow => "SiliconFlow",
+            Self::WorkersAi => "Cloudflare Workers AI",
             Self::Zai => "Z.AI (GLM)",
+            Self::MiniMax => "MiniMax",
+            Self::AwsBedrock => "AWS Bedrock",
         }
     }
 }
@@ -97,11 +111,57 @@ pub struct ChatCompletionApiConfig {
     pub api_key: String,
     pub authorization_header: Option<String>,
     pub extra_headers: HashMap<String, String>,
+    pub additional_headers: HashMap<String, String>,
     pub anthropic_beta_header_mode: AnthropicBetaHeaderMode,
+    /// Optional dotted JSON path (e.g. `output.message.content.0.text`) used by
+    /// the AWS Bedrock custom-template escape hatch to lift the assistant text
+    /// out of an arbitrary non-stream response body. When set, the
+    /// infrastructure layer bypasses provider-specific normalizers and
+    /// extracts text from this path instead.
+    pub aws_bedrock_custom_response_path: Option<String>,
+    /// Same as [`aws_bedrock_custom_response_path`] but applied to each
+    /// streaming chunk JSON. Empty / missing chunks are silently dropped so
+    /// terminal sentinel events don't surface as blank deltas.
+    pub aws_bedrock_custom_stream_path: Option<String>,
 }
 
 pub type ChatCompletionStreamSender = UnboundedSender<String>;
 pub type ChatCompletionCancelReceiver = watch::Receiver<bool>;
+pub const CHAT_COMPLETION_PROVIDER_STATE_FIELD: &str = "_tauritavern_provider_state";
+
+#[derive(Debug, Clone, Default)]
+pub struct ChatCompletionNormalizationReport {
+    pub synthetic_tool_call_ids: Vec<String>,
+}
+
+impl ChatCompletionNormalizationReport {
+    pub fn synthetic_tool_call_ids(&self) -> &[String] {
+        &self.synthetic_tool_call_ids
+    }
+
+    pub fn record_synthetic_tool_call_id(&mut self, id: impl Into<String>) {
+        self.synthetic_tool_call_ids.push(id.into());
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatCompletionRepositoryGenerateResponse {
+    pub body: Value,
+    pub normalization_report: ChatCompletionNormalizationReport,
+}
+
+impl ChatCompletionRepositoryGenerateResponse {
+    pub fn new(body: Value, normalization_report: ChatCompletionNormalizationReport) -> Self {
+        Self {
+            body,
+            normalization_report,
+        }
+    }
+
+    pub fn from_body(body: Value) -> Self {
+        Self::new(body, ChatCompletionNormalizationReport::default())
+    }
+}
 
 #[async_trait]
 pub trait ChatCompletionRepository: Send + Sync {
@@ -117,7 +177,7 @@ pub trait ChatCompletionRepository: Send + Sync {
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
         payload: &Value,
-    ) -> Result<Value, DomainError>;
+    ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError>;
 
     async fn generate_stream(
         &self,
@@ -128,6 +188,8 @@ pub trait ChatCompletionRepository: Send + Sync {
         sender: ChatCompletionStreamSender,
         cancel: ChatCompletionCancelReceiver,
     ) -> Result<(), DomainError>;
+
+    async fn close_provider_session(&self, session_id: &str);
 }
 
 #[cfg(test)]
@@ -169,12 +231,28 @@ mod tests {
             Some(ChatCompletionSource::SiliconFlow)
         );
         assert_eq!(
+            ChatCompletionSource::parse("workers_ai"),
+            Some(ChatCompletionSource::WorkersAi)
+        );
+        assert_eq!(
             ChatCompletionSource::parse("zai"),
             Some(ChatCompletionSource::Zai)
         );
         assert_eq!(
+            ChatCompletionSource::parse("minimax"),
+            Some(ChatCompletionSource::MiniMax)
+        );
+        assert_eq!(
             ChatCompletionSource::parse("vertexai"),
             Some(ChatCompletionSource::VertexAi)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("aws_bedrock"),
+            Some(ChatCompletionSource::AwsBedrock)
+        );
+        assert_eq!(
+            ChatCompletionSource::parse("bedrock"),
+            Some(ChatCompletionSource::AwsBedrock)
         );
     }
 }

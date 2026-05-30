@@ -1,4 +1,5 @@
 import { invoke, isTauriEnv } from '../../../tauri-bridge.js';
+import { stripJsonl } from '../../../tauri/main/kernel/chat-utils.js';
 import { fetchAssetStream, writeTempFileFromBytesIterable } from './asset-io.js';
 import { jsonlStreamToPayload, jsonlToPayload, payloadToJsonlByteChunks } from './jsonl.js';
 import {
@@ -7,12 +8,7 @@ import {
 } from '../../../tauri/main/services/chat-history/chat-history-mode-state.js';
 
 export function normalizeChatFileName(fileName) {
-    const value = String(fileName || '').trim();
-    if (!value) {
-        return '';
-    }
-
-    return value.replace(/\.jsonl$/i, '');
+    return stripJsonl(fileName);
 }
 
 function normalizeAvatarFileName(avatar) {
@@ -101,7 +97,7 @@ export function isTauriChatPayloadTransportEnabled() {
 export async function loadCharacterChatPayload({ characterName, avatarUrl, fileName, allowNotFound = false }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
-    if (!normalizedCharacter || !normalizedFile) {
+    if (!normalizedCharacter || !normalizedFile.trim()) {
         throw new Error('Invalid character chat payload request');
     }
 
@@ -125,7 +121,7 @@ export async function loadCharacterChatPayload({ characterName, avatarUrl, fileN
 export async function loadCharacterChatPayloadTail({ characterName, avatarUrl, fileName, maxLines, allowNotFound = false }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
-    if (!normalizedCharacter || !normalizedFile) {
+    if (!normalizedCharacter || !normalizedFile.trim()) {
         throw new Error('Invalid character chat tail request');
     }
 
@@ -148,7 +144,7 @@ export async function loadCharacterChatPayloadTail({ characterName, avatarUrl, f
 export async function loadCharacterChatPayloadBefore({ characterName, avatarUrl, fileName, cursor, maxLines }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
-    if (!normalizedCharacter || !normalizedFile) {
+    if (!normalizedCharacter || !normalizedFile.trim()) {
         throw new Error('Invalid character chat before request');
     }
 
@@ -167,7 +163,7 @@ export async function loadCharacterChatPayloadBefore({ characterName, avatarUrl,
 export async function loadCharacterChatPayloadBeforePages({ characterName, avatarUrl, fileName, cursor, maxLines, maxPages }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
-    if (!normalizedCharacter || !normalizedFile) {
+    if (!normalizedCharacter || !normalizedFile.trim()) {
         throw new Error('Invalid character chat before pages request');
     }
 
@@ -193,7 +189,7 @@ export async function loadCharacterChatPayloadBeforePages({ characterName, avata
 export async function saveCharacterChatPayload({ characterName, avatarUrl, fileName, payload, force = false }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
-    if (!Array.isArray(payload) || payload.length === 0 || !normalizedCharacter || !normalizedFile) {
+    if (!Array.isArray(payload) || payload.length === 0 || !normalizedCharacter || !normalizedFile.trim()) {
         throw new Error('Invalid chat payload');
     }
 
@@ -213,7 +209,7 @@ export async function saveCharacterChatPayload({ characterName, avatarUrl, fileN
 export async function saveCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, payload, force = false }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
-    if (!Array.isArray(payload) || payload.length === 0 || !normalizedCharacter || !normalizedFile) {
+    if (!Array.isArray(payload) || payload.length === 0 || !normalizedCharacter || !normalizedFile.trim()) {
         throw new Error('Invalid chat payload');
     }
 
@@ -235,7 +231,7 @@ export async function saveCharacterChatPayloadWindowed({ characterName, avatarUr
 export async function patchCharacterChatPayloadWindowed({ characterName, avatarUrl, fileName, cursor, header, patch, force = false }) {
     const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
-    if (!normalizedCharacter || !normalizedFile) {
+    if (!normalizedCharacter || !normalizedFile.trim()) {
         throw new Error('Invalid chat payload patch request');
     }
 
@@ -253,7 +249,7 @@ export async function patchCharacterChatPayloadWindowed({ characterName, avatarU
 
 export async function loadGroupChatPayload({ id, allowNotFound = false }) {
     const normalizedId = normalizeChatFileName(id);
-    if (!normalizedId) {
+    if (!normalizedId.trim()) {
         throw new Error('Invalid group chat payload request');
     }
 
@@ -275,7 +271,7 @@ export async function loadGroupChatPayload({ id, allowNotFound = false }) {
 
 export async function loadGroupChatPayloadTail({ id, maxLines, allowNotFound = false }) {
     const normalizedId = normalizeChatFileName(id);
-    if (!normalizedId) {
+    if (!normalizedId.trim()) {
         throw new Error('Invalid group chat tail request');
     }
 
@@ -296,7 +292,7 @@ export async function loadGroupChatPayloadTail({ id, maxLines, allowNotFound = f
 
 export async function loadGroupChatPayloadBefore({ id, cursor, maxLines }) {
     const normalizedId = normalizeChatFileName(id);
-    if (!normalizedId) {
+    if (!normalizedId.trim()) {
         throw new Error('Invalid group chat before request');
     }
 
@@ -313,7 +309,7 @@ export async function loadGroupChatPayloadBefore({ id, cursor, maxLines }) {
 
 export async function loadGroupChatPayloadBeforePages({ id, cursor, maxLines, maxPages }) {
     const normalizedId = normalizeChatFileName(id);
-    if (!normalizedId) {
+    if (!normalizedId.trim()) {
         throw new Error('Invalid group chat before pages request');
     }
 
@@ -337,7 +333,7 @@ export async function loadGroupChatPayloadBeforePages({ id, cursor, maxLines, ma
 
 export async function saveGroupChatPayload({ id, payload, force = false }) {
     const normalizedId = normalizeChatFileName(id);
-    if (!Array.isArray(payload) || payload.length === 0 || !normalizedId) {
+    if (!Array.isArray(payload) || payload.length === 0 || !normalizedId.trim()) {
         throw new Error('Invalid group chat payload');
     }
 
@@ -355,7 +351,7 @@ export async function saveGroupChatPayload({ id, payload, force = false }) {
 
 export async function saveGroupChatPayloadWindowed({ id, cursor, payload, force = false }) {
     const normalizedId = normalizeChatFileName(id);
-    if (!Array.isArray(payload) || payload.length === 0 || !normalizedId) {
+    if (!Array.isArray(payload) || payload.length === 0 || !normalizedId.trim()) {
         throw new Error('Invalid group chat payload');
     }
 
@@ -375,7 +371,7 @@ export async function saveGroupChatPayloadWindowed({ id, cursor, payload, force 
 
 export async function patchGroupChatPayloadWindowed({ id, cursor, header, patch, force = false }) {
     const normalizedId = normalizeChatFileName(id);
-    if (!normalizedId) {
+    if (!normalizedId.trim()) {
         throw new Error('Invalid group chat payload patch request');
     }
 

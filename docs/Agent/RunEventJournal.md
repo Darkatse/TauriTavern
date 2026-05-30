@@ -58,9 +58,8 @@ CallingModel
 DispatchingTool
 ApplyingWorkspacePatch
 CreatingCheckpoint
-AssemblingArtifacts
-AwaitingCommit
-Committing
+AwaitingHostCommit
+Finishing
 Completed
 Cancelling
 Cancelled
@@ -80,8 +79,8 @@ AwaitingApproval
 DispatchingTool
 ApplyingWorkspacePatch
 CreatingCheckpoint
-AssemblingArtifacts
-Committing
+AwaitingHostCommit
+Finishing
 Completed
 Cancelling
 Cancelled
@@ -111,9 +110,31 @@ run_created
 generation_intent_recorded
 status_changed
 workspace_initialized
+persistent_projection_initialized
 context_assembled
+agent_invocation_created
+agent_invocation_started
+agent_invocation_completed
+agent_invocation_failed
+agent_invocation_cancelled
+agent_task_registered
+agent_task_queued
+agent_task_started
+agent_task_completed
+agent_task_failed
+agent_task_cancelled
+agent_delegate_started
+agent_await_started
+agent_await_completed
+task_return_completed
 model_request_created
+model_call_attempt_started
+model_call_attempt_failed
+model_call_retry_scheduled
+model_response_stored
+provider_state_updated
 model_completed
+direct_output_captured
 tool_call_requested
 tool_call_started
 tool_result_stored
@@ -126,10 +147,17 @@ agent_loop_finished
 artifact_assembled
 commit_started
 commit_draft_created
+persistent_changes_committed
+persistent_changes_commit_failed
+persistent_state_metadata_update_requested
+persistent_state_metadata_updated
+persistent_state_metadata_update_failed
 run_committed
 run_completed
+run_partial_success
 run_cancel_requested
 run_cancelled
+drift_recovery_attempted
 run_failed
 ```
 
@@ -141,8 +169,10 @@ run_failed
 run_started
 status_changed
 run_completed
+run_partial_success
 run_cancel_requested
 run_cancelled
+drift_recovery_attempted
 run_failed
 ```
 
@@ -152,10 +182,71 @@ run_failed
 {
   "code": "tool_policy_denied",
   "message": "Tool mcp.foo is not allowed by current plan node",
+  "technicalMessage": "Validation error: tool_policy_denied: ...",
   "retryable": false,
+  "userRetryable": false,
   "details": {}
 }
 ```
+
+- `retryable`：宿主可不询问用户、安全地自动重试。仅在 `RateLimited`/`Transient` 等暂态错误上为 `true`。例如 `model.upstream_invalid_response` 表示上游响应体本应承载 provider JSON 契约但不可读或不是合法 JSON，属于可重试的 transient invalid response；它不应用于 request build、provider 明确拒绝、tool call / native metadata / response schema 等本地契约错误。
+- `userRetryable`：用户可通过 UI 手动重试。`retryable=true` 时一定为 `true`；此外 `model.tool_call_required`、`agent.tool_after_finish`、`agent.max_tool_rounds_exceeded` 等指令漂移类错误也是 `userRetryable=true`，但 **禁止** 自动重试。若 run 已经成功 `workspace.commit` 过 chat，终态会改为 `run_partial_success`，不会复用 `run_failed.userRetryable`，避免用户在已保留输出上直接重试造成重复消息。
+
+`run_partial_success` 是一个独立终态：当一次 run 已经通过 `workspace.commit` 向 chat 发布过至少一条消息，但后续仍因 drift、dispatch、`workspace.finish`、persistent commit 或 persistent metadata 写回错误失败时，executor 会保留这些 host-confirmed chat commit，并写 `run_partial_success`。它不是 clean success：错误仍在 payload 中暴露，`retryable` / `userRetryable` 固定为 `false`，宿主 UI 应以 warning 展示“已保留部分结果”。只有 `persistent_state_metadata_updated` 成功后，chat message 才能带有可作为下一轮 base 的 `persistStateId`。
+
+```json
+{
+  "code": "model.tool_call_required",
+  "message": "model must use Agent tools and finish through workspace_finish",
+  "technicalMessage": "Validation error: model.tool_call_required: ...",
+  "retryable": false,
+  "userRetryable": false,
+  "details": {},
+  "preservedCommitCount": 1,
+  "preservedCommits": [
+    {
+      "path": "output/main.md",
+      "mode": "replace",
+      "messageId": "10",
+      "round": 4
+    }
+  ]
+}
+```
+
+`run_rollback_targets` 作为显式丢弃 / 旧版本清理事件形状保留。它不再是 committed drift 的默认终态路径：自动 rollback 会浪费模型已经通过 host 确认的输出。宿主收到该事件时，rollback 必须 fail-fast：目标缺失、runId 不匹配、rollback strategy 缺失、swipe 状态不安全或宿主删除 API 不可用都必须报错，不能静默跳过或扩大为整条消息删除。若之后暴露 retry 动作，也必须使用 run handle / `generation_intent_recorded` 的 typed generation intent，不得触发 DOM regenerate 按钮。
+
+```json
+{
+  "reasonCode": "model.tool_call_required",
+  "round": 5,
+  "targetCount": 1,
+  "targets": [
+    {
+      "path": "output/main.md",
+      "mode": "replace",
+      "messageId": "10",
+      "round": 4
+    }
+  ]
+}
+```
+
+**Soft drift recovery**：在直接 fail-fast 之前，loop runner 会先做一次"软纠正"：当模型返回 0 tool_calls 且包含纯文本时，runtime 会把该文本捕获到当前 profile messageBody artifact 所在 root 的 `direct_output.md`（默认 `output/direct_output.md`），写入 `direct_output_captured` 与 checkpoint；随后把纯文本回复推进 history，再追加一条合成的 `user` 消息提醒它必须通过 Agent 工具继续。如果直接输出就是目标回复，应显式 `workspace_commit` 该捕获文件，再调用 `workspace_finish`；如果需要修订已提交内容，必须先 `workspace_apply_patch` / `workspace_write_file`，再 `workspace_commit`，最后 `workspace_finish`。每个 run 至多 1 次（受 `DRIFT_RECOVERY_MAX_ATTEMPTS` 控制）。每次尝试都会写一条 `drift_recovery_attempted` 事件，便于宿主 UI 给用户显示"系统正在纠正…"提示：
+
+```json
+{
+  "attempt": 1,
+  "maxAttempts": 1,
+  "round": 9,
+  "committedCount": 1,
+  "reasonCode": "model.tool_call_required"
+}
+```
+
+- 恢复成功 → run 继续，不会发 `run_rollback_targets`，也不会写 `run_failed`
+- 恢复失败（模型再次返回 0 tool_calls）→ 若没有成功 chat commit，写 `run_failed`（`userRetryable=true`）；若已有成功 chat commit，写 `run_partial_success` 并保留输出
+- 上述 rollback / partial-success 语义与前端入口无关；普通发送、`/trigger`、regenerate 与 overswipe 只要进入 Agent run，都必须遵守同一 journal 与 host commit 契约。
 
 ### 4.2 Workspace
 
@@ -169,7 +260,7 @@ workspace_file_deleted
 workspace_rollback_completed
 ```
 
-Workspace event 不应内联大文件全文。应记录 path、sha256、bytes、patch ref。
+Workspace event 不应内联大文件全文。面向 Agent/UI 的 payload 应记录 path、sha256、chars、words、patch ref；字节数仅保留在文件系统、checkpoint、hash 等内部实现边界。
 
 ### 4.3 Context
 
@@ -192,11 +283,36 @@ model_request_created
 model_request_sent
 model_delta
 model_tool_call_delta
+model_response_stored
+provider_state_updated
 model_completed
+direct_output_captured
 model_failed
 ```
 
-`model_request_created` 应记录 request ref、profile id、provider/source、model、token estimate，不应默认记录完整 prompt。完整 prompt 是否保存取决于调试设置与隐私策略。
+当前 `model_request_created` 记录 canonical request summary（source、custom format、model、message count、tool count、round），不默认记录完整 prompt。长期应记录 request ref、profile id、provider/source、model、token estimate；完整 prompt 是否保存取决于调试设置与隐私策略。
+
+当前 `model_response_stored` 会把完整 `AgentModelResponse` 写入 `model-responses/round-XXX.json`，event 只记录路径与摘要。`provider_state_updated` 只记录 `provider_state` 摘要字段，不记录完整内部 payload。
+
+`model_completed` 是 UI timeline 的模型回合入口：
+
+```json
+{
+  "round": 1,
+  "modelResponsePath": "model-responses/round-001.json",
+  "toolCallCount": 1,
+  "textChars": 26,
+  "textWords": 5,
+  "hasAssistantText": true,
+  "assistantTextChars": 26,
+  "assistantTextWords": 5,
+  "hasReasoning": true,
+  "reasoningChars": 30,
+  "reasoningWords": 6
+}
+```
+
+前端读取详情时使用 Host ABI `readModelTurn({ runId, round })`，不直接解析 `modelResponsePath` 指向的 raw 文件。
 
 ### 4.5 Tool
 
@@ -214,15 +330,11 @@ tool_call_failed
 
 ```json
 {
+  "round": 1,
   "callId": "call_...",
-  "toolName": "workspace.apply_patch",
-  "displayName": "Apply patch",
-  "argumentsRef": "events/blobs/call_..._args.json",
-  "approvalRequired": false,
-  "policy": {
-    "source": "plan_node",
-    "allowed": true
-  }
+  "name": "workspace.apply_patch",
+  "argumentsRef": "tool-args/call_....json",
+  "providerMetadata": {}
 }
 ```
 
@@ -230,14 +342,18 @@ tool_call_failed
 
 ```json
 {
+  "round": 1,
   "callId": "call_...",
-  "toolName": "workspace.apply_patch",
-  "resultRef": "tool-results/call_....json",
+  "name": "workspace.apply_patch",
   "isError": false,
-  "durationMs": 120,
-  "usage": {}
+  "errorCode": null,
+  "message": null,
+  "elapsedMs": 120,
+  "resourceRefs": ["output/main.md"]
 }
 ```
+
+`tool_result_stored` 会携带同一 `round` 与 `path`，用于 UI 读取工具结果详情。
 
 ### 4.6 Checkpoint / Diff
 
@@ -247,7 +363,7 @@ checkpoint_pruned
 diff_created
 ```
 
-Checkpoint event must include checkpoint id、reason、file count、bytes。
+Checkpoint event must include checkpoint id、reason、file count and internal storage metadata. UI-facing timeline payloads should expose text metrics as chars/words, not raw byte counts.
 
 ### 4.7 Plan / Profile
 
@@ -306,6 +422,8 @@ apply patch
 workspace_patch_applied
 checkpoint_created
 ```
+
+当前 `workspace_file_written` 同时覆盖 `workspace.write_file` 的 `replace` 与 `append` 成功结果，payload 必须携带 `mode`，便于 timeline 与恢复逻辑区分完整替换和原样追加。
 
 如果副作用前需要保证恢复后不会重复执行，可以先写 pending event，再由恢复逻辑检查 pending 状态。这一点对 MCP/外部副作用尤其重要。
 
@@ -429,9 +547,13 @@ run_created
 generation_intent_recorded
 status_changed
 workspace_initialized
+persistent_projection_initialized
 context_assembled
 model_request_created
+model_response_stored
+provider_state_updated
 model_completed
+direct_output_captured
 tool_call_requested
 tool_call_started
 tool_result_stored
@@ -444,11 +566,16 @@ agent_loop_finished
 artifact_assembled
 commit_started
 commit_draft_created
+persistent_changes_committed
+persistent_state_metadata_update_requested
+persistent_state_metadata_updated
+persistent_state_metadata_update_failed
 run_committed
 run_completed
+run_partial_success
 run_cancel_requested
 run_cancelled
 run_failed
 ```
 
-这套事件已经足够支撑当前 tool loop、timeline、cancel、debug、commit 和后续 rollback/diff 基础。
+这套事件已经足够支撑当前 tool loop、timeline、cancel、debug、commit、partial-success 和 diff 基础。`run_rollback_targets` 作为显式丢弃 / 旧版本清理事件形状保留，但不再是 committed drift 的默认终态路径。

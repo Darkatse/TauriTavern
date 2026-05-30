@@ -12,22 +12,45 @@ use crate::domain::errors::DomainError;
 use crate::domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use crate::domain::models::settings::{PromptCacheTtl, TauriTavernSettings};
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
-    ChatCompletionSource, ChatCompletionStreamSender,
+    CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    ChatCompletionNormalizationReport, ChatCompletionRepository, ChatCompletionSource,
+    ChatCompletionStreamSender,
 };
 use crate::domain::repositories::prompt_cache_repository::PromptCacheRepository;
 use crate::domain::repositories::secret_repository::SecretRepository;
 use crate::domain::repositories::settings_repository::SettingsRepository;
 
+mod additional_parameters;
 mod config;
 mod custom_api_format;
 mod custom_parameters;
+pub(crate) mod exchange;
 mod payload;
 mod prompt_caching;
 mod prompt_caching_plan;
 mod vertexai_auth;
 
+use self::additional_parameters::AdditionalParameters;
+use self::exchange::{
+    ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
+};
+
 const OPENAI_SOURCE: &str = ChatCompletionSource::OpenAi.key();
+const AGENT_STRUCTURAL_BODY_OVERRIDE_KEYS: &[&str] = &[
+    "messages",
+    "input",
+    "tools",
+    "tool_choice",
+    "previous_response_id",
+    CHAT_COMPLETION_PROVIDER_STATE_FIELD,
+];
+
+struct ChatCompletionExecution {
+    source: ChatCompletionSource,
+    provider_format: ChatCompletionProviderFormat,
+    body: Value,
+    normalization_report: ChatCompletionNormalizationReport,
+}
 
 pub struct ChatCompletionService {
     chat_completion_repository: Arc<dyn ChatCompletionRepository>,
@@ -153,6 +176,8 @@ impl ChatCompletionService {
             "reverse_proxy",
             "proxy_password",
             "custom_url",
+            "custom_include_body",
+            "custom_exclude_body",
             "custom_include_headers",
         ] {
             let Some(value) = payload.get(key) else {
@@ -284,7 +309,10 @@ impl ChatCompletionService {
         self.ensure_endpoint_overrides_allowed_for_status(source, &dto)?;
         let model_list_source = resolve_status_model_list_source(source, &dto.custom_api_format)?;
 
-        if source == ChatCompletionSource::VertexAi {
+        if matches!(
+            source,
+            ChatCompletionSource::VertexAi | ChatCompletionSource::MiniMax
+        ) {
             return Ok(json!({
                 "bypass": true,
                 "data": []
@@ -299,10 +327,10 @@ impl ChatCompletionService {
             .map_err(ApplicationError::from)
     }
 
-    pub async fn generate(
+    async fn execute_generate(
         &self,
         dto: ChatCompletionGenerateRequestDto,
-    ) -> Result<Value, ApplicationError> {
+    ) -> Result<ChatCompletionExecution, ApplicationError> {
         let source = self.resolve_source(
             dto.get_string("chat_completion_source")
                 .unwrap_or(OPENAI_SOURCE),
@@ -310,13 +338,21 @@ impl ChatCompletionService {
         self.ensure_chat_completion_source_allowed(source)?;
         self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
         self.ensure_chat_completion_features_allowed(&dto.payload)?;
+        let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
+        Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
+        let provider_format = ChatCompletionProviderFormat::from_payload(source, &dto.payload)?;
 
         let settings = self.load_tauritavern_settings().await?;
         let prompt_caching_hints =
             prompt_caching_plan::PromptCachingRequestHints::from_payload(&dto.payload)?;
 
-        let mut config =
-            config::resolve_generate_api_config(source, &dto, &self.secret_repository).await?;
+        let mut config = config::resolve_generate_api_config(
+            source,
+            &dto,
+            &additional_parameters,
+            &self.secret_repository,
+        )
+        .await?;
         let payload = dto.payload;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
         self.apply_tauritavern_prompt_caching(
@@ -328,11 +364,36 @@ impl ChatCompletionService {
             prompt_caching_hints,
         )
         .await?;
+        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
+        payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
 
-        self.chat_completion_repository
+        let response = self
+            .chat_completion_repository
             .generate(source, &config, &endpoint_path, &upstream_payload)
             .await
-            .map_err(ApplicationError::from)
+            .map_err(ApplicationError::from)?;
+
+        Ok(ChatCompletionExecution {
+            source,
+            provider_format,
+            body: response.body,
+            normalization_report: response.normalization_report,
+        })
+    }
+
+    pub(crate) async fn generate_exchange(
+        &self,
+        dto: ChatCompletionGenerateRequestDto,
+    ) -> Result<ChatCompletionExchange, ApplicationError> {
+        let execution = self.execute_generate(dto).await?;
+        let normalized_response = NormalizedChatCompletionResponse::from_value(execution.body)?;
+
+        Ok(ChatCompletionExchange {
+            source: execution.source,
+            provider_format: execution.provider_format,
+            normalized_response,
+            normalization_report: execution.normalization_report,
+        })
     }
 
     pub async fn generate_with_cancel(
@@ -340,7 +401,29 @@ impl ChatCompletionService {
         dto: ChatCompletionGenerateRequestDto,
         mut cancel: ChatCompletionCancelReceiver,
     ) -> Result<Value, ApplicationError> {
-        let generation = self.generate(dto);
+        let generation = self.execute_generate(dto);
+        tokio::pin!(generation);
+
+        let execution = tokio::select! {
+            result = &mut generation => result,
+            _ = cancel.changed() => {
+                if *cancel.borrow() {
+                    return Err(DomainError::generation_cancelled_by_user().into());
+                }
+
+                generation.await
+            }
+        }?;
+
+        Ok(execution.body)
+    }
+
+    pub(crate) async fn generate_exchange_with_cancel(
+        &self,
+        dto: ChatCompletionGenerateRequestDto,
+        mut cancel: ChatCompletionCancelReceiver,
+    ) -> Result<ChatCompletionExchange, ApplicationError> {
+        let generation = self.generate_exchange(dto);
         tokio::pin!(generation);
 
         tokio::select! {
@@ -368,13 +451,20 @@ impl ChatCompletionService {
         self.ensure_chat_completion_source_allowed(source)?;
         self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
         self.ensure_chat_completion_features_allowed(&dto.payload)?;
+        let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
+        Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
 
         let settings = self.load_tauritavern_settings().await?;
         let prompt_caching_hints =
             prompt_caching_plan::PromptCachingRequestHints::from_payload(&dto.payload)?;
 
-        let mut config =
-            config::resolve_generate_api_config(source, &dto, &self.secret_repository).await?;
+        let mut config = config::resolve_generate_api_config(
+            source,
+            &dto,
+            &additional_parameters,
+            &self.secret_repository,
+        )
+        .await?;
         let payload = dto.payload;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
         self.apply_tauritavern_prompt_caching(
@@ -386,6 +476,8 @@ impl ChatCompletionService {
             prompt_caching_hints,
         )
         .await?;
+        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
+        payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
 
         self.chat_completion_repository
             .generate_stream(
@@ -424,6 +516,12 @@ impl ChatCompletionService {
         self.active_generations.complete(request_id).await;
     }
 
+    pub async fn close_provider_session(&self, session_id: &str) {
+        self.chat_completion_repository
+            .close_provider_session(session_id)
+            .await;
+    }
+
     fn resolve_source(&self, raw: &str) -> Result<ChatCompletionSource, ApplicationError> {
         ChatCompletionSource::parse(raw).ok_or_else(|| {
             ApplicationError::ValidationError(format!(
@@ -438,6 +536,18 @@ impl ChatCompletionService {
             .load_tauritavern_settings()
             .await
             .map_err(ApplicationError::from)
+    }
+
+    fn ensure_agent_body_overrides_allowed(
+        payload: &Map<String, Value>,
+        additional_parameters: &AdditionalParameters,
+    ) -> Result<(), ApplicationError> {
+        if !payload.contains_key(CHAT_COMPLETION_PROVIDER_STATE_FIELD) {
+            return Ok(());
+        }
+
+        additional_parameters
+            .ensure_body_overrides_do_not_touch(AGENT_STRUCTURAL_BODY_OVERRIDE_KEYS)
     }
 
     async fn apply_tauritavern_prompt_caching(

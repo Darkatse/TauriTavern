@@ -16,6 +16,13 @@ pub struct ExtensionStoreBlobPayload {
     pub mime_type: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ExtensionStoreJsonLookupPayload {
+    pub found: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
+}
+
 #[tauri::command]
 pub async fn get_extension_store_json(
     namespace: String,
@@ -38,6 +45,35 @@ pub async fn get_extension_store_json(
             "Failed to get extension store json {}:{}",
             namespace, key
         )))
+}
+
+#[tauri::command]
+pub async fn try_get_extension_store_json(
+    namespace: String,
+    key: String,
+    table: Option<String>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ExtensionStoreJsonLookupPayload, CommandError> {
+    log_command(format!(
+        "try_get_extension_store_json {}:{}/{}",
+        namespace,
+        table.as_deref().unwrap_or("main"),
+        key
+    ));
+
+    let value = app_state
+        .extension_store_service
+        .try_get_json(&namespace, table.as_deref(), &key)
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to try-get extension store json {}:{}",
+            namespace, key
+        )))?;
+
+    Ok(ExtensionStoreJsonLookupPayload {
+        found: value.is_some(),
+        value,
+    })
 }
 
 #[tauri::command]

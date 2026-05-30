@@ -1,6 +1,6 @@
 import { DOMPurify } from '../lib.js';
 import { isMobile } from './RossAscends-mods.js';
-import { amount_gen, eventSource, event_types, getRequestHeaders, max_context, online_status, setGenerationParamsFromPreset } from '../script.js';
+import { amount_gen, eventSource, event_types, getRequestHeaders, isConnectionValidationSuspended, max_context, online_status, setGenerationParamsFromPreset } from '../script.js';
 import { textgenerationwebui_settings as textgen_settings, textgen_types } from './textgen-settings.js';
 import { tokenizers } from './tokenizers.js';
 import { renderTemplateAsync } from './templates.js';
@@ -20,6 +20,13 @@ let tabbyModels = [];
 let llamacppModels = [];
 export let openRouterModels = [];
 
+// Model select handlers normally reconnect immediately; profile replay defers that to the final validation.
+function reconnectTextGenIfValidationAllowed() {
+    if (!isConnectionValidationSuspended()) {
+        $('#api_button_textgenerationwebui').trigger('click');
+    }
+}
+
 /**
  * List of OpenRouter providers.
  * @type {string[]}
@@ -31,6 +38,7 @@ const OPENROUTER_PROVIDERS = [
     'AI21',
     'AionLabs',
     'Alibaba',
+    'AkashML',
     'Amazon Bedrock',
     'Amazon Nova',
     'Ambient',
@@ -39,6 +47,7 @@ const OPENROUTER_PROVIDERS = [
     'AtlasCloud',
     'Avian',
     'Azure',
+    'Baidu',
     'BaseTen',
     'Black Forest Labs',
     'Cerebras',
@@ -50,6 +59,7 @@ const OPENROUTER_PROVIDERS = [
     'Crusoe',
     'DeepInfra',
     'DeepSeek',
+    'DekaLLM',
     'FakeProvider',
     'Featherless',
     'Fireworks',
@@ -64,6 +74,8 @@ const OPENROUTER_PROVIDERS = [
     'InferenceNet',
     'Infermatic',
     'Inflection',
+    'Io Net',
+    'Ionstream',
     'Liquid',
     'Mancer 2',
     'Mara',
@@ -83,6 +95,8 @@ const OPENROUTER_PROVIDERS = [
     'Parasail',
     'Perplexity',
     'Phala',
+    'Recraft',
+    'Reka',
     'Relace',
     'SambaNova',
     'Seed',
@@ -100,6 +114,192 @@ const OPENROUTER_PROVIDERS = [
     'Xiaomi',
     'Z.AI',
 ];
+
+/**
+ * List of NanoGPT providers.
+ * Providers endpoint: https://nano-gpt.com/api/models/providers
+ * @type {{id: string, label: string}[]}
+ */
+const NANOGPT_PROVIDERS = [
+    { id: 'akash', label: 'Akash' },
+    { id: 'alibaba', label: 'Alibaba' },
+    { id: 'ambient', label: 'Ambient' },
+    { id: 'arliai', label: 'ArliAI' },
+    { id: 'atlascloud', label: 'AtlasCloud' },
+    { id: 'azure', label: 'Azure' },
+    { id: 'awsbedrock', label: 'Amazon Bedrock' },
+    { id: 'baidu', label: 'Baidu' },
+    { id: 'baseten', label: 'BaseTen' },
+    { id: 'cerebras', label: 'Cerebras' },
+    { id: 'chutes', label: 'Chutes' },
+    { id: 'clarifai', label: 'Clarifai' },
+    { id: 'cloudflare', label: 'Cloudflare' },
+    { id: 'crusoe', label: 'Crusoe' },
+    { id: 'dekallm', label: 'DekaLLM' },
+    { id: 'deepinfra', label: 'DeepInfra' },
+    { id: 'deepseek', label: 'DeepSeek' },
+    { id: 'fireworks', label: 'Fireworks' },
+    { id: 'friendli', label: 'Friendli' },
+    { id: 'gmicloud', label: 'GMICloud' },
+    { id: 'lilac', label: 'Lilac' },
+    { id: 'google', label: 'Google' },
+    { id: 'groq', label: 'Groq' },
+    { id: 'hyperbolic', label: 'Hyperbolic' },
+    { id: 'ionet', label: 'Io Net' },
+    { id: 'inceptron', label: 'Inceptron' },
+    { id: 'mancer', label: 'Mancer' },
+    { id: 'mara', label: 'Mara' },
+    { id: 'meganova', label: 'MegaNova' },
+    { id: 'minimax', label: 'MiniMax' },
+    { id: 'modelrun', label: 'ModelRun' },
+    { id: 'moonshot', label: 'Moonshot' },
+    { id: 'morph', label: 'Morph' },
+    { id: 'ncompass', label: 'NCompass' },
+    { id: 'nebius', label: 'Nebius' },
+    { id: 'neuralwatt', label: 'Neuralwatt' },
+    { id: 'nextbit', label: 'NextBit' },
+    { id: 'novita', label: 'Novita' },
+    { id: 'parasail', label: 'Parasail' },
+    { id: 'phala', label: 'Phala' },
+    { id: 'redpill', label: 'Redpill' },
+    { id: 'sambanova', label: 'SambaNova' },
+    { id: 'sambanova-high-throughput', label: 'SambaNova (High Throughput)' },
+    { id: 'siliconflow', label: 'SiliconFlow' },
+    { id: 'streamlake', label: 'StreamLake' },
+    { id: 'tinfoil', label: 'Tinfoil' },
+    { id: 'together', label: 'Together' },
+    { id: 'venice', label: 'Venice' },
+    { id: 'wandb', label: 'Weights & Biases' },
+    { id: 'zai', label: 'Z.AI' },
+];
+
+const OPENROUTER_PROVIDER_WARNING_SELECTORS = {
+    '#openrouter_providers_text': {
+        fallbackSelector: '#openrouter_allow_fallbacks_textgenerationwebui',
+        warningSelector: '#openrouter_provider_warning_text',
+    },
+    '#openrouter_providers_chat': {
+        fallbackSelector: '#openrouter_allow_fallbacks',
+        warningSelector: '#openrouter_provider_warning_chat',
+    },
+};
+
+export function updateOpenRouterProvidersWarning(providersSelector) {
+    const $providers = $(providersSelector);
+    const warningSelectors = OPENROUTER_PROVIDER_WARNING_SELECTORS[providersSelector];
+
+    if ($providers.length === 0 || !warningSelectors) {
+        return;
+    }
+
+    const allowFallback = !!$(warningSelectors.fallbackSelector).prop('checked');
+    const selectedCount = $providers.find('option:selected').length;
+    const applicableSelectedCount = $providers.find('option:selected:not(:disabled)').length;
+    const showWarning = !allowFallback && selectedCount > 0 && applicableSelectedCount === 0;
+
+    $(warningSelectors.warningSelector).toggleClass('displayNone', !showWarning);
+}
+
+export async function syncOpenRouterProvidersForModel(modelId, providersSelector) {
+    const $providers = $(providersSelector);
+    const refreshWarningState = () => updateOpenRouterProvidersWarning(providersSelector);
+
+    if (!modelId || !modelId.includes('/')) {
+        $providers.find('option').prop('disabled', false);
+        $providers.trigger('change.select2');
+        refreshWarningState();
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/openrouter/models/providers', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ model: modelId }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const providerNames = await response.json();
+        if (!Array.isArray(providerNames) || providerNames.length === 0) {
+            $providers.find('option').prop('disabled', false);
+            $providers.trigger('change.select2');
+            refreshWarningState();
+            return;
+        }
+
+        $providers.find('option').each(function () {
+            $(this).prop('disabled', !providerNames.includes($(this).val()));
+        });
+
+        $providers.trigger('change.select2');
+        refreshWarningState();
+    } catch (error) {
+        console.error('Failed to fetch OpenRouter providers for model', error);
+        refreshWarningState();
+    }
+}
+
+export async function syncNanoGptProvidersForModel(modelId, providersSelector) {
+    const $providers = $(providersSelector);
+    const refreshWarningState = () => updateNanoGptProvidersWarning(providersSelector);
+
+    if (!modelId) {
+        $providers.find('option').prop('disabled', false);
+        $providers.trigger('change.select2');
+        refreshWarningState();
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/nanogpt/models/providers', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ model: modelId }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const providerIds = Array.isArray(data?.providers) ? data.providers : [];
+
+        if (!data?.supportsProviderSelection || providerIds.length === 0) {
+            $providers.find('option').each(function () {
+                $(this).prop('disabled', Boolean($(this).val()));
+            });
+            $providers.trigger('change').trigger('change.select2');
+            refreshWarningState();
+            return;
+        }
+
+        $providers.find('option').each(function () {
+            const value = $(this).val();
+            $(this).prop('disabled', Boolean(value) && !providerIds.includes(value));
+        });
+
+        $providers.trigger('change.select2');
+        refreshWarningState();
+    } catch (error) {
+        console.error('Failed to fetch NanoGPT providers for model', error);
+        refreshWarningState();
+    }
+}
+
+export function updateNanoGptProvidersWarning(providersSelector) {
+    const $providers = $(providersSelector);
+
+    if ($providers.length === 0) {
+        return;
+    }
+
+    const selectedCount = $providers.find('option:selected').length;
+    const applicableSelectedCount = $providers.find('option:selected:not(:disabled)').length;
+    $('#nanogpt_provider_warning').toggleClass('displayNone', !(selectedCount > 0 && applicableSelectedCount === 0));
+}
 
 export async function loadOllamaModels(data) {
     if (!Array.isArray(data)) {
@@ -315,6 +515,7 @@ export async function loadOpenRouterModels(data) {
 
     // Calculate the cost of the selected model + update on settings change
     calculateOpenRouterCost();
+    syncOpenRouterProvidersForModel(textgen_settings.openrouter_model, '#openrouter_providers_text');
 }
 
 export async function loadVllmModels(data) {
@@ -596,7 +797,7 @@ function onFeatherlessModelSelect(modelId) {
     const model = featherlessModels.find(x => x.id === modelId);
     textgen_settings.featherless_model = modelId;
     $('#featherless_model').val(modelId);
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
     setGenerationParamsFromPreset({ max_length: model.context_length });
 }
 
@@ -626,7 +827,7 @@ document.addEventListener('DOMContentLoaded', function () {
 function onMancerModelSelect() {
     const modelId = String($('#mancer_model').val());
     textgen_settings.mancer_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
 
     const limits = mancerModels.find(x => x.id === modelId)?.limits;
     setGenerationParamsFromPreset({ max_length: limits.context });
@@ -635,7 +836,7 @@ function onMancerModelSelect() {
 function onTogetherModelSelect() {
     const modelName = String($('#model_togetherai_select').val());
     textgen_settings.togetherai_model = modelName;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
     const model = togetherModels.find(x => x.id === modelName);
     setGenerationParamsFromPreset({ max_length: model.context_length });
 }
@@ -643,7 +844,7 @@ function onTogetherModelSelect() {
 function onInfermaticAIModelSelect() {
     const modelName = String($('#model_infermaticai_select').val());
     textgen_settings.infermaticai_model = modelName;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
     const model = infermaticAIModels.find(x => x.id === modelName);
     setGenerationParamsFromPreset({ max_length: model.context_length });
 }
@@ -651,46 +852,47 @@ function onInfermaticAIModelSelect() {
 function onDreamGenModelSelect() {
     const modelName = String($('#model_dreamgen_select').val());
     textgen_settings.dreamgen_model = modelName;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
     // TODO(DreamGen): Consider retuning max_tokens from API and setting it here.
 }
 
 function onOllamaModelSelect() {
     const modelId = String($('#ollama_model').val());
     textgen_settings.ollama_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
 }
 
 function onTabbyModelSelect() {
     const modelId = String($('#tabby_model').val());
     textgen_settings.tabby_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
 }
 
 function onLlamaCppModelSelect() {
     const modelId = String($('#llamacpp_model').val());
     textgen_settings.llamacpp_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
 }
 
 function onOpenRouterModelSelect() {
     const modelId = String($('#openrouter_model').val());
     textgen_settings.openrouter_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
     const model = openRouterModels.find(x => x.id === modelId);
+    syncOpenRouterProvidersForModel(modelId, '#openrouter_providers_text');
     setGenerationParamsFromPreset({ max_length: model.context_length });
 }
 
 function onVllmModelSelect() {
     const modelId = String($('#vllm_model').val());
     textgen_settings.vllm_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
 }
 
 function onAphroditeModelSelect() {
     const modelId = String($('#aphrodite_model').val());
     textgen_settings.aphrodite_model = modelId;
-    $('#api_button_textgenerationwebui').trigger('click');
+    reconnectTextGenIfValidationAllowed();
 }
 
 function getMancerModelTemplate(option) {
@@ -835,7 +1037,7 @@ async function downloadOllamaModel() {
 
         // Force refresh the model list
         toastr.success('Download complete. Please select the model from the dropdown.');
-        $('#api_button_textgenerationwebui').trigger('click');
+        reconnectTextGenIfValidationAllowed();
     } catch (err) {
         console.error(err);
         toastr.error('Failed to download Ollama model. Please try again.');
@@ -999,6 +1201,14 @@ export function initTextGenModels() {
         }));
     }
 
+    const nanoGptProvidersSelect = $('#nanogpt_provider');
+    for (const provider of NANOGPT_PROVIDERS) {
+        nanoGptProvidersSelect.append($('<option>', {
+            value: provider.id,
+            text: provider.label,
+        }));
+    }
+
     if (!isMobile()) {
         $('#mancer_model').select2({
             placeholder: t`Select a model`,
@@ -1092,6 +1302,14 @@ export function initTextGenModels() {
             $element.detach();
             $(this).append($element);
             $(this).trigger('change');
+        });
+        nanoGptProvidersSelect.select2({
+            sorter: data => data.sort((a, b) => a.text.localeCompare(b.text)),
+            placeholder: t`Select providers. No selection = all providers.`,
+            searchInputPlaceholder: t`Search providers...`,
+            searchInputCssClass: 'text_pole',
+            width: '100%',
+            allowClear: true,
         });
     }
 }

@@ -51,6 +51,7 @@ const ENABLED_SYSTEM_EXTENSIONS: &[&str] = &[
     "stable-diffusion",
     "vectors",
     "tauritavern-version",
+    "agent-system",
     "translate",
     "tts",
 ];

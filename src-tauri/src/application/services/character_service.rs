@@ -2,17 +2,23 @@ mod card_contract;
 mod lorebook_codec;
 
 use crate::application::dto::character_dto::{
-    CharacterChatDto, CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
-    ExportCharacterContentDto, ExportCharacterContentResultDto, ExportCharacterDto,
-    GetCharacterChatsDto, ImportCharacterDto, MergeCharacterCardDataDto, RenameCharacterDto,
-    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto, merge_character_extensions,
+    BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataResultDto, CharacterChatDto,
+    CharacterDto, CreateCharacterDto, CreateWithAvatarDto, DeleteCharacterDto,
+    DuplicateCharacterDto, ExportCharacterContentDto, ExportCharacterContentResultDto,
+    ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto, MergeCharacterCardDataDto,
+    RenameCharacterDto, UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
+    merge_character_extensions,
 };
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_workspace_lifecycle_service::{
+    AgentChatWorkspaceTarget, AgentWorkspaceLifecycleService,
+};
 use crate::domain::errors::DomainError;
-use crate::domain::json_merge::merge_json_value;
+use crate::domain::json_merge::{merge_json_value, merge_json_value_with_unset};
 use crate::domain::models::character::Character;
 use crate::domain::models::world_info::sanitize_world_info_name;
 use crate::domain::repositories::character_repository::{CharacterRepository, ImageCrop};
+use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::world_info_repository::WorldInfoRepository;
 use crate::infrastructure::logging::logger;
 use serde_json::Value;
@@ -25,7 +31,9 @@ use self::lorebook_codec::{character_book_to_world_info, world_info_to_character
 /// Service for character management
 pub struct CharacterService {
     repository: Arc<dyn CharacterRepository>,
+    chat_repository: Arc<dyn ChatRepository>,
     world_info_repository: Arc<dyn WorldInfoRepository>,
+    agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,11 +52,15 @@ impl CharacterService {
     /// Create a new CharacterService
     pub fn new(
         repository: Arc<dyn CharacterRepository>,
+        chat_repository: Arc<dyn ChatRepository>,
         world_info_repository: Arc<dyn WorldInfoRepository>,
+        agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
     ) -> Self {
         Self {
             repository,
+            chat_repository,
             world_info_repository,
+            agent_workspace_lifecycle_service,
         }
     }
 
@@ -76,13 +88,15 @@ impl CharacterService {
         dto: CreateCharacterDto,
     ) -> Result<CharacterDto, ApplicationError> {
         logger::debug(&format!("Creating character: {}", dto.name));
+        let primary_lorebook = dto.primary_lorebook.clone();
 
         // Convert DTO to domain model
         let mut character = Character::try_from(dto).map_err(Self::map_extensions_error)?;
 
         // Validate character
         self.validate_character(&character)?;
-        self.materialize_primary_lorebook(&mut character).await?;
+        self.materialize_create_lorebook(&mut character, primary_lorebook.as_deref())
+            .await?;
 
         let created = self
             .repository
@@ -101,6 +115,7 @@ impl CharacterService {
             "Creating character with avatar: {}",
             dto.character.name
         ));
+        let primary_lorebook = dto.character.primary_lorebook.clone();
 
         // Convert DTO to domain model
         let mut character =
@@ -108,7 +123,8 @@ impl CharacterService {
 
         // Validate character
         self.validate_character(&character)?;
-        self.materialize_primary_lorebook(&mut character).await?;
+        self.materialize_create_lorebook(&mut character, primary_lorebook.as_deref())
+            .await?;
 
         // Convert avatar path
         let avatar_path_ref: Option<&Path> = dto.avatar_path.as_deref().map(Path::new);
@@ -310,7 +326,7 @@ impl CharacterService {
 
         let raw_json = self.repository.read_character_card_json(name).await?;
         let mut card_value = card_contract::parse_character_card_json(&raw_json)?;
-        merge_json_value(&mut card_value, dto.update);
+        merge_json_value_with_unset(&mut card_value, dto.update);
         let updated = self
             .write_character_card_value(
                 name,
@@ -325,11 +341,99 @@ impl CharacterService {
         Ok(CharacterDto::from(updated))
     }
 
+    /// Merge raw attributes into many stored character cards using upstream-compatible bulk semantics.
+    pub async fn bulk_merge_character_card_data(
+        &self,
+        dto: BulkMergeCharacterCardDataDto,
+    ) -> Result<BulkMergeCharacterCardDataResultDto, ApplicationError> {
+        if !dto.data.is_object() {
+            return Err(ApplicationError::ValidationError(
+                "No valid update data provided.".to_string(),
+            ));
+        }
+
+        let target_avatars = if dto.avatars.is_empty() {
+            self.repository.list_avatar_filenames().await?
+        } else {
+            dto.avatars
+        };
+
+        let filter_path = dto
+            .filter
+            .as_ref()
+            .map(|filter| filter.path.trim())
+            .filter(|path| !path.is_empty());
+        let mut result = BulkMergeCharacterCardDataResultDto {
+            updated: Vec::new(),
+            skipped: Vec::new(),
+            failed: Vec::new(),
+        };
+
+        for avatar in target_avatars {
+            let avatar = Self::normalize_merge_avatar_filename(&avatar)?;
+            let name = Self::avatar_file_stem(&avatar);
+            let merge_result = self
+                .merge_character_card_value_for_bulk(name, dto.data.clone(), filter_path)
+                .await;
+
+            match merge_result {
+                Ok(true) => result.updated.push(avatar),
+                Ok(false) => result.skipped.push(avatar),
+                Err(error) => {
+                    logger::warn(&format!(
+                        "Bulk character merge failed for {}: {}",
+                        avatar, error
+                    ));
+                    result.failed.push(avatar);
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Delete a character
     pub async fn delete_character(&self, dto: DeleteCharacterDto) -> Result<(), ApplicationError> {
         logger::debug(&format!("Deleting character: {}", dto.name));
+        let workspace_targets = if dto.delete_chats {
+            self.agent_workspace_targets_for_character_chats(&dto.name)
+                .await?
+        } else {
+            Vec::new()
+        };
+        self.agent_workspace_lifecycle_service
+            .ensure_chat_workspaces_inactive(&workspace_targets)
+            .await?;
+
         self.repository.delete(&dto.name, dto.delete_chats).await?;
+        self.agent_workspace_lifecycle_service
+            .delete_chat_workspaces(&workspace_targets)
+            .await?;
         Ok(())
+    }
+
+    async fn agent_workspace_targets_for_character_chats(
+        &self,
+        character_name: &str,
+    ) -> Result<Vec<AgentChatWorkspaceTarget>, ApplicationError> {
+        let summaries = self
+            .chat_repository
+            .list_chat_summaries(Some(character_name), true)
+            .await?;
+        let mut targets = Vec::new();
+        for summary in summaries {
+            let Some(metadata) = summary.chat_metadata.as_ref() else {
+                continue;
+            };
+            if let Some(target) = AgentWorkspaceLifecycleService::character_target_from_metadata(
+                character_name,
+                &summary.file_name,
+                metadata,
+            )? {
+                targets.push(target);
+            }
+        }
+        Ok(targets)
     }
 
     /// Rename a character
@@ -344,6 +448,16 @@ impl CharacterService {
             dto.old_name, dto.new_name
         ));
         let character = self.repository.rename(&dto.old_name, &dto.new_name).await?;
+        Ok(CharacterDto::from(character))
+    }
+
+    /// Duplicate a character using upstream file-copy semantics.
+    pub async fn duplicate_character(
+        &self,
+        dto: DuplicateCharacterDto,
+    ) -> Result<CharacterDto, ApplicationError> {
+        logger::debug(&format!("Duplicating character: {}", dto.name));
+        let character = self.repository.duplicate(&dto.name).await?;
         Ok(CharacterDto::from(character))
     }
 
@@ -490,6 +604,91 @@ impl CharacterService {
         Ok(())
     }
 
+    fn normalize_merge_avatar_filename(avatar: &str) -> Result<String, ApplicationError> {
+        let value = avatar.trim();
+        let is_png = value
+            .get(value.len().saturating_sub(4)..)
+            .is_some_and(|suffix| suffix.eq_ignore_ascii_case(".png"));
+
+        if value.is_empty()
+            || value.contains('/')
+            || value.contains('\\')
+            || value.chars().any(char::is_control)
+            || !is_png
+        {
+            return Err(ApplicationError::ValidationError(format!(
+                "Invalid avatar filename: {}",
+                avatar
+            )));
+        }
+
+        Ok(value.to_string())
+    }
+
+    fn avatar_file_stem(avatar: &str) -> &str {
+        if avatar
+            .get(avatar.len().saturating_sub(4)..)
+            .is_some_and(|suffix| suffix.eq_ignore_ascii_case(".png"))
+        {
+            &avatar[..avatar.len() - 4]
+        } else {
+            avatar
+        }
+    }
+
+    fn value_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+        if path.trim().is_empty() {
+            return Some(value);
+        }
+
+        let mut current = value;
+        for segment in path.split('.') {
+            if segment.is_empty() {
+                return None;
+            }
+
+            current = match current {
+                Value::Object(object) => object.get(segment)?,
+                Value::Array(array) => {
+                    let index = segment.parse::<usize>().ok()?;
+                    array.get(index)?
+                }
+                _ => return None,
+            };
+        }
+
+        Some(current)
+    }
+
+    async fn merge_character_card_value_for_bulk(
+        &self,
+        name: &str,
+        update: Value,
+        filter_path: Option<&str>,
+    ) -> Result<bool, ApplicationError> {
+        let raw_json = self.repository.read_character_card_json(name).await?;
+        let mut card_value = card_contract::parse_character_card_json(&raw_json)?;
+
+        if let Some(filter_path) = filter_path {
+            if Self::value_at_path(&card_value, filter_path).is_none() {
+                return Ok(false);
+            }
+        }
+
+        merge_json_value_with_unset(&mut card_value, update);
+        self.write_character_card_value(
+            name,
+            card_value,
+            None,
+            None,
+            CharacterCardValidationMode::Strict,
+            CharacterCardLorebookMaterializationMode::Skip,
+        )
+        .await?;
+
+        Ok(true)
+    }
+
     fn map_extensions_error(error: serde_json::Error) -> ApplicationError {
         ApplicationError::ValidationError(format!("Invalid character extensions: {}", error))
     }
@@ -562,12 +761,48 @@ impl CharacterService {
         &self,
         character: &mut Character,
     ) -> Result<bool, DomainError> {
-        let world_name = character.data.extensions.world.trim();
+        let world_name = character.data.extensions.world.trim().to_string();
         if world_name.is_empty() {
             let removed = character.data.character_book.take().is_some();
             return Ok(removed);
         }
 
+        self.materialize_lorebook(character, &world_name).await
+    }
+
+    async fn materialize_create_lorebook(
+        &self,
+        character: &mut Character,
+        primary_lorebook: Option<&str>,
+    ) -> Result<(), DomainError> {
+        let Some(world_name) = primary_lorebook
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(());
+        };
+
+        let Some(world_info) = self
+            .world_info_repository
+            .get_world_info(world_name, false)
+            .await?
+        else {
+            logger::warn(&format!(
+                "Failed to read world info file: {}. Character book will not be available.",
+                world_name
+            ));
+            return Ok(());
+        };
+
+        Self::apply_materialized_lorebook(character, world_name, &world_info)?;
+        Ok(())
+    }
+
+    async fn materialize_lorebook(
+        &self,
+        character: &mut Character,
+        world_name: &str,
+    ) -> Result<bool, DomainError> {
         let world_info = self
             .world_info_repository
             .get_world_info(world_name, false)
@@ -575,7 +810,16 @@ impl CharacterService {
             .ok_or_else(|| {
                 DomainError::NotFound(format!("World info file {} doesn't exist", world_name))
             })?;
-        let character_book = world_info_to_character_book(world_name, &world_info)?;
+
+        Self::apply_materialized_lorebook(character, world_name, &world_info)
+    }
+
+    fn apply_materialized_lorebook(
+        character: &mut Character,
+        world_name: &str,
+        world_info: &Value,
+    ) -> Result<bool, DomainError> {
+        let character_book = world_info_to_character_book(world_name, world_info)?;
 
         if character.data.character_book.as_ref() == Some(&character_book) {
             return Ok(false);
@@ -721,6 +965,7 @@ impl CharacterService {
             .await?;
         card_contract::normalize_v2_character_book_extensions(&mut export_value)?;
         card_contract::unset_private_fields(&mut export_value)?;
+        card_contract::sanitize_agent_profiles_for_export(&mut export_value)?;
 
         Ok(export_value)
     }

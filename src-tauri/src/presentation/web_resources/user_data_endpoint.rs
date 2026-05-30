@@ -391,6 +391,44 @@ mod tests {
     }
 
     #[test]
+    fn serves_legacy_c1_background_asset() {
+        let temp = TempDirGuard::new("user-data-endpoint-background-c1");
+        std::fs::create_dir_all(temp.path.join("backgrounds")).expect("create backgrounds dir");
+        std::fs::write(
+            temp.path.join("backgrounds").join("ã\u{80}\u{90}.png"),
+            b"ok",
+        )
+        .expect("write asset");
+
+        let request = tauri::http::Request::builder()
+            .method("GET")
+            .uri("/backgrounds/%C3%A3%C2%80%C2%90.png")
+            .body(Vec::new())
+            .expect("request");
+        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+
+        handle_user_data_asset_web_request(&dirs(&temp.path), &request, &mut response);
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.body().as_ref(), b"ok");
+    }
+
+    #[test]
+    fn rejects_c0_control_background_asset_path() {
+        let temp = TempDirGuard::new("user-data-endpoint-background-c0");
+        let request = tauri::http::Request::builder()
+            .method("GET")
+            .uri("/backgrounds/bad%1F.png")
+            .body(Vec::new())
+            .expect("request");
+        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+
+        handle_user_data_asset_web_request(&dirs(&temp.path), &request, &mut response);
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
     fn serves_nested_user_files_assets() {
         let temp = TempDirGuard::new("user-data-endpoint-user-files");
         let files_dir = temp.path.join("user/files").join("nested");

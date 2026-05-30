@@ -30,6 +30,9 @@ impl FileChatRepository {
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.ensure_directory_exists().await?;
 
+        let path = self.get_chat_path(character_name, file_name)?;
+        let backup_key = self.get_cache_key(character_name, file_name)?;
+
         let character_dir = self.get_character_dir(character_name);
         fs::create_dir_all(&character_dir).await.map_err(|error| {
             DomainError::InternalError(format!(
@@ -38,9 +41,7 @@ impl FileChatRepository {
             ))
         })?;
 
-        let path = self.get_chat_path(character_name, file_name);
         let _write_guard = self.acquire_payload_write_lock(&path).await;
-        let backup_key = self.get_cache_key(character_name, file_name);
         let result = patch_payload_windowed_internal(&path, cursor, header, op, force).await?;
 
         {
@@ -65,9 +66,9 @@ impl FileChatRepository {
     ) -> Result<ChatPayloadCursor, DomainError> {
         self.ensure_directory_exists().await?;
 
-        let path = self.get_group_chat_path(chat_id);
+        let path = self.get_group_chat_path(chat_id)?;
         let _write_guard = self.acquire_payload_write_lock(&path).await;
-        let backup_key = format!("group:{}", Self::strip_jsonl_extension(chat_id));
+        let backup_key = Self::get_group_backup_key(chat_id)?;
         let result = patch_payload_windowed_internal(&path, cursor, header, op, force).await?;
 
         self.remove_summary_cache_for_path(&path).await;

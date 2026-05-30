@@ -3,7 +3,8 @@ import { getContext, getApiUrl, doExtrasFetch, extension_settings, modules, rend
 import { appendMediaToMessage, chat_metadata, eventSource, event_types, getRequestHeaders, saveChatConditional, saveSettingsDebounced, substituteParamsExtended } from '../../../script.js';
 import { getMessageTimeStamp } from '../../RossAscends-mods.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
-import { getMultimodalCaption } from '../shared.js';
+import { oai_settings } from '../../openai.js';
+import { getMultimodalCaption, NATIVE_CAPTION_UNAVAILABLE_MESSAGE } from '../shared.js';
 import { textgen_types, textgenerationwebui_settings } from '../../textgen-settings.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
@@ -222,6 +223,10 @@ async function sendCaptionedMessage(caption, image, mimeType) {
  * @returns {Promise<{caption: string}>} Generated caption
  */
 async function doCaptionRequest(base64Img, fileData, externalPrompt) {
+    if (globalThis.__TAURI_RUNNING__ === true && ['local', 'horde'].includes(extension_settings.caption.source)) {
+        throw new Error(NATIVE_CAPTION_UNAVAILABLE_MESSAGE);
+    }
+
     switch (extension_settings.caption.source) {
         case 'local':
             return await captionLocal(base64Img);
@@ -458,7 +463,7 @@ function isVideoCaptioningAvailable() {
     return ['google', 'vertexai', 'zai'].includes(extension_settings.caption.multimodal_api);
 }
 
-jQuery(async function () {
+export async function init() {
     function addSendPictureButton() {
         const sendButton = $(`
         <div id="send_picture" class="list-group-item flex-container flexGap5">
@@ -468,8 +473,14 @@ jQuery(async function () {
 
         $('#caption_wand_container').append(sendButton);
         $(sendButton).on('click', () => {
+            let unavailableReason = '';
             const hasCaptionModule = (() => {
                 const settings = extension_settings.caption;
+
+                if (globalThis.__TAURI_RUNNING__ === true && ['local', 'horde', 'multimodal'].includes(settings.source)) {
+                    unavailableReason = NATIVE_CAPTION_UNAVAILABLE_MESSAGE;
+                    return false;
+                }
 
                 // Handle non-multimodal sources
                 if (settings.source === 'extras' && modules.includes('caption')) return true;
@@ -508,6 +519,7 @@ jQuery(async function () {
                         'chutes': SECRET_KEYS.CHUTES,
                         'electronhub': SECRET_KEYS.ELECTRONHUB,
                         'pollinations': SECRET_KEYS.POLLINATIONS,
+                        'workers_ai': SECRET_KEYS.WORKERS_AI,
                     };
 
                     if (chatCompletionApis[api] && secret_state[chatCompletionApis[api]]) {
@@ -540,7 +552,7 @@ jQuery(async function () {
             })();
 
             if (!hasCaptionModule) {
-                toastr.error('Choose other captioning source in the extension settings.', 'Captioning is not available');
+                toastr.error(unavailableReason || 'Choose other captioning source in the extension settings.', 'Captioning is not available');
                 return;
             }
 
@@ -584,7 +596,7 @@ jQuery(async function () {
     }
 
     async function addRemoteEndpointModels() {
-        async function processEndpoint(api, url) {
+        async function processEndpoint(api, url, additionalParams = {}) {
             const dropdown = document.getElementById('caption_multimodal_model');
             if (!(dropdown instanceof HTMLSelectElement)) {
                 return;
@@ -595,9 +607,11 @@ jQuery(async function () {
             const options = Array.from(dropdown.options);
             const response = await fetch(url, {
                 method: 'POST',
-                headers: getRequestHeaders({ omitContentType: true }),
+                headers: getRequestHeaders(),
+                body: JSON.stringify(additionalParams),
             });
             if (!response.ok) {
+                console.warn(`Caption: ${api} multimodal models fetch failed: HTTP ${response.status}`);
                 return;
             }
             const modelIds = await response.json();
@@ -624,6 +638,7 @@ jQuery(async function () {
         await processEndpoint('mistral', '/api/backends/chat-completions/multimodal-models/mistral');
         await processEndpoint('xai', '/api/backends/chat-completions/multimodal-models/xai');
         await processEndpoint('moonshot', '/api/backends/chat-completions/multimodal-models/moonshot');
+        await processEndpoint('workers_ai', '/api/backends/chat-completions/multimodal-models/workers_ai', { workers_ai_account_id: oai_settings.workers_ai_account_id });
     }
 
     await addSettings();
@@ -808,4 +823,4 @@ jQuery(async function () {
     }));
 
     document.body.classList.add('caption');
-});
+}

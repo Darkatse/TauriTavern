@@ -1,5 +1,7 @@
 // @ts-check
 
+import { stripJsonl } from '../kernel/chat-utils.js';
+
 /**
  * @typedef {{ kind: 'character'; characterId: string; fileName: string }} CharacterChatRef
  * @typedef {{ kind: 'group'; chatId: string }} GroupChatRef
@@ -40,11 +42,6 @@ export function mustNumber(value, label) {
     return num;
 }
 
-/** @param {unknown} value */
-function stripJsonl(value) {
-    return String(value || '').trim().replace(/\.jsonl$/i, '');
-}
-
 /**
  * @param {any} ref
  * @returns {ChatRef}
@@ -58,7 +55,7 @@ export function normalizeChatRef(ref) {
     if (kind === 'character') {
         const characterId = String(ref.characterId || '').trim();
         const fileName = stripJsonl(ref.fileName);
-        if (!characterId || !fileName) {
+        if (!characterId || !fileName.trim()) {
             throw new Error('Character ChatRef requires characterId and fileName');
         }
         return { kind: 'character', characterId, fileName };
@@ -66,7 +63,7 @@ export function normalizeChatRef(ref) {
 
     if (kind === 'group') {
         const chatId = stripJsonl(ref.chatId);
-        if (!chatId) {
+        if (!chatId.trim()) {
             throw new Error('Group ChatRef requires chatId');
         }
         return { kind: 'group', chatId };
@@ -74,4 +71,3 @@ export function normalizeChatRef(ref) {
 
     throw new Error(`Unsupported ChatRef kind: ${kind}`);
 }
-

@@ -7,16 +7,18 @@
 1. `docs/CurrentState/AgentFramework.md`：当前真实实现状态与手动 smoke。
 2. `docs/AgentArchitecture.md`：系统边界、分层、数据流。
 3. `docs/AgentContract.md`：不可破坏的不变量与 fail-fast 约束。
-4. `docs/AgentImplementPlan.md`：分阶段实施计划与验收标准。
+4. `docs/AgentImplementPlan.md`：当前实施基线、后续顺序与验收命令。
 5. `docs/Agent/Workspace.md`：Workspace、Artifact、Checkpoint 的存储语义。
 6. `docs/Agent/RunEventJournal.md`：Run Event、状态机、恢复/取消语义。
 7. `docs/Agent/ProfilesAndPreset.md`：Preset、Agent Profile、Plan Policy。
 8. `docs/Agent/ToolSystem.md`：Tool Registry、Tool Result、权限与审批。
 9. `docs/Agent/LlmGateway.md`：provider-agnostic LLM gateway 与现有 ChatCompletionService 的复用边界。
-10. `docs/Agent/McpSkill.md`：MCP 与 Skill 的边界。
-11. `docs/API/Agent.md`：前端 Host ABI 与 Tauri command 草案。
-12. `docs/API/MCP.md`：非 Agent 模式下的 MCP Host ABI 草案。
-13. `docs/Agent/TestingStrategy.md`：测试矩阵与回归守护。
+10. `docs/Agent/Skill.md`：当前 Skill 格式、存储、导入导出、Agent tool 与安全边界。
+11. `docs/Agent/McpSkill.md`：MCP 与 Skill 的边界。
+12. `docs/API/Agent.md`：前端 Agent Host ABI。
+13. `docs/API/Skill.md`：前端 Skill 管理 Host ABI。
+14. `docs/API/MCP.md`：非 Agent 模式下的 MCP Host ABI 草案。
+15. `docs/Agent/TestingStrategy.md`：测试矩阵与回归守护。
 
 ## 1. 核心定义
 
@@ -46,7 +48,7 @@ MCP / Tool Direct Call
 - 后端已经采用 Clean Architecture，依赖方向是外层依赖内层、内层定义接口、外层实现接口。见 `docs/BackendStructure.md:7`、`docs/BackendStructure.md:40`。
 - 应用服务由 `AppState` 管理并在 `bootstrap::build_services()` 装配。见 `src-tauri/src/app.rs:36`、`src-tauri/src/app/bootstrap.rs:150`。
 - 当前 LLM 请求经过 `ChatCompletionService`，该服务负责 provider 解析、iOS policy、endpoint override policy、payload build、prompt caching 和取消注册。见 `src-tauri/src/application/services/chat_completion_service/mod.rs:32`、`src-tauri/src/application/services/chat_completion_service/mod.rs:302`、`src-tauri/src/application/services/chat_completion_service/mod.rs:358`。
-- 当前 LLM API 日志依赖 bootstrap 中装配的 `LoggingChatCompletionRepository` wrapper；Agent 不得直接调用 `HttpChatCompletionRepository` 绕过日志、proxy、secret 或 policy。见 `src-tauri/src/app/bootstrap.rs:372`。
+- 当前 LLM API 日志依赖 bootstrap 中装配的 `LoggingChatCompletionRepository` wrapper；Agent 不得直接调用 `HttpChatCompletionRepository` 绕过日志、secret 或 policy。Responses WebSocket 建连已复用 `HttpClientPool` 的 ChatCompletion WebSocket profile，不应扩散成第二套 LLM 调用链。见 `src-tauri/src/app/bootstrap.rs:372`。
 - 当前 chat payload 分片读写由 `ChatService` 和 `ChatRepository` 承担，windowed save/patch 是正式契约。见 `src-tauri/src/application/services/chat_service.rs:495`、`src-tauri/src/application/services/chat_service.rs:563`、`src-tauri/src/domain/repositories/chat_repository.rs:145`、`src-tauri/src/domain/repositories/chat_repository.rs:162`。
 - 前端 Public ABI 的统一入口是 `window.__TAURITAVERN__`，应保持小而稳定。见 `docs/FrontendHostContract.md:92`、`src/tauri/main/bootstrap.js:139`。
 - 当前 `Generate()` 支持 dryRun，并在 `GENERATE_AFTER_DATA` 提供生成请求数据。见 `src/script.js:4660`、`src/script.js:5743`。
@@ -64,7 +66,7 @@ Agent 系统必须同时满足五个目标：
 
 ## 4. 非目标
 
-第一阶段不追求这些事项：
+当前不追求这些事项：
 
 - 不重写完整 SillyTavern PromptManager。
 - 不把所有历史消息复制到 workspace。
@@ -140,16 +142,23 @@ LLM Gateway / provider adapter
 
 ### 5.1 当前落地边界
 
-截至 2026-04-26，当前已落地的是 Phase 2B workspace 读改工具循环，而不是完整 Agent 产品面：
+截至 2026-05-02，当前已落地的是 canonical model IR + provider native metadata 保真 + provider_state continuation + 上下文只读工具 + workspace 读改工具循环，而不是完整 Agent 产品面：
 
 - Public Host ABI 入口为 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`，没有 `startRun()` alias。
-- `startRunFromLegacyGenerate()` 是当前推荐的兼容桥；它捕获 Legacy prompt 语义，同时禁用 Legacy ToolManager tools。
+- `startRunFromLegacyGenerate()` 是当前推荐的兼容桥；它捕获 Legacy prompt 语义与本轮最终 `worldInfoActivation`，同时禁用 Legacy ToolManager tools。
 - `startRunWithPromptSnapshot()` 是低层测试/集成入口；调用方必须提供不含 external tools/tool turns 的 chat completion payload。
-- 后端当前开放 `workspace.list_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.finish` 五个内建工具，对模型暴露为 provider-safe alias。
-- 当前模型可见 / 可写 workspace 根为 `output/`、`scratch/`、`plan/`、`summaries/`；`input/`、`tool-args/`、`tool-results/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
-- 工具循环最多 80 轮，必须以 `workspace.finish` 结束；模型直接输出文本会 fail-fast。
+- 后端当前开放 `chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`dice.roll`、`skill.list`、`skill.search`、`skill.read`、`workspace.list_files`、`workspace.search_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.commit`、`workspace.finish` 十四个非 delegation 内建工具，对模型暴露为 provider-safe alias；`dice.roll` 默认不在 Agent Profile 中启用。
+- Agent runtime 当前使用 `AgentModelRequest` / `AgentModelResponse` / `AgentModelContentPart` 作为内部模型语义，不再直接读写 OpenAI-compatible raw JSON。
+- `AgentModelGateway` 仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，在 canonical IR 与现有 provider payload pipeline 之间转换。
+- Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native metadata 以 opaque `Native` part 保存和回放；tool call id 缺失会 fail-fast。
+- Agent `provider_state` 已用于 run-scoped continuation；OpenAI Responses 通过 persistent WebSocket、incremental input 与 `previous_response_id` 续接。详见 `docs/CurrentState/AgentProviderState.md`。
+- `workspace.write_file` / `workspace.apply_patch` 成功结果只回填摘要、结构化元数据与 resource refs；需要完整内容时模型必须显式调用 `workspace.read_file`。
+- `chat.search` 与 `chat.read_messages` 只读取当前 run 绑定的聊天，不允许模型指定任意 chat target；message index 从 0 开始，JSONL header 不计入消息。
+- `worldinfo.read_activated` 只读取本次 run prompt snapshot 中 materialized 的激活结果，不把全局 last activation 当作运行时真相。
+- 当前模型可见 / 可写 workspace 根由 run manifest roots 驱动，默认包含 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/`；`persist/` 是 chat workspace 级持久 root 的 run projection，`workspace.finish` 收尾成功后 promote 回稳定 chat workspace；`input/`、`tool-args/`、`tool-results/`、`model-responses/`、`checkpoints/` 与 `events.jsonl` 不作为模型工具资源暴露。
+- 工具循环最多 80 轮，必须以 `workspace.finish` 结束；前台 run 在 finish 前必须至少成功 `workspace.commit` 一次，后台 run 可无 chat commit；模型直接输出文本会先捕获到 workspace `direct_output.md` 并触发一次 soft drift recovery，恢复耗尽后再 fail-fast / partial-success。
 - 模型可修正的工具错误以 `is_error = true` tool result 回填下一轮；宿主级 IO、journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
-- `readDiff`、`rollback`、`resume-run`、tool approval、profile routing、MCP、timeline UI、主发送按钮 Agent toggle 仍未实现。
+- Skill profile policy、readDiff、rollback、resume-run、tool approval、profile routing、MCP、timeline UI、streaming Agent loop、主发送按钮 Agent toggle 仍未实现。
 
 ### 5.2 Run 与 Workspace 身份
 
@@ -277,7 +286,9 @@ src-tauri/src/
 - 复用现有 provider 能力、policy 检查、prompt caching、logging、proxy/client 配置、cancellation。
 - 输出 provider-agnostic `ModelResponse` / streaming delta / tool call。
 
-第一期必须通过适配现有 `ChatCompletionService` 完成，而不是直接调用 `HttpChatCompletionRepository` 或新建 HTTP client。长期目标是在不破坏现有 chat completion API 的前提下抽出更明确的 model gateway。
+当前已落地 `AgentModelGateway` wrapper：Agent runtime 消费 canonical `AgentModelRequest` / `AgentModelResponse`，gateway 再编码为现有 `ChatCompletionGenerateRequestDto` 并调用 `ChatCompletionService::generate_exchange_with_cancel()`。它仍不是新 HTTP client，也不绕过 `HttpChatCompletionRepository` 外层的 logging、policy、secret、prompt cache 和 cancel 链路。Responses WebSocket 建连由 `HttpClientPool` 提供统一代理、TLS/client 构建与连接超时语义。
+
+Gateway 代码已拆成 `agent_model_gateway/` 模块目录：`mod.rs` 保留 trait / wrapper，`encode.rs` / `decode.rs` / `schema.rs` / `provider_state.rs` 处理通用转换与 continuation，`providers/*` 承载 provider-specific adapter 规则。后续修改不能退回到 runtime 直接拼 provider-specific payload。
 
 当前 `ChatCompletionStreamEvent::Chunk` 只是 provider SSE `data` 字符串的桥接，不是 Agent timeline 语义事件。Agent 必须定义自己的 `AgentRunEvent`，不能把 provider stream chunk 当作 run event。
 
@@ -353,10 +364,8 @@ Running
   ├─ CreatingCheckpoint
   ├─ Summarizing?
   └─ SwitchingProfile?
-  ↓
-AssemblingArtifacts
-  ↓
-Committing
+  ├─ AwaitingHostCommit
+  └─ Finishing
   ↓
 Completed
 ```
@@ -411,18 +420,21 @@ SillyTavern 上游的事件和 chat message 结构仍是兼容层的基础。Age
 - Provider endpoint override 必须继续遵守现有 iOS policy 与 settings policy。
 - 任何 policy violation 都必须显式进入 journal：若属于模型可修正的工具参数/权限问题，返回 recoverable tool error；若属于宿主安全或状态机问题，则 fail-fast。禁止静默降级为“工具不可见但继续跑”之类的模糊行为。
 
-## 13. 最小 MVP
+## 13. 当前基线与下一步
 
-第一个可合并 Agent MVP 应只包含：
+第一个最小 Agent 骨架已经并入当前基线：
 
-1. `api.agent.startRunWithPromptSnapshot()`。
-2. run workspace。
-3. `events.jsonl`。
-4. `output/main.md`。
+1. `api.agent.startRunFromLegacyGenerate()` / `startRunWithPromptSnapshot()`。
+2. run workspace 与 chat 级 `persist/` projection。
+3. append-only `events.jsonl`。
+4. `output/main.md` artifact。
 5. checkpoint snapshot。
-6. 单次 LLM call。
-7. artifact commit 到 chat。
-8. 最小 timeline UI。
+6. Rust-owned model/tool loop。
+7. chat/worldinfo/workspace 内建工具。
+8. artifact commit 到 chat。
 9. Agent Mode off 行为完全不变。
+10. canonical model IR 与 `AgentModelGateway`。
+11. provider native metadata opaque 保留/回放。
+12. workspace write/patch read-state 与显式 read-before-edit 语义。
 
-这个 MVP 的价值不是炫技，而是验证 runtime boundary、journal、workspace、commit、rollback 这些后续能力赖以存在的骨架。
+下一步的架构重点不再是证明 Agent loop 可行，而是补齐三个长期能力：更清晰的 provider adapter 模块、创作者可控的 profile/context policy、可理解的 timeline/diff/rollback UI。

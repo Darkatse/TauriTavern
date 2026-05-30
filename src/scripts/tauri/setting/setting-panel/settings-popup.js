@@ -23,6 +23,11 @@ import {
 } from '../../../../tauri/main/services/chat-history/chat-history-mode-state.js';
 import { runOrPopup } from './popup-utils.js';
 import { getActiveIosPolicyCapabilities } from '../../../tauritavern/ios-policy.js';
+import {
+    isNativeRegexBackendEnabled,
+    readNativeRegexBackendEnabledFromSettings,
+    syncNativeRegexBackendEnabledFromSettings,
+} from '../../regex/native-regex-settings.js';
 
 function isWindowsPlatform() {
     return typeof navigator !== 'undefined'
@@ -156,6 +161,13 @@ export async function openTauriTavernSettingsPopup() {
                         <option value="windowed" data-i18n="Windowed (Recommended)">Windowed (Recommended)</option>
                         <option value="off" data-i18n="Off (Upstream full history)">Off (Upstream full history)</option>
                     </select>
+                </div>
+
+                <div class="flex-container alignItemsCenter" style="justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                    <div class="flex-container alignItemsBaseline" style="gap: 8px; min-width: 220px; flex: 1;">
+                        <span data-i18n="Rust Regex Backend">Rust Regex Backend</span>
+                    </div>
+                    <input id="tt-native-regex-backend-enabled" type="checkbox" style="margin: 0;" />
                 </div>
 
                 <small style="opacity: 0.85;" data-i18n="Requires reload to apply.">Requires reload to apply.</small>
@@ -457,6 +469,11 @@ export async function openTauriTavernSettingsPopup() {
         throw new Error('TauriTavern settings: chat history mode selector not found');
     }
 
+    const nativeRegexBackendEnabledToggle = root.querySelector('#tt-native-regex-backend-enabled');
+    if (!(nativeRegexBackendEnabledToggle instanceof HTMLInputElement)) {
+        throw new Error('TauriTavern settings: native regex backend toggle not found');
+    }
+
     const requestProxyDetails = root.querySelector('#tt-request-proxy-details');
     if (!(requestProxyDetails instanceof HTMLDetailsElement)) {
         throw new Error('TauriTavern settings: request proxy details not found');
@@ -589,6 +606,10 @@ export async function openTauriTavernSettingsPopup() {
             : CHAT_HISTORY_MODE_WINDOWED,
     );
     chatHistoryModeSelect.value = currentChatHistoryMode;
+
+    syncNativeRegexBackendEnabledFromSettings(settings);
+    const currentNativeRegexBackendEnabled = readNativeRegexBackendEnabledFromSettings(settings);
+    nativeRegexBackendEnabledToggle.checked = isNativeRegexBackendEnabled();
 
     const currentCloseToTrayOnClose = Boolean(settings.close_to_tray_on_close);
     if (closeToTrayToggle) {
@@ -957,6 +978,7 @@ export async function openTauriTavernSettingsPopup() {
 
     const nextAllowKeysExposure = allowKeysExposureToggle.checked;
     const nextAvatarPersonaOriginalImagesEnabled = avatarPersonaOriginalImagesEnabledToggle.checked;
+    const nextNativeRegexBackendEnabled = nativeRegexBackendEnabledToggle.checked;
     const nextPromptCacheTtl = String(promptCacheTtlSelect.value || '').trim();
 
     const normalizeRequestProxyBypass = (value) => {
@@ -1000,13 +1022,15 @@ export async function openTauriTavernSettingsPopup() {
     const hasAllowKeysExposureChange = nextAllowKeysExposure !== currentAllowKeysExposure;
     const hasAvatarPersonaOriginalImagesEnabledChange =
         nextAvatarPersonaOriginalImagesEnabled !== currentAvatarPersonaOriginalImagesEnabled;
+    const hasNativeRegexBackendEnabledChange =
+        nextNativeRegexBackendEnabled !== currentNativeRegexBackendEnabled;
     const hasPromptCacheTtlChange = nextPromptCacheTtl !== currentPromptCacheTtl;
     const hasModelsChange = hasPromptCacheTtlChange;
     const hasRequestProxyChange = nextRequestProxyEnabled !== currentRequestProxyEnabled
         || nextRequestProxyUrl !== normalizedCurrentRequestProxyUrl
         || !arraysEqual(nextRequestProxyBypass, normalizedCurrentRequestProxyBypass);
 
-    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange && !hasDynamicThemeChange && !hasAllowKeysExposureChange && !hasAvatarPersonaOriginalImagesEnabledChange && !hasModelsChange && !hasRequestProxyChange) {
+    if (!hasPanelRuntimeChange && !hasEmbeddedRuntimeChange && !hasChatHistoryModeChange && !hasCloseToTrayOnCloseChange && !hasDynamicThemeChange && !hasAllowKeysExposureChange && !hasAvatarPersonaOriginalImagesEnabledChange && !hasNativeRegexBackendEnabledChange && !hasModelsChange && !hasRequestProxyChange) {
         return;
     }
 
@@ -1037,6 +1061,9 @@ export async function openTauriTavernSettingsPopup() {
     if (hasAvatarPersonaOriginalImagesEnabledChange) {
         nextSettings.avatar_persona_original_images_enabled = nextAvatarPersonaOriginalImagesEnabled;
     }
+    if (hasNativeRegexBackendEnabledChange) {
+        nextSettings.native_regex_backend_enabled = nextNativeRegexBackendEnabled;
+    }
     if (hasModelsChange) {
         /** @type {Record<string, unknown>} */
         const claude = {};
@@ -1054,6 +1081,10 @@ export async function openTauriTavernSettingsPopup() {
     }
 
     const updatedSettings = await updateTauriTavernSettings(nextSettings);
+
+    if (hasNativeRegexBackendEnabledChange) {
+        syncNativeRegexBackendEnabledFromSettings(updatedSettings);
+    }
 
     if (hasDynamicThemeChange) {
         window.dispatchEvent(new CustomEvent(DYNAMIC_THEME_CHANGED_EVENT, {

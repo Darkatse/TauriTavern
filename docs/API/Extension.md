@@ -16,6 +16,11 @@ const store = window.__TAURITAVERN__.api.extension.store;
 ```js
 await store.setJson({ namespace: 'my-ext', key: 'settings', value: { enabled: true } });
 const settings = await store.getJson({ namespace: 'my-ext', key: 'settings' });
+
+const maybeSettings = await store.tryGetJson({ namespace: 'my-ext', key: 'settings' });
+if (!maybeSettings.found) {
+  // Use in-code defaults; write only when the user changes settings.
+}
 ```
 
 ### JSON 多表（额外 json / table）
@@ -63,6 +68,7 @@ const blob = await store.getBlob({ namespace: 'my-ext', key: 'icon.png' });
 | 方法 | 返回值 | 说明 |
 | --- | --- | --- |
 | `getJson({ namespace, key, table? })` | `Promise<any>` | 读取 JSON 值 |
+| `tryGetJson({ namespace, key, table? })` | `Promise<{ found: boolean; value?: any }>` | 可选读取；key 不存在时返回 `{ found: false }`，其他错误仍抛出 |
 | `setJson({ namespace, key, value, table? })` | `Promise<void>` | 写入 JSON 值（覆盖） |
 | `updateJson({ namespace, key, value, table? })` | `Promise<void>` | 合并更新：对象会深度合并；非对象直接替换 |
 | `renameKey({ namespace, key, newKey, table? })` | `Promise<void>` | 重命名 key |

@@ -356,7 +356,16 @@ fn convert_messages(
             .trim()
             .to_lowercase();
 
-        let mut parts = convert_message_content_to_parts(message.get("content"), is_gemini3);
+        let native_gemini_parts = if role == "assistant" {
+            message_native_gemini_parts(message)
+        } else {
+            None
+        };
+        let mut parts = if let Some(native_parts) = native_gemini_parts.clone() {
+            native_parts
+        } else {
+            convert_message_content_to_parts(message.get("content"), is_gemini3)
+        };
 
         if role == "assistant" {
             let tool_calls = extract_openai_tool_calls(message.get("tool_calls"));
@@ -364,7 +373,9 @@ fn convert_messages(
                 for tool_call in &tool_calls {
                     tool_name_by_id.insert(tool_call.id.clone(), tool_call.name.clone());
                 }
-                parts.extend(convert_openai_tool_calls_to_parts(&tool_calls));
+                if native_gemini_parts.is_none() {
+                    parts.extend(convert_openai_tool_calls_to_parts(&tool_calls));
+                }
             }
         }
 
@@ -605,6 +616,16 @@ fn convert_message_content_to_parts(content: Option<&Value>, is_gemini3: bool) -
         Value::Null => Vec::new(),
         other => vec![json!({ "text": other.to_string() })],
     }
+}
+
+fn message_native_gemini_parts(message: &Map<String, Value>) -> Option<Vec<Value>> {
+    message
+        .get("native")?
+        .get("gemini")?
+        .get("content")?
+        .get("parts")?
+        .as_array()
+        .cloned()
 }
 
 fn convert_openai_tool_calls_to_parts(tool_calls: &[OpenAiToolCall]) -> Vec<Value> {
@@ -862,7 +883,7 @@ fn calculate_google_budget_tokens(
         let level = match effort.as_str() {
             "auto" => return None,
             "min" | "low" | "medium" => "low",
-            "high" | "max" => "high",
+            "high" | "max" | "xhigh" => "high",
             _ => return None,
         };
         return Some(GoogleThinkingBudget::Level(level));
@@ -874,7 +895,7 @@ fn calculate_google_budget_tokens(
             "min" => "minimal",
             "low" => "low",
             "medium" => "medium",
-            "high" | "max" => "high",
+            "high" | "max" | "xhigh" => "high",
             _ => return None,
         };
         return Some(GoogleThinkingBudget::Level(level));
@@ -887,7 +908,7 @@ fn calculate_google_budget_tokens(
             "low" => max_tokens.saturating_mul(10) / 100,
             "medium" => max_tokens.saturating_mul(25) / 100,
             "high" => max_tokens.saturating_mul(50) / 100,
-            "max" => max_tokens,
+            "max" | "xhigh" => max_tokens,
             _ => return None,
         };
 
@@ -903,7 +924,7 @@ fn calculate_google_budget_tokens(
             "low" => max_tokens.saturating_mul(10) / 100,
             "medium" => max_tokens.saturating_mul(25) / 100,
             "high" => max_tokens.saturating_mul(50) / 100,
-            "max" => max_tokens,
+            "max" | "xhigh" => max_tokens,
             _ => return None,
         };
 
@@ -919,7 +940,7 @@ fn calculate_google_budget_tokens(
             "low" => max_tokens.saturating_mul(10) / 100,
             "medium" => max_tokens.saturating_mul(25) / 100,
             "high" => max_tokens.saturating_mul(50) / 100,
-            "max" => max_tokens,
+            "max" | "xhigh" => max_tokens,
             _ => return None,
         };
 
@@ -1015,6 +1036,27 @@ mod tests {
             "low"
         );
         assert!(thinking.get("thinkingBudget").is_none());
+    }
+
+    #[test]
+    fn makersuite_xhigh_behaves_like_max() {
+        let payload = json!({
+            "model": "gemini-2.5-pro",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8000,
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(
+            upstream
+                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
+                .and_then(Value::as_i64),
+            Some(8000)
+        );
     }
 
     #[test]

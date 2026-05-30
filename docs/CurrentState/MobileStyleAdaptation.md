@@ -86,10 +86,10 @@ Android 说明：
 - 为避免主题 `custom_css` 直接覆盖移动端核心几何，宿主会注入一个 **host-last geometry firewall**（永远位于 `#custom-style` 之后）：
   - 实现：`src/tauri/main/compat/mobile/mobile-geometry-firewall.js`
   - 产物：`<style id="tt-mobile-geometry-firewall">`（keep-last，确保始终为 `<head>` 最后一个 element）
-  - 覆盖范围：只收回核心几何属性（`#top-settings-holder/#top-bar/#top-settings-holder > .drawer > .drawer-content:not(.fillLeft):not(.fillRight)/#sheld/#form_sheld`），不干预主题 skin
+  - 覆盖范围：只收回核心几何属性（`#top-settings-holder/#top-bar/#top-settings-holder > .drawer > .drawer-content:not(.fillLeft):not(.fillRight)/#sheld/#form_sheld`），其中 `#sheld` 的 `height/min-height/max-height` 必须同源计算，避免主题用 `min-height` 绕过 safe-area/viewport contract；不干预主题 skin
 - 第一方顶部设置面板（`#top-settings-holder` 下的非侧栏 drawer）不再依赖运行时测量与 inline 回写：
   - 由 geometry firewall 以 CSS contract 直接约束几何（holder-anchored），避免出现第二/第三套几何系统
-- 主容器 `#sheld` 以 `inset-top + topBarBlockSize` 定位，并用 `--tt-base-viewport-height`/`--doc-height` 计算高度。
+- 主容器 `#sheld` 以 `inset-top + topBarBlockSize` 定位，并用 `--tt-base-viewport-height`/`--doc-height` 统一计算 `height/min-height/max-height`。
 - Android 的键盘抬升不再直接绑定在主题可覆写的 `#form_sheld` 上；宿主使用 host-private DOM + contract 承载：
   - `src/tauri/main/compat/mobile/android-ime-layout-host.js` 在 `#form_sheld` 内安装 lift/spacer 节点（仅 composer）。
   - fixed-shell 等非 composer surface 由 geometry firewall 直接消费 `--tt-ime-bottom`（见 §3.6）。
@@ -109,7 +109,8 @@ Android 说明：
 当前策略：
 
 - **Admission**：仅观察 `document.body` 的直系子节点新增/移除（`subtree: false`），并对带 `script_id` 的 portal root 进一步扫描其子树（JS-Slash-Runner 常见挂载形态）。
-- **判定**：对符合条件的 `position: fixed` 节点进行 surface 分类（backdrop / viewport-host / fullscreen-window / free-window / edge-window）。
+- **生命周期**：对已经进入跟踪集的候选 surface，只监听其自身 `class/style/hidden/open/aria-hidden` 属性变化，用于撤销/恢复 host-admitted contract；属性重算按 animation frame 合并。稳定的 `free-window` 只响应 inline lifecycle style（`display/visibility/position/pointer-events/cursor/touch-action`）变化，几何类 style 写入保持在拖动热路径之外；仍不做全局 subtree/style observer。
+- **判定**：对符合条件且当前可见的 `position: fixed` 节点进行 surface 分类（backdrop / viewport-host / fullscreen-window / free-window / edge-window）。
 - **输出**：不再直接写入 `top`；改为输出契约属性：
   - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`
   - `data-tt-mobile-surface-admitted="1"`（host-private sentinel，用于区分 host-admitted 与显式 opt-in；非 ABI）
@@ -118,12 +119,12 @@ Android 说明：
   - `[data-tt-mobile-surface="edge-window"]`：只修正 top
   - `[data-tt-mobile-surface="fullscreen-window"]`：修正四边并把 width/height 改成 auto（避免 `100vh` 把底部顶出屏幕）
   - `[data-tt-mobile-surface="viewport-host"]`：outer host 强制 full-bleed（不做 safe-area 收缩；safe-area contract 进入 document boundary 处理）
-  - `[data-tt-mobile-surface="free-window"]`：不接管 `top/left`（仅 admission-time 允许一次性把初始位置从 safe-area 顶部挪开）
+  - `[data-tt-mobile-surface="free-window"]`：不接管 `top/left`（仅在 surface 准入转换时允许一次性把初始位置从 safe-area 顶部挪开）
   - `[data-tt-mobile-surface="backdrop"]`：保持 full-bleed（不做 inset）
   - 备注：firewall 的 surface selector 会刻意重复 attribute 以获得足够 specificity（覆盖常见框架 scoped CSS + `!important`）
 - **排除**：明确跳过 `body/#sheld/#chat` 等核心容器（避免影响主界面）。
 - **显式 opt-in**：若节点已带 `data-tt-mobile-surface`，该控制器将尊重并不再改写（便于第三方脚本作者自我修复）。
-- **Revalidate**：停止自动高频重分类（不再监听 `style/class` 与 `visualViewport`/`resize`/`orientationchange` 噪声）；仅在节点新增/移除时对新增子树做一次 admission。`controller.revalidate()` 保留为手动兜底（debug 用）。
+- **Revalidate**：停止自动高频重分类（不监听 `visualViewport`/`resize`/`orientationchange` 噪声）；除候选 surface 自身的生命周期属性外，仅在节点新增/移除时对新增子树做 admission。`controller.revalidate()` 保留为手动兜底（debug 用）。
 
 补充：portal host 常见为全屏容器（有时 `pointer-events: none`），实际交互面板通过 portal/render 落到其内部；classifier 会优先准入真实可交互 surface（避免 host 被误当作唯一 surface）。
 

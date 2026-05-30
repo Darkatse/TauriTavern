@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::application::services::agent_profile_service::AgentProfileService;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
+use crate::application::services::asset_service::AssetService;
 use crate::application::services::avatar_service::AvatarService;
 use crate::application::services::background_service::BackgroundService;
 use crate::application::services::character_service::CharacterService;
@@ -13,11 +15,17 @@ use crate::application::services::extension_service::ExtensionService;
 use crate::application::services::extension_store_service::ExtensionStoreService;
 use crate::application::services::group_chat_service::GroupChatService;
 use crate::application::services::group_service::GroupService;
+use crate::application::services::image_metadata_service::ImageMetadataService;
 use crate::application::services::lan_sync_service::LanSyncService;
+use crate::application::services::llm_connection_service::LlmConnectionService;
+use crate::application::services::native_regex_service::NativeRegexService;
 use crate::application::services::preset_service::PresetService;
+use crate::application::services::prompt_assembly_service::PromptAssemblyService;
+use crate::application::services::provider_metadata_service::ProviderMetadataService;
 use crate::application::services::quick_reply_service::QuickReplyService;
 use crate::application::services::secret_service::SecretService;
 use crate::application::services::settings_service::SettingsService;
+use crate::application::services::skill_service::SkillService;
 use crate::application::services::stable_diffusion_service::StableDiffusionService;
 use crate::application::services::theme_service::ThemeService;
 use crate::application::services::tokenization_service::TokenizationService;
@@ -42,17 +50,24 @@ pub struct AppState {
     pub settings_service: Arc<SettingsService>,
     pub user_directory_service: Arc<UserDirectoryService>,
     pub secret_service: Arc<SecretService>,
+    pub skill_service: Arc<SkillService>,
     pub content_service: Arc<ContentService>,
+    pub asset_service: Arc<AssetService>,
     pub extension_service: Arc<ExtensionService>,
     pub extension_store_service: Arc<ExtensionStoreService>,
     pub avatar_service: Arc<AvatarService>,
     pub group_service: Arc<GroupService>,
     pub background_service: Arc<BackgroundService>,
+    pub image_metadata_service: Arc<ImageMetadataService>,
     pub theme_service: Arc<ThemeService>,
     pub preset_service: Arc<PresetService>,
     pub quick_reply_service: Arc<QuickReplyService>,
+    pub agent_profile_service: Arc<AgentProfileService>,
+    pub prompt_assembly_service: Arc<PromptAssemblyService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
+    pub llm_connection_service: Arc<LlmConnectionService>,
+    pub provider_metadata_service: Arc<ProviderMetadataService>,
     pub tokenization_service: Arc<TokenizationService>,
     pub stable_diffusion_service: Arc<StableDiffusionService>,
     pub translate_service: Arc<TranslateService>,
@@ -61,6 +76,7 @@ pub struct AppState {
     pub lan_sync_service: Arc<LanSyncService>,
     pub tt_sync_service: Arc<TtSyncService>,
     pub update_service: Arc<UpdateService>,
+    pub native_regex_service: Arc<NativeRegexService>,
     pub ios_policy: crate::domain::ios_policy::IosPolicyActivationReport,
 }
 
@@ -89,17 +105,24 @@ impl AppState {
             settings_service: services.settings_service,
             user_directory_service: services.user_directory_service,
             secret_service: services.secret_service,
+            skill_service: services.skill_service,
             content_service: services.content_service,
+            asset_service: services.asset_service,
             extension_service: services.extension_service,
             extension_store_service: services.extension_store_service,
             avatar_service: services.avatar_service,
             group_service: services.group_service,
             background_service: services.background_service,
+            image_metadata_service: services.image_metadata_service,
             theme_service: services.theme_service,
             preset_service: services.preset_service,
             quick_reply_service: services.quick_reply_service,
+            agent_profile_service: services.agent_profile_service,
+            prompt_assembly_service: services.prompt_assembly_service,
             agent_runtime_service: services.agent_runtime_service,
             chat_completion_service: services.chat_completion_service,
+            llm_connection_service: services.llm_connection_service,
+            provider_metadata_service: services.provider_metadata_service,
             tokenization_service: services.tokenization_service,
             stable_diffusion_service: services.stable_diffusion_service,
             translate_service: services.translate_service,
@@ -108,6 +131,7 @@ impl AppState {
             lan_sync_service: services.lan_sync_service,
             tt_sync_service: services.tt_sync_service,
             update_service: services.update_service,
+            native_regex_service: services.native_regex_service,
             ios_policy: services.ios_policy,
         })
     }

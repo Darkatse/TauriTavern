@@ -43,9 +43,13 @@ pub fn enclosed_zip_entry_path_with_name<'a, 'b, R: Read + ?Sized>(
     entry: &'b ZipFile<'a, R>,
 ) -> Result<(PathBuf, &'b str), DomainError> {
     let name = zip_entry_display_name(entry)?;
-    let path = enclosed_name_from_str(name)
-        .ok_or_else(|| DomainError::InvalidData(format!("Invalid archive entry path: {}", name)))?;
+    let path = enclosed_archive_entry_path(name)?;
     Ok((path, name))
+}
+
+pub fn enclosed_archive_entry_path(name: &str) -> Result<PathBuf, DomainError> {
+    enclosed_name_from_str(name)
+        .ok_or_else(|| DomainError::InvalidData(format!("Invalid archive entry path: {}", name)))
 }
 
 pub fn zip_entry_display_name<'a, 'b, R: Read + ?Sized>(

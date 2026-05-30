@@ -1,5 +1,7 @@
 // @ts-check
 
+import { stripJsonl } from '../../kernel/chat-utils.js';
+
 /**
  * @typedef {{ kind: 'character'; characterId: string; fileName: string }} CharacterChatRef
  * @typedef {{ kind: 'group'; chatId: string }} GroupChatRef
@@ -27,11 +29,6 @@ export function mustGetSillyTavernContext() {
     }
 
     return context;
-}
-
-/** @param {unknown} value */
-function stripJsonl(value) {
-    return String(value || '').trim().replace(/\.jsonl$/i, '');
 }
 
 /** @param {any} avatar */
@@ -87,7 +84,7 @@ export function getActiveChatSnapshot() {
     const chatId = stripJsonl(rawChatId);
 
     if (context.groupId) {
-        if (!chatId) {
+        if (!chatId.trim()) {
             throw new Error('SillyTavern context chatId is empty for group chat');
         }
         return {
@@ -110,7 +107,7 @@ export function getActiveChatSnapshot() {
         throw new Error('Failed to resolve active character id');
     }
 
-    if (!chatId) {
+    if (!chatId.trim()) {
         throw new Error('SillyTavern context chatId is empty for character chat');
     }
 

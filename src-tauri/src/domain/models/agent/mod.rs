@@ -2,9 +2,14 @@ use std::path::Component;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::domain::errors::DomainError;
+
+pub mod plan;
+pub mod profile;
+
+pub const ROOT_AGENT_INVOCATION_ID: &str = "inv_root";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(
@@ -32,13 +37,49 @@ pub enum AgentRunStatus {
     DispatchingTool,
     ApplyingWorkspacePatch,
     CreatingCheckpoint,
-    AssemblingArtifacts,
-    AwaitingCommit,
-    Committing,
+    AwaitingHostCommit,
+    Finishing,
     Completed,
+    PartialSuccess,
     Cancelling,
     Cancelled,
     Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunPresentation {
+    Foreground,
+    Background,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentChatCommitMode {
+    Replace,
+    Append,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceFileWriteMode {
+    Replace,
+    Append,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunSkillScopeRefs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<profile::AgentPresetRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_id: Option<String>,
+}
+
+impl AgentRunSkillScopeRefs {
+    pub fn is_empty(&self) -> bool {
+        self.preset.is_none() && self.character_id.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +91,106 @@ pub struct AgentRun {
     pub chat_ref: AgentChatRef,
     pub generation_type: String,
     pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "AgentRunSkillScopeRefs::is_empty")]
+    pub skill_scope_refs: AgentRunSkillScopeRefs,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persist_base_state_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_message_count: Option<usize>,
+    pub presentation: AgentRunPresentation,
     pub status: AgentRunStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentInvocationKind {
+    Root,
+    Subagent,
+    Handoff,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentInvocationStatus {
+    Created,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+    Transferred,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentInvocationExitPolicy {
+    RunFinishAllowed,
+    TaskReturnRequired,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentDelegationContinuation {
+    ReturnToParent,
+    TransferControl,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentInvocation {
+    pub id: String,
+    pub run_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_invocation_id: Option<String>,
+    pub profile_id: String,
+    pub kind: AgentInvocationKind,
+    pub status: AgentInvocationStatus,
+    pub exit_policy: AgentInvocationExitPolicy,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTaskStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskBudget {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_rounds: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_calls: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskRecord {
+    pub id: String,
+    pub run_id: String,
+    pub parent_invocation_id: String,
+    pub child_invocation_id: String,
+    pub target_profile_id: String,
+    pub workspace_key: String,
+    pub continuation: AgentDelegationContinuation,
+    pub status: AgentTaskStatus,
+    #[serde(default)]
+    pub task: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<AgentTaskBudget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -117,6 +257,81 @@ pub struct AgentToolResult {
     pub error_code: Option<String>,
     #[serde(default)]
     pub resource_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentModelRole {
+    System,
+    Developer,
+    User,
+    Assistant,
+    Tool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum AgentModelContentPart {
+    Text {
+        text: String,
+    },
+    Reasoning {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default)]
+        provider_metadata: Value,
+    },
+    ToolCall {
+        call: AgentToolCall,
+    },
+    ToolResult {
+        result: AgentToolResult,
+    },
+    Media {
+        mime_type: String,
+        value: Value,
+    },
+    ResourceRef {
+        uri: String,
+    },
+    Native {
+        provider: String,
+        value: Value,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelMessage {
+    pub role: AgentModelRole,
+    #[serde(default)]
+    pub parts: Vec<AgentModelContentPart>,
+    #[serde(default)]
+    pub provider_metadata: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelRequest {
+    pub payload: Map<String, Value>,
+    pub messages: Vec<AgentModelMessage>,
+    pub tools: Vec<AgentToolSpec>,
+    #[serde(default)]
+    pub tool_choice: Value,
+    #[serde(default)]
+    pub provider_state: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelResponse {
+    pub message: AgentModelMessage,
+    pub tool_calls: Vec<AgentToolCall>,
+    pub text: String,
+    #[serde(default)]
+    pub provider_metadata: Value,
+    #[serde(default)]
+    pub raw_response: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -195,6 +410,7 @@ pub struct WorkspaceManifest {
     pub chat_ref: AgentChatRef,
     pub created_at: DateTime<Utc>,
     pub input: WorkspaceInputManifest,
+    pub roots: Vec<WorkspaceRootSpec>,
     pub artifacts: Vec<ArtifactSpec>,
     pub commit_policy: CommitPolicy,
 }
@@ -204,6 +420,47 @@ pub struct WorkspaceManifest {
 pub struct WorkspaceInputManifest {
     pub mode: String,
     pub prompt_snapshot_path: String,
+    pub resolved_profile_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRootSpec {
+    pub path: String,
+    pub lifecycle: WorkspaceRootLifecycle,
+    pub scope: WorkspaceRootScope,
+    pub mount: WorkspaceRootMount,
+    pub visible: bool,
+    pub writable: bool,
+    pub commit: WorkspaceRootCommit,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceRootLifecycle {
+    Run,
+    Persistent,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceRootScope {
+    Run,
+    Chat,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceRootMount {
+    Materialized,
+    ProjectedOverlay,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceRootCommit {
+    Never,
+    OnRunCompleted,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,6 +513,31 @@ pub struct CheckpointFile {
     pub path: String,
     pub sha256: String,
     pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspacePersistentChangeSet {
+    pub state_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_state_id: Option<String>,
+    pub changes: Vec<WorkspacePersistentChange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspacePersistentChange {
+    pub path: String,
+    pub kind: WorkspacePersistentChangeKind,
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspacePersistentChangeKind {
+    Added,
+    Modified,
 }
 
 #[cfg(test)]

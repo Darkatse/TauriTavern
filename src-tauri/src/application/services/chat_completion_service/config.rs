@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value};
 
 use crate::application::dto::chat_completion_dto::{
@@ -11,9 +12,10 @@ use crate::domain::models::secret::SecretKeys;
 use crate::domain::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
 };
+use crate::domain::repositories::provider_metadata_repository::SiliconFlowEndpoint;
 use crate::domain::repositories::secret_repository::SecretRepository;
 
-use super::custom_parameters;
+use super::additional_parameters::AdditionalParameters;
 use super::vertexai_auth;
 
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
@@ -30,17 +32,43 @@ const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
 const NANOGPT_API_BASE: &str = "https://nano-gpt.com/api/v1";
 const CHUTES_API_BASE: &str = "https://llm.chutes.ai/v1";
 const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
+const SILICONFLOW_API_BASE_CN: &str = "https://api.siliconflow.cn/v1";
+const WORKERS_AI_API_BASE: &str = "https://api.cloudflare.com/client/v4/accounts";
 const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
 const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
-const OPENROUTER_REFERER: &str = "https://tauritavern.client";
+const MINIMAX_API_BASE: &str = "https://api.minimax.io/v1";
+const MINIMAX_API_BASE_CN: &str = "https://api.minimaxi.com/v1";
+const AWS_BEDROCK_DEFAULT_REGION: &str = "us-east-1";
+const OPENROUTER_REFERER: &str = "https://tauritavern.github.io";
 const OPENROUTER_TITLE: &str = "TauriTavern";
+const OPENROUTER_CATEGORIES: &str = "roleplay,general-chat";
 
 const ZAI_ENDPOINT_CODING: &str = "coding";
+const MINIMAX_ENDPOINT_CN: &str = "cn";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ApiConfigPurpose {
     Status,
     Generate,
+}
+
+#[derive(Default)]
+struct ApiConfigHints<'a> {
+    zai_endpoint: &'a str,
+    siliconflow_endpoint: &'a str,
+    minimax_endpoint: &'a str,
+    workers_ai_account_id: &'a str,
+    nanogpt_provider: &'a str,
+    nanogpt_payg_override: bool,
+    aws_bedrock_region: &'a str,
+    /// Dotted JSON path applied to non-stream Bedrock responses when the
+    /// custom-invoke-template escape hatch is enabled (e.g.
+    /// `output.message.content.0.text`).
+    aws_bedrock_custom_response_path: Option<&'a str>,
+    /// Same as [`aws_bedrock_custom_response_path`] but applied to each
+    /// streaming chunk JSON (e.g. `delta.text`).
+    aws_bedrock_custom_stream_path: Option<&'a str>,
+    secret_id: Option<&'a str>,
 }
 
 pub(super) async fn resolve_status_api_config(
@@ -52,15 +80,24 @@ pub(super) async fn resolve_status_api_config(
     let proxy_password = dto.proxy_password.trim();
 
     let custom_url = dto.custom_url.trim();
-    let custom_headers_raw = dto.custom_include_headers.as_str();
+    let additional_parameters =
+        AdditionalParameters::from_status_headers(dto.custom_include_headers.as_str());
+    let additional_headers = additional_parameters.headers()?;
 
     resolve_api_config(
         source,
         reverse_proxy,
         proxy_password,
         custom_url,
-        custom_headers_raw,
-        "",
+        additional_headers,
+        ApiConfigHints {
+            siliconflow_endpoint: dto.siliconflow_endpoint.trim(),
+            minimax_endpoint: dto.minimax_endpoint.trim(),
+            workers_ai_account_id: dto.workers_ai_account_id.trim(),
+            aws_bedrock_region: dto.aws_bedrock_region.trim(),
+            secret_id: normalize_secret_id(dto.secret_id.as_deref()),
+            ..Default::default()
+        },
         ApiConfigPurpose::Status,
         secret_repository,
     )
@@ -70,20 +107,42 @@ pub(super) async fn resolve_status_api_config(
 pub(super) async fn resolve_generate_api_config(
     source: ChatCompletionSource,
     dto: &ChatCompletionGenerateRequestDto,
+    additional_parameters: &AdditionalParameters,
     secret_repository: &Arc<dyn SecretRepository>,
 ) -> Result<ChatCompletionApiConfig, ApplicationError> {
     let reverse_proxy = dto.get_string("reverse_proxy").unwrap_or_default().trim();
     let proxy_password = dto.get_string("proxy_password").unwrap_or_default().trim();
-    let custom_url_raw = get_payload_string(&dto.payload, "custom_url");
+    let custom_url_raw = get_payload_string(&dto.payload, "custom_url")?;
     let custom_url = custom_url_raw.trim();
-    let custom_headers_raw = get_payload_string(&dto.payload, "custom_include_headers");
-    let zai_endpoint = get_payload_string(&dto.payload, "zai_endpoint");
+    let zai_endpoint = get_payload_string(&dto.payload, "zai_endpoint")?;
+    let siliconflow_endpoint = get_payload_string(&dto.payload, "siliconflow_endpoint")?;
+    let minimax_endpoint = get_payload_string(&dto.payload, "minimax_endpoint")?;
+    let workers_ai_account_id = get_payload_string(&dto.payload, "workers_ai_account_id")?;
+    let nanogpt_provider = get_payload_string(&dto.payload, "nanogpt_provider")?;
+    let nanogpt_payg_override = get_payload_bool(&dto.payload, "nanogpt_payg_override")?;
+    let aws_bedrock_region = get_payload_string(&dto.payload, "aws_bedrock_region")?;
+    let aws_bedrock_use_custom_template =
+        get_payload_bool(&dto.payload, "aws_bedrock_use_custom_template")?;
+    let aws_bedrock_custom_response_path = if aws_bedrock_use_custom_template {
+        get_payload_string(&dto.payload, "aws_bedrock_custom_response_path")?
+    } else {
+        String::new()
+    };
+    let aws_bedrock_custom_stream_path = if aws_bedrock_use_custom_template {
+        get_payload_string(&dto.payload, "aws_bedrock_custom_stream_path")?
+    } else {
+        String::new()
+    };
+    let secret_id = get_payload_optional_string(&dto.payload, "secret_id")?;
+    let additional_headers = additional_parameters.headers()?;
 
     if source == ChatCompletionSource::VertexAi {
         return resolve_vertexai_generate_api_config(
             &dto.payload,
             reverse_proxy,
             proxy_password,
+            additional_headers,
+            secret_id.as_deref(),
             secret_repository,
         )
         .await;
@@ -94,8 +153,23 @@ pub(super) async fn resolve_generate_api_config(
         reverse_proxy,
         proxy_password,
         custom_url,
-        &custom_headers_raw,
-        &zai_endpoint,
+        additional_headers,
+        ApiConfigHints {
+            zai_endpoint: &zai_endpoint,
+            siliconflow_endpoint: &siliconflow_endpoint,
+            minimax_endpoint: &minimax_endpoint,
+            workers_ai_account_id: &workers_ai_account_id,
+            nanogpt_provider: &nanogpt_provider,
+            nanogpt_payg_override,
+            aws_bedrock_region: &aws_bedrock_region,
+            aws_bedrock_custom_response_path: aws_bedrock_custom_path_hint(
+                &aws_bedrock_custom_response_path,
+            ),
+            aws_bedrock_custom_stream_path: aws_bedrock_custom_path_hint(
+                &aws_bedrock_custom_stream_path,
+            ),
+            secret_id: secret_id.as_deref(),
+        },
         ApiConfigPurpose::Generate,
         secret_repository,
     )
@@ -108,24 +182,21 @@ async fn resolve_api_config(
     reverse_proxy: &str,
     proxy_password: &str,
     custom_url: &str,
-    custom_headers_raw: &str,
-    zai_endpoint: &str,
+    additional_headers: HashMap<String, String>,
+    hints: ApiConfigHints<'_>,
     purpose: ApiConfigPurpose,
     secret_repository: &Arc<dyn SecretRepository>,
 ) -> Result<ChatCompletionApiConfig, ApplicationError> {
     match source {
         ChatCompletionSource::Custom => {
             let base_url = resolve_custom_base_url(custom_url, reverse_proxy)?;
-            let mut extra_headers = custom_parameters::parse_string_map(custom_headers_raw)?;
-            let authorization_header = take_header_value(&mut extra_headers, "Authorization");
+            let extra_headers = source_extra_headers(source);
             let uses_reverse_proxy = custom_url.is_empty() && !reverse_proxy.is_empty();
 
-            let api_key = if authorization_header.is_some() {
-                String::new()
-            } else if uses_reverse_proxy {
+            let api_key = if uses_reverse_proxy {
                 proxy_password.to_string()
             } else {
-                read_optional_secret(secret_repository, SecretKeys::CUSTOM)
+                read_optional_secret(secret_repository, SecretKeys::CUSTOM, hints.secret_id)
                     .await?
                     .unwrap_or_default()
             };
@@ -133,16 +204,19 @@ async fn resolve_api_config(
             Ok(ChatCompletionApiConfig {
                 base_url,
                 api_key,
-                authorization_header,
+                authorization_header: None,
                 extra_headers,
+                additional_headers,
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+                aws_bedrock_custom_response_path: None,
+                aws_bedrock_custom_stream_path: None,
             })
         }
         _ => {
             let base_url = if supports_reverse_proxy(source) && !reverse_proxy.is_empty() {
                 reverse_proxy.to_string()
             } else {
-                default_base_url(source, purpose, zai_endpoint)
+                default_base_url(source, purpose, &hints)?
             };
 
             let api_key = if supports_reverse_proxy(source) && !reverse_proxy.is_empty() {
@@ -154,18 +228,67 @@ async fn resolve_api_config(
                     )
                 })?;
 
-                read_required_secret(secret_repository, secret_key, source.display_name()).await?
+                read_required_secret(
+                    secret_repository,
+                    secret_key,
+                    hints.secret_id,
+                    source.display_name(),
+                )
+                .await?
             };
+
+            let mut extra_headers = source_extra_headers(source);
+            apply_dynamic_headers(source, &hints, &mut extra_headers);
+
+            let (aws_bedrock_custom_response_path, aws_bedrock_custom_stream_path) =
+                aws_bedrock_custom_paths(source, &hints);
 
             Ok(ChatCompletionApiConfig {
                 base_url,
                 api_key,
                 authorization_header: None,
-                extra_headers: source_extra_headers(source),
+                extra_headers,
+                additional_headers,
                 anthropic_beta_header_mode: source_anthropic_beta_header_mode(source),
+                aws_bedrock_custom_response_path,
+                aws_bedrock_custom_stream_path,
             })
         }
     }
+}
+
+/// Trim and discard empty AWS Bedrock custom JSON paths so callers never see
+/// an empty-string hint (treated identically to "not configured").
+fn aws_bedrock_custom_path_hint(raw: &str) -> Option<&str> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+/// AWS Bedrock-only escape hatch: when the user opted into the custom invoke
+/// template, surface the optional response/stream paths from
+/// [`ApiConfigHints`] so the infrastructure layer can extract assistant text
+/// from arbitrary upstream shapes. Returns `(None, None)` for every other
+/// source.
+fn aws_bedrock_custom_paths(
+    source: ChatCompletionSource,
+    hints: &ApiConfigHints<'_>,
+) -> (Option<String>, Option<String>) {
+    if source != ChatCompletionSource::AwsBedrock {
+        return (None, None);
+    }
+    let response = hints
+        .aws_bedrock_custom_response_path
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let stream = hints
+        .aws_bedrock_custom_stream_path
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    (response, stream)
 }
 
 fn source_anthropic_beta_header_mode(source: ChatCompletionSource) -> AnthropicBetaHeaderMode {
@@ -173,36 +296,6 @@ fn source_anthropic_beta_header_mode(source: ChatCompletionSource) -> AnthropicB
         ChatCompletionSource::Claude => AnthropicBetaHeaderMode::ClaudeDefaults,
         _ => AnthropicBetaHeaderMode::None,
     }
-}
-
-fn take_header_value(headers: &mut HashMap<String, String>, header_name: &str) -> Option<String> {
-    let mut matching_keys = headers
-        .keys()
-        .filter(|key| key.eq_ignore_ascii_case(header_name))
-        .cloned()
-        .collect::<Vec<_>>();
-
-    if matching_keys.is_empty() {
-        return None;
-    }
-
-    matching_keys.sort_unstable();
-
-    let preferred_key = matching_keys
-        .iter()
-        .find(|key| key.as_str() == header_name)
-        .cloned()
-        .unwrap_or_else(|| matching_keys[0].clone());
-
-    let value = headers.remove(&preferred_key);
-
-    for key in matching_keys {
-        if key != preferred_key {
-            headers.remove(&key);
-        }
-    }
-
-    value
 }
 
 fn resolve_custom_base_url(
@@ -222,27 +315,69 @@ fn resolve_custom_base_url(
     ))
 }
 
-fn get_payload_string(payload: &serde_json::Map<String, Value>, key: &str) -> String {
-    payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_default()
+fn get_payload_string(
+    payload: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<String, ApplicationError> {
+    match payload.get(key) {
+        None => Ok(String::new()),
+        Some(Value::String(value)) => Ok(value.to_string()),
+        Some(_) => Err(ApplicationError::ValidationError(format!(
+            "Chat completion request field must be a string: {}",
+            key
+        ))),
+    }
+}
+
+fn get_payload_optional_string(
+    payload: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, ApplicationError> {
+    match payload.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(normalize_secret_id(Some(value)).map(str::to_string)),
+        Some(_) => Err(ApplicationError::ValidationError(format!(
+            "Chat completion request field must be a string: {}",
+            key
+        ))),
+    }
+}
+
+fn get_payload_bool(
+    payload: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<bool, ApplicationError> {
+    match payload.get(key) {
+        None => Ok(false),
+        Some(value) => value.as_bool().ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "Chat completion request field must be a boolean: {}",
+                key
+            ))
+        }),
+    }
+}
+
+fn normalize_secret_id(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 async fn read_required_secret(
     secret_repository: &Arc<dyn SecretRepository>,
     secret_key: &str,
+    secret_id: Option<&str>,
     source_name: &str,
 ) -> Result<String, ApplicationError> {
-    secret_repository
-        .read_secret(secret_key, None)
+    read_selected_secret(secret_repository, secret_key, secret_id)
         .await?
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| {
+            let selector = secret_id
+                .map(|id| format!(" for secret_id {id}"))
+                .unwrap_or_default();
             ApplicationError::ValidationError(format!(
-                "{} API key is missing. Please configure {}.",
-                source_name, secret_key
+                "{} API key is missing{}. Please configure {}.",
+                source_name, selector, secret_key
             ))
         })
 }
@@ -250,19 +385,37 @@ async fn read_required_secret(
 async fn read_optional_secret(
     secret_repository: &Arc<dyn SecretRepository>,
     secret_key: &str,
+    secret_id: Option<&str>,
 ) -> Result<Option<String>, ApplicationError> {
-    Ok(secret_repository
-        .read_secret(secret_key, None)
-        .await?
-        .filter(|value| !value.trim().is_empty()))
+    Ok(
+        read_selected_secret(secret_repository, secret_key, secret_id)
+            .await?
+            .filter(|value| !value.trim().is_empty()),
+    )
+}
+
+async fn read_selected_secret(
+    secret_repository: &Arc<dyn SecretRepository>,
+    secret_key: &str,
+    secret_id: Option<&str>,
+) -> Result<Option<String>, ApplicationError> {
+    let secret = secret_repository.read_secret(secret_key, secret_id).await?;
+    if let (Some(id), None) = (secret_id, secret.as_ref()) {
+        return Err(ApplicationError::ValidationError(format!(
+            "Secret id not found for {}: {}",
+            secret_key, id
+        )));
+    }
+
+    Ok(secret)
 }
 
 fn default_base_url(
     source: ChatCompletionSource,
     purpose: ApiConfigPurpose,
-    zai_endpoint: &str,
-) -> String {
-    match source {
+    hints: &ApiConfigHints<'_>,
+) -> Result<String, ApplicationError> {
+    let base_url = match source {
         ChatCompletionSource::OpenAi => OPENAI_API_BASE.to_string(),
         ChatCompletionSource::OpenRouter => OPENROUTER_API_BASE.to_string(),
         ChatCompletionSource::Claude => CLAUDE_API_BASE.to_string(),
@@ -280,16 +433,25 @@ fn default_base_url(
         ChatCompletionSource::Moonshot => MOONSHOT_API_BASE.to_string(),
         ChatCompletionSource::NanoGpt => NANOGPT_API_BASE.to_string(),
         ChatCompletionSource::Chutes => CHUTES_API_BASE.to_string(),
-        ChatCompletionSource::SiliconFlow => SILICONFLOW_API_BASE.to_string(),
+        ChatCompletionSource::SiliconFlow => {
+            siliconflow_base_url(hints.siliconflow_endpoint)?.to_string()
+        }
+        ChatCompletionSource::WorkersAi => {
+            workers_ai_base_url(hints.workers_ai_account_id, purpose)?
+        }
         ChatCompletionSource::Zai => {
-            if is_zai_coding_endpoint(zai_endpoint) {
+            if is_zai_coding_endpoint(hints.zai_endpoint) {
                 ZAI_API_BASE_CODING.to_string()
             } else {
                 ZAI_API_BASE_COMMON.to_string()
             }
         }
+        ChatCompletionSource::MiniMax => minimax_base_url(hints.minimax_endpoint)?.to_string(),
+        ChatCompletionSource::AwsBedrock => aws_bedrock_base_url(hints.aws_bedrock_region),
         ChatCompletionSource::Custom => OPENAI_API_BASE.to_string(),
-    }
+    };
+
+    Ok(base_url)
 }
 
 fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
@@ -306,7 +468,10 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
         ChatCompletionSource::NanoGpt => Some(SecretKeys::NANOGPT),
         ChatCompletionSource::Chutes => Some(SecretKeys::CHUTES),
         ChatCompletionSource::SiliconFlow => Some(SecretKeys::SILICONFLOW),
+        ChatCompletionSource::WorkersAi => Some(SecretKeys::WORKERS_AI),
         ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
+        ChatCompletionSource::MiniMax => Some(SecretKeys::MINIMAX),
+        ChatCompletionSource::AwsBedrock => Some(SecretKeys::AWS_BEDROCK),
         ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
     }
 }
@@ -324,10 +489,60 @@ fn supports_reverse_proxy(source: ChatCompletionSource) -> bool {
     )
 }
 
+fn siliconflow_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
+    match SiliconFlowEndpoint::parse_frontend(endpoint)
+        .map_err(ApplicationError::ValidationError)?
+    {
+        SiliconFlowEndpoint::Global => Ok(SILICONFLOW_API_BASE),
+        SiliconFlowEndpoint::China => Ok(SILICONFLOW_API_BASE_CN),
+    }
+}
+
+fn workers_ai_base_url(
+    account_id: &str,
+    purpose: ApiConfigPurpose,
+) -> Result<String, ApplicationError> {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return Err(ApplicationError::ValidationError(
+            "workers_ai_account_id is required".to_string(),
+        ));
+    }
+
+    let account_id = utf8_percent_encode(account_id, NON_ALPHANUMERIC).to_string();
+    let suffix = match purpose {
+        ApiConfigPurpose::Status => "ai",
+        ApiConfigPurpose::Generate => "ai/v1",
+    };
+    Ok(format!("{WORKERS_AI_API_BASE}/{account_id}/{suffix}"))
+}
+
+fn minimax_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
+    match endpoint.trim().to_ascii_lowercase().as_str() {
+        "" | "global" => Ok(MINIMAX_API_BASE),
+        MINIMAX_ENDPOINT_CN => Ok(MINIMAX_API_BASE_CN),
+        other => Err(ApplicationError::ValidationError(format!(
+            "Unsupported MiniMax endpoint: {other}"
+        ))),
+    }
+}
+
+fn aws_bedrock_base_url(region: &str) -> String {
+    let region = region.trim();
+    let region = if region.is_empty() {
+        AWS_BEDROCK_DEFAULT_REGION
+    } else {
+        region
+    };
+    format!("https://bedrock-runtime.{region}.amazonaws.com")
+}
+
 async fn resolve_vertexai_generate_api_config(
     payload: &Map<String, Value>,
     reverse_proxy: &str,
     proxy_password: &str,
+    additional_headers: HashMap<String, String>,
+    secret_id: Option<&str>,
     secret_repository: &Arc<dyn SecretRepository>,
 ) -> Result<ChatCompletionApiConfig, ApplicationError> {
     let extra_headers = HashMap::new();
@@ -338,7 +553,10 @@ async fn resolve_vertexai_generate_api_config(
             api_key: String::new(),
             authorization_header: Some(format!("Bearer {}", proxy_password)),
             extra_headers,
+            additional_headers,
             anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
         });
     }
 
@@ -365,9 +583,13 @@ async fn resolve_vertexai_generate_api_config(
 
     match mode.as_str() {
         "express" => {
-            let api_key =
-                read_required_secret(secret_repository, SecretKeys::VERTEXAI, "Google Vertex AI")
-                    .await?;
+            let api_key = read_required_secret(
+                secret_repository,
+                SecretKeys::VERTEXAI,
+                secret_id,
+                "Google Vertex AI",
+            )
+            .await?;
 
             let base_url = if let Some(project_id) = project_override {
                 format!("{VERTEXAI_GLOBAL_BASE}/v1/projects/{project_id}/locations/{region}",)
@@ -380,13 +602,17 @@ async fn resolve_vertexai_generate_api_config(
                 api_key,
                 authorization_header: None,
                 extra_headers,
+                additional_headers,
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+                aws_bedrock_custom_response_path: None,
+                aws_bedrock_custom_stream_path: None,
             })
         }
         "full" => {
             let service_account_json = read_required_secret(
                 secret_repository,
                 SecretKeys::VERTEXAI_SERVICE_ACCOUNT,
+                secret_id,
                 "Google Vertex AI",
             )
             .await?;
@@ -403,7 +629,10 @@ async fn resolve_vertexai_generate_api_config(
                 api_key: String::new(),
                 authorization_header: Some(format!("Bearer {}", access_token)),
                 extra_headers,
+                additional_headers,
                 anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+                aws_bedrock_custom_response_path: None,
+                aws_bedrock_custom_stream_path: None,
             })
         }
         other => Err(ApplicationError::ValidationError(format!(
@@ -428,10 +657,37 @@ fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String>
     }
     if source == ChatCompletionSource::OpenRouter {
         headers.insert("HTTP-Referer".to_string(), OPENROUTER_REFERER.to_string());
+        headers.insert(
+            "X-OpenRouter-Title".to_string(),
+            OPENROUTER_TITLE.to_string(),
+        );
         headers.insert("X-Title".to_string(), OPENROUTER_TITLE.to_string());
+        headers.insert(
+            "X-OpenRouter-Categories".to_string(),
+            OPENROUTER_CATEGORIES.to_string(),
+        );
     }
 
     headers
+}
+
+fn apply_dynamic_headers(
+    source: ChatCompletionSource,
+    hints: &ApiConfigHints<'_>,
+    headers: &mut HashMap<String, String>,
+) {
+    if source != ChatCompletionSource::NanoGpt {
+        return;
+    }
+
+    let provider = hints.nanogpt_provider.trim();
+    if !provider.is_empty() {
+        headers.insert("X-Provider".to_string(), provider.to_string());
+    }
+
+    if hints.nanogpt_payg_override {
+        headers.insert("X-Billing-Mode".to_string(), "paygo".to_string());
+    }
 }
 
 fn is_zai_coding_endpoint(value: &str) -> bool {
@@ -449,19 +705,53 @@ mod tests {
     use crate::application::dto::chat_completion_dto::{
         ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
     };
+    use crate::application::errors::ApplicationError;
     use crate::domain::errors::DomainError;
-    use crate::domain::models::secret::Secrets;
-    use crate::domain::repositories::chat_completion_repository::ChatCompletionSource;
+    use crate::domain::models::secret::{SecretKeys, Secrets};
+    use crate::domain::repositories::chat_completion_repository::{
+        ChatCompletionApiConfig, ChatCompletionSource,
+    };
     use crate::domain::repositories::secret_repository::SecretRepository;
 
+    use super::super::additional_parameters::AdditionalParameters;
     use super::{
-        ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, OPENROUTER_API_BASE, ZAI_API_BASE_CODING,
-        default_base_url, resolve_generate_api_config, resolve_status_api_config,
-        source_extra_headers, supports_reverse_proxy, take_header_value,
+        ApiConfigHints, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, MINIMAX_API_BASE,
+        MINIMAX_API_BASE_CN, OPENROUTER_API_BASE, OPENROUTER_CATEGORIES, OPENROUTER_REFERER,
+        OPENROUTER_TITLE, ZAI_API_BASE_CODING, default_base_url, resolve_generate_api_config,
+        resolve_status_api_config, source_extra_headers, supports_reverse_proxy,
     };
 
     struct TestSecretRepository {
-        secrets: HashMap<String, String>,
+        secrets: HashMap<(String, Option<String>), String>,
+    }
+
+    impl TestSecretRepository {
+        fn active(key: &str, value: &str) -> Self {
+            Self::with_entries(&[(key, None, value)])
+        }
+
+        fn with_entries(entries: &[(&str, Option<&str>, &str)]) -> Self {
+            Self {
+                secrets: entries
+                    .iter()
+                    .map(|(key, id, value)| {
+                        (
+                            ((*key).to_string(), (*id).map(str::to_string)),
+                            (*value).to_string(),
+                        )
+                    })
+                    .collect(),
+            }
+        }
+    }
+
+    async fn resolve_generate_for_test(
+        source: ChatCompletionSource,
+        dto: &ChatCompletionGenerateRequestDto,
+        secret_repository: &Arc<dyn SecretRepository>,
+    ) -> Result<ChatCompletionApiConfig, ApplicationError> {
+        let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
+        resolve_generate_api_config(source, dto, &additional_parameters, secret_repository).await
     }
 
     #[async_trait]
@@ -490,9 +780,12 @@ mod tests {
         async fn read_secret(
             &self,
             key: &str,
-            _id: Option<&str>,
+            id: Option<&str>,
         ) -> Result<Option<String>, DomainError> {
-            Ok(self.secrets.get(key).cloned())
+            Ok(self
+                .secrets
+                .get(&(key.to_string(), id.map(str::to_string)))
+                .cloned())
         }
 
         async fn delete_secret(&self, _key: &str, _id: Option<&str>) -> Result<(), DomainError> {
@@ -515,69 +808,129 @@ mod tests {
 
     #[test]
     fn deepseek_status_uses_non_beta_base() {
-        let actual = default_base_url(ChatCompletionSource::DeepSeek, ApiConfigPurpose::Status, "");
+        let hints = ApiConfigHints::default();
+        let actual = default_base_url(
+            ChatCompletionSource::DeepSeek,
+            ApiConfigPurpose::Status,
+            &hints,
+        )
+        .unwrap();
 
         assert_eq!(actual, DEEPSEEK_STATUS_API_BASE);
     }
 
     #[test]
     fn zai_coding_endpoint_resolves_coding_base() {
+        let hints = ApiConfigHints {
+            zai_endpoint: "coding",
+            ..Default::default()
+        };
         let actual = default_base_url(
             ChatCompletionSource::Zai,
             ApiConfigPurpose::Generate,
-            "coding",
-        );
+            &hints,
+        )
+        .unwrap();
 
         assert_eq!(actual, ZAI_API_BASE_CODING);
     }
 
     #[test]
+    fn aws_bedrock_uses_region_specific_bedrock_runtime_host() {
+        let default_region = default_base_url(
+            ChatCompletionSource::AwsBedrock,
+            ApiConfigPurpose::Generate,
+            &ApiConfigHints::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            default_region,
+            "https://bedrock-runtime.us-east-1.amazonaws.com"
+        );
+
+        let custom_region = default_base_url(
+            ChatCompletionSource::AwsBedrock,
+            ApiConfigPurpose::Generate,
+            &ApiConfigHints {
+                aws_bedrock_region: "us-west-2",
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            custom_region,
+            "https://bedrock-runtime.us-west-2.amazonaws.com"
+        );
+    }
+
+    #[test]
+    fn minimax_endpoint_resolves_region_base() {
+        let global = default_base_url(
+            ChatCompletionSource::MiniMax,
+            ApiConfigPurpose::Generate,
+            &ApiConfigHints::default(),
+        )
+        .unwrap();
+        assert_eq!(global, MINIMAX_API_BASE);
+
+        let cn = default_base_url(
+            ChatCompletionSource::MiniMax,
+            ApiConfigPurpose::Generate,
+            &ApiConfigHints {
+                minimax_endpoint: "cn",
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(cn, MINIMAX_API_BASE_CN);
+    }
+
+    #[test]
     fn openrouter_uses_default_base_url() {
+        let hints = ApiConfigHints::default();
         let actual = default_base_url(
             ChatCompletionSource::OpenRouter,
             ApiConfigPurpose::Generate,
-            "",
-        );
+            &hints,
+        )
+        .unwrap();
         assert_eq!(actual, OPENROUTER_API_BASE);
     }
 
     #[test]
-    fn openrouter_uses_referer_headers() {
+    fn openrouter_uses_app_attribution_headers() {
         let headers = source_extra_headers(ChatCompletionSource::OpenRouter);
-        assert!(headers.contains_key("HTTP-Referer"));
-        assert!(headers.contains_key("X-Title"));
+        assert_eq!(
+            headers.get("HTTP-Referer").map(String::as_str),
+            Some(OPENROUTER_REFERER)
+        );
+        assert_eq!(
+            headers.get("X-OpenRouter-Title").map(String::as_str),
+            Some(OPENROUTER_TITLE)
+        );
+        assert_eq!(
+            headers.get("X-Title").map(String::as_str),
+            Some(OPENROUTER_TITLE)
+        );
+        assert_eq!(
+            headers.get("X-OpenRouter-Categories").map(String::as_str),
+            Some(OPENROUTER_CATEGORIES)
+        );
     }
 
     #[test]
     fn moonshot_and_zai_support_reverse_proxy() {
         assert!(supports_reverse_proxy(ChatCompletionSource::Moonshot));
         assert!(supports_reverse_proxy(ChatCompletionSource::Zai));
-    }
-
-    #[test]
-    fn take_header_value_removes_all_case_variants() {
-        let mut headers = HashMap::from([
-            ("authorization".to_string(), "Bearer lower".to_string()),
-            ("Authorization".to_string(), "Bearer exact".to_string()),
-            ("x-extra".to_string(), "ok".to_string()),
-        ]);
-
-        let value = take_header_value(&mut headers, "Authorization");
-
-        assert_eq!(value.as_deref(), Some("Bearer exact"));
-        assert!(
-            headers
-                .keys()
-                .all(|key| !key.eq_ignore_ascii_case("authorization"))
-        );
-        assert_eq!(headers.get("x-extra").map(String::as_str), Some("ok"));
+        assert!(!supports_reverse_proxy(ChatCompletionSource::MiniMax));
     }
 
     #[tokio::test]
-    async fn custom_status_authorization_header_overrides_saved_secret() {
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
-            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
-        });
+    async fn custom_status_additional_headers_are_final_overrides() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::CUSTOM,
+            "saved-secret",
+        ));
         let dto = ChatCompletionStatusRequestDto {
             chat_completion_source: "custom".to_string(),
             custom_url: "https://example.com/v1".to_string(),
@@ -591,28 +944,26 @@ mod tests {
                 .expect("status config should resolve");
 
         assert_eq!(config.base_url, "https://example.com/v1");
-        assert!(config.api_key.is_empty());
+        assert_eq!(config.api_key, "saved-secret");
+        assert_eq!(config.authorization_header, None);
         assert_eq!(
-            config.authorization_header.as_deref(),
-            Some("Bearer override")
-        );
-        assert_eq!(
-            config.extra_headers.get("X-Trace").map(String::as_str),
+            config.additional_headers.get("X-Trace").map(String::as_str),
             Some("abc")
         );
-        assert!(
-            config
-                .extra_headers
-                .keys()
-                .all(|key| !key.eq_ignore_ascii_case("authorization"))
+        assert_eq!(
+            config.additional_headers.iter().find_map(|(key, value)| key
+                .eq_ignore_ascii_case("authorization")
+                .then_some(value.as_str())),
+            Some("Bearer override")
         );
     }
 
     #[tokio::test]
     async fn custom_generate_falls_back_to_saved_secret_without_authorization_header() {
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
-            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
-        });
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::CUSTOM,
+            "saved-secret",
+        ));
         let dto = ChatCompletionGenerateRequestDto {
             payload: json!({
                 "chat_completion_source": "custom",
@@ -624,25 +975,277 @@ mod tests {
             .expect("payload should be an object"),
         };
 
-        let config =
-            resolve_generate_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
-                .await
-                .expect("generate config should resolve");
+        let additional_parameters =
+            AdditionalParameters::from_payload(&dto.payload).expect("additional parameters parse");
+        let config = resolve_generate_api_config(
+            ChatCompletionSource::Custom,
+            &dto,
+            &additional_parameters,
+            &secret_repository,
+        )
+        .await
+        .expect("generate config should resolve");
 
         assert_eq!(config.api_key, "saved-secret");
         assert_eq!(config.authorization_header, None);
         assert_eq!(
-            config.extra_headers.get("X-Trace").map(String::as_str),
+            config.additional_headers.get("X-Trace").map(String::as_str),
             Some("abc")
         );
     }
 
     #[tokio::test]
-    async fn custom_status_prefers_saved_secret_when_custom_url_present_even_if_reverse_proxy_present()
-     {
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
-            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
-        });
+    async fn generate_uses_requested_secret_id_for_provider_key() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[
+                (SecretKeys::OPENROUTER, None, "active-secret"),
+                (
+                    SecretKeys::OPENROUTER,
+                    Some("profile-secret"),
+                    "selected-secret",
+                ),
+            ]));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "openrouter",
+                "secret_id": "profile-secret",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_for_test(ChatCompletionSource::OpenRouter, &dto, &secret_repository)
+                .await
+                .expect("generate config should resolve");
+
+        assert_eq!(config.api_key, "selected-secret");
+    }
+
+    #[tokio::test]
+    async fn generate_secret_id_does_not_fallback_to_active_secret() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(
+            TestSecretRepository::with_entries(&[(SecretKeys::OPENROUTER, None, "active-secret")]),
+        );
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "openrouter",
+                "secret_id": "missing-secret",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let error =
+            resolve_generate_for_test(ChatCompletionSource::OpenRouter, &dto, &secret_repository)
+                .await
+                .expect_err("missing explicit secret id should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Secret id not found for api_key_openrouter: missing-secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn blank_secret_id_uses_active_secret() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(
+            TestSecretRepository::with_entries(&[(SecretKeys::OPENROUTER, None, "active-secret")]),
+        );
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "openrouter",
+                "secret_id": "  ",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_for_test(ChatCompletionSource::OpenRouter, &dto, &secret_repository)
+                .await
+                .expect("blank secret id should keep active-secret semantics");
+
+        assert_eq!(config.api_key, "active-secret");
+    }
+
+    #[tokio::test]
+    async fn generate_rejects_non_string_secret_id() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::OPENROUTER,
+            "active-secret",
+        ));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "openrouter",
+                "secret_id": 42,
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let error =
+            resolve_generate_for_test(ChatCompletionSource::OpenRouter, &dto, &secret_repository)
+                .await
+                .expect_err("non-string secret id should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Chat completion request field must be a string: secret_id")
+        );
+    }
+
+    #[tokio::test]
+    async fn generate_rejects_non_string_provider_hints() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::active(SecretKeys::MINIMAX, "secret"));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "minimax",
+                "minimax_endpoint": 42,
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let error =
+            resolve_generate_for_test(ChatCompletionSource::MiniMax, &dto, &secret_repository)
+                .await
+                .expect_err("non-string provider hint should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Chat completion request field must be a string: minimax_endpoint")
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_generate_secret_id_selects_saved_secret() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[
+                (SecretKeys::CUSTOM, None, "active-secret"),
+                (
+                    SecretKeys::CUSTOM,
+                    Some("profile-secret"),
+                    "selected-secret",
+                ),
+            ]));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "custom",
+                "custom_url": "https://example.com/v1",
+                "secret_id": "profile-secret",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_for_test(ChatCompletionSource::Custom, &dto, &secret_repository)
+                .await
+                .expect("custom config should resolve");
+
+        assert_eq!(config.api_key, "selected-secret");
+    }
+
+    #[tokio::test]
+    async fn custom_additional_authorization_does_not_hide_missing_secret_id() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[]));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "custom",
+                "custom_url": "https://example.com/v1",
+                "custom_include_headers": "Authorization: \"Bearer override\"",
+                "secret_id": "missing-secret",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let error =
+            resolve_generate_for_test(ChatCompletionSource::Custom, &dto, &secret_repository)
+                .await
+                .expect_err("missing explicit secret id should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Secret id not found for api_key_custom: missing-secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn status_uses_requested_secret_id_for_provider_key() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[
+                (SecretKeys::OPENROUTER, None, "active-secret"),
+                (
+                    SecretKeys::OPENROUTER,
+                    Some("profile-secret"),
+                    "selected-secret",
+                ),
+            ]));
+        let dto = ChatCompletionStatusRequestDto {
+            chat_completion_source: "openrouter".to_string(),
+            secret_id: Some("profile-secret".to_string()),
+            ..Default::default()
+        };
+
+        let config =
+            resolve_status_api_config(ChatCompletionSource::OpenRouter, &dto, &secret_repository)
+                .await
+                .expect("status config should resolve");
+
+        assert_eq!(config.api_key, "selected-secret");
+    }
+
+    #[tokio::test]
+    async fn vertexai_generate_uses_secret_id_for_express_key() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[
+                (SecretKeys::VERTEXAI, None, "active-secret"),
+                (
+                    SecretKeys::VERTEXAI,
+                    Some("vertex-profile"),
+                    "selected-secret",
+                ),
+            ]));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "vertexai",
+                "vertexai_auth_mode": "express",
+                "secret_id": "vertex-profile",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_for_test(ChatCompletionSource::VertexAi, &dto, &secret_repository)
+                .await
+                .expect("vertex express config should resolve");
+
+        assert_eq!(config.api_key, "selected-secret");
+    }
+
+    #[tokio::test]
+    async fn custom_status_prefers_custom_url_secret_over_reverse_proxy_secret() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::CUSTOM,
+            "saved-secret",
+        ));
         let dto = ChatCompletionStatusRequestDto {
             chat_completion_source: "custom".to_string(),
             reverse_proxy: "https://proxy.example.com/v1".to_string(),
@@ -661,16 +1264,17 @@ mod tests {
         assert_eq!(config.api_key, "saved-secret");
         assert_eq!(config.authorization_header, None);
         assert_eq!(
-            config.extra_headers.get("X-Trace").map(String::as_str),
+            config.additional_headers.get("X-Trace").map(String::as_str),
             Some("abc")
         );
     }
 
     #[tokio::test]
     async fn custom_status_uses_proxy_password_when_custom_url_missing_and_reverse_proxy_present() {
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository {
-            secrets: HashMap::from([("api_key_custom".to_string(), "saved-secret".to_string())]),
-        });
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::CUSTOM,
+            "saved-secret",
+        ));
         let dto = ChatCompletionStatusRequestDto {
             chat_completion_source: "custom".to_string(),
             reverse_proxy: "https://proxy.example.com/v1".to_string(),
@@ -689,8 +1293,65 @@ mod tests {
         assert_eq!(config.api_key, "proxy-secret");
         assert_eq!(config.authorization_header, None);
         assert_eq!(
-            config.extra_headers.get("X-Trace").map(String::as_str),
+            config.additional_headers.get("X-Trace").map(String::as_str),
             Some("abc")
+        );
+    }
+
+    #[tokio::test]
+    async fn native_generate_stores_additional_headers_as_final_overrides() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::active(SecretKeys::CLAUDE, "secret"));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "claude",
+                "custom_include_headers": "X-Trace: abc\nX-Debug: true"
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be object"),
+        };
+
+        let config =
+            resolve_generate_for_test(ChatCompletionSource::Claude, &dto, &secret_repository)
+                .await
+                .expect("generate config should resolve");
+
+        assert_eq!(
+            config.additional_headers.get("X-Trace").map(String::as_str),
+            Some("abc")
+        );
+        assert_eq!(
+            config.additional_headers.get("X-Debug").map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[tokio::test]
+    async fn native_generate_accepts_reserved_additional_headers_as_user_overrides() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::active(SecretKeys::CLAUDE, "secret"));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "claude",
+                "custom_include_headers": "Authorization: Bearer hacked"
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be object"),
+        };
+
+        let config =
+            resolve_generate_for_test(ChatCompletionSource::Claude, &dto, &secret_repository)
+                .await
+                .expect("generate config should resolve");
+
+        assert_eq!(
+            config
+                .additional_headers
+                .get("Authorization")
+                .map(String::as_str),
+            Some("Bearer hacked")
         );
     }
 }

@@ -25,6 +25,8 @@ import { installAgentApi } from './api/agent.js';
 import { installDevApi } from './api/dev.js';
 import { installExtensionStoreApi } from './api/extension-store.js';
 import { installLayoutApi } from './api/layout.js';
+import { installLlmConnectionsApi } from './api/llm-connection.js';
+import { installSkillApi } from './api/skill.js';
 import { installWorldInfoApi } from './api/world-info.js';
 import { initializeTauriIntegration } from './bootstrap/initialize-tauri-integration.js';
 import {
@@ -272,7 +274,7 @@ export function bootstrapTauriMain() {
     installNativeShareBridge();
 
     const context = createTauriMainContext({ invoke, convertFileSrc });
-    installHostAbi(context); installLayoutApi(context); installChatApi(context); installAgentApi(context); installDevApi(context); installExtensionStoreApi(context); installWorldInfoApi();
+    installHostAbi(context); installLayoutApi(context); installChatApi(context); installAgentApi(context); installLlmConnectionsApi(context); installSkillApi(context); installDevApi(context); installExtensionStoreApi(context); installWorldInfoApi();
     installMainApiOptionParking();
     installWorldInfoGlobalSelectorSelect2Enforcer();
     if (perfEnabled) {
@@ -389,6 +391,7 @@ export function bootstrapTauriMain() {
     void readyPromise.then(() => setFrontendLogBackendForwardingEnabled(true));
 
     void readyPromise.then(() => import('../../scripts/tauri/setting/setting-panel.js').then(({ installTauriTavernSettingsPanel }) => installTauriTavernSettingsPanel()).catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
+    void readyPromise.then(() => import('../../scripts/tauri/regex/native-regex-settings.js').then(({ installNativeRegexBackendSetting }) => installNativeRegexBackendSetting()));
     void readyPromise.then(() => import('./services/chat-history/install.js').then(({ installChatHistoryMode }) => installChatHistoryMode())); void readyPromise.then(() => import('./services/dynamic-theme/install.js').then(({ installDynamicTheme }) => installDynamicTheme()));
     if (!isEmbeddedRuntimeTakeoverDisabled()) void readyPromise.then(() => import('./services/embedded-runtime/install.js').then(({ installEmbeddedRuntime }) => installEmbeddedRuntime()));
     void readyPromise.then(() => import('./services/panel-runtime/install.js').then(({ installPanelRuntime }) => installPanelRuntime()));

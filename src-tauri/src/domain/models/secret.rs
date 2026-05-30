@@ -218,10 +218,12 @@ impl SecretKeys {
     pub const VERTEXAI_SERVICE_ACCOUNT: &'static str = "vertexai_service_account_json";
     pub const MINIMAX: &'static str = "api_key_minimax";
     pub const MINIMAX_GROUP_ID: &'static str = "minimax_group_id";
+    pub const AWS_BEDROCK: &'static str = "api_key_aws_bedrock";
     pub const MOONSHOT: &'static str = "api_key_moonshot";
     pub const COMETAPI: &'static str = "api_key_cometapi";
     pub const ZAI: &'static str = "api_key_zai";
     pub const SILICONFLOW: &'static str = "api_key_siliconflow";
+    pub const WORKERS_AI: &'static str = "api_key_workers_ai";
     pub const ELEVENLABS: &'static str = "api_key_elevenlabs";
     pub const POLLINATIONS: &'static str = "api_key_pollinations";
     pub const VOLCENGINE_APP_ID: &'static str = "volcengine_app_id";
@@ -283,10 +285,12 @@ impl SecretKeys {
             Self::VERTEXAI_SERVICE_ACCOUNT,
             Self::MINIMAX,
             Self::MINIMAX_GROUP_ID,
+            Self::AWS_BEDROCK,
             Self::MOONSHOT,
             Self::COMETAPI,
             Self::ZAI,
             Self::SILICONFLOW,
+            Self::WORKERS_AI,
             Self::ELEVENLABS,
             Self::POLLINATIONS,
             Self::VOLCENGINE_APP_ID,

@@ -47,13 +47,18 @@ fn is_animated_webp_header(buffer: &[u8]) -> bool {
 }
 
 async fn read_image_header(path: &Path) -> Result<Vec<u8>, DomainError> {
-    let mut file = fs::File::open(path).await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to inspect image header '{}': {}",
-            path.display(),
-            error
-        ))
-    })?;
+    let mut file = fs::File::open(path)
+        .await
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => {
+                DomainError::NotFound(format!("Source image not found: {}", path.display()))
+            }
+            _ => DomainError::InternalError(format!(
+                "Failed to inspect image header '{}': {}",
+                path.display(),
+                error
+            )),
+        })?;
     let mut header = vec![0u8; 512];
     let read_len = file.read(&mut header).await.map_err(|error| {
         DomainError::InternalError(format!(
@@ -69,12 +74,15 @@ async fn read_image_header(path: &Path) -> Result<Vec<u8>, DomainError> {
 fn read_image_header_sync(path: &Path) -> Result<Vec<u8>, DomainError> {
     use std::io::Read;
 
-    let mut file = std::fs::File::open(path).map_err(|error| {
-        DomainError::InternalError(format!(
+    let mut file = std::fs::File::open(path).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => {
+            DomainError::NotFound(format!("Source image not found: {}", path.display()))
+        }
+        _ => DomainError::InternalError(format!(
             "Failed to inspect image header '{}': {}",
             path.display(),
             error
-        ))
+        )),
     })?;
 
     let mut header = vec![0u8; 512];

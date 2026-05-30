@@ -3,11 +3,13 @@ use serde_json::{Value, json};
 
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
 use super::normalizers;
+use super::response_body::read_upstream_json_body;
 
 const PROVIDER_NAME: &str = "Google Vertex AI";
 
@@ -23,7 +25,7 @@ pub(super) async fn generate(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
-) -> Result<Value, DomainError> {
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let payload_object = payload.as_object().ok_or_else(|| {
         DomainError::InvalidData("Vertex AI payload must be a JSON object".to_string())
     })?;
@@ -58,9 +60,10 @@ pub(super) async fn generate(
     };
 
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {
@@ -72,9 +75,7 @@ pub(super) async fn generate(
         .await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
-    })?;
+    let body = read_upstream_json_body(PROVIDER_NAME, "generate", response).await?;
 
     Ok(normalizers::normalize_gemini_response(body))
 }
@@ -122,9 +123,10 @@ pub(super) async fn generate_stream(
     };
 
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {

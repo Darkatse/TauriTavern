@@ -41,6 +41,10 @@ fn default_avatar_persona_original_images_enabled() -> bool {
     false
 }
 
+fn default_native_regex_backend_enabled() -> bool {
+    true
+}
+
 fn default_model_settings() -> ModelSettings {
     ModelSettings::default()
 }
@@ -203,6 +207,8 @@ pub struct TauriTavernSettings {
     /// cached/generated thumbnails. Background thumbnails are intentionally unaffected.
     #[serde(default = "default_avatar_persona_original_images_enabled")]
     pub avatar_persona_original_images_enabled: bool,
+    #[serde(default = "default_native_regex_backend_enabled")]
+    pub native_regex_backend_enabled: bool,
     #[serde(default)]
     pub dev: DevLoggingSettings,
     #[serde(default)]
@@ -232,6 +238,7 @@ impl Default for TauriTavernSettings {
             allow_keys_exposure: false,
             avatar_persona_original_images_enabled: default_avatar_persona_original_images_enabled(
             ),
+            native_regex_backend_enabled: default_native_regex_backend_enabled(),
             dev: DevLoggingSettings::default(),
             dynamic_theme: DynamicThemeSettings::default(),
             models: default_model_settings(),
@@ -326,5 +333,15 @@ mod tests {
         .expect("parse settings");
 
         assert!(settings.avatar_persona_original_images_enabled);
+    }
+
+    #[test]
+    fn native_regex_backend_enabled_defaults_to_true() {
+        let settings = TauriTavernSettings::from_json_str_with_compat(
+            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
+        )
+        .expect("parse settings");
+
+        assert!(settings.native_regex_backend_enabled);
     }
 }

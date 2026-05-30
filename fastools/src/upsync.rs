@@ -2,18 +2,18 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::Local;
 use regex::Regex;
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-const DEFAULT_BASE: &str = "sillytavern-1.15.0/public";
-const DEFAULT_TARGET: &str = "sillytavern-1.16.0/public";
+const DEFAULT_BASE: &str = "sillytavern-1.16.0/public";
+const DEFAULT_TARGET: &str = "sillytavern-1.18.0/public";
 const DEFAULT_LOCAL: &str = "src";
 const DEFAULT_ROUTE_DIR: &str = "src/tauri/main/routes";
 const DEFAULT_COMMAND_REGISTRY: &str = "src-tauri/src/presentation/commands/registry.rs";
-const DEFAULT_OUT: &str = "docs/upstream-sync-1.16-plan/reports";
+const DEFAULT_OUT: &str = "docs/upstream-sync-1.18-plan/reports";
 
 const IGNORED_PREFIXES: &[&str] = &["scripts/extensions/third-party/JS-Slash-Runner/"];
 
@@ -21,6 +21,7 @@ const REPORT_FILE_CLASSIFICATION: &str = "01-file-classification.json";
 const REPORT_INJECTION_CONFLICTS: &str = "02-injection-conflicts.json";
 const REPORT_ENDPOINT_GAP: &str = "03-endpoint-gap.json";
 const REPORT_COMMAND_GAP: &str = "04-command-gap.json";
+const REPORT_ENDPOINT_TRACE: &str = "05-endpoint-trace.json";
 const REPORT_SUMMARY: &str = "summary.md";
 
 const INJECTION_KEYWORDS: &[&str] = &[
@@ -130,6 +131,8 @@ struct FileClassificationData {
     upstream_changed: Vec<String>,
     local_changed: Vec<String>,
     both_changed: Vec<String>,
+    already_synced: Vec<String>,
+    both_changed_diverged: Vec<String>,
     upstream_only_changed: Vec<String>,
     local_only_changed: Vec<String>,
 }
@@ -151,6 +154,8 @@ struct FileClassificationSummary {
     upstream_changed: usize,
     local_changed: usize,
     both_changed: usize,
+    already_synced: usize,
+    both_changed_diverged: usize,
     upstream_only_changed: usize,
     local_only_changed: usize,
 }
@@ -163,6 +168,8 @@ struct FileClassificationReport {
     upstream_changed: Vec<String>,
     local_changed: Vec<String>,
     both_changed: Vec<String>,
+    already_synced: Vec<String>,
+    both_changed_diverged: Vec<String>,
     upstream_only_changed: Vec<String>,
     local_only_changed: Vec<String>,
 }
@@ -208,6 +215,43 @@ struct EndpointGapReport {
     route_patterns: Vec<String>,
 }
 
+#[derive(Debug)]
+struct EndpointOccurrence {
+    endpoint: String,
+    path: String,
+    line: usize,
+}
+
+#[derive(Serialize)]
+struct EndpointTraceSummary {
+    target_endpoints: usize,
+    target_occurrences: usize,
+    new_target_endpoints: usize,
+    new_unhandled_endpoints: usize,
+}
+
+#[derive(Clone, Serialize)]
+struct EndpointCallSite {
+    path: String,
+    line: usize,
+}
+
+#[derive(Serialize)]
+struct EndpointTraceItem {
+    endpoint: String,
+    is_new_in_target: bool,
+    handled_by_local_route: bool,
+    route_patterns: Vec<String>,
+    target_call_sites: Vec<EndpointCallSite>,
+}
+
+#[derive(Serialize)]
+struct EndpointTraceReport {
+    generated_at: String,
+    summary: EndpointTraceSummary,
+    endpoints: Vec<EndpointTraceItem>,
+}
+
 #[derive(Serialize)]
 struct CommandGapSummary {
     invoked_commands: usize,
@@ -245,18 +289,24 @@ pub fn run_upsync_analyze_cli(args: &[String]) -> Result<()> {
             upstream_changed: classification.upstream_changed.len(),
             local_changed: classification.local_changed.len(),
             both_changed: classification.both_changed.len(),
+            already_synced: classification.already_synced.len(),
+            both_changed_diverged: classification.both_changed_diverged.len(),
             upstream_only_changed: classification.upstream_only_changed.len(),
             local_only_changed: classification.local_only_changed.len(),
         },
         upstream_changed: classification.upstream_changed.clone(),
         local_changed: classification.local_changed.clone(),
         both_changed: classification.both_changed.clone(),
+        already_synced: classification.already_synced.clone(),
+        both_changed_diverged: classification.both_changed_diverged.clone(),
         upstream_only_changed: classification.upstream_only_changed.clone(),
         local_only_changed: classification.local_only_changed.clone(),
     };
 
-    let injection_report = analyze_injection_conflicts(&opts, &classification.both_changed)?;
+    let injection_report =
+        analyze_injection_conflicts(&opts, &classification.both_changed_diverged)?;
     let endpoint_gap_report = analyze_endpoint_gaps(&opts)?;
+    let endpoint_trace_report = analyze_endpoint_trace(&opts)?;
     let command_gap_report = analyze_command_gaps(&opts)?;
 
     fs::create_dir_all(&opts.out_dir).with_context(|| {
@@ -279,11 +329,16 @@ pub fn run_upsync_analyze_cli(args: &[String]) -> Result<()> {
         &endpoint_gap_report,
     )?;
     write_json_report(&opts.out_dir.join(REPORT_COMMAND_GAP), &command_gap_report)?;
+    write_json_report(
+        &opts.out_dir.join(REPORT_ENDPOINT_TRACE),
+        &endpoint_trace_report,
+    )?;
     write_summary_markdown(
         &opts.out_dir.join(REPORT_SUMMARY),
         &classification_report,
         &injection_report,
         &endpoint_gap_report,
+        &endpoint_trace_report,
         &command_gap_report,
     )?;
 
@@ -297,6 +352,7 @@ pub fn run_upsync_analyze_cli(args: &[String]) -> Result<()> {
     println!("  - {}", REPORT_INJECTION_CONFLICTS);
     println!("  - {}", REPORT_ENDPOINT_GAP);
     println!("  - {}", REPORT_COMMAND_GAP);
+    println!("  - {}", REPORT_ENDPOINT_TRACE);
     println!("  - {}", REPORT_SUMMARY);
     Ok(())
 }
@@ -343,6 +399,16 @@ fn classify_files(opts: &AnalyzeOptions) -> Result<FileClassificationData> {
         .intersection(&local_changed_set)
         .cloned()
         .collect();
+    let mut already_synced_set = BTreeSet::new();
+    let mut both_changed_diverged_set = BTreeSet::new();
+    for rel in &both_changed_set {
+        if files_differ(&opts.target_dir, &opts.local_dir, rel)? {
+            both_changed_diverged_set.insert(rel.clone());
+        } else {
+            already_synced_set.insert(rel.clone());
+        }
+    }
+
     let upstream_only_set: BTreeSet<String> = upstream_changed_set
         .difference(&local_changed_set)
         .cloned()
@@ -356,6 +422,8 @@ fn classify_files(opts: &AnalyzeOptions) -> Result<FileClassificationData> {
         upstream_changed: upstream_changed_set.into_iter().collect(),
         local_changed: local_changed_set.into_iter().collect(),
         both_changed: both_changed_set.into_iter().collect(),
+        already_synced: already_synced_set.into_iter().collect(),
+        both_changed_diverged: both_changed_diverged_set.into_iter().collect(),
         upstream_only_changed: upstream_only_set.into_iter().collect(),
         local_only_changed: local_only_set.into_iter().collect(),
     })
@@ -573,6 +641,64 @@ fn analyze_endpoint_gaps(opts: &AnalyzeOptions) -> Result<EndpointGapReport> {
     })
 }
 
+fn analyze_endpoint_trace(opts: &AnalyzeOptions) -> Result<EndpointTraceReport> {
+    let endpoints_base = extract_static_endpoints(&opts.base_dir)?;
+    let target_occurrences = extract_endpoint_occurrences(&opts.target_dir)?;
+    let route_patterns = extract_route_patterns(&opts.route_dir)?;
+
+    let mut call_sites_by_endpoint: BTreeMap<String, Vec<EndpointCallSite>> = BTreeMap::new();
+    for occurrence in target_occurrences {
+        call_sites_by_endpoint
+            .entry(occurrence.endpoint)
+            .or_default()
+            .push(EndpointCallSite {
+                path: occurrence.path,
+                line: occurrence.line,
+            });
+    }
+
+    let mut new_target_endpoints = 0;
+    let mut new_unhandled_endpoints = 0;
+    let mut items = Vec::with_capacity(call_sites_by_endpoint.len());
+
+    for (endpoint, call_sites) in call_sites_by_endpoint {
+        let is_new_in_target = !endpoints_base.contains(&endpoint);
+        let route_matches = matching_route_patterns(&endpoint, &route_patterns);
+        let handled_by_local_route = !route_matches.is_empty();
+
+        if is_new_in_target {
+            new_target_endpoints += 1;
+            if !handled_by_local_route {
+                new_unhandled_endpoints += 1;
+            }
+        }
+
+        items.push(EndpointTraceItem {
+            endpoint,
+            is_new_in_target,
+            handled_by_local_route,
+            route_patterns: route_matches,
+            target_call_sites: call_sites,
+        });
+    }
+
+    let target_occurrences = items
+        .iter()
+        .map(|item| item.target_call_sites.len())
+        .sum::<usize>();
+
+    Ok(EndpointTraceReport {
+        generated_at: now_rfc3339(),
+        summary: EndpointTraceSummary {
+            target_endpoints: items.len(),
+            target_occurrences,
+            new_target_endpoints,
+            new_unhandled_endpoints,
+        },
+        endpoints: items,
+    })
+}
+
 fn analyze_command_gaps(opts: &AnalyzeOptions) -> Result<CommandGapReport> {
     let invoked_commands = extract_safe_invoke_commands(&opts.route_dir, &opts.local_dir)?;
     let registered_commands = extract_registered_commands(&opts.command_registry)?;
@@ -596,9 +722,16 @@ fn analyze_command_gaps(opts: &AnalyzeOptions) -> Result<CommandGapReport> {
 }
 
 fn extract_static_endpoints(root: &Path) -> Result<BTreeSet<String>> {
+    Ok(extract_endpoint_occurrences(root)?
+        .into_iter()
+        .map(|occurrence| occurrence.endpoint)
+        .collect())
+}
+
+fn extract_endpoint_occurrences(root: &Path) -> Result<Vec<EndpointOccurrence>> {
     let endpoint_regex = Regex::new(r#"['"](/(?:api|csrf-token|version)[^'"\s]*)['"]"#)
         .context("Failed to compile endpoint regex")?;
-    let mut endpoints = BTreeSet::new();
+    let mut occurrences = Vec::new();
 
     for entry in WalkDir::new(root) {
         let entry = entry
@@ -612,18 +745,35 @@ fn extract_static_endpoints(root: &Path) -> Result<BTreeSet<String>> {
             if let Some(raw) = captures.get(1) {
                 let endpoint = normalize_endpoint(raw.as_str());
                 if is_relevant_endpoint(&endpoint) {
-                    endpoints.insert(endpoint);
+                    let path = entry
+                        .path()
+                        .strip_prefix(root)
+                        .with_context(|| {
+                            format!(
+                                "Failed to strip prefix {} from {}",
+                                normalize_path_string(root),
+                                normalize_path_string(entry.path())
+                            )
+                        })?
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    occurrences.push(EndpointOccurrence {
+                        endpoint,
+                        path,
+                        line: line_number_at(&content, raw.start()),
+                    });
                 }
             }
         }
     }
 
-    Ok(endpoints)
+    Ok(occurrences)
 }
 
 fn extract_route_patterns(route_dir: &Path) -> Result<BTreeSet<String>> {
-    let route_regex = Regex::new(r#"router\.(?:get|post|all)\(\s*['"]([^'"]+)['"]"#)
-        .context("Failed to compile route regex")?;
+    let route_regex =
+        Regex::new(r#"router\.(?:get|post|put|delete|patch|all)\(\s*['"]([^'"]+)['"]"#)
+            .context("Failed to compile route regex")?;
     let mut routes = BTreeSet::new();
 
     for entry in WalkDir::new(route_dir) {
@@ -649,14 +799,21 @@ fn extract_route_patterns(route_dir: &Path) -> Result<BTreeSet<String>> {
 }
 
 fn extract_safe_invoke_commands(route_dir: &Path, local_dir: &Path) -> Result<BTreeSet<String>> {
-    let invoke_regex = Regex::new(r#"safeInvoke\(\s*['"]([^'"]+)['"]"#)
+    let invoke_regex = Regex::new(r#"(?:safeInvoke|invoke)\(\s*['"]([^'"]+)['"]"#)
         .context("Failed to compile invoke regex")?;
     let mut commands = BTreeSet::new();
 
-    let mut scan_roots = vec![route_dir.to_path_buf()];
-    let context_path = local_dir.join("tauri/main/context.js");
-    if context_path.exists() {
-        scan_roots.push(context_path);
+    let mut scan_roots = BTreeSet::new();
+    scan_roots.insert(route_dir.to_path_buf());
+
+    let tauri_main_dir = local_dir.join("tauri/main");
+    if tauri_main_dir.exists() {
+        scan_roots.insert(tauri_main_dir);
+    }
+
+    let bridge_path = local_dir.join("tauri-bridge.js");
+    if bridge_path.exists() {
+        scan_roots.insert(bridge_path);
     }
 
     for root in scan_roots {
@@ -664,7 +821,10 @@ fn extract_safe_invoke_commands(route_dir: &Path, local_dir: &Path) -> Result<BT
             let content = read_text_lossy(&root)?;
             for captures in invoke_regex.captures_iter(&content) {
                 if let Some(name) = captures.get(1) {
-                    commands.insert(name.as_str().to_string());
+                    let command = name.as_str();
+                    if is_local_invoke_command(command) {
+                        commands.insert(command.to_string());
+                    }
                 }
             }
             continue;
@@ -684,7 +844,10 @@ fn extract_safe_invoke_commands(route_dir: &Path, local_dir: &Path) -> Result<BT
             let content = read_text_lossy(entry.path())?;
             for captures in invoke_regex.captures_iter(&content) {
                 if let Some(name) = captures.get(1) {
-                    commands.insert(name.as_str().to_string());
+                    let command = name.as_str();
+                    if is_local_invoke_command(command) {
+                        commands.insert(command.to_string());
+                    }
                 }
             }
         }
@@ -708,18 +871,27 @@ fn extract_registered_commands(command_registry: &Path) -> Result<BTreeSet<Strin
     Ok(commands)
 }
 
+fn is_local_invoke_command(command: &str) -> bool {
+    !command.contains(':')
+}
+
 fn is_endpoint_handled(endpoint: &str, routes: &BTreeSet<String>) -> bool {
+    !matching_route_patterns(endpoint, routes).is_empty()
+}
+
+fn matching_route_patterns(endpoint: &str, routes: &BTreeSet<String>) -> Vec<String> {
+    let mut matches = Vec::new();
     for pattern in routes {
         if pattern.ends_with('*') {
             let prefix = pattern.trim_end_matches('*');
             if endpoint.starts_with(prefix) {
-                return true;
+                matches.push(pattern.clone());
             }
         } else if pattern == endpoint {
-            return true;
+            matches.push(pattern.clone());
         }
     }
-    false
+    matches
 }
 
 fn write_json_report<T: Serialize>(path: &Path, value: &T) -> Result<()> {
@@ -734,6 +906,7 @@ fn write_summary_markdown(
     classification: &FileClassificationReport,
     injection: &InjectionConflictReport,
     endpoints: &EndpointGapReport,
+    endpoint_trace: &EndpointTraceReport,
     commands: &CommandGapReport,
 ) -> Result<()> {
     let mut text = String::new();
@@ -781,6 +954,14 @@ fn write_summary_markdown(
         classification.summary.both_changed
     ));
     text.push_str(&format!(
+        "- Already synced with target: **{}**\n",
+        classification.summary.already_synced
+    ));
+    text.push_str(&format!(
+        "- Both changed but diverged: **{}**\n",
+        classification.summary.both_changed_diverged
+    ));
+    text.push_str(&format!(
         "- Upstream-only changed: **{}**\n",
         classification.summary.upstream_only_changed
     ));
@@ -789,8 +970,8 @@ fn write_summary_markdown(
         classification.summary.local_only_changed
     ));
 
-    text.push_str("### Both Changed (top 40)\n\n");
-    for path in classification.both_changed.iter().take(40) {
+    text.push_str("### Both Changed but Diverged (top 40)\n\n");
+    for path in classification.both_changed_diverged.iter().take(40) {
         text.push_str(&format!("- `{}`\n", path));
     }
     text.push('\n');
@@ -857,6 +1038,42 @@ fn write_summary_markdown(
     }
     text.push('\n');
 
+    text.push_str("## Endpoint Trace\n\n");
+    text.push_str(&format!(
+        "- Target endpoint call sites: **{}**\n",
+        endpoint_trace.summary.target_occurrences
+    ));
+    text.push_str(&format!(
+        "- Target endpoints: **{}**\n",
+        endpoint_trace.summary.target_endpoints
+    ));
+    text.push_str(&format!(
+        "- New target endpoints: **{}**\n",
+        endpoint_trace.summary.new_target_endpoints
+    ));
+    text.push_str(&format!(
+        "- New unhandled endpoints: **{}**\n\n",
+        endpoint_trace.summary.new_unhandled_endpoints
+    ));
+
+    text.push_str("### New Unhandled Endpoint Call Sites (top 40)\n\n");
+    for item in endpoint_trace
+        .endpoints
+        .iter()
+        .filter(|item| item.is_new_in_target && !item.handled_by_local_route)
+        .take(40)
+    {
+        let call_sites = item
+            .target_call_sites
+            .iter()
+            .take(3)
+            .map(|site| format!("{}:{}", site.path, site.line))
+            .collect::<Vec<_>>()
+            .join(", ");
+        text.push_str(&format!("- `{}`: {}\n", item.endpoint, call_sites));
+    }
+    text.push('\n');
+
     text.push_str("## Command Gaps\n\n");
     text.push_str(&format!(
         "- Invoked commands: **{}**\n",
@@ -901,6 +1118,13 @@ fn read_text_lossy(path: &Path) -> Result<String> {
 fn contains_keyword(text: Option<&str>, keyword: &str) -> bool {
     text.map(|content| content.contains(keyword))
         .unwrap_or(false)
+}
+
+fn line_number_at(content: &str, byte_index: usize) -> usize {
+    let Some(prefix) = content.get(..byte_index) else {
+        return content.lines().count().max(1);
+    };
+    prefix.bytes().filter(|byte| *byte == b'\n').count() + 1
 }
 
 fn is_endpoint_source_file(path: &Path) -> bool {

@@ -30,10 +30,16 @@ const api = host?.api;
 - `api.extension.store`
   - 面向需要**全局持久化**的扩展（不绑定 chat）。
   - 提供 Extension KV JSON + Blob 存储，支持多 table。
-- `api.agent`（已落地 Phase 2B workspace 读改工具循环）
+- `api.agent`（已落地 canonical model IR、provider_state continuation、上下文只读工具与 workspace 读改工具循环）
   - 面向 Agent Run / timeline / workspace / checkpoint / commit。
-  - 当前提供启动 run、订阅/读取事件、取消、读取 workspace 文件、prepare/finalize/commit；模型侧内建 workspace list/read/write/patch/finish 工具由 Rust runtime 注册。
-  - approval、listRuns、readDiff、rollback 仍是后续阶段；当前入口显式 throw。
+  - 当前提供启动 run、订阅/读取事件、取消、读取 workspace 文件、prepare/finalize/commit；模型侧内建 chat search/read、world info read、skill list/read 与 workspace list/read/write/patch/finish 工具由 Rust runtime 注册。
+  - approval、listRuns、readDiff、rollback 仍是后续工作；当前入口显式 throw。
+- `api.llmConnections`
+  - 面向 Agent Profile / 扩展侧的 LLM 连接定义管理。
+  - 当前提供 list、load、save、delete；Profile 通过 `connectionRef + modelId` 引用连接，不直接依赖 Connection Manager 的 Model Target id。
+- `api.skill`（已落地）
+  - 面向本地 Agent Skill 管理。
+  - 当前提供 scope-aware 的 list、previewImport、installImport、readFile、writeFile、move、export、delete；Agent run 内只能通过 `skill.list` / `skill.search` / `skill.read` 工具消费已安装 Skill。
 - `api.mcp`（规划中）
   - 面向 MCP server/tool/resource/prompt 的独立平台能力。
   - Agent 可以消费 MCP，但 MCP 不依附 Agent Mode。
@@ -47,7 +53,9 @@ const api = host?.api;
 | [Dev.md](Dev.md) | `api.dev` 完整参考 |
 | [WorldInfo.md](WorldInfo.md) | `api.worldInfo` 完整参考 |
 | [ExtensionStore.md](Extension.md) | `api.extension.store` 完整参考 |
-| [Agent.md](Agent.md) | `api.agent` 草案（Agent Run / workspace / timeline） |
+| [Agent.md](Agent.md) | `api.agent` 当前参考（Agent Run / workspace / timeline） |
+| [LlmConnections.md](LlmConnections.md) | `api.llmConnections` 完整参考（Agent LLM 连接定义） |
+| [Skill.md](Skill.md) | `api.skill` 完整参考（Skill 管理、导入导出、读取） |
 | [MCP.md](MCP.md) | `api.mcp` 草案（MCP server/tool/resource/prompt） |
 | [Migration.md](Migration.md) | 从 SillyTavern 扩展迁移到 TauriTavern 的适配指南 |
 
@@ -55,5 +63,7 @@ const api = host?.api;
 
 - API 类型定义见 `src/types.d.ts`
 - 宿主契约与稳定性边界见 `docs/FrontendHostContract.md`
-- Agent 已落地当前 Host ABI 与 Phase 2B workspace 读改工具；真实边界见 `docs/API/Agent.md` 与 `docs/CurrentState/AgentFramework.md`
+- Agent 已落地当前 Host ABI、canonical model IR、provider_state continuation、上下文只读工具、Skill tools 与 workspace 读改工具；真实边界见 `docs/API/Agent.md`、`docs/CurrentState/AgentFramework.md` 与 `docs/CurrentState/AgentProviderState.md`
+- LLM Connection 管理 API 真实边界见 `docs/API/LlmConnections.md` 与 `docs/Agent/PromptAssembly.md`
+- Skill 管理 API 真实边界见 `docs/API/Skill.md` 与 `docs/Agent/Skill.md`
 - MCP 仍处于规划阶段；实现前请以 `docs/API/MCP.md` 与 `docs/FrontendHostContract.md` 的草案约束为准

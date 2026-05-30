@@ -20,6 +20,10 @@ import * as Popper from '@popperjs/core';
 import droll from 'droll';
 import morphdom from 'morphdom';
 import * as chevrotain from 'chevrotain';
+import { gzipSync, gzip } from 'fflate';
+import jsSha256Module from 'js-sha256';
+
+const jsSha256 = jsSha256Module.sha256 ?? jsSha256Module;
 
 const libBundle = {
     lodash,
@@ -38,6 +42,9 @@ const libBundle = {
     droll,
     morphdom,
     chevrotain,
+    gzipSync,
+    gzip,
+    sha256: jsSha256,
     initialized: true,
 };
 
@@ -58,7 +65,9 @@ export {
     droll,
     morphdom,
     chevrotain,
+    gzipSync,
+    gzip,
+    jsSha256 as sha256,
 };
 
 export default libBundle;
-

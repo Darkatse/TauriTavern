@@ -28,14 +28,19 @@ agent-workspaces/
         user/
         skills/
         memory/
+      persist/
       runs/
         <run-id>/
           manifest.json
           input/
+          tool-args/
+          tool-results/
+          model-responses/
           output/
           plan/
           scratch/
           summaries/
+          persist/
           checkpoints/
           patches/
           events.jsonl
@@ -322,7 +327,7 @@ checkpoints/
       ...
 ```
 
-`checkpoint.json`：
+`checkpoint.json` 是内部实现元数据，不作为 Agent/UI payload；其中的 `bytes` 仅服务于存储体积、清理与完整性边界：
 
 ```json
 {
@@ -383,7 +388,15 @@ rollbackCommittedMessage(runId, checkpointId)
 - Completed run 可以保留完整 workspace。
 - Failed/Cancelled run 默认保留，便于 debug。
 - 移动端可以限制 checkpoint 数量或总大小，但删除必须明确记录。
-- 用户删除聊天时，关联 workspace 的清理策略需要独立设计，不能静默泄漏大量文件。
+- 用户删除聊天时，关联 chat workspace 必须随聊天生命周期清理，避免静默泄漏大量文件。
+
+当前实现：
+
+- 单个角色聊天删除清理由 `chat_metadata.integrity` 派生的 Agent chat workspace。
+- 单个群聊聊天删除清理由 group chat id 派生的 Agent chat workspace。
+- 删除角色且级联删除聊天、删除群组时，会批量清理对应聊天 workspace。
+- 若 workspace 仍有关联 active run，删除必须 fail-fast；用户应先取消 run 再删除聊天。
+- 旧聊天缺少稳定 `integrity` 时，不存在可可靠定位的 Agent workspace，保持普通聊天删除语义。
 
 建议后续提供设置：
 
@@ -414,21 +427,28 @@ _tauritavern/agent-workspaces/
       <run-id>.json
   chats/
     <workspace-id>/
+      persist/
+        <promoted persistent files>
       runs/
         <run-id>/
           manifest.json
           events.jsonl
           input/
             prompt_snapshot.json
+            persist_snapshot.json
           tool-args/
             <tool-call-id>.json
+          tool-results/
+            <tool-call-id>.json
+          model-responses/
+            round-XXX.json
           output/
             main.md
           scratch/
           plan/
           summaries/
-          tool-results/
-            <tool-call-id>.json
+          persist/
+            <run projection of chat-level persist files>
           checkpoints/
             <checkpoint-id>/
               checkpoint.json
@@ -442,7 +462,29 @@ output/
 scratch/
 plan/
 summaries/
+persist/
 ```
+
+return-mode child invocation 会获得 invocation-scoped workspace view。模型看到的是简单语义路径，runtime 在 repository adapter 层映射到物理路径：
+
+| Child-facing path | 物理路径 | 权限 | 语义 |
+| --- | --- | --- | --- |
+| `summaries/` | `summaries/agents/<workspace-key>/` | read/write | 当前子任务的持久 notes |
+| `scratch/` | `scratch/agents/<workspace-key>/` | read/write | 当前子任务的临时 notes |
+| `summaries/parent/` | 父级 `summaries/` 私有树，排除 `agents/` | read-only | 请求者留下的 notes |
+| `summaries/agents/` | `summaries/agents/` 中其他 child 的目录 | read-only | 其他 delegated Agents 的结果 notes |
+| Profile 可见共享 root，例如 `output/`、`plan/`、`persist/` | 同名 run workspace path | profile 决定 | 共享草稿、计划或本 run persist projection |
+
+其中 `<workspace-key>` 优先使用 target Agent id；同一 run 重复调用同一 Agent 时追加 `-002`、`-003`。子 Agent 不需要知道 `childInvocationId` 或物理路径。`summaries/parent/agents/...` 与 `summaries/agents/<self>/...` 会作为可恢复工具错误拒绝，避免模型绕过语义视图。共享 root 的实际可见/可写权限来自 target Agent Profile 的 `workspace.visibleRoots` / `workspace.writableRoots`；return-mode child 仍不能 `workspace.commit` / `workspace.finish`。
+
+`persist/` 是 chat workspace 级持久 root 的 run projection：
+
+```text
+chats/<workspace-id>/persist/                # 稳定持久层
+chats/<workspace-id>/runs/<run-id>/persist/  # 本 run 投影
+```
+
+run 初始化时，稳定 `persist/` 会复制到本次 run 的 `persist/`，并在 `input/persist_snapshot.json` 中记录 base sha。模型在 run 中通过普通 workspace 工具读写 `persist/`；这些写入在 `workspace.finish` 收尾成功前不会写回稳定层。finish 阶段会计算 persistent changes、检查并发冲突，并 promote 回 `chats/<workspace-id>/persist/`。Failed、Cancelled 或未 finish 的 run 不会污染后续 run。
 
 早期设计中的最小概念结构仍可作为抽象理解：
 

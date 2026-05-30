@@ -2,7 +2,14 @@ use serde_json::{Map, Value, json};
 
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
-use crate::application::services::agent_tools::BuiltinAgentToolRegistry;
+use crate::domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
+use crate::domain::models::agent::{
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentToolSpec,
+};
+
+use super::invocation::model_session_id;
+
+const AGENT_PROMPT_MARKER_FIELD: &str = "_tauritavern_agent_prompt_marker";
 
 pub(super) fn request_from_prompt_snapshot(
     prompt_snapshot: &Value,
@@ -33,39 +40,63 @@ pub(super) fn request_from_prompt_snapshot(
 
 pub(super) fn prepare_agent_tool_request(
     mut request: ChatCompletionGenerateRequestDto,
-    registry: &BuiltinAgentToolRegistry,
-) -> Result<ChatCompletionGenerateRequestDto, ApplicationError> {
-    let messages = ensure_messages_array(&mut request.payload)?;
-    let agent_system_prompt = [
-        "TauriTavern Agent Mode is active.",
-        "Work only through the Agent workspace tools. Tool results are private run state, not chat messages.",
-        "Use workspace_list_files to inspect visible workspace files.",
-        "Use workspace_read_file before modifying an existing file. Read output has line numbers; never include line number prefixes in old_string or new_string.",
-        "Use workspace_apply_patch for precise edits to existing files. The old_string must match exactly and uniquely unless replace_all is true.",
-        "Use workspace_write_file for new files or complete rewrites.",
-        "Write the final chat message body to output/main.md, then call workspace_finish.",
-        "Do not answer directly without finishing through workspace_finish.",
-    ]
-    .join("\n");
-    messages.insert(
-        0,
-        json!({
-            "role": "system",
-            "content": agent_system_prompt,
-        }),
-    );
+    tools: &[AgentToolSpec],
+    run_id: &str,
+    invocation_id: &str,
+) -> Result<AgentModelRequest, ApplicationError> {
+    reject_external_tool_request(&request.payload)?;
 
-    request
-        .payload
-        .insert("tools".to_string(), Value::Array(registry.openai_tools()));
-    request
-        .payload
-        .insert("tool_choice".to_string(), Value::String("auto".to_string()));
+    let messages = messages_from_payload(&mut request.payload)?;
+
+    request.payload.remove("tools");
+    request.payload.remove("tool_choice");
     request
         .payload
         .insert("stream".to_string(), Value::Bool(false));
 
-    Ok(request)
+    Ok(AgentModelRequest {
+        payload: request.payload,
+        messages,
+        tools: tools.to_vec(),
+        tool_choice: Value::String("auto".to_string()),
+        provider_state: json!({
+            "sessionId": model_session_id(run_id, invocation_id),
+            "runId": run_id,
+            "invocationId": invocation_id,
+        }),
+    })
+}
+
+pub(super) fn validate_prompt_snapshot_context_policy(
+    prompt_snapshot: &Value,
+    profile: &ResolvedAgentProfile,
+) -> Result<(), ApplicationError> {
+    let snapshot_policy_value = prompt_snapshot
+        .as_object()
+        .and_then(|object| object.get("contextPolicy"))
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.context_policy_required: prompt snapshot must include contextPolicy"
+                    .to_string(),
+            )
+        })?;
+    let snapshot_policy = serde_json::from_value::<AgentContextPolicy>(
+        snapshot_policy_value.clone(),
+    )
+    .map_err(|error| {
+        ApplicationError::ValidationError(format!(
+            "agent.invalid_context_policy_snapshot: contextPolicy is invalid: {error}"
+        ))
+    })?;
+
+    if snapshot_policy != profile.context {
+        return Err(ApplicationError::ValidationError(
+            "agent.context_policy_mismatch: prompt snapshot contextPolicy does not match resolved Agent profile"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 pub(super) fn reject_external_tool_request(
@@ -78,6 +109,13 @@ pub(super) fn reject_external_tool_request(
     if has_tools {
         return Err(ApplicationError::ValidationError(
             "agent.external_tools_unsupported_phase2b: Agent Phase 2B owns the tool registry"
+                .to_string(),
+        ));
+    }
+
+    if payload.contains_key("tool_choice") {
+        return Err(ApplicationError::ValidationError(
+            "agent.external_tool_choice_unsupported_phase2b: Agent Phase 2B owns tool choice"
                 .to_string(),
         ));
     }
@@ -107,11 +145,13 @@ pub(super) fn reject_external_tool_request(
     Ok(())
 }
 
-pub(super) fn request_summary(payload: &Map<String, Value>) -> Value {
+pub(super) fn request_summary(request: &AgentModelRequest) -> Value {
     json!({
-        "chatCompletionSource": payload.get("chat_completion_source").and_then(Value::as_str),
-        "model": payload.get("model").and_then(Value::as_str),
-        "messageCount": payload.get("messages").and_then(Value::as_array).map(|messages| messages.len()),
+        "chatCompletionSource": request.payload.get("chat_completion_source").and_then(Value::as_str),
+        "customApiFormat": request.payload.get("custom_api_format").and_then(Value::as_str),
+        "model": request.payload.get("model").and_then(Value::as_str),
+        "messageCount": request.messages.len(),
+        "toolCount": request.tools.len(),
     })
 }
 
@@ -136,35 +176,333 @@ fn find_payload_object(value: &Value) -> Option<Map<String, Value>> {
     None
 }
 
-fn ensure_messages_array(
+fn messages_from_payload(
     payload: &mut Map<String, Value>,
-) -> Result<&mut Vec<Value>, ApplicationError> {
-    if !payload.contains_key("messages") {
-        let prompt = payload
-            .get("prompt")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| {
-                ApplicationError::ValidationError(
-                    "agent.tool_loop_requires_messages: prompt snapshot must contain messages or a string prompt"
-                        .to_string(),
-                )
-            })?;
-        payload.insert(
-            "messages".to_string(),
-            Value::Array(vec![json!({
+) -> Result<Vec<AgentModelMessage>, ApplicationError> {
+    let messages = match payload.remove("messages") {
+        Some(Value::Array(messages)) => messages,
+        Some(Value::String(prompt)) => vec![json!({
+            "role": "user",
+            "content": prompt,
+        })],
+        Some(_) => {
+            return Err(ApplicationError::ValidationError(
+                "agent.tool_loop_requires_messages: messages must be an array".to_string(),
+            ));
+        }
+        None => {
+            let prompt = payload
+                .remove("prompt")
+                .and_then(|value| value.as_str().map(str::to_string))
+                .ok_or_else(|| {
+                    ApplicationError::ValidationError(
+                        "agent.tool_loop_requires_messages: prompt snapshot must contain messages or a string prompt"
+                            .to_string(),
+                    )
+                })?;
+            vec![json!({
                 "role": "user",
                 "content": prompt,
-            })]),
+            })]
+        }
+    };
+    payload.remove("prompt");
+
+    messages
+        .iter()
+        .map(message_from_openai_value)
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn reject_agent_prompt_marker(value: &Value) -> Result<(), ApplicationError> {
+    let Some(marker) = value
+        .as_object()
+        .and_then(|object| object.get(AGENT_PROMPT_MARKER_FIELD))
+    else {
+        return Ok(());
+    };
+
+    if !marker.is_string() {
+        return Err(ApplicationError::ValidationError(
+            "agent.invalid_prompt_marker: prompt marker must be a string".to_string(),
+        ));
+    }
+
+    Err(ApplicationError::ValidationError(
+        "agent.prompt_marker_unmaterialized: prompt snapshot must materialize agentSystemPrompt before entering the Agent runtime".to_string(),
+    ))
+}
+
+fn message_from_openai_value(value: &Value) -> Result<AgentModelMessage, ApplicationError> {
+    reject_agent_prompt_marker(value)?;
+    let object = value.as_object().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "agent.invalid_prompt_snapshot: message must be an object".to_string(),
+        )
+    })?;
+    let role = match object
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("user")
+        .trim()
+        .to_lowercase()
+        .as_str()
+    {
+        "system" => AgentModelRole::System,
+        "developer" => AgentModelRole::Developer,
+        "assistant" => AgentModelRole::Assistant,
+        "tool" | "function" => AgentModelRole::Tool,
+        _ => AgentModelRole::User,
+    };
+
+    let provider_metadata = json!({
+        "openai": {
+            "name": object.get("name").and_then(Value::as_str),
+        }
+    });
+
+    Ok(AgentModelMessage {
+        role,
+        parts: content_parts_from_openai_value(object.get("content")),
+        provider_metadata,
+    })
+}
+
+fn content_parts_from_openai_value(value: Option<&Value>) -> Vec<AgentModelContentPart> {
+    match value {
+        Some(Value::String(text)) => vec![AgentModelContentPart::Text { text: text.clone() }],
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .map(|part| match part {
+                Value::String(text) => AgentModelContentPart::Text { text: text.clone() },
+                Value::Object(object)
+                    if object.get("type").and_then(Value::as_str) == Some("text") =>
+                {
+                    AgentModelContentPart::Text {
+                        text: object
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    }
+                }
+                other => AgentModelContentPart::Native {
+                    provider: "openai.content_part".to_string(),
+                    value: other.clone(),
+                },
+            })
+            .collect(),
+        Some(Value::Null) | None => Vec::new(),
+        Some(other) => vec![AgentModelContentPart::Text {
+            text: other.to_string(),
+        }],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        prepare_agent_tool_request, reject_external_tool_request, request_from_prompt_snapshot,
+        validate_prompt_snapshot_context_policy,
+    };
+    use crate::domain::models::agent::profile::ResolvedAgentProfile;
+    use crate::domain::models::agent::{AgentModelContentPart, AgentModelRequest, AgentModelRole};
+
+    #[test]
+    fn rejects_external_tool_choice_even_when_null() {
+        let prompt_snapshot = json!({
+            "chatCompletionPayload": {
+                "messages": [{ "role": "user", "content": "hello" }],
+                "tool_choice": null
+            }
+        });
+        let request = request_from_prompt_snapshot(&prompt_snapshot).expect("request");
+
+        let error = reject_external_tool_request(&request.payload).expect_err("tool_choice fails");
+        assert!(
+            error
+                .to_string()
+                .contains("agent.external_tool_choice_unsupported_phase2b")
         );
     }
 
-    payload
-        .get_mut("messages")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "agent.tool_loop_requires_messages: messages must be an array".to_string(),
-            )
+    #[test]
+    fn materialized_agent_system_prompt_passes_through_at_prompt_manager_position() {
+        let request = request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": {
+                "messages": [
+                    { "role": "system", "content": "Before Agent prompt." },
+                    { "role": "user", "content": "Materialized Agent System Prompt." },
+                    { "role": "user", "content": "hello" }
+                ]
+            }
+        }))
+        .expect("request");
+
+        let request = prepare_agent_tool_request(request, &[], "run_test", "inv_root")
+            .expect("agent request");
+
+        assert_eq!(message_text(&request, 0), "Before Agent prompt.");
+        assert_eq!(request.messages[1].role, AgentModelRole::User);
+        assert_eq!(
+            message_text(&request, 1),
+            "Materialized Agent System Prompt."
+        );
+        assert_eq!(message_text(&request, 2), "hello");
+    }
+
+    #[test]
+    fn internal_agent_prompt_marker_is_rejected() {
+        let request = request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": {
+                "messages": [
+                    agent_system_marker(),
+                    { "role": "user", "content": "hello" }
+                ]
+            }
+        }))
+        .expect("request");
+
+        let error = prepare_agent_tool_request(request, &[], "run_test", "inv_root")
+            .expect_err("marker leak fails");
+
+        assert!(
+            error
+                .to_string()
+                .contains("agent.prompt_marker_unmaterialized")
+        );
+    }
+
+    #[test]
+    fn context_policy_must_match_resolved_profile() {
+        let profile = test_profile(None);
+        let prompt_snapshot = json!({
+            "contextPolicy": {
+                "initialChatHistoryMessages": 8,
+                "includeActivatedWorldInfo": true
+            },
+            "chatCompletionPayload": {
+                "messages": [{ "role": "system", "content": "Materialized Agent System Prompt." }]
+            }
+        });
+
+        let error = validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
+            .expect_err("context policy mismatch fails");
+
+        assert!(error.to_string().contains("agent.context_policy_mismatch"));
+    }
+
+    #[test]
+    fn context_policy_is_required_for_agent_run_start() {
+        let profile = test_profile(None);
+        let prompt_snapshot = json!({
+            "chatCompletionPayload": {
+                "messages": [{ "role": "system", "content": "Materialized Agent System Prompt." }]
+            }
+        });
+
+        let error = validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
+            .expect_err("missing context policy fails");
+
+        assert!(error.to_string().contains("agent.context_policy_required"));
+    }
+
+    #[test]
+    fn truncated_context_policy_does_not_change_tool_history_source() {
+        let mut profile = test_profile(None);
+        profile.context.initial_chat_history_messages = 8;
+        let prompt_snapshot = json!({
+            "contextPolicy": {
+                "initialChatHistoryMessages": 8,
+                "includeActivatedWorldInfo": true
+            },
+            "chatCompletionPayload": {
+                "messages": [{ "role": "system", "content": "Materialized Agent System Prompt." }]
+            }
+        });
+
+        validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
+            .expect("matching truncated context policy should pass");
+    }
+
+    fn message_text(request: &AgentModelRequest, index: usize) -> &str {
+        match &request.messages[index].parts[0] {
+            AgentModelContentPart::Text { text } => text.as_str(),
+            _ => panic!("expected text message"),
+        }
+    }
+
+    fn agent_system_marker() -> serde_json::Value {
+        json!({
+            "role": "system",
+            "content": "[marker]",
+            "_tauritavern_agent_prompt_marker": "agentSystemPrompt"
         })
+    }
+
+    fn test_profile(agent_system_prompt: Option<&str>) -> ResolvedAgentProfile {
+        let instructions = match agent_system_prompt {
+            Some(prompt) => json!({ "agentSystemPrompt": prompt }),
+            None => json!({}),
+        };
+
+        serde_json::from_value(json!({
+            "schemaVersion": 1,
+            "kind": "tauritavern.agentProfile",
+            "id": "test",
+            "displayName": "Test",
+            "preset": {
+                "mode": "none",
+                "required": false
+            },
+            "model": {
+                "mode": "currentPromptSnapshot"
+            },
+            "run": {
+                "presentation": "background"
+            },
+            "instructions": instructions,
+            "tools": {
+                "allow": ["workspace.write_file", "workspace.commit", "workspace.finish"],
+                "deny": [],
+                "toolDescriptions": {},
+                "maxRounds": 1,
+                "maxCallsPerRun": 1,
+                "maxCallsPerTool": {}
+            },
+            "skills": {
+                "visible": ["*"],
+                "deny": [],
+                "maxReadCharsPerCall": 1,
+                "maxReadCharsPerRun": 1
+            },
+            "workspace": {
+                "visibleRoots": ["output"],
+                "writableRoots": ["output"]
+            },
+            "plan": {
+                "mode": "none",
+                "beta": true,
+                "nodes": []
+            },
+            "output": {
+                "artifacts": [{
+                    "id": "main",
+                    "path": "output/main.md",
+                    "kind": "markdown",
+                    "target": "message_body",
+                    "required": true,
+                    "assemblyOrder": 0
+                }],
+                "messageBodyArtifactId": "main",
+                "messageBodyPath": "output/main.md"
+            },
+            "sourceTrace": {
+                "profileSource": "test"
+            }
+        }))
+        .expect("test profile")
+    }
 }

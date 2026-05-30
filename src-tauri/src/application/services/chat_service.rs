@@ -8,8 +8,15 @@ use crate::application::dto::chat_dto::{
     ImportCharacterChatsDto, ImportChatDto, RenameChatDto, SaveChatFromFileDto,
 };
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_workspace_lifecycle_service::{
+    AgentChatWorkspaceTarget, AgentWorkspaceLifecycleService,
+};
+use crate::application::services::chat_file_validation::{
+    validate_character_path_component, validate_chat_file_name,
+};
 use crate::domain::errors::DomainError;
 use crate::domain::models::chat::{Chat, ChatMessage, MessageExtra};
+use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentPersistentStatePrune;
 use crate::domain::repositories::character_repository::CharacterRepository;
 use crate::domain::repositories::chat_repository::{
     ChatExportFormat, ChatImportFormat, ChatRepository,
@@ -24,6 +31,7 @@ use crate::domain::repositories::chat_types::{
 pub struct ChatService {
     chat_repository: Arc<dyn ChatRepository>,
     character_repository: Arc<dyn CharacterRepository>,
+    agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
 }
 
 impl ChatService {
@@ -31,10 +39,12 @@ impl ChatService {
     pub fn new(
         chat_repository: Arc<dyn ChatRepository>,
         character_repository: Arc<dyn CharacterRepository>,
+        agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
     ) -> Self {
         Self {
             chat_repository,
             character_repository,
+            agent_workspace_lifecycle_service,
         }
     }
 
@@ -147,7 +157,11 @@ impl ChatService {
     }
 
     /// Rename a chat
-    pub async fn rename_chat(&self, dto: RenameChatDto) -> Result<(), ApplicationError> {
+    pub async fn rename_chat(&self, dto: RenameChatDto) -> Result<String, ApplicationError> {
+        validate_character_path_component(&dto.character_name)?;
+        validate_chat_file_name(&dto.old_file_name, "Old chat file name")?;
+        validate_chat_file_name(&dto.new_file_name, "New chat file name")?;
+
         tracing::info!(
             "Renaming chat: {}/{} -> {}/{}",
             dto.character_name,
@@ -156,11 +170,12 @@ impl ChatService {
             dto.new_file_name
         );
 
-        self.chat_repository
+        let committed_file_name = self
+            .chat_repository
             .rename_chat(&dto.character_name, &dto.old_file_name, &dto.new_file_name)
             .await?;
 
-        Ok(())
+        Ok(committed_file_name)
     }
 
     /// Delete a chat
@@ -171,9 +186,33 @@ impl ChatService {
     ) -> Result<(), ApplicationError> {
         tracing::info!("Deleting chat: {}/{}", character_name, file_name);
 
+        let summary = self
+            .chat_repository
+            .get_character_chat_summary(character_name, file_name, true)
+            .await?;
+        let target = match summary.chat_metadata.as_ref() {
+            Some(metadata) => AgentWorkspaceLifecycleService::character_target_from_metadata(
+                character_name,
+                file_name,
+                metadata,
+            )?,
+            None => None,
+        };
+        if let Some(target) = target.as_ref() {
+            self.agent_workspace_lifecycle_service
+                .ensure_chat_workspace_inactive(target)
+                .await?;
+        }
+
         self.chat_repository
             .delete_chat(character_name, file_name)
             .await?;
+
+        if let Some(target) = target {
+            self.agent_workspace_lifecycle_service
+                .delete_chat_workspace(&target)
+                .await?;
+        }
 
         Ok(())
     }
@@ -492,6 +531,27 @@ impl ChatService {
         Ok(path.to_string_lossy().to_string())
     }
 
+    pub async fn get_chat_payload(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Vec<Value>, ApplicationError> {
+        self.chat_repository
+            .get_chat_payload(character_name, file_name)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn prune_agent_persistent_states(
+        &self,
+        target: &AgentChatWorkspaceTarget,
+        retained_state_ids: &[String],
+    ) -> Result<AgentPersistentStatePrune, ApplicationError> {
+        self.agent_workspace_lifecycle_service
+            .prune_persistent_states(target, retained_state_ids)
+            .await
+    }
+
     /// Get the tail window for a character chat JSONL payload.
     pub async fn get_chat_payload_tail_lines(
         &self,
@@ -569,6 +629,9 @@ impl ChatService {
         lines: Vec<String>,
         force: bool,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
+        validate_character_path_component(character_name)?;
+        validate_chat_file_name(file_name, "Chat file name")?;
+
         self.chat_repository
             .save_chat_payload_windowed(character_name, file_name, cursor, header, lines, force)
             .await
@@ -585,6 +648,9 @@ impl ChatService {
         op: ChatPayloadPatchOp,
         force: bool,
     ) -> Result<ChatPayloadCursor, ApplicationError> {
+        validate_character_path_component(character_name)?;
+        validate_chat_file_name(file_name, "Chat file name")?;
+
         self.chat_repository
             .patch_chat_payload_windowed(character_name, file_name, cursor, header, op, force)
             .await
@@ -596,11 +662,8 @@ impl ChatService {
         &self,
         dto: SaveChatFromFileDto,
     ) -> Result<(), ApplicationError> {
-        if dto.character_name.trim().is_empty() || dto.file_name.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "Character name and file name cannot be empty".to_string(),
-            ));
-        }
+        validate_character_path_component(&dto.character_name)?;
+        validate_chat_file_name(&dto.file_name, "Chat file name")?;
 
         self.chat_repository
             .save_chat_payload_from_path(

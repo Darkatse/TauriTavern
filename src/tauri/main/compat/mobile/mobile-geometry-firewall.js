@@ -73,13 +73,27 @@ const FIREWALL_CSS = `
   body #character_popup {
     top: calc(var(--topBarBlockSize) + max(var(--tt-inset-top), 0px)) !important;
     height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
+    min-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
     max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
   }
 
   body #completion_prompt_manager_popup {
     top: calc(var(--topBarBlockSize) + max(var(--tt-inset-top), 0px)) !important;
     height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
+    min-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
     max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
+  }
+
+  body #select_chat_popup {
+    position: fixed !important;
+    top: max(var(--tt-inset-top), 0px) !important;
+    left: max(var(--tt-inset-left), 0px) !important;
+    right: max(var(--tt-inset-right), 0px) !important;
+    bottom: max(var(--tt-viewport-bottom-inset, var(--tt-inset-bottom)), 0px) !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
   }
 
   body #form_sheld {
@@ -184,6 +198,7 @@ const FIREWALL_CSS = `
   body #sheld {
     top: calc(var(--topBarBlockSize) + var(--tt-safe-top)) !important;
     height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top) - 1px) !important;
+    min-height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top) - 1px) !important;
     max-height: calc(var(--tt-base-viewport-height, var(--doc-height, 100vh)) - var(--topBarBlockSize) - var(--tt-safe-top) - 1px) !important;
   }
 
@@ -197,6 +212,8 @@ const FIREWALL_CSS = `
   body #completion_prompt_manager_popup {
     top: calc(var(--topBarBlockSize) + var(--tt-safe-top)) !important;
     height: calc(100% - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
+    min-height: calc(100% - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
+    max-height: calc(100% - var(--topBarBlockSize) - var(--tt-safe-top)) !important;
   }
 
   body #top-settings-holder > .drawer > .drawer-content:not(.fillLeft):not(.fillRight) {
@@ -227,6 +244,54 @@ body #sheld {
   --tt-keyboard-offset: max(calc(var(--tt-viewport-bottom-inset-local) - var(--tt-bottom-inset)), 0px);
 }
 
+/* First-party chat manager overlay. Upstream keeps it as a desktop-sized
+ * min-content popup; on mobile the chat list must be the scrolling surface.
+ */
+body #shadow_select_chat_popup {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  width: 100dvw !important;
+  height: var(--tt-base-viewport-height, var(--doc-height, 100vh)) !important;
+  height: var(--tt-base-viewport-height, var(--doc-height, 100dvh)) !important;
+  overflow: hidden !important;
+}
+
+body #select_chat_popup {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  align-content: stretch !important;
+  min-height: 0 !important;
+  height: auto !important;
+  overflow: hidden !important;
+}
+
+body #select_chat_popup > [name="selectChatPopupHeader"],
+body #select_chat_popup > .chatBackupsList,
+body #select_chat_popup > #select_chat_div {
+  width: 100% !important;
+  min-width: 0 !important;
+}
+
+body #select_chat_popup > [name="selectChatPopupHeader"] {
+  flex: 0 0 auto !important;
+}
+
+body #select_chat_popup > .chatBackupsList {
+  flex: 0 1 auto !important;
+  min-height: 0 !important;
+}
+
+body #select_chat_popup > #select_chat_div {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  height: auto !important;
+  overflow-y: auto !important;
+  overscroll-behavior-y: contain !important;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* Host-private IME nodes keep Android keyboard lift off the theme-controlled shell. */
 body #form_sheld[data-tt-android-ime-host] > [data-tt-android-ime-lift] {
   transform: translate3d(0, calc(-1 * var(--tt-keyboard-offset)), 0) !important;
@@ -248,12 +313,19 @@ body [data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
 
 body #character_popup[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
   height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+  min-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
   max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
 }
 
 body #completion_prompt_manager_popup[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
   height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+  min-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
   max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px) - var(--tt-keyboard-offset)) !important;
+}
+
+body #select_chat_popup[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {
+  bottom: max(var(--tt-viewport-bottom-inset-local), 0px) !important;
+  max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - max(var(--tt-inset-top), 0px) - var(--tt-viewport-bottom-inset-local)) !important;
 }
 
 body .drawer-content[data-tt-ime-surface="fixed-shell"][data-tt-ime-active] {

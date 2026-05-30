@@ -1,9 +1,3 @@
-// Type declarations for modules without type definitions
-
-declare module 'crypto-browserify';
-declare module 'stream-browserify';
-declare module 'os-browserify/browser';
-declare module 'slidetoggle';
 declare module 'droll';
 declare module '@iconfu/svg-inject';
 
@@ -95,13 +89,15 @@ type TauriTavernAgentRunStatus =
     | 'dispatching_tool'
     | 'applying_workspace_patch'
     | 'creating_checkpoint'
-    | 'assembling_artifacts'
-    | 'awaiting_commit'
-    | 'committing'
+    | 'awaiting_host_commit'
+    | 'finishing'
     | 'completed'
+    | 'partial_success'
     | 'cancelling'
     | 'cancelled'
     | 'failed';
+
+type TauriTavernAgentRunPresentation = 'foreground' | 'background';
 
 type TauriTavernAgentRunEvent = {
     seq: number;
@@ -120,6 +116,171 @@ type TauriTavernAgentRunHandle = {
     status: TauriTavernAgentRunStatus;
 };
 
+type TauriTavernAgentModelTurn = {
+    runId: string;
+    round: number;
+    modelResponsePath: string;
+    provider: {
+        source?: string;
+        format?: string;
+        model?: string;
+        responseId?: string;
+        usage?: any;
+    };
+    assistant: {
+        text: string;
+        totalChars: number;
+        totalWords: number;
+        truncated: boolean;
+    };
+    reasoning: Array<{
+        source: string;
+        text: string;
+        totalChars: number;
+        totalWords: number;
+        truncated: boolean;
+    }>;
+    toolCalls: Array<{
+        callId: string;
+        name: string;
+        modelName?: string;
+    }>;
+};
+
+type TauriTavernAgentProfileSummary = {
+    id: string;
+    displayName: string;
+    description?: string;
+    directRunnable: boolean;
+};
+
+type TauriTavernAgentToolSpec = {
+    name: string;
+    modelName: string;
+    title: string;
+    description: string;
+    inputSchema: any;
+    outputSchema?: any;
+    annotations?: any;
+    source: string;
+};
+
+type TauriTavernAgentProfileDefinition = {
+    schemaVersion: number;
+    kind: 'tauritavern.agentProfile';
+    id: string;
+    displayName: string;
+    description?: string;
+    preset: {
+        mode: 'currentPromptSnapshot' | 'ref' | 'none';
+        ref?: {
+            apiId: string;
+            name: string;
+        };
+        required?: boolean;
+    };
+    model: {
+        mode: 'currentPromptSnapshot' | 'connectionRef' | 'requiresConfiguration';
+        connectionRef?: string;
+        modelId?: string;
+    };
+    run: {
+        presentation: TauriTavernAgentRunPresentation;
+        directRunnable: boolean;
+        modelRetry: {
+            maxRetries: number;
+            intervalMs: number;
+        };
+    };
+    instructions: {
+        agentSystemPrompt?: string | null;
+    };
+    tools: {
+        allow: string[];
+        deny?: string[];
+        toolDescriptions?: Record<string, {
+            description?: string;
+            properties?: Record<string, string>;
+        }>;
+        maxRounds: number;
+        maxCallsPerRun: number;
+        maxCallsPerTool?: Record<string, number>;
+    };
+    skills: {
+        visible: string[];
+        deny?: string[];
+        maxReadCharsPerCall: number;
+        maxReadCharsPerRun: number;
+    };
+    workspace: {
+        visibleRoots: string[];
+        writableRoots: string[];
+    };
+    plan: {
+        mode: 'none' | 'free' | 'strict' | 'hybrid';
+        beta?: boolean;
+        nodes?: Array<{
+            id: string;
+            title: string;
+            locked: boolean;
+        }>;
+    };
+    output: {
+        artifacts: Array<{
+            id: string;
+            path: string;
+            kind: string;
+            target: 'messageBody';
+            required?: boolean;
+            assemblyOrder?: number;
+        }>;
+    };
+};
+
+type TauriTavernAgentProfilesApi = {
+    list: () => Promise<{ profiles: TauriTavernAgentProfileSummary[] }>;
+    load: (input: string | { profileId: string }) => Promise<{ profile: TauriTavernAgentProfileDefinition | null }>;
+    resolveSystemPrompt: (input?: string | { profileId?: string | null }) => Promise<{ agentSystemPrompt: string }>;
+    save: (input: TauriTavernAgentProfileDefinition | { profile: TauriTavernAgentProfileDefinition }) => Promise<void>;
+    delete: (input: string | { profileId: string }) => Promise<void>;
+};
+
+type TauriTavernAgentToolsApi = {
+    list: () => Promise<{ tools: TauriTavernAgentToolSpec[] }>;
+};
+
+type TauriTavernAgentPromptAssemblyApi = {
+    prepare: (input: {
+        profileId?: string | null;
+        generationType?: string;
+        frozenRunInputSnapshot: Record<string, any>;
+        jsonSchema?: any;
+    }) => Promise<{
+        mode: 'currentPromptSnapshot' | 'frontendPromptAssembly';
+        request?: any;
+        assembly?: any;
+    }>;
+    buildSnapshot: (input: {
+        generationType?: string;
+        frozenRunInputSnapshot: Record<string, any>;
+        settings?: Record<string, any>;
+        presetSettings?: Record<string, any>;
+        modelId?: string | null;
+        profileId?: string | null;
+        agentContextPolicy?: Record<string, any>;
+        contextPolicy?: Record<string, any>;
+        agentSystemPrompt?: string | null;
+        agentTaskPrompt?: string | null;
+        requiredAgentPromptComponents?: string[];
+        jsonSchema?: any;
+    }) => Promise<{
+        promptSnapshot: any;
+        frozenRunInputSnapshot: any;
+        generationIntent: any;
+        assembly: any;
+    }>;
+};
+
 type TauriTavernAgentApi = {
     startRunWithPromptSnapshot: (input: {
         chatRef: TauriTavernChatRef;
@@ -127,8 +288,10 @@ type TauriTavernAgentApi = {
         generationType?: string;
         profileId?: string | null;
         promptSnapshot: any;
+        frozenRunInputSnapshot?: any;
         generationIntent?: any;
-        options?: { autoCommit?: boolean; stream?: boolean };
+        presentation?: TauriTavernAgentRunPresentation;
+        options?: { presentation?: TauriTavernAgentRunPresentation; stream?: boolean };
     }) => Promise<TauriTavernAgentRunHandle>;
     startRunFromLegacyGenerate: (input?: {
         chatRef?: TauriTavernChatRef;
@@ -137,7 +300,8 @@ type TauriTavernAgentApi = {
         generateOptions?: Record<string, any>;
         profileId?: string | null;
         generationIntent?: any;
-        options?: { autoCommit?: false; stream?: false };
+        presentation?: TauriTavernAgentRunPresentation;
+        options?: { presentation?: TauriTavernAgentRunPresentation; stream?: false };
     }) => Promise<TauriTavernAgentRunHandle>;
     cancel: (runId: string) => Promise<{
         runId: string;
@@ -154,22 +318,253 @@ type TauriTavernAgentApi = {
     readWorkspaceFile: (input: {
         runId: string;
         path: string;
-    }) => Promise<{ path: string; text: string; bytes: number; sha256: string }>;
+    }) => Promise<{ path: string; text: string; chars: number; words: number; sha256: string }>;
+    readModelTurn: (input: {
+        runId: string;
+        invocationId?: string;
+        round: number;
+        maxChars?: number;
+    }) => Promise<TauriTavernAgentModelTurn>;
     subscribe: (
         runId: string,
         handler: (event: TauriTavernAgentRunEvent) => void,
         options?: { afterSeq?: number; limit?: number; intervalMs?: number; onError?: (error: unknown) => void },
     ) => TauriTavernHostUnsubscribe;
-    commit: (input: { runId: string; messageId?: string | number }) => Promise<{
-        runId: string;
-        status: TauriTavernAgentRunStatus;
-    }>;
-    prepareCommit: (input: { runId: string }) => Promise<any>;
-    finalizeCommit: (input: { runId: string; messageId?: string | number }) => Promise<any>;
+    profiles: TauriTavernAgentProfilesApi;
+    tools: TauriTavernAgentToolsApi;
+    promptAssembly: TauriTavernAgentPromptAssemblyApi;
     approveToolCall: () => never;
     listRuns: () => never;
     readDiff: () => never;
     rollback: () => never;
+};
+
+type TauriTavernLlmConnectionSummary = {
+    id: string;
+    displayName: string;
+    description?: string;
+    chatCompletionSource: string;
+    customApiFormat?: string;
+};
+
+type TauriTavernLlmConnectionDefinition = {
+    schemaVersion: number;
+    kind: 'tauritavern.llmConnection';
+    id: string;
+    displayName: string;
+    description?: string;
+    provider: {
+        chatCompletionSource: string;
+        customApiFormat?: string;
+    };
+    endpoint?: {
+        baseUrl?: string;
+        sourceSpecific?: Record<string, any>;
+    };
+    auth: {
+        secretRef: {
+            key: string;
+            id: string;
+            labelSnapshot?: string;
+        };
+    };
+    routing?: {
+        reverseProxy?: {
+            url: string;
+        };
+    };
+    adapterHints?: {
+        promptPostProcessing?: string;
+        customIncludeHeaders?: string;
+        customIncludeBody?: string;
+        customExcludeBody?: string;
+    };
+    capabilities?: {
+        streaming?: string;
+        toolCalling?: string;
+    };
+};
+
+type TauriTavernLlmConnectionsApi = {
+    list: () => Promise<{ connections: TauriTavernLlmConnectionSummary[] }>;
+    load: (input: string | { connectionId: string } | { connection_id: string }) => Promise<{
+        connection: TauriTavernLlmConnectionDefinition | null;
+    }>;
+    save: (input: TauriTavernLlmConnectionDefinition | { connection: TauriTavernLlmConnectionDefinition }) => Promise<void>;
+    delete: (input: string | { connectionId: string } | { connection_id: string }) => Promise<void>;
+};
+
+type TauriTavernSkillFileKind = 'text' | 'binary';
+
+type TauriTavernSkillImportConflictKind = 'new' | 'same' | 'different';
+
+type TauriTavernSkillInstallConflictStrategy = 'skip' | 'replace';
+
+type TauriTavernSkillInstallAction = 'installed' | 'replaced' | 'already_installed' | 'skipped';
+
+type TauriTavernSkillScope =
+    | { kind: 'global' }
+    | { kind: 'preset'; apiId: string; name: string }
+    | { kind: 'profile'; profileId: string }
+    | { kind: 'character'; characterId: string };
+
+type TauriTavernSkillScopeFilter =
+    | { kind: 'all' }
+    | TauriTavernSkillScope;
+
+type TauriTavernSkillIndexEntry = {
+    scope: TauriTavernSkillScope;
+    name: string;
+    description: string;
+    displayName?: string;
+    sourceKind?: string;
+    license?: string;
+    author?: string;
+    version?: string;
+    tags: string[];
+    installedHash: string;
+    fileCount: number;
+    totalBytes: number;
+    hasScripts: boolean;
+    hasBinary: boolean;
+    installedAt: string;
+    sourceRefs?: TauriTavernSkillSourceRef[];
+};
+
+type TauriTavernSkillSourceRef = {
+    kind: string;
+    id: string;
+    label: string;
+    installedHash: string;
+};
+
+type TauriTavernSkillInlineFile = {
+    path: string;
+    encoding?: 'utf8' | 'utf-8' | 'base64';
+    content: string;
+    mediaType?: string;
+    sizeBytes?: number;
+    sha256?: string;
+};
+
+type TauriTavernSkillImportInput =
+    | {
+        kind: 'inlineFiles';
+        files: TauriTavernSkillInlineFile[];
+        source?: any;
+    }
+    | {
+        kind: 'directory';
+        path: string;
+        source?: any;
+    }
+    | {
+        kind: 'archiveFile';
+        path: string;
+        source?: any;
+    }
+    | {
+        kind: 'archiveBase64';
+        fileName: string;
+        contentBase64: string;
+        sha256?: string;
+        source?: any;
+    };
+
+type TauriTavernSkillFileRef = {
+    path: string;
+    kind: TauriTavernSkillFileKind;
+    mediaType: string;
+    sizeBytes: number;
+    sha256: string;
+};
+
+type TauriTavernSkillImportPreview = {
+    skill: TauriTavernSkillIndexEntry;
+    files: TauriTavernSkillFileRef[];
+    conflict: {
+        kind: TauriTavernSkillImportConflictKind;
+        installedHash?: string;
+    };
+    warnings: string[];
+    source: any;
+};
+
+type TauriTavernSkillInstallResult = {
+    scope: TauriTavernSkillScope;
+    name: string;
+    action: TauriTavernSkillInstallAction;
+    skill?: TauriTavernSkillIndexEntry;
+};
+
+type TauriTavernSkillReadResult = {
+    name: string;
+    path: string;
+    content: string;
+    chars: number;
+    words: number;
+    totalChars: number;
+    totalWords: number;
+    startChar: number;
+    endChar: number;
+    totalLines: number;
+    startLine: number;
+    endLine: number;
+    bytes: number;
+    sha256: string;
+    truncated: boolean;
+    resourceRef: string;
+};
+
+type TauriTavernSkillExportPayload = {
+    fileName: string;
+    contentBase64: string;
+    sha256: string;
+};
+
+type TauriTavernSkillApi = {
+    list: (options?: { scope?: TauriTavernSkillScopeFilter; filter?: TauriTavernSkillScopeFilter }) => Promise<TauriTavernSkillIndexEntry[]>;
+    listFiles: (options: { scope?: TauriTavernSkillScope; name: string }) => Promise<TauriTavernSkillFileRef[]>;
+    pickImportArchive: () => Promise<TauriTavernSkillImportInput | null>;
+    discardPickedImport: (input?: TauriTavernSkillImportInput | null) => Promise<void>;
+    downloadImport: (options: { url: string }) => Promise<TauriTavernSkillImportInput>;
+    previewImport: (options: {
+        input: TauriTavernSkillImportInput;
+        targetScope?: TauriTavernSkillScope;
+    }) => Promise<TauriTavernSkillImportPreview>;
+    installImport: (request: {
+        input: TauriTavernSkillImportInput;
+        targetScope?: TauriTavernSkillScope;
+        conflictStrategy?: TauriTavernSkillInstallConflictStrategy;
+    }) => Promise<TauriTavernSkillInstallResult>;
+    readFile: (options: {
+        scope?: TauriTavernSkillScope;
+        name: string;
+        path: string;
+        maxChars?: number;
+        startLine?: number;
+        lineCount?: number;
+        startChar?: number;
+    }) => Promise<TauriTavernSkillReadResult>;
+    writeFile: (options: {
+        scope?: TauriTavernSkillScope;
+        name: string;
+        path: string;
+        content: string;
+        expectedSha256?: string;
+    }) => Promise<TauriTavernSkillReadResult>;
+    export: (options: { scope?: TauriTavernSkillScope; name: string }) => Promise<TauriTavernSkillExportPayload>;
+    delete: (options: { scope?: TauriTavernSkillScope; name: string }) => Promise<void>;
+    move: (request: {
+        name: string;
+        fromScope: TauriTavernSkillScope;
+        toScope: TauriTavernSkillScope;
+        conflictStrategy?: TauriTavernSkillInstallConflictStrategy;
+    }) => Promise<TauriTavernSkillInstallResult>;
+    retargetScope: (request: {
+        fromScope: TauriTavernSkillScope;
+        toScope: TauriTavernSkillScope;
+    }) => Promise<any>;
 };
 
 type TauriTavernFrontendLogsApi = {
@@ -215,6 +610,7 @@ type TauriTavernWorldInfoApi = {
 
 type TauriTavernExtensionStoreApi = {
     getJson: (options: { namespace: string; key: string; table?: string }) => Promise<any>;
+    tryGetJson: (options: { namespace: string; key: string; table?: string }) => Promise<{ found: boolean; value?: any }>;
     setJson: (options: { namespace: string; key: string; value: any; table?: string }) => Promise<void>;
     updateJson: (options: { namespace: string; key: string; value: any; table?: string }) => Promise<void>;
     updateJSON: (options: { namespace: string; key: string; value: any; table?: string }) => Promise<void>;
@@ -284,6 +680,8 @@ type TauriTavernLayoutApi = {
 type TauriTavernHostApi = {
     chat?: TauriTavernChatApi;
     agent?: TauriTavernAgentApi;
+    llmConnections?: TauriTavernLlmConnectionsApi;
+    skill?: TauriTavernSkillApi;
     layout?: TauriTavernLayoutApi;
     dev?: TauriTavernDevApi;
     worldInfo?: TauriTavernWorldInfoApi;

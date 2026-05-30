@@ -1,1 +1,1 @@
-export const SILLYTAVERN_COMPAT_VERSION = '1.16.0';
+export const SILLYTAVERN_COMPAT_VERSION = '1.18.0';

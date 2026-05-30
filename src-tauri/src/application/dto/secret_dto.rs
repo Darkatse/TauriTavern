@@ -15,6 +15,12 @@ pub struct SecretStateDto {
     pub states: HashMap<String, Option<Vec<SecretStateItemDto>>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretSettingsDto {
+    pub allow_keys_exposure: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AllSecretsDto {
     #[serde(flatten)]

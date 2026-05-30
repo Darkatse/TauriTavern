@@ -8,8 +8,10 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::character_commands::update_character,
         super::character_commands::update_character_card_data,
         super::character_commands::merge_character_card_data,
+        super::character_commands::bulk_merge_character_card_data,
         super::character_commands::delete_character,
         super::character_commands::rename_character,
+        super::character_commands::duplicate_character,
         super::character_commands::import_character,
         super::character_commands::export_character,
         super::character_commands::export_character_content,
@@ -82,6 +84,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::group_chat_api_commands::search_group_chat_messages,
         // Extension store commands (global extension persistence)
         super::extension_store_commands::get_extension_store_json,
+        super::extension_store_commands::try_get_extension_store_json,
         super::extension_store_commands::set_extension_store_json,
         super::extension_store_commands::update_extension_store_json,
         super::extension_store_commands::rename_extension_store_key,
@@ -138,15 +141,34 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // Secret commands
         super::secret_commands::write_secret,
         super::secret_commands::read_secret_state,
+        super::secret_commands::read_secret_settings,
         super::secret_commands::view_secrets,
         super::secret_commands::find_secret,
         super::secret_commands::delete_secret,
         super::secret_commands::rotate_secret,
         super::secret_commands::rename_secret,
+        // Provider metadata commands
+        super::provider_metadata_commands::get_openrouter_model_providers,
+        super::provider_metadata_commands::get_openrouter_credits,
+        super::provider_metadata_commands::get_nanogpt_model_providers,
+        super::provider_metadata_commands::get_nanogpt_credits,
+        super::provider_metadata_commands::get_siliconflow_embedding_models,
+        super::provider_metadata_commands::get_workers_ai_embedding_models,
+        super::provider_metadata_commands::get_workers_ai_multimodal_models,
+        // LLM connection commands
+        super::llm_connection_commands::list_llm_connections,
+        super::llm_connection_commands::load_llm_connection,
+        super::llm_connection_commands::save_llm_connection,
+        super::llm_connection_commands::delete_llm_connection,
         // Content commands
         super::content_commands::initialize_default_content,
         super::content_commands::is_default_content_initialized,
         super::content_commands::download_external_import_url,
+        // Asset library commands
+        super::asset_commands::get_assets_library,
+        super::asset_commands::download_asset,
+        super::asset_commands::delete_asset,
+        super::asset_commands::get_character_assets,
         // Data archive commands
         super::data_archive_commands::start_import_data_archive,
         super::data_archive_commands::start_export_data_archive,
@@ -155,9 +177,14 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::data_archive_commands::cancel_data_archive_job,
         super::data_archive_commands::save_export_data_archive,
         super::data_archive_commands::cleanup_export_data_archive,
+        super::data_archive_commands::export_user_backup_archive,
+        super::data_archive_commands::save_user_backup_archive,
+        super::data_archive_commands::cleanup_user_backup_archive,
         // iOS file bridge commands
         #[cfg(target_os = "ios")]
         super::ios_file_bridge_commands::ios_import_data_archive_from_picker,
+        #[cfg(target_os = "ios")]
+        super::ios_file_bridge_commands::ios_pick_skill_import_archive,
         #[cfg(target_os = "ios")]
         super::ios_file_bridge_commands::ios_share_file,
         #[cfg(target_os = "ios")]
@@ -219,6 +246,13 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::background_commands::upload_background,
         super::background_commands::upload_background_from_path,
         super::background_commands::read_thumbnail_asset,
+        super::image_metadata_commands::get_background_folders,
+        super::image_metadata_commands::create_image_metadata_folder,
+        super::image_metadata_commands::update_image_metadata_folder,
+        super::image_metadata_commands::delete_image_metadata_folder,
+        super::image_metadata_commands::set_image_metadata_folder_thumbnails,
+        super::image_metadata_commands::assign_images_to_metadata_folder,
+        super::image_metadata_commands::unassign_images_from_metadata_folder,
         // Theme commands
         super::theme_commands::save_theme,
         super::theme_commands::delete_theme,
@@ -236,11 +270,34 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::quick_reply_commands::delete_quick_reply_set,
         // Agent runtime commands
         super::agent_commands::start_agent_run,
+        super::agent_commands::prepare_agent_prompt_assembly,
+        super::agent_commands::list_agent_profiles,
+        super::agent_commands::list_agent_tool_specs,
+        super::agent_commands::resolve_agent_system_prompt,
+        super::agent_commands::load_agent_profile,
+        super::agent_commands::save_agent_profile,
+        super::agent_commands::delete_agent_profile,
         super::agent_commands::cancel_agent_run,
         super::agent_commands::read_agent_run_events,
         super::agent_commands::read_agent_workspace_file,
-        super::agent_commands::prepare_agent_run_commit,
-        super::agent_commands::finalize_agent_run_commit,
+        super::agent_commands::read_agent_model_turn,
+        super::agent_commands::read_agent_prompt_assembly_request,
+        super::agent_commands::resolve_agent_chat_commit,
+        super::agent_commands::resolve_agent_prompt_assembly,
+        super::agent_commands::resolve_agent_persistent_state_metadata_update,
+        super::agent_commands::prune_agent_chat_persistent_states,
+        // Agent Skill commands
+        super::skill_commands::download_skill_import_url,
+        super::skill_commands::list_skills,
+        super::skill_commands::list_skill_files,
+        super::skill_commands::preview_skill_import,
+        super::skill_commands::install_skill_import,
+        super::skill_commands::read_skill_file,
+        super::skill_commands::write_skill_file,
+        super::skill_commands::export_skill,
+        super::skill_commands::delete_skill,
+        super::skill_commands::move_skill,
+        super::skill_commands::retarget_skill_scope,
         // Chat completion commands
         super::chat_completion_commands::get_chat_completions_status,
         super::chat_completion_commands::generate_chat_completion,
@@ -260,6 +317,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::tokenizer_commands::encode_openai_tokens,
         super::tokenizer_commands::decode_openai_tokens,
         super::tokenizer_commands::build_openai_logit_bias,
+        // Native regex commands
+        super::native_regex_commands::apply_native_regex_batch,
         // Update commands
         super::update_commands::check_for_update,
         // Bridge commands

@@ -22,7 +22,7 @@ pub struct CharacterDto {
     pub character_version: String,
     pub tags: Vec<String>,
     pub create_date: String,
-    pub talkativeness: f32,
+    pub talkativeness: f64,
     pub fav: bool,
     pub chat_size: u64,
     pub date_added: i64,
@@ -44,6 +44,9 @@ fn format_timestamp_millis(timestamp_millis: i64) -> Option<String> {
 /// Character creation DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateCharacterDto {
+    pub file_name: Option<String>,
+    pub json_data: Option<String>,
+    pub primary_lorebook: Option<String>,
     pub name: String,
     pub description: String,
     pub personality: String,
@@ -54,7 +57,7 @@ pub struct CreateCharacterDto {
     pub creator_notes: Option<String>,
     pub character_version: Option<String>,
     pub tags: Option<Vec<String>>,
-    pub talkativeness: Option<f32>,
+    pub talkativeness: Option<f64>,
     pub fav: Option<bool>,
     pub alternate_greetings: Option<Vec<String>>,
     pub system_prompt: Option<String>,
@@ -76,7 +79,7 @@ pub struct UpdateCharacterDto {
     pub creator_notes: Option<String>,
     pub character_version: Option<String>,
     pub tags: Option<Vec<String>>,
-    pub talkativeness: Option<f32>,
+    pub talkativeness: Option<f64>,
     pub fav: Option<bool>,
     pub alternate_greetings: Option<Vec<String>>,
     pub system_prompt: Option<String>,
@@ -98,11 +101,40 @@ pub struct MergeCharacterCardDataDto {
     pub update: serde_json::Value,
 }
 
+/// Bulk character card merge filter DTO used by upstream-compatible HTTP routes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkMergeCharacterCardDataFilterDto {
+    pub path: String,
+}
+
+/// Bulk character card merge DTO used by upstream-compatible HTTP routes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkMergeCharacterCardDataDto {
+    #[serde(default)]
+    pub avatars: Vec<String>,
+    pub data: serde_json::Value,
+    pub filter: Option<BulkMergeCharacterCardDataFilterDto>,
+}
+
+/// Bulk character card merge result DTO.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BulkMergeCharacterCardDataResultDto {
+    pub updated: Vec<String>,
+    pub skipped: Vec<String>,
+    pub failed: Vec<String>,
+}
+
 /// Character rename DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenameCharacterDto {
     pub old_name: String,
     pub new_name: String,
+}
+
+/// Character duplicate DTO
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateCharacterDto {
+    pub name: String,
 }
 
 /// Character import DTO
@@ -285,8 +317,16 @@ impl TryFrom<CreateCharacterDto> for Character {
     type Error = serde_json::Error;
 
     fn try_from(dto: CreateCharacterDto) -> Result<Self, Self::Error> {
+        let file_name = dto
+            .file_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.strip_suffix(".png").unwrap_or(value).to_string());
         let mut character =
             Character::new(dto.name, dto.description, dto.personality, dto.first_mes);
+        character.file_name = file_name;
+        character.json_data = dto.json_data;
 
         character.scenario = dto.scenario;
         character.mes_example = dto.mes_example;
@@ -352,6 +392,9 @@ mod tests {
     #[test]
     fn try_from_create_character_dto_maps_structured_extensions() {
         let character = Character::try_from(CreateCharacterDto {
+            file_name: None,
+            json_data: None,
+            primary_lorebook: None,
             name: "Test".to_string(),
             description: "desc".to_string(),
             personality: "persona".to_string(),
@@ -387,10 +430,39 @@ mod tests {
             character.data.extensions.additional.get("custom"),
             Some(&json!("value"))
         );
+        assert_eq!(character.file_name, None);
         assert_eq!(character.talkativeness, 0.75);
         assert!(character.fav);
         assert_eq!(character.data.extensions.talkativeness, 0.75);
         assert!(character.data.extensions.fav);
+    }
+
+    #[test]
+    fn try_from_create_character_dto_preserves_explicit_file_name() {
+        let character = Character::try_from(CreateCharacterDto {
+            file_name: Some("Assistant.png".to_string()),
+            json_data: None,
+            primary_lorebook: None,
+            name: "Assistant".to_string(),
+            description: String::new(),
+            personality: String::new(),
+            scenario: String::new(),
+            first_mes: String::new(),
+            mes_example: String::new(),
+            creator: None,
+            creator_notes: None,
+            character_version: None,
+            tags: None,
+            talkativeness: None,
+            fav: None,
+            alternate_greetings: None,
+            system_prompt: None,
+            post_history_instructions: None,
+            extensions: None,
+        })
+        .expect("character conversion should succeed");
+
+        assert_eq!(character.file_name, Some("Assistant".to_string()));
     }
 
     #[test]

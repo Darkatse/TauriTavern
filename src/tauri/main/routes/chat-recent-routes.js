@@ -49,7 +49,7 @@ export function registerChatRecentRoutes(router, context, { jsonResponse }) {
 
                     chatIds.forEach((chatId) => {
                         const id = context.stripJsonl(chatId);
-                        if (!id || groupChatToGroup.has(id)) {
+                        if (!id.trim() || groupChatToGroup.has(id)) {
                             return;
                         }
                         groupChatToGroup.set(id, groupId);
@@ -62,7 +62,7 @@ export function registerChatRecentRoutes(router, context, { jsonResponse }) {
             await Promise.all(pinnedChats.map(async (chat) => {
                 const avatar = String(chat?.avatar || '').trim();
                 const fileStem = context.stripJsonl(chat?.file_name || '');
-                if (!avatar || !fileStem || chat?.group) {
+                if (!avatar || !fileStem.trim() || chat?.group) {
                     return;
                 }
 
@@ -87,7 +87,7 @@ export function registerChatRecentRoutes(router, context, { jsonResponse }) {
             pinnedChats.forEach((chat) => {
                 const groupId = String(chat?.group || '').trim();
                 const fileStem = context.stripJsonl(chat?.file_name || '');
-                if (!groupId || !fileStem) {
+                if (!groupId || !fileStem.trim()) {
                     return;
                 }
 
@@ -125,7 +125,7 @@ export function registerChatRecentRoutes(router, context, { jsonResponse }) {
                 ? characterSummaries.map((chat) => {
                     const characterId = String(chat?.character_name || '').trim();
                     const fileStem = context.stripJsonl(chat?.file_name || '');
-                    if (!characterId || !fileStem) {
+                    if (!characterId || !fileStem.trim()) {
                         return null;
                     }
 
@@ -199,4 +199,3 @@ export function registerChatRecentRoutes(router, context, { jsonResponse }) {
         }
     });
 }
-

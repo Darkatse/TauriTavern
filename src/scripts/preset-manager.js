@@ -6,6 +6,7 @@ import {
     eventSource,
     event_types,
     getRequestHeaders,
+    isConnectionValidationSuspended,
     koboldai_setting_names,
     koboldai_settings,
     main_api,
@@ -39,9 +40,21 @@ import {
     textgenerationwebui_preset_names,
     textgenerationwebui_presets,
 } from './textgen-settings.js';
+import { sanitizePortableAgentProfilePackage } from './tauritavern/agent/agent-profile-portable.js';
+import { retargetPresetSkillsAfterRename } from './tauritavern/agent/skill-scope-sync.js';
 import { download, ensurePlainObject, equalsIgnoreCaseAndAccents, getSanitizedFilename, parseJsonFile, waitUntilCondition } from './utils.js';
 
 const presetManagers = {};
+
+function buildPortablePresetForExport(preset) {
+    const exportPreset = structuredClone(preset);
+    const packageValue = exportPreset?.extensions?.tauritavern?.agentProfiles;
+    if (packageValue === undefined) {
+        return exportPreset;
+    }
+    exportPreset.extensions.tauritavern.agentProfiles = sanitizePortableAgentProfilePackage(packageValue);
+    return exportPreset;
+}
 
 /**
  * Automatically select a preset for current API based on character or group name.
@@ -508,6 +521,11 @@ class PresetManager {
         }
         try {
             await this.savePreset(newName);
+            await retargetPresetSkillsAfterRename({
+                apiId: this.apiId,
+                oldName,
+                newName,
+            });
             await this.deletePreset(oldName);
         } catch (error) {
             toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Preset could not be renamed`);
@@ -911,7 +929,7 @@ class PresetManager {
  * @returns {Promise<string>} Selected or current preset name
  */
 async function presetCommandCallback(_, name) {
-    const shouldReconnect = online_status !== 'no_connection';
+    const shouldReconnect = online_status !== 'no_connection' && !isConnectionValidationSuspended();
     const presetManager = getPresetManager();
     const allPresets = presetManager.getAllPresets();
     const currentPreset = presetManager.getSelectedPresetName();
@@ -1090,7 +1108,15 @@ export async function initPresetManager() {
         const selected = $(presetManager.select).find('option:selected');
         const name = selected.text();
         const preset = presetManager.getPresetSettings(name);
-        const data = JSON.stringify(preset, null, 4);
+        const storedPreset = presetManager.getCompletionPresetByName(name);
+        if (storedPreset?.extensions && !preset.extensions) {
+            preset.extensions = structuredClone(storedPreset.extensions);
+        } else if (storedPreset?.extensions?.tauritavern && !preset.extensions?.tauritavern) {
+            preset.extensions = preset.extensions || {};
+            preset.extensions.tauritavern = structuredClone(storedPreset.extensions.tauritavern);
+        }
+        const exportPreset = buildPortablePresetForExport(preset);
+        const data = JSON.stringify(exportPreset, null, 4);
         download(data, `${name}.json`, 'application/json');
     });
 
@@ -1122,7 +1148,18 @@ export async function initPresetManager() {
         await presetManager.savePreset(name, data);
         const successToast = !presetManager.isAdvancedFormatting() ? t`Preset imported` : t`Template imported`;
         toastr.success(successToast);
-        e.target.value = null;
+        try {
+            const { maybePromptForPresetEmbeddedProfiles } = await import('./tauri/agent-profiles/embedded-import.js');
+            await maybePromptForPresetEmbeddedProfiles({ apiId, name, preset: data });
+            const { maybePromptForPresetEmbeddedSkills } = await import('./tauri/agent-skills/embedded-import.js');
+            await maybePromptForPresetEmbeddedSkills({ apiId, name, preset: data });
+        } catch (error) {
+            console.error('Failed to start embedded Agent asset import prompt for preset', error);
+            const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
+            toastr.error(message, t`Agent embedded import failed`);
+        } finally {
+            e.target.value = null;
+        }
     });
 
     $(document).on('click', '[data-preset-manager-delete]', async function () {
@@ -1146,6 +1183,8 @@ export async function initPresetManager() {
         if (result) {
             const successToast = !presetManager.isAdvancedFormatting() ? t`Preset deleted` : t`Template deleted`;
             toastr.success(successToast);
+            const { clearPresetSkillImportReminders } = await import('./tauri/agent-skills/reminders.js');
+            clearPresetSkillImportReminders(apiId, name);
             await eventSource.emit(event_types.PRESET_DELETED, { apiId, name });
         } else {
             const warningToast = !presetManager.isAdvancedFormatting() ? t`Preset was not deleted from server` : t`Template was not deleted from server`;

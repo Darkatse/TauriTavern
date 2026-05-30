@@ -2,6 +2,8 @@
 
 import { fnv1a32 } from '../hash-utils.js';
 
+const PROVIDER_METADATA_TIMEOUT_MS = 35_000;
+
 /**
  * @typedef {import('./tauri-commands.js').TauriInvokeCommand} TauriInvokeCommand
  *
@@ -53,6 +55,16 @@ function countOpenAiTokensBatchKey(args) {
     return fnv1a32(json);
 }
 
+/**
+ * @param {any} args
+ * @returns {string}
+ */
+function providerMetadataKey(args) {
+    const dto = args?.dto ?? args ?? {};
+    const json = JSON.stringify(dto);
+    return fnv1a32(json);
+}
+
 /** @param {any} _prev @param {any} next */
 function takeLatest(_prev, next) {
     return next;
@@ -99,6 +111,60 @@ export function createHostInvokePolicies({ thumbnailBlobCacheLimit }) {
             cacheTtlMs: 2_000,
             cacheLimit: 50,
             key: countOpenAiTokensBatchKey,
+        },
+        get_openrouter_model_providers: {
+            kind: 'dedupe',
+            maxConcurrent: 2,
+            timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
+            cacheTtlMs: 60_000,
+            cacheLimit: 50,
+            key: providerMetadataKey,
+        },
+        get_nanogpt_model_providers: {
+            kind: 'dedupe',
+            maxConcurrent: 2,
+            timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
+            cacheTtlMs: 60_000,
+            cacheLimit: 50,
+            key: providerMetadataKey,
+        },
+        get_siliconflow_embedding_models: {
+            kind: 'dedupe',
+            maxConcurrent: 2,
+            timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
+            cacheTtlMs: 60_000,
+            cacheLimit: 10,
+            key: providerMetadataKey,
+        },
+        get_workers_ai_embedding_models: {
+            kind: 'dedupe',
+            maxConcurrent: 2,
+            timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
+            cacheTtlMs: 60_000,
+            cacheLimit: 10,
+            key: providerMetadataKey,
+        },
+        get_workers_ai_multimodal_models: {
+            kind: 'dedupe',
+            maxConcurrent: 2,
+            timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
+            cacheTtlMs: 60_000,
+            cacheLimit: 10,
+            key: providerMetadataKey,
+        },
+        get_openrouter_credits: {
+            kind: 'dedupe',
+            key: () => 'singleton',
+            timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
+            cacheTtlMs: 30_000,
+            cacheLimit: 1,
+        },
+        get_nanogpt_credits: {
+            kind: 'dedupe',
+            key: () => 'singleton',
+            timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
+            cacheTtlMs: 30_000,
+            cacheLimit: 1,
         },
         save_user_settings: {
             kind: 'writeBehind',

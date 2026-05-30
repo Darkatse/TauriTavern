@@ -1,5 +1,7 @@
 // Repository implementations
+pub mod file_agent_profile_repository;
 pub mod file_agent_repository;
+pub mod file_asset_repository;
 pub mod file_avatar_repository;
 pub mod file_background_repository;
 pub mod file_character_repository;
@@ -8,11 +10,14 @@ pub mod file_content_repository;
 pub mod file_extension_repository;
 pub mod file_extension_store_repository;
 pub mod file_group_repository;
+pub mod file_image_metadata_repository;
+pub mod file_llm_connection_repository;
 pub mod file_preset_repository;
 pub mod file_prompt_cache_repository;
 pub mod file_quick_reply_repository;
 pub mod file_secret_repository;
 pub mod file_settings_repository;
+pub mod file_skill_repository;
 pub mod file_theme_repository;
 pub mod file_user_directory_repository;
 pub mod file_user_repository;

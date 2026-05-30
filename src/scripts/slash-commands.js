@@ -1,5 +1,5 @@
 import { Fuse, DOMPurify } from '../lib.js';
-import { canUseNegativeLookbehind, copyText, findPersona, flashHighlight } from './utils.js';
+import { canUseNegativeLookbehind, copyText, findPersona, flashHighlight, resolveAvatarData } from './utils.js';
 
 import {
     Generate,
@@ -12,6 +12,7 @@ import {
     comment_avatar,
     deactivateSendButtons,
     default_avatar,
+    deleteCharacter,
     deleteSwipe,
     displayPastChats,
     duplicateCharacter,
@@ -20,10 +21,14 @@ import {
     extractMessageBias,
     generateQuietPrompt,
     generateRaw,
+    getCharacters,
     getCurrentChatDetails,
     getCurrentChatId,
     getFirstDisplayedMessageId,
+    getOneCharacter,
+    getRequestHeaders,
     getThumbnailUrl,
+    isConnectionValidationSuspended,
     is_send_press,
     main_api,
     name1,
@@ -38,6 +43,8 @@ import {
     saveChatConditional,
     saveSettings,
     saveSettingsDebounced,
+    selectCharacterById,
+    select_selected_character,
     sendMessageAsUser,
     sendSystemMessage,
     setActiveCharacter,
@@ -46,6 +53,7 @@ import {
     setCharacterName,
     setExtensionPrompt,
     showMoreMessages,
+    swipe,
     stopGeneration,
     substituteParams,
     syncMesToSwipe,
@@ -61,14 +69,15 @@ import { getMessageTimeStamp, isMobile } from './RossAscends-mods.js';
 import { hideChatMessageRange } from './chats.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
-import { findGroupMemberId, groups, is_group_generating, openGroupById, resetSelectedGroup, saveGroupChat, selected_group, getGroupMembers } from './group-chats.js';
-import { chat_completion_sources, oai_settings, promptManager, ZAI_ENDPOINT } from './openai.js';
+import { findGroupMemberId, groups, is_group_generating, openGroupById, regenerateGroup, resetSelectedGroup, saveGroupChat, selected_group, getGroupMembers } from './group-chats.js';
+import { addAndSelectCustomModelForSource, chat_completion_sources, getChatCompletionModelControl, isCustomModelActionValue, MINIMAX_ENDPOINT, oai_settings, promptManager, SILICONFLOW_ENDPOINT, ZAI_ENDPOINT } from './openai.js';
 import { user_avatar } from './personas.js';
 import { addEphemeralStoppingString, chat_styles, context_presets, flushEphemeralStoppingStrings, playMessageSound, power_user } from './power-user.js';
 import { SERVER_INPUTS, textgen_types, textgenerationwebui_settings } from './textgen-settings.js';
 import { decodeTextTokens, getAvailableTokenizers, getFriendlyTokenizerName, getTextTokens, getTokenCountAsync, selectTokenizer } from './tokenizers.js';
 import { debounce, delay, equalsIgnoreCaseAndAccents, findChar, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, regexFromString, showFontAwesomePicker, stringToRange, trimToEndSentence, trimToStartSentence, waitUntilCondition } from './utils.js';
 import { registerVariableCommands, resolveVariable } from './variables.js';
+import { registerActionLoaderSlashCommands } from './action-loader-slashcommands.js';
 import { background_settings } from './backgrounds.js';
 import { SlashCommandClosure } from './slash-commands/SlashCommandClosure.js';
 import { SlashCommandClosureResult } from './slash-commands/SlashCommandClosureResult.js';
@@ -79,8 +88,10 @@ import { SlashCommandAbortController } from './slash-commands/SlashCommandAbortC
 import { SlashCommandNamedArgumentAssignment } from './slash-commands/SlashCommandNamedArgumentAssignment.js';
 import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
 import { getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
+import { getAgentGenerationOptions } from './tauritavern/agent/agent-generation-router.js';
+import { agentErrorMessage } from './tauritavern/agent/agent-error-presenter.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
-import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
+import { commonEnumProviders, enumIcons, commonEnumMatchProviders } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandBreakController } from './slash-commands/SlashCommandBreakController.js';
 import { SlashCommandExecutionError } from './slash-commands/SlashCommandExecutionError.js';
 import { slashCommandReturnHelper } from './slash-commands/SlashCommandReturnHelper.js';
@@ -90,7 +101,7 @@ import { SlashCommandScope } from './slash-commands/SlashCommandScope.js';
 import { t } from './i18n.js';
 import { kai_settings } from './kai-settings.js';
 import { instruct_presets, selectContextPreset, selectInstructPreset } from './instruct-mode.js';
-import { debounce_timeout } from './constants.js';
+import { debounce_timeout, SWIPE_DIRECTION, SWIPE_SOURCE } from './constants.js';
 export {
     executeSlashCommands, executeSlashCommandsWithOptions, getSlashCommandsHelp, registerSlashCommand,
 };
@@ -230,6 +241,56 @@ function setupConnectAPIMap() {
     UNIQUE_APIS.push(...new Set(Object.values(CONNECT_API_MAP).map(x => x.selected)));
 }
 
+/**
+ * Gets the connection map entry for the currently selected API.
+ * @returns {ConnectAPIMap|undefined}
+ */
+function getCurrentConnectApiConfig() {
+    return Object.values(CONNECT_API_MAP).find(config => {
+        if (config.selected !== main_api) {
+            return false;
+        }
+
+        if (config.source && oai_settings.chat_completion_source !== config.source) {
+            return false;
+        }
+
+        if (config.type && textgenerationwebui_settings.type !== config.type) {
+            return false;
+        }
+
+        return true;
+    });
+}
+
+/**
+ * Triggers an API connection button unless automatic validation is suspended.
+ * Used by slash commands so profile replay can still mutate settings without probing half-applied state.
+ * @param {string} button Button selector
+ * @returns {boolean} Whether a connection was triggered
+ */
+function triggerApiConnectionButton(button) {
+    if (isConnectionValidationSuspended()) {
+        return false;
+    }
+
+    $(button).trigger('click');
+    return true;
+}
+
+/**
+ * Triggers one connection attempt for the currently selected API.
+ * @returns {boolean} Whether a connection was triggered
+ */
+export function connectCurrentApi() {
+    const apiConfig = getCurrentConnectApiConfig();
+    if (!apiConfig?.button) {
+        return false;
+    }
+
+    return triggerApiConnectionButton(apiConfig.button);
+}
+
 export function initDefaultSlashCommands() {
     eventSource.on(event_types.CHAT_CHANGED, processChatSlashCommands);
     setupConnectAPIMap();
@@ -245,11 +306,6 @@ export function initDefaultSlashCommands() {
         return '';
     }
 
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-        name: 'dupe',
-        callback: duplicateCharacter,
-        helpString: t`Duplicates the currently selected character.`,
-    }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'api',
         callback: async function (args, text) {
@@ -320,18 +376,24 @@ export function initDefaultSlashCommands() {
                 connectionRequired = true;
             }
 
+            const quiet = isTrueBoolean(args?.quiet?.toString());
+            const validationSuspended = isConnectionValidationSuspended();
+
             if (connectionRequired && apiConfig.button) {
-                $(apiConfig.button).trigger('click');
+                triggerApiConnectionButton(apiConfig.button);
             }
 
-            const quiet = isTrueBoolean(args?.quiet?.toString());
-            const toast = quiet ? jQuery() : toastr.info(t`API set to ${text}, trying to connect..`);
+            const toast = quiet || validationSuspended ? jQuery() : toastr.info(t`API set to ${text}, trying to connect..`);
 
             try {
-                if (connectionRequired) {
+                if (connectionRequired && !validationSuspended) {
                     await waitUntilCondition(() => online_status !== 'no_connection', 5000, 100);
+                    console.log('Connection successful');
+                } else if (connectionRequired) {
+                    console.log('Connection deferred');
+                } else {
+                    console.log('Connection successful');
                 }
-                console.log('Connection successful');
             } catch {
                 console.log('Could not connect after 5 seconds, skipping.');
             }
@@ -857,6 +919,268 @@ export function initDefaultSlashCommands() {
         </div>
         `,
     }));
+
+    const getCharacterFieldArgs = ({ requiredFields = [] } = {}) => [
+        SlashCommandNamedArgument.fromProps({
+            name: 'name',
+            description: t`The name of the character`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('name'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'description',
+            description: t`The character's description/personality definition`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('description'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'firstMessage',
+            description: t`The character's first message/greeting`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('firstMessage'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'personality',
+            description: t`A brief description of the personality`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('personality'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'scenario',
+            description: t`The scenario or circumstances for the conversation`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('scenario'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'messageExamples',
+            description: t`Example messages for the character`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('messageExamples'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'creatorNotes',
+            description: t`Notes from the character creator`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('creatorNotes'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'systemPrompt',
+            description: t`The character's system prompt`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('systemPrompt'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'postHistoryInstructions',
+            description: t`Post-history instructions (jailbreak)`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('postHistoryInstructions'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'creator',
+            description: t`The creator of the character`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('creator'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'characterVersion',
+            description: t`The version of the character`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('characterVersion'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'tags',
+            description: t`Comma-separated list of character card tags`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('tags'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'favorite',
+            description: t`Whether this character is a favorite`,
+            typeList: [ARGUMENT_TYPE.BOOLEAN],
+            enumProvider: commonEnumProviders.boolean('trueFalse'),
+            isRequired: requiredFields.includes('favorite'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'avatar',
+            description: t`Avatar image. Use "prompt" to open a file picker, a base64 image data URL, or a local ST file path.`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('avatar'),
+            enumList: [
+                new SlashCommandEnumValue('prompt', t`Open file picker to select an image`, enumTypes.enum, '📁'),
+                new SlashCommandEnumValue('characters/...', t`Character avatars path`, enumTypes.enum, '📄', (input) => commonEnumMatchProviders.folderEnum(input, 'characters/'), () => 'characters/'),
+                new SlashCommandEnumValue('backgrounds/...', t`Background image path`, enumTypes.enum, '📄', (input) => commonEnumMatchProviders.folderEnum(input, 'backgrounds/'), () => 'backgrounds/'),
+                new SlashCommandEnumValue('User Avatars/...', t`User avatar path`, enumTypes.enum, '📄', (input) => commonEnumMatchProviders.folderEnum(input, 'User Avatars/'), () => 'User Avatars/'),
+                new SlashCommandEnumValue('assets/...', t`Asset file path`, enumTypes.enum, '📄', (input) => commonEnumMatchProviders.folderEnum(input, 'assets/'), () => 'assets/'),
+                new SlashCommandEnumValue('user/images/...', t`User image path`, enumTypes.enum, '📄', (input) => commonEnumMatchProviders.folderEnum(input, 'user/images/'), () => 'user/images/'),
+            ],
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'avatarPromptResize',
+            description: t`Whether to show the avatar resize/crop dialog when uploading`,
+            typeList: [ARGUMENT_TYPE.BOOLEAN],
+            defaultValue: 'true',
+            enumProvider: commonEnumProviders.boolean('trueFalse'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'talkativeness',
+            description: t`How often the character speaks in group chats (0.0 to 1.0)`,
+            typeList: [ARGUMENT_TYPE.NUMBER],
+            isRequired: requiredFields.includes('talkativeness'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'world',
+            description: t`The name of the lorebook to attach`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            enumProvider: commonEnumProviders.worlds,
+            isRequired: requiredFields.includes('world'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'depthPrompt',
+            description: t`Character-specific depth prompt content`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: requiredFields.includes('depthPrompt'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'depthPromptDepth',
+            description: t`Depth for the character-specific depth prompt`,
+            typeList: [ARGUMENT_TYPE.NUMBER],
+            isRequired: requiredFields.includes('depthPromptDepth'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'depthPromptRole',
+            description: t`Role for the depth prompt`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            enumList: commonEnumProviders.messageRoles(),
+            isRequired: requiredFields.includes('depthPromptRole'),
+        }),
+    ];
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'char-create',
+        callback: createCharacterCallback,
+        returns: t`the avatar key of the created character`,
+        namedArgumentList: [
+            ...getCharacterFieldArgs({ requiredFields: ['name'] }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'select',
+                description: t`Whether to select/open the character after creation`,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'true',
+                enumProvider: commonEnumProviders.boolean('trueFalse'),
+            }),
+        ],
+        helpString: t`Creates a new character and returns its avatar key.`,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'char-update',
+        callback: updateCharacterCallback,
+        returns: t`the avatar key of the updated character`,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'char',
+                description: t`Character name or avatar key. If omitted, uses the current character.`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.characters('character'),
+            }),
+            ...getCharacterFieldArgs(),
+        ],
+        helpString: t`Updates an existing character. Avatar updates use the same edit-avatar route as the character editor.`,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'char-duplicate',
+        aliases: ['dupe'],
+        callback: duplicateCharacterCallback,
+        returns: t`the avatar key of the duplicated character`,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'char',
+                description: t`Character name or avatar key to duplicate. If omitted, uses the current character.`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.characters('character'),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'select',
+                description: t`Whether to select/open the duplicated character after creation`,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'false',
+                enumProvider: commonEnumProviders.boolean('trueFalse'),
+            }),
+        ],
+        helpString: t`Duplicates a character and returns the new avatar key.`,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'char-get',
+        aliases: ['char-data'],
+        callback: getCharacterDataCallback,
+        returns: t`character data as JSON or a specific field value`,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'char',
+                description: t`Character name or avatar key. If omitted, uses the current character.`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.characters('character'),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'field',
+                description: t`Specific field to retrieve. If omitted, returns the character data object.`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumList: [
+                    new SlashCommandEnumValue('name', t`Character name`, enumTypes.enum),
+                    new SlashCommandEnumValue('description', t`Character description`, enumTypes.enum),
+                    new SlashCommandEnumValue('personality', t`Character personality`, enumTypes.enum),
+                    new SlashCommandEnumValue('scenario', t`Character scenario`, enumTypes.enum),
+                    new SlashCommandEnumValue('first_mes', t`First message`, enumTypes.enum),
+                    new SlashCommandEnumValue('mes_example', t`Message examples`, enumTypes.enum),
+                    new SlashCommandEnumValue('creator_notes', t`Creator notes`, enumTypes.enum),
+                    new SlashCommandEnumValue('system_prompt', t`System prompt`, enumTypes.enum),
+                    new SlashCommandEnumValue('post_history_instructions', t`Post-history instructions`, enumTypes.enum),
+                    new SlashCommandEnumValue('creator', t`Creator name`, enumTypes.enum),
+                    new SlashCommandEnumValue('character_version', t`Character version`, enumTypes.enum),
+                    new SlashCommandEnumValue('tags', t`Character tags`, enumTypes.enum),
+                    new SlashCommandEnumValue('talkativeness', t`Talkativeness`, enumTypes.enum),
+                    new SlashCommandEnumValue('avatar', t`Avatar filename`, enumTypes.enum),
+                    new SlashCommandEnumValue('fav', t`Favorite status`, enumTypes.enum),
+                ],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'return',
+                description: t`The way to return the result`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: 'pipe',
+                enumList: slashCommandReturnHelper.enumList({ allowPipe: true, allowObject: true, allowChat: false, allowPopup: true, allowTextVersion: false }),
+            }),
+        ],
+        helpString: t`Retrieves character data or a specific character field.`,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'char-delete',
+        callback: deleteCharacterCallback,
+        returns: t`true if the character was deleted, false otherwise`,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'char',
+                description: t`Character name or avatar key. If omitted, uses the current character.`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.characters('character'),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'deleteChats',
+                description: t`Whether to also delete all chats with this character`,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'false',
+                enumProvider: commonEnumProviders.boolean('trueFalse'),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'silent',
+                description: t`Skip the confirmation popup`,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'false',
+                enumProvider: commonEnumProviders.boolean('trueFalse'),
+            }),
+        ],
+        helpString: t`Deletes a character from the system.`,
+    }));
+
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'message-role',
         callback: messageRoleCallback,
@@ -1226,6 +1550,66 @@ export function initDefaultSlashCommands() {
     `,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'regenerate',
+        callback: regenerateChatCallback,
+        aliases: ['regen'],
+        namedArgumentList: [
+            new SlashCommandNamedArgument(
+                'await',
+                t`Whether to await for the regeneration before proceeding`,
+                [ARGUMENT_TYPE.BOOLEAN],
+                false,
+                false,
+                'false',
+            ),
+        ],
+        helpString: `
+        <div>
+            ${t`Regenerates the latest reply in the chat.`}
+        </div>
+        <div>
+            ${t`If <code>await=true</code> named argument is passed, the command will await for the regeneration before proceeding.`}
+        </div>
+    `,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'swipe',
+        callback: swipeChatCallback,
+        namedArgumentList: [
+            new SlashCommandNamedArgument(
+                'direction',
+                t`Swipe direction`,
+                [ARGUMENT_TYPE.STRING],
+                false,
+                false,
+                SWIPE_DIRECTION.RIGHT,
+                [
+                    new SlashCommandEnumValue(SWIPE_DIRECTION.RIGHT, t`Swipe to the next reply`, enumTypes.enum, enumIcons.default),
+                    new SlashCommandEnumValue(SWIPE_DIRECTION.LEFT, t`Swipe to the previous reply`, enumTypes.enum, enumIcons.default),
+                ],
+                [],
+                null,
+                true,
+            ),
+            new SlashCommandNamedArgument(
+                'await',
+                t`Whether to await for the swipe action before proceeding`,
+                [ARGUMENT_TYPE.BOOLEAN],
+                false,
+                false,
+                'false',
+            ),
+        ],
+        helpString: `
+        <div>
+            ${t`Swipes the latest reply. Defaults to <code>direction=right</code>; use <code>direction=left</code> to go to the previous reply. If no next swipe exists, behavior depends on message context.`}
+        </div>
+        <div>
+            ${t`If <code>await=true</code> named argument is passed, the command will await for the swipe action before proceeding.`}
+        </div>
+    `,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'go',
         callback: goToCharacterCallback,
         returns: t`The character/group name`,
@@ -1391,7 +1775,7 @@ export function initDefaultSlashCommands() {
                 description: t`display name`,
                 typeList: [ARGUMENT_TYPE.STRING],
                 defaultValue: '{{user}}',
-                enumProvider: commonEnumProviders.personas,
+                enumProvider: commonEnumProviders.personas({ allowPersonaKey: true }),
             }),
             SlashCommandNamedArgument.fromProps({
                 name: 'return',
@@ -2711,6 +3095,24 @@ export function initDefaultSlashCommands() {
         helpString: t`Sets the specified prompt manager entry/entries on or off.`,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'pm-render',
+        callback: (args, _) => {
+            const dryRun = !isFalseBoolean(args?.refresh?.toString());
+            promptManager.render(dryRun);
+            return '';
+        },
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'refresh',
+                description: 'Perform a dry run of the generation to refresh token counters before rendering the prompt manager',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'true',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
+        ],
+        helpString: t`Rerenders the prompt manager content. Use this if you have made changes to the prompt entries through slash commands and want to see the changes reflected in the prompt manager UI.`,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'pick-icon',
         callback: async () => ((await showFontAwesomePicker()) ?? false).toString(),
         returns: t`The chosen icon name or false if cancelled.`,
@@ -2740,6 +3142,8 @@ export function initDefaultSlashCommands() {
                     new SlashCommandEnumValue('custom', 'custom OpenAI-compatible', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'openai')), 'O'),
                     new SlashCommandEnumValue('zai', 'Z.AI', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'zai')), 'Z'),
                     new SlashCommandEnumValue('vertexai', 'Google Vertex AI', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'vertexai')), 'V'),
+                    new SlashCommandEnumValue('siliconflow', 'SiliconFlow', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'siliconflow')), 'S'),
+                    new SlashCommandEnumValue('minimax', 'MiniMax', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'minimax')), 'M'),
                     new SlashCommandEnumValue('kobold', 'KoboldAI Classic', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'kobold')), 'K'),
                     ...Object.values(textgen_types).map(api => new SlashCommandEnumValue(api, null, enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'textgenerationwebui')), 'T')),
                 ],
@@ -2754,6 +3158,13 @@ export function initDefaultSlashCommands() {
             SlashCommandNamedArgument.fromProps({
                 name: 'quiet',
                 description: t`suppress the toast message on API change`,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'false',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'clear',
+                description: t`Clear the current API URL instead of reading it when no URL is provided`,
                 typeList: [ARGUMENT_TYPE.BOOLEAN],
                 defaultValue: 'false',
                 enumList: commonEnumProviders.boolean('trueFalse')(),
@@ -2773,7 +3184,7 @@ export function initDefaultSlashCommands() {
                 ${t`If a manual API is provided to <b>set</b> the URL, make sure to set <code>connect=false</code>, as auto-connect only works for the currently selected API, or consider switching to it with <code>/api</code> first.`}
             </div>
             <div>
-                ${t`This slash command works for most of the Text Completion sources, KoboldAI Classic, and also Custom OpenAI compatible, Z.AI, and Google Vertex AI for the Chat Completion sources. If unsure which APIs are supported, check the auto-completion of the optional <code>api</code> argument of this command.`}
+                ${t`This slash command works for most of the Text Completion sources, KoboldAI Classic, and also Custom OpenAI compatible, Z.AI, SiliconFlow, MiniMax, and Google Vertex AI for the Chat Completion sources. If unsure which APIs are supported, check the auto-completion of the optional <code>api</code> argument of this command.`}
             </div>
         `,
     }));
@@ -3238,6 +3649,29 @@ export function initDefaultSlashCommands() {
         `,
     }));
 
+    // 新增 /llmlog 斜杠命令，快捷打开 LLM API 日志窗口（TauriTavern 专有功能）
+    // 无需进入设置面板即可直接打开日志查看器
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'llmlog',
+        aliases: ['apilog'],
+        callback: async () => {
+            // 检查 Tauri 宿主环境是否可用
+            if (!window.__TAURITAVERN__?.api?.dev) {
+                toastr.error(t`LLM API logs are only available in TauriTavern.`);
+                return '';
+            }
+            try {
+                const { openLlmApiLogsPanel } = await import('./tauri/setting/dev-logs.js');
+                await openLlmApiLogsPanel();
+            } catch (error) {
+                toastr.error(t`Failed to open LLM API logs: ${error?.message || error}`);
+            }
+            return '';
+        },
+        helpString: t`Open the LLM API log viewer (TauriTavern only).`,
+    }));
+
+
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'beep',
         aliases: ['ding'],
@@ -3249,7 +3683,111 @@ export function initDefaultSlashCommands() {
         helpString: t`Plays the message received sound effect.`,
     }));
 
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'array-wrap',
+        aliases: ['list-wrap'],
+        returns: t`unnamed argument value wrapped into an array`,
+        helpString: t`Wraps a single unnamed argument into an array if it's not already an array. If the value is an empty string, returns an empty array.`,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'stringify',
+                description: t`Whether JSON primitives (numbers, booleans, nulls) should be treated as strings, i.e. ["null"] when stringify=true vs. [null] when stringify=false.`,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'true',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
+        ],
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: t`value`,
+                acceptsMultiple: false,
+                isRequired: true,
+                typeList: [ARGUMENT_TYPE.STRING, ARGUMENT_TYPE.DICTIONARY, ARGUMENT_TYPE.BOOLEAN, ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.LIST],
+            }),
+        ],
+        callback: (args, value) => {
+            if (value instanceof SlashCommandClosure) {
+                throw new SlashCommandExecutionError(t`Closures are not supported as unnamed arguments for /array-wrap. Did you forget to call the closure with parentheses?`);
+            }
+
+            if (Array.isArray(value)) {
+                throw new SlashCommandExecutionError(t`/array-wrap does not support multiple unnamed arguments.`);
+            }
+
+            if (value === '') {
+                return JSON.stringify([]);
+            }
+
+            try {
+                const parsedValue = JSON.parse(value);
+
+                if (Array.isArray(parsedValue)) {
+                    return value;
+                }
+
+                if (typeof parsedValue === 'object' && parsedValue !== null) {
+                    return JSON.stringify([parsedValue]);
+                }
+
+                const isJsonPrimitive = parsedValue === null || ['string', 'number', 'boolean'].includes(typeof parsedValue);
+                if (isJsonPrimitive && isFalseBoolean(String(args?.stringify?.toString()))) {
+                    return JSON.stringify([parsedValue]);
+                }
+
+                return JSON.stringify([value]);
+            } catch {
+                return JSON.stringify([value]);
+            }
+        },
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'array-unwrap',
+        aliases: ['list-unwrap'],
+        returns: t`unnamed argument value unwrapped from an array`,
+        helpString: t`Unwraps the first element of an array provided as an unnamed argument. If the value is not an array, returns the value as-is. If the array is empty, returns an empty string.`,
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: t`value`,
+                acceptsMultiple: false,
+                isRequired: true,
+                typeList: [ARGUMENT_TYPE.STRING, ARGUMENT_TYPE.DICTIONARY, ARGUMENT_TYPE.BOOLEAN, ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.LIST],
+            }),
+        ],
+        callback: (_args, value) => {
+            if (value instanceof SlashCommandClosure) {
+                throw new SlashCommandExecutionError(t`Closures are not supported as unnamed arguments for /array-unwrap. Did you forget to call the closure with parentheses?`);
+            }
+
+            if (Array.isArray(value)) {
+                throw new SlashCommandExecutionError(t`/array-unwrap does not support multiple unnamed arguments.`);
+            }
+
+            try {
+                const parsed = JSON.parse(value);
+
+                if (Array.isArray(parsed)) {
+                    const unwrappedValue = parsed?.[0] ?? '';
+
+                    if (unwrappedValue === null || unwrappedValue === undefined) {
+                        return '';
+                    }
+
+                    if (typeof unwrappedValue === 'object') {
+                        return JSON.stringify(unwrappedValue);
+                    }
+
+                    return String(unwrappedValue);
+                }
+
+                return value;
+            } catch {
+                return value;
+            }
+        },
+    }));
+
     registerVariableCommands();
+    registerActionLoaderSlashCommands();
 }
 
 const NARRATOR_NAME_KEY = 'narrator_name';
@@ -4456,38 +4994,60 @@ async function addGroupMemberCallback(_, name) {
 
 async function triggerGenerationCallback(args, value) {
     const shouldAwait = isTrueBoolean(args?.await);
-    const outerPromise = new Promise((outerResolve) => setTimeout(async () => {
-        try {
-            await waitUntilCondition(() => !is_send_press && !is_group_generating, 10000, 100);
-        } catch {
-            console.warn('Timeout waiting for generation unlock');
-            toastr.warning(t`Cannot run /trigger command while the reply is being generated.`);
-            outerResolve(Promise.resolve(''));
-            return '';
-        }
-
-        // Prevent generate recursion
-        $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
-
-        let chid = undefined;
-
-        if (selected_group && value) {
-            chid = findGroupMemberId(value);
-
-            if (chid === undefined) {
-                console.warn(`WARN: No group member found for argument ${value}`);
-            }
-        }
-
-        outerResolve(new Promise(innerResolve => setTimeout(() => innerResolve(Generate('normal', { force_chid: chid })), 100)));
-    }, 1));
+    const generationPromise = runTriggeredGeneration(value);
 
     if (shouldAwait) {
-        const innerPromise = await outerPromise;
-        await innerPromise;
+        await generationPromise;
+    } else {
+        void generationPromise.catch((error) => {
+            console.error('Error running /trigger command', error);
+            queueMicrotask(() => {
+                throw error;
+            });
+        });
     }
 
     return '';
+}
+
+async function runTriggeredGeneration(value) {
+    await delay(1);
+    try {
+        await waitUntilCondition(() => !is_send_press && !is_group_generating, 10000, 100);
+    } catch {
+        console.warn('Timeout waiting for generation unlock');
+        toastr.warning(t`Cannot run /trigger command while the reply is being generated.`);
+        return '';
+    }
+
+    // Prevent generate recursion
+    $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
+
+    let chid = undefined;
+
+    if (selected_group && value) {
+        chid = findGroupMemberId(value);
+
+        if (chid === undefined) {
+            console.warn(`WARN: No group member found for argument ${value}`);
+        }
+    }
+
+    let agentOptions;
+    try {
+        agentOptions = await getAgentGenerationOptions({
+            generationType: 'normal',
+            isSlashCommand: false,
+            mainApi: main_api,
+            selectedGroup: selected_group,
+        });
+    } catch (error) {
+        toastr.error(agentErrorMessage(error), t`Agent Mode`);
+        throw error;
+    }
+
+    await delay(100);
+    return Generate('normal', { force_chid: chid, ...agentOptions });
 }
 /**
  * Find persona by name.
@@ -4602,6 +5162,445 @@ async function openChat(chid) {
     await reloadCurrentChat();
 }
 
+/**
+ * Uploads an avatar image to a character.
+ * @param {string} avatarKey Character avatar filename
+ * @param {string} base64Data Base64 image data URL
+ * @param {{ resizePrompt?: boolean }} [options]
+ * @returns {Promise<boolean>} True when uploaded, false when the crop dialog was cancelled
+ */
+async function uploadCharacterAvatar(avatarKey, base64Data, { resizePrompt = false } = {}) {
+    if (!base64Data || !avatarKey) {
+        return false;
+    }
+
+    let finalImageData = base64Data;
+
+    if (resizePrompt) {
+        if (power_user.never_resize_avatars) {
+            toastr.warning(t`Avatar resizing is disabled in settings. The image will be uploaded as-is.`);
+        } else {
+            const dlg = new Popup(t`Set the crop position of the avatar image`, POPUP_TYPE.CROP, '', { cropImage: base64Data });
+            const croppedImage = await dlg.show();
+            if (!croppedImage) {
+                return false;
+            }
+            finalImageData = String(croppedImage);
+        }
+    }
+
+    try {
+        const response = await fetch(finalImageData);
+        const blob = await response.blob();
+        const formData = new FormData();
+        formData.append('avatar', blob, 'avatar.png');
+        formData.append('avatar_url', avatarKey);
+
+        const uploadResponse = await fetch('/api/characters/edit-avatar', {
+            method: 'POST',
+            headers: getRequestHeaders({ omitContentType: true }),
+            body: formData,
+        });
+
+        if (!uploadResponse.ok) {
+            const errorText = await uploadResponse.text();
+            throw new Error(errorText || `Avatar upload failed: ${uploadResponse.status}`);
+        }
+
+        const thumbnailUrl = getThumbnailUrl('avatar', avatarKey);
+        await fetch(thumbnailUrl, { method: 'GET', cache: 'reload' });
+        await fetch(`/characters/${avatarKey}`, { method: 'GET', cache: 'reload' });
+
+        const avatarImages = document.querySelectorAll(`img[src^="${thumbnailUrl}"]`);
+        for (const img of avatarImages) {
+            if (img instanceof HTMLImageElement) {
+                const originalSrc = img.src;
+                img.src = '';
+                img.src = originalSrc;
+            }
+        }
+
+        return true;
+    } catch (error) {
+        console.error('Error uploading character avatar:', error);
+        toastr.warning(t`Failed to upload avatar: ${error.message}`);
+        return false;
+    }
+}
+
+/**
+ * Creates a new character via the upstream-compatible character API.
+ * @param {object} args Named arguments
+ * @returns {Promise<string>} Created character avatar key
+ */
+async function createCharacterCallback(args) {
+    const name = args.name;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+        toastr.warning(t`Character name is required`);
+        return '';
+    }
+
+    const avatarData = args.avatar ? await resolveAvatarData(args.avatar) : null;
+
+    const characterData = {
+        ch_name: name.trim(),
+        description: args.description ?? '',
+        first_mes: args.firstMessage ?? '',
+        personality: args.personality ?? '',
+        scenario: args.scenario ?? '',
+        mes_example: args.messageExamples ?? '',
+        creator_notes: args.creatorNotes ?? '',
+        system_prompt: args.systemPrompt ?? '',
+        post_history_instructions: args.postHistoryInstructions ?? '',
+        creator: args.creator ?? '',
+        character_version: args.characterVersion ?? '',
+        tags: args.tags ? args.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+        talkativeness: args.talkativeness ?? '0.5',
+        world: args.world ?? '',
+        depth_prompt_prompt: args.depthPrompt ?? '',
+        depth_prompt_depth: args.depthPromptDepth ?? '4',
+        depth_prompt_role: args.depthPromptRole ?? 'system',
+        fav: isTrueBoolean(args.favorite) ? 'true' : 'false',
+        alternate_greetings: [],
+        extensions: '{}',
+    };
+
+    try {
+        const response = await fetch('/api/characters/create', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(characterData),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || `Character create failed: ${response.status}`);
+        }
+
+        const avatarKey = await response.text();
+
+        if (avatarData) {
+            const resizePrompt = !isFalseBoolean(args.avatarPromptResize);
+            const uploaded = await uploadCharacterAvatar(avatarKey, avatarData, { resizePrompt });
+            if (!uploaded && resizePrompt) {
+                toastr.info(t`Character created without avatar (resize cancelled)`);
+            }
+        }
+
+        await getCharacters();
+
+        if (!isFalseBoolean(args.select)) {
+            const characterIndex = characters.findIndex(c => c.avatar === avatarKey);
+            if (characterIndex !== -1) {
+                await selectCharacterById(characterIndex);
+            }
+        }
+
+        toastr.success(t`Character "${name}" created successfully`);
+        return avatarKey;
+    } catch (error) {
+        console.error('Error creating character:', error);
+        toastr.error(t`Failed to create character: ${error.message}`);
+        return '';
+    }
+}
+
+/**
+ * Updates an existing character via the merge-attributes API.
+ * @param {object} args Named arguments
+ * @returns {Promise<string>} Updated character avatar key
+ */
+async function updateCharacterCallback(args) {
+    let character;
+    let characterIndex;
+
+    if (args.char) {
+        character = findChar({ name: args.char });
+        if (!character) {
+            toastr.warning(t`Character "${args.char}" not found`);
+            return '';
+        }
+        characterIndex = String(characters.indexOf(character));
+    } else {
+        if (this_chid === undefined || !characters[this_chid]) {
+            toastr.warning(t`No character selected and no char argument provided`);
+            return '';
+        }
+        character = characters[this_chid];
+        characterIndex = this_chid;
+    }
+
+    const updateData = {
+        avatar: character.avatar,
+    };
+    const fieldMappings = {
+        name: 'name',
+        description: 'description',
+        firstMessage: 'first_mes',
+        personality: 'personality',
+        scenario: 'scenario',
+        messageExamples: 'mes_example',
+        creatorNotes: 'creator_notes',
+        systemPrompt: 'system_prompt',
+        postHistoryInstructions: 'post_history_instructions',
+        creator: 'creator',
+        characterVersion: 'character_version',
+        tags: 'tags',
+    };
+
+    let hasUpdates = false;
+    for (const [argName, fieldName] of Object.entries(fieldMappings)) {
+        if (args[argName] !== undefined) {
+            let value = args[argName];
+            if (fieldName === 'tags' && typeof value === 'string') {
+                value = value.split(',').map(t => t.trim()).filter(Boolean);
+            }
+            updateData[fieldName] = value;
+            updateData.data ??= {};
+            updateData.data[fieldName] = value;
+            hasUpdates = true;
+        }
+    }
+
+    if (args.world !== undefined) {
+        updateData.data ??= {};
+        updateData.data.extensions ??= {};
+        updateData.data.extensions.world = args.world;
+        hasUpdates = true;
+    }
+
+    if (args.talkativeness !== undefined) {
+        const talkValue = Number(args.talkativeness);
+        if (!Number.isFinite(talkValue)) {
+            throw new Error(`Invalid talkativeness value: ${args.talkativeness}`);
+        }
+        updateData.talkativeness = talkValue;
+        updateData.data ??= {};
+        updateData.data.extensions ??= {};
+        updateData.data.extensions.talkativeness = talkValue;
+        hasUpdates = true;
+    }
+
+    if (args.favorite !== undefined) {
+        const favValue = isTrueBoolean(args.favorite);
+        updateData.fav = favValue;
+        updateData.data ??= {};
+        updateData.data.extensions ??= {};
+        updateData.data.extensions.fav = favValue;
+        hasUpdates = true;
+    }
+
+    const avatarData = args.avatar ? await resolveAvatarData(args.avatar) : null;
+    if (avatarData) {
+        hasUpdates = true;
+    }
+
+    if (args.depthPrompt !== undefined || args.depthPromptDepth !== undefined || args.depthPromptRole !== undefined) {
+        updateData.data ??= {};
+        updateData.data.extensions ??= {};
+        updateData.data.extensions.depth_prompt ??= {};
+
+        if (args.depthPrompt !== undefined) {
+            updateData.data.extensions.depth_prompt.prompt = args.depthPrompt;
+            hasUpdates = true;
+        }
+        if (args.depthPromptDepth !== undefined) {
+            const depth = Number(args.depthPromptDepth);
+            if (!Number.isFinite(depth)) {
+                throw new Error(`Invalid depth prompt depth: ${args.depthPromptDepth}`);
+            }
+            updateData.data.extensions.depth_prompt.depth = depth;
+            hasUpdates = true;
+        }
+        if (args.depthPromptRole !== undefined) {
+            updateData.data.extensions.depth_prompt.role = args.depthPromptRole;
+            hasUpdates = true;
+        }
+    }
+
+    if (!hasUpdates) {
+        toastr.warning(t`No fields provided to update`);
+        return character.avatar;
+    }
+
+    try {
+        const response = await fetch('/api/characters/merge-attributes', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(updateData),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || `Character update failed: ${response.status}`);
+        }
+
+        if (avatarData) {
+            const resizePrompt = !isFalseBoolean(args.avatarPromptResize);
+            const uploaded = await uploadCharacterAvatar(character.avatar, avatarData, { resizePrompt });
+            if (!uploaded) {
+                toastr.warning(t`Avatar update cancelled`);
+            }
+        }
+
+        await getOneCharacter(character.avatar);
+        await eventSource.emit(event_types.CHARACTER_EDITED, { detail: { id: characterIndex, character: characters[characterIndex] } });
+
+        if (String(characterIndex) === String(this_chid)) {
+            select_selected_character(this_chid, { switchMenu: false });
+        }
+
+        toastr.success(t`Character "${character.name}" updated successfully`);
+        return character.avatar;
+    } catch (error) {
+        console.error('Error updating character:', error);
+        toastr.error(t`Failed to update character: ${error.message}`);
+        return '';
+    }
+}
+
+/**
+ * Duplicates a character via slash command.
+ * @param {object} args Named arguments
+ * @returns {Promise<string>} Duplicated character avatar key
+ */
+async function duplicateCharacterCallback(args) {
+    let targetAvatar = null;
+    if (args.char) {
+        const character = findChar({ name: args.char });
+        if (!character) {
+            toastr.warning(t`Character "${args.char}" not found`);
+            return '';
+        }
+        targetAvatar = character.avatar;
+    }
+
+    const newAvatarKey = await duplicateCharacter({ avatar: targetAvatar, silent: true });
+    if (!newAvatarKey) {
+        toastr.error(t`Failed to duplicate character`);
+        return '';
+    }
+
+    if (isTrueBoolean(args.select)) {
+        const characterIndex = characters.findIndex(c => c.avatar === newAvatarKey);
+        if (characterIndex !== -1) {
+            await selectCharacterById(characterIndex);
+        }
+    }
+
+    return newAvatarKey;
+}
+
+/**
+ * Gets character data or a specific field.
+ * @param {object} args Named arguments
+ * @returns {Promise<string>} Character data or field value
+ */
+async function getCharacterDataCallback(args) {
+    let character;
+    if (args.char) {
+        character = findChar({ name: args.char });
+        if (!character) {
+            toastr.warning(t`Character "${args.char}" not found`);
+            return '';
+        }
+    } else {
+        if (this_chid === undefined || !characters[this_chid]) {
+            toastr.warning(t`No character selected and no char argument provided`);
+            return '';
+        }
+        character = characters[this_chid];
+    }
+
+    if (args.field) {
+        const fieldName = args.field;
+        let value = character.data?.[fieldName] ?? character[fieldName];
+
+        if (fieldName === 'talkativeness') {
+            value = character.data?.extensions?.talkativeness ?? character.talkativeness ?? 0.5;
+        }
+        if (fieldName === 'tags') {
+            value = character.data?.tags ?? character.tags ?? [];
+            if (Array.isArray(value)) {
+                value = value.join(', ');
+            }
+        }
+
+        if (value === undefined) {
+            return '';
+        }
+
+        return await slashCommandReturnHelper.doReturn(args.return ?? 'pipe', value, { objectToStringFunc: x => String(x) });
+    }
+
+    const charData = {
+        avatar: character.avatar,
+        name: character.name,
+        description: character.description ?? character.data?.description ?? '',
+        personality: character.personality ?? character.data?.personality ?? '',
+        scenario: character.scenario ?? character.data?.scenario ?? '',
+        first_mes: character.first_mes ?? character.data?.first_mes ?? '',
+        mes_example: character.mes_example ?? character.data?.mes_example ?? '',
+        creator_notes: character.data?.creator_notes ?? '',
+        system_prompt: character.data?.system_prompt ?? '',
+        post_history_instructions: character.data?.post_history_instructions ?? '',
+        creator: character.data?.creator ?? '',
+        character_version: character.data?.character_version ?? '',
+        tags: character.data?.tags ?? character.tags ?? [],
+        talkativeness: character.data?.extensions?.talkativeness ?? character.talkativeness ?? 0.5,
+        fav: character.fav ?? character.data?.extensions?.fav ?? false,
+        chat: character.chat,
+        create_date: character.create_date,
+    };
+
+    return await slashCommandReturnHelper.doReturn(args.return ?? 'pipe', charData, { objectToStringFunc: x => JSON.stringify(x, null, 2) });
+}
+
+/**
+ * Deletes a character through the core character deletion flow.
+ * @param {object} args Named arguments
+ * @returns {Promise<string>} "true" if deleted, otherwise "false"
+ */
+async function deleteCharacterCallback(args) {
+    let character;
+    if (args.char) {
+        character = findChar({ name: args.char });
+        if (!character) {
+            toastr.warning(t`Character "${args.char}" not found`);
+            return 'false';
+        }
+    } else {
+        if (this_chid === undefined || !characters[this_chid]) {
+            toastr.warning(t`No character selected and no char argument provided`);
+            return 'false';
+        }
+        character = characters[this_chid];
+    }
+
+    const deleteChats = isTrueBoolean(args.deleteChats);
+    const silent = isTrueBoolean(args.silent);
+
+    if (!silent) {
+        const confirmMessage = deleteChats
+            ? t`Are you sure you want to delete "${character.name}" and all associated chats? This action cannot be undone.`
+            : t`Are you sure you want to delete "${character.name}"? This action cannot be undone.`;
+
+        const result = await callGenericPopup(confirmMessage, POPUP_TYPE.CONFIRM);
+        if (result !== POPUP_RESULT.AFFIRMATIVE) {
+            return 'false';
+        }
+    }
+
+    try {
+        const success = await deleteCharacter(character.avatar, { deleteChats });
+        return success ? 'true' : 'false';
+    } catch (error) {
+        console.error('Error deleting character:', error);
+        toastr.error(t`Failed to delete character: ${error.message}`);
+        return 'false';
+    }
+}
+
 async function continueChatCallback(args, prompt) {
     const shouldAwait = isTrueBoolean(args?.await);
 
@@ -4630,6 +5629,80 @@ async function continueChatCallback(args, prompt) {
 
     if (shouldAwait) {
         await outerPromise;
+    }
+
+    return '';
+}
+
+async function regenerateChatCallback(args) {
+    const shouldAwait = isTrueBoolean(args?.await);
+    const generationPromise = runRegeneration();
+
+    if (shouldAwait) {
+        await generationPromise;
+    } else {
+        void generationPromise.catch((error) => {
+            console.error('Error running /regenerate command', error);
+            queueMicrotask(() => {
+                throw error;
+            });
+        });
+    }
+
+    return '';
+}
+
+async function runRegeneration() {
+    await delay(1);
+    try {
+        await waitUntilCondition(() => !is_send_press && !is_group_generating, 10000, 100);
+    } catch {
+        console.warn('Timeout waiting for generation unlock');
+        toastr.warning(t`Cannot run /regenerate command while the reply is being generated.`);
+        return '';
+    }
+
+    let agentOptions;
+    try {
+        agentOptions = await getAgentGenerationOptions({
+            generationType: 'regenerate',
+            mainApi: main_api,
+            selectedGroup: selected_group,
+        });
+    } catch (error) {
+        toastr.error(agentErrorMessage(error), t`Agent Mode`);
+        throw error;
+    }
+
+    if (selected_group) {
+        return regenerateGroup();
+    }
+
+    await delay(1);
+    return Generate('regenerate', agentOptions);
+}
+
+async function swipeChatCallback(args) {
+    const shouldAwait = isTrueBoolean(args?.await);
+    const direction = args?.direction === SWIPE_DIRECTION.LEFT ? SWIPE_DIRECTION.LEFT : SWIPE_DIRECTION.RIGHT;
+
+    const outerPromise = new Promise((outerResolve) => setTimeout(async () => {
+        try {
+            await waitUntilCondition(() => !is_send_press && !is_group_generating, 10000, 100);
+        } catch {
+            console.warn('Timeout waiting for generation unlock');
+            toastr.warning(t`Cannot run /swipe command while the reply is being generated.`);
+            outerResolve(Promise.resolve(''));
+            return '';
+        }
+
+        outerResolve(Promise.resolve(swipe(null, direction, { source: SWIPE_SOURCE.SLASH_COMMAND, repeated: false })));
+        return '';
+    }, 1));
+
+    if (shouldAwait) {
+        const innerPromise = await outerPromise;
+        await innerPromise;
     }
 
     return '';
@@ -5173,10 +6246,10 @@ function setBackgroundCallback(_, bg) {
  * Retrieves the available model options based on the currently selected main API and its subtype
  * @param {boolean} quiet - Whether to suppress toasts
  *
- * @returns {{control: HTMLSelectElement|HTMLInputElement, options: HTMLOptionElement[]}?} An array of objects representing the available model options, or null if not supported
+ * @returns {{control: HTMLSelectElement|HTMLInputElement, options: HTMLOptionElement[], supportsCustomModels: boolean, customModelSource: string?}?} An array of objects representing the available model options, or null if not supported
  */
 function getModelOptions(quiet) {
-    const nullResult = { control: null, options: null };
+    const nullResult = { control: null, options: null, supportsCustomModels: false, customModelSource: null };
     const modelSelectMap = [
         { id: 'generic_model_textgenerationwebui', api: 'textgenerationwebui', type: textgen_types.GENERIC },
         { id: 'custom_model_textgenerationwebui', api: 'textgenerationwebui', type: textgen_types.OOBA },
@@ -5191,29 +6264,6 @@ function getModelOptions(quiet) {
         { id: 'tabby_model', api: 'textgenerationwebui', type: textgen_types.TABBY },
         { id: 'llamacpp_model', api: 'textgenerationwebui', type: textgen_types.LLAMACPP },
         { id: 'featherless_model', api: 'textgenerationwebui', type: textgen_types.FEATHERLESS },
-        { id: 'model_openai_select', api: 'openai', type: chat_completion_sources.OPENAI },
-        { id: 'model_claude_select', api: 'openai', type: chat_completion_sources.CLAUDE },
-        { id: 'model_openrouter_select', api: 'openai', type: chat_completion_sources.OPENROUTER },
-        { id: 'model_ai21_select', api: 'openai', type: chat_completion_sources.AI21 },
-        { id: 'model_google_select', api: 'openai', type: chat_completion_sources.MAKERSUITE },
-        { id: 'model_vertexai_select', api: 'openai', type: chat_completion_sources.VERTEXAI },
-        { id: 'model_mistralai_select', api: 'openai', type: chat_completion_sources.MISTRALAI },
-        { id: 'custom_model_id', api: 'openai', type: chat_completion_sources.CUSTOM },
-        { id: 'model_cohere_select', api: 'openai', type: chat_completion_sources.COHERE },
-        { id: 'model_perplexity_select', api: 'openai', type: chat_completion_sources.PERPLEXITY },
-        { id: 'model_groq_select', api: 'openai', type: chat_completion_sources.GROQ },
-        { id: 'model_chutes_select', api: 'openai', type: chat_completion_sources.CHUTES },
-        { id: 'model_siliconflow_select', api: 'openai', type: chat_completion_sources.SILICONFLOW },
-        { id: 'model_electronhub_select', api: 'openai', type: chat_completion_sources.ELECTRONHUB },
-        { id: 'model_nanogpt_select', api: 'openai', type: chat_completion_sources.NANOGPT },
-        { id: 'model_deepseek_select', api: 'openai', type: chat_completion_sources.DEEPSEEK },
-        { id: 'model_aimlapi_select', api: 'openai', type: chat_completion_sources.AIMLAPI },
-        { id: 'model_xai_select', api: 'openai', type: chat_completion_sources.XAI },
-        { id: 'model_pollinations_select', api: 'openai', type: chat_completion_sources.POLLINATIONS },
-        { id: 'model_moonshot_select', api: 'openai', type: chat_completion_sources.MOONSHOT },
-        { id: 'model_fireworks_select', api: 'openai', type: chat_completion_sources.FIREWORKS },
-        { id: 'model_cometapi_select', api: 'openai', type: chat_completion_sources.COMETAPI },
-        { id: 'model_zai_select', api: 'openai', type: chat_completion_sources.ZAI },
         { id: 'model_novel_select', api: 'novel', type: null },
         { id: 'horde_model', api: 'koboldhorde', type: null },
     ];
@@ -5230,7 +6280,10 @@ function getModelOptions(quiet) {
     }
 
     const apiSubType = getSubType();
-    const modelSelectItem = modelSelectMap.find(x => x.api == main_api && x.type == apiSubType)?.id;
+    const chatCompletionModelControl = main_api === 'openai' ? getChatCompletionModelControl(apiSubType) : null;
+    const modelSelectItem = chatCompletionModelControl?.selector?.startsWith('#')
+        ? chatCompletionModelControl.selector.slice(1)
+        : modelSelectMap.find(x => x.api == main_api && x.type == apiSubType)?.id;
 
     if (!modelSelectItem) {
         !quiet && toastr.info(t`Setting a model for your API is not supported or not implemented yet.`);
@@ -5263,8 +6316,17 @@ function getModelOptions(quiet) {
         return [valueOption];
     };
 
-    const options = getOptions(modelSelectControl).filter(x => x.value).filter(onlyUnique);
-    return { control: modelSelectControl, options };
+    const options = getOptions(modelSelectControl)
+        .filter(x => x.value)
+        .filter(x => !isCustomModelActionValue(x.value))
+        .filter(onlyUnique);
+
+    return {
+        control: modelSelectControl,
+        options,
+        supportsCustomModels: Boolean(chatCompletionModelControl?.supportsCustomModels),
+        customModelSource: chatCompletionModelControl?.source ?? null,
+    };
 }
 
 /**
@@ -5275,7 +6337,7 @@ function getModelOptions(quiet) {
  */
 function modelCallback(args, model) {
     const quiet = isTrueBoolean(args?.quiet);
-    const { control: modelSelectControl, options } = getModelOptions(quiet);
+    const { control: modelSelectControl, options, supportsCustomModels, customModelSource } = getModelOptions(quiet);
 
     // If no model was found, the reason was already logged, we just return here
     if (options === null) {
@@ -5297,7 +6359,7 @@ function modelCallback(args, model) {
         return model;
     }
 
-    if (!options.length) {
+    if (!options.length && !(supportsCustomModels && customModelSource)) {
         !quiet && toastr.warning(t`No model options found. Check your API settings.`);
         return '';
     }
@@ -5314,6 +6376,10 @@ function modelCallback(args, model) {
         newSelectedOption = exactValueMatch;
     } else if (exactTextMatch) {
         newSelectedOption = exactTextMatch;
+    } else if (supportsCustomModels && customModelSource) {
+        const selectedModel = addAndSelectCustomModelForSource(customModelSource, model);
+        !quiet && toastr.success(t`Model set to "${selectedModel}"`);
+        return selectedModel;
     } else if (fuzzySearchResult.length) {
         newSelectedOption = fuzzySearchResult[0].item;
     }
@@ -5490,16 +6556,28 @@ function setPromptEntryCallback(args, targetState) {
  * @param {string?} [args.api=null] - the API name to set/get the URL for
  * @param {string?} [args.connect=true] - whether to connect to the API after setting
  * @param {string?} [args.quiet=false] - whether to suppress toasts
+ * @param {string?} [args.clear=false] - whether to clear the URL instead of reading it
  * @param {string} url - the API URL to set
  * @returns {Promise<string>}
  */
-async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false' }, url) {
+async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false', clear = 'false' }, url) {
     const isQuiet = isTrueBoolean(quiet);
     const autoConnect = isTrueBoolean(connect);
+    const isClear = isTrueBoolean(clear);
 
     // Special handling for Chat Completion Custom OpenAI compatible, that one can also support API url handling
     const isCurrentlyCustomOpenai = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.CUSTOM;
     if (api === chat_completion_sources.CUSTOM || (!api && isCurrentlyCustomOpenai)) {
+        if (isClear) {
+            $('#custom_api_url_text').val('').trigger('input');
+
+            if (autoConnect) {
+                triggerApiConnectionButton('#api_button_openai');
+            }
+
+            return '';
+        }
+
         if (!url) {
             return oai_settings.custom_url ?? '';
         }
@@ -5512,7 +6590,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         $('#custom_api_url_text').val(url).trigger('input');
 
         if (autoConnect) {
-            $('#api_button_openai').trigger('click');
+            triggerApiConnectionButton('#api_button_openai');
         }
 
         return url;
@@ -5520,6 +6598,16 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
 
     const isCurrentlyZAI = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.ZAI;
     if (api === chat_completion_sources.ZAI || (!api && isCurrentlyZAI)) {
+        if (isClear) {
+            $('#zai_endpoint').val(ZAI_ENDPOINT.COMMON).trigger('input');
+
+            if (autoConnect) {
+                triggerApiConnectionButton('#api_button_openai');
+            }
+
+            return '';
+        }
+
         if (!url) {
             return oai_settings.zai_endpoint || ZAI_ENDPOINT.COMMON;
         }
@@ -5538,10 +6626,82 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         $('#zai_endpoint').val(url).trigger('input');
 
         if (autoConnect) {
-            $('#api_button_openai').trigger('click');
+            triggerApiConnectionButton('#api_button_openai');
         }
 
         return oai_settings.zai_endpoint || ZAI_ENDPOINT.COMMON;
+    }
+
+    const isCurrentlySiliconFlow = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.SILICONFLOW;
+    if (api === chat_completion_sources.SILICONFLOW || (!api && isCurrentlySiliconFlow)) {
+        if (isClear) {
+            $('#siliconflow_endpoint').val(SILICONFLOW_ENDPOINT.GLOBAL).trigger('input');
+
+            if (autoConnect) {
+                triggerApiConnectionButton('#api_button_openai');
+            }
+
+            return '';
+        }
+
+        if (!url) {
+            return oai_settings.siliconflow_endpoint || SILICONFLOW_ENDPOINT.GLOBAL;
+        }
+
+        const permittedValues = Object.values(SILICONFLOW_ENDPOINT);
+        if (!permittedValues.includes(url)) {
+            !isQuiet && toastr.warning(t`Valid options are: ${permittedValues.join(', ')}`, t`SiliconFlow endpoint '${url}' is not a valid option.`);
+            return '';
+        }
+
+        if (!isCurrentlySiliconFlow && autoConnect) {
+            toastr.warning(t`SiliconFlow is not the currently selected API, so we cannot do an auto-connect. Consider switching to it via /api beforehand.`);
+            return '';
+        }
+
+        $('#siliconflow_endpoint').val(url).trigger('input');
+
+        if (autoConnect) {
+            triggerApiConnectionButton('#api_button_openai');
+        }
+
+        return oai_settings.siliconflow_endpoint || SILICONFLOW_ENDPOINT.GLOBAL;
+    }
+
+    const isCurrentlyMinimax = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.MINIMAX;
+    if (api === chat_completion_sources.MINIMAX || (!api && isCurrentlyMinimax)) {
+        if (isClear) {
+            $('#minimax_endpoint').val(MINIMAX_ENDPOINT.GLOBAL).trigger('input');
+
+            if (autoConnect) {
+                triggerApiConnectionButton('#api_button_openai');
+            }
+
+            return '';
+        }
+
+        if (!url) {
+            return oai_settings.minimax_endpoint || MINIMAX_ENDPOINT.GLOBAL;
+        }
+
+        const permittedValues = Object.values(MINIMAX_ENDPOINT);
+        if (!permittedValues.includes(url)) {
+            !isQuiet && toastr.warning(t`Valid options are: ${permittedValues.join(', ')}`, t`MiniMax endpoint '${url}' is not a valid option.`);
+            return '';
+        }
+
+        if (!isCurrentlyMinimax && autoConnect) {
+            toastr.warning(t`MiniMax is not the currently selected API, so we cannot do an auto-connect. Consider switching to it via /api beforehand.`);
+            return '';
+        }
+
+        $('#minimax_endpoint').val(url).trigger('input');
+
+        if (autoConnect) {
+            triggerApiConnectionButton('#api_button_openai');
+        }
+
+        return oai_settings.minimax_endpoint || MINIMAX_ENDPOINT.GLOBAL;
     }
 
     const isCurrentlyVertexAI = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI;
@@ -5551,6 +6711,16 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
             .from(document.querySelectorAll('#vertexai_region_suggestions option'))
             .map(e => e instanceof HTMLOptionElement ? e.value : '')
             .filter(x => x);
+
+        if (isClear) {
+            $('#vertexai_region').val(defaultRegion).trigger('input');
+
+            if (autoConnect) {
+                triggerApiConnectionButton('#api_button_openai');
+            }
+
+            return '';
+        }
 
         if (!url) {
             return oai_settings.vertexai_region || defaultRegion;
@@ -5568,7 +6738,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         $('#vertexai_region').val(url).trigger('input');
 
         if (autoConnect) {
-            $('#api_button_openai').trigger('click');
+            triggerApiConnectionButton('#api_button_openai');
         }
 
         return oai_settings.vertexai_region || defaultRegion;
@@ -5577,6 +6747,18 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
     // Special handling for Kobold Classic API
     const isCurrentlyKoboldClassic = main_api === 'kobold';
     if (api === 'kobold' || (!api && isCurrentlyKoboldClassic)) {
+        if (isClear) {
+            $('#api_url_text').val('').trigger('input');
+            // trigger blur debounced, so we hide the autocomplete menu
+            setTimeout(() => $('#api_url_text').trigger('blur'), 1);
+
+            if (autoConnect) {
+                triggerApiConnectionButton('#api_button');
+            }
+
+            return '';
+        }
+
         if (!url) {
             return kai_settings.api_server ?? '';
         }
@@ -5591,7 +6773,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         setTimeout(() => $('#api_url_text').trigger('blur'), 1);
 
         if (autoConnect) {
-            $('#api_button').trigger('click');
+            triggerApiConnectionButton('#api_button');
         }
 
         return kai_settings.api_server ?? '';
@@ -5602,12 +6784,16 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         !isQuiet && toastr.warning(t`API '${api}' is not a valid text_gen API.`);
         return '';
     }
-    if (!api && !Object.values(textgen_types).includes(textgenerationwebui_settings.type)) {
-        !isQuiet && toastr.warning(t`API '${textgenerationwebui_settings.type}' is not a valid text_gen API.`);
+    if (!api && main_api !== 'textgenerationwebui') {
+        if (isClear) {
+            return '';
+        }
+
+        !isQuiet && toastr.warning(t`API type '${main_api}' does not support setting the server URL.`);
         return '';
     }
-    if (!api && main_api !== 'textgenerationwebui') {
-        !isQuiet && toastr.warning(t`API type '${main_api}' does not support setting the server URL.`);
+    if (!api && !Object.values(textgen_types).includes(textgenerationwebui_settings.type)) {
+        !isQuiet && toastr.warning(t`API '${textgenerationwebui_settings.type}' is not a valid text_gen API.`);
         return '';
     }
     if (api && url && autoConnect && api !== textgenerationwebui_settings.type) {
@@ -5618,7 +6804,23 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
 
     const inputSelector = SERVER_INPUTS[type];
     if (!inputSelector) {
+        if (isClear) {
+            return '';
+        }
+
         !isQuiet && toastr.warning(t`API '${type}' does not have a server url input.`);
+        return '';
+    }
+
+    if (isClear) {
+        $(inputSelector).val('').trigger('input');
+        // trigger blur debounced, so we hide the autocomplete menu
+        setTimeout(() => $(inputSelector).trigger('blur'), 1);
+
+        if (autoConnect) {
+            triggerApiConnectionButton('#api_button_textgenerationwebui');
+        }
+
         return '';
     }
 
@@ -5634,7 +6836,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
 
     // Trigger the auto connect via connect button, if requested
     if (autoConnect) {
-        $('#api_button_textgenerationwebui').trigger('click');
+        triggerApiConnectionButton('#api_button_textgenerationwebui');
     }
 
     // We still re-acquire the value, as it might have been modified by the validation on connect

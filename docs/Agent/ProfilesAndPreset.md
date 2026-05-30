@@ -4,6 +4,8 @@
 
 SillyTavern 的核心优势之一是 prompt/preset 的创作者自由。Agent Mode 必须继承这一点，但自由度要进入可维护的 runtime policy，而不是散落在字符串 prompt 中。
 
+当前已落地字段以 `ResolvedAgentProfile` 为准：`preset.mode` 支持 `currentPromptSnapshot` / `ref` / `none`，`preset.ref` 当前用于独立 OpenAI/chat-completion preset 组装；`model.mode` 支持 `currentPromptSnapshot` / `connectionRef` / `requiresConfiguration`，`connectionRef + modelId` 会通过 LLM Connection 解耦 preset source/model，`requiresConfiguration` 用于可分享 Profile 导入后的本机模型重绑。完整生产链路见 [PromptAssembly.md](PromptAssembly.md)。
+
 ## 1. Agent Profile
 
 Agent Profile 是：
@@ -62,6 +64,16 @@ Built-in defaults
 - plan node policy 优先于 profile global policy。
 - user explicit deny 优先级最高。
 - missing required field fail-fast。
+
+### 1.3 Agent System Prompt Ownership
+
+`instructions.agentSystemPrompt` 只属于 Agent Profile：`null` 使用 resolved profile 默认值，非空字符串完整替换默认值。
+
+Preset / PromptManager 中的 `agentSystemPrompt` 不是内容源，而是 Agent Mode 的组装位置、enabled 状态与 role 契约。前端必须先解析 Agent Profile，再在该 PromptManager index materialize 真实 Agent system prompt；Rust runtime 只消费组装后的最终 messages，并 fail-fast 拒绝内部 marker 泄漏。Legacy Generation 必须移除 Agent-only 组件，不能看到 `agentSystemPrompt` 或 Agent system prompt 内容。
+
+### 1.4 Agent-facing Delegation Description
+
+`delegation.descriptionForAgents` 是给其它 Agent 选择调用对象时看的能力说明，不是给人类管理界面的营销文案。它应该用一两句话说明“什么时候找我、给我哪些 workspace path、我会返回什么形态”，例如“审阅 `output/scene.md` 的连续性并在 `summaries/notes.md` 返回问题列表；如要求修订，可直接编辑指定 `output/` 文件”。不要写 runtime id、物理路径、CAS/overwrite policy 或内部实现细节。
 
 ## 2. Preset Agent Schema
 
@@ -125,7 +137,7 @@ Built-in defaults
 - `profiles[].tools`
 - `profiles[].output.artifacts`
 
-更复杂的 plan/profile switch 可以 Phase 3 加。
+更复杂的 plan/profile switch 属于后续 profile routing 工作。
 
 ## 3. ContextFrame
 
@@ -391,33 +403,72 @@ profile_switch_denied
 
 ## 12. MVP Profile
 
-当前状态（2026-04-26）：尚未实现 profile resolution / profile routing。`profileId` 可以随 run 记录，但不会驱动模型、工具或 context policy。当前工具 registry 固定为 Phase 2B workspace 内建工具集，输出 artifact 固定为 `output/main.md`。
+当前状态（2026-05-04）：Phase 3 Profile 基线已实现 profile resolution，但尚未实现 profile routing、Plan Mode runtime、provider/model switch 或 ContextFrame 预算。`profileId` 会驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds、model retry 与 model-facing prompt/tool descriptions。`preset.ref` 目前只做校验/记录，不隐式切换 model。
 
-当前最小 profile 可以理解为硬编码：
+当前最小 built-in profile 是 `default-writer`，缺省 `profileId` 时使用它：
 
 ```json
 {
   "id": "default-writer",
-  "modelRef": { "source": "openai", "model": "current" },
-  "contextPolicy": {
-    "mode": "prompt_snapshot"
+  "preset": {
+    "mode": "currentPromptSnapshot",
+    "required": false
   },
-  "toolPolicy": {
+  "model": {
+    "mode": "currentPromptSnapshot"
+  },
+  "run": {
+    "presentation": "foreground",
+    "directRunnable": true,
+    "modelRetry": {
+      "maxRetries": 3,
+      "intervalMs": 3000
+    }
+  },
+  "instructions": {
+    "agentSystemPrompt": null
+  },
+  "tools": {
     "allow": [
       "workspace.list_files",
+      "workspace.search_files",
       "workspace.read_file",
       "workspace.write_file",
       "workspace.apply_patch",
-      "workspace.finish"
+      "workspace.finish",
+      "chat.search",
+      "chat.read_messages",
+      "worldinfo.read_activated",
+      "skill.list",
+      "skill.search",
+      "skill.read"
     ],
-    "deny": ["*"]
+    "deny": [],
+    "toolDescriptions": {},
+    "maxRounds": 80,
+    "maxCallsPerRun": 80
   },
-  "outputPolicy": {
+  "skills": {
+    "visible": ["*"],
+    "deny": [],
+    "maxReadCharsPerCall": 20000,
+    "maxReadCharsPerRun": 80000
+  },
+  "workspace": {
+    "visibleRoots": ["output", "scratch", "plan", "summaries", "persist"],
+    "writableRoots": ["output", "scratch", "plan", "summaries", "persist"]
+  },
+  "plan": {
+    "mode": "none",
+    "beta": true,
+    "nodes": []
+  },
+  "output": {
     "artifacts": [
-      { "id": "main", "path": "output/main.md", "target": "message_body", "required": true }
+      { "id": "main", "path": "output/main.md", "kind": "markdown", "target": "messageBody", "required": true }
     ]
   }
 }
 ```
 
-这个 profile 足以支撑当前 workspace 读改工具循环，同时给后续 context tools、profile routing 与 MCP 留出自然扩展点。
+Profile 文件存储在 `_tauritavern/agent-profiles/profiles/<id>.json`。每个 run 会固化 `input/resolved_profile.json`，运行时只消费 resolved profile。后续 profile routing 应在此基础上扩展，而不是绕过现有 resolver、registry 与 dispatcher。

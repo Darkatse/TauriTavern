@@ -12,11 +12,11 @@ import {
     event_types,
     eventSource,
     Generate,
-    getExtensionPrompt,
     getExtensionPromptMaxDepth,
     getMediaDisplay,
     getMediaIndex,
     getRequestHeaders,
+    isConnectionValidationSuspended,
     is_send_press,
     main_api,
     name1,
@@ -26,7 +26,6 @@ import {
     setOnlineStatus,
     startStatusLoading,
     substituteParams,
-    substituteParamsExtended,
     system_message_types,
     this_chid,
 } from '../script.js';
@@ -50,7 +49,7 @@ import {
 } from './prompt-injections.js';
 
 import { forceCharacterEditorTokenize, getCustomStoppingStrings, persona_description_positions, power_user } from './power-user.js';
-import { SECRET_KEYS, secret_state, writeSecret } from './secrets.js';
+import { resolveSecretKey, SECRET_KEYS, secret_state, writeSecret } from './secrets.js';
 
 import { getEventSourceStream } from './sse-stream.js';
 import {
@@ -61,6 +60,7 @@ import {
     getBase64Async,
     getFileText,
     getImageSizeFromDataURL,
+    clamp,
     getSortableDelay,
     getStringHash,
     getVideoDurationFromDataURL,
@@ -85,7 +85,8 @@ import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { t } from './i18n.js';
 import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
-import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE } from './constants.js';
+import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE, inject_ids } from './constants.js';
+import { syncNanoGptProvidersForModel, syncOpenRouterProvidersForModel, updateNanoGptProvidersWarning, updateOpenRouterProvidersWarning } from './textgen-models.js';
 
 export {
     openai_messages_count,
@@ -117,6 +118,10 @@ const default_bias = 'Default (none)';
 const default_personality_format = '{{personality}}';
 const default_scenario_format = '{{scenario}}';
 const default_group_nudge_prompt = '[Write the next reply only as {{char}}.]';
+const AGENT_SYSTEM_PROMPT_IDENTIFIER = 'agentSystemPrompt';
+const AGENT_RESULTS_PROMPT_IDENTIFIER = 'agentResults';
+const AGENT_TASK_PROMPT_IDENTIFIER = 'agentTask';
+const AGENT_ONLY_PROMPT_IDENTIFIERS = new Set([AGENT_SYSTEM_PROMPT_IDENTIFIER, AGENT_RESULTS_PROMPT_IDENTIFIER, AGENT_TASK_PROMPT_IDENTIFIER]);
 const default_bias_presets = {
     [default_bias]: [],
     'Anti-bond': [
@@ -143,8 +148,10 @@ const unlocked_max = max_2mil;
 const oai_max_temp = 2.0;
 const claude_max_temp = 1.0;
 const mistral_max_temp = 1.5;
+const workers_ai_max_temp = 5.0;
 const openrouter_website_model = 'OR_Website';
 const openai_max_stop_strings = 4;
+const additional_parameters_migration_version = 1;
 
 const textCompletionModels = [
     'gpt-3.5-turbo-instruct',
@@ -202,7 +209,65 @@ export const chat_completion_sources = {
     AZURE_OPENAI: 'azure_openai',
     ZAI: 'zai',
     SILICONFLOW: 'siliconflow',
+    WORKERS_AI: 'workers_ai',
+    MINIMAX: 'minimax',
+    AWS_BEDROCK: 'aws_bedrock',
 };
+
+const manage_custom_chat_completion_models_option = '__tauritavern_manage_custom_chat_completion_models__';
+const custom_model_option_values = new Set([
+    manage_custom_chat_completion_models_option,
+]);
+
+const chatCompletionModelControls = {
+    [chat_completion_sources.OPENAI]: { selector: '#model_openai_select', settingKey: 'openai_model', label: 'OpenAI', supportsCustomModels: true },
+    [chat_completion_sources.CLAUDE]: { selector: '#model_claude_select', settingKey: 'claude_model', label: 'Claude', supportsCustomModels: true },
+    [chat_completion_sources.OPENROUTER]: { selector: '#model_openrouter_select', settingKey: 'openrouter_model', label: 'OpenRouter', supportsCustomModels: true },
+    [chat_completion_sources.AI21]: { selector: '#model_ai21_select', settingKey: 'ai21_model', label: 'AI21', supportsCustomModels: true },
+    [chat_completion_sources.MAKERSUITE]: { selector: '#model_google_select', settingKey: 'google_model', label: 'Google AI Studio', supportsCustomModels: true },
+    [chat_completion_sources.VERTEXAI]: { selector: '#model_vertexai_select', settingKey: 'vertexai_model', label: 'Vertex AI', supportsCustomModels: true },
+    [chat_completion_sources.MISTRALAI]: { selector: '#model_mistralai_select', settingKey: 'mistralai_model', label: 'Mistral AI', supportsCustomModels: true },
+    [chat_completion_sources.CUSTOM]: { selector: '#custom_model_id', settingKey: 'custom_model', label: 'Custom', supportsCustomModels: false },
+    [chat_completion_sources.COHERE]: { selector: '#model_cohere_select', settingKey: 'cohere_model', label: 'Cohere', supportsCustomModels: true },
+    [chat_completion_sources.PERPLEXITY]: { selector: '#model_perplexity_select', settingKey: 'perplexity_model', label: 'Perplexity', supportsCustomModels: true },
+    [chat_completion_sources.GROQ]: { selector: '#model_groq_select', settingKey: 'groq_model', label: 'Groq', supportsCustomModels: true },
+    [chat_completion_sources.ELECTRONHUB]: { selector: '#model_electronhub_select', settingKey: 'electronhub_model', label: 'ElectronHub', supportsCustomModels: true },
+    [chat_completion_sources.CHUTES]: { selector: '#model_chutes_select', settingKey: 'chutes_model', label: 'Chutes', supportsCustomModels: true },
+    [chat_completion_sources.NANOGPT]: { selector: '#model_nanogpt_select', settingKey: 'nanogpt_model', label: 'NanoGPT', supportsCustomModels: true },
+    [chat_completion_sources.DEEPSEEK]: { selector: '#model_deepseek_select', settingKey: 'deepseek_model', label: 'DeepSeek', supportsCustomModels: true },
+    [chat_completion_sources.AIMLAPI]: { selector: '#model_aimlapi_select', settingKey: 'aimlapi_model', label: 'AI/ML API', supportsCustomModels: true },
+    [chat_completion_sources.XAI]: { selector: '#model_xai_select', settingKey: 'xai_model', label: 'xAI', supportsCustomModels: true },
+    [chat_completion_sources.POLLINATIONS]: { selector: '#model_pollinations_select', settingKey: 'pollinations_model', label: 'Pollinations', supportsCustomModels: true },
+    [chat_completion_sources.MOONSHOT]: { selector: '#model_moonshot_select', settingKey: 'moonshot_model', label: 'Moonshot', supportsCustomModels: true },
+    [chat_completion_sources.FIREWORKS]: { selector: '#model_fireworks_select', settingKey: 'fireworks_model', label: 'Fireworks AI', supportsCustomModels: true },
+    [chat_completion_sources.COMETAPI]: { selector: '#model_cometapi_select', settingKey: 'cometapi_model', label: 'CometAPI', supportsCustomModels: true },
+    [chat_completion_sources.AZURE_OPENAI]: { selector: '#azure_openai_model', settingKey: 'azure_openai_model', label: 'Azure OpenAI', supportsCustomModels: false },
+    [chat_completion_sources.ZAI]: { selector: '#model_zai_select', settingKey: 'zai_model', label: 'Z.AI', supportsCustomModels: true },
+    [chat_completion_sources.SILICONFLOW]: { selector: '#model_siliconflow_select', settingKey: 'siliconflow_model', label: 'SiliconFlow', supportsCustomModels: true },
+    [chat_completion_sources.MINIMAX]: { selector: '#model_minimax_select', settingKey: 'minimax_model', label: 'MiniMax', supportsCustomModels: true },
+    [chat_completion_sources.WORKERS_AI]: { selector: '#model_workers_ai_select', settingKey: 'workers_ai_model', label: 'Cloudflare Workers AI', supportsCustomModels: true },
+    [chat_completion_sources.AWS_BEDROCK]: { selector: '#model_aws_bedrock_select', settingKey: 'aws_bedrock_model', label: 'AWS Bedrock', supportsCustomModels: true },
+};
+
+export function getChatCompletionModelControl(source = oai_settings.chat_completion_source) {
+    const sourceKey = String(source || '');
+    const control = chatCompletionModelControls[sourceKey];
+    return control ? { source: sourceKey, ...control } : null;
+}
+
+function getChatCompletionModelControlByElement(element) {
+    for (const [source, control] of Object.entries(chatCompletionModelControls)) {
+        if (element.matches(control.selector)) {
+            return { source, ...control };
+        }
+    }
+
+    return null;
+}
+
+export function isCustomModelActionValue(value) {
+    return custom_model_option_values.has(String(value || ''));
+}
 
 const custom_api_formats = {
     OPENAI_COMPAT: 'openai_compat',
@@ -257,6 +322,7 @@ export const reasoning_effort_types = {
     high: 'high',
     min: 'min',
     max: 'max',
+    xhigh: 'xhigh',
 };
 
 export const verbosity_levels = {
@@ -266,15 +332,61 @@ export const verbosity_levels = {
     high: 'high',
 };
 
+export const tool_reasoning_modes = {
+    DISABLED: 'disabled',
+    SINCE_LAST_USER: 'since_last_user',
+    ACTIVE_CHAIN: 'active_chain',
+};
+
+// Providers that support plaintext reasoning forwarding in legacy tool-call chains.
+const interleaved_reasoning_providers = [
+    chat_completion_sources.OPENROUTER,
+    chat_completion_sources.CUSTOM,
+];
+
 export const ZAI_ENDPOINT = {
     COMMON: 'common',
     CODING: 'coding',
 };
 
+export const SILICONFLOW_ENDPOINT = {
+    GLOBAL: 'global',
+    CN: 'cn',
+};
+
+export const MINIMAX_ENDPOINT = {
+    GLOBAL: 'global',
+    CN: 'cn',
+};
+
+export const AWS_BEDROCK_REGION_DEFAULT = 'us-east-1';
+
+export function getAwsBedrockModelMetadata(modelId = null) {
+    const resolvedModelId = String(modelId ?? oai_settings.aws_bedrock_model ?? '');
+    if (!resolvedModelId || !Array.isArray(model_list)) {
+        return null;
+    }
+    const model = model_list.find(entry => entry?.id === resolvedModelId);
+    return model?.tauritavern?.bedrock ?? null;
+}
+
+function getAwsBedrockModelCapabilities(modelId = null) {
+    return getAwsBedrockModelMetadata(modelId)?.capabilities ?? null;
+}
+
+function getAwsBedrockEntryMetadata(model) {
+    return model?.tauritavern?.bedrock ?? null;
+}
+
+function isAwsBedrockModelSupported(model) {
+    return getAwsBedrockEntryMetadata(model)?.supported === true;
+}
+
 const sensitiveFields = [
     'reverse_proxy',
     'proxy_password',
     'custom_url',
+    'additional_parameters_by_source',
     'custom_include_body',
     'custom_exclude_body',
     'custom_include_headers',
@@ -283,6 +395,7 @@ const sensitiveFields = [
     'vertexai_express_project_id',
     'azure_base_url',
     'azure_deployment_name',
+    'workers_ai_account_id',
 ];
 
 /**
@@ -311,6 +424,7 @@ export const settingsToUpdate = {
     openrouter_quantizations: ['#openrouter_quantizations_chat', 'openrouter_quantizations', false, true],
     openrouter_allow_fallbacks: ['#openrouter_allow_fallbacks', 'openrouter_allow_fallbacks', true, true],
     openrouter_middleout: ['#openrouter_middleout', 'openrouter_middleout', false, true],
+    tool_reasoning_mode: ['#tool_reasoning_mode', 'tool_reasoning_mode', false, false],
     ai21_model: ['#model_ai21_select', 'ai21_model', false, true],
     mistralai_model: ['#model_mistralai_select', 'mistralai_model', false, true],
     cohere_model: ['#model_cohere_select', 'cohere_model', false, true],
@@ -319,10 +433,21 @@ export const settingsToUpdate = {
     chutes_model: ['#model_chutes_select', 'chutes_model', false, true],
     chutes_sort_models: ['#chutes_sort_models', 'chutes_sort_models', false, true],
     siliconflow_model: ['#model_siliconflow_select', 'siliconflow_model', false, true],
+    siliconflow_endpoint: ['#siliconflow_endpoint', 'siliconflow_endpoint', false, true],
+    minimax_model: ['#model_minimax_select', 'minimax_model', false, true],
+    minimax_endpoint: ['#minimax_endpoint', 'minimax_endpoint', false, true],
+    aws_bedrock_model: ['#model_aws_bedrock_select', 'aws_bedrock_model', false, true],
+    aws_bedrock_region: ['#aws_bedrock_region', 'aws_bedrock_region', false, true],
+    aws_bedrock_use_custom_template: ['#aws_bedrock_use_custom_template', 'aws_bedrock_use_custom_template', true, true],
+    aws_bedrock_custom_template: ['#aws_bedrock_custom_template', 'aws_bedrock_custom_template', false, true],
+    aws_bedrock_custom_response_path: ['#aws_bedrock_custom_response_path', 'aws_bedrock_custom_response_path', false, true],
+    aws_bedrock_custom_stream_path: ['#aws_bedrock_custom_stream_path', 'aws_bedrock_custom_stream_path', false, true],
     electronhub_model: ['#model_electronhub_select', 'electronhub_model', false, true],
     electronhub_sort_models: ['#electronhub_sort_models', 'electronhub_sort_models', false, true],
     electronhub_group_models: ['#electronhub_group_models', 'electronhub_group_models', false, true],
     nanogpt_model: ['#model_nanogpt_select', 'nanogpt_model', false, true],
+    nanogpt_provider: ['#nanogpt_provider', 'nanogpt_provider', false, true],
+    nanogpt_payg_override: ['#nanogpt_payg_override', 'nanogpt_payg_override', true, true],
     deepseek_model: ['#model_deepseek_select', 'deepseek_model', false, true],
     aimlapi_model: ['#model_aimlapi_select', 'aimlapi_model', false, true],
     xai_model: ['#model_xai_select', 'xai_model', false, true],
@@ -332,6 +457,9 @@ export const settingsToUpdate = {
     cometapi_model: ['#model_cometapi_select', 'cometapi_model', false, true],
     custom_model: ['#custom_model_id', 'custom_model', false, true],
     custom_url: ['#custom_api_url_text', 'custom_url', false, true],
+    custom_models_by_source: ['', 'custom_models_by_source', false, true],
+    additional_parameters_by_source: ['', 'additional_parameters_by_source', false, true],
+    additional_parameters_migration_version: ['', 'additional_parameters_migration_version', false, true],
     custom_include_body: ['#custom_include_body', 'custom_include_body', false, true],
     custom_exclude_body: ['#custom_exclude_body', 'custom_exclude_body', false, true],
     custom_include_headers: ['#custom_include_headers', 'custom_include_headers', false, true],
@@ -341,6 +469,8 @@ export const settingsToUpdate = {
     vertexai_model: ['#model_vertexai_select', 'vertexai_model', false, true],
     zai_model: ['#model_zai_select', 'zai_model', false, true],
     zai_endpoint: ['#zai_endpoint', 'zai_endpoint', false, true],
+    workers_ai_model: ['#model_workers_ai_select', 'workers_ai_model', false, true],
+    workers_ai_account_id: ['#workers_ai_account_id', 'workers_ai_account_id', false, true],
     openai_max_context: ['#openai_max_context', 'openai_max_context', false, false],
     openai_max_tokens: ['#openai_max_tokens', 'openai_max_tokens', false, false],
     names_behavior: ['#names_behavior', 'names_behavior', false, false],
@@ -373,6 +503,7 @@ export const settingsToUpdate = {
     continue_prefill: ['#continue_prefill', 'continue_prefill', true, false],
     continue_postfix: ['#continue_postfix', 'continue_postfix', false, false],
     function_calling: ['#openai_function_calling', 'function_calling', true, false],
+    tool_call_recurse_limit: ['#tool_call_recurse_limit', 'tool_call_recurse_limit', false, false],
     show_thoughts: ['#openai_show_thoughts', 'show_thoughts', true, false],
     reasoning_effort: ['#openai_reasoning_effort', 'reasoning_effort', false, false],
     verbosity: ['#openai_verbosity', 'verbosity', false, false],
@@ -429,10 +560,21 @@ const default_settings = {
     chutes_model: 'deepseek-ai/DeepSeek-V3-0324',
     chutes_sort_models: 'alphabetically',
     siliconflow_model: 'deepseek-ai/DeepSeek-V3',
+    siliconflow_endpoint: SILICONFLOW_ENDPOINT.GLOBAL,
+    minimax_model: 'MiniMax-M2.7',
+    minimax_endpoint: MINIMAX_ENDPOINT.GLOBAL,
+    aws_bedrock_model: 'anthropic.claude-sonnet-4-20250514-v1:0',
+    aws_bedrock_region: AWS_BEDROCK_REGION_DEFAULT,
+    aws_bedrock_use_custom_template: false,
+    aws_bedrock_custom_template: '',
+    aws_bedrock_custom_response_path: '',
+    aws_bedrock_custom_stream_path: '',
     electronhub_model: 'gpt-4o-mini',
     electronhub_sort_models: 'alphabetically',
     electronhub_group_models: false,
     nanogpt_model: 'gpt-4o-mini',
+    nanogpt_provider: '',
+    nanogpt_payg_override: false,
     deepseek_model: 'deepseek-v4-flash',
     aimlapi_model: 'chatgpt-4o-latest',
     xai_model: 'grok-3-beta',
@@ -442,13 +584,18 @@ const default_settings = {
     fireworks_model: 'accounts/fireworks/models/kimi-k2-instruct',
     zai_model: 'glm-4.6',
     zai_endpoint: ZAI_ENDPOINT.COMMON,
+    workers_ai_model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+    workers_ai_account_id: '',
     azure_base_url: '',
     azure_deployment_name: '',
     azure_api_version: '2024-02-15-preview',
     azure_openai_model: '',
     custom_model: '',
     custom_url: '',
+    custom_models_by_source: {},
     custom_api_format: custom_api_formats.OPENAI_COMPAT,
+    additional_parameters_by_source: {},
+    additional_parameters_migration_version: additional_parameters_migration_version,
     custom_include_body: '',
     custom_exclude_body: '',
     custom_include_headers: '',
@@ -461,6 +608,7 @@ const default_settings = {
     openrouter_quantizations: [],
     openrouter_allow_fallbacks: true,
     openrouter_middleout: openrouter_middleout_types.ON,
+    tool_reasoning_mode: tool_reasoning_modes.DISABLED,
     reverse_proxy: '',
     chat_completion_source: chat_completion_sources.OPENAI,
     max_context_unlocked: false,
@@ -478,6 +626,7 @@ const default_settings = {
     bypass_status_check: false,
     continue_prefill: false,
     function_calling: false,
+    tool_call_recurse_limit: 5,
     names_behavior: character_names_behavior.DEFAULT,
     continue_postfix: continue_postfix_types.SPACE,
     custom_prompt_post_processing: custom_prompt_post_processing_types.NONE,
@@ -510,6 +659,229 @@ export let openai_settings;
 
 /** @type {import('./PromptManager.js').PromptManager} */
 export let promptManager = null;
+
+function createAdditionalParametersEntry() {
+    return {
+        include_body: '',
+        exclude_body: '',
+        include_headers: '',
+    };
+}
+
+function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeCustomModelId(value) {
+    if (typeof value !== 'string') {
+        throw new Error('Custom model ID must be a string');
+    }
+
+    const modelId = value.trim();
+    if (!modelId) {
+        throw new Error('Custom model ID cannot be empty');
+    }
+
+    return modelId;
+}
+
+function normalizeCustomModelsForSource(source, models) {
+    const control = getChatCompletionModelControl(source);
+    if (!control?.supportsCustomModels) {
+        throw new Error(`Custom models are not supported for source: ${source}`);
+    }
+
+    if (!Array.isArray(models)) {
+        throw new Error(`Custom models must be an array for source: ${source}`);
+    }
+
+    const seen = new Set();
+    const normalized = [];
+    for (const model of models) {
+        const modelId = normalizeCustomModelId(model);
+        if (seen.has(modelId)) {
+            continue;
+        }
+        seen.add(modelId);
+        normalized.push(modelId);
+    }
+
+    return normalized;
+}
+
+function getCustomModelsStore(settings = oai_settings) {
+    if (settings.custom_models_by_source === undefined) {
+        settings.custom_models_by_source = {};
+    }
+
+    if (!isPlainObject(settings.custom_models_by_source)) {
+        throw new Error('custom_models_by_source must be an object');
+    }
+
+    return settings.custom_models_by_source;
+}
+
+function normalizeKnownCustomModelsStore(settings = oai_settings) {
+    const store = getCustomModelsStore(settings);
+
+    for (const source of Object.keys(store)) {
+        const control = getChatCompletionModelControl(source);
+        if (!control?.supportsCustomModels) {
+            continue;
+        }
+
+        store[control.source] = normalizeCustomModelsForSource(control.source, store[control.source]);
+    }
+
+    return store;
+}
+
+function getCustomModelsForSource(source, settings = oai_settings) {
+    const control = getChatCompletionModelControl(source);
+    if (!control?.supportsCustomModels) {
+        return [];
+    }
+
+    const store = getCustomModelsStore(settings);
+    if (store[control.source] === undefined) {
+        return [];
+    }
+
+    store[control.source] = normalizeCustomModelsForSource(control.source, store[control.source]);
+    return store[control.source];
+}
+
+function setCustomModelsForSource(source, models, settings = oai_settings) {
+    const control = getChatCompletionModelControl(source);
+    if (!control?.supportsCustomModels) {
+        throw new Error(`Custom models are not supported for source: ${source}`);
+    }
+
+    const store = getCustomModelsStore(settings);
+    const normalized = normalizeCustomModelsForSource(control.source, models);
+
+    if (normalized.length === 0) {
+        delete store[control.source];
+    } else {
+        store[control.source] = normalized;
+    }
+
+    return normalized;
+}
+
+function normalizeAdditionalParametersEntry(value) {
+    if (value === undefined) {
+        return createAdditionalParametersEntry();
+    }
+
+    if (!isPlainObject(value)) {
+        throw new Error('additional_parameters_by_source entries must be objects');
+    }
+
+    for (const key of ['include_body', 'exclude_body', 'include_headers']) {
+        if (value[key] === undefined) {
+            value[key] = '';
+            continue;
+        }
+
+        if (typeof value[key] !== 'string') {
+            throw new Error(`Additional parameter field must be a string: ${key}`);
+        }
+    }
+
+    return value;
+}
+
+function getAdditionalParametersStore(settings = oai_settings) {
+    if (settings.additional_parameters_by_source === undefined) {
+        settings.additional_parameters_by_source = {};
+    }
+
+    if (!isPlainObject(settings.additional_parameters_by_source)) {
+        throw new Error('additional_parameters_by_source must be an object');
+    }
+
+    return settings.additional_parameters_by_source;
+}
+
+function getAdditionalParametersSourceKey(settings = oai_settings) {
+    if (settings.chat_completion_source !== chat_completion_sources.CUSTOM) {
+        return settings.chat_completion_source || chat_completion_sources.OPENAI;
+    }
+
+    switch (settings.custom_api_format) {
+        case custom_api_formats.OPENAI_RESPONSES:
+            return custom_source_variants.OPENAI_RESPONSES;
+        case custom_api_formats.CLAUDE_MESSAGES:
+            return custom_source_variants.CLAUDE_MESSAGES;
+        case custom_api_formats.GEMINI_INTERACTIONS:
+            return custom_source_variants.GEMINI_INTERACTIONS;
+        case custom_api_formats.OPENAI_COMPAT:
+        default:
+            return chat_completion_sources.CUSTOM;
+    }
+}
+
+export function getAdditionalParametersForSource(
+    settings = oai_settings,
+    sourceKey = getAdditionalParametersSourceKey(settings),
+    { create = true } = {},
+) {
+    const store = getAdditionalParametersStore(settings);
+    const key = String(sourceKey || chat_completion_sources.OPENAI);
+    const value = store[key];
+
+    if (value === undefined && !create) {
+        return createAdditionalParametersEntry();
+    }
+
+    const entry = normalizeAdditionalParametersEntry(value);
+    if (create || value !== undefined) {
+        store[key] = entry;
+    }
+
+    return entry;
+}
+
+function getLegacyAdditionalParameters(settings) {
+    return {
+        include_body: typeof settings.custom_include_body === 'string' ? settings.custom_include_body : '',
+        exclude_body: typeof settings.custom_exclude_body === 'string' ? settings.custom_exclude_body : '',
+        include_headers: typeof settings.custom_include_headers === 'string' ? settings.custom_include_headers : '',
+    };
+}
+
+function applyAdditionalParametersToRequest(request, settings = oai_settings, { includeBody = true } = {}) {
+    const parameters = getAdditionalParametersForSource(
+        settings,
+        getAdditionalParametersSourceKey(settings),
+        { create: false },
+    );
+
+    if (includeBody) {
+        request.custom_include_body = parameters.include_body;
+        request.custom_exclude_body = parameters.exclude_body;
+    }
+
+    request.custom_include_headers = parameters.include_headers;
+}
+
+function hasSensitiveFieldValue(value) {
+    if (typeof value === 'string') {
+        return value.trim().length > 0;
+    }
+    if (Array.isArray(value)) {
+        return value.some(hasSensitiveFieldValue);
+    }
+    if (isPlainObject(value)) {
+        return Object.values(value).some(hasSensitiveFieldValue);
+    }
+    return Boolean(value);
+}
+
+function formatSensitiveFieldValue(value) {
+    return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
 
 async function validateReverseProxy() {
     if (!oai_settings.reverse_proxy) {
@@ -604,25 +976,28 @@ function setOpenAIMessages(chat) {
         const originApi = chat[j]?.extra?.api;
         const originModel = chat[j]?.extra?.model;
         const isSameModel = originApi === currentApi && originModel === currentModel;
-        const signature = isSameModel ? chat[j]?.extra?.reasoning_signature : null;
-        const native = includeNative && isSameModel ? chat[j]?.extra?.native : null;
+        const isOtherGroupMember = selected_group && chat[j].name !== name2;
+        const canReplayProviderTurnMetadata = isSameModel && !isOtherGroupMember;
+        const signature = canReplayProviderTurnMetadata ? chat[j]?.extra?.reasoning_signature : null;
+        const reasoning = canReplayProviderTurnMetadata ? String(chat[j]?.extra?.reasoning ?? '') : '';
+        const native = includeNative && canReplayProviderTurnMetadata ? chat[j]?.extra?.native : null;
         const shouldReplayReasoningContent = currentApi === chat_completion_sources.DEEPSEEK
             && oai_settings.show_thoughts
-            && isSameModel;
+            && canReplayProviderTurnMetadata;
         const reasoningContent = shouldReplayReasoningContent ? chat[j]?.extra?.tool_reasoning_content : null;
-
-        // Remove signatures from invocations if the API/model don't match
+        // Remove provider reasoning metadata from invocations if the API/model/speaker don't match.
         if (Array.isArray(invocations) && invocations.length > 0) {
             invocations.forEach((invocation, index) => {
-                if (invocation.signature && !isSameModel) {
+                if (!canReplayProviderTurnMetadata && (invocation.signature || invocation.reasoning)) {
                     const cloneInvocation = structuredClone(invocation);
                     delete cloneInvocation.signature;
+                    delete cloneInvocation.reasoning;
                     invocations[index] = cloneInvocation;
                 }
             });
         }
 
-        messages[i] = { 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations, 'signature': signature, 'native': native, 'reasoningContent': reasoningContent };
+        messages[i] = { 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations, 'signature': signature, 'reasoning': reasoning, 'native': native, 'reasoningContent': reasoningContent };
         j++;
     }
 
@@ -662,23 +1037,7 @@ function setupChatCompletionPromptManager(openAiSettings) {
 
     promptManager = new PromptManager();
 
-    const configuration = {
-        prefix: 'completion_',
-        containerIdentifier: 'completion_prompt_manager',
-        listIdentifier: 'completion_prompt_manager_list',
-        toggleDisabled: [],
-        sortableDelay: getSortableDelay(),
-        defaultPrompts: {
-            main: default_main_prompt,
-            nsfw: default_nsfw_prompt,
-            jailbreak: default_jailbreak_prompt,
-            enhanceDefinitions: default_enhance_definitions_prompt,
-        },
-        promptOrder: {
-            strategy: 'global',
-            dummyId: 100001,
-        },
-    };
+    const configuration = getChatCompletionPromptManagerConfiguration();
 
     promptManager.saveServiceSettings = () => {
         saveSettingsDebounced();
@@ -699,6 +1058,226 @@ function setupChatCompletionPromptManager(openAiSettings) {
     promptManager.render(false);
 
     return promptManager;
+}
+
+function getChatCompletionPromptManagerConfiguration() {
+    return {
+        prefix: 'completion_',
+        containerIdentifier: 'completion_prompt_manager',
+        listIdentifier: 'completion_prompt_manager_list',
+        toggleDisabled: [],
+        sortableDelay: getSortableDelay(),
+        defaultPrompts: {
+            main: default_main_prompt,
+            nsfw: default_nsfw_prompt,
+            jailbreak: default_jailbreak_prompt,
+            enhanceDefinitions: default_enhance_definitions_prompt,
+        },
+        promptOrder: {
+            strategy: 'global',
+            dummyId: 100001,
+        },
+    };
+}
+
+function createPromptAssemblyRuntime({
+    promptManager: assemblyPromptManager,
+    settings = null,
+    tokenHandler: assemblyTokenHandler = null,
+    macroContext = null,
+    extensionPrompts = null,
+    model = null,
+    emitPromptReady = true,
+    updatePromptManager = true,
+    renderPromptManager = true,
+    showToasts = true,
+} = {}) {
+    if (!assemblyPromptManager) {
+        throw new Error('prompt_assembly.prompt_manager_required: Prompt assembly requires a PromptManager instance');
+    }
+
+    const serviceSettings = settings ?? assemblyPromptManager.serviceSettings;
+    if (!serviceSettings || typeof serviceSettings !== 'object' || Array.isArray(serviceSettings)) {
+        throw new Error('prompt_assembly.settings_required: Prompt assembly requires chat-completion settings');
+    }
+
+    const serviceTokenHandler = assemblyTokenHandler ?? assemblyPromptManager.tokenHandler;
+    if (!serviceTokenHandler) {
+        throw new Error('prompt_assembly.token_handler_required: Prompt assembly requires a token handler');
+    }
+
+    return {
+        promptManager: assemblyPromptManager,
+        settings: serviceSettings,
+        tokenHandler: serviceTokenHandler,
+        macroContext: normalizePromptAssemblyMacroContext(macroContext),
+        extensionPrompts: normalizePromptAssemblyExtensionPrompts(extensionPrompts),
+        model: normalizePromptAssemblyString(model),
+        emitPromptReady: Boolean(emitPromptReady),
+        updatePromptManager: Boolean(updatePromptManager),
+        renderPromptManager: Boolean(renderPromptManager),
+        showToasts: Boolean(showToasts),
+    };
+}
+
+function getPromptAssemblyRuntime(runtime = null) {
+    if (runtime) {
+        return createPromptAssemblyRuntime(runtime);
+    }
+
+    return createPromptAssemblyRuntime({
+        promptManager,
+        settings: oai_settings,
+        tokenHandler,
+    });
+}
+
+function createHeadlessChatCompletionPromptManager(settings, {
+    macroContext = null,
+    extensionPrompts = null,
+    model = null,
+} = {}) {
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        throw new Error('prompt_assembly.settings_required: Headless prompt assembly requires chat-completion settings');
+    }
+
+    const serviceSettings = structuredClone(settings);
+    const assemblyPromptManager = new PromptManager();
+    const configuration = getChatCompletionPromptManagerConfiguration();
+
+    assemblyPromptManager.configuration = Object.assign(assemblyPromptManager.configuration, configuration);
+    assemblyPromptManager.serviceSettings = serviceSettings;
+    assemblyPromptManager.activeCharacter = { id: configuration.promptOrder.dummyId };
+    assemblyPromptManager.saveServiceSettings = () => Promise.resolve();
+    assemblyPromptManager.tryGenerate = () => Promise.resolve();
+    assemblyPromptManager.tokenHandler = new TokenHandler((messages, full) => countTokensOpenAIAsync(messages, full, serviceSettings));
+    assemblyPromptManager.substituteParams = (content, options = {}) => substitutePromptParams(content, options, {
+        macroContext,
+        extensionPrompts,
+        model,
+    });
+    assemblyPromptManager.sanitizeServiceSettings();
+
+    return assemblyPromptManager;
+}
+
+function normalizePromptAssemblyMacroContext(value) {
+    if (value == null) {
+        return null;
+    }
+    if (typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('prompt_assembly.macro_context_invalid: macroContext must be an object');
+    }
+    return value;
+}
+
+function normalizePromptAssemblyExtensionPrompts(value) {
+    if (value == null) {
+        return null;
+    }
+    if (typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('prompt_assembly.extension_prompts_invalid: extensionPrompts must be an object');
+    }
+    return value;
+}
+
+function normalizePromptAssemblyString(value) {
+    const text = String(value ?? '').trim();
+    return text || null;
+}
+
+function substitutePromptParams(content, options = {}, runtime = null) {
+    const macroContext = normalizePromptAssemblyMacroContext(runtime?.macroContext ?? null);
+    const extensionPrompts = normalizePromptAssemblyExtensionPrompts(runtime?.extensionPrompts ?? null);
+    const model = normalizePromptAssemblyString(runtime?.model ?? null);
+
+    if (!macroContext && !extensionPrompts && !model) {
+        return substituteParams(content, options);
+    }
+
+    const preparedContent = replaceFrozenOutletMacros(content, extensionPrompts);
+    const macroOptions = macroContext
+        ? withPromptAssemblyMacroContext(options, macroContext, { model })
+        : options;
+
+    return substituteParams(preparedContent, macroOptions);
+}
+
+function withPromptAssemblyMacroContext(options, macroContext, { model = null } = {}) {
+    const names = macroContext.names && typeof macroContext.names === 'object' ? macroContext.names : {};
+    const character = macroContext.character && typeof macroContext.character === 'object' ? macroContext.character : {};
+    const system = macroContext.system && typeof macroContext.system === 'object' ? macroContext.system : {};
+    const dynamicMacros = {
+        user: stringOrEmpty(names.user),
+        char: stringOrEmpty(names.char),
+        group: stringOrEmpty(names.group),
+        charIfNotGroup: stringOrEmpty(names.group ?? names.char),
+        groupNotMuted: stringOrEmpty(names.groupNotMuted),
+        notChar: stringOrEmpty(names.notChar),
+        charPrompt: stringOrEmpty(character.charPrompt),
+        charInstruction: stringOrEmpty(character.charInstruction ?? character.charJailbreak),
+        charJailbreak: stringOrEmpty(character.charJailbreak ?? character.charInstruction),
+        charDescription: stringOrEmpty(character.description),
+        description: stringOrEmpty(character.description),
+        charPersonality: stringOrEmpty(character.personality),
+        personality: stringOrEmpty(character.personality),
+        charScenario: stringOrEmpty(character.scenario),
+        scenario: stringOrEmpty(character.scenario),
+        persona: stringOrEmpty(character.persona),
+        personaPosition: stringOrEmpty(character.personaPosition),
+        mesExamplesRaw: stringOrEmpty(character.mesExamplesRaw),
+        mesExamples: stringOrEmpty(character.mesExamples),
+        charDepthPrompt: stringOrEmpty(character.charDepthPrompt),
+        charCreatorNotes: stringOrEmpty(character.creatorNotes),
+        creatorNotes: stringOrEmpty(character.creatorNotes),
+        charVersion: stringOrEmpty(character.version),
+        version: stringOrEmpty(character.version),
+        char_version: stringOrEmpty(character.version),
+        greeting: stringOrEmpty(character.firstMessage),
+        charFirstMessage: stringOrEmpty(character.firstMessage),
+        model: stringOrEmpty(model ?? system.model),
+        ...(options?.dynamicMacros ?? {}),
+    };
+
+    return {
+        ...options,
+        name1Override: options?.name1Override ?? stringOrEmpty(names.user),
+        name2Override: options?.name2Override ?? stringOrEmpty(names.char),
+        groupOverride: options?.groupOverride ?? stringOrEmpty(names.group),
+        dynamicMacros,
+    };
+}
+
+function replaceFrozenOutletMacros(content, extensionPrompts) {
+    if (!extensionPrompts || typeof content !== 'string' || !content.includes('{{outlet::')) {
+        return content;
+    }
+
+    return content.replace(/{{outlet::(.+?)}}/gi, (_, key) => {
+        return getOutletPromptFromExtensionPrompts(extensionPrompts, String(key ?? '').trim());
+    });
+}
+
+function getOutletPromptFromExtensionPrompts(extensionPrompts, key) {
+    if (!key) {
+        return '';
+    }
+
+    const outletPrompt = extensionPrompts[inject_ids.CUSTOM_WI_OUTLET(key)];
+
+    return stringOrEmpty(outletPrompt?.value);
+}
+
+function stringOrEmpty(value) {
+    return value == null ? '' : String(value);
+}
+
+function splitPromptAssemblyGroupNames(value) {
+    const text = stringOrEmpty(value).trim();
+    if (!text) {
+        return [];
+    }
+    return text.split(',').map(name => name.trim()).filter(Boolean);
 }
 
 /**
@@ -767,12 +1346,12 @@ export function parseExampleIntoIndividual(messageExampleString, appendNamesForG
     return result;
 }
 
-export function formatWorldInfo(value, { wiFormat = null } = {}) {
+export function formatWorldInfo(value, { wiFormat = null, settings = oai_settings } = {}) {
     if (!value) {
         return '';
     }
 
-    const format = wiFormat ?? oai_settings.wi_format;
+    const format = wiFormat ?? settings.wi_format;
 
     if (!format.trim()) {
         return value;
@@ -788,7 +1367,8 @@ export function formatWorldInfo(value, { wiFormat = null } = {}) {
  * @param {Object[]} messages - Array containing all messages.
  * @returns {Promise<Object[]>} - Array containing all messages with injections.
  */
-async function populationInjectionPrompts(prompts, messages) {
+async function populationInjectionPrompts(prompts, messages, extensionPrompts = null, runtime = null) {
+    const assemblyRuntime = getPromptAssemblyRuntime(runtime);
     let totalInsertedMessages = 0;
 
     const roleTypes = {
@@ -834,7 +1414,7 @@ async function populationInjectionPrompts(prompts, messages) {
 
                 // Get extension prompt
                 const extensionPrompt = order === extensionPromptsOrder
-                    ? await getExtensionPrompt(extension_prompt_types.IN_CHAT, i, separator, roleTypes[role], wrap)
+                    ? await getPromptAssemblyExtensionPrompt(extensionPrompts, extension_prompt_types.IN_CHAT, i, separator, roleTypes[role], wrap, assemblyRuntime)
                     : '';
                 const jointPrompt = [rolePrompts, extensionPrompt].filter(x => x).map(x => x.trim()).join(separator);
 
@@ -855,6 +1435,39 @@ async function populationInjectionPrompts(prompts, messages) {
     return messages;
 }
 
+async function getPromptAssemblyExtensionPrompt(extensionPrompts, position, depth, separator, role, wrap, runtime = null) {
+    const source = normalizePromptAssemblyExtensionPrompts(extensionPrompts);
+    if (!source) {
+        return '';
+    }
+
+    const promptPromises = Object.keys(source)
+        .sort()
+        .map(key => source[key])
+        .filter(prompt => prompt.position == position && prompt.value)
+        .filter(prompt => depth === undefined || prompt.depth === undefined || prompt.depth === depth)
+        .filter(prompt => role === undefined || prompt.role === undefined || prompt.role === role)
+        .map(async prompt => {
+            if (typeof prompt.filter === 'function' && !await prompt.filter()) {
+                return null;
+            }
+            return prompt;
+        });
+    const prompts = (await Promise.all(promptPromises)).filter(Boolean);
+
+    let values = prompts.map(prompt => String(prompt.value).trim()).join(separator);
+    if (wrap && values.length && !values.startsWith(separator)) {
+        values = separator + values;
+    }
+    if (wrap && values.length && !values.endsWith(separator)) {
+        values = values + separator;
+    }
+    if (values.length) {
+        values = substitutePromptParams(values, {}, runtime);
+    }
+    return values;
+}
+
 /**
  * Populates the chat history of the conversation.
  * @param {object[]} messages - Array containing all messages.
@@ -863,7 +1476,12 @@ async function populationInjectionPrompts(prompts, messages) {
  * @param type
  * @param cyclePrompt
  */
-async function populateChatHistory(messages, prompts, chatCompletion, type = null, cyclePrompt = null) {
+async function populateChatHistory(messages, prompts, chatCompletion, type = null, cyclePrompt = null, runtime = null) {
+    const assemblyRuntime = getPromptAssemblyRuntime(runtime);
+    const activePromptManager = assemblyRuntime.promptManager;
+    const settings = assemblyRuntime.settings;
+    const assemblyTokenHandler = assemblyRuntime.tokenHandler;
+
     if (!prompts.has('chatHistory')) {
         return;
     }
@@ -871,8 +1489,8 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     chatCompletion.add(new MessageCollection('chatHistory'), prompts.index('chatHistory'));
 
     // Reserve budget for new chat message
-    const newChat = selected_group ? oai_settings.new_group_chat_prompt : oai_settings.new_chat_prompt;
-    const newChatMessage = await Message.createAsync('system', substituteParams(newChat), 'newMainChat');
+    const newChat = selected_group ? settings.new_group_chat_prompt : settings.new_chat_prompt;
+    const newChatMessage = await Message.createAsync('system', substitutePromptParams(newChat, {}, assemblyRuntime), 'newMainChat', assemblyTokenHandler);
     chatCompletion.reserveBudget(newChatMessage);
 
     // Reserve budget for group nudge
@@ -880,17 +1498,19 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     const noGroupNudgeTypes = ['impersonate'];
     const groupNudgePrompt = getRelativePromptById(prompts, 'groupNudge');
     if (selected_group && groupNudgePrompt && !noGroupNudgeTypes.includes(type)) {
-        groupNudgeMessage = await Message.fromPromptAsync(groupNudgePrompt);
+        groupNudgeMessage = await Message.fromPromptAsync(groupNudgePrompt, assemblyTokenHandler);
         chatCompletion.reserveBudget(groupNudgeMessage);
     }
 
     // Reserve budget for continue nudge
     let continueMessageCollection = null;
-    if (type === 'continue' && cyclePrompt && !oai_settings.continue_prefill) {
+    if (type === 'continue' && cyclePrompt && !settings.continue_prefill) {
         const promptObject = {
             identifier: 'continueNudge',
             role: 'system',
-            content: substituteParamsExtended(oai_settings.continue_nudge_prompt, { lastChatMessage: String(cyclePrompt).trim() }),
+            content: substitutePromptParams(settings.continue_nudge_prompt, {
+                dynamicMacros: { lastChatMessage: String(cyclePrompt).trim() },
+            }, assemblyRuntime),
             system_prompt: true,
         };
         continueMessageCollection = new MessageCollection('continueNudge');
@@ -898,29 +1518,35 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
         if (continueMessageIndex >= 0) {
             const continueMessage = messages.splice(continueMessageIndex, 1)[0];
             const prompt = new Prompt(continueMessage);
-            const chatMessage = await Message.fromPromptAsync(promptManager.preparePrompt(prompt));
+            const chatMessage = await Message.fromPromptAsync(activePromptManager.preparePrompt(prompt), assemblyTokenHandler);
             continueMessageCollection.add(chatMessage);
         }
         const continueNudgePrompt = new Prompt(promptObject);
-        const preparedNudgePrompt = promptManager.preparePrompt(continueNudgePrompt);
-        const continueNudgeMessage = await Message.fromPromptAsync(preparedNudgePrompt);
+        const preparedNudgePrompt = activePromptManager.preparePrompt(continueNudgePrompt);
+        const continueNudgeMessage = await Message.fromPromptAsync(preparedNudgePrompt, assemblyTokenHandler);
         continueMessageCollection.add(continueNudgeMessage);
         chatCompletion.reserveBudget(continueMessageCollection);
     }
 
     const lastChatPrompt = messages[messages.length - 1];
-    const message = await Message.createAsync('user', oai_settings.send_if_empty, 'emptyUserMessageReplacement');
-    if (lastChatPrompt && lastChatPrompt.role === 'assistant' && oai_settings.send_if_empty && chatCompletion.canAfford(message)) {
+    const message = await Message.createAsync('user', settings.send_if_empty, 'emptyUserMessageReplacement', assemblyTokenHandler);
+    if (lastChatPrompt && lastChatPrompt.role === 'assistant' && settings.send_if_empty && chatCompletion.canAfford(message)) {
         chatCompletion.insert(message, 'chatHistory');
     }
 
-    const imageInlining = isImageInliningSupported();
-    const videoInlining = isVideoInliningSupported();
-    const audioInlining = isAudioInliningSupported();
-    const canUseTools = ToolManager.isToolCallingSupported();
-    const includeSignature = isReasoningSignatureSupported();
-    const includeNative = oai_settings.chat_completion_source === chat_completion_sources.CUSTOM
-        && oai_settings.custom_api_format === custom_api_formats.GEMINI_INTERACTIONS;
+    const imageInlining = isImageInliningSupported(settings);
+    const videoInlining = isVideoInliningSupported(settings);
+    const audioInlining = isAudioInliningSupported(settings);
+    const canUseTools = ToolManager.isToolCallingSupported(settings);
+    const includeSignature = isReasoningSignatureSupported(settings);
+    const includeNative = settings.chat_completion_source === chat_completion_sources.CUSTOM
+        && settings.custom_api_format === custom_api_formats.GEMINI_INTERACTIONS;
+    const isToolReasoningProvider = interleaved_reasoning_providers.includes(settings.chat_completion_source);
+    const toolReasoningMode = isToolReasoningProvider
+        ? getEffectiveToolReasoningMode(settings)
+        : tool_reasoning_modes.DISABLED;
+    const includeToolReasoning = toolReasoningMode !== tool_reasoning_modes.DISABLED;
+    const lastUserIdx = messages.findLastIndex(x => x.role === 'user');
 
     // Insert chat messages as long as there is budget available
     const chatPool = [...messages].reverse();
@@ -932,11 +1558,11 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             // We do not want to mutate the prompt
             const prompt = new Prompt(chatPrompt);
             prompt.identifier = `chatHistory-${messages.length - index}`;
-            const chatMessage = await Message.fromPromptAsync(promptManager.preparePrompt(prompt));
+            const chatMessage = await Message.fromPromptAsync(activePromptManager.preparePrompt(prompt), assemblyTokenHandler);
 
-            if (promptManager.serviceSettings.names_behavior === character_names_behavior.COMPLETION && prompt.name) {
-                const messageName = promptManager.isValidName(prompt.name) ? prompt.name : promptManager.sanitizeName(prompt.name);
-                await chatMessage.setName(messageName);
+            if (activePromptManager.serviceSettings.names_behavior === character_names_behavior.COMPLETION && prompt.name) {
+                const messageName = activePromptManager.isValidName(prompt.name) ? prompt.name : activePromptManager.sanitizeName(prompt.name);
+                await chatMessage.setName(messageName, assemblyTokenHandler);
             }
 
             /**
@@ -951,10 +1577,10 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                     media.type = MEDIA_TYPE.IMAGE;
                 }
                 if (imageInlining && media.type === MEDIA_TYPE.IMAGE) {
-                    await chatMessage.addImage(media.url);
+                    await chatMessage.addImage(media.url, settings);
                 }
                 if (videoInlining && media.type === MEDIA_TYPE.VIDEO) {
-                    await chatMessage.addVideo(media.url);
+                    await chatMessage.addVideo(media.url, settings);
                 }
                 if (audioInlining && media.type === MEDIA_TYPE.AUDIO) {
                     await chatMessage.addAudio(media.url);
@@ -973,11 +1599,60 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                 }
             }
 
+            const promptIdx = messages.indexOf(chatPrompt);
+            const reasoningIsEligible = toolReasoningMode !== tool_reasoning_modes.DISABLED
+                && promptIdx > lastUserIdx;
+            let previousAssistantReasoning = '';
+            if (reasoningIsEligible) {
+                if (toolReasoningMode === tool_reasoning_modes.ACTIVE_CHAIN) {
+                    for (let idx = promptIdx - 1; idx > lastUserIdx; idx--) {
+                        const candidate = messages[idx];
+                        if (candidate?.role === 'tool') {
+                            continue;
+                        }
+                        if (candidate?.role === 'assistant' && Array.isArray(candidate.invocations)) {
+                            continue;
+                        }
+                        const hasAssistantText = candidate?.role === 'assistant'
+                            && !Array.isArray(candidate.invocations)
+                            && typeof candidate.content === 'string'
+                            && candidate.content.trim().length > 0;
+                        if (hasAssistantText) {
+                            previousAssistantReasoning = String(candidate.reasoning ?? '');
+                        }
+                        break;
+                    }
+                } else if (toolReasoningMode === tool_reasoning_modes.SINCE_LAST_USER) {
+                    for (let idx = promptIdx - 1; idx > lastUserIdx; idx--) {
+                        const candidate = messages[idx];
+                        const hasAssistantText = candidate?.role === 'assistant'
+                            && !Array.isArray(candidate.invocations)
+                            && typeof candidate.content === 'string'
+                            && candidate.content.trim().length > 0;
+                        if (!hasAssistantText) {
+                            continue;
+                        }
+                        const candidateReasoning = String(candidate.reasoning ?? '');
+                        if (candidateReasoning) {
+                            previousAssistantReasoning = candidateReasoning;
+                            break;
+                        }
+                    }
+                }
+            }
             /** @type {import('./tool-calling.js').ToolInvocation[]} */
-            const invocations = chatPrompt.invocations;
-            const toolCallMessage = await Message.createAsync(chatMessage.role, undefined, 'toolCall-' + chatMessage.identifier);
-            const toolResultMessages = await Promise.all(invocations.slice().reverse().map((invocation) => Message.createAsync('tool', invocation.result || '[No content]', invocation.id)));
-            await toolCallMessage.setToolCalls(invocations, includeSignature);
+            const invocations = chatPrompt.invocations.map(invocation => {
+                const clone = structuredClone(invocation);
+                if (!reasoningIsEligible) {
+                    delete clone.reasoning;
+                } else if (previousAssistantReasoning && !clone.reasoning) {
+                    clone.reasoning = previousAssistantReasoning;
+                }
+                return clone;
+            });
+            const toolCallMessage = await Message.createAsync(chatMessage.role, undefined, 'toolCall-' + chatMessage.identifier, assemblyTokenHandler);
+            const toolResultMessages = await Promise.all(invocations.slice().reverse().map((invocation) => Message.createAsync('tool', invocation.result || '[No content]', invocation.id, assemblyTokenHandler)));
+            await toolCallMessage.setToolCalls(invocations, includeSignature, includeToolReasoning);
             if (includeNative && chatPrompt.native) {
                 toolCallMessage.native = chatPrompt.native;
             }
@@ -1006,12 +1681,12 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
 
             const prompt = new Prompt(candidate);
             prompt.identifier = `chatHistory-${messages.length - index}`;
-            batch.push({ chatPrompt: candidate, prompt, preparedPrompt: promptManager.preparePrompt(prompt) });
+            batch.push({ chatPrompt: candidate, prompt, preparedPrompt: activePromptManager.preparePrompt(prompt) });
         }
 
-        const batchMessages = await Promise.all(batch.map((item) => Message.fromPromptAsync(item.preparedPrompt)));
+        const batchMessages = await Promise.all(batch.map((item) => Message.fromPromptAsync(item.preparedPrompt, assemblyTokenHandler)));
 
-        if (promptManager.serviceSettings.names_behavior === character_names_behavior.COMPLETION) {
+        if (activePromptManager.serviceSettings.names_behavior === character_names_behavior.COMPLETION) {
             const nameUpdates = [];
             for (let batchIndex = 0; batchIndex < batch.length; batchIndex++) {
                 const prompt = batch[batchIndex].prompt;
@@ -1019,8 +1694,8 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                     continue;
                 }
 
-                const messageName = promptManager.isValidName(prompt.name) ? prompt.name : promptManager.sanitizeName(prompt.name);
-                nameUpdates.push(batchMessages[batchIndex].setName(messageName));
+                const messageName = activePromptManager.isValidName(prompt.name) ? prompt.name : activePromptManager.sanitizeName(prompt.name);
+                nameUpdates.push(batchMessages[batchIndex].setName(messageName, assemblyTokenHandler));
             }
 
             await Promise.all(nameUpdates);
@@ -1043,10 +1718,10 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                     media.type = MEDIA_TYPE.IMAGE;
                 }
                 if (imageInlining && media.type === MEDIA_TYPE.IMAGE) {
-                    await chatMessage.addImage(media.url);
+                    await chatMessage.addImage(media.url, settings);
                 }
                 if (videoInlining && media.type === MEDIA_TYPE.VIDEO) {
-                    await chatMessage.addVideo(media.url);
+                    await chatMessage.addVideo(media.url, settings);
                 }
                 if (audioInlining && media.type === MEDIA_TYPE.AUDIO) {
                     await chatMessage.addAudio(media.url);
@@ -1109,14 +1784,18 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
  * @param {ChatCompletion} chatCompletion - An instance of ChatCompletion class that will be populated with the prompts.
  * @param {Object[]} messageExamples - Array containing all message examples.
  */
-async function populateDialogueExamples(prompts, chatCompletion, messageExamples) {
+async function populateDialogueExamples(prompts, chatCompletion, messageExamples, runtime = null) {
+    const assemblyRuntime = getPromptAssemblyRuntime(runtime);
+    const settings = assemblyRuntime.settings;
+    const assemblyTokenHandler = assemblyRuntime.tokenHandler;
+
     if (!prompts.has('dialogueExamples')) {
         return;
     }
 
     chatCompletion.add(new MessageCollection('dialogueExamples'), prompts.index('dialogueExamples'));
     if (Array.isArray(messageExamples) && messageExamples.length) {
-        const newExampleChat = await Message.createAsync('system', substituteParams(oai_settings.new_example_chat_prompt), 'newChat');
+            const newExampleChat = await Message.createAsync('system', substitutePromptParams(settings.new_example_chat_prompt, {}, assemblyRuntime), 'newChat', assemblyTokenHandler);
         for (const dialogue of [...messageExamples]) {
             const dialogueIndex = messageExamples.indexOf(dialogue);
             const chatMessages = [];
@@ -1127,8 +1806,8 @@ async function populateDialogueExamples(prompts, chatCompletion, messageExamples
                 const content = prompt.content || '';
                 const identifier = `dialogueExamples ${dialogueIndex}-${promptIndex}`;
 
-                const chatMessage = await Message.createAsync(role, content, identifier);
-                await chatMessage.setName(prompt.name);
+                const chatMessage = await Message.createAsync(role, content, identifier, assemblyTokenHandler);
+                await chatMessage.setName(prompt.name, assemblyTokenHandler);
                 chatMessages.push(chatMessage);
             }
 
@@ -1142,6 +1821,81 @@ async function populateDialogueExamples(prompts, chatCompletion, messageExamples
             }
         }
     }
+}
+
+/**
+ * Remove Agent-only PromptManager entries from Legacy generation assembly.
+ *
+ * @param {import('./PromptManager.js').PromptCollection} prompts - Prompt collection to mutate.
+ */
+function removeAgentOnlyPrompts(prompts) {
+    prompts.collection = prompts.collection.filter(prompt => !AGENT_ONLY_PROMPT_IDENTIFIERS.has(prompt.identifier));
+}
+
+/**
+ * Materializes the resolved Agent System Prompt at the PromptManager-controlled position.
+ *
+ * @param {import('./PromptManager.js').PromptCollection} prompts - PromptCollection containing all prompts.
+ * @param {ChatCompletion} chatCompletion - An instance of ChatCompletion class that will be populated with the prompts.
+ * @param {boolean} agentMode - Whether this prompt snapshot is owned by the Agent runtime.
+ * @param {string|null} agentSystemPrompt - Resolved Agent system prompt content.
+ */
+async function populateAgentSystemPrompt(prompts, chatCompletion, agentMode, agentSystemPrompt, runtime = null) {
+    if (!agentMode) {
+        return;
+    }
+    if (!prompts.has(AGENT_SYSTEM_PROMPT_IDENTIFIER)) {
+        throw new Error('agent.system_prompt_component_missing: PromptManager must include agentSystemPrompt in Agent Mode');
+    }
+
+    const content = String(agentSystemPrompt ?? '');
+    if (!content.trim()) {
+        throw new Error('agent.system_prompt_required: Agent Mode requires a resolved Agent system prompt');
+    }
+
+    const prompt = prompts.get(AGENT_SYSTEM_PROMPT_IDENTIFIER);
+    const assemblyRuntime = getPromptAssemblyRuntime(runtime);
+    const materializedPrompt = assemblyRuntime.promptManager.preparePrompt({
+        ...prompt,
+        content,
+    });
+
+    chatCompletion.add(new MessageCollection(AGENT_SYSTEM_PROMPT_IDENTIFIER), prompts.index(AGENT_SYSTEM_PROMPT_IDENTIFIER));
+    const message = await Message.fromPromptAsync(materializedPrompt, assemblyRuntime.tokenHandler);
+    chatCompletion.insertAtEnd(message, AGENT_SYSTEM_PROMPT_IDENTIFIER);
+}
+
+/**
+ * Materializes the invocation-scoped Agent task prompt at the PromptManager-controlled position.
+ *
+ * @param {import('./PromptManager.js').PromptCollection} prompts - PromptCollection containing all prompts.
+ * @param {ChatCompletion} chatCompletion - An instance of ChatCompletion class that will be populated with the prompts.
+ * @param {boolean} agentMode - Whether this prompt snapshot is owned by the Agent runtime.
+ * @param {string|null} agentTaskPrompt - Invocation task prompt content.
+ */
+async function populateAgentTaskPrompt(prompts, chatCompletion, agentMode, agentTaskPrompt, runtime = null) {
+    if (!agentMode) {
+        return;
+    }
+
+    const content = String(agentTaskPrompt ?? '');
+    if (!content.trim()) {
+        return;
+    }
+    if (!prompts.has(AGENT_TASK_PROMPT_IDENTIFIER)) {
+        throw new Error('agent.task_prompt_component_missing: PromptManager must include agentTask in Agent Mode when agentTaskPrompt is provided');
+    }
+
+    const prompt = prompts.get(AGENT_TASK_PROMPT_IDENTIFIER);
+    const assemblyRuntime = getPromptAssemblyRuntime(runtime);
+    const materializedPrompt = assemblyRuntime.promptManager.preparePrompt({
+        ...prompt,
+        content,
+    });
+
+    chatCompletion.add(new MessageCollection(AGENT_TASK_PROMPT_IDENTIFIER), prompts.index(AGENT_TASK_PROMPT_IDENTIFIER));
+    const message = await Message.fromPromptAsync(materializedPrompt, assemblyRuntime.tokenHandler);
+    chatCompletion.insertAtEnd(message, AGENT_TASK_PROMPT_IDENTIFIER);
 }
 
 /**
@@ -1191,36 +1945,51 @@ export function getPromptRole(role) {
  * @param {string} options.cyclePrompt - The last prompt in the conversation.
  * @param {object[]} options.messages - Array containing all messages.
  * @param {object[]} options.messageExamples - Array containing all message examples.
+ * @param {object} options.extensionPrompts - Frozen/materialized extension prompt snapshot.
  * @param {(message: string) => void} options.attachWarning - Warning sink for attach-existing prompt issues.
  * @param {boolean} [options.agentMode] Skip legacy frontend tool registration for Agent-owned tool loops.
+ * @param {string|null} [options.agentSystemPrompt] Resolved Agent system prompt content.
+ * @param {string|null} [options.agentTaskPrompt] Invocation task prompt content.
  * @returns {Promise<void>}
  */
-async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning, agentMode = false }) {
+async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentSystemPrompt = null, agentTaskPrompt = null }, runtime = null) {
+    const assemblyRuntime = getPromptAssemblyRuntime(runtime);
+    const activePromptManager = assemblyRuntime.promptManager;
+    const settings = assemblyRuntime.settings;
+    const assemblyTokenHandler = assemblyRuntime.tokenHandler;
+
+    if (!agentMode) {
+        removeAgentOnlyPrompts(prompts);
+    }
+
     // Helper function for preparing a prompt, that already exists within the prompt collection, for completion
     const addToChatCompletion = async (source, target = null) => {
         // We need the prompts array to determine a position for the source.
         if (false === prompts.has(source)) return;
 
-        if (promptManager.isPromptDisabledForActiveCharacter(source) && source !== 'main') {
-            promptManager.log(`Skipping prompt ${source} because it is disabled`);
+        if (activePromptManager.isPromptDisabledForActiveCharacter(source) && source !== 'main') {
+            activePromptManager.log(`Skipping prompt ${source} because it is disabled`);
             return;
         }
 
         const prompt = prompts.get(source);
 
         if (!isPromptInjectionPosition(prompt, INJECTION_POSITION.RELATIVE)) {
-            promptManager.log(`Skipping prompt ${source} because it is not a relative prompt`);
+            activePromptManager.log(`Skipping prompt ${source} because it is not a relative prompt`);
             return;
         }
 
         const index = target ? prompts.index(target) : prompts.index(source);
         const collection = new MessageCollection(source);
-        const message = await Message.fromPromptAsync(prompt);
+        const message = await Message.fromPromptAsync(prompt, assemblyTokenHandler);
         collection.add(message);
         chatCompletion.add(collection, index);
     };
 
     chatCompletion.reserveBudget(3); // every reply is primed with <|start|>assistant<|message|>
+    await populateAgentSystemPrompt(prompts, chatCompletion, agentMode, agentSystemPrompt, assemblyRuntime);
+    await populateAgentTaskPrompt(prompts, chatCompletion, agentMode, agentTaskPrompt, assemblyRuntime);
+
     // Character and world information
     await addToChatCompletion('worldInfoBefore');
     await addToChatCompletion('main');
@@ -1235,16 +2004,16 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     const controlPrompts = new MessageCollection('controlPrompts');
 
     const impersonatePrompt = getRelativePromptById(prompts, 'impersonate');
-    const impersonateMessage = impersonatePrompt ? await Message.fromPromptAsync(impersonatePrompt) : null;
+    const impersonateMessage = impersonatePrompt ? await Message.fromPromptAsync(impersonatePrompt, assemblyTokenHandler) : null;
     if (type === 'impersonate' && impersonateMessage) controlPrompts.add(impersonateMessage);
 
     // Add quiet prompt to control prompts
     // This should always be last, even in control prompts. Add all further control prompts BEFORE this prompt
     const quietPromptEntry = getRelativePromptById(prompts, 'quietPrompt');
-    const quietPromptMessage = quietPromptEntry ? await Message.fromPromptAsync(quietPromptEntry) : null;
+    const quietPromptMessage = quietPromptEntry ? await Message.fromPromptAsync(quietPromptEntry, assemblyTokenHandler) : null;
     if (quietPromptMessage && quietPromptMessage.content) {
-        if (isImageInliningSupported() && quietImage) {
-            await quietPromptMessage.addImage(quietImage);
+        if (isImageInliningSupported(settings) && quietImage) {
+            await quietPromptMessage.addImage(quietImage, settings);
         }
 
         controlPrompts.add(quietPromptMessage);
@@ -1272,7 +2041,7 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
         }
 
         if (chatCompletion.has('main')) {
-            const message = await Message.fromPromptAsync(prompt);
+            const message = await Message.fromPromptAsync(prompt, assemblyTokenHandler);
             chatCompletion.insert(message, 'main', position);
         } else {
             // Convert the relative prompt to an injection and place it relative to main prompt
@@ -1315,11 +2084,11 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     }
 
     // Pre-allocation of tokens for tool data
-    if (!agentMode && ToolManager.canPerformToolCalls(type)) {
+    if (!agentMode && ToolManager.canPerformToolCalls(type, settings)) {
         const toolData = {};
         await ToolManager.registerFunctionToolsOpenAI(toolData);
         const toolMessage = [{ role: 'user', content: JSON.stringify(toolData) }];
-        const toolTokens = await tokenHandler.countAsync(toolMessage);
+        const toolTokens = await assemblyTokenHandler.countAsync(toolMessage);
         chatCompletion.reserveBudget(toolTokens);
     }
 
@@ -1331,29 +2100,29 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
 
     // Displace the message to be continued from its original position before performing in-chat injections
     // In case if it is an assistant message, we want to prepend the users assistant prefill on the message
-    if (type === 'continue' && oai_settings.continue_prefill && messages.length) {
+    if (type === 'continue' && settings.continue_prefill && messages.length) {
         const chatMessage = messages.shift();
         const isAssistantRole = chatMessage.role === 'assistant';
-        const supportsAssistantPrefill = oai_settings.chat_completion_source === chat_completion_sources.CLAUDE;
-        const namesInCompletion = oai_settings.names_behavior === character_names_behavior.COMPLETION;
-        const assistantPrefill = isAssistantRole && supportsAssistantPrefill ? substituteParams(oai_settings.assistant_prefill) : '';
+        const supportsAssistantPrefill = settings.chat_completion_source === chat_completion_sources.CLAUDE;
+        const namesInCompletion = settings.names_behavior === character_names_behavior.COMPLETION;
+        const assistantPrefill = isAssistantRole && supportsAssistantPrefill ? substitutePromptParams(settings.assistant_prefill, {}, assemblyRuntime) : '';
         const messageContent = [assistantPrefill, chatMessage.content].filter(x => x).join('\n\n');
-        const continueMessage = await Message.createAsync(chatMessage.role, messageContent, 'continuePrefill');
-        chatMessage.name && namesInCompletion && await continueMessage.setName(promptManager.sanitizeName(chatMessage.name));
+        const continueMessage = await Message.createAsync(chatMessage.role, messageContent, 'continuePrefill', assemblyTokenHandler);
+        chatMessage.name && namesInCompletion && await continueMessage.setName(activePromptManager.sanitizeName(chatMessage.name), assemblyTokenHandler);
         controlPrompts.add(continueMessage);
         chatCompletion.reserveBudget(continueMessage);
     }
 
     // Add in-chat injections
-    messages = await populationInjectionPrompts(absolutePrompts, messages);
+    messages = await populationInjectionPrompts(absolutePrompts, messages, extensionPrompts ?? assemblyRuntime.extensionPrompts, assemblyRuntime);
 
     // Decide whether dialogue examples should always be added
     if (power_user.pin_examples) {
-        await populateDialogueExamples(prompts, chatCompletion, messageExamples);
-        await populateChatHistory(messages, prompts, chatCompletion, type, cyclePrompt);
+        await populateDialogueExamples(prompts, chatCompletion, messageExamples, assemblyRuntime);
+        await populateChatHistory(messages, prompts, chatCompletion, type, cyclePrompt, assemblyRuntime);
     } else {
-        await populateChatHistory(messages, prompts, chatCompletion, type, cyclePrompt);
-        await populateDialogueExamples(prompts, chatCompletion, messageExamples);
+        await populateChatHistory(messages, prompts, chatCompletion, type, cyclePrompt, assemblyRuntime);
+        await populateDialogueExamples(prompts, chatCompletion, messageExamples, assemblyRuntime);
     }
 
     chatCompletion.freeBudget(controlPrompts);
@@ -1378,17 +2147,21 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
  * @param {string} options.type - The type of generation that triggered the prompt
  * @returns {Promise<Object>} prompts - The prepared and merged system and user-defined prompts.
  */
-async function preparePromptsForChatCompletion({ scenario, charPersonality, name2, worldInfoBefore, worldInfoAfter, charDescription, quietPrompt, bias, extensionPrompts, systemPromptOverride, jailbreakPromptOverride, type }) {
-    const scenarioText = scenario && oai_settings.scenario_format ? substituteParams(oai_settings.scenario_format) : (scenario || '');
-    const charPersonalityText = charPersonality && oai_settings.personality_format ? substituteParams(oai_settings.personality_format) : (charPersonality || '');
-    const groupNudge = substituteParams(oai_settings.group_nudge_prompt);
-    const impersonationPrompt = oai_settings.impersonation_prompt ? substituteParams(oai_settings.impersonation_prompt) : '';
+async function preparePromptsForChatCompletion({ scenario, charPersonality, name2, worldInfoBefore, worldInfoAfter, charDescription, quietPrompt, bias, extensionPrompts, systemPromptOverride, jailbreakPromptOverride, type }, runtime = null) {
+    const assemblyRuntime = getPromptAssemblyRuntime(runtime);
+    const activePromptManager = assemblyRuntime.promptManager;
+    const settings = assemblyRuntime.settings;
+    extensionPrompts = normalizePromptAssemblyExtensionPrompts(extensionPrompts) ?? {};
+    const scenarioText = scenario && settings.scenario_format ? substitutePromptParams(settings.scenario_format, {}, assemblyRuntime) : (scenario || '');
+    const charPersonalityText = charPersonality && settings.personality_format ? substitutePromptParams(settings.personality_format, {}, assemblyRuntime) : (charPersonality || '');
+    const groupNudge = substitutePromptParams(settings.group_nudge_prompt, {}, assemblyRuntime);
+    const impersonationPrompt = settings.impersonation_prompt ? substitutePromptParams(settings.impersonation_prompt, {}, assemblyRuntime) : '';
 
     // Create entries for system prompts
     const systemPrompts = [
         // Ordered prompts for which a marker should exist
-        { role: 'system', content: formatWorldInfo(worldInfoBefore), identifier: 'worldInfoBefore' },
-        { role: 'system', content: formatWorldInfo(worldInfoAfter), identifier: 'worldInfoAfter' },
+        { role: 'system', content: formatWorldInfo(worldInfoBefore, { settings }), identifier: 'worldInfoBefore' },
+        { role: 'system', content: formatWorldInfo(worldInfoAfter, { settings }), identifier: 'worldInfoAfter' },
         { role: 'system', content: charDescription, identifier: 'charDescription' },
         { role: 'system', content: charPersonalityText, identifier: 'charPersonality' },
         { role: 'system', content: scenarioText, identifier: 'scenario' },
@@ -1444,8 +2217,14 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
     });
 
     // Persona Description
-    if (power_user.persona_description && power_user.persona_description_position === persona_description_positions.IN_PROMPT) {
-        systemPrompts.push({ role: 'system', content: power_user.persona_description, identifier: 'personaDescription' });
+    const personaDescription = assemblyRuntime.macroContext
+        ? stringOrEmpty(assemblyRuntime.macroContext.character?.persona)
+        : power_user.persona_description;
+    const personaPosition = assemblyRuntime.macroContext
+        ? Number(assemblyRuntime.macroContext.character?.personaPosition)
+        : power_user.persona_description_position;
+    if (personaDescription && personaPosition === persona_description_positions.IN_PROMPT) {
+        systemPrompts.push({ role: 'system', content: personaDescription, identifier: 'personaDescription' });
     }
 
     const knownExtensionPrompts = [
@@ -1481,7 +2260,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
     }
 
     // This is the prompt order defined by the user
-    const prompts = promptManager.getPromptCollection(type);
+    const prompts = activePromptManager.getPromptCollection(type);
 
     // Merge system prompts with prompt manager prompts
     systemPrompts.forEach(prompt => {
@@ -1490,7 +2269,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
         // Apply system prompt role/depth overrides if they set in the prompt manager
         applyPromptManagerOverrides(prompt, collectionPrompt);
 
-        const newPrompt = promptManager.preparePrompt(prompt);
+        const newPrompt = activePromptManager.preparePrompt(prompt);
         const markerIndex = prompts.index(prompt.identifier);
 
         if (-1 !== markerIndex) prompts.collection[markerIndex] = newPrompt;
@@ -1499,21 +2278,21 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
 
     // Apply character-specific main prompt
     const systemPrompt = prompts.get('main') ?? null;
-    const isSystemPromptDisabled = promptManager.isPromptDisabledForActiveCharacter('main');
+    const isSystemPromptDisabled = activePromptManager.isPromptDisabledForActiveCharacter('main');
     if (systemPromptOverride && systemPrompt && systemPrompt.forbid_overrides !== true && !isSystemPromptDisabled) {
         const mainOriginalContent = systemPrompt.content;
         systemPrompt.content = systemPromptOverride;
-        const mainReplacement = promptManager.preparePrompt(systemPrompt, mainOriginalContent);
+        const mainReplacement = activePromptManager.preparePrompt(systemPrompt, mainOriginalContent);
         prompts.override(mainReplacement, prompts.index('main'));
     }
 
     // Apply character-specific jailbreak
     const jailbreakPrompt = prompts.get('jailbreak') ?? null;
-    const isJailbreakPromptDisabled = promptManager.isPromptDisabledForActiveCharacter('jailbreak');
+    const isJailbreakPromptDisabled = activePromptManager.isPromptDisabledForActiveCharacter('jailbreak');
     if (jailbreakPromptOverride && jailbreakPrompt && jailbreakPrompt.forbid_overrides !== true && !isJailbreakPromptDisabled) {
         const jbOriginalContent = jailbreakPrompt.content;
         jailbreakPrompt.content = jailbreakPromptOverride;
-        const jbReplacement = promptManager.preparePrompt(jailbreakPrompt, jbOriginalContent);
+        const jbReplacement = activePromptManager.preparePrompt(jailbreakPrompt, jbOriginalContent);
         prompts.override(jbReplacement, prompts.index('jailbreak'));
     }
 
@@ -1542,6 +2321,8 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
  * @param {object[]} content.messages - An array of messages to be used as chat history.
  * @param {string[]} content.messageExamples - An array of messages to be used as dialogue examples.
  * @param {boolean} [content.agentMode] Skip legacy frontend tool state for Agent-owned tool loops.
+ * @param {string|null} [content.agentSystemPrompt] Resolved Agent system prompt content.
+ * @param {string|null} [content.agentTaskPrompt] Invocation task prompt content.
  * @param dryRun - Whether this is a live call or not.
  * @returns {Promise<(any[]|boolean)[]>} An array where the first element is the prepared chat and the second element is a boolean flag.
  */
@@ -1563,14 +2344,28 @@ export async function prepareOpenAIMessages({
     messages,
     messageExamples,
     agentMode = false,
-}, dryRun) {
+    agentSystemPrompt = null,
+    agentTaskPrompt = null,
+}, dryRun, runtime = null) {
+    const assemblyRuntime = runtime
+        ? getPromptAssemblyRuntime({
+            ...runtime,
+            extensionPrompts: extensionPrompts ?? runtime.extensionPrompts ?? null,
+        })
+        : getPromptAssemblyRuntime();
+    if (!runtime && extensionPrompts) {
+        assemblyRuntime.extensionPrompts = normalizePromptAssemblyExtensionPrompts(extensionPrompts);
+    }
+    const activePromptManager = assemblyRuntime.promptManager;
+    const settings = assemblyRuntime.settings;
+
     // Without a character selected, there is no way to accurately calculate tokens
-    if (!promptManager.activeCharacter && dryRun) return [null, false];
+    if (!activePromptManager.activeCharacter && dryRun) return [null, false];
 
     const chatCompletion = new ChatCompletion();
     if (power_user.console_log_prompts) chatCompletion.enableLogging();
 
-    const userSettings = promptManager.serviceSettings;
+    const userSettings = activePromptManager.serviceSettings;
     chatCompletion.setTokenBudget(userSettings.openai_max_context, userSettings.openai_max_tokens);
 
     try {
@@ -1588,53 +2383,156 @@ export async function prepareOpenAIMessages({
             systemPromptOverride,
             jailbreakPromptOverride,
             type,
-        });
+        }, assemblyRuntime);
 
         const attachWarning = (message) => {
             console.warn(message);
             if (dryRun === false) {
-                toastr.warning(message);
+                assemblyRuntime.showToasts && toastr.warning(message);
             }
         };
 
         // Fill the chat completion with as much context as the budget allows
-        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, attachWarning, agentMode });
+        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentSystemPrompt, agentTaskPrompt }, assemblyRuntime);
     } catch (error) {
         if (error instanceof TokenBudgetExceededError) {
-            toastr.error(t`Mandatory prompts exceed the context size.`);
+            assemblyRuntime.showToasts && toastr.error(t`Mandatory prompts exceed the context size.`);
             chatCompletion.log('Mandatory prompts exceed the context size.');
-            promptManager.error = t`Not enough free tokens for mandatory prompts. Raise your token limit or disable custom prompts.`;
+            activePromptManager.error = t`Not enough free tokens for mandatory prompts. Raise your token limit or disable custom prompts.`;
         } else if (error instanceof InvalidCharacterNameError) {
-            toastr.warning(t`An error occurred while counting tokens: Invalid character name`);
+            assemblyRuntime.showToasts && toastr.warning(t`An error occurred while counting tokens: Invalid character name`);
             chatCompletion.log('Invalid character name');
-            promptManager.error = t`The name of at least one character contained whitespaces or special characters. Please check your user and character name.`;
+            activePromptManager.error = t`The name of at least one character contained whitespaces or special characters. Please check your user and character name.`;
         } else {
-            toastr.error(t`An unknown error occurred while counting tokens. Further information may be available in console.`);
+            assemblyRuntime.showToasts && toastr.error(t`An unknown error occurred while counting tokens. Further information may be available in console.`);
             chatCompletion.log('----- Unexpected error while preparing prompts -----');
             chatCompletion.log(error);
             chatCompletion.log(error.stack);
             chatCompletion.log('----------------------------------------------------');
         }
+        if (agentMode) {
+            throw error;
+        }
     } finally {
         // Pass chat completion to prompt manager for inspection
-        promptManager.setChatCompletion(chatCompletion);
+        if (assemblyRuntime.updatePromptManager) {
+            activePromptManager.setChatCompletion(chatCompletion);
+        }
 
-        if (oai_settings.squash_system_messages && dryRun == false) {
-            await chatCompletion.squashSystemMessages();
+        if (settings.squash_system_messages && dryRun == false) {
+            await chatCompletion.squashSystemMessages(assemblyRuntime.tokenHandler);
         }
 
         // All information is up-to-date, render.
-        if (false === dryRun) promptManager.render(false);
+        if (assemblyRuntime.renderPromptManager && false === dryRun) activePromptManager.render(false);
     }
 
     const chat = chatCompletion.getChat();
 
-    const eventData = { chat, dryRun };
-    await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, eventData);
+    if (assemblyRuntime.emitPromptReady) {
+        const eventData = { chat, dryRun };
+        await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, eventData);
+    }
 
-    openai_messages_count = chat.filter(x => !x?.tool_calls && ['user', 'assistant', 'tool'].includes(x?.role)).length || 0;
+    if (assemblyRuntime.emitPromptReady) {
+        openai_messages_count = chat.filter(x => !x?.tool_calls && ['user', 'assistant', 'tool'].includes(x?.role)).length || 0;
+    }
 
-    return [chat, promptManager.tokenHandler.counts];
+    return [chat, activePromptManager.tokenHandler.counts];
+}
+
+export async function assembleOpenAIChatCompletionPrompt({
+    settings,
+    model = null,
+    generationType = 'normal',
+    promptInputs,
+    macroContext = null,
+    jsonSchema = null,
+    agentMode = true,
+    agentSystemPrompt = null,
+    agentTaskPrompt = null,
+} = {}) {
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        throw new Error('prompt_assembly.settings_required: Prompt assembly requires chat-completion settings');
+    }
+    if (!promptInputs || typeof promptInputs !== 'object' || Array.isArray(promptInputs)) {
+        throw new Error('prompt_assembly.inputs_required: Prompt assembly requires promptInputs');
+    }
+
+    const normalizedGenerationType = String(generationType || promptInputs.type || 'normal').trim() || 'normal';
+    const resolvedModel = String(model || getChatCompletionModel(settings) || '').trim();
+    if (!resolvedModel) {
+        throw new Error('prompt_assembly.model_required: chat-completion settings did not resolve a model');
+    }
+    const extensionPrompts = normalizePromptAssemblyExtensionPrompts(promptInputs.extensionPrompts);
+    const assemblyPromptManager = createHeadlessChatCompletionPromptManager(settings, {
+        macroContext,
+        extensionPrompts,
+        model: resolvedModel,
+    });
+    const runtime = createPromptAssemblyRuntime({
+        promptManager: assemblyPromptManager,
+        settings: assemblyPromptManager.serviceSettings,
+        tokenHandler: assemblyPromptManager.tokenHandler,
+        macroContext,
+        extensionPrompts,
+        model: resolvedModel,
+        emitPromptReady: false,
+        updatePromptManager: true,
+        renderPromptManager: false,
+        showToasts: false,
+    });
+
+    const [messages, tokenCounts] = await prepareOpenAIMessages({
+        ...promptInputs,
+        type: normalizedGenerationType,
+        agentMode,
+        agentSystemPrompt,
+        agentTaskPrompt,
+    }, true, runtime);
+
+    if (!Array.isArray(messages)) {
+        throw new Error('prompt_assembly.messages_required: Prompt assembly did not produce chat-completion messages');
+    }
+
+    const { generate_data: chatCompletionPayload } = await createGenerationParameters(
+        runtime.settings,
+        resolvedModel,
+        normalizedGenerationType,
+        structuredClone(messages),
+        {
+            jsonSchema,
+            agentMode,
+            macroContext,
+            extensionPrompts,
+        },
+    );
+
+    return {
+        messages,
+        chatCompletionPayload,
+        tokenCounts,
+    };
+}
+
+/**
+ * Builds deterministic chat-completion settings for headless Agent prompt assembly.
+ * Saved OpenAI presets are deltas over SillyTavern's full settings object; Agent
+ * assembly cannot read the current UI state, so missing fields are filled from the
+ * canonical defaults before normal migration is applied.
+ *
+ * @param {Record<string, any>} settings Preset/effective chat-completion settings
+ * @returns {Record<string, any>} Normalized settings
+ */
+export function normalizeChatCompletionSettingsForPromptAssembly(settings) {
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        throw new Error('prompt_assembly.settings_required: Prompt assembly requires chat-completion settings');
+    }
+
+    const normalized = structuredClone(default_settings);
+    Object.assign(normalized, structuredClone(settings));
+    migrateChatCompletionSettings(normalized);
+    return normalized;
 }
 
 /**
@@ -1747,6 +2645,10 @@ export function getChatCompletionModel(settings = null) {
             return settings.groq_model;
         case chat_completion_sources.SILICONFLOW:
             return settings.siliconflow_model;
+        case chat_completion_sources.MINIMAX:
+            return settings.minimax_model;
+        case chat_completion_sources.AWS_BEDROCK:
+            return settings.aws_bedrock_model;
         case chat_completion_sources.ELECTRONHUB:
             return settings.electronhub_model;
         case chat_completion_sources.CHUTES:
@@ -1771,6 +2673,8 @@ export function getChatCompletionModel(settings = null) {
             return settings.azure_openai_model;
         case chat_completion_sources.ZAI:
             return settings.zai_model;
+        case chat_completion_sources.WORKERS_AI:
+            return settings.workers_ai_model;
         default:
             console.error(`Unknown chat completion source: ${source}`);
             return '';
@@ -1971,9 +2875,339 @@ function calculateChutesCost() {
     $('#chutes_max_prompt_cost').text(cost);
 }
 
+function getSourceModelSelect(source, { required = false } = {}) {
+    const control = getChatCompletionModelControl(source);
+    if (!control) {
+        if (required) {
+            throw new Error(`Model control is not registered for source: ${source}`);
+        }
+        return null;
+    }
+
+    const element = document.querySelector(control.selector);
+    if (!(element instanceof HTMLSelectElement)) {
+        if (required) {
+            throw new Error(`Model select control not found: ${control.selector}`);
+        }
+        return null;
+    }
+
+    return { control, element };
+}
+
+function getSelectModelOption(select, modelId) {
+    return Array.from(select.options).find(option => option.value === modelId && !isCustomModelActionValue(option.value)) ?? null;
+}
+
+function selectHasModelOption(select, modelId) {
+    return Boolean(getSelectModelOption(select, modelId));
+}
+
+function addCustomModelForSource(source, modelId) {
+    const { control, element } = getSourceModelSelect(source, { required: true });
+    if (!control.supportsCustomModels) {
+        throw new Error(`Custom models are not supported for source: ${source}`);
+    }
+
+    const normalizedModelId = normalizeCustomModelId(modelId);
+    const existingOption = getSelectModelOption(element, normalizedModelId);
+    if (existingOption && !existingOption.closest('[data-tauritavern-custom-models="true"]')) {
+        return normalizedModelId;
+    }
+
+    const models = getCustomModelsForSource(control.source);
+    if (!models.includes(normalizedModelId)) {
+        setCustomModelsForSource(control.source, [...models, normalizedModelId]);
+        saveSettingsDebounced();
+    }
+
+    return normalizedModelId;
+}
+
+export function addAndSelectCustomModelForSource(source, modelId) {
+    const normalizedModelId = addCustomModelForSource(source, modelId);
+    const { control, element } = getSourceModelSelect(source, { required: true });
+    applyCustomModelOptionsForSource(control.source);
+    $(element).val(normalizedModelId).trigger('change');
+    return normalizedModelId;
+}
+
+function isCustomModelValueForSource(source, value) {
+    const control = getChatCompletionModelControl(source);
+    if (!control?.supportsCustomModels || !value) {
+        return false;
+    }
+
+    if (getCustomModelsForSource(control.source).includes(value)) {
+        return true;
+    }
+
+    const element = document.querySelector(control.selector);
+    if (!(element instanceof HTMLSelectElement)) {
+        return false;
+    }
+
+    const option = getSelectModelOption(element, value);
+    return !option || Boolean(option.closest('[data-tauritavern-custom-models="true"]'));
+}
+
+function appendOption(parent, text, value) {
+    const option = new Option(text, value);
+    parent.append(option);
+    return option;
+}
+
+function applyCustomModelOptionsForSource(source) {
+    const selectEntry = getSourceModelSelect(source);
+    if (!selectEntry?.control.supportsCustomModels) {
+        return;
+    }
+
+    const { control, element } = selectEntry;
+    removeCustomModelOptionsForSource(source);
+
+    const customModels = getCustomModelsForSource(control.source);
+    const existingValues = new Set(Array.from(element.options).filter(option => !isCustomModelActionValue(option.value)).map(option => option.value));
+    const currentModel = String(oai_settings[control.settingKey] || '');
+    const customGroupModels = customModels.filter(modelId => !existingValues.has(modelId));
+
+    if (currentModel && !existingValues.has(currentModel) && !customGroupModels.includes(currentModel)) {
+        customGroupModels.unshift(currentModel);
+    }
+
+    if (customGroupModels.length > 0) {
+        const customGroup = document.createElement('optgroup');
+        customGroup.label = t`Custom Models`;
+        customGroup.dataset.tauritavernCustomModels = 'true';
+
+        for (const modelId of customGroupModels) {
+            appendOption(customGroup, modelId, modelId);
+        }
+
+        element.append(customGroup);
+    }
+
+    const actionGroup = document.createElement('optgroup');
+    actionGroup.label = t`Actions`;
+    actionGroup.dataset.tauritavernCustomModels = 'true';
+    appendOption(actionGroup, t`Manage custom models...`, manage_custom_chat_completion_models_option);
+    element.append(actionGroup);
+}
+
+function removeCustomModelOptionsForSource(source) {
+    const selectEntry = getSourceModelSelect(source);
+    if (!selectEntry) {
+        return;
+    }
+
+    selectEntry.element.querySelectorAll('[data-tauritavern-custom-models="true"]').forEach(node => node.remove());
+}
+
+function applyCustomModelOptionsToAllSources() {
+    for (const source of Object.keys(chatCompletionModelControls)) {
+        applyCustomModelOptionsForSource(source);
+    }
+}
+
+function chooseModelOrCurrentCustom(source, modelIds, currentModel, fallbackModel) {
+    if (!currentModel) {
+        return fallbackModel;
+    }
+
+    if (modelIds.includes(currentModel)) {
+        return currentModel;
+    }
+
+    const control = getChatCompletionModelControl(source);
+    if (control?.supportsCustomModels) {
+        return currentModel;
+    }
+
+    return fallbackModel;
+}
+
+function setModelSelectValue(source, value) {
+    const selectEntry = getSourceModelSelect(source);
+    if (!selectEntry) {
+        return;
+    }
+
+    applyCustomModelOptionsForSource(source);
+    $(selectEntry.element).val(value).trigger('change');
+}
+
+async function handleCustomModelSelectAction(select, value) {
+    if (!isCustomModelActionValue(value)) {
+        return false;
+    }
+
+    const control = getChatCompletionModelControlByElement(select);
+    if (!control?.supportsCustomModels) {
+        throw new Error(`Custom model action selected for unsupported control: ${select.id}`);
+    }
+
+    const previousValue = String(oai_settings[control.settingKey] || '');
+    applyCustomModelOptionsForSource(control.source);
+    $(select).val(previousValue);
+
+    if (value === manage_custom_chat_completion_models_option) {
+        const selectedModelId = await showCustomModelManager(control.source);
+        applyCustomModelOptionsForSource(control.source);
+        $(select).val(selectedModelId || String(oai_settings[control.settingKey] || ''));
+        if (selectedModelId) {
+            $(select).trigger('change');
+        }
+        return true;
+    }
+
+    throw new Error(`Unknown custom model action: ${value}`);
+}
+
+async function showCustomModelManager(source) {
+    const control = getChatCompletionModelControl(source);
+    if (!control?.supportsCustomModels) {
+        throw new Error(`Custom models are not supported for source: ${source}`);
+    }
+
+    const root = document.createElement('div');
+    root.classList.add('custom-model-manager', 'flex-container', 'flexFlowColumn', 'gap10px');
+
+    const header = document.createElement('h3');
+    header.textContent = t`Custom Models: ${control.label}`;
+    root.append(header);
+
+    const inputRow = document.createElement('div');
+    inputRow.classList.add('flex-container', 'gap5px');
+
+    const input = document.createElement('input');
+    input.classList.add('text_pole', 'flex1');
+    input.type = 'text';
+    input.placeholder = t`Model ID`;
+    input.autocomplete = 'off';
+    inputRow.append(input);
+
+    const addButton = document.createElement('div');
+    addButton.classList.add('menu_button', 'fa-solid', 'fa-plus', 'fa-fw');
+    addButton.title = t`Add`;
+    addButton.dataset.i18n = '[title]Add';
+    inputRow.append(addButton);
+
+    root.append(inputRow);
+
+    const list = document.createElement('div');
+    list.classList.add('custom-model-manager-list', 'flex-container', 'flexFlowColumn', 'gap5px');
+    root.append(list);
+
+    let draftModels = [...getCustomModelsForSource(control.source)];
+    let lastAddedModelId = null;
+
+    const renderList = () => {
+        list.replaceChildren();
+
+        for (const modelId of draftModels) {
+            const row = document.createElement('div');
+            row.classList.add('custom-model-manager-row', 'flex-container', 'alignItemsBaseline', 'gap5px');
+
+            const label = document.createElement('span');
+            label.classList.add('flex1');
+            label.textContent = modelId;
+            row.append(label);
+
+            const deleteButton = document.createElement('div');
+            deleteButton.classList.add('menu_button', 'menu_button_icon', 'fa-solid', 'fa-trash-can', 'fa-fw');
+            deleteButton.title = t`Delete`;
+            deleteButton.dataset.i18n = '[title]Delete';
+            deleteButton.addEventListener('click', async () => {
+                const currentModel = String(oai_settings[control.settingKey] || '');
+                if (modelId === currentModel && isCustomModelValueForSource(control.source, modelId)) {
+                    await Popup.show.text(t`Cannot delete current custom model`, t`Switch to another model before deleting it.`);
+                    return;
+                }
+
+                draftModels = draftModels.filter(model => model !== modelId);
+                renderList();
+            });
+            row.append(deleteButton);
+
+            list.append(row);
+        }
+    };
+
+    const addDraftModel = ({ selectExisting = false } = {}) => {
+        try {
+            const modelId = normalizeCustomModelId(input.value);
+            const selectEntry = getSourceModelSelect(control.source);
+            const existingOption = selectEntry ? getSelectModelOption(selectEntry.element, modelId) : null;
+            if (existingOption && !existingOption.closest('[data-tauritavern-custom-models="true"]')) {
+                if (selectExisting) {
+                    lastAddedModelId = modelId;
+                    input.value = '';
+                    return true;
+                }
+                toastr.info(t`Custom model already exists.`);
+                input.focus();
+                return false;
+            }
+            if (draftModels.includes(modelId)) {
+                if (!selectExisting) {
+                    toastr.info(t`Custom model already exists.`);
+                }
+                lastAddedModelId = modelId;
+                input.value = '';
+                input.focus();
+                return true;
+            }
+            draftModels = [...draftModels, modelId];
+            lastAddedModelId = modelId;
+            input.value = '';
+            renderList();
+            return true;
+        } catch (error) {
+            toastr.error(error instanceof Error ? error.message : String(error));
+            input.focus();
+            return false;
+        }
+    };
+
+    addButton.addEventListener('click', addDraftModel);
+    input.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') {
+            return;
+        }
+        event.preventDefault();
+        addDraftModel();
+    });
+
+    renderList();
+
+    const result = await callGenericPopup(root, POPUP_TYPE.CONFIRM, '', {
+        okButton: t`Save`,
+        cancelButton: t`Cancel`,
+        leftAlign: true,
+        onOpen: () => input.focus(),
+        onClosing: (popup) => {
+            if (popup.result !== POPUP_RESULT.AFFIRMATIVE || !input.value.trim()) {
+                return true;
+            }
+
+            return addDraftModel({ selectExisting: true });
+        },
+    });
+
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return null;
+    }
+
+    setCustomModelsForSource(control.source, draftModels);
+    saveSettingsDebounced();
+    toastr.success(t`Custom models saved.`);
+    return lastAddedModelId && draftModels.includes(lastAddedModelId) ? lastAddedModelId : null;
+}
+
 function saveModelList(data) {
     model_list = data.map((model) => ({ ...model }));
     model_list.sort((a, b) => a?.id && b?.id && a.id.localeCompare(b.id));
+    removeCustomModelOptionsForSource(oai_settings.chat_completion_source);
 
     if (oai_settings.chat_completion_source == chat_completion_sources.OPENROUTER) {
         model_list = openRouterSortBy(model_list, oai_settings.openrouter_sort_models);
@@ -1986,7 +3220,7 @@ function saveModelList(data) {
             appendOpenRouterOptions(model_list);
         }
 
-        $('#model_openrouter_select').val(oai_settings.openrouter_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.OPENROUTER, oai_settings.openrouter_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.OPENAI) {
@@ -1998,10 +3232,15 @@ function saveModelList(data) {
                     text: model.id,
                 }));
         });
-        // If the selected model is not in the list, revert to default
+        // Preserve explicit custom models even when the provider list does not include them.
         if (oai_settings.show_external_models) {
-            const model = model_list.findIndex((model) => model.id == oai_settings.openai_model) !== -1 ? oai_settings.openai_model : default_settings.openai_model;
-            $('#model_openai_select').val(model).trigger('change');
+            const model = chooseModelOrCurrentCustom(
+                chat_completion_sources.OPENAI,
+                model_list.map(model => model.id),
+                oai_settings.openai_model,
+                default_settings.openai_model,
+            );
+            setModelSelectValue(chat_completion_sources.OPENAI, model);
         }
     }
 
@@ -2032,22 +3271,26 @@ function saveModelList(data) {
             oai_settings.aimlapi_model = chatModels[0].id;
         }
 
-        $('#model_aimlapi_select').val(oai_settings.aimlapi_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.AIMLAPI, oai_settings.aimlapi_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.MISTRALAI) {
         $('#model_mistralai_select').empty();
 
-        for (const model of model_list.filter(model => model?.capabilities?.completion_chat)) {
+        const chatModels = model_list.filter(model => model?.capabilities?.completion_chat);
+
+        for (const model of chatModels) {
             $('#model_mistralai_select').append(new Option(model.id, model.id));
         }
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.mistralai_model);
-        if (!selectedModel) {
-            oai_settings.mistralai_model = model_list.find(model => model?.capabilities?.completion_chat)?.id;
-        }
+        oai_settings.mistralai_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.MISTRALAI,
+            chatModels.map(model => model.id),
+            oai_settings.mistralai_model,
+            chatModels[0]?.id || '',
+        );
 
-        $('#model_mistralai_select').val(oai_settings.mistralai_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.MISTRALAI, oai_settings.mistralai_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.ELECTRONHUB) {
@@ -2060,12 +3303,14 @@ function saveModelList(data) {
         const groupedList = oai_settings.electronhub_group_models ? electronHubGroupByVendor(model_list) : model_list;
         appendElectronHubOptions(groupedList, oai_settings.electronhub_group_models);
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.electronhub_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.electronhub_model)) {
-            oai_settings.electronhub_model = model_list[0].id;
-        }
+        oai_settings.electronhub_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.ELECTRONHUB,
+            model_list.map(model => model.id),
+            oai_settings.electronhub_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_electronhub_select').val(oai_settings.electronhub_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.ELECTRONHUB, oai_settings.electronhub_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.CHUTES) {
@@ -2081,12 +3326,14 @@ function saveModelList(data) {
             $('#model_chutes_select').append(option);
         }
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.chutes_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.chutes_model)) {
-            oai_settings.chutes_model = model_list[0].id;
-        }
+        oai_settings.chutes_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.CHUTES,
+            model_list.map(model => model.id),
+            oai_settings.chutes_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_chutes_select').val(oai_settings.chutes_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.CHUTES, oai_settings.chutes_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.NANOGPT) {
@@ -2099,12 +3346,14 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.nanogpt_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.nanogpt_model)) {
-            oai_settings.nanogpt_model = model_list[0].id;
-        }
+        oai_settings.nanogpt_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.NANOGPT,
+            model_list.map(model => model.id),
+            oai_settings.nanogpt_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_nanogpt_select').val(oai_settings.nanogpt_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.NANOGPT, oai_settings.nanogpt_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.DEEPSEEK) {
@@ -2117,12 +3366,110 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.deepseek_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.deepseek_model)) {
-            oai_settings.deepseek_model = model_list[0].id;
-        }
+        oai_settings.deepseek_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.DEEPSEEK,
+            model_list.map(model => model.id),
+            oai_settings.deepseek_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_deepseek_select').val(oai_settings.deepseek_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.DEEPSEEK, oai_settings.deepseek_model);
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+        // Dynamic Bedrock catalog wins over the static <optgroup> placeholders
+        // in index.html. The backend attaches TauriTavern Bedrock metadata to
+        // every catalog entry; the UI only renders that contract instead of
+        // re-implementing provider/model-family support checks in JavaScript.
+        const select = $('#model_aws_bedrock_select');
+        select.empty();
+
+        const appendOption = (parent, model) => {
+            const metadata = getAwsBedrockEntryMetadata(model);
+            const supported = isAwsBedrockModelSupported(model);
+            const option = new Option(
+                supported ? model.id : `${model.id}  (unsupported, coming soon)`,
+                model.id,
+            );
+            if (!supported) {
+                option.disabled = true;
+                option.title = metadata?.unsupportedReason || 'Unsupported by the built-in AWS Bedrock adapter';
+            }
+            if (metadata?.family) {
+                option.dataset.tauritavernBedrockFamily = metadata.family;
+            }
+            parent.append(option);
+        };
+
+        const groupBy = (entries, fn) => {
+            const groups = new Map();
+            entries.forEach(entry => {
+                const key = fn(entry);
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(entry);
+            });
+            return groups;
+        };
+
+        const PROVIDER_LABELS = {
+            anthropic: 'Anthropic (Claude)',
+            amazon: 'Amazon (Nova / Titan)',
+            meta: 'Meta (Llama)',
+            mistral: 'Mistral',
+            cohere: 'Cohere',
+            ai21: 'AI21',
+            deepseek: 'DeepSeek',
+        };
+        const providerLabel = (provider) => PROVIDER_LABELS[provider] || provider || 'Other';
+
+        const renderSection = (heading, entries) => {
+            if (entries.length === 0) return;
+            const byProvider = groupBy(entries, e => String(e.provider || 'unknown').toLowerCase());
+            // Wired providers (anthropic first, then the others alphabetically)
+            // float to the top so the working models are always visible without
+            // scrolling; unsupported providers stay at the bottom.
+            const wiredOrder = ['anthropic', 'amazon', 'meta', 'mistral', 'cohere', 'ai21', 'deepseek'];
+            const rankOf = (provider) => {
+                const wired = wiredOrder.indexOf(provider);
+                return wired >= 0 ? wired : wiredOrder.length;
+            };
+            const sortedProviders = [...byProvider.keys()].sort((a, b) => {
+                const ra = rankOf(a);
+                const rb = rankOf(b);
+                if (ra !== rb) return ra - rb;
+                return a.localeCompare(b);
+            });
+            sortedProviders.forEach(provider => {
+                const group = $('<optgroup>').attr(
+                    'label',
+                    `${heading} — ${providerLabel(provider)}`,
+                );
+                byProvider.get(provider).forEach(model => appendOption(group, model));
+                select.append(group);
+            });
+        };
+
+        const inferenceProfiles = model_list.filter(m => m?.source === 'inference-profile');
+        const foundationModels = model_list.filter(m => m?.source === 'foundation-model');
+        const ungrouped = model_list.filter(m => m?.source !== 'foundation-model' && m?.source !== 'inference-profile');
+
+        renderSection('Cross-region inference profiles', inferenceProfiles);
+        renderSection('Foundation models', foundationModels);
+        ungrouped.forEach(model => appendOption(select, model));
+
+        // When picking a default, prefer a *supported* model so the first run
+        // works out-of-the-box. Falls back to anything if Anthropic isn't
+        // available in the user's region.
+        const supportedIds = model_list.filter(isAwsBedrockModelSupported).map(m => m.id);
+        const allIds = model_list.map(m => m.id);
+        oai_settings.aws_bedrock_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.AWS_BEDROCK,
+            allIds,
+            oai_settings.aws_bedrock_model,
+            supportedIds[0] || allIds[0] || oai_settings.aws_bedrock_model || '',
+        );
+
+        setModelSelectValue(chat_completion_sources.AWS_BEDROCK, oai_settings.aws_bedrock_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.POLLINATIONS) {
@@ -2135,12 +3482,14 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.pollinations_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.pollinations_model)) {
-            oai_settings.pollinations_model = model_list[0].id;
-        }
+        oai_settings.pollinations_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.POLLINATIONS,
+            model_list.map(model => model.id),
+            oai_settings.pollinations_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_pollinations_select').val(oai_settings.pollinations_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.POLLINATIONS, oai_settings.pollinations_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.MAKERSUITE) {
@@ -2172,12 +3521,14 @@ function saveModelList(data) {
             }
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.google_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.google_model)) {
-            oai_settings.google_model = model_list[0].id;
-        }
+        oai_settings.google_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.MAKERSUITE,
+            model_list.map(model => model.id),
+            oai_settings.google_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_google_select').val(oai_settings.google_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.MAKERSUITE, oai_settings.google_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.GROQ) {
@@ -2190,12 +3541,14 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.groq_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.groq_model)) {
-            oai_settings.groq_model = model_list[0].id;
-        }
+        oai_settings.groq_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.GROQ,
+            model_list.map(model => model.id),
+            oai_settings.groq_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_groq_select').val(oai_settings.groq_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.GROQ, oai_settings.groq_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.SILICONFLOW) {
@@ -2208,12 +3561,14 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.siliconflow_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.siliconflow_model)) {
-            oai_settings.siliconflow_model = model_list[0].id;
-        }
+        oai_settings.siliconflow_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.SILICONFLOW,
+            model_list.map(model => model.id),
+            oai_settings.siliconflow_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_siliconflow_select').val(oai_settings.siliconflow_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.SILICONFLOW, oai_settings.siliconflow_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.FIREWORKS) {
@@ -2229,12 +3584,35 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.fireworks_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.fireworks_model)) {
-            oai_settings.fireworks_model = model_list[0].id;
-        }
+        const chatModels = model_list.filter(model => model?.supports_chat);
+        oai_settings.fireworks_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.FIREWORKS,
+            chatModels.map(model => model.id),
+            oai_settings.fireworks_model,
+            chatModels[0]?.id || '',
+        );
 
-        $('#model_fireworks_select').val(oai_settings.fireworks_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.FIREWORKS, oai_settings.fireworks_model);
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.WORKERS_AI) {
+        $('#model_workers_ai_select').empty();
+        model_list.forEach((model) => {
+            $('#model_workers_ai_select').append(
+                $('<option>', {
+                    value: model.id,
+                    text: model.id,
+                }));
+        });
+
+        oai_settings.workers_ai_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.WORKERS_AI,
+            model_list.map(model => model.id),
+            oai_settings.workers_ai_model,
+            model_list[0]?.id || '',
+        );
+
+        setModelSelectValue(chat_completion_sources.WORKERS_AI, oai_settings.workers_ai_model);
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.COMETAPI) {
@@ -2251,13 +3629,19 @@ function saveModelList(data) {
             $('#model_cometapi_select').append(new Option(model.id, model.id));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.cometapi_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.cometapi_model)) {
-            oai_settings.cometapi_model = model_list[0].id;
+        const cometModels = model_list.filter(model => !COMETAPI_IGNORE_PATTERNS.some(pattern => model.id.toLowerCase().includes(pattern)));
+        const nextCometModel = chooseModelOrCurrentCustom(
+            chat_completion_sources.COMETAPI,
+            cometModels.map(model => model.id),
+            oai_settings.cometapi_model,
+            cometModels[0]?.id || '',
+        );
+        if (nextCometModel !== oai_settings.cometapi_model) {
+            oai_settings.cometapi_model = nextCometModel;
             saveSettingsDebounced();
         }
 
-        $('#model_cometapi_select').val(oai_settings.cometapi_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.COMETAPI, oai_settings.cometapi_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.AZURE_OPENAI) {
@@ -2280,12 +3664,14 @@ function saveModelList(data) {
                 }));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.xai_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.xai_model)) {
-            oai_settings.xai_model = model_list[0].id;
-        }
+        oai_settings.xai_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.XAI,
+            model_list.map(model => model.id),
+            oai_settings.xai_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_xai_select').val(oai_settings.xai_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.XAI, oai_settings.xai_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.MOONSHOT) {
@@ -2294,12 +3680,14 @@ function saveModelList(data) {
             $('#model_moonshot_select').append(new Option(model.id, model.id));
         });
 
-        const selectedModel = model_list.find(model => model.id === oai_settings.moonshot_model);
-        if (model_list.length > 0 && (!selectedModel || !oai_settings.moonshot_model)) {
-            oai_settings.moonshot_model = model_list[0].id;
-        }
+        oai_settings.moonshot_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.MOONSHOT,
+            model_list.map(model => model.id),
+            oai_settings.moonshot_model,
+            model_list[0]?.id || '',
+        );
 
-        $('#model_moonshot_select').val(oai_settings.moonshot_model).trigger('change');
+        setModelSelectValue(chat_completion_sources.MOONSHOT, oai_settings.moonshot_model);
     }
 }
 
@@ -2505,6 +3893,7 @@ function getReasoningEffort(settings = null, model = null) {
         chat_completion_sources.COMETAPI,
         chat_completion_sources.ELECTRONHUB,
         chat_completion_sources.CHUTES,
+        chat_completion_sources.AWS_BEDROCK,
     ];
 
     if (!reasoningEffortSources.includes(settings.chat_completion_source)) {
@@ -2512,6 +3901,46 @@ function getReasoningEffort(settings = null, model = null) {
     }
 
     function resolveReasoningEffort() {
+        function resolveMaximumReasoningEffort() {
+            if (settings.chat_completion_source === chat_completion_sources.DEEPSEEK || settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+                return reasoning_effort_types.max;
+            }
+            return reasoning_effort_types.high;
+        }
+
+        function isOpenAiXHighReasoningModel(modelName) {
+            const normalizedModel = String(modelName ?? '').trim().toLowerCase();
+            if (/^gpt-5\.1-codex-max(?:$|-)/.test(normalizedModel)) {
+                return true;
+            }
+
+            const gpt5MinorMatch = /^gpt-5\.(\d+)/.exec(normalizedModel);
+            if (gpt5MinorMatch) {
+                return Number(gpt5MinorMatch[1]) >= 2;
+            }
+
+            const gptMajorMatch = /^gpt-(\d+)/.exec(normalizedModel);
+            return gptMajorMatch ? Number(gptMajorMatch[1]) > 5 : false;
+        }
+
+        function isCustomOpenAiReasoningFormat() {
+            const customApiFormat = settings.custom_api_format || custom_api_formats.OPENAI_COMPAT;
+            return [custom_api_formats.OPENAI_COMPAT, custom_api_formats.OPENAI_RESPONSES].includes(customApiFormat);
+        }
+
+        function supportsXHighReasoningEffort() {
+            if ([chat_completion_sources.OPENAI, chat_completion_sources.AZURE_OPENAI].includes(settings.chat_completion_source)) {
+                return isOpenAiXHighReasoningModel(model);
+            }
+            if (settings.chat_completion_source === chat_completion_sources.CUSTOM && isCustomOpenAiReasoningFormat()) {
+                return isOpenAiXHighReasoningModel(model);
+            }
+            if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+                return /(?:^|\.)claude-opus-4-(?:7|8)(?:\b|-)/.test(model);
+            }
+            return false;
+        }
+
         switch (settings.reasoning_effort) {
             case reasoning_effort_types.auto:
                 return undefined;
@@ -2520,9 +3949,11 @@ function getReasoningEffort(settings = null, model = null) {
                     ? reasoning_effort_types.min
                     : reasoning_effort_types.low;
             case reasoning_effort_types.max:
-                return settings.chat_completion_source === chat_completion_sources.DEEPSEEK
-                    ? reasoning_effort_types.max
-                    : reasoning_effort_types.high;
+                return resolveMaximumReasoningEffort();
+            case reasoning_effort_types.xhigh:
+                return supportsXHighReasoningEffort()
+                    ? reasoning_effort_types.xhigh
+                    : resolveMaximumReasoningEffort();
             default:
                 return settings.reasoning_effort;
         }
@@ -2540,6 +3971,10 @@ function getReasoningEffort(settings = null, model = null) {
             }
             return undefined;
         }
+    }
+
+    if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+        return getAwsBedrockModelCapabilities(model)?.reasoning ? reasoningEffort : undefined;
     }
 
     return reasoningEffort;
@@ -2567,10 +4002,10 @@ function getVerbosity(settings = null) {
  * @param {string} model Model name
  * @param {string} type Request type (impersonate, quiet, continue, etc)
  * @param {ChatCompletionMessage[]} messages Array of chat completion messages
- * @param {import('../script.js').AdditionalRequestOptions & { agentMode?: boolean }} options Additional request options
+ * @param {import('../script.js').AdditionalRequestOptions & { agentMode?: boolean; macroContext?: object|null; extensionPrompts?: object|null }} options Additional request options
  * @returns {Promise<object>} Final generation parameters object appropriate for the chat completion source
  */
-export async function createGenerationParameters(settings, model, type, messages, { jsonSchema = null, agentMode = false } = {}) {
+export async function createGenerationParameters(settings, model, type, messages, { jsonSchema = null, agentMode = false, macroContext = null, extensionPrompts = null } = {}) {
     // HACK: Filter out null and non-object messages
     if (!Array.isArray(messages)) {
         throw new Error('messages must be an array');
@@ -2648,10 +4083,12 @@ export async function createGenerationParameters(settings, model, type, messages
     ];
 
     const isO1 = gptSources.includes(settings.chat_completion_source) && ['o1-2024-12-17', 'o1'].includes(model);
-    const stream = !agentMode && settings.stream_openai && type !== 'quiet' && !isO1;
+    const isWorkersAIJsonMode = settings.chat_completion_source === chat_completion_sources.WORKERS_AI && jsonSchema;
+    const stream = !agentMode && settings.stream_openai && type !== 'quiet' && !isO1 && !isWorkersAIJsonMode;
 
     const noMultiSwipeTypes = ['quiet', 'impersonate', 'continue'];
     const canMultiSwipe = !agentMode && settings.n > 1 && !noMultiSwipeTypes.includes(type) && multiswipeSources.includes(settings.chat_completion_source);
+    const macroNames = macroContext?.names && typeof macroContext.names === 'object' ? macroContext.names : null;
 
     let logit_bias = {};
     if (settings.bias_preset_selected
@@ -2680,9 +4117,9 @@ export async function createGenerationParameters(settings, model, type, messages
         'stop': getCustomStoppingStrings(openai_max_stop_strings),
         'chat_completion_source': settings.chat_completion_source,
         'n': canMultiSwipe ? settings.n : undefined,
-        'user_name': name1,
-        'char_name': name2,
-        'group_names': getGroupNames(),
+        'user_name': macroNames ? stringOrEmpty(macroNames.user) : name1,
+        'char_name': macroNames ? stringOrEmpty(macroNames.char) : name2,
+        'group_names': macroNames ? splitPromptAssemblyGroupNames(macroNames.group) : getGroupNames(),
         'include_reasoning': Boolean(settings.show_thoughts),
         'reasoning_effort': getReasoningEffort(settings, model),
         'enable_web_search': Boolean(settings.enable_web_search),
@@ -2742,8 +4179,8 @@ export async function createGenerationParameters(settings, model, type, messages
         // Don't add a prefill on quiet gens (summarization) and when using continue prefill.
         if (type !== 'quiet' && !(type === 'continue' && settings.continue_prefill)) {
             generate_data.assistant_prefill = type === 'impersonate'
-                ? substituteParams(settings.assistant_impersonation)
-                : substituteParams(settings.assistant_prefill);
+                ? substitutePromptParams(settings.assistant_impersonation, {}, { macroContext, extensionPrompts, model })
+                : substitutePromptParams(settings.assistant_prefill, {}, { macroContext, extensionPrompts, model });
         }
     }
 
@@ -2776,12 +4213,11 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.stop = getCustomStoppingStrings(); // Mistral shouldn't have limits on stop strings.
     }
 
+    applyAdditionalParametersToRequest(generate_data, settings);
+
     if (settings.chat_completion_source === chat_completion_sources.CUSTOM) {
         generate_data.custom_url = settings.custom_url;
         generate_data.custom_api_format = settings.custom_api_format;
-        generate_data.custom_include_body = settings.custom_include_body;
-        generate_data.custom_exclude_body = settings.custom_exclude_body;
-        generate_data.custom_include_headers = settings.custom_include_headers;
         generate_data.custom_claude_prompt_caching =
             settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES
             && Boolean(settings.custom_claude_prompt_caching);
@@ -2859,12 +4295,55 @@ export async function createGenerationParameters(settings, model, type, messages
         delete generate_data.frequency_penalty;
     }
 
+    if (settings.chat_completion_source === chat_completion_sources.SILICONFLOW) {
+        generate_data.siliconflow_endpoint = settings.siliconflow_endpoint || SILICONFLOW_ENDPOINT.GLOBAL;
+    }
+
+    if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+        const capabilities = getAwsBedrockModelCapabilities(settings.aws_bedrock_model);
+        generate_data.aws_bedrock_region = (settings.aws_bedrock_region || AWS_BEDROCK_REGION_DEFAULT).trim();
+        generate_data.top_k = Number(settings.top_k_openai);
+        generate_data.use_sysprompt = settings.use_sysprompt;
+        generate_data.stop = getCustomStoppingStrings();
+        if (!capabilities?.webSearch) {
+            generate_data.enable_web_search = false;
+        }
+        // Custom invoke template escape hatch — only forwarded when the user
+        // has explicitly opted in so the backend can keep its automatic
+        // provider dispatch for everyone else.
+        if (settings.aws_bedrock_use_custom_template) {
+            generate_data.aws_bedrock_use_custom_template = true;
+            generate_data.aws_bedrock_custom_template = String(settings.aws_bedrock_custom_template || '');
+            generate_data.aws_bedrock_custom_response_path = String(settings.aws_bedrock_custom_response_path || '').trim();
+            generate_data.aws_bedrock_custom_stream_path = String(settings.aws_bedrock_custom_stream_path || '').trim();
+        }
+    }
+
+    if (settings.chat_completion_source === chat_completion_sources.MINIMAX) {
+        generate_data.minimax_endpoint = settings.minimax_endpoint || MINIMAX_ENDPOINT.GLOBAL;
+        if (Number.isFinite(generate_data.temperature)) {
+            generate_data.temperature = clamp(generate_data.temperature, Number.EPSILON, 1.0);
+        }
+    }
+
+    if (settings.chat_completion_source === chat_completion_sources.WORKERS_AI) {
+        generate_data.workers_ai_account_id = settings.workers_ai_account_id;
+        generate_data.top_k = settings.top_k_openai > 0 ? Math.min(Number(settings.top_k_openai), 50) : undefined;
+        generate_data.repetition_penalty = Number(settings.repetition_penalty_openai);
+        generate_data.seed = settings.seed >= 1 ? Number(settings.seed) : undefined;
+        generate_data.top_p = Math.max(Number(settings.top_p_openai), 0.001);
+        delete generate_data.n;
+        delete generate_data.logit_bias;
+    }
+
     // https://docs.nano-gpt.com/api-reference/endpoint/chat-completion#temperature-&-nucleus
     if (settings.chat_completion_source === chat_completion_sources.NANOGPT) {
         generate_data.top_k = Number(settings.top_k_openai);
         generate_data.min_p = Number(settings.min_p_openai);
         generate_data.repetition_penalty = Number(settings.repetition_penalty_openai);
         generate_data.top_a = Number(settings.top_a_openai);
+        generate_data.nanogpt_provider = settings.nanogpt_provider || '';
+        generate_data.nanogpt_payg_override = Boolean(settings.nanogpt_payg_override);
     }
 
     // https://platform.moonshot.ai/docs/api/chat#public-service-address
@@ -3042,7 +4521,9 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
     const isCustomClaudeMessages = chat_completion_source === chat_completion_sources.CUSTOM
         && oai_settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES;
 
-    if (chat_completion_source === chat_completion_sources.CLAUDE || isCustomClaudeMessages) {
+    if (chat_completion_source === chat_completion_sources.CLAUDE
+        || chat_completion_source === chat_completion_sources.AWS_BEDROCK
+        || isCustomClaudeMessages) {
         if (show_thoughts) {
             state.reasoning += data?.delta?.thinking || '';
         }
@@ -3095,7 +4576,7 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
             }
         });
         return data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? '';
-    } else if ([chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES].includes(chat_completion_source)) {
+    } else if ([chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES, chat_completion_sources.WORKERS_AI].includes(chat_completion_source)) {
         if (show_thoughts) {
             state.reasoning +=
                 data.choices?.filter(x => x?.delta?.reasoning_content)?.[0]?.delta?.reasoning_content ??
@@ -3334,6 +4815,8 @@ class Message {
     tool_call = null;
     /** @type {string?} */
     signature = null;
+    /** @type {string?} */
+    reasoning = null;
     /** @type {any?} */
     native = null;
     /** @type {string?} */
@@ -3366,11 +4849,11 @@ class Message {
      * @param {string} identifier
      * @returns {Promise<Message>} Message instance
      */
-    static async createAsync(role, content, identifier) {
+    static async createAsync(role, content, identifier, messageTokenHandler = tokenHandler) {
         const message = new Message(role, content, identifier);
 
         if (typeof message.content === 'string' && message.content.length > 0) {
-            message.tokens = await tokenHandler.countAsync({ role: message.role, content: message.content });
+            message.tokens = await messageTokenHandler.countAsync({ role: message.role, content: message.content });
         }
 
         return message;
@@ -3380,9 +4863,10 @@ class Message {
      * Reconstruct the message from a tool invocation.
      * @param {import('./tool-calling.js').ToolInvocation[]} invocations - The tool invocations to reconstruct the message from.
      * @param {boolean} includeSignature Whether to include the signature in the tool calls.
+     * @param {boolean} includeReasoning Whether to include plaintext reasoning fallback.
      * @returns {Promise<void>}
      */
-    async setToolCalls(invocations, includeSignature) {
+    async setToolCalls(invocations, includeSignature, includeReasoning = false, messageTokenHandler = tokenHandler) {
         this.tool_calls = invocations.map(i => ({
             id: i.id,
             type: 'function',
@@ -3392,7 +4876,13 @@ class Message {
             },
             ...(includeSignature && i.signature ? { signature: i.signature } : {}),
         }));
-        this.tokens = await tokenHandler.countAsync({ role: this.role, tool_calls: JSON.stringify(this.tool_calls) });
+        const fallbackReasoning = invocations.find(i => typeof i.reasoning === 'string' && i.reasoning.length > 0)?.reasoning || null;
+        this.reasoning = includeReasoning ? fallbackReasoning : null;
+        this.tokens = await messageTokenHandler.countAsync({
+            role: this.role,
+            tool_calls: JSON.stringify(this.tool_calls),
+            ...(this.reasoning ? { reasoning: this.reasoning } : {}),
+        });
     }
 
     /**
@@ -3400,9 +4890,9 @@ class Message {
      * @param {string} name Name to set for the message.
      * @returns {Promise<void>}
      */
-    async setName(name) {
+    async setName(name, messageTokenHandler = tokenHandler) {
         this.name = name;
-        this.tokens = await tokenHandler.countAsync({ role: this.role, content: this.content, name: this.name });
+        this.tokens = await messageTokenHandler.countAsync({ role: this.role, content: this.content, name: this.name });
     }
 
     /**
@@ -3425,7 +4915,7 @@ class Message {
      * @param {string} image Image URL or Data URL.
      * @returns {Promise<void>}
      */
-    async addImage(image) {
+    async addImage(image, settings = oai_settings) {
         this.content = this.ensureContentIsArray();
         const isDataUrl = isDataURL(image);
         if (!isDataUrl) {
@@ -3440,9 +4930,9 @@ class Message {
             }
         }
 
-        image = await this.compressImage(image);
+        image = await this.compressImage(image, settings);
 
-        const quality = oai_settings.inline_image_quality || default_settings.inline_image_quality;
+        const quality = settings.inline_image_quality || default_settings.inline_image_quality;
         this.content.push({ type: 'image_url', image_url: { 'url': image, 'detail': quality } });
 
         try {
@@ -3459,7 +4949,7 @@ class Message {
      * @param {string} video Video URL or Data URL.
      * @returns {Promise<void>}
      */
-    async addVideo(video) {
+    async addVideo(video, settings = oai_settings) {
         this.content = this.ensureContentIsArray();
         const isDataUrl = isDataURL(video);
         if (!isDataUrl) {
@@ -3475,7 +4965,7 @@ class Message {
         }
 
         // Note: No compression for videos (unlike images)
-        const quality = oai_settings.inline_image_quality || default_settings.inline_image_quality;
+        const quality = settings.inline_image_quality || default_settings.inline_image_quality;
         this.content.push({ type: 'video_url', video_url: { 'url': video, 'detail': quality } });
 
         try {
@@ -3528,7 +5018,7 @@ class Message {
      * @param {string} image Data URL of the image.
      * @returns {Promise<string>} Compressed image as a Data URL.
      */
-    async compressImage(image) {
+    async compressImage(image, settings = oai_settings) {
         const compressImageSources = [
             chat_completion_sources.OPENROUTER,
             chat_completion_sources.MAKERSUITE,
@@ -3539,7 +5029,7 @@ class Message {
         const dataSize = image.length * 0.75;
         const safeMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
         const mimeType = image?.split(';')?.[0]?.split(':')?.[1];
-        if (compressImageSources.includes(oai_settings.chat_completion_source) && dataSize > sizeThreshold) {
+        if (compressImageSources.includes(settings.chat_completion_source) && dataSize > sizeThreshold) {
             const maxSide = 2048;
             image = await createThumbnail(image, maxSide, maxSide);
         } else if (!safeMimeTypes.includes(mimeType)) {
@@ -3593,8 +5083,8 @@ class Message {
      * @param {Object} prompt - The prompt object.
      * @returns {Promise<Message>} A new instance of Message.
      */
-    static fromPromptAsync(prompt) {
-        return Message.createAsync(prompt.role, prompt.content, prompt.identifier);
+    static fromPromptAsync(prompt, messageTokenHandler = tokenHandler) {
+        return Message.createAsync(prompt.role, prompt.content, prompt.identifier, messageTokenHandler);
     }
 
     /**
@@ -3643,6 +5133,7 @@ class MessageCollection {
                     ...(message.tool_calls && { tool_calls: message.tool_calls }),
                     ...(message.role === 'tool' && { tool_call_id: message.identifier }),
                     ...(message.signature && { signature: message.signature }),
+                    ...(message.reasoning && { reasoning: message.reasoning }),
                     ...(message.native && { native: message.native }),
                     ...(message.reasoningContent && { reasoning_content: message.reasoningContent }),
                 });
@@ -3724,8 +5215,8 @@ export class ChatCompletion {
      * Combines consecutive system messages into one if they have no name attached.
      * @returns {Promise<void>}
      */
-    async squashSystemMessages() {
-        const excludeList = ['newMainChat', 'newChat', 'groupNudge'];
+    async squashSystemMessages(messageTokenHandler = tokenHandler) {
+        const excludeList = ['newMainChat', 'newChat', 'groupNudge', AGENT_SYSTEM_PROMPT_IDENTIFIER];
         this.messages.collection = this.messages.flatten();
 
         let lastMessage = null;
@@ -3744,7 +5235,7 @@ export class ChatCompletion {
             if (shouldSquash(message)) {
                 if (lastMessage && shouldSquash(lastMessage)) {
                     lastMessage.content += '\n' + message.content;
-                    lastMessage.tokens = await tokenHandler.countAsync({ role: lastMessage.role, content: lastMessage.content });
+                    lastMessage.tokens = await messageTokenHandler.countAsync({ role: lastMessage.role, content: lastMessage.content });
                 }
                 else {
                     squashedMessages.push(message);
@@ -3937,6 +5428,7 @@ export class ChatCompletion {
                     ...(item.tool_calls ? { tool_calls: item.tool_calls } : {}),
                     ...(item.role === 'tool' ? { tool_call_id: item.identifier } : {}),
                     ...(item.signature ? { signature: item.signature } : {}),
+                    ...(item.reasoning ? { reasoning: item.reasoning } : {}),
                     ...(item.native ? { native: item.native } : {}),
                     ...(item.reasoningContent ? { reasoning_content: item.reasoningContent } : {}),
                 };
@@ -4078,8 +5570,10 @@ export class ChatCompletion {
 /**
  * Migrate old Chat Completion settings to new format.
  * @param {ChatCompletionSettings} settings Settings to migrate
+ * @returns {boolean} True if settings were changed
  */
 function migrateChatCompletionSettings(settings) {
+    let changed = false;
     const migrateMap = [
         { oldKey: 'names_in_completion', oldValue: true, newKey: 'names_behavior', newValue: character_names_behavior.COMPLETION },
         { oldKey: 'chat_completion_source', oldValue: 'palm', newKey: 'chat_completion_source', newValue: chat_completion_sources.MAKERSUITE },
@@ -4101,12 +5595,75 @@ function migrateChatCompletionSettings(settings) {
                 : settings[migration.oldKey] === migration.oldValue;
             if (shouldMigrate) {
                 settings[migration.newKey] = migration.newValue;
+                changed = true;
             }
             if (migration.oldKey !== migration.newKey) {
                 delete settings[migration.oldKey];
+                changed = true;
             }
         }
     }
+
+    if (migrateAdditionalParameters(settings)) {
+        changed = true;
+    }
+
+    if (migrateCustomModels(settings)) {
+        changed = true;
+    }
+
+    return changed;
+}
+
+function migrateCustomModels(settings) {
+    const previous = JSON.stringify(settings.custom_models_by_source ?? null);
+
+    if (settings.custom_models_by_source === undefined) {
+        settings.custom_models_by_source = {};
+    }
+
+    normalizeKnownCustomModelsStore(settings);
+
+    return previous !== JSON.stringify(settings.custom_models_by_source);
+}
+
+function migrateAdditionalParameters(settings) {
+    let changed = false;
+
+    if (settings.additional_parameters_by_source === undefined) {
+        settings.additional_parameters_by_source = {};
+        changed = true;
+    }
+
+    const store = getAdditionalParametersStore(settings);
+    for (const key of Object.keys(store)) {
+        store[key] = normalizeAdditionalParametersEntry(store[key]);
+    }
+
+    const currentVersion = Number(settings.additional_parameters_migration_version || 0);
+    if (currentVersion >= additional_parameters_migration_version) {
+        return changed;
+    }
+
+    const legacy = getLegacyAdditionalParameters(settings);
+    const hasLegacyValues = Object.values(legacy).some(value => value.trim().length > 0);
+
+    if (hasLegacyValues) {
+        const sourceKey = getAdditionalParametersSourceKey(settings);
+        const entry = getAdditionalParametersForSource(settings, sourceKey);
+
+        for (const key of ['include_body', 'exclude_body', 'include_headers']) {
+            if (!entry[key].trim() && legacy[key].trim()) {
+                entry[key] = legacy[key];
+                changed = true;
+            }
+        }
+    }
+
+    settings.additional_parameters_migration_version = additional_parameters_migration_version;
+    changed = true;
+
+    return changed;
 }
 
 function resolveChatCompletionSourceSelectValue(settings) {
@@ -4273,7 +5830,7 @@ function loadOpenAISettings(data, settings) {
     });
     openai_setting_names = settingNames;
 
-    migrateChatCompletionSettings(settings);
+    const settingsMigrated = migrateChatCompletionSettings(settings);
 
     for (const key of Object.keys(default_settings)) {
         oai_settings[key] = settings[key] ?? default_settings[key];
@@ -4308,6 +5865,7 @@ function loadOpenAISettings(data, settings) {
     $('#bind_preset_to_connection').prop('checked', oai_settings.bind_preset_to_connection);
     $('#openai_external_category').toggle(oai_settings.show_external_models);
     $('.reverse_proxy_warning').toggle(oai_settings.reverse_proxy !== '');
+    $('#aws_bedrock_custom_template_section').toggleClass('displayNone', !oai_settings.aws_bedrock_use_custom_template);
 
     // Don't display Service Account JSON in textarea - it's stored in backend secrets
     $('#vertexai_service_account_json').val('');
@@ -4333,13 +5891,21 @@ function loadOpenAISettings(data, settings) {
 
     setNamesBehaviorControls();
     setContinuePostfixControls();
+    setToolReasoningControls();
+    ToolManager.RECURSE_LIMIT = oai_settings.tool_call_recurse_limit;
 
     $('#openrouter_providers_chat').trigger('change');
     $('#openrouter_quantizations_chat').trigger('change');
+    $('#nanogpt_provider').trigger('change');
     syncChatCompletionSourceSelector();
     enforceIosPolicyChatCompletionSourceSelector();
+    applyCustomModelOptionsToAllSources();
     $('#chat_completion_source').trigger('change');
     updateCustomEndpointPreview();
+
+    if (settingsMigrated) {
+        saveSettingsDebounced();
+    }
 }
 
 function setNamesBehaviorControls() {
@@ -4388,13 +5954,24 @@ function setContinuePostfixControls() {
     $('#continue_postfix_display').text(checkedItemText);
 }
 
+function setToolReasoningControls() {
+    const isEnabled = oai_settings.show_thoughts;
+    $('#tool_reasoning_mode').prop('disabled', !isEnabled);
+    $('#openrouter_interleaved_thinking_disabled_hint').toggle(!isEnabled);
+}
+
 async function getStatusOpen() {
+    if (isConnectionValidationSuspended()) {
+        return resultCheckStatus();
+    }
+
     const noValidateSources = [
         chat_completion_sources.CLAUDE,
         chat_completion_sources.AI21,
         chat_completion_sources.VERTEXAI,
         chat_completion_sources.PERPLEXITY,
         chat_completion_sources.ZAI,
+        chat_completion_sources.MINIMAX,
     ];
     if (noValidateSources.includes(oai_settings.chat_completion_source)) {
         let status = t`Key saved; press \"Test Message\" to verify.`;
@@ -4420,6 +5997,11 @@ async function getStatusOpen() {
         proxy_password: oai_settings.proxy_password,
         chat_completion_source: oai_settings.chat_completion_source,
     };
+    const secretKey = resolveSecretKey();
+    const activeSecret = Array.isArray(secret_state[secretKey]) ? secret_state[secretKey].find(secret => secret.active) : null;
+    if (activeSecret) {
+        data.secret_id = activeSecret.id;
+    }
 
     const validateProxySources = [
         chat_completion_sources.CLAUDE,
@@ -4436,17 +6018,34 @@ async function getStatusOpen() {
         await validateReverseProxy();
     }
 
+    applyAdditionalParametersToRequest(data, oai_settings, { includeBody: false });
+
     if (oai_settings.chat_completion_source === chat_completion_sources.CUSTOM) {
         $('.model_custom_select').empty();
         data.custom_api_format = oai_settings.custom_api_format;
         data.custom_url = oai_settings.custom_url;
-        data.custom_include_headers = oai_settings.custom_include_headers;
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.AZURE_OPENAI) {
         data.azure_base_url = oai_settings.azure_base_url;
         data.azure_deployment_name = oai_settings.azure_deployment_name;
         data.azure_api_version = oai_settings.azure_api_version;
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.SILICONFLOW) {
+        data.siliconflow_endpoint = oai_settings.siliconflow_endpoint;
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.MINIMAX) {
+        data.minimax_endpoint = oai_settings.minimax_endpoint;
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+        data.aws_bedrock_region = (oai_settings.aws_bedrock_region || AWS_BEDROCK_REGION_DEFAULT).trim();
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.WORKERS_AI) {
+        data.workers_ai_account_id = oai_settings.workers_ai_account_id;
     }
 
     const canBypass = (oai_settings.chat_completion_source === chat_completion_sources.OPENAI && oai_settings.bypass_status_check) || oai_settings.chat_completion_source === chat_completion_sources.CUSTOM;
@@ -4699,7 +6298,7 @@ async function onPresetImportFileChange(e) {
         return;
     }
 
-    const fields = sensitiveFields.filter(field => presetBody[field]).map(field => `<b>${field}</b>`);
+    const fields = sensitiveFields.filter(field => hasSensitiveFieldValue(presetBody[field])).map(field => `<b>${field}</b>`);
     const shouldConfirm = fields.length > 0;
 
     if (shouldConfirm) {
@@ -4761,6 +6360,17 @@ async function onPresetImportFileChange(e) {
         option.innerText = data.name;
         $('#settings_preset_openai').append(option).trigger('change');
     }
+
+    try {
+        const { maybePromptForPresetEmbeddedProfiles } = await import('./tauri/agent-profiles/embedded-import.js');
+        await maybePromptForPresetEmbeddedProfiles({ apiId: 'openai', name: data.name, preset: presetBody });
+        const { maybePromptForPresetEmbeddedSkills } = await import('./tauri/agent-skills/embedded-import.js');
+        await maybePromptForPresetEmbeddedSkills({ apiId: 'openai', name: data.name, preset: presetBody });
+    } catch (error) {
+        console.error('Failed to start embedded Agent asset import prompt for OpenAI preset', error);
+        const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
+        toastr.error(message, t`Agent embedded import failed`);
+    }
 }
 
 async function onExportPresetClick() {
@@ -4771,7 +6381,9 @@ async function onExportPresetClick() {
 
     const preset = structuredClone(openai_settings[openai_setting_names[oai_settings.preset_settings_openai]]);
 
-    const fieldValues = sensitiveFields.filter(field => preset[field]).map(field => `<b>${field}</b>: <code>${preset[field]}</code>`);
+    const fieldValues = sensitiveFields
+        .filter(field => hasSensitiveFieldValue(preset[field]))
+        .map(field => `<b>${field}</b>: <code>${formatSensitiveFieldValue(preset[field])}</code>`);
     if (fieldValues.length > 0) {
         const textHeader = t`Your preset contains proxy and/or custom endpoint settings.`;
         const textMessage = '<div>' + t`Do you want to remove these fields before exporting?` + `</div><br>${DOMPurify.sanitize(fieldValues.join('<br>'))}`;
@@ -4889,6 +6501,8 @@ async function onDeletePresetClick() {
         toastr.warning(t`Preset was not deleted from server`);
     } else {
         toastr.success(t`Preset deleted`);
+        const { clearPresetSkillImportReminders } = await import('./tauri/agent-skills/reminders.js');
+        clearPresetSkillImportReminders('openai', nameToDelete);
         await eventSource.emit(event_types.PRESET_DELETED, { apiId: 'openai', name: nameToDelete });
     }
 
@@ -4923,9 +6537,12 @@ function onSettingsPresetChange() {
     const presetName = $('#settings_preset_openai').find(':selected').text();
     oai_settings.preset_settings_openai = presetName;
 
-    const preset = structuredClone(openai_settings[openai_setting_names[oai_settings.preset_settings_openai]]);
+    const presetIndex = openai_setting_names[oai_settings.preset_settings_openai];
+    const preset = structuredClone(openai_settings[presetIndex]);
 
-    migrateChatCompletionSettings(preset);
+    if (migrateChatCompletionSettings(preset)) {
+        openai_settings[presetIndex] = structuredClone(preset);
+    }
 
     const updateInput = (selector, value) => $(selector).val(value).trigger('input', { source: 'preset' });
     const updateCheckbox = (selector, value) => $(selector).prop('checked', value).trigger('input', { source: 'preset' });
@@ -4967,9 +6584,11 @@ function onSettingsPresetChange() {
         // These cannot be changed via preset if unbound to connection
         if (oai_settings.bind_preset_to_connection) {
             syncChatCompletionSourceSelector();
+            applyCustomModelOptionsToAllSources();
             $('#chat_completion_source').trigger('change');
             $('#openrouter_providers_chat').trigger('change');
             $('#openrouter_quantizations_chat').trigger('change');
+            $('#nanogpt_provider').trigger('change');
         }
 
         $('#openai_logit_bias_preset').trigger('change');
@@ -5314,17 +6933,37 @@ function getNanoGptMaxContext(model, isUnlocked) {
     return max_128k;
 }
 
+/**
+ * Get the maximum context size for the Workers AI model
+ * @param {string} model Model identifier
+ * @param {boolean} isUnlocked Whether context limits are unlocked
+ * @returns {number} Maximum context size in tokens
+ */
+function getWorkersAiMaxContext(model, isUnlocked) {
+    if (isUnlocked) {
+        return unlocked_max;
+    }
+
+    const modelInfo = Array.isArray(model_list) && model_list.find(m => m.id === model);
+    const contextProperty = Array.isArray(modelInfo?.properties) && modelInfo.properties.find(p => p.property_id === 'context_window');
+    const contextLength = contextProperty ? Number(contextProperty.value) : max_8k;
+    return contextLength || max_8k;
+}
+
 async function onModelChange() {
     biasCache = undefined;
     let value = String($(this).val() || '');
+    if (this instanceof HTMLSelectElement && await handleCustomModelSelectAction(this, value)) {
+        return;
+    }
 
     // Skip setting the context size for sources that get it from external APIs
     const hasModelsLoaded = Array.isArray(model_list) && model_list.length > 0;
 
     if ($(this).is('#model_claude_select')) {
-        if (value.includes('-v')) {
+        if (value.includes('-v') && !isCustomModelValueForSource(chat_completion_sources.CLAUDE, value)) {
             value = value.replace('-v', '-');
-        } else if (value === '' || value === 'claude-2') {
+        } else if (value === '' || (value === 'claude-2' && !isCustomModelValueForSource(chat_completion_sources.CLAUDE, value))) {
             value = default_settings.claude_model;
         }
         console.log('Claude model changed to', value);
@@ -5339,17 +6978,18 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_openrouter_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.OPENROUTER, value))) {
             console.debug('Null OR model selected. Ignoring.');
             return;
         }
 
         console.log('OpenRouter model changed to', value);
         oai_settings.openrouter_model = value;
+        syncOpenRouterProvidersForModel(value, '#openrouter_providers_chat');
     }
 
     if ($(this).is('#model_ai21_select')) {
-        if (value === '' || value.startsWith('j2-')) {
+        if (value === '' || (value.startsWith('j2-') && !isCustomModelValueForSource(chat_completion_sources.AI21, value))) {
             value = 'jamba-large';
             $('#model_ai21_select').val(value);
         }
@@ -5374,7 +7014,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_mistralai_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.MISTRALAI, value))) {
             console.debug('Null MistralAI model selected. Ignoring.');
             return;
         }
@@ -5394,7 +7034,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_groq_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.GROQ, value))) {
             console.debug('Null Groq model selected. Ignoring.');
             return;
         }
@@ -5411,8 +7051,26 @@ async function onModelChange() {
         oai_settings.siliconflow_model = value;
     }
 
+    if ($(this).is('#model_minimax_select')) {
+        if (!value) {
+            console.debug('Null MiniMax model selected. Ignoring.');
+            return;
+        }
+        console.log('MiniMax model changed to', value);
+        oai_settings.minimax_model = value;
+    }
+
+    if ($(this).is('#model_aws_bedrock_select')) {
+        if (!value) {
+            console.debug('Null AWS Bedrock model selected. Ignoring.');
+            return;
+        }
+        console.log('AWS Bedrock model changed to', value);
+        oai_settings.aws_bedrock_model = value;
+    }
+
     if ($(this).is('#model_electronhub_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.ELECTRONHUB, value))) {
             console.debug('Null ElectronHub model selected. Ignoring.');
             return;
         }
@@ -5421,7 +7079,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_chutes_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.CHUTES, value))) {
             console.debug('Null Chutes model selected. Ignoring.');
             return;
         }
@@ -5430,13 +7088,14 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_nanogpt_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.NANOGPT, value))) {
             console.debug('Null NanoGPT model selected. Ignoring.');
             return;
         }
 
         console.log('NanoGPT model changed to', value);
         oai_settings.nanogpt_model = value;
+        syncNanoGptProvidersForModel(value, '#nanogpt_provider');
     }
 
     if ($(this).is('#model_deepseek_select')) {
@@ -5461,7 +7120,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_aimlapi_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.AIMLAPI, value))) {
             console.debug('Null AI/ML model selected. Ignoring.');
             return;
         }
@@ -5479,7 +7138,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_moonshot_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.MOONSHOT, value))) {
             console.debug('Null Moonshot model selected. Ignoring.');
             return;
         }
@@ -5488,7 +7147,7 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_fireworks_select')) {
-        if (!value || !hasModelsLoaded) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.FIREWORKS, value))) {
             console.debug('Null Fireworks model selected. Ignoring.');
             return;
         }
@@ -5516,6 +7175,15 @@ async function onModelChange() {
     if ($(this).is('#model_zai_select')) {
         console.log('ZAI model changed to', value);
         oai_settings.zai_model = value;
+    }
+
+    if ($(this).is('#model_workers_ai_select')) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.WORKERS_AI, value))) {
+            console.debug('Null Workers AI model selected. Ignoring.');
+            return;
+        }
+        console.log('Workers AI model changed to', value);
+        oai_settings.workers_ai_model = value;
     }
 
     if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(oai_settings.chat_completion_source)) {
@@ -5574,7 +7242,7 @@ async function onModelChange() {
     if (oai_settings.chat_completion_source == chat_completion_sources.CLAUDE) {
         if (oai_settings.max_context_unlocked) {
             $('#openai_max_context').attr('max', unlocked_max);
-        } else if (/^claude-(sonnet-4-5|sonnet-4-6|opus-4-6|opus-4-7)/.test(value)) {
+        } else if (/^claude-(sonnet-4-5|sonnet-4-6|opus-4-6|opus-4-7|opus-4-8)/.test(value)) {
             $('#openai_max_context').attr('max', max_1mil);
         } else if (/^claude-(3|opus|haiku|sonnet)/.test(value)) {
             $('#openai_max_context').attr('max', max_200k);
@@ -5749,6 +7417,14 @@ async function onModelChange() {
         $('#temp_openai').attr('max', oai_max_temp).val(oai_settings.temp_openai).trigger('input');
     }
 
+    if (oai_settings.chat_completion_source === chat_completion_sources.WORKERS_AI) {
+        $('#openai_max_context').attr('max', getWorkersAiMaxContext(oai_settings.workers_ai_model, oai_settings.max_context_unlocked));
+        oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
+        $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
+        oai_settings.temp_openai = Math.min(workers_ai_max_temp, oai_settings.temp_openai);
+        $('#temp_openai').attr('max', workers_ai_max_temp).val(oai_settings.temp_openai).trigger('input');
+    }
+
     if (oai_settings.chat_completion_source === chat_completion_sources.COMETAPI) {
         $('#openai_max_context').attr('max', oai_settings.max_context_unlocked ? unlocked_max : max_128k);
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
@@ -5838,6 +7514,24 @@ async function onModelChange() {
         $('#temp_openai').attr('max', oai_max_temp).val(oai_settings.temp_openai).trigger('input');
     }
 
+    if (oai_settings.chat_completion_source === chat_completion_sources.MINIMAX) {
+        const maxContext = oai_settings.minimax_model === 'M2-her' ? 65536 : 204800;
+        $('#openai_max_context').attr('max', maxContext);
+        oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
+        $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
+        oai_settings.temp_openai = Math.min(claude_max_temp, oai_settings.temp_openai);
+        $('#temp_openai').attr('max', claude_max_temp).val(oai_settings.temp_openai).trigger('input');
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+        const maxContext = max_200k;
+        $('#openai_max_context').attr('max', maxContext);
+        oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
+        $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
+        oai_settings.temp_openai = Math.min(claude_max_temp, oai_settings.temp_openai);
+        $('#temp_openai').attr('max', claude_max_temp).val(oai_settings.temp_openai).trigger('input');
+    }
+
     if (oai_settings.chat_completion_source == chat_completion_sources.ZAI) {
         const maxContext = getZaiMaxContext(oai_settings.zai_model, oai_settings.max_context_unlocked);
         $('#openai_max_context').attr('max', maxContext);
@@ -5885,6 +7579,10 @@ function onReverseProxyInput() {
 async function onConnectButtonClick(e) {
     e.stopPropagation();
 
+    if (isConnectionValidationSuspended()) {
+        return;
+    }
+
     /** @type {Object.<string, {key: string, selector: string, proxy?: boolean, keyless?: boolean}>} */
     const apiSourceConfig = {
         [chat_completion_sources.OPENROUTER]: { key: SECRET_KEYS.OPENROUTER, selector: '#api_key_openrouter', proxy: false },
@@ -5910,6 +7608,9 @@ async function onConnectButtonClick(e) {
         [chat_completion_sources.ZAI]: { key: SECRET_KEYS.ZAI, selector: '#api_key_zai', proxy: true },
         [chat_completion_sources.CHUTES]: { key: SECRET_KEYS.CHUTES, selector: '#api_key_chutes', proxy: false },
         [chat_completion_sources.POLLINATIONS]: { key: SECRET_KEYS.POLLINATIONS, selector: '#api_key_pollinations', proxy: false },
+        [chat_completion_sources.WORKERS_AI]: { key: SECRET_KEYS.WORKERS_AI, selector: '#api_key_workers_ai', proxy: false },
+        [chat_completion_sources.MINIMAX]: { key: SECRET_KEYS.MINIMAX, selector: '#api_key_minimax', proxy: false },
+        [chat_completion_sources.AWS_BEDROCK]: { key: SECRET_KEYS.AWS_BEDROCK, selector: '#api_key_aws_bedrock', proxy: false },
     };
 
     // Vertex AI Express version - use API key
@@ -5945,6 +7646,8 @@ async function onConnectButtonClick(e) {
 }
 
 function toggleChatCompletionForms() {
+    applyCustomModelOptionsForSource(oai_settings.chat_completion_source);
+
     if (oai_settings.chat_completion_source == chat_completion_sources.CLAUDE) {
         $('#model_claude_select').trigger('change');
     }
@@ -5988,6 +7691,12 @@ function toggleChatCompletionForms() {
     else if (oai_settings.chat_completion_source == chat_completion_sources.SILICONFLOW) {
         $('#model_siliconflow_select').trigger('change');
     }
+    else if (oai_settings.chat_completion_source == chat_completion_sources.MINIMAX) {
+        $('#model_minimax_select').trigger('change');
+    }
+    else if (oai_settings.chat_completion_source == chat_completion_sources.AWS_BEDROCK) {
+        $('#model_aws_bedrock_select').trigger('change');
+    }
     else if (oai_settings.chat_completion_source == chat_completion_sources.ELECTRONHUB) {
         $('#model_electronhub_select').trigger('change');
     }
@@ -6024,6 +7733,9 @@ function toggleChatCompletionForms() {
     else if (oai_settings.chat_completion_source == chat_completion_sources.ZAI) {
         $('#model_zai_select').trigger('change');
     }
+    else if (oai_settings.chat_completion_source == chat_completion_sources.WORKERS_AI) {
+        $('#model_workers_ai_select').trigger('change');
+    }
 
     $('[data-source]').each(function () {
         const mode = $(this).data('source-mode');
@@ -6031,6 +7743,8 @@ function toggleChatCompletionForms() {
         const matchesSource = validSources.includes(oai_settings.chat_completion_source);
         $(this).toggle(mode !== 'except' ? matchesSource : !matchesSource);
     });
+
+    setToolReasoningControls();
 }
 
 async function testApiConnection() {
@@ -6051,6 +7765,11 @@ async function testApiConnection() {
 }
 
 function reconnectOpenAi() {
+    if (isConnectionValidationSuspended()) {
+        cancelStatusCheck('OpenAI reconnection deferred');
+        return;
+    }
+
     if (main_api == 'openai') {
         setOnlineStatus('no_connection');
         resultCheckStatus();
@@ -6067,19 +7786,20 @@ function onProxyPasswordShowClick() {
 
 async function onCustomizeParametersClick() {
     const template = $(await renderTemplateAsync('customEndpointAdditionalParameters'));
+    const parameters = getAdditionalParametersForSource(oai_settings);
 
-    template.find('#custom_include_body').val(oai_settings.custom_include_body).on('input', function () {
-        oai_settings.custom_include_body = String($(this).val());
+    template.find('#custom_include_body').val(parameters.include_body).on('input', function () {
+        parameters.include_body = String($(this).val());
         saveSettingsDebounced();
     });
 
-    template.find('#custom_exclude_body').val(oai_settings.custom_exclude_body).on('input', function () {
-        oai_settings.custom_exclude_body = String($(this).val());
+    template.find('#custom_exclude_body').val(parameters.exclude_body).on('input', function () {
+        parameters.exclude_body = String($(this).val());
         saveSettingsDebounced();
     });
 
-    template.find('#custom_include_headers').val(oai_settings.custom_include_headers).on('input', function () {
-        oai_settings.custom_include_headers = String($(this).val());
+    template.find('#custom_include_headers').val(parameters.include_headers).on('input', function () {
+        parameters.include_headers = String($(this).val());
         saveSettingsDebounced();
     });
 
@@ -6090,12 +7810,12 @@ async function onCustomizeParametersClick() {
  * Check if the model supports image inlining
  * @returns {boolean} True if the model supports image inlining
  */
-export function isImageInliningSupported() {
+export function isImageInliningSupported(settings = oai_settings) {
     if (main_api !== 'openai') {
         return false;
     }
 
-    if (!oai_settings.media_inlining) {
+    if (!settings.media_inlining) {
         return false;
     }
 
@@ -6156,52 +7876,58 @@ export function isImageInliningSupported() {
         'zai-org/GLM-4.5V',
     ];
 
-    switch (oai_settings.chat_completion_source) {
+    switch (settings.chat_completion_source) {
         case chat_completion_sources.OPENAI:
         case chat_completion_sources.AZURE_OPENAI: {
-            const modelToCheck = oai_settings.chat_completion_source === chat_completion_sources.AZURE_OPENAI
-                ? oai_settings.azure_openai_model
-                : oai_settings.openai_model;
+            const modelToCheck = settings.chat_completion_source === chat_completion_sources.AZURE_OPENAI
+                ? settings.azure_openai_model
+                : settings.openai_model;
             return visionSupportedModels.some(model =>
                 modelToCheck.includes(model)
                 && ['gpt-4-turbo-preview', 'o1-mini', 'o3-mini'].some(x => !modelToCheck.includes(x)),
             );
         }
         case chat_completion_sources.MAKERSUITE:
-            return visionSupportedModels.some(model => oai_settings.google_model.includes(model));
+            return visionSupportedModels.some(model => settings.google_model.includes(model));
         case chat_completion_sources.VERTEXAI:
-            return visionSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
+            return visionSupportedModels.some(model => settings.vertexai_model.includes(model));
         case chat_completion_sources.CLAUDE:
-            return visionSupportedModels.some(model => oai_settings.claude_model.includes(model));
+            return visionSupportedModels.some(model => settings.claude_model.includes(model));
         case chat_completion_sources.OPENROUTER:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.openrouter_model)?.architecture?.input_modalities?.includes('image'));
+            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.openrouter_model)?.architecture?.input_modalities?.includes('image'));
         case chat_completion_sources.CUSTOM:
             return true;
         case chat_completion_sources.MISTRALAI:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.mistralai_model)?.capabilities?.vision);
+            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.mistralai_model)?.capabilities?.vision);
         case chat_completion_sources.COHERE:
-            return visionSupportedModels.some(model => oai_settings.cohere_model.includes(model));
+            return visionSupportedModels.some(model => settings.cohere_model.includes(model));
         case chat_completion_sources.XAI:
             // TODO: xAI's /models endpoint doesn't return modality info
-            return visionSupportedModels.some(model => oai_settings.xai_model.includes(model));
+            return visionSupportedModels.some(model => settings.xai_model.includes(model));
         case chat_completion_sources.AIMLAPI:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.aimlapi_model)?.features?.includes('openai/chat-completion.vision'));
+            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.aimlapi_model)?.features?.includes('openai/chat-completion.vision'));
         case chat_completion_sources.CHUTES:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.chutes_model)?.input_modalities?.includes('image'));
+            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.chutes_model)?.input_modalities?.includes('image'));
         case chat_completion_sources.ELECTRONHUB:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.electronhub_model)?.metadata?.vision);
+            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.electronhub_model)?.metadata?.vision);
         case chat_completion_sources.POLLINATIONS:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.pollinations_model)?.input_modalities?.includes('image'));
+            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.pollinations_model)?.input_modalities?.includes('image'));
         case chat_completion_sources.COMETAPI:
             return true;
         case chat_completion_sources.MOONSHOT:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.moonshot_model)?.supports_image_in);
+            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.moonshot_model)?.supports_image_in);
         case chat_completion_sources.NANOGPT:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.nanogpt_model)?.capabilities?.vision);
+            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.nanogpt_model)?.capabilities?.vision);
+        case chat_completion_sources.AWS_BEDROCK:
+            return Boolean(getAwsBedrockModelCapabilities(settings.aws_bedrock_model)?.images);
         case chat_completion_sources.ZAI:
-            return visionSupportedModels.some(model => oai_settings.zai_model.includes(model));
+            return visionSupportedModels.some(model => settings.zai_model.includes(model));
         case chat_completion_sources.SILICONFLOW:
-            return visionSupportedModels.some(model => oai_settings.siliconflow_model.includes(model));
+            return visionSupportedModels.some(model => settings.siliconflow_model.includes(model));
+        case chat_completion_sources.WORKERS_AI: {
+            const model = Array.isArray(model_list) && model_list.find(m => m.id === settings.workers_ai_model);
+            return Boolean(model && Array.isArray(model.properties) && model.properties.some(p => p.property_id === 'vision' && p.value === 'true'));
+        }
         default:
             return false;
     }
@@ -6211,12 +7937,12 @@ export function isImageInliningSupported() {
  * Check if the model supports video inlining
  * @returns {boolean} True if the model supports video inlining
  */
-export function isVideoInliningSupported() {
+export function isVideoInliningSupported(settings = oai_settings) {
     if (main_api !== 'openai') {
         return false;
     }
 
-    if (!oai_settings.media_inlining) {
+    if (!settings.media_inlining) {
         return false;
     }
 
@@ -6231,15 +7957,15 @@ export function isVideoInliningSupported() {
         'glm-4.6v',
     ];
 
-    switch (oai_settings.chat_completion_source) {
+    switch (settings.chat_completion_source) {
         case chat_completion_sources.MAKERSUITE:
-            return videoSupportedModels.some(model => oai_settings.google_model.includes(model));
+            return videoSupportedModels.some(model => settings.google_model.includes(model));
         case chat_completion_sources.VERTEXAI:
-            return videoSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
+            return videoSupportedModels.some(model => settings.vertexai_model.includes(model));
         case chat_completion_sources.OPENROUTER:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.openrouter_model)?.architecture?.input_modalities?.includes('video'));
+            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.openrouter_model)?.architecture?.input_modalities?.includes('video'));
         case chat_completion_sources.ZAI:
-            return videoSupportedModels.some(model => oai_settings.zai_model.includes(model));
+            return videoSupportedModels.some(model => settings.zai_model.includes(model));
         default:
             return false;
     }
@@ -6249,12 +7975,12 @@ export function isVideoInliningSupported() {
  * Check if the model supports video inlining
  * @returns {boolean} True if the model supports audio inlining
  */
-export function isAudioInliningSupported() {
+export function isAudioInliningSupported(settings = oai_settings) {
     if (main_api !== 'openai') {
         return false;
     }
 
-    if (!oai_settings.media_inlining) {
+    if (!settings.media_inlining) {
         return false;
     }
 
@@ -6271,20 +7997,47 @@ export function isAudioInliningSupported() {
         'gpt-realtime',
     ];
 
-    switch (oai_settings.chat_completion_source) {
+    switch (settings.chat_completion_source) {
         case chat_completion_sources.OPENAI:
-            return audioSupportedModels.some(model => oai_settings.openai_model.includes(model));
+            return audioSupportedModels.some(model => settings.openai_model.includes(model));
         case chat_completion_sources.MAKERSUITE:
-            return audioSupportedModels.some(model => oai_settings.google_model.includes(model));
+            return audioSupportedModels.some(model => settings.google_model.includes(model));
         case chat_completion_sources.VERTEXAI:
-            return audioSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
+            return audioSupportedModels.some(model => settings.vertexai_model.includes(model));
         case chat_completion_sources.OPENROUTER:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.openrouter_model)?.architecture?.input_modalities?.includes('audio'));
+            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.openrouter_model)?.architecture?.input_modalities?.includes('audio'));
         case chat_completion_sources.CUSTOM:
             return true;
         default:
             return false;
     }
+}
+
+/**
+ * Gets the tool-call reasoning forwarding mode.
+ * @param {ChatCompletionSettings} settings Settings object to use
+ * @returns {string} Reasoning forwarding mode
+ */
+function getToolReasoningMode(settings = oai_settings) {
+    const mode = String(settings.tool_reasoning_mode ?? '');
+    if (Object.values(tool_reasoning_modes).includes(mode)) {
+        return mode;
+    }
+    return tool_reasoning_modes.DISABLED;
+}
+
+/**
+ * Gets the effective tool-call reasoning forwarding mode.
+ * Interleaved thinking requires explicit reasoning requests.
+ * @param {ChatCompletionSettings} settings Settings object to use
+ * @returns {string} Effective reasoning forwarding mode
+ */
+function getEffectiveToolReasoningMode(settings = oai_settings) {
+    if (!settings.show_thoughts) {
+        return tool_reasoning_modes.DISABLED;
+    }
+
+    return getToolReasoningMode(settings);
 }
 
 /**
@@ -6844,6 +8597,7 @@ export function initOpenAI() {
 
     $('#openrouter_allow_fallbacks').on('input', function () {
         oai_settings.openrouter_allow_fallbacks = !!$(this).prop('checked');
+        updateOpenRouterProvidersWarning('#openrouter_providers_chat');
         saveSettingsDebounced();
     });
 
@@ -6891,6 +8645,21 @@ export function initOpenAI() {
     $('#openai_function_calling').on('input', function () {
         oai_settings.function_calling = !!$(this).prop('checked');
         updateFeatureSupportFlags();
+        saveSettingsDebounced();
+    });
+
+    $('#tool_call_recurse_limit').on('input', function () {
+        oai_settings.tool_call_recurse_limit = Number($(this).val());
+        $('#tool_call_recurse_limit_counter').val(oai_settings.tool_call_recurse_limit);
+        ToolManager.RECURSE_LIMIT = oai_settings.tool_call_recurse_limit;
+        saveSettingsDebounced();
+    });
+
+    $('#tool_reasoning_mode').on('input', function () {
+        oai_settings.tool_reasoning_mode = getToolReasoningMode({
+            ...oai_settings,
+            tool_reasoning_mode: String($(this).val()),
+        });
         saveSettingsDebounced();
     });
 
@@ -7003,6 +8772,7 @@ export function initOpenAI() {
 
     $('#openai_show_thoughts').on('input', function () {
         oai_settings.show_thoughts = !!$(this).prop('checked');
+        setToolReasoningControls();
         saveSettingsDebounced();
     });
 
@@ -7042,6 +8812,8 @@ export function initOpenAI() {
             resetScrollHeight($(this));
         });
     }
+
+    applyCustomModelOptionsToAllSources();
 
     if (!isMobile()) {
         $('#model_openrouter_select').select2({
@@ -7100,6 +8872,7 @@ export function initOpenAI() {
 
         oai_settings.openrouter_providers = selectedProviders;
 
+        updateOpenRouterProvidersWarning('#openrouter_providers_chat');
         saveSettingsDebounced();
     });
 
@@ -7113,6 +8886,17 @@ export function initOpenAI() {
 
         oai_settings.openrouter_quantizations = selectedQuantizations;
 
+        saveSettingsDebounced();
+    });
+
+    $('#nanogpt_provider').on('change', function () {
+        oai_settings.nanogpt_provider = String($(this).val() || '');
+        updateNanoGptProvidersWarning('#nanogpt_provider');
+        saveSettingsDebounced();
+    });
+
+    $('#nanogpt_payg_override').on('input', function () {
+        oai_settings.nanogpt_payg_override = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
 
@@ -7140,6 +8924,40 @@ export function initOpenAI() {
         oai_settings.zai_endpoint = String($(this).val());
         saveSettingsDebounced();
     });
+    $('#siliconflow_endpoint').on('input', function () {
+        oai_settings.siliconflow_endpoint = String($(this).val());
+        saveSettingsDebounced();
+    });
+    $('#minimax_endpoint').on('input', function () {
+        oai_settings.minimax_endpoint = String($(this).val());
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_region').on('input', function () {
+        oai_settings.aws_bedrock_region = String($(this).val()).trim() || AWS_BEDROCK_REGION_DEFAULT;
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_use_custom_template').on('change', function () {
+        const enabled = Boolean($(this).prop('checked'));
+        oai_settings.aws_bedrock_use_custom_template = enabled;
+        $('#aws_bedrock_custom_template_section').toggleClass('displayNone', !enabled);
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_custom_template').on('input', function () {
+        oai_settings.aws_bedrock_custom_template = String($(this).val());
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_custom_response_path').on('input', function () {
+        oai_settings.aws_bedrock_custom_response_path = String($(this).val()).trim();
+        saveSettingsDebounced();
+    });
+    $('#aws_bedrock_custom_stream_path').on('input', function () {
+        oai_settings.aws_bedrock_custom_stream_path = String($(this).val()).trim();
+        saveSettingsDebounced();
+    });
+    $('#workers_ai_account_id').on('input', function () {
+        oai_settings.workers_ai_account_id = String($(this).val());
+        saveSettingsDebounced();
+    });
     $('#vertexai_service_account_json').on('input', onVertexAIServiceAccountJsonChange);
     $('#vertexai_validate_service_account').on('click', onVertexAIValidateServiceAccount);
     $('#vertexai_clear_service_account').on('click', onVertexAIClearServiceAccount);
@@ -7156,6 +8974,8 @@ export function initOpenAI() {
     $('#model_groq_select').on('change', onModelChange);
     $('#model_chutes_select').on('change', onModelChange);
     $('#model_siliconflow_select').on('change', onModelChange);
+    $('#model_minimax_select').on('change', onModelChange);
+    $('#model_aws_bedrock_select').on('change', onModelChange);
     $('#model_electronhub_select').on('change', onModelChange);
     $('#model_nanogpt_select').on('change', onModelChange);
     $('#model_deepseek_select').on('change', onModelChange);
@@ -7168,6 +8988,7 @@ export function initOpenAI() {
     $('#model_fireworks_select').on('change', onModelChange);
     $('#azure_openai_model').on('change', onModelChange);
     $('#model_zai_select').on('change', onModelChange);
+    $('#model_workers_ai_select').on('change', onModelChange);
     $('#settings_preset_openai').on('change', onSettingsPresetChange);
     $('#new_oai_preset').on('click', onNewPresetClick);
     $('#delete_oai_preset').on('click', onDeletePresetClick);

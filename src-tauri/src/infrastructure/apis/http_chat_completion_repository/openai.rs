@@ -7,6 +7,7 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 
 use super::HttpChatCompletionRepository;
+use super::response_body::read_upstream_json_body;
 
 pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
@@ -28,11 +29,11 @@ pub(super) async fn list_models_with_path(
     let request = client.get(url).header(ACCEPT, "application/json");
     let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request
-        .send()
-        .await
-        .map_err(|error| DomainError::InternalError(format!("Status request failed: {error}")))?;
+    let response = request.send().await.map_err(|error| {
+        HttpChatCompletionRepository::map_transport_error("Status request failed", error)
+    })?;
 
     if !response.status().is_success() {
         return Err(HttpChatCompletionRepository::map_error_response(
@@ -43,9 +44,7 @@ pub(super) async fn list_models_with_path(
         .await);
     }
 
-    response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse models JSON: {error}"))
-    })
+    read_upstream_json_body(provider_name, "list_models", response).await
 }
 
 pub(super) async fn generate(
@@ -66,9 +65,10 @@ pub(super) async fn generate(
 
     let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {
@@ -80,9 +80,7 @@ pub(super) async fn generate(
         .await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
-    })?;
+    let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
     if super::payload_contains_cache_control(payload) {
         let model = payload.get("model").and_then(Value::as_str);
@@ -112,9 +110,10 @@ pub(super) async fn generate_stream(
 
     let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {

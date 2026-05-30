@@ -7,11 +7,12 @@ use serde_json::Value;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionStreamSender,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
 use super::normalizers;
+use super::response_body::read_upstream_json_body;
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const ANTHROPIC_BETA_OUTPUT_128K: &str = "output-128k-2025-02-19";
@@ -33,11 +34,11 @@ pub(super) async fn list_models(
 
     let request = apply_claude_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request
-        .send()
-        .await
-        .map_err(|error| DomainError::InternalError(format!("Status request failed: {error}")))?;
+    let response = request.send().await.map_err(|error| {
+        HttpChatCompletionRepository::map_transport_error("Status request failed", error)
+    })?;
 
     if !response.status().is_success() {
         return Err(HttpChatCompletionRepository::map_error_response(
@@ -48,9 +49,7 @@ pub(super) async fn list_models(
         .await);
     }
 
-    response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse models JSON: {error}"))
-    })
+    read_upstream_json_body("Claude", "list_models", response).await
 }
 
 pub(super) async fn generate(
@@ -59,7 +58,7 @@ pub(super) async fn generate(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-) -> Result<Value, DomainError> {
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let endpoint_path = if endpoint_path.trim().is_empty() {
         "/messages"
     } else {
@@ -78,9 +77,10 @@ pub(super) async fn generate(
 
     let request = apply_claude_auth(request, config);
     let request = apply_configured_anthropic_beta_headers(request, config, payload);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {
@@ -92,9 +92,7 @@ pub(super) async fn generate(
         .await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to parse generation JSON: {error}"))
-    })?;
+    let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
     if super::payload_contains_cache_control(payload) {
         let model = payload.get("model").and_then(Value::as_str);
@@ -131,9 +129,10 @@ pub(super) async fn generate_stream(
 
     let request = apply_claude_auth(request, config);
     let request = apply_configured_anthropic_beta_headers(request, config, payload);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response = request.send().await.map_err(|error| {
-        DomainError::InternalError(format!("Generation request failed: {error}"))
+        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
     })?;
 
     if !response.status().is_success() {

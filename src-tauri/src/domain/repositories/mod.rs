@@ -1,5 +1,9 @@
 // Repository interfaces
+pub mod agent_invocation_repository;
+pub mod agent_profile_repository;
 pub mod agent_run_repository;
+pub mod agent_workspace_lifecycle_repository;
+pub mod asset_repository;
 pub mod avatar_repository;
 pub mod background_repository;
 pub mod character_repository;
@@ -12,11 +16,15 @@ pub mod extension_repository;
 pub mod extension_store_repository;
 pub mod group_chat_repository;
 pub mod group_repository;
+pub mod image_metadata_repository;
+pub mod llm_connection_repository;
 pub mod preset_repository;
 pub mod prompt_cache_repository;
+pub mod provider_metadata_repository;
 pub mod quick_reply_repository;
 pub mod secret_repository;
 pub mod settings_repository;
+pub mod skill_repository;
 pub mod stable_diffusion_repository;
 pub mod theme_repository;
 pub mod tokenizer_repository;

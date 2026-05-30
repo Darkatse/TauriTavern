@@ -155,6 +155,7 @@ type LlmApiLogRaw = {
 
 - `getPreview()` / `getRaw()` 会从磁盘读取对应的 log 文件（按需加载，不常驻内存）。
 - `requestReadable/responseReadable` 为开发者调试默认不截断（内容过大时可能影响 UI 打开速度）；完整内容也可用 `getRaw()` 或导出 bundle 获取。
+- `requestReadable/responseReadable` 会显示 provider 返回的可见/摘要化 reasoning，例如 `[reasoning]`、`[thinking]`、`[thought]` 块；signature、`thoughtSignature`、`encrypted_content` 等 provider-private continuation 只显示 `native_state=present` 标记，不当作可解释文本展开。
 
 ## 4. `exportBundle()`
 

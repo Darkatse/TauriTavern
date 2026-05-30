@@ -78,6 +78,10 @@ impl SettingsService {
                 avatar_persona_original_images_enabled;
         }
 
+        if let Some(native_regex_backend_enabled) = dto.native_regex_backend_enabled {
+            settings.native_regex_backend_enabled = native_regex_backend_enabled;
+        }
+
         if let Some(dev) = dto.dev {
             if let Some(frontend_console_capture) = dev.frontend_console_capture {
                 settings.dev.frontend_console_capture = frontend_console_capture;

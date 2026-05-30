@@ -7,7 +7,7 @@ use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_foundation::{
-    NSArray, NSError, NSFileManager, NSObject, NSObjectProtocol, NSString, NSURL, ns_string,
+    NSArray, NSError, NSFileManager, NSObject, NSObjectProtocol, NSString, NSURL,
 };
 use objc2_ui_kit::{UIDocumentPickerDelegate, UIDocumentPickerViewController};
 use objc2_uniform_type_identifiers::UTType;
@@ -17,12 +17,26 @@ use tokio::sync::oneshot;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::ios_ui::resolve_presenting_view_controller;
 
+const DATA_ARCHIVE_CONTENT_TYPES: &[&str] = &[
+    "public.zip-archive",
+    "com.pkware.zip-archive",
+    "public.tar-archive",
+    "org.gnu.gnu-zip-archive",
+    "com.tauritavern.client.tar-archive",
+    "com.tauritavern.client.gzip-archive",
+];
+const SKILL_IMPORT_CONTENT_TYPES: &[&str] = &[
+    "public.zip-archive",
+    "com.pkware.zip-archive",
+    "public.data",
+];
+
 pub struct PickedUrl {
     pub url: Retained<NSURL>,
     pub file_name: String,
 }
 
-pub enum PickZipResult {
+pub enum PickDocumentResult {
     Cancelled,
     Picked(PickedUrl),
 }
@@ -139,7 +153,29 @@ unsafe fn retain_delegate(
     }
 }
 
-pub async fn pick_zip_archive(window: &WebviewWindow) -> Result<PickZipResult, DomainError> {
+fn resolve_content_types(identifiers: &[&str]) -> Result<Retained<NSArray<UTType>>, String> {
+    let mut content_types = Vec::with_capacity(identifiers.len());
+    for identifier in identifiers {
+        let ns_identifier = NSString::from_str(identifier);
+        if let Some(content_type) = UTType::typeWithIdentifier(&ns_identifier) {
+            content_types.push(content_type);
+        }
+    }
+
+    if content_types.is_empty() {
+        return Err(format!(
+            "No supported iOS document picker content types are available: {}",
+            identifiers.join(", ")
+        ));
+    }
+
+    Ok(NSArray::from_retained_slice(&content_types))
+}
+
+async fn pick_archive_with_content_types(
+    window: &WebviewWindow,
+    identifiers: &'static [&'static str],
+) -> Result<PickDocumentResult, DomainError> {
     let (sender, receiver) = oneshot::channel::<PickOutcome>();
 
     window
@@ -176,20 +212,13 @@ pub async fn pick_zip_archive(window: &WebviewWindow) -> Result<PickZipResult, D
             let delegate = DocumentPickerDelegate::new(mtm, delegate_sender);
             let delegate_protocol_object = ProtocolObject::from_ref(&*delegate);
 
-            let zip_archive = match UTType::typeWithIdentifier(ns_string!("public.zip-archive")) {
-                Some(value) => value,
-                None => {
-                    send_failure(
-                        &mut sender,
-                        "UTType public.zip-archive is unavailable".to_string(),
-                    );
+            let content_types = match resolve_content_types(identifiers) {
+                Ok(content_types) => content_types,
+                Err(message) => {
+                    send_failure(&mut sender, message);
                     return;
                 }
             };
-            let pkware_zip = UTType::typeWithIdentifier(ns_string!("com.pkware.zip-archive"))
-                .unwrap_or_else(|| zip_archive.clone());
-            let content_types: Retained<NSArray<UTType>> =
-                NSArray::from_retained_slice(&[zip_archive, pkware_zip]);
 
             let picker = UIDocumentPickerViewController::initForOpeningContentTypes_asCopy(
                 UIDocumentPickerViewController::alloc(mtm),
@@ -219,10 +248,20 @@ pub async fn pick_zip_archive(window: &WebviewWindow) -> Result<PickZipResult, D
     })?;
 
     match outcome {
-        PickOutcome::Cancelled => Ok(PickZipResult::Cancelled),
-        PickOutcome::Picked(picked) => Ok(PickZipResult::Picked(picked)),
+        PickOutcome::Cancelled => Ok(PickDocumentResult::Cancelled),
+        PickOutcome::Picked(picked) => Ok(PickDocumentResult::Picked(picked)),
         PickOutcome::Failed(message) => Err(DomainError::InternalError(message)),
     }
+}
+
+pub async fn pick_data_archive(window: &WebviewWindow) -> Result<PickDocumentResult, DomainError> {
+    pick_archive_with_content_types(window, DATA_ARCHIVE_CONTENT_TYPES).await
+}
+
+pub async fn pick_skill_import_archive(
+    window: &WebviewWindow,
+) -> Result<PickDocumentResult, DomainError> {
+    pick_archive_with_content_types(window, SKILL_IMPORT_CONTENT_TYPES).await
 }
 
 struct SecurityScopedAccess<'a> {

@@ -52,7 +52,7 @@ pub struct Character {
 
     // Extensions
     #[serde(default, deserialize_with = "deserialize_string_or_float")]
-    pub talkativeness: f32,
+    pub talkativeness: f64,
     #[serde(default)]
     pub fav: bool,
 
@@ -119,7 +119,7 @@ pub struct CharacterData {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CharacterExtensions {
     #[serde(default, deserialize_with = "deserialize_string_or_float")]
-    pub talkativeness: f32,
+    pub talkativeness: f64,
     #[serde(default)]
     pub fav: bool,
     #[serde(default)]
@@ -167,59 +167,53 @@ fn default_role() -> String {
     "system".to_string()
 }
 
-/// Deserialize a value that can be either a string or a number into an f32
-fn deserialize_string_or_float<'de, D>(deserializer: D) -> Result<f32, D::Error>
+/// Deserialize a value that can be either a string or a number into an f64.
+fn deserialize_string_or_float<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
     D: Deserializer<'de>,
 {
-    // This will handle the deserialization
     struct StringOrFloat;
 
     impl<'de> de::Visitor<'de> for StringOrFloat {
-        type Value = f32;
+        type Value = f64;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("a string or a float")
         }
 
-        // Handle string values
-        fn visit_str<E>(self, value: &str) -> Result<f32, E>
+        fn visit_str<E>(self, value: &str) -> Result<f64, E>
         where
             E: de::Error,
         {
-            f32::from_str(value).map_err(|_| E::custom(format!("invalid float value: {}", value)))
+            f64::from_str(value).map_err(|_| E::custom(format!("invalid float value: {}", value)))
         }
 
-        // Handle float values
-        fn visit_f32<E>(self, value: f32) -> Result<f32, E>
+        fn visit_f32<E>(self, value: f32) -> Result<f64, E>
+        where
+            E: de::Error,
+        {
+            Ok(f64::from(value))
+        }
+
+        fn visit_f64<E>(self, value: f64) -> Result<f64, E>
         where
             E: de::Error,
         {
             Ok(value)
         }
 
-        // Handle float values as f64
-        fn visit_f64<E>(self, value: f64) -> Result<f32, E>
+        fn visit_i64<E>(self, value: i64) -> Result<f64, E>
         where
             E: de::Error,
         {
-            Ok(value as f32)
+            Ok(value as f64)
         }
 
-        // Handle integer values
-        fn visit_i64<E>(self, value: i64) -> Result<f32, E>
+        fn visit_u64<E>(self, value: u64) -> Result<f64, E>
         where
             E: de::Error,
         {
-            Ok(value as f32)
-        }
-
-        // Handle unsigned integer values
-        fn visit_u64<E>(self, value: u64) -> Result<f32, E>
-        where
-            E: de::Error,
-        {
-            Ok(value as f32)
+            Ok(value as f64)
         }
     }
 
@@ -343,22 +337,25 @@ impl Character {
         let mut character = self.clone();
         character.spec = "chara_card_v2".to_string();
         character.spec_version = "2.0".to_string();
-
-        // Ensure data fields are synchronized with top-level fields
-        character.data.name = character.name.clone();
-        character.data.description = character.description.clone();
-        character.data.personality = character.personality.clone();
-        character.data.scenario = character.scenario.clone();
-        character.data.first_mes = character.first_mes.clone();
-        character.data.mes_example = character.mes_example.clone();
-        character.data.creator_notes = character.creator_notes.clone();
-        character.data.creator = character.creator.clone();
-        character.data.character_version = character.character_version.clone();
-        character.data.tags = character.tags.clone();
-        character.data.extensions.talkativeness = character.talkativeness;
-        character.data.extensions.fav = character.fav;
+        character.sync_top_level_fields_to_v2_data();
 
         character
+    }
+
+    /// Synchronize legacy top-level fields into the V2 `data` object before persisting.
+    pub(crate) fn sync_top_level_fields_to_v2_data(&mut self) {
+        self.data.name = self.name.clone();
+        self.data.description = self.description.clone();
+        self.data.personality = self.personality.clone();
+        self.data.scenario = self.scenario.clone();
+        self.data.first_mes = self.first_mes.clone();
+        self.data.mes_example = self.mes_example.clone();
+        self.data.creator_notes = self.creator_notes.clone();
+        self.data.creator = self.creator.clone();
+        self.data.character_version = self.character_version.clone();
+        self.data.tags = self.tags.clone();
+        self.data.extensions.talkativeness = self.talkativeness;
+        self.data.extensions.fav = self.fav;
     }
 
     /// Get the file name for this character
@@ -438,6 +435,7 @@ impl Character {
 #[cfg(test)]
 mod tests {
     use super::Character;
+    use serde_json::Value;
 
     #[test]
     fn into_shallow_drops_heavy_character_payload() {
@@ -476,12 +474,49 @@ mod tests {
         assert!(shallow.data.character_book.is_none());
         assert!(shallow.json_data.is_none());
     }
+
+    #[test]
+    fn talkativeness_serializes_as_clean_json_number() {
+        let mut character = Character::new(
+            "Alice".to_string(),
+            "desc".to_string(),
+            "persona".to_string(),
+            "hello".to_string(),
+        );
+        character.talkativeness = 0.8;
+        character.data.extensions.talkativeness = 0.8;
+
+        let value = serde_json::to_value(character.to_v2()).expect("serialize character");
+
+        assert_eq!(value.get("talkativeness"), Some(&Value::from(0.8)));
+        assert_eq!(
+            value.pointer("/data/extensions/talkativeness"),
+            Some(&Value::from(0.8))
+        );
+    }
+}
+
+pub(crate) const MAX_SANITIZED_FILENAME_BYTES: usize = 255;
+
+pub(crate) fn truncate_utf8_bytes(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+
+    let mut end = 0usize;
+    for (index, ch) in value.char_indices() {
+        let next = index + ch.len_utf8();
+        if next > max_bytes {
+            break;
+        }
+        end = next;
+    }
+
+    &value[..end]
 }
 
 /// Sanitize a filename to be safe for file systems
 pub fn sanitize_filename(name: &str) -> String {
-    const MAX_FILENAME_BYTES: usize = 255;
-
     fn is_illegal_character(ch: char) -> bool {
         matches!(ch, '/' | '?' | '<' | '>' | '\\' | ':' | '*' | '|' | '"')
     }
@@ -512,23 +547,6 @@ pub fn sanitize_filename(name: &str) -> String {
                 .is_some_and(|suffix| suffix.len() == 1 && suffix.as_bytes()[0].is_ascii_digit())
     }
 
-    fn truncate_utf8_bytes(value: &str, max_bytes: usize) -> &str {
-        if value.len() <= max_bytes {
-            return value;
-        }
-
-        let mut end = 0usize;
-        for (index, ch) in value.char_indices() {
-            let next = index + ch.len_utf8();
-            if next > max_bytes {
-                break;
-            }
-            end = next;
-        }
-
-        &value[..end]
-    }
-
     let mut sanitized = String::with_capacity(name.len());
     for ch in name.chars() {
         if is_illegal_character(ch) || is_control_code(ch) {
@@ -546,8 +564,7 @@ pub fn sanitize_filename(name: &str) -> String {
         sanitized.pop();
     }
 
-    let trimmed = sanitized.trim();
-    truncate_utf8_bytes(trimmed, MAX_FILENAME_BYTES).to_string()
+    truncate_utf8_bytes(&sanitized, MAX_SANITIZED_FILENAME_BYTES).to_string()
 }
 
 #[cfg(test)]
@@ -572,6 +589,13 @@ mod filename_tests {
     fn sanitize_filename_strips_trailing_dots_and_spaces() {
         assert_eq!(sanitize_filename("name. "), "name");
         assert_eq!(sanitize_filename("name..."), "name");
+    }
+
+    #[test]
+    fn sanitize_filename_preserves_leading_spaces_like_upstream() {
+        assert_eq!(sanitize_filename(" name "), " name");
+        assert_eq!(sanitize_filename("/ name"), " name");
+        assert_eq!(sanitize_filename("中文/ 测试"), "中文 测试");
     }
 
     #[test]

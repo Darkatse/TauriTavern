@@ -9,7 +9,7 @@ use crate::presentation::errors::CommandError;
 #[cfg(any(dev, debug_assertions))]
 use crate::presentation::web_resources::dev_resource_dispatch::dispatch_dev_web_resource_request;
 
-const SILLYTAVERN_COMPAT_VERSION: &str = "1.16.0";
+const SILLYTAVERN_COMPAT_VERSION: &str = "1.18.0";
 const BUILD_GIT_REVISION: &str = env!("TAURITAVERN_GIT_REVISION");
 const BUILD_GIT_BRANCH: &str = env!("TAURITAVERN_GIT_BRANCH");
 

@@ -8,7 +8,7 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::domain::errors::DomainError;
 use crate::infrastructure::ios_document_picker::{
-    PickZipResult, copy_picked_url_to_path, pick_zip_archive,
+    PickDocumentResult, copy_picked_url_to_path, pick_data_archive, pick_skill_import_archive,
 };
 use crate::infrastructure::ios_share_sheet::share_file;
 use crate::infrastructure::paths::{IOS_EXPORT_STAGING_ROOT_NAME, resolve_runtime_paths};
@@ -20,10 +20,20 @@ use crate::infrastructure::persistence::data_archive_jobs::{
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
+const IOS_SKILL_IMPORT_STAGING_ROOT_NAME: &str = "tauritavern-skill-import-staging";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct IosImportArchiveResponse {
     pub cancelled: bool,
     pub job_id: Option<String>,
+    pub file_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IosPickSkillImportArchiveResponse {
+    pub cancelled: bool,
+    pub file_path: Option<String>,
     pub file_name: Option<String>,
 }
 
@@ -47,18 +57,18 @@ pub async fn ios_import_data_archive_from_picker(
 ) -> Result<IosImportArchiveResponse, CommandError> {
     log_command("ios_import_data_archive_from_picker");
 
-    let picked = match pick_zip_archive(&window)
+    let picked = match pick_data_archive(&window)
         .await
         .map_err(map_command_error("Failed to present iOS document picker"))?
     {
-        PickZipResult::Cancelled => {
+        PickDocumentResult::Cancelled => {
             return Ok(IosImportArchiveResponse {
                 cancelled: true,
                 job_id: None,
                 file_name: None,
             });
         }
-        PickZipResult::Picked(picked) => picked,
+        PickDocumentResult::Picked(picked) => picked,
     };
 
     let app_handle = app.clone();
@@ -127,9 +137,93 @@ fn prepare_incoming_import_archive_path(app: &AppHandle) -> Result<PathBuf, Doma
     })?;
 
     Ok(incoming_dir.join(format!(
-        "tauritavern-import-{}.zip",
+        "tauritavern-import-{}.archive",
         uuid::Uuid::new_v4().simple()
     )))
+}
+
+fn prepare_skill_import_archive_path(app: &AppHandle) -> Result<PathBuf, DomainError> {
+    let path_resolver = app.path();
+    let staging_root = match path_resolver.app_cache_dir() {
+        Ok(path) => path.join(IOS_SKILL_IMPORT_STAGING_ROOT_NAME),
+        Err(cache_error) => path_resolver
+            .temp_dir()
+            .map(|path| path.join(IOS_SKILL_IMPORT_STAGING_ROOT_NAME))
+            .map_err(|temp_error| {
+                DomainError::InternalError(format!(
+                    "Failed to resolve iOS Skill import staging directory. app cache: {}; temp: {}",
+                    cache_error, temp_error
+                ))
+            })?,
+    };
+
+    fs::create_dir_all(&staging_root).map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to create iOS Skill import staging directory {}: {}",
+            staging_root.display(),
+            error
+        ))
+    })?;
+
+    Ok(staging_root.join(format!(
+        "tauritavern-skill-import-{}.zip",
+        uuid::Uuid::new_v4().simple()
+    )))
+}
+
+#[tauri::command]
+pub async fn ios_pick_skill_import_archive(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<IosPickSkillImportArchiveResponse, CommandError> {
+    log_command("ios_pick_skill_import_archive");
+
+    let picked = match pick_skill_import_archive(&window)
+        .await
+        .map_err(map_command_error(
+            "Failed to present iOS Skill import picker",
+        ))? {
+        PickDocumentResult::Cancelled => {
+            return Ok(IosPickSkillImportArchiveResponse {
+                cancelled: true,
+                file_path: None,
+                file_name: None,
+            });
+        }
+        PickDocumentResult::Picked(picked) => picked,
+    };
+
+    let app_handle = app.clone();
+    let picked_url = picked.url.clone();
+    let picked_file_name = picked.file_name.clone();
+
+    let target_path =
+        tauri::async_runtime::spawn_blocking(move || -> Result<PathBuf, DomainError> {
+            let target_path = prepare_skill_import_archive_path(&app_handle)?;
+            match copy_picked_url_to_path(&picked_url, &target_path) {
+                Ok(()) => Ok(target_path),
+                Err(error) => {
+                    let _ = fs::remove_file(&target_path);
+                    Err(error)
+                }
+            }
+        })
+        .await
+        .map_err(|error| {
+            CommandError::InternalServerError(format!(
+                "Failed to join iOS Skill import staging task: {}",
+                error
+            ))
+        })?
+        .map_err(map_command_error(
+            "Failed to stage iOS Skill import archive",
+        ))?;
+
+    Ok(IosPickSkillImportArchiveResponse {
+        cancelled: false,
+        file_path: Some(target_path.to_string_lossy().to_string()),
+        file_name: Some(picked_file_name),
+    })
 }
 
 async fn present_ios_share_sheet_for_path(
