@@ -263,21 +263,20 @@ fn parse_thumbnail_query(query: &str) -> Result<(String, String), ThumbnailQuery
     let file = file.ok_or(ThumbnailQueryError::MissingFile)?;
 
     let normalized_type = thumbnail_type.trim().to_ascii_lowercase();
-    let normalized_file = file.trim().to_string();
 
     if normalized_type.is_empty() {
         return Err(ThumbnailQueryError::MissingType);
     }
 
-    if normalized_file.is_empty() {
+    if file.is_empty() {
         return Err(ThumbnailQueryError::MissingFile);
     }
 
-    if !crate::infrastructure::request_path::validate_path_segment(&normalized_file) {
+    if !crate::infrastructure::request_path::validate_path_segment(&file) {
         return Err(ThumbnailQueryError::ForbiddenFile);
     }
 
-    Ok((normalized_type, normalized_file))
+    Ok((normalized_type, file))
 }
 
 #[cfg(test)]
@@ -472,5 +471,53 @@ mod tests {
             Some(&tauri::http::header::HeaderValue::from_static("image/jpeg"))
         );
         assert_eq!(response.body().as_ref(), b"thumb");
+    }
+
+    #[test]
+    fn serves_thumbnail_for_exact_file_query_segment() {
+        let temp = TempDirGuard::new("thumbnail-endpoint-exact-file");
+        let policy = ThumbnailEndpointPolicy::new(true);
+        std::fs::create_dir_all(temp.path.join("backgrounds")).expect("create backgrounds dir");
+        std::fs::create_dir_all(temp.path.join("thumbnails").join("bg"))
+            .expect("create thumbnail dir");
+        std::fs::write(
+            temp.path.join("backgrounds").join(" space.png"),
+            b"original",
+        )
+        .expect("write original");
+        std::fs::write(
+            temp.path.join("thumbnails").join("bg").join(" space.png"),
+            b"thumb",
+        )
+        .expect("write thumbnail");
+
+        let request = tauri::http::Request::builder()
+            .method("GET")
+            .uri("/thumbnail?type=bg&file=%20space.png")
+            .body(Vec::new())
+            .expect("request");
+        let mut response = tauri::http::Response::new(Cow::Owned(Vec::new()));
+
+        handle_thumbnail_web_request(&dirs(&temp.path), &policy, &request, &mut response);
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.body().as_ref(), b"thumb");
+    }
+
+    #[test]
+    fn parses_legacy_c1_thumbnail_file() {
+        let (thumbnail_type, file) = parse_thumbnail_query("type=bg&file=%C3%A3%C2%80%C2%90.png")
+            .expect("parse thumbnail query");
+
+        assert_eq!(thumbnail_type, "bg");
+        assert_eq!(file, "ã\u{80}\u{90}.png");
+    }
+
+    #[test]
+    fn rejects_c0_control_thumbnail_file() {
+        let error = parse_thumbnail_query("type=bg&file=bad%1F.png")
+            .expect_err("C0 control should be forbidden");
+
+        assert_eq!(error, ThumbnailQueryError::ForbiddenFile);
     }
 }

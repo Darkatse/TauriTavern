@@ -164,6 +164,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_legacy_c1_background_asset_path() {
+        let path = "/backgrounds/%C3%A3%C2%80%C2%90.png";
+        let parsed = parse_user_data_asset_request_path(path)
+            .expect("parse")
+            .expect("should match");
+
+        assert_eq!(parsed.kind, UserDataAssetKind::Background);
+        assert_eq!(parsed.relative_path, PathBuf::from("ã\u{80}\u{90}.png"));
+        assert_eq!(parsed.relative_path_display, "ã\u{80}\u{90}.png");
+    }
+
+    #[test]
+    fn rejects_c0_control_path_segments() {
+        let path = "/backgrounds/bad%1F.png";
+        let result = parse_user_data_asset_request_path(path);
+        assert_eq!(result, Err(UserDataPathError::InvalidPath));
+    }
+
+    #[test]
     fn parses_nested_user_image_asset_path() {
         let path = "/user/images/folders/a.png";
         let parsed = parse_user_data_asset_request_path(path)

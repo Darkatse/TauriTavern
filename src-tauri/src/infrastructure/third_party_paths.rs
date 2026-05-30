@@ -164,6 +164,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_legacy_c1_third_party_asset_path_segments() {
+        let path = "/scripts/extensions/third-party/%C3%A3%C2%80%C2%90/%C3%A3%C2%80%C2%90.js";
+        let parsed = parse_third_party_asset_request_path(path)
+            .expect("parse")
+            .expect("should match");
+
+        assert_eq!(parsed.extension_folder, "ã\u{80}\u{90}");
+        assert_eq!(parsed.relative_path, PathBuf::from("ã\u{80}\u{90}.js"));
+        assert_eq!(parsed.relative_path_display, "ã\u{80}\u{90}.js");
+    }
+
+    #[test]
     fn normalizes_redundant_relative_separators() {
         let path = "/scripts/extensions/third-party/mobile//a.js";
         let parsed = parse_third_party_asset_request_path(path)
@@ -185,6 +197,13 @@ mod tests {
     #[test]
     fn rejects_encoded_path_separators() {
         let path = "/scripts/extensions/third-party/mobile/%2fsecret.js";
+        let result = parse_third_party_asset_request_path(path);
+        assert_eq!(result, Err(ThirdPartyPathError::InvalidPath));
+    }
+
+    #[test]
+    fn rejects_c0_control_segments() {
+        let path = "/scripts/extensions/third-party/mobile/bad%1F.js";
         let result = parse_third_party_asset_request_path(path);
         assert_eq!(result, Err(ThirdPartyPathError::InvalidPath));
     }

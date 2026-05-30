@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use mime_guess::from_path;
 use std::collections::{HashMap, HashSet};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
@@ -15,6 +16,7 @@ use crate::domain::repositories::image_metadata_repository::ImageMetadataReposit
 use crate::infrastructure::logging::logger;
 use crate::infrastructure::persistence::file_system::write_json_file;
 use crate::infrastructure::persistence::thumbnail_cache::is_animated_image;
+use crate::infrastructure::request_path;
 use crate::infrastructure::thumbnails::{BACKGROUND_THUMBNAIL_HEIGHT, BACKGROUND_THUMBNAIL_WIDTH};
 
 const METADATA_FILE_NAME: &str = "image-metadata.json";
@@ -25,6 +27,85 @@ pub struct FileImageMetadataRepository {
     user_root: PathBuf,
     backgrounds_dir: PathBuf,
     lock: Mutex<()>,
+}
+
+#[derive(Debug)]
+enum BackgroundMetadataBuildError {
+    Skippable(String),
+    Fatal(DomainError),
+}
+
+impl BackgroundMetadataBuildError {
+    fn skippable(message: impl Into<String>) -> Self {
+        Self::Skippable(message.into())
+    }
+
+    fn from_metadata_error(path: &Path, error: std::io::Error) -> Self {
+        if error.kind() == ErrorKind::NotFound {
+            return Self::skippable(format!(
+                "Background disappeared before metadata refresh '{}': {}",
+                path.display(),
+                error
+            ));
+        }
+
+        Self::Fatal(DomainError::InternalError(format!(
+            "Failed to read background metadata '{}': {}",
+            path.display(),
+            error
+        )))
+    }
+
+    fn from_dimension_reader_join(path: &Path, error: tokio::task::JoinError) -> Self {
+        Self::Fatal(DomainError::InternalError(format!(
+            "Failed to join background dimension reader '{}': {}",
+            path.display(),
+            error
+        )))
+    }
+
+    fn from_dimension_error(path: &Path, error: image::ImageError) -> Self {
+        match error {
+            image::ImageError::IoError(error) => match error.kind() {
+                ErrorKind::NotFound => Self::skippable(format!(
+                    "Background disappeared before dimension refresh '{}': {}",
+                    path.display(),
+                    error
+                )),
+                ErrorKind::InvalidData | ErrorKind::UnexpectedEof => Self::skippable(format!(
+                    "Invalid background image '{}': {}",
+                    path.display(),
+                    error
+                )),
+                _ => Self::Fatal(DomainError::InternalError(format!(
+                    "Failed to read background dimensions '{}': {}",
+                    path.display(),
+                    error
+                ))),
+            },
+            _ => Self::skippable(format!(
+                "Failed to read background dimensions '{}': {}",
+                path.display(),
+                error
+            )),
+        }
+    }
+
+    fn invalid_dimensions(path: &Path) -> Self {
+        Self::skippable(format!(
+            "Invalid background dimensions '{}'",
+            path.display()
+        ))
+    }
+
+    fn from_animation_error(error: DomainError) -> Self {
+        match error {
+            DomainError::NotFound(message) | DomainError::InvalidData(message) => {
+                Self::skippable(message)
+            }
+            error => Self::Fatal(error),
+        }
+    }
 }
 
 impl FileImageMetadataRepository {
@@ -118,12 +199,23 @@ impl FileImageMetadataRepository {
         Ok(value.to_string())
     }
 
-    fn background_relative_path(filename: &str) -> Result<String, DomainError> {
+    fn strict_background_relative_path(filename: &str) -> Result<String, DomainError> {
         Ok(format!(
             "{}{}",
             BACKGROUNDS_PREFIX,
             Self::normalize_background_filename(filename)?
         ))
+    }
+
+    fn existing_background_asset_relative_path(filename: &str) -> Result<String, DomainError> {
+        if !request_path::validate_path_segment(filename) {
+            return Err(DomainError::InvalidData(format!(
+                "Invalid background filename: {}",
+                filename
+            )));
+        }
+
+        Ok(format!("{BACKGROUNDS_PREFIX}{filename}"))
     }
 
     fn normalize_background_relative_path(path: &str) -> Result<String, DomainError> {
@@ -138,12 +230,9 @@ impl FileImageMetadataRepository {
         let parts = raw.split('/').collect::<Vec<_>>();
         if parts.len() < 2
             || parts[0] != "backgrounds"
-            || parts.iter().any(|part| {
-                part.is_empty()
-                    || *part == "."
-                    || *part == ".."
-                    || part.chars().any(char::is_control)
-            })
+            || parts
+                .iter()
+                .any(|part| !request_path::validate_path_segment(part))
         {
             return Err(DomainError::InvalidData(format!(
                 "Invalid background path: {}",
@@ -194,10 +283,24 @@ impl FileImageMetadataRepository {
             }
 
             let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+                logger::warn(&format!(
+                    "[ImageMetadata] Skipping background with non UTF-8 filename: '{}'",
+                    path.display()
+                ));
                 continue;
             };
 
-            let relative_path = Self::background_relative_path(file_name)?;
+            let relative_path = match Self::existing_background_asset_relative_path(file_name) {
+                Ok(value) => value,
+                Err(error) => {
+                    logger::warn(&format!(
+                        "[ImageMetadata] Skipping background with unsupported filename '{}': {}",
+                        path.display(),
+                        error
+                    ));
+                    continue;
+                }
+            };
             files.push((relative_path, path));
         }
 
@@ -246,14 +349,10 @@ impl FileImageMetadataRepository {
     async fn build_background_metadata(
         path: &Path,
         cached: Option<&ImageMetadata>,
-    ) -> Result<ImageMetadata, DomainError> {
-        let file_metadata = fs::metadata(path).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read background metadata '{}': {}",
-                path.display(),
-                error
-            ))
-        })?;
+    ) -> Result<ImageMetadata, BackgroundMetadataBuildError> {
+        let file_metadata = fs::metadata(path)
+            .await
+            .map_err(|error| BackgroundMetadataBuildError::from_metadata_error(path, error))?;
 
         let mtime = file_metadata
             .modified()
@@ -272,27 +371,16 @@ impl FileImageMetadataRepository {
             tokio::task::spawn_blocking(move || image::image_dimensions(&dimensions_path))
                 .await
                 .map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to join background dimension reader '{}': {}",
-                        path.display(),
-                        error
-                    ))
+                    BackgroundMetadataBuildError::from_dimension_reader_join(path, error)
                 })?
-                .map_err(|error| {
-                    DomainError::InvalidData(format!(
-                        "Failed to read background dimensions '{}': {}",
-                        path.display(),
-                        error
-                    ))
-                })?;
+                .map_err(|error| BackgroundMetadataBuildError::from_dimension_error(path, error))?;
         if width == 0 || height == 0 {
-            return Err(DomainError::InvalidData(format!(
-                "Invalid background dimensions '{}'",
-                path.display()
-            )));
+            return Err(BackgroundMetadataBuildError::invalid_dimensions(path));
         }
 
-        let is_animated = is_animated_image(path).await?;
+        let is_animated = is_animated_image(path)
+            .await
+            .map_err(BackgroundMetadataBuildError::from_animation_error)?;
         let same_file = cached
             .and_then(|metadata| metadata.mtime)
             .is_some_and(|cached_mtime| (cached_mtime - mtime).abs() < 0.5);
@@ -446,12 +534,28 @@ impl FileImageMetadataRepository {
         let mut relative_paths = Vec::with_capacity(files.len());
 
         for (relative_path, path) in files {
-            let cached = index.images.get(&relative_path);
-            let metadata = Self::build_background_metadata(&path, cached).await?;
-            if index.images.get(&relative_path) != Some(&metadata) {
-                index.images.insert(relative_path.clone(), metadata);
-                modified = true;
+            let metadata_result = {
+                let cached = index.images.get(&relative_path);
+                Self::build_background_metadata(&path, cached).await
+            };
+
+            match metadata_result {
+                Ok(metadata) => {
+                    if index.images.get(&relative_path) != Some(&metadata) {
+                        index.images.insert(relative_path.clone(), metadata);
+                        modified = true;
+                    }
+                }
+                Err(BackgroundMetadataBuildError::Skippable(message)) => {
+                    logger::warn(&format!(
+                        "[ImageMetadata] Failed to refresh background metadata '{}': {}",
+                        path.display(),
+                        message
+                    ));
+                }
+                Err(BackgroundMetadataBuildError::Fatal(error)) => return Err(error),
             }
+
             relative_paths.push(relative_path);
         }
 
@@ -550,7 +654,7 @@ impl ImageMetadataRepository for FileImageMetadataRepository {
 
         if let Some(thumbnail_file) = thumbnail_file {
             if !thumbnail_file.is_empty() {
-                let relative_path = Self::background_relative_path(thumbnail_file)?;
+                let relative_path = Self::existing_background_asset_relative_path(thumbnail_file)?;
                 self.ensure_background_file_exists(&relative_path).await?;
             }
         }
@@ -609,7 +713,7 @@ impl ImageMetadataRepository for FileImageMetadataRepository {
                 continue;
             };
             if !thumbnail_file.trim().is_empty() {
-                Self::background_relative_path(&thumbnail_file)?;
+                Self::existing_background_asset_relative_path(&thumbnail_file)?;
             }
 
             if folder.thumbnail_file != thumbnail_file {
@@ -693,7 +797,7 @@ impl ImageMetadataRepository for FileImageMetadataRepository {
     }
 
     async fn remove_background_metadata(&self, filename: &str) -> Result<(), DomainError> {
-        let relative_path = Self::background_relative_path(filename)?;
+        let relative_path = Self::strict_background_relative_path(filename)?;
         let removed_filename = Self::filename_from_background_relative_path(&relative_path);
 
         let _guard = self.lock.lock().await;
@@ -714,8 +818,8 @@ impl ImageMetadataRepository for FileImageMetadataRepository {
         old_filename: &str,
         new_filename: &str,
     ) -> Result<(), DomainError> {
-        let old_relative_path = Self::background_relative_path(old_filename)?;
-        let new_relative_path = Self::background_relative_path(new_filename)?;
+        let old_relative_path = Self::strict_background_relative_path(old_filename)?;
+        let new_relative_path = Self::strict_background_relative_path(new_filename)?;
         let old_basename = Self::filename_from_background_relative_path(&old_relative_path);
         let new_basename = Self::filename_from_background_relative_path(&new_relative_path);
 
@@ -754,12 +858,13 @@ mod tests {
     use base64::Engine;
     use serde_json::json;
 
+    use crate::domain::errors::DomainError;
     use crate::domain::models::image_metadata::{
         ImageMetadata, ImageMetadataFolder, ImageMetadataIndex,
     };
     use crate::domain::repositories::image_metadata_repository::ImageMetadataRepository;
 
-    use super::FileImageMetadataRepository;
+    use super::{BackgroundMetadataBuildError, FileImageMetadataRepository};
 
     struct TempDirGuard {
         path: PathBuf,
@@ -801,6 +906,55 @@ mod tests {
 
         let repository = FileImageMetadataRepository::new(user_root, backgrounds_dir);
         (temp, repository)
+    }
+
+    #[test]
+    fn metadata_dimension_permission_errors_are_fatal() {
+        let error =
+            image::ImageError::IoError(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        let classified = BackgroundMetadataBuildError::from_dimension_error(
+            &PathBuf::from("blocked.png"),
+            error,
+        );
+
+        assert!(matches!(classified, BackgroundMetadataBuildError::Fatal(_)));
+    }
+
+    #[test]
+    fn metadata_dimension_decode_errors_are_skippable() {
+        let error =
+            image::ImageError::IoError(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+        let classified =
+            BackgroundMetadataBuildError::from_dimension_error(&PathBuf::from("broken.png"), error);
+
+        assert!(matches!(
+            classified,
+            BackgroundMetadataBuildError::Skippable(_)
+        ));
+    }
+
+    #[test]
+    fn metadata_file_vanished_errors_are_skippable() {
+        let error = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let classified =
+            BackgroundMetadataBuildError::from_metadata_error(&PathBuf::from("missing.png"), error);
+
+        assert!(matches!(
+            classified,
+            BackgroundMetadataBuildError::Skippable(_)
+        ));
+    }
+
+    #[test]
+    fn metadata_animation_not_found_errors_are_skippable() {
+        let classified = BackgroundMetadataBuildError::from_animation_error(DomainError::NotFound(
+            "Source image not found: missing.png".to_string(),
+        ));
+
+        assert!(matches!(
+            classified,
+            BackgroundMetadataBuildError::Skippable(_)
+        ));
     }
 
     #[tokio::test]
@@ -879,6 +1033,50 @@ mod tests {
         assert_eq!(metadata.folder_ids, vec![folder.id]);
         assert_eq!(metadata.is_animated, Some(false));
         assert_eq!(metadata.thumbnail_resolution, Some(160 * 90));
+    }
+
+    #[tokio::test]
+    async fn background_list_accepts_legacy_c1_filenames() {
+        let (_temp, repository) = repository_with_background().await;
+        let legacy_name = "ã\u{80}\u{90}.png";
+        tokio::fs::write(repository.backgrounds_dir.join(legacy_name), tiny_png())
+            .await
+            .expect("write legacy background");
+
+        let entries = repository
+            .get_background_list_entries()
+            .await
+            .expect("refresh metadata");
+
+        assert!(entries.iter().any(|entry| entry.filename == "a.png"));
+        assert!(entries.iter().any(|entry| entry.filename == legacy_name));
+    }
+
+    #[tokio::test]
+    async fn background_list_keeps_scanning_when_one_image_has_bad_metadata() {
+        let (_temp, repository) = repository_with_background().await;
+        tokio::fs::write(repository.backgrounds_dir.join("broken.png"), b"not a png")
+            .await
+            .expect("write broken background");
+
+        let entries = repository
+            .get_background_list_entries()
+            .await
+            .expect("refresh metadata");
+        let filenames = entries
+            .iter()
+            .map(|entry| entry.filename.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(filenames.contains(&"a.png"));
+        assert!(filenames.contains(&"broken.png"));
+
+        let index = repository
+            .read_metadata_index(Some("backgrounds/"))
+            .await
+            .expect("read metadata");
+        assert!(index.images.contains_key("backgrounds/a.png"));
+        assert!(!index.images.contains_key("backgrounds/broken.png"));
     }
 
     #[tokio::test]
