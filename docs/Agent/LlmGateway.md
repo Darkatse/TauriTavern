@@ -207,7 +207,7 @@ Tool result 当前会编码为 JSON 字符串，包含：
 }
 ```
 
-前 5 轮 `workspace.write_file` / `workspace.apply_patch` 成功结果会被 runtime hydrate：下一轮模型看到完整文件内容，journal/workspace 真相不变。
+前 5 轮 `workspace.write_file` / `workspace.apply_patch` 成功结果会被 runtime hydrate：下一轮模型看到完整文件内容，并同步为完整 read-state；journal/workspace 真相不变。
 
 ## 8. Policy
 

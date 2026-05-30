@@ -196,7 +196,7 @@ pub fn materialize_agent_system_prompt(
     }
     if has_tool(tools, "workspace.write_file") {
         lines.push(format!(
-            "- Use {} to create new files or perform complete rewrites.",
+            "- Use {} to create files, append to files, or perform complete rewrites.",
             model_name(tools, "workspace.write_file")
         ));
     }

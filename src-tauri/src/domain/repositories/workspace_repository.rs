@@ -15,6 +15,12 @@ pub struct WorkspaceFile {
     pub sha256: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct WorkspaceAppendResult {
+    pub file: WorkspaceFile,
+    pub previous_sha256: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkspaceEntryKind {
     File,
@@ -66,6 +72,13 @@ pub trait WorkspaceRepository: Send + Sync {
         text: &str,
         guard: WorkspaceWriteGuard,
     ) -> Result<WorkspaceFile, DomainError>;
+
+    async fn append_text(
+        &self,
+        run_id: &str,
+        path: &WorkspacePath,
+        text: &str,
+    ) -> Result<WorkspaceAppendResult, DomainError>;
 
     async fn read_text(
         &self,

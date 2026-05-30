@@ -158,6 +158,8 @@ workspace_list_files accepts omitted/empty/dot path as workspace root
 workspace_search_files searches only visible roots and returns snippets
 workspace_read_file full read records read-state
 workspace_read_file character range does not unlock patch state unless it covers the full file
+workspace_write_file append creates missing files and appends existing files without a rewrite read
+workspace_write_file append does not auto-insert newlines and does not unlock rewrite or patch state for unread existing content
 workspace_apply_patch requires full read-state and checkpoints on success
 chat deletion removes the corresponding Agent chat workspace and run index
 chat deletion fails clearly while the corresponding Agent workspace has an active run

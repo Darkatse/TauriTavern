@@ -3,7 +3,7 @@ use serde_json::Value;
 use tokio::fs;
 
 use super::FileAgentRepository;
-use super::fs_tree::{workspace_file_from_text, workspace_path_from_run_dir};
+use super::fs_tree::{sha256_hex, workspace_file_from_text, workspace_path_from_run_dir};
 use super::paths::validate_workspace_root_path;
 use crate::domain::errors::{DomainError, WorkspaceWriteConflictKind};
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
@@ -11,8 +11,8 @@ use crate::domain::models::agent::{
     AgentRun, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
 };
 use crate::domain::repositories::workspace_repository::{
-    WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
-    WorkspaceWriteGuard,
+    WorkspaceAppendResult, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile, WorkspaceFileList,
+    WorkspaceRepository, WorkspaceWriteGuard,
 };
 use crate::infrastructure::persistence::file_system::{
     replace_file_with_fallback, unique_temp_path,
@@ -111,6 +111,42 @@ impl WorkspaceRepository for FileAgentRepository {
         replace_file_with_fallback(&temp_path, &target).await?;
 
         workspace_file_from_text(path.clone(), text.to_string())
+    }
+
+    async fn append_text(
+        &self,
+        run_id: &str,
+        path: &WorkspacePath,
+        text: &str,
+    ) -> Result<WorkspaceAppendResult, DomainError> {
+        let target = self.safe_workspace_path(run_id, path, true).await?;
+        let _guard = self.acquire_workspace_write_lock(&target).await;
+        ensure_target_is_not_directory(&target, path).await?;
+        let existing = read_existing_workspace_text(&target).await?;
+        let previous_sha256 = existing.as_ref().map(|text| sha256_hex(text.as_bytes()));
+        let updated = match existing {
+            Some(mut existing) => {
+                existing.push_str(text);
+                existing
+            }
+            None => text.to_string(),
+        };
+        let temp_path = unique_temp_path(&target, "workspace.txt");
+        fs::write(&temp_path, updated.as_bytes())
+            .await
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to write workspace temp file {}: {}",
+                    temp_path.display(),
+                    error
+                ))
+            })?;
+        replace_file_with_fallback(&temp_path, &target).await?;
+
+        Ok(WorkspaceAppendResult {
+            file: workspace_file_from_text(path.clone(), updated)?,
+            previous_sha256,
+        })
     }
 
     async fn read_text(

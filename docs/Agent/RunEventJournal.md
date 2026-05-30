@@ -425,6 +425,8 @@ workspace_patch_applied
 checkpoint_created
 ```
 
+当前 `workspace_file_written` 同时覆盖 `workspace.write_file` 的 `replace` 与 `append` 成功结果，payload 必须携带 `mode`，便于 timeline 与恢复逻辑区分完整替换和原样追加。
+
 如果副作用前需要保证恢复后不会重复执行，可以先写 pending event，再由恢复逻辑检查 pending 状态。这一点对 MCP/外部副作用尤其重要。
 
 ## 6. 实时订阅

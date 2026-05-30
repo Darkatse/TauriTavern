@@ -501,7 +501,7 @@ Agent Mode on：
 | `workspace.list_files` | `workspace_list_files` | 列出模型可见 workspace 文件；`path` 省略、空字符串、`.`、`./` 表示 workspace root |
 | `workspace.search_files` | `workspace_search_files` | 搜索模型可见 workspace UTF-8 文本文件，返回 snippet/ref |
 | `workspace.read_file` | `workspace_read_file` | 读取 UTF-8 文本文件并返回行号；支持行范围和字符范围；完整读取记录 read-state |
-| `workspace.write_file` | `workspace_write_file` | 写 UTF-8 文本到 manifest 可写 roots，当前为 `output/`、`scratch/`、`plan/`、`summaries/`、`persist/` |
+| `workspace.write_file` | `workspace_write_file` | 写 UTF-8 文本到 manifest 可写 roots；`mode` 默认为 `replace`，`append` 原样追加并在缺失时创建文件 |
 | `workspace.apply_patch` | `workspace_apply_patch` | 单文件 `old_string` / `new_string` 精确替换，要求已完整读取或由本 run 创建/修改 |
 | `workspace.commit` | `workspace_commit` | 提交可见 workspace 文件到当前聊天；无参数默认 replace `output/main.md`；append 首次创建、后续追加同一消息 |
 | `workspace.finish` | `workspace_finish` | 结束工具循环；前台 run 要求已有成功 commit，后台 run 可直接结束 |

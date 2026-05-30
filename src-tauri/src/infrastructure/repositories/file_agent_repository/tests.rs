@@ -288,6 +288,53 @@ async fn guarded_workspace_writes_are_atomic_per_path() {
 }
 
 #[tokio::test]
+async fn append_text_is_atomic_per_path_and_creates_missing_files() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_append_workspace_write");
+    let manifest = sample_manifest(&run);
+    let profile = sample_resolved_profile(&manifest);
+
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .initialize_run(
+            &run,
+            &manifest,
+            &serde_json::json!({"messages": []}),
+            &profile,
+        )
+        .await
+        .expect("initialize workspace");
+
+    let path = WorkspacePath::parse("output/main.md").expect("workspace path");
+    let created = repository
+        .append_text(&run.id, &path, "first")
+        .await
+        .expect("append missing file");
+    assert_eq!(created.previous_sha256, None);
+    assert_eq!(created.file.text, "first");
+
+    let (left, right) = tokio::join!(
+        repository.append_text(&run.id, &path, " left"),
+        repository.append_text(&run.id, &path, " right"),
+    );
+    assert!(left.expect("append left").previous_sha256.is_some());
+    assert!(right.expect("append right").previous_sha256.is_some());
+
+    let final_text = repository
+        .read_text(&run.id, &path)
+        .await
+        .expect("read final text")
+        .text;
+    assert!(
+        final_text == "first left right" || final_text == "first right left",
+        "unexpected final text: {final_text}"
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn repository_round_trips_invocations() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());

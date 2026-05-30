@@ -43,7 +43,7 @@ use crate::domain::models::agent::{
     AgentChatRef, AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart,
     AgentModelRequest, AgentModelRole, AgentRun, AgentRunEventLevel, AgentRunPresentation,
     AgentRunSkillScopeRefs, AgentRunStatus, AgentTaskStatus, AgentToolCall, AgentToolResult,
-    WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
+    WorkspaceFileWriteMode, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
 };
 use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
 use crate::domain::models::skill::{
@@ -57,7 +57,8 @@ use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::preset_repository::PresetRepository;
 use crate::domain::repositories::skill_repository::SkillRepository;
 use crate::domain::repositories::workspace_repository::{
-    WorkspaceFile, WorkspaceFileList, WorkspaceRepository, WorkspaceWriteGuard,
+    WorkspaceAppendResult, WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
+    WorkspaceWriteGuard,
 };
 use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 use crate::infrastructure::repositories::file_agent_repository::FileAgentRepository;
@@ -2551,6 +2552,178 @@ async fn agent_loop_writes_artifact_and_completes() {
         })
         .expect("tool call requested");
     assert_eq!(tool_requested.payload["round"], json!(1));
+    let written = events
+        .iter()
+        .find(|event| event.event_type == "workspace_file_written")
+        .expect("workspace write event");
+    assert_eq!(written.payload["mode"], json!("replace"));
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn agent_loop_hydrated_append_result_unlocks_next_round_rewrite() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-append-hydrate-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_append_hydrate_test".to_string(),
+        workspace_id: "chat_append_hydrate_test".to_string(),
+        stable_chat_id: "stable_append_hydrate_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: Default::default(),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+
+    let request = ChatCompletionGenerateRequestDto {
+        payload: json!({
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "messages": prompt_messages("append then rewrite")
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    };
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let profile = test_resolved_profile(&root).await;
+    repository
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &profile),
+            &prompt_snapshot,
+            &profile,
+        )
+        .await
+        .expect("initialize workspace");
+    repository
+        .write_text(
+            &run.id,
+            &WorkspacePath::parse("output/main.md").unwrap(),
+            "first",
+        )
+        .await
+        .expect("seed artifact");
+
+    let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_append",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"\\nsecond\",\"mode\":\"append\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_replace_after_hydrate",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_write_file",
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"rewritten after hydrated append\",\"mode\":\"replace\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_finish",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_finish",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        }),
+    ]));
+    let model_gateway_probe = model_gateway.clone();
+
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        model_gateway,
+        test_profile_service(&root),
+        test_llm_connection_service(&root),
+    );
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+
+    service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("agent loop");
+
+    let artifact = repository
+        .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+        .await
+        .expect("read artifact");
+    assert_eq!(artifact.text, "rewritten after hydrated append");
+
+    let model_requests = model_gateway_probe.requests().await;
+    let second_request = model_requests.get(1).expect("second model request");
+    let hydrated_tool_result = second_request
+        .messages
+        .iter()
+        .find(|message| message.role == AgentModelRole::Tool)
+        .and_then(|message| message.parts.first())
+        .and_then(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some(result),
+            _ => None,
+        })
+        .expect("hydrated append result");
+    assert!(
+        hydrated_tool_result
+            .content
+            .contains("Full content of output/main.md")
+    );
+    assert!(hydrated_tool_result.content.contains("first\nsecond"));
+    wait_for_closed_sessions(
+        &model_gateway_probe,
+        vec!["run_append_hydrate_test:inv_root".to_string()],
+    )
+    .await;
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -4938,6 +5111,253 @@ async fn workspace_write_file_uses_session_cas_for_existing_files() {
 }
 
 #[tokio::test]
+async fn workspace_write_file_append_mode_adds_text_without_rewrite_read() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-write-append-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_write_append_test".to_string(),
+        workspace_id: "chat_write_append_test".to_string(),
+        stable_chat_id: "stable_write_append_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: Default::default(),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    let profile = test_resolved_profile(&root).await;
+    repository
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &profile),
+            &json!({"messages": []}),
+            &profile,
+        )
+        .await
+        .expect("initialize workspace");
+    repository
+        .write_text(
+            &run.id,
+            &WorkspacePath::parse("output/main.md").unwrap(),
+            "first",
+        )
+        .await
+        .expect("seed artifact");
+
+    let dispatcher = test_dispatcher(repository.clone(), &root);
+    let mut session = AgentToolSession::default();
+    let append_call = AgentToolCall {
+        id: "call_append".to_string(),
+        name: "workspace.write_file".to_string(),
+        arguments: json!({
+            "path": "output/main.md",
+            "content": "\nsecond",
+            "mode": "append",
+        }),
+        provider_metadata: Value::Null,
+    };
+
+    let appended = dispatcher
+        .dispatch(&run.id, &append_call, &mut session, &profile)
+        .await
+        .expect("dispatch append");
+    assert!(!appended.result.is_error);
+    assert_eq!(appended.result.structured["mode"], "append");
+    assert!(matches!(
+        appended.effect,
+        AgentToolEffect::WorkspaceFileWritten {
+            mode: WorkspaceFileWriteMode::Append,
+            ..
+        }
+    ));
+    let artifact = repository
+        .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+        .await
+        .expect("read artifact");
+    assert_eq!(artifact.text, "first\nsecond");
+
+    let replace_after_unread_append_call = AgentToolCall {
+        id: "call_replace_after_unread_append".to_string(),
+        name: "workspace.write_file".to_string(),
+        arguments: json!({
+            "path": "output/main.md",
+            "content": "rewritten without read",
+            "mode": "replace",
+        }),
+        provider_metadata: Value::Null,
+    };
+    let replace_after_unread_append = dispatcher
+        .dispatch(
+            &run.id,
+            &replace_after_unread_append_call,
+            &mut session,
+            &profile,
+        )
+        .await
+        .expect("dispatch replace after unread append");
+    assert!(replace_after_unread_append.result.is_error);
+    assert_eq!(
+        replace_after_unread_append.result.error_code.as_deref(),
+        Some("workspace.write_requires_read")
+    );
+
+    let patch_call = AgentToolCall {
+        id: "call_patch_after_append".to_string(),
+        name: "workspace.apply_patch".to_string(),
+        arguments: json!({
+            "path": "output/main.md",
+            "old_string": "first",
+            "new_string": "FIRST",
+        }),
+        provider_metadata: Value::Null,
+    };
+    let patch_without_full_read = dispatcher
+        .dispatch(&run.id, &patch_call, &mut session, &profile)
+        .await
+        .expect("dispatch patch after append");
+    assert!(patch_without_full_read.result.is_error);
+    assert_eq!(
+        patch_without_full_read.result.error_code.as_deref(),
+        Some("workspace.patch_requires_read")
+    );
+
+    let invalid_mode_call = AgentToolCall {
+        id: "call_invalid_append_mode".to_string(),
+        name: "workspace.write_file".to_string(),
+        arguments: json!({
+            "path": "output/main.md",
+            "content": "ignored",
+            "mode": "merge",
+        }),
+        provider_metadata: Value::Null,
+    };
+    let invalid_mode = dispatcher
+        .dispatch(&run.id, &invalid_mode_call, &mut session, &profile)
+        .await
+        .expect("dispatch invalid write mode");
+    assert!(invalid_mode.result.is_error);
+    assert_eq!(
+        invalid_mode.result.error_code.as_deref(),
+        Some("workspace.write_mode_invalid")
+    );
+
+    let append_new_call = AgentToolCall {
+        id: "call_append_new".to_string(),
+        name: "workspace.write_file".to_string(),
+        arguments: json!({
+            "path": "output/new.md",
+            "content": "created by append",
+            "mode": "append",
+        }),
+        provider_metadata: Value::Null,
+    };
+    let appended_new = dispatcher
+        .dispatch(&run.id, &append_new_call, &mut session, &profile)
+        .await
+        .expect("dispatch append new file");
+    assert!(!appended_new.result.is_error);
+    let new_file = repository
+        .read_text(&run.id, &WorkspacePath::parse("output/new.md").unwrap())
+        .await
+        .expect("read appended new file");
+    assert_eq!(new_file.text, "created by append");
+
+    let replace_new_call = AgentToolCall {
+        id: "call_replace_append_new".to_string(),
+        name: "workspace.write_file".to_string(),
+        arguments: json!({
+            "path": "output/new.md",
+            "content": "rewritten after append create",
+            "mode": "replace",
+        }),
+        provider_metadata: Value::Null,
+    };
+    let replaced_new = dispatcher
+        .dispatch(&run.id, &replace_new_call, &mut session, &profile)
+        .await
+        .expect("dispatch replace appended new file");
+    assert!(!replaced_new.result.is_error);
+    let new_file = repository
+        .read_text(&run.id, &WorkspacePath::parse("output/new.md").unwrap())
+        .await
+        .expect("read replaced new file");
+    assert_eq!(new_file.text, "rewritten after append create");
+
+    repository
+        .write_text(
+            &run.id,
+            &WorkspacePath::parse("output/known.md").unwrap(),
+            "alpha",
+        )
+        .await
+        .expect("seed known artifact");
+    let read_known_call = AgentToolCall {
+        id: "call_read_known_before_append".to_string(),
+        name: "workspace.read_file".to_string(),
+        arguments: json!({
+            "path": "output/known.md",
+        }),
+        provider_metadata: Value::Null,
+    };
+    let read_known = dispatcher
+        .dispatch(&run.id, &read_known_call, &mut session, &profile)
+        .await
+        .expect("dispatch read known file");
+    assert!(!read_known.result.is_error);
+    assert_eq!(read_known.result.structured["fullRead"], true);
+
+    let append_known_call = AgentToolCall {
+        id: "call_append_known".to_string(),
+        name: "workspace.write_file".to_string(),
+        arguments: json!({
+            "path": "output/known.md",
+            "content": "\nbeta",
+            "mode": "append",
+        }),
+        provider_metadata: Value::Null,
+    };
+    let appended_known = dispatcher
+        .dispatch(&run.id, &append_known_call, &mut session, &profile)
+        .await
+        .expect("dispatch append known file");
+    assert!(!appended_known.result.is_error);
+
+    let replace_known_call = AgentToolCall {
+        id: "call_replace_known_after_append".to_string(),
+        name: "workspace.write_file".to_string(),
+        arguments: json!({
+            "path": "output/known.md",
+            "content": "rewritten after known append",
+            "mode": "replace",
+        }),
+        provider_metadata: Value::Null,
+    };
+    let replaced_known = dispatcher
+        .dispatch(&run.id, &replace_known_call, &mut session, &profile)
+        .await
+        .expect("dispatch replace known file");
+    assert!(!replaced_known.result.is_error);
+    let known_file = repository
+        .read_text(&run.id, &WorkspacePath::parse("output/known.md").unwrap())
+        .await
+        .expect("read replaced known file");
+    assert_eq!(known_file.text, "rewritten after known append");
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn dispatcher_searches_and_reads_current_chat_messages() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-chat-tools-{}",
@@ -6054,6 +6474,15 @@ impl WorkspaceRepository for FailingPersistentCommitWorkspaceRepository {
         self.inner
             .write_text_guarded(run_id, path, text, guard)
             .await
+    }
+
+    async fn append_text(
+        &self,
+        run_id: &str,
+        path: &WorkspacePath,
+        text: &str,
+    ) -> Result<WorkspaceAppendResult, DomainError> {
+        self.inner.append_text(run_id, path, text).await
     }
 
     async fn read_text(

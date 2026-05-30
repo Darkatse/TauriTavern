@@ -204,7 +204,7 @@ impl AgentRuntimeService {
                     )
                     .await?;
                 match &outcome.effect {
-                    AgentToolEffect::WorkspaceFileWritten { file } => {
+                    AgentToolEffect::WorkspaceFileWritten { file, mode } => {
                         let metrics = TextMetrics::from_text(&file.text);
                         self.checkpoint_workspace_file(
                             run_id,
@@ -214,6 +214,7 @@ impl AgentRuntimeService {
                             json!({
                                 "invocationId": invocation_id,
                                 "path": file.path.as_str(),
+                                "mode": mode,
                                 "chars": metrics.chars,
                                 "words": metrics.words,
                                 "sha256": file.sha256.as_str(),
@@ -328,6 +329,7 @@ impl AgentRuntimeService {
                     round,
                     &tool_results,
                     &workspace_repository,
+                    &mut tool_session,
                 )
                 .await?
             } else {
@@ -336,6 +338,7 @@ impl AgentRuntimeService {
                     round,
                     &tool_results,
                     self.workspace_repository.as_ref(),
+                    &mut tool_session,
                 )
                 .await?
             };
@@ -409,6 +412,7 @@ impl AgentRuntimeService {
         round: usize,
         tool_results: &[AgentToolResult],
         workspace_repository: &dyn WorkspaceRepository,
+        tool_session: &mut AgentToolSession,
     ) -> Result<Vec<AgentToolResult>, ApplicationError> {
         if round > 5 {
             return Ok(tool_results.to_vec());
@@ -439,6 +443,7 @@ impl AgentRuntimeService {
             let file = workspace_repository
                 .read_text(run_id, &workspace_path)
                 .await?;
+            tool_session.remember_file(&file, true);
             result.content = format!(
                 "{}\n\nFull content of {}:\n{}",
                 result.content,

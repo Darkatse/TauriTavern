@@ -12,8 +12,8 @@ use crate::domain::models::agent::{
     WorkspacePersistentChangeSet,
 };
 use crate::domain::repositories::workspace_repository::{
-    WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
-    WorkspaceWriteGuard,
+    WorkspaceAppendResult, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile, WorkspaceFileList,
+    WorkspaceRepository, WorkspaceWriteGuard,
 };
 
 const SUMMARY_PARENT_ROOT: &str = "summaries/parent";
@@ -78,7 +78,7 @@ impl ChildWorkspaceView {
         mut outcome: AgentToolDispatchOutcome,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         match &mut outcome.effect {
-            AgentToolEffect::WorkspaceFileWritten { file }
+            AgentToolEffect::WorkspaceFileWritten { file, .. }
             | AgentToolEffect::WorkspaceFilePatched { file, .. } => {
                 file.path = self.scope.model_to_physical_path(&file.path)?;
             }
@@ -217,6 +217,32 @@ impl WorkspaceRepository for ChildWorkspaceRepository<'_> {
                     .modelize_domain_error(error, Some(&requested_path), "file")
             })?;
         self.view.model_file_from_physical(file)
+    }
+
+    async fn append_text(
+        &self,
+        run_id: &str,
+        path: &WorkspacePath,
+        text: &str,
+    ) -> Result<WorkspaceAppendResult, DomainError> {
+        let requested_path = path.clone();
+        let path = self
+            .view
+            .scope
+            .model_to_physical_write_path(path)
+            .map_err(ChildWorkspaceView::recoverable_model_path_error)?;
+        let result = self
+            .inner
+            .append_text(run_id, &path, text)
+            .await
+            .map_err(|error| {
+                self.view
+                    .modelize_domain_error(error, Some(&requested_path), "file")
+            })?;
+        Ok(WorkspaceAppendResult {
+            file: self.view.model_file_from_physical(result.file)?,
+            previous_sha256: result.previous_sha256,
+        })
     }
 
     async fn read_text(

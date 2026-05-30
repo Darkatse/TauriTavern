@@ -146,7 +146,7 @@ Tool registry 只产 canonical `AgentToolSpec`，不再暴露 OpenAI-shaped `ope
 | `workspace.list_files` | `workspace_list_files` | read-only |
 | `workspace.search_files` | `workspace_search_files` | read-only |
 | `workspace.read_file` | `workspace_read_file` | read-only |
-| `workspace.write_file` | `workspace_write_file` | mutating |
+| `workspace.write_file` | `workspace_write_file` | mutating；默认 replace，支持 append 原样追加 |
 | `workspace.apply_patch` | `workspace_apply_patch` | mutating |
 | `workspace.finish` | `workspace_finish` | control |
 
@@ -168,7 +168,7 @@ Tool registry 只产 canonical `AgentToolSpec`，不再暴露 OpenAI-shaped `ope
 
 当前已落地 recent hydration：
 
-- 前 5 轮 `workspace.write_file` / `workspace.apply_patch` 成功结果会读取目标 workspace 文件，将完整文本加入下一轮模型上下文。
+- 前 5 轮 `workspace.write_file` / `workspace.apply_patch` 成功结果会读取目标 workspace 文件，将完整文本加入下一轮模型上下文，并同步为完整 read-state。
 - hydration 只影响 model request，不改变 workspace/journal 真相。
 - hydration 会写 `context_tool_result_hydrated` debug event。
 

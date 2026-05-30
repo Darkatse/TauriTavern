@@ -124,7 +124,7 @@ pub(in crate::application::services::agent_tools) fn workspace_write_file_spec()
         name: WORKSPACE_WRITE_FILE.to_string(),
         model_name: MODEL_WORKSPACE_WRITE_FILE.to_string(),
         title: "Workspace Write File".to_string(),
-        description: "Write complete UTF-8 text to a writable Agent workspace file.".to_string(),
+        description: "Write UTF-8 text to a writable Agent workspace file. mode replace writes the complete file. mode append adds content exactly to the end and creates the file when missing; include a leading newline in content when you want a new line.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -135,7 +135,12 @@ pub(in crate::application::services::agent_tools) fn workspace_write_file_spec()
                 },
                 "content": {
                     "type": "string",
-                    "description": "Complete UTF-8 file content."
+                    "description": "Complete UTF-8 file content for replace, or the exact suffix to add for append."
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["replace", "append"],
+                    "description": "replace writes the complete file; append adds content to the end, creating the file if missing. Defaults to replace."
                 }
             },
             "required": ["path", "content"]

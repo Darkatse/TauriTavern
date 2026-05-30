@@ -141,7 +141,7 @@ fn apply_return_mode_context(
         }
         WORKSPACE_WRITE_FILE => {
             spec.description = format!(
-                "Write complete UTF-8 text to a writable delegated-task workspace file. Writable prefixes are {writable_roots}. Use summaries/ for durable private notes and scratch/ for temporary notes; use shared writable roots only for requested artifacts or edits."
+                "Write UTF-8 text to a writable delegated-task workspace file. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing. Writable prefixes are {writable_roots}. Use summaries/ for durable private notes and scratch/ for temporary notes; use shared writable roots only for requested artifacts or edits."
             );
             set_property_description(
                 spec,
@@ -218,7 +218,7 @@ fn apply_profile_context(
         }
         WORKSPACE_WRITE_FILE => {
             spec.description = format!(
-                "Write complete UTF-8 text to a writable Agent workspace file. Use {final_path} for the default chat message body."
+                "Write UTF-8 text to a writable Agent workspace file. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing. Use {final_path} for the default chat message body."
             );
             set_property_description(
                 spec,

@@ -12,7 +12,7 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::skill_service::SkillService;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
-    AgentChatCommitMode, AgentToolCall, AgentToolResult, WorkspacePath,
+    AgentChatCommitMode, AgentToolCall, AgentToolResult, WorkspaceFileWriteMode, WorkspacePath,
 };
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::chat_repository::ChatRepository;
@@ -31,6 +31,7 @@ pub enum AgentToolEffect {
     None,
     WorkspaceFileWritten {
         file: WorkspaceFile,
+        mode: WorkspaceFileWriteMode,
     },
     WorkspaceFilePatched {
         file: WorkspaceFile,

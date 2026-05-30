@@ -197,7 +197,7 @@ persist/
 
 工具参数会写入 `tool-args/call_<sha256_8byte_hex(call-id)>.json`，工具结果会写入 `tool-results/call_<sha256_8byte_hex(call-id)>.json`；本地文件名只使用 SHA-256 前 8 字节 hex。provider 返回的原始 `call_id` 只作为不透明业务 ID 保存在 JSON 内容、journal payload 与下一轮 canonical `ToolResult` part 中，不作为本地文件名。Gateway 会在 provider 边界把它转换为对应 provider 格式。工具结果不会写入 SillyTavern chat 楼层。
 
-`workspace.apply_patch` 使用 Claude Code 风格的 `old_string` / `new_string` 单文件精确替换。未完整读取、版本变化、匹配 0 次或多次会作为 recoverable tool error 返回模型。`workspace.write_file` 对已存在文件复用同一个 session read-state 做 CAS：模型不需要传 `expectedSha256`，schema 不暴露 overwrite policy；若文件在最近读取/写入后被其他 invocation 修改，会返回可恢复的 stale-file 工具错误，要求重新读取后再写。模型传入的非法 path、空 path、不可见/不可写 path 也作为可恢复工具错误回填；目标 path 实际指向目录的读写请求会作为 `workspace.path_is_directory` 业务错误回填，提示模型改用 `workspace_list_files`。repository 内部 escape/symlink/journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
+`workspace.apply_patch` 使用 Claude Code 风格的 `old_string` / `new_string` 单文件精确替换。未完整读取、版本变化、匹配 0 次或多次会作为 recoverable tool error 返回模型。`workspace.write_file` 支持 `mode = replace | append`，默认 `replace`。`replace` 对已存在文件复用同一个 session read-state 做 CAS：模型不需要传 `expectedSha256`，schema 不暴露 overwrite policy；若文件在最近读取/写入后被其他 invocation 修改，会返回可恢复的 stale-file 工具错误，要求重新读取后再写。`append` 会把 `content` 原样追加到文件末尾，目标缺失时创建文件；不会自动补换行，模型需要新行时应把前导 `\n` 放进 `content`。`append` 工具调用本身只在新建文件或追加前文件已完整读入且版本匹配时更新完整 read-state，避免未读既有内容在同一轮内被隐式授权为后续 rewrite/patch 的依据。模型传入的非法 path、空 path、非法 mode、不可见/不可写 path 也作为可恢复工具错误回填；目标 path 实际指向目录的读写请求会作为 `workspace.path_is_directory` 业务错误回填，提示模型改用 `workspace_list_files`。repository 内部 escape/symlink/journal、checkpoint、序列化、取消和模型响应结构错误仍 fail-fast。
 
 `workspace.commit` 与 `workspace.finish` 的契约：模型可以多次 commit；当全部修订与 commit 完成后，必须用 `workspace.finish` 收口，不能用纯文本代替最终 answer。`workspace.commit` 工具的返回字符串只做温和提醒，提示模型可继续修订并再次 commit，但最终不要忘记 finish。
 
@@ -279,8 +279,10 @@ workspace.create_checkpoint
 
 - Mutating。
 - 只能写 writable path；return-mode child 应把 `summaries/` / `scratch/` 用作私有笔记，只在任务要求 artifact 或 edit 时写共享 writable roots。
+- `mode` 默认为 `replace`；`append` 把 `content` 原样追加到文件末尾，文件不存在时创建文件。
+- `append` 不自动补换行；需要另起一行时，模型应在 `content` 开头包含 `\n`。
 - 写后应 checkpoint。
-- 已存在文件若发生并发修改，会返回 recoverable stale-file tool error；模型重新读取后再写。
+- `replace` 写已存在文件若发生并发修改，会返回 recoverable stale-file tool error；模型重新读取后再写。
 
 `workspace.apply_patch`
 
@@ -520,7 +522,7 @@ result returns to backend journal
 - agent list/delegate/await 与 runtime-only task.return 的 return-mode SubAgent MVP。
 - tool arguments / tool results resource refs。
 - recoverable tool error 回填模型。
-- 前 5 轮 workspace write/patch 成功结果会 hydrate 完整文件内容到下一轮模型上下文。
+- 前 5 轮 workspace write/patch 成功结果会 hydrate 完整文件内容到下一轮模型上下文，并同步为完整 read-state。
 - workspace mutation checkpoint。
 - journal events。
 
