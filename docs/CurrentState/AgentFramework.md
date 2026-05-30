@@ -22,7 +22,7 @@
 - Return-mode SubAgent MVP 已落地：root/active invocation 可通过 `agent.list`、`agent.delegate`、`agent.await` 创建、查看或等待子任务；child invocation 使用 `task.return` 结束，不能直接 `workspace.commit` 或 `workspace.finish`。当前 child task 已由 run-scoped scheduler 后台并行执行；`agent.await` 只等待/查询结果，未显式 await 的 terminal results 会在父 Agent 下一次 tool turn 后注入下一轮模型请求。
 - 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
 - Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；实际 root run 使用扩展设置中的 `activeProfileId`。Profile 面板的 `editingProfileId` 只表示当前正在编辑的配置档案，不影响生成。Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
-- Agent System 前端已提供 run timeline / detail panel；详情面板顶部可拖动调整高度，高度仅作为扩展 UI 偏好保存，不进入 Agent Host ABI、journal 或 Rust runtime。
+- Agent System 前端已提供 run timeline / detail panel；timeline 以 `readEvents(beforeSeq, limit)` 读取最新页并按需补拉更早 journal 页，默认视图只投影用户可见操作，DOM 使用窗口化渲染避免长 run 在低端移动设备上堆积节点；详情面板顶部可拖动调整高度，高度仅作为扩展 UI 偏好保存，不进入 Agent Host ABI、journal 或 Rust runtime。
 
 ## 当前 Host ABI
 

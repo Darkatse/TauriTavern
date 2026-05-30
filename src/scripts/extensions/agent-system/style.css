@@ -656,8 +656,40 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     list-style: none;
 }
 
+.ttas-run-events.is-windowed {
+    --ttas-run-event-row-height: 58px;
+    gap: 0;
+}
+
 .ttas-run-event {
     position: relative;
+    min-height: var(--ttas-run-event-row-height, auto);
+}
+
+.ttas-run-events.is-windowed .ttas-run-event {
+    height: var(--ttas-run-event-row-height);
+    overflow: hidden;
+}
+
+.ttas-run-event-spacer {
+    flex: 0 0 auto;
+    min-height: 0;
+    pointer-events: none;
+}
+
+.ttas-run-event-loader {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 28px;
+    color: var(--ttas-run-line-text-muted);
+    font-size: 0.72rem;
+}
+
+.ttas-run-event-spacer::before,
+.ttas-run-event-loader::before {
+    display: none;
 }
 
 .ttas-run-event::before {
@@ -686,6 +718,7 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     gap: 8px;
     align-items: center;
     width: 100%;
+    min-height: calc(var(--ttas-run-event-row-height, 58px) - 4px);
     min-width: 0;
     padding: 6px 8px;
     color: var(--SmartThemeBodyColor);
@@ -695,6 +728,10 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 28%, transparent);
     cursor: pointer;
     transition: background-color var(--ttas-transition), border-color var(--ttas-transition), transform var(--ttas-transition), box-shadow var(--ttas-transition);
+}
+
+.ttas-run-events.is-windowed .ttas-run-event button {
+    height: calc(var(--ttas-run-event-row-height) - 4px);
 }
 
 .ttas-run-event button:hover,

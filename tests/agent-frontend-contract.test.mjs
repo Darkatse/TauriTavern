@@ -153,6 +153,69 @@ test('Agent run timeline resize geometry is deterministic', async () => {
     }), 380);
 });
 
+test('Agent run timeline event store keeps ordered history without tail truncation', async () => {
+    const storeModule = await importFresh('src/scripts/extensions/agent-system/src/run-timeline-event-store.js');
+    const store = storeModule.createRunTimelineEventStore();
+
+    assert.equal(store.add({ seq: 3, id: 'evt-3', runId: 'run-1', type: 'run_completed' }), true);
+    assert.equal(store.add({ seq: 1, id: 'evt-1', runId: 'run-1', type: 'run_created' }), true);
+    assert.equal(store.add({ seq: 2, id: 'evt-2', runId: 'run-1', type: 'tool_call_completed' }), true);
+    assert.equal(store.add({ seq: 2, id: 'evt-2', runId: 'run-1', type: 'tool_call_completed' }), false);
+
+    assert.deepEqual(store.events().map(event => event.seq), [1, 2, 3]);
+    assert.equal(store.oldestSeq(), 1);
+    assert.throws(() => store.add({ seq: 0, runId: 'run-1' }), /positive integer/);
+});
+
+test('Agent run timeline virtualizer windows DOM items without dropping timeline entries', async () => {
+    const virtualList = await importFresh('src/scripts/extensions/agent-system/src/run-timeline-virtual-list.js');
+    const items = Array.from({ length: 120 }, (_, index) => ({ id: `item-${index + 1}` }));
+
+    const topWindow = virtualList.virtualizeTimelineItems(items, 0, 174, {
+        rowHeight: 58,
+        overscan: 2,
+    });
+    assert.deepEqual(topWindow.items.map(item => item.id), [
+        'item-1',
+        'item-2',
+        'item-3',
+        'item-4',
+        'item-5',
+        'item-6',
+        'item-7',
+    ]);
+    assert.equal(topWindow.topPadding, 0);
+    assert.equal(topWindow.bottomPadding, (120 - 7) * 58);
+    assert.equal(topWindow.totalHeight, 120 * 58);
+
+    const middleWindow = virtualList.virtualizeTimelineItems(items, 58 * 50, 174, {
+        rowHeight: 58,
+        overscan: 2,
+    });
+    assert.equal(middleWindow.items[0].id, 'item-49');
+    assert.equal(middleWindow.topPadding, 48 * 58);
+    assert.ok(middleWindow.bottomPadding > 0);
+
+    const clampedWindow = virtualList.virtualizeTimelineItems(items.slice(0, 10), 999_999, 174, {
+        rowHeight: 58,
+        overscan: 2,
+    });
+    assert.equal(clampedWindow.items.at(-1).id, 'item-10');
+    assert.equal(clampedWindow.bottomPadding, 0);
+});
+
+test('Agent run timeline panel does not cap visible history with tail-only slices', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/extensions/agent-system/src/run-timeline-panel.js',
+    ), 'utf8');
+
+    assert.doesNotMatch(source, /MAX_RAW_EVENTS/);
+    assert.doesNotMatch(source, /\.slice\(-90\)/);
+    assert.match(source, /loadOlderRunHistory/);
+    assert.match(source, /virtualDisplayItems/);
+});
+
 test('Agent run timeline projects SubAgent tasks without flattening child events into root', async () => {
     const projector = await importFresh('src/scripts/extensions/agent-system/src/run-invocation-projector.js');
     const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');

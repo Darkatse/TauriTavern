@@ -38,10 +38,15 @@ import {
     timelineItemsFromEvents,
     TERMINAL_EVENT_TYPES,
 } from './run-event-presenter.js';
+import {
+    createRunTimelineEventStore,
+    RUN_EVENT_PAGE_LIMIT,
+    RUN_EVENT_TAIL_SEQ,
+} from './run-timeline-event-store.js';
+import { virtualizeTimelineItems } from './run-timeline-virtual-list.js';
 
 const MOUNT_ID = 'ttas_agent_run_timeline_mount';
-const HISTORY_LIMIT = 160;
-const MAX_RAW_EVENTS = 260;
+const HISTORY_TOP_LOAD_THRESHOLD_PX = 72;
 
 function createAgentRunTimelineApp() {
     return createApp({
@@ -53,14 +58,16 @@ function createAgentRunTimelineApp() {
                 },
                 currentRun: null,
                 activeRun: null,
+                eventStore: createRunTimelineEventStore(),
                 events: [],
-                seenEventKeys: Object.create(null),
                 terminalEvent: null,
                 collapsed: true,
                 detailsOpen: false,
                 selectedSeq: null,
                 autoStick: true,
                 loadingHistory: false,
+                loadingOlderHistory: false,
+                hasMoreBefore: false,
                 historyRequestId: 0,
                 detailLoading: false,
                 detailError: '',
@@ -79,6 +86,10 @@ function createAgentRunTimelineApp() {
                 resizeStartY: 0,
                 resizeStartHeightPx: 0,
                 resizeBounds: null,
+                timelineScrollTop: 0,
+                timelineViewportHeight: 1,
+                subAgentTimelineScrollTop: 0,
+                subAgentTimelineViewportHeight: 1,
                 unsubscribeSettings: null,
                 unsubscribeRunState: null,
                 unsubscribeRunEvents: null,
@@ -124,7 +135,14 @@ function createAgentRunTimelineApp() {
             displayItems() {
                 return timelineItemsFromEvents(this.events, {
                     invocationId: ROOT_INVOCATION_ID,
-                }).slice(-90);
+                });
+            },
+            virtualDisplayItems() {
+                return virtualizeTimelineItems(
+                    this.displayItems,
+                    this.timelineScrollTop,
+                    this.timelineViewportHeight,
+                );
             },
             latestDisplayItem() {
                 return this.displayItems[this.displayItems.length - 1] || null;
@@ -222,7 +240,14 @@ function createAgentRunTimelineApp() {
                 }
                 return timelineItemsFromEvents(this.subAgentEvents, {
                     invocationId: this.selectedSubAgentInvocationId,
-                }).slice(-90);
+                });
+            },
+            virtualSubAgentDisplayItems() {
+                return virtualizeTimelineItems(
+                    this.subAgentDisplayItems,
+                    this.subAgentTimelineScrollTop,
+                    this.subAgentTimelineViewportHeight,
+                );
             },
             selectedSubAgentItem() {
                 if (this.subAgentSelectedSeq != null) {
@@ -277,6 +302,7 @@ function createAgentRunTimelineApp() {
                 this.subAgentSelectedSeq = null;
                 this.subAgentDetailSections = [];
                 this.subAgentDetailError = '';
+                this.subAgentTimelineScrollTop = 0;
                 if (this.subAgentDialogOpen) {
                     void this.loadSubAgentDetails();
                 }
@@ -321,12 +347,16 @@ function createAgentRunTimelineApp() {
             },
             async startTrackingRun(run) {
                 this.currentRun = run;
+                this.eventStore = createRunTimelineEventStore();
                 this.events = [];
-                this.seenEventKeys = Object.create(null);
                 this.terminalEvent = null;
                 this.selectedSeq = null;
                 this.collapsed = true;
                 this.detailsOpen = false;
+                this.loadingOlderHistory = false;
+                this.hasMoreBefore = false;
+                this.timelineScrollTop = 0;
+                this.subAgentTimelineScrollTop = 0;
                 this.subAgentTrayExpanded = false;
                 this.subAgentDialogOpen = false;
                 this.selectedSubAgentInvocationId = '';
@@ -343,15 +373,20 @@ function createAgentRunTimelineApp() {
                 try {
                     const result = await requireHostApi('agent').readEvents({
                         runId,
-                        afterSeq: 0,
-                        limit: HISTORY_LIMIT,
+                        beforeSeq: RUN_EVENT_TAIL_SEQ,
+                        limit: RUN_EVENT_PAGE_LIMIT,
                     });
                     if (requestId !== this.historyRequestId) {
                         return;
                     }
-                    for (const event of Array.isArray(result?.events) ? result.events : []) {
-                        this.receiveRunEvent(event);
-                    }
+                    const events = Array.isArray(result?.events) ? result.events : [];
+                    this.receiveRunEvents(events);
+                    this.hasMoreBefore = events.length >= RUN_EVENT_PAGE_LIMIT
+                        && Number(this.eventStore.oldestSeq() || 0) > 1;
+                    this.$nextTick(() => {
+                        this.measureTimelineViewport();
+                        this.stickTimelineToBottom();
+                    });
                 } catch (error) {
                     console.error('[AgentSystem] Failed to load Agent run events', error);
                     window.toastr?.error?.(errorText(error));
@@ -361,7 +396,57 @@ function createAgentRunTimelineApp() {
                     }
                 }
             },
-            receiveRunEvent(event) {
+            async loadOlderRunHistory() {
+                if (this.loadingHistory || this.loadingOlderHistory || !this.hasMoreBefore || !this.currentRun?.runId) {
+                    return;
+                }
+                const beforeSeq = this.eventStore.oldestSeq();
+                if (beforeSeq == null || beforeSeq <= 1) {
+                    this.hasMoreBefore = false;
+                    return;
+                }
+
+                const requestId = ++this.historyRequestId;
+                this.loadingOlderHistory = true;
+                const scroller = this.$refs.timelineScroller;
+                const previousScrollHeight = scroller instanceof HTMLElement ? scroller.scrollHeight : 0;
+                const previousScrollTop = scroller instanceof HTMLElement ? scroller.scrollTop : 0;
+                try {
+                    const result = await requireHostApi('agent').readEvents({
+                        runId: this.currentRun.runId,
+                        beforeSeq,
+                        limit: RUN_EVENT_PAGE_LIMIT,
+                    });
+                    if (requestId !== this.historyRequestId) {
+                        return;
+                    }
+                    const events = Array.isArray(result?.events) ? result.events : [];
+                    this.receiveRunEvents(events);
+                    this.hasMoreBefore = events.length >= RUN_EVENT_PAGE_LIMIT
+                        && Number(this.eventStore.oldestSeq() || 0) > 1;
+                    this.$nextTick(() => {
+                        if (scroller instanceof HTMLElement) {
+                            const delta = scroller.scrollHeight - previousScrollHeight;
+                            scroller.scrollTop = previousScrollTop + Math.max(0, delta);
+                            this.timelineScrollTop = scroller.scrollTop;
+                        }
+                    });
+                } catch (error) {
+                    console.error('[AgentSystem] Failed to load older Agent run events', error);
+                    window.toastr?.error?.(errorText(error));
+                } finally {
+                    if (requestId === this.historyRequestId) {
+                        this.loadingOlderHistory = false;
+                    }
+                }
+            },
+            receiveRunEvents(events) {
+                for (const event of events) {
+                    this.receiveRunEvent(event, { skipStick: true });
+                }
+                this.$nextTick(() => this.stickToBottomIfNeeded());
+            },
+            receiveRunEvent(event, options = {}) {
                 if (!event?.runId) {
                     return;
                 }
@@ -372,16 +457,10 @@ function createAgentRunTimelineApp() {
                     return;
                 }
 
-                const key = this.eventKey(event);
-                if (this.seenEventKeys[key]) {
+                if (!this.eventStore.add(event)) {
                     return;
                 }
-                this.seenEventKeys[key] = true;
-                this.events.push(event);
-                this.events.sort((a, b) => Number(a?.seq || 0) - Number(b?.seq || 0));
-                if (this.events.length > MAX_RAW_EVENTS) {
-                    this.events.splice(0, this.events.length - MAX_RAW_EVENTS);
-                }
+                this.events = this.eventStore.events();
                 if (TERMINAL_EVENT_TYPES.includes(event.type)) {
                     this.terminalEvent = event;
                     if (event.type === 'run_failed' && event?.payload?.userRetryable === true) {
@@ -398,7 +477,9 @@ function createAgentRunTimelineApp() {
                     && eventBelongsToInvocation(event, this.selectedSubAgentInvocationId)) {
                     void this.loadSubAgentDetails();
                 }
-                this.$nextTick(() => this.stickToBottomIfNeeded());
+                if (!options.skipStick) {
+                    this.$nextTick(() => this.stickToBottomIfNeeded());
+                }
             },
             revealUserRetryableFailure(event) {
                 this.collapsed = false;
@@ -432,9 +513,6 @@ function createAgentRunTimelineApp() {
                     console.error('[AgentSystem] Failed to retry Agent run', error);
                     window.toastr?.error?.(errorText(error), tr('agentSystem'));
                 }
-            },
-            eventKey(event) {
-                return event?.id ? `id:${event.id}` : `seq:${event?.runId || ''}:${event?.seq || 0}`;
             },
             itemTitle(item) {
                 return tr(item.titleKey, item.titleParams || {});
@@ -602,6 +680,7 @@ function createAgentRunTimelineApp() {
                     if (!dialog.open) {
                         dialog.showModal();
                     }
+                    this.measureTimelineViewport();
                 });
             },
             closeSubAgentDialog(reset = true) {
@@ -626,6 +705,12 @@ function createAgentRunTimelineApp() {
             },
             toggleCollapsed() {
                 this.collapsed = !this.collapsed;
+                if (!this.collapsed) {
+                    this.$nextTick(() => {
+                        this.measureTimelineViewport();
+                        this.stickToBottomIfNeeded();
+                    });
+                }
             },
             openDetails() {
                 if (!this.selectedHasDetails) {
@@ -660,8 +745,41 @@ function createAgentRunTimelineApp() {
                 if (!(scroller instanceof HTMLElement)) {
                     return;
                 }
+                this.timelineScrollTop = scroller.scrollTop;
+                this.timelineViewportHeight = Math.max(1, scroller.clientHeight);
                 const remaining = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
                 this.autoStick = remaining < 18;
+                if (scroller.scrollTop <= HISTORY_TOP_LOAD_THRESHOLD_PX) {
+                    void this.loadOlderRunHistory();
+                }
+            },
+            onSubAgentTimelineScroll() {
+                const scroller = this.$refs.subAgentTimelineScroller;
+                if (!(scroller instanceof HTMLElement)) {
+                    return;
+                }
+                this.subAgentTimelineScrollTop = scroller.scrollTop;
+                this.subAgentTimelineViewportHeight = Math.max(1, scroller.clientHeight);
+            },
+            measureTimelineViewport() {
+                const scroller = this.$refs.timelineScroller;
+                if (scroller instanceof HTMLElement) {
+                    this.timelineScrollTop = scroller.scrollTop;
+                    this.timelineViewportHeight = Math.max(1, scroller.clientHeight);
+                }
+                const subAgentScroller = this.$refs.subAgentTimelineScroller;
+                if (subAgentScroller instanceof HTMLElement) {
+                    this.subAgentTimelineScrollTop = subAgentScroller.scrollTop;
+                    this.subAgentTimelineViewportHeight = Math.max(1, subAgentScroller.clientHeight);
+                }
+            },
+            stickTimelineToBottom() {
+                const scroller = this.$refs.timelineScroller;
+                if (scroller instanceof HTMLElement) {
+                    scroller.scrollTop = scroller.scrollHeight;
+                    this.timelineScrollTop = scroller.scrollTop;
+                    this.timelineViewportHeight = Math.max(1, scroller.clientHeight);
+                }
             },
             stickToBottomIfNeeded() {
                 if (!this.autoStick || this.collapsed) {
@@ -670,6 +788,8 @@ function createAgentRunTimelineApp() {
                 const scroller = this.$refs.timelineScroller;
                 if (scroller instanceof HTMLElement) {
                     scroller.scrollTop = scroller.scrollHeight;
+                    this.timelineScrollTop = scroller.scrollTop;
+                    this.timelineViewportHeight = Math.max(1, scroller.clientHeight);
                 }
             },
             async loadDetails() {
@@ -967,9 +1087,23 @@ function createAgentRunTimelineApp() {
                                     <i class="fa-solid fa-circle-dot"></i>
                                     <span>{{ emptyTimelineText }}</span>
                                 </div>
-                                <ol v-else class="ttas-run-events">
+                                <ol v-else class="ttas-run-events is-windowed">
                                     <li
-                                        v-for="item in displayItems"
+                                        v-if="loadingOlderHistory"
+                                        class="ttas-run-event-loader"
+                                        aria-live="polite"
+                                    >
+                                        <i class="fa-solid fa-spinner fa-spin"></i>
+                                        <span>{{ tr('timelineLoading') }}</span>
+                                    </li>
+                                    <li
+                                        v-if="virtualDisplayItems.topPadding > 0"
+                                        class="ttas-run-event-spacer"
+                                        :style="{ height: virtualDisplayItems.topPadding + 'px' }"
+                                        aria-hidden="true"
+                                    ></li>
+                                    <li
+                                        v-for="item in virtualDisplayItems.items"
                                         :key="item.id"
                                         class="ttas-run-event"
                                         :data-ttas-kind="item.kind"
@@ -1002,6 +1136,12 @@ function createAgentRunTimelineApp() {
                                             </span>
                                         </button>
                                     </li>
+                                    <li
+                                        v-if="virtualDisplayItems.bottomPadding > 0"
+                                        class="ttas-run-event-spacer"
+                                        :style="{ height: virtualDisplayItems.bottomPadding + 'px' }"
+                                        aria-hidden="true"
+                                    ></li>
                                 </ol>
                             </div>
                             <aside
@@ -1194,14 +1334,25 @@ function createAgentRunTimelineApp() {
                             </button>
                         </header>
                         <div class="ttas-subagent-body">
-                            <section class="ttas-subagent-timeline" :aria-label="tr('timelineSubAgentTimeline')">
+                            <section
+                                ref="subAgentTimelineScroller"
+                                class="ttas-subagent-timeline"
+                                :aria-label="tr('timelineSubAgentTimeline')"
+                                @scroll.passive="onSubAgentTimelineScroll"
+                            >
                                 <div v-if="subAgentDisplayItems.length === 0" class="ttas-run-empty">
                                     <i class="fa-solid fa-circle-dot"></i>
                                     <span>{{ tr('timelineNoEvents') }}</span>
                                 </div>
-                                <ol v-else class="ttas-run-events ttas-subagent-events">
+                                <ol v-else class="ttas-run-events ttas-subagent-events is-windowed">
                                     <li
-                                        v-for="item in subAgentDisplayItems"
+                                        v-if="virtualSubAgentDisplayItems.topPadding > 0"
+                                        class="ttas-run-event-spacer"
+                                        :style="{ height: virtualSubAgentDisplayItems.topPadding + 'px' }"
+                                        aria-hidden="true"
+                                    ></li>
+                                    <li
+                                        v-for="item in virtualSubAgentDisplayItems.items"
                                         :key="'subagent-' + item.id"
                                         class="ttas-run-event"
                                         :data-ttas-kind="item.kind"
@@ -1227,6 +1378,12 @@ function createAgentRunTimelineApp() {
                                             </span>
                                         </button>
                                     </li>
+                                    <li
+                                        v-if="virtualSubAgentDisplayItems.bottomPadding > 0"
+                                        class="ttas-run-event-spacer"
+                                        :style="{ height: virtualSubAgentDisplayItems.bottomPadding + 'px' }"
+                                        aria-hidden="true"
+                                    ></li>
                                 </ol>
                             </section>
                             <section class="ttas-subagent-detail" :aria-label="tr('timelineDetails')">

@@ -438,7 +438,7 @@ const unsubscribe = await window.__TAURITAVERN__.api.agent.subscribe(runId, even
 要求：
 
 - subscribe 不复播全部历史，除非 options 指定。
-- UI 首次进入 run 页面应先 `readEvents(runId, { afterSeq })`，再 subscribe。
+- UI 首次进入 run 页面可以读取最新页 `readEvents(runId, { beforeSeq, limit })`，再通过 subscribe / `afterSeq` 追新；需要回看更早轮次时继续用 `beforeSeq` 分页补拉。
 - unsubscribe 必须幂等。
 - 事件丢失时，UI 可通过 `afterSeq` 补拉。
 
@@ -452,6 +452,7 @@ readEvents(runId, { beforeSeq, limit })
 ```
 
 移动端 timeline 不应该一次读取巨大 journal。
+默认 timeline UI 应把 raw journal 投影成用户可见操作流，并使用窗口化渲染；状态机、provider state、checkpoint 等审计事件仍保留在 journal 中，但不应因为 UI 容量限制挤掉早期操作轮次。
 
 ## 8. Cancel
 
