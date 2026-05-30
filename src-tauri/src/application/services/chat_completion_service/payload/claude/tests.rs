@@ -467,16 +467,18 @@ fn claude_full_sampling_models_keep_temperature_top_p_and_top_k() {
 }
 
 #[test]
-fn claude_sampling_free_models_reject_non_default_sampling_params() {
+fn claude_sampling_free_models_drop_non_default_sampling_params() {
     let mut payload = claude_payload("claude-opus-4-7");
     payload.insert("temperature".to_string(), json!(0.7));
+    payload.insert("top_p".to_string(), json!(0.9));
+    payload.insert("top_k".to_string(), json!(40));
 
-    let error = build(payload).expect_err("build should fail");
-    assert!(
-        error
-            .to_string()
-            .contains("does not support non-default sampling parameters: temperature")
-    );
+    let (_, upstream) = build(payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+
+    assert!(body.get("temperature").is_none());
+    assert!(body.get("top_p").is_none());
+    assert!(body.get("top_k").is_none());
 }
 
 #[test]
@@ -495,16 +497,17 @@ fn claude_sampling_free_models_ignore_default_sampling_params() {
 }
 
 #[test]
-fn claude_future_models_do_not_inherit_sampling_or_prefill_support() {
+fn claude_opus_4_8_drops_sampling_and_rejects_prefill() {
     let mut sampling_payload = claude_payload("claude-opus-4-8");
     sampling_payload.insert("temperature".to_string(), json!(0.7));
+    sampling_payload.insert("top_p".to_string(), json!(0.9));
+    sampling_payload.insert("top_k".to_string(), json!(40));
 
-    let sampling_error = build(sampling_payload).expect_err("build should fail");
-    assert!(
-        sampling_error
-            .to_string()
-            .contains("does not support non-default sampling parameters: temperature")
-    );
+    let (_, upstream) = build(sampling_payload).expect("build should succeed");
+    let body = upstream.as_object().expect("body must be object");
+    assert!(body.get("temperature").is_none());
+    assert!(body.get("top_p").is_none());
+    assert!(body.get("top_k").is_none());
 
     let mut prefill_payload = claude_payload("claude-opus-4-8");
     prefill_payload.insert("assistant_prefill".to_string(), json!("prefill"));
@@ -518,8 +521,8 @@ fn claude_future_models_do_not_inherit_sampling_or_prefill_support() {
 }
 
 #[test]
-fn claude_future_models_do_not_inherit_legacy_or_adaptive_reasoning_support() {
-    let mut payload = claude_payload("claude-opus-4-8");
+fn claude_unknown_models_do_not_inherit_reasoning_support() {
+    let mut payload = claude_payload("claude-opus-4-9");
     payload.insert("reasoning_effort".to_string(), json!("medium"));
 
     let error = build(payload).expect_err("build should fail");
@@ -532,43 +535,49 @@ fn claude_future_models_do_not_inherit_legacy_or_adaptive_reasoning_support() {
 
 #[test]
 fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
-    let mut payload = claude_payload("claude-opus-4-7");
-    payload.insert("reasoning_effort".to_string(), json!("high"));
-    payload.insert("include_reasoning".to_string(), json!(true));
+    for model in ["claude-opus-4-7", "claude-opus-4-8"] {
+        let mut payload = claude_payload(model);
+        payload.insert("reasoning_effort".to_string(), json!("high"));
+        payload.insert("include_reasoning".to_string(), json!(true));
 
-    let (_, upstream) = build(payload).expect("build should succeed");
-    let body = upstream.as_object().expect("body must be object");
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
 
-    assert_eq!(
-        body.get("thinking")
-            .and_then(Value::as_object)
-            .and_then(|thinking| thinking.get("type"))
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-        "adaptive"
-    );
-    assert_eq!(
-        body.get("thinking")
-            .and_then(Value::as_object)
-            .and_then(|thinking| thinking.get("display"))
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-        "summarized"
-    );
-    assert_eq!(
-        body.get("output_config")
-            .and_then(Value::as_object)
-            .and_then(|config| config.get("effort"))
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-        "high"
-    );
-    assert!(
-        body.get("thinking")
-            .and_then(Value::as_object)
-            .and_then(|thinking| thinking.get("budget_tokens"))
-            .is_none()
-    );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("type"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "adaptive",
+            "{model} should use adaptive thinking"
+        );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("display"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "summarized",
+            "{model} should request summarized reasoning"
+        );
+        assert_eq!(
+            body.get("output_config")
+                .and_then(Value::as_object)
+                .and_then(|config| config.get("effort"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "high",
+            "{model} should map reasoning_effort to output_config.effort"
+        );
+        assert!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("budget_tokens"))
+                .is_none(),
+            "{model} should not use legacy budget_tokens"
+        );
+    }
 }
 
 #[test]

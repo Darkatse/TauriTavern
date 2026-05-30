@@ -3,7 +3,7 @@ use serde_json::{Map, Number, Value, json};
 use crate::application::errors::ApplicationError;
 
 use super::super::shared::insert_if_present;
-use super::contract::{ClaudeModelContract, ClaudeThinkingMode};
+use super::contract::{ClaudeModelContract, ClaudeSamplingMode, ClaudeThinkingMode};
 use super::messages::{
     convert_messages, merge_consecutive_messages, move_assistant_images_to_next_user_message,
 };
@@ -181,7 +181,11 @@ fn build_claude_payload_inner(
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
     insert_if_present(&mut request, payload, "stream");
-    insert_claude_sampling_params(&mut request, payload);
+    insert_claude_sampling_params(
+        &mut request,
+        payload,
+        contract.map(|contract| contract.sampling),
+    );
 
     if let Some(stop) = payload.get("stop").filter(|value| value.is_array()) {
         request.insert("stop_sequences".to_string(), stop.clone());
@@ -297,7 +301,15 @@ fn build_claude_payload_inner(
     Ok(request)
 }
 
-fn insert_claude_sampling_params(request: &mut Map<String, Value>, payload: &Map<String, Value>) {
+fn insert_claude_sampling_params(
+    request: &mut Map<String, Value>,
+    payload: &Map<String, Value>,
+    sampling: Option<ClaudeSamplingMode>,
+) {
+    if sampling == Some(ClaudeSamplingMode::None) {
+        return;
+    }
+
     if has_non_default_temperature(payload) {
         insert_if_present(request, payload, "temperature");
     }
