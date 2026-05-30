@@ -360,6 +360,27 @@ export const MINIMAX_ENDPOINT = {
 
 export const AWS_BEDROCK_REGION_DEFAULT = 'us-east-1';
 
+export function getAwsBedrockModelMetadata(modelId = null) {
+    const resolvedModelId = String(modelId ?? oai_settings.aws_bedrock_model ?? '');
+    if (!resolvedModelId || !Array.isArray(model_list)) {
+        return null;
+    }
+    const model = model_list.find(entry => entry?.id === resolvedModelId);
+    return model?.tauritavern?.bedrock ?? null;
+}
+
+function getAwsBedrockModelCapabilities(modelId = null) {
+    return getAwsBedrockModelMetadata(modelId)?.capabilities ?? null;
+}
+
+function getAwsBedrockEntryMetadata(model) {
+    return model?.tauritavern?.bedrock ?? null;
+}
+
+function isAwsBedrockModelSupported(model) {
+    return getAwsBedrockEntryMetadata(model)?.supported === true;
+}
+
 const sensitiveFields = [
     'reverse_proxy',
     'proxy_password',
@@ -3356,57 +3377,25 @@ function saveModelList(data) {
 
     if (oai_settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
         // Dynamic Bedrock catalog wins over the static <optgroup> placeholders
-        // in index.html. The backend's list_models returns every active
-        // foundation model + inference profile across all providers, each
-        // tagged with `provider`. We have payload builders + stream/response
-        // normalizers wired for the seven providers listed below; everything
-        // else is still surfaced (so users can see the full catalog) but
-        // disabled with an `(unsupported, coming soon)` suffix so picking one
-        // doesn't lead to a confusing 4xx after Send. Two notable caveats:
-        //   - `amazon` covers Nova only; Titan-family models share the
-        //     `amazon.*` provider prefix but use the legacy Titan invoke body
-        //     and are filtered out below before the `isSupported` check.
-        //   - `ai21` covers Jamba only; legacy Jurassic-2 models
-        //     (`ai21.j2-*`) are recognised as unsupported and grey out.
+        // in index.html. The backend attaches TauriTavern Bedrock metadata to
+        // every catalog entry; the UI only renders that contract instead of
+        // re-implementing provider/model-family support checks in JavaScript.
         const select = $('#model_aws_bedrock_select');
         select.empty();
 
-        const SUPPORTED_PROVIDERS = new Set([
-            'anthropic',
-            'amazon',
-            'meta',
-            'mistral',
-            'cohere',
-            'ai21',
-            'deepseek',
-        ]);
-        const isSupportedModel = (model) => {
-            const provider = String(model?.provider || '').toLowerCase();
-            if (!SUPPORTED_PROVIDERS.has(provider)) return false;
-            const id = String(model?.id || '').toLowerCase();
-            // Titan-family models share `amazon.*` but use the older Titan
-            // invoke body (`inputText` / `textGenerationConfig`) that the
-            // Nova builder doesn't speak. Mark them unsupported until we
-            // wire a dedicated Titan branch.
-            if (provider === 'amazon' && !id.includes('.nova') && !id.includes('amazon.nova')) {
-                return false;
-            }
-            // AI21 Jurassic-2 (`ai21.j2-*`) uses a legacy completion body;
-            // only Jamba (`ai21.jamba*`) goes through the wired builder.
-            if (provider === 'ai21' && !id.includes('.jamba')) {
-                return false;
-            }
-            return true;
-        };
-        const isSupported = isSupportedModel;
-
         const appendOption = (parent, model) => {
+            const metadata = getAwsBedrockEntryMetadata(model);
+            const supported = isAwsBedrockModelSupported(model);
             const option = new Option(
-                isSupported(model) ? model.id : `${model.id}  (unsupported, coming soon)`,
+                supported ? model.id : `${model.id}  (unsupported, coming soon)`,
                 model.id,
             );
-            if (!isSupported(model)) {
+            if (!supported) {
                 option.disabled = true;
+                option.title = metadata?.unsupportedReason || 'Unsupported by the built-in AWS Bedrock adapter';
+            }
+            if (metadata?.family) {
+                option.dataset.tauritavernBedrockFamily = metadata.family;
             }
             parent.append(option);
         };
@@ -3470,7 +3459,7 @@ function saveModelList(data) {
         // When picking a default, prefer a *supported* model so the first run
         // works out-of-the-box. Falls back to anything if Anthropic isn't
         // available in the user's region.
-        const supportedIds = model_list.filter(isSupported).map(m => m.id);
+        const supportedIds = model_list.filter(isAwsBedrockModelSupported).map(m => m.id);
         const allIds = model_list.map(m => m.id);
         oai_settings.aws_bedrock_model = chooseModelOrCurrentCustom(
             chat_completion_sources.AWS_BEDROCK,
@@ -3903,6 +3892,7 @@ function getReasoningEffort(settings = null, model = null) {
         chat_completion_sources.COMETAPI,
         chat_completion_sources.ELECTRONHUB,
         chat_completion_sources.CHUTES,
+        chat_completion_sources.AWS_BEDROCK,
     ];
 
     if (!reasoningEffortSources.includes(settings.chat_completion_source)) {
@@ -3938,6 +3928,10 @@ function getReasoningEffort(settings = null, model = null) {
             }
             return undefined;
         }
+    }
+
+    if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+        return getAwsBedrockModelCapabilities(model)?.reasoning ? reasoningEffort : undefined;
     }
 
     return reasoningEffort;
@@ -4263,10 +4257,14 @@ export async function createGenerationParameters(settings, model, type, messages
     }
 
     if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+        const capabilities = getAwsBedrockModelCapabilities(settings.aws_bedrock_model);
         generate_data.aws_bedrock_region = (settings.aws_bedrock_region || AWS_BEDROCK_REGION_DEFAULT).trim();
         generate_data.top_k = Number(settings.top_k_openai);
         generate_data.use_sysprompt = settings.use_sysprompt;
         generate_data.stop = getCustomStoppingStrings();
+        if (!capabilities?.webSearch) {
+            generate_data.enable_web_search = false;
+        }
         // Custom invoke template escape hatch — only forwarded when the user
         // has explicitly opted in so the backend can keep its automatic
         // provider dispatch for everyone else.
@@ -7877,6 +7875,8 @@ export function isImageInliningSupported(settings = oai_settings) {
             return (Array.isArray(model_list) && model_list.find(m => m.id === settings.moonshot_model)?.supports_image_in);
         case chat_completion_sources.NANOGPT:
             return (Array.isArray(model_list) && model_list.find(m => m.id === settings.nanogpt_model)?.capabilities?.vision);
+        case chat_completion_sources.AWS_BEDROCK:
+            return Boolean(getAwsBedrockModelCapabilities(settings.aws_bedrock_model)?.images);
         case chat_completion_sources.ZAI:
             return visionSupportedModels.some(model => settings.zai_model.includes(model));
         case chat_completion_sources.SILICONFLOW:

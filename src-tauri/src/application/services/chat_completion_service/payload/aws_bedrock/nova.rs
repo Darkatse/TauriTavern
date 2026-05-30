@@ -69,7 +69,10 @@ pub(super) fn build(
 
     let inference_config = build_inference_config(&payload);
     if !inference_config.is_empty() {
-        body.insert("inferenceConfig".to_string(), Value::Object(inference_config));
+        body.insert(
+            "inferenceConfig".to_string(),
+            Value::Object(inference_config),
+        );
     }
 
     Ok((
@@ -82,7 +85,10 @@ fn build_inference_config(payload: &Map<String, Value>) -> Map<String, Value> {
     let mut config = Map::new();
 
     if let Some(max_tokens) = value_to_positive_i64(payload.get("max_tokens")) {
-        config.insert("maxTokens".to_string(), Value::Number(Number::from(max_tokens)));
+        config.insert(
+            "maxTokens".to_string(),
+            Value::Number(Number::from(max_tokens)),
+        );
     }
     if let Some(temperature) = payload.get("temperature").and_then(Value::as_f64) {
         if let Some(number) = Number::from_f64(temperature) {
@@ -97,7 +103,11 @@ fn build_inference_config(payload: &Map<String, Value>) -> Map<String, Value> {
     if let Some(top_k) = value_to_positive_i64(payload.get("top_k")) {
         config.insert("topK".to_string(), Value::Number(Number::from(top_k)));
     }
-    if let Some(stop) = payload.get("stop").cloned().filter(|value| !value.is_null()) {
+    if let Some(stop) = payload
+        .get("stop")
+        .cloned()
+        .filter(|value| !value.is_null())
+    {
         // Bedrock Converse-style payload accepts `stopSequences`.
         let stops = match stop {
             Value::Array(values) => values
@@ -162,7 +172,10 @@ mod tests {
             Some("be concise"),
         );
 
-        let messages = body.get("messages").and_then(Value::as_array).expect("messages");
+        let messages = body
+            .get("messages")
+            .and_then(Value::as_array)
+            .expect("messages");
         assert_eq!(messages.len(), 1, "system was lifted out");
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[0]["content"][0]["text"], "hello");
@@ -171,8 +184,14 @@ mod tests {
             .get("inferenceConfig")
             .and_then(Value::as_object)
             .expect("nova must always carry an inferenceConfig when params are present");
-        assert_eq!(inference.get("maxTokens").and_then(Value::as_i64), Some(256));
-        assert_eq!(inference.get("temperature").and_then(Value::as_f64), Some(0.4));
+        assert_eq!(
+            inference.get("maxTokens").and_then(Value::as_i64),
+            Some(256)
+        );
+        assert_eq!(
+            inference.get("temperature").and_then(Value::as_f64),
+            Some(0.4)
+        );
         assert_eq!(inference.get("topP").and_then(Value::as_f64), Some(0.9));
         assert_eq!(inference.get("topK").and_then(Value::as_i64), Some(50));
         let stop = inference

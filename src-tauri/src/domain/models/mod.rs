@@ -3,6 +3,7 @@ pub mod agent;
 pub mod asset;
 pub mod avatar;
 pub mod background;
+pub mod bedrock_model;
 pub mod character;
 pub mod chat;
 pub mod extension;

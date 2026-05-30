@@ -29,6 +29,7 @@ use super::shared::{
     value_to_positive_i64,
 };
 use crate::application::errors::ApplicationError;
+use crate::domain::models::bedrock_model::is_deepseek_text_completion_model;
 
 pub(super) fn build(
     payload: Map<String, Value>,
@@ -44,10 +45,7 @@ pub(super) fn build(
 }
 
 pub(super) fn is_text_completion(model_id: &str) -> bool {
-    // R1 is the only DeepSeek model that requires the `<｜begin▁of▁sentence｜>`
-    // template per the official Bedrock model-parameters doc; V3.x variants
-    // accept OpenAI-shape messages.
-    model_id.to_ascii_lowercase().contains("r1")
+    is_deepseek_text_completion_model(model_id)
 }
 
 fn build_text_completion_body(payload: Map<String, Value>) -> Value {
@@ -73,7 +71,11 @@ fn build_text_completion_body(payload: Map<String, Value>) -> Value {
             body.insert("top_p".to_string(), Value::Number(number));
         }
     }
-    if let Some(stop) = payload.get("stop").cloned().filter(|value| value.is_array()) {
+    if let Some(stop) = payload
+        .get("stop")
+        .cloned()
+        .filter(|value| value.is_array())
+    {
         body.insert("stop".to_string(), stop);
     }
 
@@ -119,10 +121,7 @@ fn build_chat_completion_body(payload: Map<String, Value>) -> Value {
 /// immediately. Unicode characters (`｜` `▁`) match the model card verbatim.
 pub(super) fn format_r1_prompt(system: Option<&str>, turns: &[FlatMessage]) -> String {
     let mut prompt = String::from("<｜begin▁of▁sentence｜>");
-    if let Some(text) = system
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(text) = system.map(str::trim).filter(|value| !value.is_empty()) {
         prompt.push_str(text);
     }
 

@@ -159,7 +159,6 @@ pub(super) fn value_to_positive_i64(value: Option<&Value>) -> Option<i64> {
     value.and_then(Value::as_i64).filter(|number| *number > 0)
 }
 
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;

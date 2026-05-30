@@ -29,6 +29,7 @@ use super::shared::{
     value_to_positive_i64,
 };
 use crate::application::errors::ApplicationError;
+use crate::domain::models::bedrock_model::is_mistral_text_completion_model;
 
 pub(super) fn build(
     payload: Map<String, Value>,
@@ -44,10 +45,7 @@ pub(super) fn build(
 }
 
 pub(super) fn is_legacy_text_completion(model_id: &str) -> bool {
-    let id = model_id.to_ascii_lowercase();
-    // Cross-region prefix has already been preserved in `model_id`; substring
-    // match works regardless of `us.` / `eu.` / ... profile prefixes.
-    id.contains("mistral-7b") || id.contains("mixtral") || id.contains("-2402")
+    is_mistral_text_completion_model(model_id)
 }
 
 fn build_text_completion_body(payload: Map<String, Value>) -> Value {
@@ -102,7 +100,11 @@ fn build_chat_completion_body(payload: Map<String, Value>) -> Value {
             body.insert("top_p".to_string(), Value::Number(number));
         }
     }
-    if let Some(tools) = payload.get("tools").cloned().filter(|value| value.is_array()) {
+    if let Some(tools) = payload
+        .get("tools")
+        .cloned()
+        .filter(|value| value.is_array())
+    {
         body.insert("tools".to_string(), tools);
     }
     if let Some(tool_choice) = payload
@@ -187,7 +189,10 @@ mod tests {
         .expect("payload should be object");
 
         let (endpoint_path, body) = build(payload).expect("payload should build");
-        assert_eq!(endpoint_path, "/model/mistral.mistral-7b-instruct-v0:2/invoke");
+        assert_eq!(
+            endpoint_path,
+            "/model/mistral.mistral-7b-instruct-v0:2/invoke"
+        );
         let body = body.as_object().expect("body should be object");
         assert!(
             body.get("messages").is_none(),
@@ -231,7 +236,10 @@ mod tests {
         .expect("payload should be object");
 
         let (endpoint_path, body) = build(payload).expect("payload should build");
-        assert_eq!(endpoint_path, "/model/mistral.mistral-large-2407-v1:0/invoke");
+        assert_eq!(
+            endpoint_path,
+            "/model/mistral.mistral-large-2407-v1:0/invoke"
+        );
         let body = body.as_object().expect("body should be object");
         let messages = body
             .get("messages")
@@ -242,7 +250,10 @@ mod tests {
         assert_eq!(messages[0]["content"], "you are a helpful assistant");
         assert_eq!(messages[1]["role"], "user");
         assert_eq!(messages[1]["content"], "hi");
-        assert!(body.get("prompt").is_none(), "chat path must not emit a prompt");
+        assert!(
+            body.get("prompt").is_none(),
+            "chat path must not emit a prompt"
+        );
         assert_eq!(body.get("max_tokens").and_then(Value::as_i64), Some(1024));
         assert_eq!(body.get("temperature").and_then(Value::as_f64), Some(0.4));
         assert!(body.get("tools").is_some(), "tools array passes through");

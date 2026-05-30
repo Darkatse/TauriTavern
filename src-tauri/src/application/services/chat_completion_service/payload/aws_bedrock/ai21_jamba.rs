@@ -41,9 +41,7 @@
 
 use serde_json::{Map, Number, Value};
 
-use super::shared::{
-    BEDROCK_INVOKE_SUFFIX, passthrough_chat_messages, value_to_positive_i64,
-};
+use super::shared::{BEDROCK_INVOKE_SUFFIX, passthrough_chat_messages, value_to_positive_i64};
 use crate::application::errors::ApplicationError;
 
 pub(super) fn build(
@@ -73,7 +71,11 @@ pub(super) fn build(
             body.insert("top_p".to_string(), Value::Number(number));
         }
     }
-    if let Some(stop) = payload.get("stop").cloned().filter(|value| value.is_array()) {
+    if let Some(stop) = payload
+        .get("stop")
+        .cloned()
+        .filter(|value| value.is_array())
+    {
         body.insert("stop".to_string(), stop);
     }
     if let Some(frequency_penalty) = payload.get("frequency_penalty").and_then(Value::as_f64) {
@@ -87,11 +89,19 @@ pub(super) fn build(
         }
     }
 
-    // Streaming forbids n > 1; Bedrock currently only accepts streaming
-    // requests in the TauriTavern flow, but we accept both. Clamp to 1 when
-    // the upstream value is invalid.
+    // Streaming forbids n > 1; clamp streaming requests to the single-choice
+    // shape Bedrock accepts.
     let n_value = value_to_positive_i64(payload.get("n")).unwrap_or(1);
-    body.insert("n".to_string(), Value::Number(Number::from(n_value.max(1))));
+    let n_value = if payload
+        .get("stream")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        1
+    } else {
+        n_value.max(1)
+    };
+    body.insert("n".to_string(), Value::Number(Number::from(n_value)));
 
     Ok((endpoint_path, Value::Object(body)))
 }
@@ -145,5 +155,22 @@ mod tests {
             Some(&json!(1)),
             "n defaults to 1 because streaming forbids n>1",
         );
+    }
+
+    #[test]
+    fn build_ai21_jamba_clamps_streaming_n_to_one() {
+        let payload = json!({
+            "chat_completion_source": "aws_bedrock",
+            "model": "ai21.jamba-1-5-large-v1:0",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": true,
+            "n": 3,
+        })
+        .as_object()
+        .cloned()
+        .expect("payload should be object");
+
+        let (_, body) = build(payload).expect("ai21 jamba build must succeed");
+        assert_eq!(body.get("n"), Some(&json!(1)));
     }
 }

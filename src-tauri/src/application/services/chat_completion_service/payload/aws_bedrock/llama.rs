@@ -133,7 +133,10 @@ mod tests {
         );
 
         let body = body.as_object().expect("body should be object");
-        assert!(body.get("messages").is_none(), "llama uses prompt, not messages");
+        assert!(
+            body.get("messages").is_none(),
+            "llama uses prompt, not messages"
+        );
         assert_eq!(
             body.get("max_gen_len").and_then(Value::as_i64),
             Some(512),
@@ -183,7 +186,9 @@ mod tests {
         );
 
         assert!(prompt.starts_with("<|begin_of_text|><|start_header_id|>user<|end_header_id|>"));
-        assert!(prompt.contains("<|start_header_id|>assistant<|end_header_id|>\n\nhello<|eot_id|>"));
+        assert!(
+            prompt.contains("<|start_header_id|>assistant<|end_header_id|>\n\nhello<|eot_id|>")
+        );
         assert!(prompt.contains("<|start_header_id|>user<|end_header_id|>\n\nagain<|eot_id|>"));
         assert!(prompt.ends_with("<|start_header_id|>assistant<|end_header_id|>\n\n"));
     }

@@ -843,7 +843,10 @@ mod tests {
             &ApiConfigHints::default(),
         )
         .unwrap();
-        assert_eq!(default_region, "https://bedrock-runtime.us-east-1.amazonaws.com");
+        assert_eq!(
+            default_region,
+            "https://bedrock-runtime.us-east-1.amazonaws.com"
+        );
 
         let custom_region = default_base_url(
             ChatCompletionSource::AwsBedrock,
@@ -854,7 +857,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(custom_region, "https://bedrock-runtime.us-west-2.amazonaws.com");
+        assert_eq!(
+            custom_region,
+            "https://bedrock-runtime.us-west-2.amazonaws.com"
+        );
     }
 
     #[test]

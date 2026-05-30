@@ -133,8 +133,7 @@ mod tests {
         let cases = [
             json!({ "messageStart": { "role": "assistant" } }).to_string(),
             json!({ "messageStop": { "stopReason": "end_turn" } }).to_string(),
-            json!({ "metadata": { "usage": { "inputTokens": 1, "outputTokens": 1 } } })
-                .to_string(),
+            json!({ "metadata": { "usage": { "inputTokens": 1, "outputTokens": 1 } } }).to_string(),
         ];
         for chunk in cases {
             assert!(

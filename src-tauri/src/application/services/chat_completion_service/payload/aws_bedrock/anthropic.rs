@@ -19,6 +19,7 @@ use serde_json::{Map, Value};
 use super::super::claude;
 use super::shared::BEDROCK_INVOKE_SUFFIX;
 use crate::application::errors::ApplicationError;
+use crate::domain::models::bedrock_model::strip_inference_profile_prefix;
 
 const BEDROCK_ANTHROPIC_VERSION: &str = "bedrock-2023-05-31";
 const BEDROCK_ANTHROPIC_PREFIX: &str = "anthropic.";
@@ -77,7 +78,7 @@ pub(super) fn normalize_bedrock_model_id(raw: &str) -> String {
         return String::new();
     }
 
-    let mut id = super::strip_inference_profile_prefix(trimmed);
+    let mut id = strip_inference_profile_prefix(trimmed);
     if let Some(rest) = id.strip_prefix(BEDROCK_ANTHROPIC_PREFIX) {
         id = rest;
     }
@@ -119,7 +120,10 @@ mod tests {
         );
 
         let body = body.as_object().expect("body should be object");
-        assert!(body.get("model").is_none(), "model must be removed from body");
+        assert!(
+            body.get("model").is_none(),
+            "model must be removed from body"
+        );
         assert!(
             body.get("stream").is_none(),
             "stream must be removed; Bedrock infers it from the URL path",
@@ -217,8 +221,7 @@ mod tests {
 
         let (endpoint_path, body) = build(payload).expect("payload should build");
         assert_eq!(
-            endpoint_path,
-            "/model/us.anthropic.claude-opus-4-7/invoke",
+            endpoint_path, "/model/us.anthropic.claude-opus-4-7/invoke",
             "URL path must retain the raw Bedrock id"
         );
 

@@ -19,6 +19,9 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
 use crate::domain::errors::DomainError;
+use crate::domain::models::bedrock_model::{
+    BedrockModelFamily, BedrockModelSpec, extract_provider,
+};
 use crate::domain::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
@@ -43,53 +46,24 @@ const BEDROCK_STREAM_SUFFIX: &str = "/invoke-with-response-stream";
 const BEDROCK_RUNTIME_HOST_INFIX: &str = "bedrock-runtime.";
 const BEDROCK_CONTROL_PLANE_HOST_INFIX: &str = "bedrock.";
 
-/// Inference-profile prefixes used by Bedrock cross-region routing. Used to
-/// extract the underlying provider name from an inference-profile id (e.g.
-/// `us.anthropic.claude-opus-4-7` -> provider `anthropic`).
-const BEDROCK_INFERENCE_PROFILE_PREFIXES: &[&str] =
-    &["us.", "eu.", "apac.", "global.", "us-gov."];
-
-/// HTTP-side view of which Bedrock provider a request belongs to. Used to
-/// pick the right non-stream response normalizer and the right stream-chunk
-/// transformer. Kept narrowly here (separate from
-/// `payload::aws_bedrock::BedrockProvider`) so the infrastructure layer
-/// doesn't import from the application layer (Clean Architecture rule:
-/// dependencies point inward).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HttpBedrockProvider {
-    Anthropic,
-    Nova,
-    Llama,
-    Mistral,
-    DeepSeek,
-    Cohere,
-    Ai21Jamba,
-    Other,
-}
-
-fn detect_http_provider(model_id: &str) -> HttpBedrockProvider {
-    match extract_provider(model_id) {
-        "anthropic" => HttpBedrockProvider::Anthropic,
-        "amazon" => HttpBedrockProvider::Nova,
-        "meta" => HttpBedrockProvider::Llama,
-        "mistral" => HttpBedrockProvider::Mistral,
-        "deepseek" => HttpBedrockProvider::DeepSeek,
-        "cohere" => HttpBedrockProvider::Cohere,
-        // Jurassic-2 (`ai21.j2-*`) doesn't match `.jamba` and stays Other.
-        "ai21" if model_id.contains(".jamba") => HttpBedrockProvider::Ai21Jamba,
-        _ => HttpBedrockProvider::Other,
-    }
-}
-
-/// Pull the model id out of a Bedrock invoke endpoint path. Returns an empty
-/// string when the path is malformed (the caller falls back to the Claude
-/// normalizer in that case, which is harmless: the request would already have
-/// failed at the application layer).
-fn extract_model_id_from_endpoint(endpoint_path: &str) -> &str {
+fn extract_model_id_from_endpoint(endpoint_path: &str) -> Result<&str, DomainError> {
     let Some(rest) = endpoint_path.strip_prefix("/model/") else {
-        return "";
+        return Err(DomainError::InvalidData(format!(
+            "AWS Bedrock endpoint path must start with /model/, got {endpoint_path}"
+        )));
     };
-    rest.rsplit_once('/').map(|(model, _)| model).unwrap_or("")
+    let Some((model, _)) = rest.rsplit_once('/') else {
+        return Err(DomainError::InvalidData(format!(
+            "AWS Bedrock endpoint path is missing an invoke suffix: {endpoint_path}"
+        )));
+    };
+    let model = model.trim();
+    if model.is_empty() {
+        return Err(DomainError::InvalidData(
+            "AWS Bedrock endpoint path is missing a model id".to_string(),
+        ));
+    }
+    Ok(model)
 }
 
 pub(super) async fn list_models(
@@ -102,18 +76,17 @@ pub(super) async fn list_models(
     // since TauriTavern wants to surface the entire catalog (with a
     // best-effort `(unsupported)` tag in the UI for providers we haven't
     // wired payload builders for yet), we drop the byProvider filter.
-    let foundation_url =
-        format!("{control_plane_base}/foundation-models?byOutputModality=TEXT");
+    let foundation_url = format!("{control_plane_base}/foundation-models?byOutputModality=TEXT");
     let profiles_url = format!("{control_plane_base}/inference-profiles");
 
     let client = repository.client()?;
     // Doing the two calls in sequence (rather than `tokio::try_join!`) keeps
     // the dependency graph small and matters very little here: each call is a
     // small JSON GET against the regional control plane.
-    let foundation = get_control_plane_json(&client, config, &foundation_url, "foundation-models")
-        .await?;
-    let profiles = get_control_plane_json(&client, config, &profiles_url, "inference-profiles")
-        .await?;
+    let foundation =
+        get_control_plane_json(&client, config, &foundation_url, "foundation-models").await?;
+    let profiles =
+        get_control_plane_json(&client, config, &profiles_url, "inference-profiles").await?;
 
     Ok(json!({ "data": merge_bedrock_models(&foundation, &profiles) }))
 }
@@ -178,33 +151,28 @@ fn inference_supports_on_demand(model_summary: &Value) -> bool {
     if arr.is_empty() {
         return true;
     }
-    arr.iter()
-        .any(|value| value.as_str() == Some("ON_DEMAND"))
+    arr.iter().any(|value| value.as_str() == Some("ON_DEMAND"))
 }
 
-/// Extract the provider name from a Bedrock model id by stripping any
-/// inference-profile prefix (us./eu./apac./global./us-gov.) and returning
-/// the leading dotted segment. Examples:
-/// - `anthropic.claude-3-haiku`         -> `anthropic`
-/// - `us.anthropic.claude-opus-4-7`     -> `anthropic`
-/// - `amazon.nova-pro-v1:0`             -> `amazon`
-/// - `us.meta.llama3-3-70b-instruct`    -> `meta`
-fn extract_provider(id: &str) -> &str {
-    let after_region = BEDROCK_INFERENCE_PROFILE_PREFIXES
-        .iter()
-        .find_map(|prefix| id.strip_prefix(prefix))
-        .unwrap_or(id);
-    after_region.split('.').next().unwrap_or(after_region)
+fn tauritavern_bedrock_metadata(id: &str) -> Value {
+    let spec = BedrockModelSpec::classify(id);
+    json!({
+        "bedrock": {
+            "provider": spec.provider(),
+            "normalizedId": spec.normalized_id(),
+            "family": spec.family_key(),
+            "supported": spec.is_supported(),
+            "unsupportedReason": spec.unsupported_reason(),
+            "capabilities": spec.capabilities(),
+        }
+    })
 }
 
 fn merge_bedrock_models(foundation: &Value, profiles: &Value) -> Vec<Value> {
     let mut entries: Vec<Value> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
-    if let Some(items) = foundation
-        .get("modelSummaries")
-        .and_then(Value::as_array)
-    {
+    if let Some(items) = foundation.get("modelSummaries").and_then(Value::as_array) {
         for item in items {
             // Skip retired models when the catalog marks them as such.
             let status = item
@@ -236,6 +204,7 @@ fn merge_bedrock_models(foundation: &Value, profiles: &Value) -> Vec<Value> {
                 "name": item.get("modelName").cloned().unwrap_or(Value::Null),
                 "source": "foundation-model",
                 "provider": extract_provider(id),
+                "tauritavern": tauritavern_bedrock_metadata(id),
             }));
         }
     }
@@ -260,6 +229,7 @@ fn merge_bedrock_models(foundation: &Value, profiles: &Value) -> Vec<Value> {
                 "name": item.get("inferenceProfileName").cloned().unwrap_or(Value::Null),
                 "source": "inference-profile",
                 "provider": extract_provider(id),
+                "tauritavern": tauritavern_bedrock_metadata(id),
             }));
         }
     }
@@ -274,6 +244,10 @@ pub(super) async fn generate(
     payload: &Value,
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     validate_invoke_endpoint(endpoint_path)?;
+    let response_mode = response_mode_from_endpoint(
+        endpoint_path,
+        config.aws_bedrock_custom_response_path.as_deref(),
+    )?;
     let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
 
     let client = repository.client()?;
@@ -299,53 +273,45 @@ pub(super) async fn generate(
     }
 
     let body = read_upstream_json_body(BEDROCK_PROVIDER_NAME, "generate", response).await?;
-    Ok(normalize_provider_response(
-        endpoint_path,
-        body,
-        config.aws_bedrock_custom_response_path.as_deref(),
-    ))
+    normalize_provider_response(body, response_mode)
 }
 
 fn normalize_provider_response(
-    endpoint_path: &str,
     body: Value,
-    custom_response_path: Option<&str>,
-) -> ChatCompletionRepositoryGenerateResponse {
-    // Custom-template requests carry a user-supplied JSON path that overrides
-    // the automatic provider dispatch. Honour it first so the upstream model
-    // id never matters when the user has explicitly opted in.
-    if let Some(path) = custom_response_path.filter(|value| !value.is_empty()) {
-        return normalizers::normalize_claude_response(custom::response_to_claude_shape(
-            body, path,
-        ));
-    }
-
-    let model_id = extract_model_id_from_endpoint(endpoint_path);
-    match detect_http_provider(model_id) {
-        HttpBedrockProvider::Anthropic => normalizers::normalize_claude_response(body),
-        HttpBedrockProvider::Nova => {
+    mode: ResponseMode,
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+    let response = match mode {
+        ResponseMode::Custom(path) => {
+            normalizers::normalize_claude_response(custom::response_to_claude_shape(body, &path)?)
+        }
+        ResponseMode::Family(BedrockModelFamily::AnthropicClaude) => {
+            normalizers::normalize_claude_response(body)
+        }
+        ResponseMode::Family(BedrockModelFamily::AmazonNova) => {
             normalizers::normalize_claude_response(nova::response_to_claude_shape(body))
         }
-        HttpBedrockProvider::Llama => {
+        ResponseMode::Family(BedrockModelFamily::MetaLlama) => {
             normalizers::normalize_claude_response(llama::response_to_claude_shape(body))
         }
-        HttpBedrockProvider::Mistral => {
-            normalizers::normalize_claude_response(mistral::response_to_claude_shape(body))
-        }
-        HttpBedrockProvider::DeepSeek => {
-            normalizers::normalize_claude_response(deepseek::response_to_claude_shape(body))
-        }
-        HttpBedrockProvider::Cohere => {
+        ResponseMode::Family(
+            BedrockModelFamily::MistralTextCompletion | BedrockModelFamily::MistralChat,
+        ) => normalizers::normalize_claude_response(mistral::response_to_claude_shape(body)),
+        ResponseMode::Family(
+            BedrockModelFamily::DeepSeekTextCompletion | BedrockModelFamily::DeepSeekChat,
+        ) => normalizers::normalize_claude_response(deepseek::response_to_claude_shape(body)),
+        ResponseMode::Family(BedrockModelFamily::CohereCommandR) => {
             normalizers::normalize_claude_response(cohere::response_to_claude_shape(body))
         }
-        HttpBedrockProvider::Ai21Jamba => {
+        ResponseMode::Family(BedrockModelFamily::Ai21Jamba) => {
             normalizers::normalize_claude_response(ai21_jamba::response_to_claude_shape(body))
         }
-        // Other providers reuse the Claude normalizer for now (they fail at the
-        // application layer before reaching this point); kept for forward
-        // compatibility with custom-template overrides.
-        HttpBedrockProvider::Other => normalizers::normalize_claude_response(body),
-    }
+        ResponseMode::Family(BedrockModelFamily::Unsupported) => {
+            return Err(DomainError::InvalidData(
+                "AWS Bedrock unsupported model reached response normalization without custom template paths".to_string(),
+            ));
+        }
+    };
+    Ok(response)
 }
 
 pub(super) async fn generate_stream(
@@ -357,6 +323,10 @@ pub(super) async fn generate_stream(
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
     let stream_endpoint = to_stream_endpoint(endpoint_path)?;
+    let stream_mode = stream_mode_from_endpoint(
+        endpoint_path,
+        config.aws_bedrock_custom_stream_path.as_deref(),
+    )?;
     let url = HttpChatCompletionRepository::build_url(&config.base_url, &stream_endpoint);
 
     let client = repository.stream_client()?;
@@ -381,24 +351,70 @@ pub(super) async fn generate_stream(
         .await);
     }
 
-    let provider = detect_http_provider(extract_model_id_from_endpoint(endpoint_path));
-    let stream_mode = match config
-        .aws_bedrock_custom_stream_path
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
-        Some(path) => StreamMode::Custom(path.to_string()),
-        None => StreamMode::Provider(provider),
-    };
     forward_eventstream_response(response, sender, cancel, stream_mode).await
+}
+
+#[derive(Debug, Clone)]
+enum ResponseMode {
+    Family(BedrockModelFamily),
+    Custom(String),
 }
 
 /// Stream-side dispatch mode used by `forward_eventstream_response`. Keeps
 /// the per-frame transform decision out of the hot path.
 #[derive(Debug, Clone)]
 enum StreamMode {
-    Provider(HttpBedrockProvider),
+    Family(BedrockModelFamily),
     Custom(String),
+}
+
+fn response_mode_from_endpoint(
+    endpoint_path: &str,
+    custom_response_path: Option<&str>,
+) -> Result<ResponseMode, DomainError> {
+    if let Some(path) = custom_response_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(ResponseMode::Custom(path.to_string()));
+    }
+    let spec = classify_endpoint_model(endpoint_path)?;
+    require_supported_family(&spec)?;
+    Ok(ResponseMode::Family(spec.family()))
+}
+
+fn stream_mode_from_endpoint(
+    endpoint_path: &str,
+    custom_stream_path: Option<&str>,
+) -> Result<StreamMode, DomainError> {
+    if let Some(path) = custom_stream_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(StreamMode::Custom(path.to_string()));
+    }
+    let spec = classify_endpoint_model(endpoint_path)?;
+    require_supported_family(&spec)?;
+    Ok(StreamMode::Family(spec.family()))
+}
+
+fn classify_endpoint_model(endpoint_path: &str) -> Result<BedrockModelSpec, DomainError> {
+    Ok(BedrockModelSpec::classify(extract_model_id_from_endpoint(
+        endpoint_path,
+    )?))
+}
+
+fn require_supported_family(spec: &BedrockModelSpec) -> Result<(), DomainError> {
+    if spec.is_supported() {
+        return Ok(());
+    }
+    let reason = spec
+        .unsupported_reason()
+        .unwrap_or("This Bedrock model family is not wired by TauriTavern's built-in adapter yet.");
+    Err(DomainError::InvalidData(format!(
+        "AWS Bedrock model `{}` is not supported by TauriTavern's built-in Bedrock adapter. {reason} Enable the custom template (`aws_bedrock_use_custom_template`) with response paths, or choose a supported Bedrock family.",
+        spec.raw_id()
+    )))
 }
 
 fn apply_bedrock_auth(request: RequestBuilder, config: &ChatCompletionApiConfig) -> RequestBuilder {
@@ -559,7 +575,7 @@ fn decode_eventstream_payload(
         // `data.delta.thinking`) works uniformly across every Bedrock provider.
         // Custom-template streams take precedence: the user-supplied JSON
         // path replaces the per-provider extraction logic.
-        return Ok(transform_chunk_for_mode(&decoded, mode));
+        return transform_chunk_for_mode(&decoded, mode);
     }
 
     if let Some(message) = value.get("message").and_then(Value::as_str) {
@@ -571,27 +587,32 @@ fn decode_eventstream_payload(
     Ok(None)
 }
 
-fn transform_chunk_for_mode(decoded: &str, mode: &StreamMode) -> Option<String> {
+fn transform_chunk_for_mode(
+    decoded: &str,
+    mode: &StreamMode,
+) -> Result<Option<String>, DomainError> {
     match mode {
         StreamMode::Custom(path) => custom::transform_chunk_to_anthropic(decoded, path),
-        StreamMode::Provider(provider) => transform_chunk_for_provider(decoded, *provider),
+        StreamMode::Family(family) => Ok(transform_chunk_for_family(decoded, *family)),
     }
 }
 
-fn transform_chunk_for_provider(
-    decoded: &str,
-    provider: HttpBedrockProvider,
-) -> Option<String> {
-    match provider {
+fn transform_chunk_for_family(decoded: &str, family: BedrockModelFamily) -> Option<String> {
+    match family {
         // Anthropic already emits `{"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}`.
         // Pass through.
-        HttpBedrockProvider::Anthropic | HttpBedrockProvider::Other => Some(decoded.to_string()),
-        HttpBedrockProvider::Nova => nova::transform_chunk_to_anthropic(decoded),
-        HttpBedrockProvider::Llama => llama::transform_chunk_to_anthropic(decoded),
-        HttpBedrockProvider::Mistral => mistral::transform_chunk_to_anthropic(decoded),
-        HttpBedrockProvider::DeepSeek => deepseek::transform_chunk_to_anthropic(decoded),
-        HttpBedrockProvider::Cohere => cohere::transform_chunk_to_anthropic(decoded),
-        HttpBedrockProvider::Ai21Jamba => ai21_jamba::transform_chunk_to_anthropic(decoded),
+        BedrockModelFamily::AnthropicClaude => Some(decoded.to_string()),
+        BedrockModelFamily::AmazonNova => nova::transform_chunk_to_anthropic(decoded),
+        BedrockModelFamily::MetaLlama => llama::transform_chunk_to_anthropic(decoded),
+        BedrockModelFamily::MistralTextCompletion | BedrockModelFamily::MistralChat => {
+            mistral::transform_chunk_to_anthropic(decoded)
+        }
+        BedrockModelFamily::DeepSeekTextCompletion | BedrockModelFamily::DeepSeekChat => {
+            deepseek::transform_chunk_to_anthropic(decoded)
+        }
+        BedrockModelFamily::CohereCommandR => cohere::transform_chunk_to_anthropic(decoded),
+        BedrockModelFamily::Ai21Jamba => ai21_jamba::transform_chunk_to_anthropic(decoded),
+        BedrockModelFamily::Unsupported => None,
     }
 }
 
@@ -602,11 +623,13 @@ mod tests {
     use serde_json::json;
     use tokio::sync::mpsc::unbounded_channel;
 
+    use crate::domain::models::bedrock_model::{BedrockModelFamily, extract_provider};
+
     use super::{
-        HttpBedrockProvider, StreamMode, decode_eventstream_payload, derive_control_plane_base,
-        detect_http_provider, drain_eventstream_messages, extract_model_id_from_endpoint,
-        extract_provider, inference_supports_on_demand, merge_bedrock_models,
-        normalize_provider_response, to_stream_endpoint, validate_invoke_endpoint,
+        ResponseMode, StreamMode, decode_eventstream_payload, derive_control_plane_base,
+        drain_eventstream_messages, extract_model_id_from_endpoint, inference_supports_on_demand,
+        merge_bedrock_models, normalize_provider_response, response_mode_from_endpoint,
+        to_stream_endpoint, validate_invoke_endpoint,
     };
 
     #[test]
@@ -617,8 +640,7 @@ mod tests {
 
     #[test]
     fn validate_invoke_endpoint_rejects_other_paths() {
-        validate_invoke_endpoint("/messages")
-            .expect_err("non-invoke endpoint should be rejected");
+        validate_invoke_endpoint("/messages").expect_err("non-invoke endpoint should be rejected");
     }
 
     #[test]
@@ -653,7 +675,7 @@ mod tests {
         let payload = json!({ "bytes": encoded }).to_string();
         let decoded = decode_eventstream_payload(
             payload.as_bytes(),
-            &StreamMode::Provider(HttpBedrockProvider::Anthropic),
+            &StreamMode::Family(BedrockModelFamily::AnthropicClaude),
         )
         .unwrap()
         .expect("payload with bytes should decode");
@@ -666,7 +688,7 @@ mod tests {
         let payload = json!({ "p": "ignored" }).to_string();
         let decoded = decode_eventstream_payload(
             payload.as_bytes(),
-            &StreamMode::Provider(HttpBedrockProvider::Anthropic),
+            &StreamMode::Family(BedrockModelFamily::AnthropicClaude),
         )
         .unwrap();
         assert!(decoded.is_none(), "metadata payloads should be skipped");
@@ -677,7 +699,7 @@ mod tests {
         let payload = json!({ "message": "throttled" }).to_string();
         let error = decode_eventstream_payload(
             payload.as_bytes(),
-            &StreamMode::Provider(HttpBedrockProvider::Anthropic),
+            &StreamMode::Family(BedrockModelFamily::AnthropicClaude),
         )
         .expect_err("exception payload should fail");
         assert!(error.to_string().contains("throttled"));
@@ -712,7 +734,7 @@ mod tests {
         drain_eventstream_messages(
             &mut buffer,
             &sender,
-            &StreamMode::Provider(HttpBedrockProvider::Anthropic),
+            &StreamMode::Family(BedrockModelFamily::AnthropicClaude),
         )
         .unwrap();
         assert!(buffer.is_empty());
@@ -731,7 +753,7 @@ mod tests {
         drain_eventstream_messages(
             &mut buffer,
             &sender,
-            &StreamMode::Provider(HttpBedrockProvider::Anthropic),
+            &StreamMode::Family(BedrockModelFamily::AnthropicClaude),
         )
         .unwrap();
         assert_eq!(buffer.len(), chunk.len() - 1, "buffer should be retained");
@@ -739,59 +761,29 @@ mod tests {
     }
 
     #[test]
-    fn detect_http_provider_identifies_every_wired_provider() {
-        assert_eq!(
-            detect_http_provider("us.anthropic.claude-opus-4-7"),
-            HttpBedrockProvider::Anthropic,
-        );
-        assert_eq!(
-            detect_http_provider("amazon.nova-pro-v1:0"),
-            HttpBedrockProvider::Nova,
-        );
-        assert_eq!(
-            detect_http_provider("meta.llama3-2-3b-instruct-v1:0"),
-            HttpBedrockProvider::Llama,
-        );
-        assert_eq!(
-            detect_http_provider("mistral.mistral-large-2407-v1:0"),
-            HttpBedrockProvider::Mistral,
-        );
-        assert_eq!(
-            detect_http_provider("us.deepseek.r1-v1:0"),
-            HttpBedrockProvider::DeepSeek,
-        );
-        assert_eq!(
-            detect_http_provider("cohere.command-r-plus-v1:0"),
-            HttpBedrockProvider::Cohere,
-        );
-        assert_eq!(
-            detect_http_provider("ai21.jamba-1-5-large-v1:0"),
-            HttpBedrockProvider::Ai21Jamba,
-        );
-        assert_eq!(
-            detect_http_provider("us.ai21.jamba-instruct-v1:0"),
-            HttpBedrockProvider::Ai21Jamba,
-        );
-        // Legacy Jurassic stays Other (no `.jamba` substring).
-        assert_eq!(
-            detect_http_provider("ai21.j2-ultra-v1"),
-            HttpBedrockProvider::Other,
-        );
-    }
-
-    #[test]
     fn extract_model_id_from_endpoint_works_for_invoke_and_stream_paths() {
         assert_eq!(
-            extract_model_id_from_endpoint("/model/us.amazon.nova-pro-v1:0/invoke"),
+            extract_model_id_from_endpoint("/model/us.amazon.nova-pro-v1:0/invoke").unwrap(),
             "us.amazon.nova-pro-v1:0",
         );
         assert_eq!(
             extract_model_id_from_endpoint(
                 "/model/anthropic.claude-3-haiku-20240307-v1:0/invoke-with-response-stream"
-            ),
+            )
+            .unwrap(),
             "anthropic.claude-3-haiku-20240307-v1:0",
         );
-        assert_eq!(extract_model_id_from_endpoint("/chat/completions"), "");
+        assert!(extract_model_id_from_endpoint("/chat/completions").is_err());
+    }
+
+    #[test]
+    fn response_mode_rejects_unsupported_builtin_model_without_custom_path() {
+        let error =
+            response_mode_from_endpoint("/model/amazon.titan-text-premier-v1:0/invoke", None)
+                .expect_err("unsupported family must fail before normalization");
+
+        assert!(error.to_string().contains("not supported"));
+        assert!(error.to_string().contains("custom template"));
     }
 
     #[test]
@@ -807,14 +799,17 @@ mod tests {
         });
 
         let normalized = normalize_provider_response(
-            "/model/us.amazon.nova-pro-v1:0/invoke",
             nova_body,
-            None,
+            ResponseMode::Family(BedrockModelFamily::AmazonNova),
         )
+        .expect("nova response should normalize")
         .body;
 
         assert_eq!(normalized["object"], "chat.completion");
-        assert_eq!(normalized["choices"][0]["message"]["content"], "hi from nova");
+        assert_eq!(
+            normalized["choices"][0]["message"]["content"],
+            "hi from nova"
+        );
         assert_eq!(normalized["choices"][0]["finish_reason"], "stop");
     }
 
@@ -832,10 +827,10 @@ mod tests {
         });
 
         let normalized = normalize_provider_response(
-            "/model/us.amazon.nova-pro-v1:0/invoke",
             body,
-            Some("anything.user_defined.0.value"),
+            ResponseMode::Custom("anything.user_defined.0.value".to_string()),
         )
+        .expect("custom response should normalize")
         .body;
 
         assert_eq!(normalized["object"], "chat.completion");
@@ -897,13 +892,19 @@ mod tests {
     #[test]
     fn extract_provider_strips_inference_profile_prefix_and_returns_first_segment() {
         assert_eq!(extract_provider("anthropic.claude-3-haiku"), "anthropic");
-        assert_eq!(extract_provider("us.anthropic.claude-opus-4-7"), "anthropic");
+        assert_eq!(
+            extract_provider("us.anthropic.claude-opus-4-7"),
+            "anthropic"
+        );
         assert_eq!(extract_provider("amazon.nova-pro-v1:0"), "amazon");
         assert_eq!(
             extract_provider("us.meta.llama3-3-70b-instruct-v1:0"),
             "meta",
         );
-        assert_eq!(extract_provider("mistral.mistral-large-2407-v1:0"), "mistral");
+        assert_eq!(
+            extract_provider("mistral.mistral-large-2407-v1:0"),
+            "mistral"
+        );
         assert_eq!(extract_provider("cohere.command-r-plus-v1:0"), "cohere");
         assert_eq!(extract_provider("ai21.jamba-1-5-large-v1:0"), "ai21");
         assert_eq!(extract_provider("deepseek.r1-v1:0"), "deepseek");
@@ -992,9 +993,8 @@ mod tests {
         assert!(!by_id.contains_key("anthropic.claude-opus-4-7"));
         // LEGACY models are dropped.
         assert!(!by_id.contains_key("anthropic.claude-2"));
-        // ACTIVE inference profiles for *any* provider are kept now (no more
-        // Anthropic-only filter); the UI is responsible for marking unsupported
-        // providers.
+        // ACTIVE inference profiles for any provider are kept; TauriTavern
+        // metadata marks support status for the UI.
         assert!(by_id.contains_key("us.anthropic.claude-opus-4-7"));
         assert!(by_id.contains_key("us.meta.llama3-3-70b-instruct-v1:0"));
         assert!(by_id.contains_key("us.amazon.nova-pro-v1:0"));
@@ -1011,6 +1011,41 @@ mod tests {
         assert_eq!(
             nova.get("provider").and_then(serde_json::Value::as_str),
             Some("amazon")
+        );
+        assert_eq!(
+            nova.pointer("/tauritavern/bedrock/family")
+                .and_then(serde_json::Value::as_str),
+            Some("amazon_nova")
+        );
+        assert_eq!(
+            nova.pointer("/tauritavern/bedrock/supported")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            nova.pointer("/tauritavern/bedrock/capabilities/stream")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+
+        let titan = by_id["amazon.titan-text-premier-v1:0"];
+        assert_eq!(
+            titan
+                .pointer("/tauritavern/bedrock/family")
+                .and_then(serde_json::Value::as_str),
+            Some("unsupported")
+        );
+        assert_eq!(
+            titan
+                .pointer("/tauritavern/bedrock/supported")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+        assert!(
+            titan
+                .pointer("/tauritavern/bedrock/unsupportedReason")
+                .and_then(serde_json::Value::as_str)
+                .is_some()
         );
 
         let llama_foundation = by_id["meta.llama3-2-3b-instruct-v1:0"];

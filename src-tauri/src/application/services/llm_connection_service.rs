@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -25,15 +24,6 @@ const CONNECTION_PAYLOAD_KEYS: &[&str] = &[
     "custom_include_headers",
     "custom_include_body",
     "custom_exclude_body",
-    "vertexai_auth_mode",
-    "vertexai_region",
-    "vertexai_express_project_id",
-    "zai_endpoint",
-    "siliconflow_endpoint",
-    "minimax_endpoint",
-    "workers_ai_account_id",
-    "nanogpt_provider",
-    "nanogpt_payg_override",
 ];
 
 const ALLOWED_CUSTOM_API_FORMATS: &[&str] = &[
@@ -43,16 +33,90 @@ const ALLOWED_CUSTOM_API_FORMATS: &[&str] = &[
     "gemini_interactions",
 ];
 
-const SOURCE_SPECIFIC_KEYS: &[&str] = &[
-    "vertexai_auth_mode",
-    "vertexai_region",
-    "vertexai_express_project_id",
-    "zai_endpoint",
-    "siliconflow_endpoint",
-    "minimax_endpoint",
-    "workers_ai_account_id",
-    "nanogpt_provider",
-    "nanogpt_payg_override",
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceSpecificValueKind {
+    NonEmptyString,
+    Boolean,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SourceSpecificFieldSpec {
+    key: &'static str,
+    source: ChatCompletionSource,
+    kind: SourceSpecificValueKind,
+}
+
+const SOURCE_SPECIFIC_FIELD_SPECS: &[SourceSpecificFieldSpec] = &[
+    SourceSpecificFieldSpec {
+        key: "vertexai_auth_mode",
+        source: ChatCompletionSource::VertexAi,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
+        key: "vertexai_region",
+        source: ChatCompletionSource::VertexAi,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
+        key: "vertexai_express_project_id",
+        source: ChatCompletionSource::VertexAi,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
+        key: "zai_endpoint",
+        source: ChatCompletionSource::Zai,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
+        key: "siliconflow_endpoint",
+        source: ChatCompletionSource::SiliconFlow,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
+        key: "minimax_endpoint",
+        source: ChatCompletionSource::MiniMax,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
+        key: "workers_ai_account_id",
+        source: ChatCompletionSource::WorkersAi,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
+        key: "nanogpt_provider",
+        source: ChatCompletionSource::NanoGpt,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
+        key: "nanogpt_payg_override",
+        source: ChatCompletionSource::NanoGpt,
+        kind: SourceSpecificValueKind::Boolean,
+    },
+    SourceSpecificFieldSpec {
+        key: "aws_bedrock_region",
+        source: ChatCompletionSource::AwsBedrock,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
+        key: "aws_bedrock_use_custom_template",
+        source: ChatCompletionSource::AwsBedrock,
+        kind: SourceSpecificValueKind::Boolean,
+    },
+    SourceSpecificFieldSpec {
+        key: "aws_bedrock_custom_template",
+        source: ChatCompletionSource::AwsBedrock,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
+        key: "aws_bedrock_custom_response_path",
+        source: ChatCompletionSource::AwsBedrock,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
+        key: "aws_bedrock_custom_stream_path",
+        source: ChatCompletionSource::AwsBedrock,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -166,6 +230,9 @@ impl LlmConnectionService {
 
         for key in CONNECTION_PAYLOAD_KEYS {
             payload.remove(*key);
+        }
+        for spec in SOURCE_SPECIFIC_FIELD_SPECS {
+            payload.remove(spec.key);
         }
 
         payload.insert(
@@ -405,31 +472,27 @@ fn validate_source_specific(
     connection: &LlmConnectionDefinition,
     source: ChatCompletionSource,
 ) -> Result<(), ApplicationError> {
-    let allowed = SOURCE_SPECIFIC_KEYS
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
     for (key, value) in &connection.endpoint.source_specific {
-        if !allowed.contains(key.as_str()) {
-            return Err(ApplicationError::ValidationError(format!(
+        let spec = source_specific_field_spec(key).ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
                 "llm_connection.source_specific_unknown: unsupported sourceSpecific key `{key}`"
-            )));
-        }
-        if !source_specific_key_matches_source(key, source) {
+            ))
+        })?;
+        if spec.source != source {
             return Err(ApplicationError::ValidationError(format!(
                 "llm_connection.source_specific_source_mismatch: sourceSpecific.{key} is not valid for source `{}`",
                 source.key()
             )));
         }
-        match key.as_str() {
-            "nanogpt_payg_override" => {
+        match spec.kind {
+            SourceSpecificValueKind::Boolean => {
                 if !value.is_boolean() {
                     return Err(ApplicationError::ValidationError(format!(
                         "llm_connection.source_specific_type_invalid: sourceSpecific.{key} must be boolean"
                     )));
                 }
             }
-            _ => {
+            SourceSpecificValueKind::NonEmptyString => {
                 if !value.as_str().is_some_and(|text| !text.trim().is_empty()) {
                     return Err(ApplicationError::ValidationError(format!(
                         "llm_connection.source_specific_type_invalid: sourceSpecific.{key} must be a non-empty string"
@@ -451,21 +514,49 @@ fn validate_source_specific(
         ));
     }
 
+    validate_aws_bedrock_source_specific(connection, source)?;
     Ok(())
 }
 
-fn source_specific_key_matches_source(key: &str, source: ChatCompletionSource) -> bool {
-    match key {
-        "vertexai_auth_mode" | "vertexai_region" | "vertexai_express_project_id" => {
-            source == ChatCompletionSource::VertexAi
-        }
-        "zai_endpoint" => source == ChatCompletionSource::Zai,
-        "siliconflow_endpoint" => source == ChatCompletionSource::SiliconFlow,
-        "minimax_endpoint" => source == ChatCompletionSource::MiniMax,
-        "workers_ai_account_id" => source == ChatCompletionSource::WorkersAi,
-        "nanogpt_provider" | "nanogpt_payg_override" => source == ChatCompletionSource::NanoGpt,
-        _ => false,
+fn source_specific_field_spec(key: &str) -> Option<&'static SourceSpecificFieldSpec> {
+    SOURCE_SPECIFIC_FIELD_SPECS
+        .iter()
+        .find(|spec| spec.key == key)
+}
+
+fn validate_aws_bedrock_source_specific(
+    connection: &LlmConnectionDefinition,
+    source: ChatCompletionSource,
+) -> Result<(), ApplicationError> {
+    if source != ChatCompletionSource::AwsBedrock {
+        return Ok(());
     }
+    let use_custom_template = connection
+        .endpoint
+        .source_specific
+        .get("aws_bedrock_use_custom_template")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !use_custom_template {
+        return Ok(());
+    }
+    for key in [
+        "aws_bedrock_custom_template",
+        "aws_bedrock_custom_response_path",
+    ] {
+        if !connection
+            .endpoint
+            .source_specific
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Err(ApplicationError::ValidationError(format!(
+                "llm_connection.aws_bedrock_custom_template_incomplete: sourceSpecific.{key} is required when sourceSpecific.aws_bedrock_use_custom_template is true"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_auth(
@@ -628,6 +719,56 @@ mod tests {
         }
     }
 
+    fn bedrock_connection() -> LlmConnectionDefinition {
+        let mut connection = openrouter_connection();
+        connection.id = LlmConnectionId::parse("bedrock-main").unwrap();
+        connection.display_name = "Bedrock Main".to_string();
+        connection.provider.chat_completion_source = "aws_bedrock".to_string();
+        connection.auth.secret_ref.key = "api_key_aws_bedrock".to_string();
+        connection
+            .endpoint
+            .source_specific
+            .insert("aws_bedrock_region".to_string(), json!("us-west-2"));
+        connection
+    }
+
+    struct TestRepo {
+        connection: LlmConnectionDefinition,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::domain::repositories::llm_connection_repository::LlmConnectionRepository for TestRepo {
+        async fn list_connections(
+            &self,
+        ) -> Result<
+            Vec<crate::domain::models::llm_connection::LlmConnectionSummary>,
+            crate::domain::errors::DomainError,
+        > {
+            Ok(vec![self.connection.summary()])
+        }
+
+        async fn load_connection(
+            &self,
+            _id: &crate::domain::models::llm_connection::LlmConnectionId,
+        ) -> Result<Option<LlmConnectionDefinition>, crate::domain::errors::DomainError> {
+            Ok(Some(self.connection.clone()))
+        }
+
+        async fn save_connection(
+            &self,
+            _connection: &LlmConnectionDefinition,
+        ) -> Result<(), crate::domain::errors::DomainError> {
+            Ok(())
+        }
+
+        async fn delete_connection(
+            &self,
+            _id: &crate::domain::models::llm_connection::LlmConnectionId,
+        ) -> Result<(), crate::domain::errors::DomainError> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn validate_rejects_secret_namespace_mismatch() {
         let mut connection = openrouter_connection();
@@ -653,47 +794,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn validate_accepts_bedrock_source_specific_contract() {
+        let mut connection = bedrock_connection();
+        connection
+            .endpoint
+            .source_specific
+            .insert("aws_bedrock_use_custom_template".to_string(), json!(true));
+        connection.endpoint.source_specific.insert(
+            "aws_bedrock_custom_template".to_string(),
+            json!("{\"messages\":{{messages}}}"),
+        );
+        connection.endpoint.source_specific.insert(
+            "aws_bedrock_custom_response_path".to_string(),
+            json!("output.text"),
+        );
+
+        validate_connection(&connection).expect("bedrock sourceSpecific should validate");
+    }
+
+    #[test]
+    fn validate_rejects_incomplete_bedrock_custom_template_contract() {
+        let mut connection = bedrock_connection();
+        connection
+            .endpoint
+            .source_specific
+            .insert("aws_bedrock_use_custom_template".to_string(), json!(true));
+
+        let error = validate_connection(&connection).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("aws_bedrock_custom_template_incomplete")
+        );
+    }
+
     #[tokio::test]
     async fn apply_connection_overlays_and_clears_stale_payload_fields() {
-        struct Repo {
-            connection: LlmConnectionDefinition,
-        }
-
-        #[async_trait::async_trait]
-        impl crate::domain::repositories::llm_connection_repository::LlmConnectionRepository for Repo {
-            async fn list_connections(
-                &self,
-            ) -> Result<
-                Vec<crate::domain::models::llm_connection::LlmConnectionSummary>,
-                crate::domain::errors::DomainError,
-            > {
-                Ok(vec![self.connection.summary()])
-            }
-
-            async fn load_connection(
-                &self,
-                _id: &crate::domain::models::llm_connection::LlmConnectionId,
-            ) -> Result<Option<LlmConnectionDefinition>, crate::domain::errors::DomainError>
-            {
-                Ok(Some(self.connection.clone()))
-            }
-
-            async fn save_connection(
-                &self,
-                _connection: &LlmConnectionDefinition,
-            ) -> Result<(), crate::domain::errors::DomainError> {
-                Ok(())
-            }
-
-            async fn delete_connection(
-                &self,
-                _id: &crate::domain::models::llm_connection::LlmConnectionId,
-            ) -> Result<(), crate::domain::errors::DomainError> {
-                Ok(())
-            }
-        }
-
-        let service = LlmConnectionService::new(std::sync::Arc::new(Repo {
+        let service = LlmConnectionService::new(std::sync::Arc::new(TestRepo {
             connection: openrouter_connection(),
         }));
         let mut payload = json!({
@@ -729,5 +867,35 @@ mod tests {
             payload.get("secret_id").and_then(|v| v.as_str()),
             Some("secret-1")
         );
+    }
+
+    #[tokio::test]
+    async fn apply_bedrock_connection_overlays_source_specific_and_clears_stale_fields() {
+        let service = LlmConnectionService::new(std::sync::Arc::new(TestRepo {
+            connection: bedrock_connection(),
+        }));
+        let mut payload = json!({
+            "chat_completion_source": "workers_ai",
+            "workers_ai_account_id": "stale-account",
+            "nanogpt_payg_override": true,
+            "aws_bedrock_region": "eu-central-1",
+            "messages": []
+        })
+        .as_object()
+        .cloned()
+        .unwrap_or_else(Map::new);
+
+        let resolved = service
+            .apply_connection_to_payload("bedrock-main", "us.amazon.nova-pro-v1:0", &mut payload)
+            .await
+            .expect("connection overlay");
+
+        assert_eq!(resolved.chat_completion_source, "aws_bedrock");
+        assert_eq!(
+            payload.get("aws_bedrock_region").and_then(|v| v.as_str()),
+            Some("us-west-2")
+        );
+        assert!(payload.get("workers_ai_account_id").is_none());
+        assert!(payload.get("nanogpt_payg_override").is_none());
     }
 }

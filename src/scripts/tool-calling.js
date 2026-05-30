@@ -638,6 +638,8 @@ export class ToolManager {
                     return currentModel.supported_features?.includes('tools');
                 case chat_completion_sources.ELECTRONHUB:
                     return currentModel.metadata?.function_call;
+                case chat_completion_sources.AWS_BEDROCK:
+                    return currentModel.tauritavern?.bedrock?.capabilities?.tools === true;
             }
         }
 

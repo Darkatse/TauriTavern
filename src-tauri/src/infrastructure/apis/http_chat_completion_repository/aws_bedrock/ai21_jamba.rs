@@ -41,10 +41,7 @@ pub(super) fn response_to_claude_shape(body: Value) -> Value {
         if let Some(input_tokens) = usage_value.get("prompt_tokens").and_then(Value::as_u64) {
             usage.insert("input_tokens".to_string(), json!(input_tokens));
         }
-        if let Some(output_tokens) = usage_value
-            .get("completion_tokens")
-            .and_then(Value::as_u64)
-        {
+        if let Some(output_tokens) = usage_value.get("completion_tokens").and_then(Value::as_u64) {
             usage.insert("output_tokens".to_string(), json!(output_tokens));
         }
     }

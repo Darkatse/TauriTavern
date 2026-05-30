@@ -147,8 +147,8 @@ mod tests {
             "generations": [{ "text": " legacy" }]
         })
         .to_string();
-        let legacy_delta = transform_chunk_to_anthropic(&legacy)
-            .expect("legacy chunks must surface a delta");
+        let legacy_delta =
+            transform_chunk_to_anthropic(&legacy).expect("legacy chunks must surface a delta");
         let parsed: Value = serde_json::from_str(&legacy_delta).unwrap();
         assert_eq!(parsed["delta"]["text"], " legacy");
     }

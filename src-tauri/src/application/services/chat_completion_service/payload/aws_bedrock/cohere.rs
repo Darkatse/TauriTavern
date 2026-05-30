@@ -104,7 +104,11 @@ pub(super) fn build(
     if let Some(seed) = value_to_positive_i64(payload.get("seed")) {
         body.insert("seed".to_string(), Value::Number(Number::from(seed)));
     }
-    if let Some(stop) = payload.get("stop").cloned().filter(|value| value.is_array()) {
+    if let Some(stop) = payload
+        .get("stop")
+        .cloned()
+        .filter(|value| value.is_array())
+    {
         body.insert("stop_sequences".to_string(), stop);
     } else if let Some(stop) = payload
         .get("stop_sequences")

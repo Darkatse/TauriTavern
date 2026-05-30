@@ -4,8 +4,9 @@
 //! / Nova add-ons, ...).
 //!
 //! Activated by setting `aws_bedrock_use_custom_template = true` and
-//! supplying a body template (and optional response/stream JSON paths) on
-//! the request. The template is plain JSON with five placeholders that get
+//! supplying a body template plus response JSON path on the request. Streaming
+//! requests must also provide a stream JSON path. The template is plain JSON
+//! with five placeholders that get
 //! substituted with the current request's data:
 //!
 //! - `{{messages}}` — JSON-encoded `[{"role":"...","content":"..."}, ...]`
@@ -18,15 +19,15 @@
 //!
 //! The endpoint remains the regular `/model/{model_id}/invoke` path the
 //! infrastructure layer already speaks. Response / stream extraction is then
-//! driven by user-provided JSON paths surfaced through
+//! driven by required user-provided JSON paths surfaced through
 //! [`crate::domain::repositories::chat_completion_repository::ChatCompletionApiConfig`].
 
 use serde_json::{Map, Value, json};
 
+use super::super::shared::message_content_to_text;
 use super::shared::{
     BEDROCK_INVOKE_SUFFIX, FlatMessage, flatten_openai_messages, value_to_positive_i64,
 };
-use super::super::shared::message_content_to_text;
 use crate::application::errors::ApplicationError;
 
 /// Default `max_tokens` baked into the template when the request omits one.
@@ -52,15 +53,24 @@ pub(super) fn build(
                 "AWS Bedrock custom template is enabled but `aws_bedrock_custom_template` is empty.".to_string(),
             )
         })?;
+    require_non_empty_path(&payload, "aws_bedrock_custom_response_path")?;
+    if payload
+        .get("stream")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        require_non_empty_path(&payload, "aws_bedrock_custom_stream_path")?;
+    }
 
     let messages_json = render_messages(payload.get("messages"));
     let system_json = render_system(payload.get("messages"));
     let max_tokens_json = render_max_tokens(payload.get("max_tokens"));
     let temperature_json = render_temperature(payload.get("temperature"));
-    let model_json = serde_json::to_string(model_id)
-        .map_err(|error| ApplicationError::InternalError(format!(
+    let model_json = serde_json::to_string(model_id).map_err(|error| {
+        ApplicationError::InternalError(format!(
             "Failed to JSON-encode AWS Bedrock model id: {error}"
-        )))?;
+        ))
+    })?;
 
     let rendered = template
         .replace("{{messages}}", &messages_json)
@@ -85,9 +95,19 @@ fn render_messages(messages: Option<&Value>) -> String {
         .into_iter()
         .map(|FlatMessage { role, text }| json!({ "role": role, "content": text }))
         .collect();
-    // Falls back to a literal `[]` if serialization fails, so `{{messages}}`
-    // always renders to syntactically valid JSON.
-    serde_json::to_string(&payload).unwrap_or_else(|_| "[]".to_string())
+    serde_json::to_string(&payload).expect("flattened messages are always JSON-serializable")
+}
+
+fn require_non_empty_path(payload: &Map<String, Value>, key: &str) -> Result<(), ApplicationError> {
+    match payload.get(key) {
+        Some(Value::String(value)) if !value.trim().is_empty() => Ok(()),
+        Some(Value::String(_)) | None => Err(ApplicationError::ValidationError(format!(
+            "AWS Bedrock custom template is enabled but `{key}` is empty."
+        ))),
+        Some(_) => Err(ApplicationError::ValidationError(format!(
+            "AWS Bedrock custom template field `{key}` must be a string."
+        ))),
+    }
 }
 
 fn render_system(messages: Option<&Value>) -> String {
@@ -112,7 +132,7 @@ fn render_system(messages: Option<&Value>) -> String {
                 .join("\n\n")
         })
         .unwrap_or_default();
-    serde_json::to_string(&system_text).unwrap_or_else(|_| "\"\"".to_string())
+    serde_json::to_string(&system_text).expect("system prompt is always JSON-serializable")
 }
 
 fn render_max_tokens(value: Option<&Value>) -> String {
@@ -129,12 +149,10 @@ fn render_temperature(value: Option<&Value>) -> String {
     // most-compact JSON-legal form so the resulting body parses cleanly even
     // for `0` / `1` / `2`. `Value::Number::from_f64` does the right thing for
     // both flavours.
-    Value::Number(
-        serde_json::Number::from_f64(resolved).unwrap_or_else(|| {
-            serde_json::Number::from_f64(DEFAULT_TEMPERATURE)
-                .expect("0.7 is always representable as JSON number")
-        }),
-    )
+    Value::Number(serde_json::Number::from_f64(resolved).unwrap_or_else(|| {
+        serde_json::Number::from_f64(DEFAULT_TEMPERATURE)
+            .expect("0.7 is always representable as JSON number")
+    }))
     .to_string()
 }
 
@@ -163,9 +181,15 @@ mod tests {
     fn is_enabled_treats_truthy_variants_uniformly() {
         let mut payload = serde_json::Map::new();
         assert!(!is_enabled(&payload));
-        payload.insert("aws_bedrock_use_custom_template".to_string(), Value::Bool(false));
+        payload.insert(
+            "aws_bedrock_use_custom_template".to_string(),
+            Value::Bool(false),
+        );
         assert!(!is_enabled(&payload));
-        payload.insert("aws_bedrock_use_custom_template".to_string(), Value::Bool(true));
+        payload.insert(
+            "aws_bedrock_use_custom_template".to_string(),
+            Value::Bool(true),
+        );
         assert!(is_enabled(&payload));
         payload.insert(
             "aws_bedrock_use_custom_template".to_string(),
@@ -186,6 +210,7 @@ mod tests {
             "aws_bedrock_use_custom_template": true,
             "aws_bedrock_custom_template":
                 "{\"model\":{{model}},\"system\":{{system}},\"messages\":{{messages}},\"max_tokens\":{{max_tokens}},\"temperature\":{{temperature}}}",
+            "aws_bedrock_custom_response_path": "output.text",
             "messages": [
                 { "role": "system", "content": "be terse" },
                 { "role": "user", "content": "ping" },
@@ -227,8 +252,8 @@ mod tests {
         .as_object()
         .cloned()
         .unwrap();
-        let err = build(payload, "writer.palmyra-x-004-v1:0")
-            .expect_err("missing template must fail");
+        let err =
+            build(payload, "writer.palmyra-x-004-v1:0").expect_err("missing template must fail");
         assert!(err.to_string().contains("custom template is enabled but"));
     }
 
@@ -239,6 +264,7 @@ mod tests {
             "aws_bedrock_use_custom_template": true,
             // Unbalanced braces, even after substitution.
             "aws_bedrock_custom_template": "{\"messages\":{{messages}}",
+            "aws_bedrock_custom_response_path": "output.text",
             "messages": [{ "role": "user", "content": "hi" }],
         })
         .as_object()
@@ -257,15 +283,52 @@ mod tests {
             "aws_bedrock_use_custom_template": true,
             "aws_bedrock_custom_template":
                 "{\"max_tokens\":{{max_tokens}},\"temperature\":{{temperature}}}",
+            "aws_bedrock_custom_response_path": "output.text",
             "messages": [{ "role": "user", "content": "hi" }],
         })
         .as_object()
         .cloned()
         .unwrap();
 
-        let (_, body) = build(payload, "writer.palmyra-x-004-v1:0")
-            .expect("template must build with defaults");
+        let (_, body) =
+            build(payload, "writer.palmyra-x-004-v1:0").expect("template must build with defaults");
         assert_eq!(body["max_tokens"], 1024);
         assert!(body["temperature"].as_f64().unwrap().eq(&0.7));
+    }
+
+    #[test]
+    fn build_requires_response_path_when_custom_template_is_enabled() {
+        let payload = json!({
+            "model": "writer.palmyra-x-004-v1:0",
+            "aws_bedrock_use_custom_template": true,
+            "aws_bedrock_custom_template": "{\"messages\":{{messages}}}",
+            "messages": [{ "role": "user", "content": "hi" }],
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+        let err = build(payload, "writer.palmyra-x-004-v1:0")
+            .expect_err("missing response path must fail");
+        assert!(err.to_string().contains("aws_bedrock_custom_response_path"));
+    }
+
+    #[test]
+    fn build_requires_stream_path_for_custom_streaming_requests() {
+        let payload = json!({
+            "model": "writer.palmyra-x-004-v1:0",
+            "aws_bedrock_use_custom_template": true,
+            "aws_bedrock_custom_template": "{\"messages\":{{messages}}}",
+            "aws_bedrock_custom_response_path": "output.text",
+            "stream": true,
+            "messages": [{ "role": "user", "content": "hi" }],
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+        let err =
+            build(payload, "writer.palmyra-x-004-v1:0").expect_err("missing stream path must fail");
+        assert!(err.to_string().contains("aws_bedrock_custom_stream_path"));
     }
 }
