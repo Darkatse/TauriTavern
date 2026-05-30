@@ -122,6 +122,12 @@ pub fn materialize_agent_system_prompt(
             model_name(tools, "worldinfo.read_activated")
         ));
     }
+    if has_tool(tools, "dice.roll") {
+        lines.push(format!(
+            "- Use {} only when an explicit random roll, chance check, or tabletop/roleplay check is needed. Do not invent roll results.",
+            model_name(tools, "dice.roll")
+        ));
+    }
     if has_tool(tools, "skill.list") {
         lines.push(format!(
             "- Use {} to discover visible agent skills when reusable writing, editing, planning, style, or character guidance may be helpful.",
@@ -1502,6 +1508,16 @@ mod tests {
 
         super::validate_run_policy(&run, &delegation, &tools)
             .expect("subagent-only profile should not require workspace.finish");
+    }
+
+    #[test]
+    fn default_writer_does_not_enable_dice_roll() {
+        let profile = super::default_writer_profile().expect("default writer profile");
+
+        assert!(
+            !profile.tools.allow.iter().any(|tool| tool == "dice.roll"),
+            "dice.roll must stay opt-in so normal Agent flows do not roll accidentally"
+        );
     }
 
     #[test]

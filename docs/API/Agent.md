@@ -487,13 +487,14 @@ Agent Mode on：
 
 ## 17. 当前工具与手动验证
 
-当前开放十三个内建工具：
+当前开放十四个非 delegation 内建工具：
 
 | Canonical name | Model-facing alias | 说明 |
 | --- | --- | --- |
 | `chat.search` | `chat_search` | 搜索当前 run 绑定的聊天。只有 `query` 必填；可选 `limit`、`role`、`start_message`、`end_message`、`scan_limit`。返回 message index、snippet 与 ref。 |
 | `chat.read_messages` | `chat_read_messages` | 按 0-based message index 读取当前聊天消息；每项可选 `start_char`、`max_chars` 读取长消息片段。 |
 | `worldinfo.read_activated` | `worldinfo_read_activated` | 读取本次 run 的最终激活世界书条目；模型可读文本只包含条目名、世界书名、条目内容。 |
+| `dice.roll` | `dice_roll` | 为明确的随机、跑团或 roleplay 检定投骰；支持 `d6`、`1d20`、`3d6+4` 与纯数字。默认 Profile 不启用。 |
 | `skill.list` | `skill_list` | 列出当前 Profile 可见的已安装 Skill 索引摘要。 |
 | `skill.search` | `skill_search` | 搜索当前 Profile 可见的单个 Skill 内 UTF-8 文本文件，返回 snippet/ref。 |
 | `skill.read` | `skill_read` | 读取已安装 Skill 内的 UTF-8 文本文件或范围；默认 `SKILL.md`，支持 `path`、行范围、字符范围与 `max_chars`。 |

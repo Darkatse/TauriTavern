@@ -147,7 +147,7 @@ LLM Gateway / provider adapter
 - Public Host ABI 入口为 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`，没有 `startRun()` alias。
 - `startRunFromLegacyGenerate()` 是当前推荐的兼容桥；它捕获 Legacy prompt 语义与本轮最终 `worldInfoActivation`，同时禁用 Legacy ToolManager tools。
 - `startRunWithPromptSnapshot()` 是低层测试/集成入口；调用方必须提供不含 external tools/tool turns 的 chat completion payload。
-- 后端当前开放 `chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`skill.list`、`skill.search`、`skill.read`、`workspace.list_files`、`workspace.search_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.commit`、`workspace.finish` 十三个内建工具，对模型暴露为 provider-safe alias。
+- 后端当前开放 `chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`dice.roll`、`skill.list`、`skill.search`、`skill.read`、`workspace.list_files`、`workspace.search_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.commit`、`workspace.finish` 十四个非 delegation 内建工具，对模型暴露为 provider-safe alias；`dice.roll` 默认不在 Agent Profile 中启用。
 - Agent runtime 当前使用 `AgentModelRequest` / `AgentModelResponse` / `AgentModelContentPart` 作为内部模型语义，不再直接读写 OpenAI-compatible raw JSON。
 - `AgentModelGateway` 仍复用 `ChatCompletionService::generate_exchange_with_cancel()`，在 canonical IR 与现有 provider payload pipeline 之间转换。
 - Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native metadata 以 opaque `Native` part 保存和回放；tool call id 缺失会 fail-fast。

@@ -1,6 +1,7 @@
 mod agent;
 mod chat;
 mod common;
+mod dice;
 mod dispatcher;
 mod registry;
 mod session;

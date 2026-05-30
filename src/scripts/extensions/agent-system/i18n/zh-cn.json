@@ -269,6 +269,7 @@
     "agent_system.timelineToolAgentList": "列出 SubAgent",
     "agent_system.timelineToolChatReadMessages": "读取聊天记录",
     "agent_system.timelineToolChatSearch": "搜索聊天",
+    "agent_system.timelineToolDiceRoll": "投骰",
     "agent_system.timelineToolGeneric": "使用工具",
     "agent_system.timelineToolSkillList": "查看技能列表",
     "agent_system.timelineToolSkillRead": "读取技能",

@@ -377,6 +377,7 @@ const DEFAULT_MESSAGES = Object.freeze({
     timelineTextMetrics: '{chars} chars / {words} words',
     timelineToolChatReadMessages: 'reading chat',
     timelineToolChatSearch: 'searching chat',
+    timelineToolDiceRoll: 'rolling dice',
     timelineToolAgentAwait: 'waiting for SubAgents',
     timelineToolAgentDelegate: 'delegating to a SubAgent',
     timelineToolAgentList: 'listing SubAgents',

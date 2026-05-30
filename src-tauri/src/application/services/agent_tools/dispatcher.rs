@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use super::chat;
+use super::dice;
 use super::session::AgentToolSession;
 use super::skill;
 use super::structured::{ToolErrorStructured, structured_value};
@@ -129,6 +130,7 @@ impl AgentToolDispatcher {
             world_info::WORLDINFO_READ_ACTIVATED => {
                 world_info::read_activated(workspace_repository, run_id, call).await?
             }
+            dice::DICE_ROLL => dice::roll(call).await?,
             skill::SKILL_LIST => skill::list(call, session, profile).await?,
             skill::SKILL_SEARCH => {
                 skill::search(self.skill_service.as_ref(), call, session, profile).await?

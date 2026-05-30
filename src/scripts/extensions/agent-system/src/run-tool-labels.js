@@ -7,6 +7,7 @@ const TOOL_LABEL_KEYS = Object.freeze({
     'task.return': 'timelineToolTaskReturn',
     'chat.search': 'timelineToolChatSearch',
     'chat.read_messages': 'timelineToolChatReadMessages',
+    'dice.roll': 'timelineToolDiceRoll',
     'worldinfo.read_activated': 'timelineToolWorldInfoReadActivated',
     'skill.list': 'timelineToolSkillList',
     'skill.search': 'timelineToolSkillSearch',

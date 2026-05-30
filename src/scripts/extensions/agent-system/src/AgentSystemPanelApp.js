@@ -87,6 +87,12 @@ const TOOL_GROUPS = Object.freeze([
         icon: 'fa-flag-checkered',
         tools: ['workspace.commit', 'workspace.finish'],
     },
+    {
+        id: 'other',
+        labelKey: 'otherTools',
+        icon: 'fa-dice',
+        tools: ['dice.roll'],
+    },
 ]);
 
 const WORKSPACE_ROOT_ICONS = Object.freeze({
@@ -282,7 +288,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 const extraTools = this.toolNames.filter((tool) => !groupedTools.has(tool));
                 if (extraTools.length > 0) {
                     groups.push({
-                        id: 'other',
+                        id: 'extra',
                         labelKey: 'otherTools',
                         icon: 'fa-ellipsis',
                         tools: extraTools,

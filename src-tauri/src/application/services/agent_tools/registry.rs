@@ -1,5 +1,6 @@
 use super::agent::{agent_await_spec, agent_delegate_spec, agent_list_spec, task_return_spec};
 use super::chat::{chat_read_messages_spec, chat_search_spec};
+use super::dice::dice_roll_spec;
 use super::skill::{skill_list_spec, skill_read_spec, skill_search_spec};
 use super::workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
@@ -31,6 +32,7 @@ impl BuiltinAgentToolRegistry {
                 chat_search_spec(),
                 chat_read_messages_spec(),
                 worldinfo_read_activated_spec(),
+                dice_roll_spec(),
                 skill_list_spec(),
                 skill_search_spec(),
                 skill_read_spec(),
@@ -315,6 +317,7 @@ fn set_property_description(
 #[cfg(test)]
 mod tests {
     use super::super::agent::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_LIST, TASK_RETURN};
+    use super::super::dice::DICE_ROLL;
     use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE, WORKSPACE_WRITE_FILE};
     use super::*;
 
@@ -332,6 +335,13 @@ mod tests {
         assert_eq!(tools[3].model_name, "task_return");
         assert_eq!(tools[3].name, TASK_RETURN);
         assert_eq!(tools[4].model_name, "chat_search");
+        assert_eq!(
+            tools
+                .iter()
+                .find(|spec| spec.model_name == "dice_roll")
+                .map(|spec| spec.name.as_str()),
+            Some(DICE_ROLL)
+        );
         assert_eq!(
             tools
                 .iter()

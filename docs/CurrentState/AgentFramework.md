@@ -126,6 +126,7 @@ Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swi
 | `chat.search` | `chat_search` | read-only | 搜索当前 run 绑定的聊天。只有 `query` 必填；可选 `limit`、`role`、`start_message`、`end_message`、`scan_limit`。 |
 | `chat.read_messages` | `chat_read_messages` | read-only | 按 0-based message index 读取当前聊天消息；每项可选 `start_char`、`max_chars`。JSONL header 不计入 index。 |
 | `worldinfo.read_activated` | `worldinfo_read_activated` | read-only | 读取本次 Agent run 捕获的最终激活世界书条目，不读取全局 last activation。 |
+| `dice.roll` | `dice_roll` | read-only | 为明确的随机、跑团或 roleplay 检定投骰；支持 `d6`、`1d20`、`3d6+4` 与纯数字。默认 Profile 不启用。 |
 | `skill.list` | `skill_list` | read-only | 列出当前 Profile 可见的已安装 Skill 索引摘要。 |
 | `skill.search` | `skill_search` | read-only | 搜索当前 Profile 可见的单个 Skill 内 UTF-8 文本文件；返回 snippet/ref，snippet 字符数计入 Skill read budget。 |
 | `skill.read` | `skill_read` | read-only | 读取当前 Profile 可见 Skill 内的 UTF-8 文本文件或范围；默认 `SKILL.md`，支持 `path`、行范围、字符范围与 `max_chars`，受 Profile read budget 控制。 |
