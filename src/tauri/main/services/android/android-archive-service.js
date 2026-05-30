@@ -206,7 +206,7 @@ export function createAndroidArchiveService({ safeInvoke, removeTempUploadFile, 
         }
 
         const stagingDirectory = await resolveAndroidSkillImportStagingDirectory(pathApi);
-        const targetFileName = `tauritavern-skill-import-${Date.now()}-${Math.random().toString(16).slice(2)}.ttskill`;
+        const targetFileName = `tauritavern-skill-import-${Date.now()}-${Math.random().toString(16).slice(2)}.zip`;
         const targetFilePath = await pathApi.join(stagingDirectory, targetFileName);
         const filePath = String(
             bridge.stageContentUriToFile(String(contentUri).trim(), targetFilePath),

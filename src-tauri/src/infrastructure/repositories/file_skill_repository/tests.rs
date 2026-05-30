@@ -1370,7 +1370,8 @@ async fn exported_skill_archive_can_be_reimported() {
         .export_skill(global_scope(), "test-skill")
         .await
         .expect("export skill");
-    let archive_path = root.join("test-skill.ttskill");
+    assert_eq!(exported.file_name, "test-skill.zip");
+    let archive_path = root.join(&exported.file_name);
     tokio_fs::write(&archive_path, exported.bytes)
         .await
         .expect("write archive");
@@ -1413,6 +1414,7 @@ async fn exported_skill_archive_base64_can_be_reimported() {
         .export_skill(global_scope(), "test-skill")
         .await
         .expect("export skill");
+    assert_eq!(exported.file_name, "test-skill.zip");
     let second_root = temp_root("reimport-base64");
     let second_repository = FileSkillRepository::new(second_root.clone());
     let preview = second_repository
@@ -1459,6 +1461,8 @@ async fn exported_skill_roundtrip_preserves_hash() {
         .export_skill(global_scope(), "test-skill")
         .await
         .expect("export skill");
+    assert_eq!(exported.file_name, "test-skill.zip");
+    // Historical .ttskill files are still zip archives and must remain import-compatible.
     let archive_path = root.join("test-skill.ttskill");
     tokio_fs::write(&archive_path, exported.bytes)
         .await

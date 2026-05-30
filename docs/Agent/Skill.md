@@ -55,7 +55,7 @@ data_root/_tauritavern/skills/
 
 - `inlineFiles`：Preset / 角色卡嵌入 Skill 的文件列表。
 - `directory`：本地 Skill 目录。
-- `archiveFile`：`.ttskill` zip 包。
+- `archiveFile`：zip 包；`.ttskill` 作为历史扩展名保持导入兼容。
 
 导入流程：
 
@@ -77,7 +77,8 @@ materialize input into .staging
 导出：
 
 - `api.skill.export({ scope, name })` 返回 `{ fileName, contentBase64, sha256 }`；`scope` 省略时按全局 Skill 处理。
-- `.ttskill` 内只包含 Skill 文件本身，不写入会改变内容 hash 的诊断 sidecar。
+- 默认导出文件名使用 `.zip` 扩展名；归档内只包含 Skill 文件本身，不写入会改变内容 hash 的诊断 sidecar。
+- `.ttskill` 是历史兼容扩展名，仍可导入，但不再作为默认导出扩展名。
 
 ## Agent 读取
 

@@ -788,7 +788,7 @@ export function createSkillManagerPanelRoot() {
                     });
                     const blob = base64ToBlob(payload.contentBase64, SKILL_ARCHIVE_CONTENT_TYPE);
                     const downloadResult = await downloadBlobWithRuntime(blob, payload.fileName, {
-                        fallbackName: `${skill.name}.ttskill`,
+                        fallbackName: `${skill.name}.zip`,
                     });
                     if (downloadResult?.mode !== 'ios-native-share' || downloadResult.completed === true) {
                         this.toast(tr('exportedSkill', { name: skill.name }));

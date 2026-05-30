@@ -191,7 +191,7 @@ Skill 已落地：
 
 - `SkillRepository` / `FileSkillRepository` / `SkillService`。
 - `api.skill` 管理入口。
-- `.ttskill` 导入导出。
+- Skill zip 导入导出；历史 `.ttskill` 归档保持导入兼容。
 - Preset / Character embedded skill 导入确认与 source ref 清理。
 - `skill.list`。
 - `skill.read`。

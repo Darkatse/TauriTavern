@@ -58,7 +58,7 @@ type TauriTavernSkillApi = {
 
 ## 导入输入
 
-用户从本机选择 `.ttskill` / `.zip` 时应优先调用 `pickImportArchive()`。它只负责唤起系统文件选择器并返回：
+用户从本机选择 `.zip` Skill 归档时应优先调用 `pickImportArchive()`；历史 `.ttskill` 归档仍保持导入兼容。该方法只负责唤起系统文件选择器并返回：
 
 ```ts
 { kind: 'archiveFile', path: string }
@@ -134,8 +134,9 @@ type action = 'installed' | 'replaced' | 'already_installed' | 'skipped';
 
 `export()`：
 
-- 返回 base64 编码的 `.ttskill` zip。
-- `.ttskill` 只包含 Skill 文件本身；不会写入会改变内容 hash 的导出诊断文件。
+- 返回 base64 编码的 zip，默认文件名使用 `.zip` 扩展名。
+- zip 内只包含 Skill 文件本身；不会写入会改变内容 hash 的导出诊断文件。
+- `.ttskill` 是历史兼容扩展名，仍可导入，但不再作为默认导出扩展名。
 
 `delete()`：
 

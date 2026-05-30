@@ -166,7 +166,7 @@ fn prepare_skill_import_archive_path(app: &AppHandle) -> Result<PathBuf, DomainE
     })?;
 
     Ok(staging_root.join(format!(
-        "tauritavern-skill-import-{}.ttskill",
+        "tauritavern-skill-import-{}.zip",
         uuid::Uuid::new_v4().simple()
     )))
 }

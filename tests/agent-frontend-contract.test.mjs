@@ -916,7 +916,7 @@ test('Embedded Skill items export the selected scoped Skill archive', async () =
             async export(options) {
                 calls.push(options);
                 return {
-                    fileName: 'writer.ttskill',
+                    fileName: 'writer.zip',
                     contentBase64: 'UEsDBAo=',
                     sha256: 'abc123',
                 };
@@ -941,7 +941,7 @@ test('Embedded Skill items export the selected scoped Skill archive', async () =
         skillName: 'writer',
         sourceScope: { kind: 'profile', profileId: 'writer' },
         sourceScopeLabel: 'Agent Profile / writer',
-        fileName: 'writer.ttskill',
+        fileName: 'writer.zip',
         contentBase64: 'UEsDBAo=',
         sha256: 'abc123',
     });
@@ -956,7 +956,7 @@ test('Skill extension portability sync embeds moved preset-scoped Skills', async
             async export(options) {
                 exportCalls.push(options);
                 return {
-                    fileName: 'writer.ttskill',
+                    fileName: 'writer.zip',
                     contentBase64: 'UEsDBAo=',
                     sha256: 'abc123',
                 };
@@ -1014,7 +1014,7 @@ test('Skill extension portability sync embeds moved preset-scoped Skills', async
                 skillName: 'writer',
                 sourceScope: presetScope,
                 sourceScopeLabel: 'Preset / Creative',
-                fileName: 'writer.ttskill',
+                fileName: 'writer.zip',
                 contentBase64: 'UEsDBAo=',
                 sha256: 'abc123',
             },
@@ -1070,7 +1070,7 @@ test('Skill extension portability sync writes character embedded Skills without 
             skill: {
                 async export() {
                     return {
-                        fileName: 'writer.ttskill',
+                        fileName: 'writer.zip',
                         contentBase64: 'UEsDBAo=',
                         sha256: 'abc123',
                     };

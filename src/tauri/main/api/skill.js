@@ -177,7 +177,7 @@ function createSkillApi({
                 filters: [
                     {
                         name: 'Agent Skill Archive',
-                        extensions: ['ttskill', 'zip'],
+                        extensions: ['zip', 'ttskill'],
                     },
                 ],
             },

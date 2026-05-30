@@ -100,7 +100,7 @@ test('api.skill maps archiveBase64 command fields to Rust DTO names', async () =
     const { calls, skill } = await installHarness();
     const input = {
         kind: 'archiveBase64',
-        fileName: 'embedded-skill.ttskill',
+        fileName: 'embedded-skill.zip',
         contentBase64: 'UEsDBAo=',
         sha256: 'abc123',
         source: { kind: 'preset', id: 'preset:openai:test', label: 'Test preset' },
@@ -111,7 +111,7 @@ test('api.skill maps archiveBase64 command fields to Rust DTO names', async () =
 
     assert.deepEqual(calls[0].args.input, {
         kind: 'archiveBase64',
-        file_name: 'embedded-skill.ttskill',
+        file_name: 'embedded-skill.zip',
         content_base64: 'UEsDBAo=',
         sha256: 'abc123',
         source: { kind: 'preset', id: 'preset:openai:test', label: 'Test preset' },
@@ -119,7 +119,7 @@ test('api.skill maps archiveBase64 command fields to Rust DTO names', async () =
     assert.deepEqual(calls[1].args.request, {
         input: {
             kind: 'archiveBase64',
-            file_name: 'embedded-skill.ttskill',
+            file_name: 'embedded-skill.zip',
             content_base64: 'UEsDBAo=',
             sha256: 'abc123',
             source: { kind: 'preset', id: 'preset:openai:test', label: 'Test preset' },
@@ -254,16 +254,16 @@ test('api.skill picks import archives through the host dialog', async () => {
     installSkillApi({
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
-            return '/tmp/test-skill.ttskill';
+            return '/tmp/test-skill.zip';
         },
     });
 
     const input = await globalThis.window.__TAURITAVERN__.api.skill.pickImportArchive();
 
-    assert.deepEqual(input, { kind: 'archiveFile', path: '/tmp/test-skill.ttskill' });
+    assert.deepEqual(input, { kind: 'archiveFile', path: '/tmp/test-skill.zip' });
     assert.equal(calls[0].command, 'plugin:dialog|open');
     assert.deepEqual(calls[0].args.options.filters, [
-        { name: 'Agent Skill Archive', extensions: ['ttskill', 'zip'] },
+        { name: 'Agent Skill Archive', extensions: ['zip', 'ttskill'] },
     ]);
 });
 
@@ -285,8 +285,8 @@ test('api.skill stages Android picked content URIs as archive files', async () =
             materializeAndroidSkillImportArchive: async (contentUri) => {
                 assert.equal(contentUri, 'content://picked-skill');
                 return {
-                    filePath: '/cache/tauritavern-skill-import-staging/picked.ttskill',
-                    cleanup: async () => cleanups.push('picked.ttskill'),
+                    filePath: '/cache/tauritavern-skill-import-staging/picked.zip',
+                    cleanup: async () => cleanups.push('picked.zip'),
                 };
             },
         });
@@ -295,12 +295,12 @@ test('api.skill stages Android picked content URIs as archive files', async () =
         const input = await skill.pickImportArchive();
         assert.deepEqual(input, {
             kind: 'archiveFile',
-            path: '/cache/tauritavern-skill-import-staging/picked.ttskill',
+            path: '/cache/tauritavern-skill-import-staging/picked.zip',
         });
         assert.deepEqual(calls, []);
 
         await skill.discardPickedImport(input);
-        assert.deepEqual(cleanups, ['picked.ttskill']);
+        assert.deepEqual(cleanups, ['picked.zip']);
     });
 });
 
@@ -316,7 +316,7 @@ test('api.skill stages iOS picked files through the native command', async () =>
         installSkillApi({
             safeInvoke: async (command, args) => {
                 calls.push({ command, args });
-                return { cancelled: false, filePath: '/cache/tauritavern-skill-import-staging/picked.ttskill' };
+                return { cancelled: false, filePath: '/cache/tauritavern-skill-import-staging/picked.zip' };
             },
             removeTemporaryFile: async (filePath) => cleanups.push(filePath),
         });
@@ -325,12 +325,12 @@ test('api.skill stages iOS picked files through the native command', async () =>
         const input = await skill.pickImportArchive();
         assert.deepEqual(input, {
             kind: 'archiveFile',
-            path: '/cache/tauritavern-skill-import-staging/picked.ttskill',
+            path: '/cache/tauritavern-skill-import-staging/picked.zip',
         });
         assert.equal(calls[0].command, 'ios_pick_skill_import_archive');
 
         await skill.discardPickedImport(input);
-        assert.deepEqual(cleanups, ['/cache/tauritavern-skill-import-staging/picked.ttskill']);
+        assert.deepEqual(cleanups, ['/cache/tauritavern-skill-import-staging/picked.zip']);
     });
 });
 

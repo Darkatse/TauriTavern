@@ -212,7 +212,7 @@ impl SkillRepository for FileSkillRepository {
         let bytes = archive::export_skill_dir(&root)?;
         let sha256 = package::sha256_hex(&bytes);
         Ok(SkillExportResult {
-            file_name: format!("{name}.ttskill"),
+            file_name: format!("{name}.zip"),
             bytes,
             sha256,
         })
