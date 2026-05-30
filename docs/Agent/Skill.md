@@ -99,7 +99,7 @@ materialize input into .staging
 - 只能读取当前 Profile 可见且未 deny 的 Skill。
 - 支持行范围和字符范围；两种范围不能混用。
 - 只能读取 UTF-8 文本文件；二进制文件返回可恢复 tool error。
-- `max_chars` 受 `maxReadCharsPerCall` 与 `maxReadCharsPerRun` 控制；超预算返回可恢复 tool error。
+- `max_chars` 受当前 Agent Profile 的 `maxReadCharsPerCall` 与 `maxReadCharsPerRun` 控制；超预算返回可恢复 tool error。未拿到 Profile 专属预算的非 Agent Skill 管理读取使用默认 80000 字符边界。
 - 结果写入 Agent journal / tool result，并作为后续模型上下文的一部分回填。
 
 `skill.search`：

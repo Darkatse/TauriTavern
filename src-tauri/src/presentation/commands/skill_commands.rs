@@ -9,10 +9,10 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::domain::models::skill::{
-    SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry, SkillInlineFile,
-    SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest, SkillReadResult,
-    SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult,
-    SkillWriteRequest,
+    DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS, SkillFileRef, SkillImportInput, SkillImportPreview,
+    SkillIndexEntry, SkillInlineFile, SkillInstallRequest, SkillInstallResult, SkillMoveRequest,
+    SkillReadRequest, SkillReadResult, SkillScope, SkillScopeFilter, SkillScopeRetargetRequest,
+    SkillScopeRetargetResult, SkillWriteRequest,
 };
 use crate::infrastructure::http_client_pool::{HttpClientPool, HttpClientProfile};
 use crate::presentation::commands::helpers::{
@@ -163,6 +163,21 @@ pub async fn read_skill_file(
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<SkillReadResult, CommandError> {
     log_command(format!("read_skill_file {}/{}", name, path));
+
+    let max_chars = match max_chars {
+        Some(0) => {
+            return Err(CommandError::BadRequest(
+                "maxChars must be greater than 0".to_string(),
+            ));
+        }
+        Some(value) if value > DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS => {
+            return Err(CommandError::BadRequest(format!(
+                "maxChars must be <= {DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS} for api.skill.readFile; Agent skill.read uses Agent Profile budgets"
+            )));
+        }
+        Some(value) => Some(value),
+        None => Some(DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS),
+    };
 
     app_state
         .skill_service

@@ -92,7 +92,7 @@ pub fn materialize_agent_system_prompt(
         "---".to_string(),
         String::new(),
         "# Agent Mode is active.".to_string(),
-        "- Work using the available agent tools. Tool results are private runtime data, not chat messages.".to_string(),
+        "- Work using the available agent tools. Tool results are working context, not chat messages.".to_string(),
         String::new(),
     ]);
 
@@ -1348,6 +1348,7 @@ mod tests {
         assert!(prompt.contains("- workspace_commit_alias"));
         assert!(prompt.contains("- workspace_finish_alias"));
         assert!(!prompt.contains("TauriTavern"));
+        assert!(!prompt.contains("runtime"));
         assert!(prompt.contains("use chat_search_alias to find relevant prior messages"));
         assert!(prompt.contains(
             "Before calling workspace_finish_alias, you **must successfully call workspace_commit_alias at least once**"

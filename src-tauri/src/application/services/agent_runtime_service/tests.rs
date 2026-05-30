@@ -6217,6 +6217,83 @@ async fn dispatcher_searches_skills_and_reads_skill_ranges() {
 }
 
 #[tokio::test]
+async fn dispatcher_uses_profile_skill_read_budget_above_default_fallback() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-skill-profile-budget-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let skill_repository = Arc::new(FileSkillRepository::new(root.join("skills")));
+    let long_content = "a".repeat(120_000);
+    skill_repository
+        .install_import(SkillInstallRequest {
+            target_scope: SkillScope::Global,
+            input: SkillImportInput::InlineFiles {
+                files: vec![
+                    SkillInlineFile {
+                        path: "SKILL.md".to_string(),
+                        encoding: "utf8".to_string(),
+                        content: "---\nname: test-skill\ndescription: Skill for read budget tests.\n---\n\n# Test\n".to_string(),
+                        media_type: None,
+                        size_bytes: None,
+                        sha256: None,
+                    },
+                    SkillInlineFile {
+                        path: "references/long.md".to_string(),
+                        encoding: "utf8".to_string(),
+                        content: long_content,
+                        media_type: None,
+                        size_bytes: None,
+                        sha256: None,
+                    },
+                ],
+                source: json!({ "kind": "test" }),
+            },
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+    let skill_service = Arc::new(SkillService::new(skill_repository));
+    let mut profile = test_resolved_profile(&root).await;
+    profile.skills.max_read_chars_per_call = 100_000;
+    profile.skills.max_read_chars_per_run = 100_000;
+    let effective_skills = skill_service
+        .resolve_effective_skills(&[SkillScope::Global], &profile.skills)
+        .await
+        .expect("resolve effective skills");
+    let dispatcher = AgentToolDispatcher::new(
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        repository,
+        skill_service.clone(),
+    );
+    let mut session = AgentToolSession::new(effective_skills);
+
+    let read_call = AgentToolCall {
+        id: "call_skill_read_profile_budget".to_string(),
+        name: "skill.read".to_string(),
+        arguments: json!({
+            "name": "test-skill",
+            "path": "references/long.md",
+            "max_chars": 100000
+        }),
+        provider_metadata: Value::Null,
+    };
+    let read = dispatcher
+        .dispatch("unused", &read_call, &mut session, &profile)
+        .await
+        .expect("dispatch profile-budget skill read");
+    assert!(!read.result.is_error);
+    assert_eq!(read.result.structured["chars"], 100_000);
+    assert_eq!(read.result.structured["totalChars"], 120_000);
+    assert_eq!(read.result.structured["truncated"], true);
+    assert_eq!(session.skill_read_chars(), 100_000);
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn dispatcher_progressively_reads_worldinfo_activation_from_run_snapshot() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-worldinfo-tool-{}",

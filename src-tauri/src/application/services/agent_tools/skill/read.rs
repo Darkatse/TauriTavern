@@ -98,7 +98,7 @@ pub(in crate::application::services::agent_tools) async fn read(
             tool_error(
                 call,
                 "skill.policy_denied",
-                &format!("Skill `{name}` is not visible in the current profile."),
+                &format!("Skill `{name}` is not available under the current policy."),
             ),
             AgentToolEffect::None,
         ));
@@ -108,7 +108,7 @@ pub(in crate::application::services::agent_tools) async fn read(
             tool_error(
                 call,
                 "skill.not_visible",
-                &format!("Skill `{name}` is not installed in the active Skill scopes."),
+                &format!("Skill `{name}` is not available in the current Skill set."),
             ),
             AgentToolEffect::None,
         ));
@@ -134,7 +134,7 @@ pub(in crate::application::services::agent_tools) async fn read(
                     call,
                     "skill.read_budget_exceeded",
                     &format!(
-                        "max_chars exceeds profile per-call skill read budget of {}.",
+                        "max_chars exceeds the current per-call Skill read budget of {}.",
                         profile.skills.max_read_chars_per_call
                     ),
                 ),

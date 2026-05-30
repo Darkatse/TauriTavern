@@ -83,7 +83,7 @@ pub(in crate::application::services::agent_tools) fn skill_read_spec() -> AgentT
                 },
                 "max_chars": {
                     "type": "integer",
-                    "description": "Maximum characters to return. Defaults to 20000; maximum is 80000."
+                    "description": "Maximum characters to return in this call. Current policy controls the exact per-call and per-run Skill read budgets."
                 },
                 "start_line": {
                     "type": "integer",

@@ -77,7 +77,7 @@ fn skill_list_items<'a>(skills: &[&'a SkillIndexEntry]) -> Vec<SkillListItem<'a>
 
 fn render_content(skills: &[&SkillIndexEntry]) -> String {
     if skills.is_empty() {
-        "No Agent Skills are visible in the current profile.".to_string()
+        "No Agent Skills are available under the current policy.".to_string()
     } else {
         let mut content = skills
             .iter()

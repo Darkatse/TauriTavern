@@ -38,8 +38,6 @@ const MAX_SINGLE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_SKILL_MD_BYTES: u64 = 1024 * 1024;
 const MAX_ZIP_COMPRESSION_RATIO: u64 = 100;
-const DEFAULT_READ_MAX_CHARS: usize = 20_000;
-const MAX_READ_CHARS: usize = 80_000;
 
 pub struct FileSkillRepository {
     pub(super) root: PathBuf,

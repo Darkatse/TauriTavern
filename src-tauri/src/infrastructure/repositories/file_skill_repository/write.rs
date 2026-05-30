@@ -11,9 +11,11 @@ use super::fs_ops::{
 use super::index::sort_index;
 use super::package::{sha256_hex, validate_skill_root};
 use super::paths::{normalize_skill_path, validate_skill_name, validate_skill_scope};
-use super::{FileSkillRepository, MAX_READ_CHARS, MAX_SINGLE_FILE_BYTES, MAX_SKILL_MD_BYTES};
+use super::{FileSkillRepository, MAX_SINGLE_FILE_BYTES, MAX_SKILL_MD_BYTES};
 use crate::domain::errors::DomainError;
-use crate::domain::models::skill::{SkillReadRequest, SkillReadResult, SkillWriteRequest};
+use crate::domain::models::skill::{
+    DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS, SkillReadRequest, SkillReadResult, SkillWriteRequest,
+};
 
 pub(super) async fn write_skill_file(
     repository: &FileSkillRepository,
@@ -101,7 +103,7 @@ async fn write_skill_file_inner(
             start_line: None,
             line_count: None,
             start_char: None,
-            max_chars: Some(MAX_READ_CHARS),
+            max_chars: Some(DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS),
         },
     )
     .await

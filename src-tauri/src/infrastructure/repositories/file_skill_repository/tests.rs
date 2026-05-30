@@ -9,9 +9,10 @@ use uuid::Uuid;
 
 use super::*;
 use crate::domain::models::skill::{
-    SkillFileKind, SkillImportConflictKind, SkillImportInput, SkillInlineFile, SkillInstallAction,
-    SkillInstallConflictStrategy, SkillInstallRequest, SkillMoveRequest, SkillReadRequest,
-    SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillSearchRequest, SkillWriteRequest,
+    DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS, SkillFileKind, SkillImportConflictKind,
+    SkillImportInput, SkillInlineFile, SkillInstallAction, SkillInstallConflictStrategy,
+    SkillInstallRequest, SkillMoveRequest, SkillReadRequest, SkillScope, SkillScopeFilter,
+    SkillScopeRetargetRequest, SkillSearchRequest, SkillWriteRequest,
 };
 use crate::domain::repositories::skill_repository::SkillRepository;
 
@@ -223,6 +224,53 @@ async fn reads_skill_file_ranges() {
     assert_eq!(chars.total_words, 4);
     assert_eq!(chars.start_char, 6);
     assert_eq!(chars.end_char, 10);
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn reads_default_budget_without_enforcing_it_as_a_hard_cap() {
+    let root = temp_root("read-budget");
+    let repository = FileSkillRepository::new(root.clone());
+    let long_content = "a".repeat(120_000);
+    repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input: inline_skill("test-skill", vec![("references/long.md", &long_content)]),
+            conflict_strategy: None,
+        })
+        .await
+        .expect("install skill");
+
+    let default_read = repository
+        .read_skill_file(SkillReadRequest {
+            scope: global_scope(),
+            name: "test-skill".to_string(),
+            path: "references/long.md".to_string(),
+            start_line: None,
+            line_count: None,
+            start_char: None,
+            max_chars: None,
+        })
+        .await
+        .expect("read default range");
+    assert_eq!(default_read.chars, DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS);
+    assert!(default_read.truncated);
+
+    let profile_sized_read = repository
+        .read_skill_file(SkillReadRequest {
+            scope: global_scope(),
+            name: "test-skill".to_string(),
+            path: "references/long.md".to_string(),
+            start_line: None,
+            line_count: None,
+            start_char: None,
+            max_chars: Some(100_000),
+        })
+        .await
+        .expect("read profile-sized range");
+    assert_eq!(profile_sized_read.chars, 100_000);
+    assert!(profile_sized_read.truncated);
 
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }

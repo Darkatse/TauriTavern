@@ -1,13 +1,13 @@
 use std::fs;
 use std::path::PathBuf;
 
+use super::FileSkillRepository;
 use super::package::{collect_skill_files, sha256_hex};
 use super::paths::{normalize_skill_path, validate_skill_name};
-use super::{DEFAULT_READ_MAX_CHARS, FileSkillRepository, MAX_READ_CHARS};
 use crate::domain::errors::DomainError;
 use crate::domain::models::skill::{
-    SkillFileKind, SkillFileRef, SkillReadRequest, SkillReadResult, SkillScope, SkillSearchHit,
-    SkillSearchRequest, SkillSearchResult,
+    DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS, SkillFileKind, SkillFileRef, SkillReadRequest,
+    SkillReadResult, SkillScope, SkillSearchHit, SkillSearchRequest, SkillSearchResult,
 };
 use crate::domain::text_metrics::TextMetrics;
 use crate::domain::text_search::PreparedTextSearch;
@@ -40,16 +40,13 @@ pub(super) async fn read_skill_file(
     repository: &FileSkillRepository,
     request: SkillReadRequest,
 ) -> Result<SkillReadResult, DomainError> {
-    let requested_chars = request.max_chars.unwrap_or(DEFAULT_READ_MAX_CHARS);
+    let requested_chars = request
+        .max_chars
+        .unwrap_or(DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS);
     if requested_chars == 0 {
         return Err(DomainError::InvalidData(
             "max_chars must be greater than 0".to_string(),
         ));
-    }
-    if requested_chars > MAX_READ_CHARS {
-        return Err(DomainError::InvalidData(format!(
-            "max_chars must be <= {MAX_READ_CHARS}"
-        )));
     }
 
     let file =

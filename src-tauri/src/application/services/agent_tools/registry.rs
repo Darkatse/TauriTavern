@@ -1,7 +1,7 @@
 use super::agent::{agent_await_spec, agent_delegate_spec, agent_list_spec, task_return_spec};
 use super::chat::{chat_read_messages_spec, chat_search_spec};
 use super::dice::dice_roll_spec;
-use super::skill::{skill_list_spec, skill_read_spec, skill_search_spec};
+use super::skill::{SKILL_READ, skill_list_spec, skill_read_spec, skill_search_spec};
 use super::workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
     WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_WRITE_FILE, workspace_apply_patch_spec,
@@ -251,6 +251,18 @@ fn apply_profile_context(
                 "Finish the Agent run after required chat commits and workspace changes are complete."
                     .to_string();
         }
+        SKILL_READ => {
+            let per_call = profile.skills.max_read_chars_per_call;
+            let per_run = profile.skills.max_read_chars_per_run;
+            set_property_description(
+                spec,
+                "max_chars",
+                &format!(
+                    "Maximum characters to return in this skill_read call. Current policy allows up to {per_call} characters per call and {per_run} total Skill characters per run; the remaining run budget also applies. Omit to use the available per-call budget."
+                ),
+            )?;
+            set_integer_property_bounds(spec, "max_chars", 1, per_call)?;
+        }
         _ => {}
     }
 
@@ -280,11 +292,35 @@ fn apply_description_override(
     Ok(())
 }
 
+fn set_integer_property_bounds(
+    spec: &mut AgentToolSpec,
+    property: &str,
+    minimum: usize,
+    maximum: usize,
+) -> Result<(), ApplicationError> {
+    let object = property_schema_object_mut(spec, property)?;
+    object.insert("minimum".to_string(), serde_json::json!(minimum));
+    object.insert("maximum".to_string(), serde_json::json!(maximum));
+    Ok(())
+}
+
 fn set_property_description(
     spec: &mut AgentToolSpec,
     property: &str,
     description: &str,
 ) -> Result<(), ApplicationError> {
+    let object = property_schema_object_mut(spec, property)?;
+    object.insert(
+        "description".to_string(),
+        serde_json::Value::String(description.to_string()),
+    );
+    Ok(())
+}
+
+fn property_schema_object_mut<'a>(
+    spec: &'a mut AgentToolSpec,
+    property: &str,
+) -> Result<&'a mut serde_json::Map<String, serde_json::Value>, ApplicationError> {
     let properties = spec
         .input_schema
         .get_mut("properties")
@@ -307,19 +343,26 @@ fn set_property_description(
             spec.name
         ))
     })?;
-    object.insert(
-        "description".to_string(),
-        serde_json::Value::String(description.to_string()),
-    );
-    Ok(())
+    Ok(object)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::super::agent::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_LIST, TASK_RETURN};
     use super::super::dice::DICE_ROLL;
     use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE, WORKSPACE_WRITE_FILE};
     use super::*;
+    use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
+    use crate::domain::models::agent::profile::{
+        AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy,
+        AgentDelegationPolicy, AgentModelBinding, AgentModelBindingMode, AgentPresetBinding,
+        AgentPresetBindingMode, AgentProfileId, AgentProfileInstructions, AgentProfileSourceTrace,
+        AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy, AgentWorkspacePolicy,
+        ResolvedAgentOutputPolicy, ResolvedAgentProfile,
+    };
+    use crate::domain::models::agent::{AgentRunPresentation, ArtifactSpec, ArtifactTarget};
 
     #[test]
     fn registry_uses_openai_safe_model_names() {
@@ -397,6 +440,42 @@ mod tests {
     }
 
     #[test]
+    fn visible_specs_expose_profile_skill_read_budget() {
+        let registry = BuiltinAgentToolRegistry::phase2c();
+        let profile = profile_with_skill_budget(100_000, 100_000);
+        let tools = registry.visible_specs(&profile).expect("visible specs");
+        let skill_read = tools
+            .iter()
+            .find(|tool| tool.name == SKILL_READ)
+            .expect("skill.read spec");
+        let max_chars = skill_read
+            .input_schema
+            .pointer("/properties/max_chars")
+            .expect("max_chars schema");
+
+        assert_eq!(max_chars["maximum"], serde_json::json!(100_000));
+        assert_eq!(max_chars["minimum"], serde_json::json!(1));
+        assert!(
+            max_chars["description"]
+                .as_str()
+                .expect("description")
+                .contains("100000")
+        );
+        assert!(
+            !max_chars["description"]
+                .as_str()
+                .expect("description")
+                .contains("80000")
+        );
+        assert!(
+            !max_chars["description"]
+                .as_str()
+                .expect("description")
+                .contains("profile")
+        );
+    }
+
+    #[test]
     fn agent_tool_specs_keep_runtime_terms_out_of_model_descriptions() {
         let registry = BuiltinAgentToolRegistry::phase2c();
         let agent_tools = registry
@@ -422,6 +501,72 @@ mod tests {
             assert!(!text.contains("workspace_finish"), "{}", tool.name);
             assert!(!text.contains("to collect it"), "{}", tool.name);
             assert!(!text.contains("before finalizing"), "{}", tool.name);
+        }
+    }
+
+    fn profile_with_skill_budget(per_call: usize, per_run: usize) -> ResolvedAgentProfile {
+        ResolvedAgentProfile {
+            schema_version: AGENT_PROFILE_SCHEMA_VERSION,
+            kind: AGENT_PROFILE_KIND.to_string(),
+            id: AgentProfileId::parse("test-profile").expect("profile id"),
+            display_name: "Test Profile".to_string(),
+            description: None,
+            preset: AgentPresetBinding {
+                mode: AgentPresetBindingMode::CurrentPromptSnapshot,
+                ref_: None,
+                required: false,
+            },
+            model: AgentModelBinding {
+                mode: AgentModelBindingMode::CurrentPromptSnapshot,
+                connection_ref: None,
+                model_id: None,
+            },
+            run: AgentRunPolicy {
+                presentation: AgentRunPresentation::Background,
+                direct_runnable: true,
+                model_retry: Default::default(),
+            },
+            context: AgentContextPolicy::default(),
+            delegation: AgentDelegationPolicy::default(),
+            instructions: AgentProfileInstructions::default(),
+            tools: AgentToolPolicy {
+                allow: vec![SKILL_READ.to_string()],
+                deny: Vec::new(),
+                tool_descriptions: BTreeMap::new(),
+                max_rounds: 1,
+                max_calls_per_run: 1,
+                max_calls_per_tool: BTreeMap::new(),
+            },
+            skills: AgentSkillPolicy {
+                visible: vec!["*".to_string()],
+                deny: Vec::new(),
+                max_read_chars_per_call: per_call,
+                max_read_chars_per_run: per_run,
+            },
+            workspace: AgentWorkspacePolicy {
+                visible_roots: vec!["output".to_string()],
+                writable_roots: vec!["output".to_string()],
+            },
+            plan: AgentPlanPolicy {
+                mode: AgentPlanMode::None,
+                beta: true,
+                nodes: Vec::new(),
+            },
+            output: ResolvedAgentOutputPolicy {
+                artifacts: vec![ArtifactSpec {
+                    id: "main".to_string(),
+                    path: "output/main.md".to_string(),
+                    kind: "markdown".to_string(),
+                    target: ArtifactTarget::MessageBody,
+                    required: true,
+                    assembly_order: 0,
+                }],
+                message_body_artifact_id: "main".to_string(),
+                message_body_path: "output/main.md".to_string(),
+            },
+            source_trace: AgentProfileSourceTrace {
+                profile_source: "test".to_string(),
+            },
         }
     }
 }
