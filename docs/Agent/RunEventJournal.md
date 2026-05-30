@@ -143,7 +143,6 @@ tool_call_failed
 workspace_file_written
 workspace_patch_applied
 checkpoint_created
-context_tool_result_hydrated
 agent_loop_finished
 artifact_assembled
 commit_started
@@ -325,7 +324,6 @@ tool_call_denied
 tool_call_started
 tool_call_completed
 tool_call_failed
-context_tool_result_hydrated
 ```
 
 `tool_call_requested`：
@@ -564,7 +562,6 @@ tool_call_failed
 workspace_file_written
 workspace_patch_applied
 checkpoint_created
-context_tool_result_hydrated
 agent_loop_finished
 artifact_assembled
 commit_started

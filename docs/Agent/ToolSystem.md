@@ -522,7 +522,7 @@ result returns to backend journal
 - agent list/delegate/await 与 runtime-only task.return 的 return-mode SubAgent MVP。
 - tool arguments / tool results resource refs。
 - recoverable tool error 回填模型。
-- 前 5 轮 workspace write/patch 成功结果会 hydrate 完整文件内容到下一轮模型上下文，并同步为完整 read-state。
+- workspace write/patch 成功结果只回填摘要、结构化元数据与 resource refs；需要完整内容时由模型显式调用 workspace_read_file。
 - workspace mutation checkpoint。
 - journal events。
 

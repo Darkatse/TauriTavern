@@ -6,7 +6,7 @@
 
 ## 当前基线
 
-截至 2026-05-28，Agent 当前基线：
+截至 2026-05-30，Agent 当前基线：
 
 - Rust 后端已有 Agent domain model、runtime、workspace、journal、checkpoint、commit bridge。
 - 前端已挂载 `window.__TAURITAVERN__.api.agent` Host ABI。
@@ -209,13 +209,14 @@ AgentModelContentPart {
 - journal / workspace 保存的是真实 tool result、tool args、resource refs。
 - 下一轮模型上下文使用 canonical `ToolResult` part。
 
-当前已落地 recent hydration：
+当前不再自动补入 workspace 写入内容：
 
-- 前 5 轮中，`workspace.write_file` 与 `workspace.apply_patch` 成功后，会把目标文件当前完整内容回填到下一轮模型上下文，并同步为完整 read-state。
-- 该回填只影响 model request，不改变实际 workspace/journal 真相。
-- hydration 会写 `context_tool_result_hydrated` debug event。
+- `workspace.write_file` 与 `workspace.apply_patch` 成功结果只把摘要、结构化元数据与 resource refs 作为 canonical `ToolResult` 回填模型。
+- runtime 不会因前几轮 workspace 写入而自动读取完整文件内容并拼入下一轮模型上下文。
+- 模型需要完整文件内容时必须显式调用 `workspace.read_file`；append 到未完整读过的旧文件后，后续 rewrite / patch 会按 read-state 规则要求重新读取。
+- read-state 由 workspace 工具维护：完整读取、创建/完整替换、成功 patch 会记录完整已知；append 只有在旧内容已经完整已知时才延续完整已知。
 
-这样避免模型/provider 切换后只看到写入摘要而丢失刚写入的真实文本；面向模型与 UI 的摘要统一使用 chars/words，字节数只保留在内部存储与完整性边界。
+这样让跨 Agent / 跨模型协作依赖显式 task packet、workspace refs 与 invocation-scoped prompt，而不是旧的 provider switch 最近历史启发式。
 
 ## Workspace 与 Commit
 
@@ -343,7 +344,6 @@ tool_call_completed / tool_call_failed
 workspace_file_written
 workspace_patch_applied
 checkpoint_created
-context_tool_result_hydrated
 provider_state_updated
 model_response_stored
 agent_loop_finished

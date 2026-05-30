@@ -207,7 +207,7 @@ Tool result 当前会编码为 JSON 字符串，包含：
 }
 ```
 
-前 5 轮 `workspace.write_file` / `workspace.apply_patch` 成功结果会被 runtime hydrate：下一轮模型看到完整文件内容，并同步为完整 read-state；journal/workspace 真相不变。
+`workspace.write_file` / `workspace.apply_patch` 成功结果不会被 runtime 自动补入完整文件内容。下一轮模型只看到 canonical tool result 摘要、结构化元数据与 resource refs；需要完整文件内容时必须通过 `workspace.read_file` 显式读取。
 
 ## 8. Policy
 
@@ -275,7 +275,7 @@ Agent runtime 会按 Profile `run.modelRetry` 重试 `429` rate limit 与 transi
 - missing tool call id fail-fast。
 - Gemini schema sanitizer。
 - Agent loop 通过 canonical response 推进。
-- 前 5 轮 workspace write result hydration。
+- workspace write/patch result 不再隐式补入完整内容，后续编辑依赖显式 read-state。
 - OpenAI Responses native output items 回放。
 - OpenAI Responses `provider_state.previousResponseId` 注入与 `messageCursor` 增量输入。
 - Claude / Gemini native continuation 计数与缺失 fail-fast。

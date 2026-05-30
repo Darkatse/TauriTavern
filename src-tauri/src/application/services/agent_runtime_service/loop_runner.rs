@@ -19,7 +19,6 @@ use crate::domain::models::agent::{
     WorkspacePath,
 };
 use crate::domain::models::skill::SkillIndexEntry;
-use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 use crate::domain::text_metrics::TextMetrics;
 
 /// How many in-loop drift recovery attempts to make per run before
@@ -318,30 +317,6 @@ impl AgentRuntimeService {
                 return Ok(Some(commit_count));
             }
 
-            let tool_results = if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
-                let workspace_view = self
-                    .child_workspace_view(run_id, invocation_id, profile)
-                    .await?;
-                let workspace_repository =
-                    workspace_view.repository(self.workspace_repository.as_ref());
-                self.hydrate_recent_tool_results_for_model(
-                    run_id,
-                    round,
-                    &tool_results,
-                    &workspace_repository,
-                    &mut tool_session,
-                )
-                .await?
-            } else {
-                self.hydrate_recent_tool_results_for_model(
-                    run_id,
-                    round,
-                    &tool_results,
-                    self.workspace_repository.as_ref(),
-                    &mut tool_session,
-                )
-                .await?
-            };
             remember_seen_child_results_from_await(&tool_results, &mut seen_child_result_task_ids);
             append_tool_turn_to_request(&mut request, assistant_message, &tool_results)?;
             if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed {
@@ -404,72 +379,6 @@ impl AgentRuntimeService {
         .await?;
 
         Ok(Some(file.path))
-    }
-
-    async fn hydrate_recent_tool_results_for_model(
-        &self,
-        run_id: &str,
-        round: usize,
-        tool_results: &[AgentToolResult],
-        workspace_repository: &dyn WorkspaceRepository,
-        tool_session: &mut AgentToolSession,
-    ) -> Result<Vec<AgentToolResult>, ApplicationError> {
-        if round > 5 {
-            return Ok(tool_results.to_vec());
-        }
-
-        let mut hydrated = Vec::with_capacity(tool_results.len());
-        for result in tool_results {
-            let mut result = result.clone();
-            if result.is_error
-                || !(result.name == "workspace.write_file"
-                    || result.name == "workspace.apply_patch")
-            {
-                hydrated.push(result);
-                continue;
-            }
-
-            let Some(path) = result
-                .structured
-                .get("path")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            else {
-                hydrated.push(result);
-                continue;
-            };
-            let workspace_path = WorkspacePath::parse(path)?;
-            let file = workspace_repository
-                .read_text(run_id, &workspace_path)
-                .await?;
-            tool_session.remember_file(&file, true);
-            result.content = format!(
-                "{}\n\nFull content of {}:\n{}",
-                result.content,
-                file.path.as_str(),
-                file.text
-            );
-            self.event(
-                run_id,
-                AgentRunEventLevel::Debug,
-                "context_tool_result_hydrated",
-                {
-                    let metrics = TextMetrics::from_text(&file.text);
-                    json!({
-                        "round": round,
-                        "callId": result.call_id.as_str(),
-                        "path": file.path.as_str(),
-                        "chars": metrics.chars,
-                        "words": metrics.words,
-                    })
-                },
-            )
-            .await?;
-            hydrated.push(result);
-        }
-
-        Ok(hydrated)
     }
 }
 

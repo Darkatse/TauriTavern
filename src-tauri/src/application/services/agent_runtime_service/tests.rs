@@ -2492,7 +2492,7 @@ async fn agent_loop_writes_artifact_and_completes() {
 
     let model_requests = model_gateway_probe.requests().await;
     let second_request = model_requests.get(1).expect("second model request");
-    let hydrated_tool_result = second_request
+    let write_tool_result = second_request
         .messages
         .iter()
         .find(|message| message.role == AgentModelRole::Tool)
@@ -2501,13 +2501,12 @@ async fn agent_loop_writes_artifact_and_completes() {
             AgentModelContentPart::ToolResult { result } => Some(result),
             _ => None,
         })
-        .expect("hydrated tool result");
-    assert!(
-        hydrated_tool_result
-            .content
-            .contains("Full content of output/main.md")
+        .expect("write tool result");
+    assert_eq!(
+        write_tool_result.content,
+        "Wrote 15 chars / 3 words to output/main.md."
     );
-    assert!(hydrated_tool_result.content.contains("hello from loop"));
+    assert!(!write_tool_result.content.contains("hello from loop"));
     wait_for_closed_sessions(
         &model_gateway_probe,
         vec!["run_loop_test:inv_root".to_string()],
@@ -2562,16 +2561,16 @@ async fn agent_loop_writes_artifact_and_completes() {
 }
 
 #[tokio::test]
-async fn agent_loop_hydrated_append_result_unlocks_next_round_rewrite() {
+async fn agent_loop_explicit_read_after_append_unlocks_rewrite() {
     let root = std::env::temp_dir().join(format!(
-        "tauritavern-agent-append-hydrate-{}",
+        "tauritavern-agent-append-read-{}",
         Uuid::new_v4().simple()
     ));
     let repository = Arc::new(FileAgentRepository::new(root.clone()));
     let run = AgentRun {
-        id: "run_append_hydrate_test".to_string(),
-        workspace_id: "chat_append_hydrate_test".to_string(),
-        stable_chat_id: "stable_append_hydrate_test".to_string(),
+        id: "run_append_read_test".to_string(),
+        workspace_id: "chat_append_read_test".to_string(),
+        stable_chat_id: "stable_append_read_test".to_string(),
         chat_ref: AgentChatRef::Character {
             character_id: "Seraphina".to_string(),
             file_name: "Seraphina.png".to_string(),
@@ -2641,11 +2640,27 @@ async fn agent_loop_hydrated_append_result_unlocks_next_round_rewrite() {
                     "role": "assistant",
                     "content": null,
                     "tool_calls": [{
-                        "id": "call_replace_after_hydrate",
+                        "id": "call_read_after_append",
+                        "type": "function",
+                        "function": {
+                            "name": "workspace_read_file",
+                            "arguments": "{\"path\":\"output/main.md\"}"
+                        }
+                    }]
+                }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_replace_after_read",
                         "type": "function",
                         "function": {
                             "name": "workspace_write_file",
-                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"rewritten after hydrated append\",\"mode\":\"replace\"}"
+                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"rewritten after explicit read\",\"mode\":\"replace\"}"
                         }
                     }]
                 }
@@ -2699,11 +2714,11 @@ async fn agent_loop_hydrated_append_result_unlocks_next_round_rewrite() {
         .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
         .await
         .expect("read artifact");
-    assert_eq!(artifact.text, "rewritten after hydrated append");
+    assert_eq!(artifact.text, "rewritten after explicit read");
 
     let model_requests = model_gateway_probe.requests().await;
     let second_request = model_requests.get(1).expect("second model request");
-    let hydrated_tool_result = second_request
+    let append_tool_result = second_request
         .messages
         .iter()
         .find(|message| message.role == AgentModelRole::Tool)
@@ -2712,16 +2727,38 @@ async fn agent_loop_hydrated_append_result_unlocks_next_round_rewrite() {
             AgentModelContentPart::ToolResult { result } => Some(result),
             _ => None,
         })
-        .expect("hydrated append result");
-    assert!(
-        hydrated_tool_result
-            .content
-            .contains("Full content of output/main.md")
+        .expect("append result");
+    assert_eq!(
+        append_tool_result.content,
+        "Appended 12 chars / 2 words to output/main.md."
     );
-    assert!(hydrated_tool_result.content.contains("first\nsecond"));
+    assert!(!append_tool_result.content.contains("first\nsecond"));
+
+    let third_request = model_requests.get(2).expect("third model request");
+    let read_tool_result = third_request
+        .messages
+        .iter()
+        .filter(|message| message.role == AgentModelRole::Tool)
+        .filter_map(|message| message.parts.first())
+        .find_map(|part| match part {
+            AgentModelContentPart::ToolResult { result }
+                if result.name == "workspace.read_file" =>
+            {
+                Some(result)
+            }
+            _ => None,
+        })
+        .expect("explicit read result");
+    assert!(
+        read_tool_result
+            .content
+            .contains("output/main.md lines 1-2 of 2")
+    );
+    assert!(read_tool_result.content.contains("first"));
+    assert!(read_tool_result.content.contains("second"));
     wait_for_closed_sessions(
         &model_gateway_probe,
-        vec!["run_append_hydrate_test:inv_root".to_string()],
+        vec!["run_append_read_test:inv_root".to_string()],
     )
     .await;
 

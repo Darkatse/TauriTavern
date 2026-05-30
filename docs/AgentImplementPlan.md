@@ -166,11 +166,11 @@ Tool registry 只产 canonical `AgentToolSpec`，不再暴露 OpenAI-shaped `ope
 - Recoverable tool error：模型参数、路径字符串、可见/可写策略、文件不存在、chat message index 不存在、读取范围非法、结果超过工具预算、patch 未完整读取、sha 过期、匹配 0 次或多次等模型可修正问题。返回 `AgentToolResult { is_error: true }`，写入 `tool_call_failed` warn event，并作为 tool message 回填下一轮模型。
 - Fatal runtime error：journal 写入失败、workspace repository 内部 IO 错误、chat JSONL 损坏、manifest/checkpoint 损坏、模型响应结构不可解析、取消、序列化失败、状态机错误等宿主级问题。直接让 run 进入 failed 或 cancelled。
 
-当前已落地 recent hydration：
+当前工具结果不做自动内容补入：
 
-- 前 5 轮 `workspace.write_file` / `workspace.apply_patch` 成功结果会读取目标 workspace 文件，将完整文本加入下一轮模型上下文，并同步为完整 read-state。
-- hydration 只影响 model request，不改变 workspace/journal 真相。
-- hydration 会写 `context_tool_result_hydrated` debug event。
+- `workspace.write_file` / `workspace.apply_patch` 成功结果只以 tool result 摘要、结构化元数据与 resource refs 回填模型。
+- runtime 不再自动读取完整 workspace 文件内容并拼入下一轮 model request。
+- 后续 rewrite / patch 依赖 workspace 工具维护的 read-state；模型需要完整文件内容时必须显式调用 `workspace.read_file`。
 
 ## 7. 当前运行流
 
