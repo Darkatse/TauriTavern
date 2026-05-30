@@ -9,14 +9,32 @@ ZIP_PATH=""
 FINAL_ZIP_PATH=""
 INCLUDE_BACKUPS=0
 IS_TERMUX=0
+READ_INPUT=""
+ACTIVE_CHILD_PID=""
 
 cleanup() {
+    if [ -n "${ACTIVE_CHILD_PID:-}" ]; then
+        kill "$ACTIVE_CHILD_PID" >/dev/null 2>&1 || true
+        wait "$ACTIVE_CHILD_PID" 2>/dev/null || true
+        ACTIVE_CHILD_PID=""
+    fi
+
     if [ -n "${WORK_DIR:-}" ] && [ -d "$WORK_DIR" ]; then
-        rm -rf "$WORK_DIR"
+        rm -rf "$WORK_DIR" || true
     fi
 }
 
-trap cleanup EXIT INT TERM
+handle_signal() {
+    exit_status=$1
+    trap - EXIT INT TERM
+    printf '\n' >&2
+    cleanup
+    exit "$exit_status"
+}
+
+trap cleanup EXIT
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
 
 msg() {
     case "${LANG_CODE}:$1" in
@@ -72,6 +90,8 @@ msg() {
         "en:zip_requires") printf '%s' "The zip command is missing. Please install zip first." ;;
         "zh:zip_requires_termux") printf '%s' "在 Termux 中可先执行: pkg install zip" ;;
         "en:zip_requires_termux") printf '%s' "On Termux you can install it with: pkg install zip" ;;
+        ":input_required"|"zh:input_required") printf '%s' "无法读取交互输入。请在可交互终端中运行这个脚本。" ;;
+        "en:input_required") printf '%s' "Unable to read interactive input. Please run this script from an interactive terminal." ;;
         "zh:zip_progress") printf '%s' "压缩进度" ;;
         "en:zip_progress") printf '%s' "Zip progress" ;;
         "zh:step_move_termux") printf '%s' "尝试移动到 Android 下载目录" ;;
@@ -92,11 +112,11 @@ msg() {
         "en:final_path_label") printf '%s' "Zip file location" ;;
         "zh:final_hint") printf '%s' "现在可以在 TauriTavern 的 data-migration 扩展中导入这个 zip。" ;;
         "en:final_hint") printf '%s' "You can now import this zip from the data-migration extension in TauriTavern." ;;
-        "zh:warning") printf '%s' "警告" ;;
+        ":warning"|"zh:warning") printf '%s' "警告" ;;
         "en:warning") printf '%s' "Warning" ;;
-        "zh:info") printf '%s' "信息" ;;
+        ":info"|"zh:info") printf '%s' "信息" ;;
         "en:info") printf '%s' "Info" ;;
-        "zh:error") printf '%s' "错误" ;;
+        ":error"|"zh:error") printf '%s' "错误" ;;
         "en:error") printf '%s' "Error" ;;
         *)
             printf '%s' "$1"
@@ -127,6 +147,32 @@ print_error() {
     printf '%s: %s\n' "$(msg "error")" "$1" >&2
 }
 
+read_user_input() {
+    READ_INPUT=""
+
+    if [ -t 0 ]; then
+        IFS= read -r READ_INPUT
+        return $?
+    fi
+
+    if [ -t 1 ] || [ -t 2 ]; then
+        IFS= read -r READ_INPUT 2>/dev/null < /dev/tty
+        return $?
+    fi
+
+    return 1
+}
+
+read_user_input_or_exit() {
+    if read_user_input; then
+        return
+    fi
+
+    printf '\n' >&2
+    print_error "$(msg "input_required")"
+    exit 1
+}
+
 normalize_input_path() {
     printf '%s' "$1" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//;s/^'//;s/'$//;s/^\"//;s/\"$//"
 }
@@ -145,7 +191,8 @@ select_language() {
         printf '%s\n' "$(msg "language_option_zh")"
         printf '%s\n' "$(msg "language_option_en")"
         printf '%s' "$(msg "language_prompt")"
-        IFS= read -r choice || exit 1
+        read_user_input_or_exit
+        choice=$READ_INPUT
         case "$choice" in
             ""|1)
                 LANG_CODE="zh"
@@ -173,7 +220,8 @@ resolve_sillytavern_root() {
     while :; do
         printf '%s\n' "$(msg "root_prompt")"
         printf '> '
-        IFS= read -r input_path || exit 1
+        read_user_input_or_exit
+        input_path=$READ_INPUT
         input_path=$(normalize_input_path "$input_path")
         if [ -z "$input_path" ]; then
             print_warning "$(msg "root_invalid")"
@@ -191,7 +239,8 @@ resolve_sillytavern_root() {
 
 ask_backups() {
     printf '%s' "$(msg "ask_backups")"
-    IFS= read -r answer || exit 1
+    read_user_input_or_exit
+    answer=$READ_INPUT
     case $(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]') in
         y|yes|1|是)
             INCLUDE_BACKUPS=1
@@ -310,6 +359,7 @@ create_staging_zip() {
         zip -r "$ZIP_PATH" data >"$progress_fifo" 2>&1
     ) &
     zip_pid=$!
+    ACTIVE_CHILD_PID=$zip_pid
 
     processed=0
     while IFS= read -r line; do
@@ -324,8 +374,9 @@ create_staging_zip() {
         esac
     done <"$progress_fifo"
 
-    wait "$zip_pid"
-    zip_status=$?
+    zip_status=0
+    wait "$zip_pid" || zip_status=$?
+    ACTIVE_CHILD_PID=""
     rm -f "$progress_fifo"
 
     if [ "$processed" -lt "$entry_count" ]; then

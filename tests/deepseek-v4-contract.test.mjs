@@ -28,7 +28,9 @@ test('DeepSeek reasoning controls match the v4 request contract', async () => {
     ]);
 
     assert.match(openaiSource, /chat_completion_sources\.DEEPSEEK/);
-    assert.match(openaiSource, /settings\.chat_completion_source === chat_completion_sources\.DEEPSEEK\s*\?\s*reasoning_effort_types\.max\s*:\s*reasoning_effort_types\.high/);
+    assert.match(openaiSource, /function resolveMaximumReasoningEffort\(\)\s*{[\s\S]*chat_completion_sources\.DEEPSEEK[\s\S]*return reasoning_effort_types\.max;[\s\S]*return reasoning_effort_types\.high;/);
+    assert.match(openaiSource, /case reasoning_effort_types\.max:\s*return resolveMaximumReasoningEffort\(\);/);
+    assert.match(openaiSource, /case reasoning_effort_types\.xhigh:\s*return supportsXHighReasoningEffort\(\)\s*\?\s*reasoning_effort_types\.xhigh\s*:\s*resolveMaximumReasoningEffort\(\);/);
     assert.match(indexHtml, /data-source="[^"]*\bdeepseek\b[^"]*"[\s\S]*?<select id="openai_reasoning_effort">/);
     assert.match(indexHtml, /data-source-mode="except" data-source="deepseek,zai,moonshot"/);
     assert.match(indexHtml, /DeepSeek options: Auto omits the effort field, Minimum through High request high effort, and Maximum requests max effort\./);
