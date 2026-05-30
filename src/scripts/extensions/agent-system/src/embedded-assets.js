@@ -2,6 +2,10 @@ import { DEFAULT_PROFILE_ID } from './constants.js';
 import { clone, requireSkillApi } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 import { skillScopeLabel } from './skill-scope.js';
+import {
+    sanitizePortableAgentProfile,
+    sanitizePortableAgentProfilePackage,
+} from '../../../tauritavern/agent/agent-profile-portable.js';
 
 const EMBEDDED_PROFILES_VERSION = 1;
 const EMBEDDED_SKILLS_VERSION = 1;
@@ -174,7 +178,7 @@ function profilePackage(existing) {
     if (!Array.isArray(payload.items)) {
         throw new Error(tr('embeddedProfileItemsInvalid'));
     }
-    return payload;
+    return sanitizePortableAgentProfilePackage(payload);
 }
 
 function skillPackage(existing) {
@@ -192,7 +196,7 @@ function skillPackage(existing) {
 }
 
 function upsertProfile(packageValue, profile) {
-    const normalized = clone(requirePlainObject(profile, 'profile'));
+    const normalized = sanitizePortableAgentProfile(requirePlainObject(profile, 'profile'));
     const id = String(normalized.id || '').trim();
     if (!id) {
         throw new Error(tr('profileIdRequired'));

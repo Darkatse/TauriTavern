@@ -21,7 +21,9 @@ use crate::application::errors::ApplicationError;
 use crate::application::services::agent_identity::{
     validate_stable_chat_id, workspace_id_for_stable_chat_id,
 };
-use crate::application::services::agent_profile_service::AgentProfileResolveInput;
+use crate::application::services::agent_profile_service::{
+    AgentProfileResolveInput, ensure_profile_model_configured,
+};
 use crate::application::services::agent_workspace_lifecycle_service::AgentRunActivity;
 use crate::application::services::prompt_assembly_service::attach_frozen_run_input_snapshot;
 use crate::domain::models::agent::{AgentRun, AgentRunEventLevel, AgentRunStatus, WorkspacePath};
@@ -68,6 +70,7 @@ impl AgentRuntimeService {
                 resolved_profile.id.as_str()
             )));
         }
+        ensure_profile_model_configured(&resolved_profile)?;
         validate_prompt_snapshot_context_policy(prompt_snapshot, &resolved_profile)?;
         let prompt_snapshot = attach_frozen_run_input_snapshot(
             prompt_snapshot.clone(),

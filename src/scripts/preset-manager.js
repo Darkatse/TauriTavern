@@ -40,10 +40,21 @@ import {
     textgenerationwebui_preset_names,
     textgenerationwebui_presets,
 } from './textgen-settings.js';
+import { sanitizePortableAgentProfilePackage } from './tauritavern/agent/agent-profile-portable.js';
 import { retargetPresetSkillsAfterRename } from './tauritavern/agent/skill-scope-sync.js';
 import { download, ensurePlainObject, equalsIgnoreCaseAndAccents, getSanitizedFilename, parseJsonFile, waitUntilCondition } from './utils.js';
 
 const presetManagers = {};
+
+function buildPortablePresetForExport(preset) {
+    const exportPreset = structuredClone(preset);
+    const packageValue = exportPreset?.extensions?.tauritavern?.agentProfiles;
+    if (packageValue === undefined) {
+        return exportPreset;
+    }
+    exportPreset.extensions.tauritavern.agentProfiles = sanitizePortableAgentProfilePackage(packageValue);
+    return exportPreset;
+}
 
 /**
  * Automatically select a preset for current API based on character or group name.
@@ -1104,7 +1115,8 @@ export async function initPresetManager() {
             preset.extensions = preset.extensions || {};
             preset.extensions.tauritavern = structuredClone(storedPreset.extensions.tauritavern);
         }
-        const data = JSON.stringify(preset, null, 4);
+        const exportPreset = buildPortablePresetForExport(preset);
+        const data = JSON.stringify(exportPreset, null, 4);
         download(data, `${name}.json`, 'application/json');
     });
 

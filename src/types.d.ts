@@ -180,7 +180,7 @@ type TauriTavernAgentProfileDefinition = {
         required?: boolean;
     };
     model: {
-        mode: 'currentPromptSnapshot' | 'connectionRef';
+        mode: 'currentPromptSnapshot' | 'connectionRef' | 'requiresConfiguration';
         connectionRef?: string;
         modelId?: string;
     };

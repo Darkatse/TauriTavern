@@ -1,6 +1,9 @@
 use serde::Deserialize;
 
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_profile_service::{
+    profile_model_configuration_error, profile_model_requires_configuration,
+};
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{AgentRunPresentation, AgentTaskBudget};
 
@@ -52,6 +55,9 @@ pub(super) fn validate_subagent_target(
             source.id.as_str(),
             target.id.as_str()
         ));
+    }
+    if profile_model_requires_configuration(target) {
+        return Err(profile_model_configuration_error(target));
     }
     Ok(())
 }

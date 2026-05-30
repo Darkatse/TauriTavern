@@ -1,6 +1,7 @@
 import { AGENT_DELEGATION_TOOLS, DEFAULT_PROFILE_ID, KNOWN_TOOLS, RUNTIME_ONLY_TOOLS, WORKSPACE_ROOTS } from './constants.js';
 import { clone } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
+import { AGENT_MODEL_REQUIRES_CONFIGURATION } from '../../../tauritavern/agent/agent-profile-portable.js';
 import {
     DEFAULT_AGENT_CONTEXT_POLICY,
     normalizeAgentContextPolicy,
@@ -100,6 +101,11 @@ function normalizeModelBinding(value) {
     if (mode === 'currentPromptSnapshot') {
         return {
             mode: 'currentPromptSnapshot',
+        };
+    }
+    if (mode === AGENT_MODEL_REQUIRES_CONFIGURATION) {
+        return {
+            mode: AGENT_MODEL_REQUIRES_CONFIGURATION,
         };
     }
 

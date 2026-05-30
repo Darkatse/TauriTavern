@@ -1,5 +1,6 @@
 import { loadAgentSystemSettings } from './agent-system-settings.js';
 import { agentContextPolicyForProfile } from './agent-context-policy.js';
+import { AGENT_MODEL_REQUIRES_CONFIGURATION } from './agent-profile-portable.js';
 import { loadResolvedAgentSystemPrompt } from './agent-system-prompt.js';
 
 const AGENT_GENERATION_TYPES = new Set(['normal', 'regenerate', 'swipe']);
@@ -50,6 +51,9 @@ async function loadDirectRunnableProfile(profileId) {
     }
     if (profile.run?.directRunnable === false) {
         throw new Error(`agent.profile_not_direct_runnable: Agent profile '${normalizedProfileId}' can only run as a delegated SubAgent`);
+    }
+    if (profile.model?.mode === AGENT_MODEL_REQUIRES_CONFIGURATION) {
+        throw new Error(`agent.profile_model_requires_configuration: Agent profile '${normalizedProfileId}' requires a local model selection before it can run`);
     }
     return profile;
 }

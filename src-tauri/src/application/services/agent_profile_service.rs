@@ -45,6 +45,31 @@ pub struct AgentProfileResolveInput<'a> {
     pub known_tools: &'a [AgentToolSpec],
 }
 
+pub fn profile_model_requires_configuration(profile: &ResolvedAgentProfile) -> bool {
+    matches!(
+        profile.model.mode,
+        AgentModelBindingMode::RequiresConfiguration
+    )
+}
+
+pub fn profile_model_configuration_error(profile: &ResolvedAgentProfile) -> String {
+    format!(
+        "agent.profile_model_requires_configuration: Agent profile `{}` requires a local model selection before it can run",
+        profile.id.as_str()
+    )
+}
+
+pub fn ensure_profile_model_configured(
+    profile: &ResolvedAgentProfile,
+) -> Result<(), ApplicationError> {
+    if profile_model_requires_configuration(profile) {
+        return Err(ApplicationError::ValidationError(
+            profile_model_configuration_error(profile),
+        ));
+    }
+    Ok(())
+}
+
 pub fn materialize_agent_system_prompt(
     tools: &[AgentToolSpec],
     profile: &ResolvedAgentProfile,
@@ -683,6 +708,23 @@ fn validate_model_binding(binding: &AgentModelBinding) -> Result<(), Application
             }
             Ok(())
         }
+        AgentModelBindingMode::RequiresConfiguration => {
+            if binding
+                .connection_ref
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty())
+                || binding
+                    .model_id
+                    .as_ref()
+                    .is_some_and(|value| !value.trim().is_empty())
+            {
+                return Err(ApplicationError::ValidationError(
+                    "agent.profile_model_requires_configuration_extra_fields: connectionRef/modelId must be empty when model.mode is requiresConfiguration"
+                        .to_string(),
+                ));
+            }
+            Ok(())
+        }
         AgentModelBindingMode::ConnectionRef => {
             if binding
                 .connection_ref
@@ -1265,7 +1307,9 @@ mod tests {
     use serde_json::json;
 
     use crate::domain::models::agent::AgentToolSpec;
-    use crate::domain::models::agent::profile::ResolvedAgentProfile;
+    use crate::domain::models::agent::profile::{
+        AgentModelBinding, AgentModelBindingMode, ResolvedAgentProfile,
+    };
 
     use super::materialize_agent_system_prompt;
 
@@ -1304,6 +1348,46 @@ mod tests {
         ));
         assert!(prompt.contains("**Must finish via workspace_finish_alias.**"));
         assert!(!prompt.contains("workspace_read_file"));
+    }
+
+    #[test]
+    fn requires_configuration_model_binding_is_valid_but_not_configured() {
+        let binding = AgentModelBinding {
+            mode: AgentModelBindingMode::RequiresConfiguration,
+            connection_ref: None,
+            model_id: None,
+        };
+
+        super::validate_model_binding(&binding).expect("requiresConfiguration is saveable");
+
+        let mut profile = test_profile(None, "background");
+        profile.model = binding;
+        let error = super::ensure_profile_model_configured(&profile)
+            .expect_err("requiresConfiguration cannot run");
+
+        assert!(
+            error
+                .to_string()
+                .contains("agent.profile_model_requires_configuration")
+        );
+    }
+
+    #[test]
+    fn requires_configuration_rejects_local_connection_fields() {
+        let binding = AgentModelBinding {
+            mode: AgentModelBindingMode::RequiresConfiguration,
+            connection_ref: Some("local-main".to_string()),
+            model_id: Some("secret-model".to_string()),
+        };
+
+        let error = super::validate_model_binding(&binding)
+            .expect_err("requiresConfiguration must not carry local fields");
+
+        assert!(
+            error
+                .to_string()
+                .contains("agent.profile_model_requires_configuration_extra_fields")
+        );
     }
 
     #[test]

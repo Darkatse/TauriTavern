@@ -10,6 +10,7 @@ import {
 import { defaultProfile, normalizeProfileForSave, normalizeProfileId, profileForEdit } from './profile-model.js';
 import { loadSettings, patchSettings } from './settings-store.js';
 import { downloadBlobWithRuntime } from '../../../file-export.js';
+import { AGENT_MODEL_REQUIRES_CONFIGURATION, sanitizePortableAgentProfile } from '../../../tauritavern/agent/agent-profile-portable.js';
 import { normalizeAgentSystemPrompt } from '../../../tauritavern/agent/agent-system-prompt.js';
 
 const PROFILE_EXPORT_CONTENT_TYPE = 'application/json';
@@ -248,6 +249,9 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             },
             modelSummaryLabel() {
                 const model = this.draft?.model || {};
+                if (model.mode === AGENT_MODEL_REQUIRES_CONFIGURATION) {
+                    return tr('modelRequiresConfiguration');
+                }
                 if (model.mode !== 'connectionRef') {
                     return tr('currentChatModel');
                 }
@@ -576,6 +580,12 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     };
                     return;
                 }
+                if (mode === AGENT_MODEL_REQUIRES_CONFIGURATION) {
+                    this.draft.model = {
+                        mode: AGENT_MODEL_REQUIRES_CONFIGURATION,
+                    };
+                    return;
+                }
                 if (mode !== 'connectionRef') {
                     throw new Error(`Unsupported model mode: ${mode}`);
                 }
@@ -865,7 +875,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     throw new Error(tr('agentProfileExportSaveFirst'));
                 }
 
-                const blob = new Blob([`${prettyJson(profile)}\n`], { type: PROFILE_EXPORT_CONTENT_TYPE });
+                const portableProfile = sanitizePortableAgentProfile(profile);
+                const blob = new Blob([`${prettyJson(portableProfile)}\n`], { type: PROFILE_EXPORT_CONTENT_TYPE });
                 const downloadResult = await downloadBlobWithRuntime(blob, `${profile.id}.agent-profile.json`, {
                     fallbackName: 'agent-profile.json',
                 });
@@ -1098,6 +1109,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                             <span>{{ tr('modelSource') }}</span>
                                             <select :value="draft.model.mode" :disabled="isBuiltinProfile" @change="setModelMode($event.target.value)">
                                                 <option value="currentPromptSnapshot">{{ tr('currentChatModel') }}</option>
+                                                <option v-if="draft.model.mode === 'requiresConfiguration'" value="requiresConfiguration">{{ tr('modelRequiresConfiguration') }}</option>
                                                 <option value="connectionRef" :disabled="modelTargets.length === 0 && draft.model.mode !== 'connectionRef'">{{ tr('savedModelTarget') }}</option>
                                             </select>
                                         </label>

@@ -6,7 +6,7 @@ use super::task_status::task_is_terminal;
 use crate::application::dto::agent_dto::AgentPromptAssemblyScopeDto;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_profile_service::{
-    AgentProfileResolveInput, materialize_agent_system_prompt,
+    AgentProfileResolveInput, ensure_profile_model_configured, materialize_agent_system_prompt,
 };
 use crate::application::services::agent_runtime_service::AgentCancelReceiver;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
@@ -124,6 +124,7 @@ impl AgentRuntimeService {
                 known_tools: self.tool_registry.specs(),
             })
             .await?;
+        ensure_profile_model_configured(&profile)?;
         apply_child_invocation_policy(&mut profile, task.budget)?;
 
         let prompt_snapshot = self

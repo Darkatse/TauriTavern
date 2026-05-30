@@ -6,6 +6,7 @@ use serde_json::{Map, Value};
 use super::policy::caller_allowed;
 use super::tool_error::tool_error_outcome;
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_profile_service::profile_model_requires_configuration;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
@@ -220,6 +221,9 @@ fn list_item_for_target(
     purpose: AgentListPurpose,
 ) -> Option<AgentListItem> {
     if !target.delegation.callable || !caller_allowed(source, target) {
+        return None;
+    }
+    if profile_model_requires_configuration(target) {
         return None;
     }
 

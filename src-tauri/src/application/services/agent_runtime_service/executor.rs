@@ -10,6 +10,7 @@ use super::prompt_snapshot::{prepare_agent_tool_request, request_summary};
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_profile_service::ensure_profile_model_configured;
 use crate::domain::models::agent::profile::{AgentModelBindingMode, ResolvedAgentProfile};
 use crate::domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentRunEventLevel, AgentRunStatus,
@@ -312,6 +313,9 @@ impl AgentRuntimeService {
                     }),
                 )
                 .await?;
+            }
+            AgentModelBindingMode::RequiresConfiguration => {
+                ensure_profile_model_configured(profile)?;
             }
             AgentModelBindingMode::ConnectionRef => {
                 let connection_ref = profile.model.connection_ref.as_deref().ok_or_else(|| {

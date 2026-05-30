@@ -965,6 +965,7 @@ impl CharacterService {
             .await?;
         card_contract::normalize_v2_character_book_extensions(&mut export_value)?;
         card_contract::unset_private_fields(&mut export_value)?;
+        card_contract::sanitize_agent_profiles_for_export(&mut export_value)?;
 
         Ok(export_value)
     }

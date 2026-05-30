@@ -79,6 +79,7 @@
     "agent_system.maxToolCalls": "最大工具调用数",
     "agent_system.messageBodyPath": "消息正文路径",
     "agent_system.model": "模型",
+    "agent_system.modelRequiresConfiguration": "运行前请选择模型",
     "agent_system.mountContainerNotFound": "未找到 agent_system_container 容器",
     "agent_system.modelRetries": "模型重试次数",
     "agent_system.modelSource": "模型来源",

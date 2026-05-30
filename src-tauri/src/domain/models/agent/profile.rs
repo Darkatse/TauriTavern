@@ -178,6 +178,7 @@ pub struct AgentModelBinding {
 pub enum AgentModelBindingMode {
     CurrentPromptSnapshot,
     ConnectionRef,
+    RequiresConfiguration,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

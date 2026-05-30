@@ -130,6 +130,7 @@ const DEFAULT_MESSAGES = Object.freeze({
     mainAgentControl: 'Main Agent Control',
     mountContainerNotFound: 'agent_system_container not found',
     model: 'Model',
+    modelRequiresConfiguration: 'Select a model before running',
     modelRetries: 'Model Retries',
     modelSource: 'Model Source',
     noPromptPreset: 'No preset',

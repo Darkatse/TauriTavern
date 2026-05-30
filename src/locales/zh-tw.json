@@ -4453,6 +4453,8 @@
     "agent.error.tool_after_finish.summary": "模型在 workspace.finish 之後繼續調用工具，未提交訊息。",
     "agent.error.max_tool_rounds_exceeded.message": "Agent 迴圈在調用 workspace.finish 前耗盡了最大工具輪數。TauriTavern 已停止本輪，未寫入聊天。請用更明確的提示重新生成，或在配置中提高輪數預算。",
     "agent.error.max_tool_rounds_exceeded.summary": "工具輪數預算耗盡，未提交訊息。",
+    "agent.error.profile_model_requires_configuration.message": "此 Agent Profile 執行前需要在本機選擇模型。請開啟 Agent System，為此 Profile 選擇已儲存的模型目標後再執行。",
+    "agent.error.profile_model_requires_configuration.summary": "Agent Profile 需要先選擇本機模型。",
     "Clear": "清除",
     "Custom Models": "自訂模型",
     "Custom Models: ${0}": "自訂模型：${0}",

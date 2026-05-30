@@ -36,8 +36,8 @@ use crate::application::services::prompt_assembly_service::PromptAssemblyService
 use crate::application::services::skill_service::SkillService;
 use crate::domain::errors::DomainError;
 use crate::domain::models::agent::profile::{
-    AgentDelegationPolicy, AgentPresetBindingMode, AgentPresetRef, AgentProfileId,
-    ResolvedAgentProfile,
+    AgentDelegationPolicy, AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef,
+    AgentProfileId, ResolvedAgentProfile,
 };
 use crate::domain::models::agent::{
     AgentChatRef, AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart,
@@ -160,6 +160,33 @@ async fn agent_list_returns_callable_profiles_allowed_by_delegation_policy() {
         .save_profile(callable, service.tool_specs())
         .await
         .expect("save callable profile");
+    let mut unconfigured = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    unconfigured.id = AgentProfileId::parse("unconfigured-editor").expect("profile id");
+    unconfigured.display_name = "Unconfigured Editor".to_string();
+    unconfigured.model.mode = AgentModelBindingMode::RequiresConfiguration;
+    unconfigured.model.connection_ref = None;
+    unconfigured.model.model_id = None;
+    unconfigured.tools.allow.retain(|name| {
+        !matches!(
+            name.as_str(),
+            "agent.list" | "agent.delegate" | "agent.await"
+        )
+    });
+    unconfigured.delegation = AgentDelegationPolicy {
+        callable: true,
+        allow_as_subagent: true,
+        allowed_callers: vec!["default-writer".to_string()],
+        description_for_agents: Some("Would edit scenes after model setup.".to_string()),
+        ..Default::default()
+    };
+    profile_service
+        .save_profile(unconfigured, service.tool_specs())
+        .await
+        .expect("save unconfigured callable profile");
 
     let mut profile = profile_service
         .resolve_profile(AgentProfileResolveInput {
@@ -231,6 +258,13 @@ async fn agent_list_returns_callable_profiles_allowed_by_delegation_policy() {
     assert_eq!(
         outcome.result.structured["agents"][0]["operations"],
         json!(["delegate"])
+    );
+    assert_eq!(
+        outcome.result.structured["agents"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
     );
     assert!(
         outcome
@@ -1779,6 +1813,75 @@ async fn direct_start_rejects_subagent_only_profile() {
         error
             .to_string()
             .contains("agent.profile_not_direct_runnable")
+    );
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn direct_start_rejects_requires_configuration_profile() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-unconfigured-start-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let profile_service = test_profile_service(&root);
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(Vec::new())),
+        profile_service.clone(),
+        test_llm_connection_service(&root),
+    ));
+
+    let mut profile = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    profile.id = AgentProfileId::parse("imported-writer").expect("profile id");
+    profile.display_name = "Imported Writer".to_string();
+    profile.model.mode = AgentModelBindingMode::RequiresConfiguration;
+    profile.model.connection_ref = None;
+    profile.model.model_id = None;
+    profile_service
+        .save_profile(profile, service.tool_specs())
+        .await
+        .expect("save unconfigured profile");
+
+    let error = service
+        .start_run(AgentStartRunDto {
+            chat_ref: AgentChatRef::Character {
+                character_id: "Seraphina".to_string(),
+                file_name: "Seraphina.png".to_string(),
+            },
+            stable_chat_id: "stable_unconfigured_start".to_string(),
+            generation_type: "normal".to_string(),
+            profile_id: Some("imported-writer".to_string()),
+            persist_base_state_id: None,
+            prompt_snapshot: Some(json!({
+                "chatCompletionPayload": {
+                    "chat_completion_source": "openai",
+                    "model": "test-model",
+                    "messages": prompt_messages("direct start should require local model")
+                }
+            })),
+            frozen_run_input_snapshot: None,
+            generation_intent: None,
+            skill_scope_refs: Default::default(),
+            options: AgentStartRunOptionsDto::default(),
+        })
+        .await
+        .expect_err("requiresConfiguration profile must not start directly");
+
+    assert!(
+        error
+            .to_string()
+            .contains("agent.profile_model_requires_configuration")
     );
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }

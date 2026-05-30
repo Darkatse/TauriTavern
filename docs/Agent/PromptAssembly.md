@@ -9,6 +9,7 @@
 - `FrozenRunInputSnapshot` 是本次 run 的输入事实；broker 只能从其中读取 `promptInputs`、`worldInfoActivation`、`macroContext`。
 - `preset.ref` 是 prompt compiler input，不是对现有 `promptSnapshot` 的字符串补丁。
 - `model.connectionRef + modelId` 与 preset provider source 解耦；preset 不拥有 endpoint、secret、最终 source/model。
+- Profile 导出或嵌入到 Preset/Character 时必须移除本机 `connectionRef + modelId`，写为 `model.mode = "requiresConfiguration"`。
 - 错误必须 fail-fast，不允许静默回退 Legacy Generate 或当前 UI preset/model。
 
 ## Profile 绑定语义
@@ -38,6 +39,7 @@
 
 - `currentPromptSnapshot`：沿用 prompt snapshot 中已有 source/model。
 - `connectionRef`：通过 `LlmConnectionService` 解析 connection 与 `modelId`，覆盖组装 settings 与最终 runtime payload。
+- `requiresConfiguration`：可保存、可导入、可展示的未配置模型状态；运行或 prompt assembly 前必须 fail-fast，用户需在本机重新选择模型后才能使用。
 
 独立 preset 当前只支持 OpenAI/chat-completion preset，因为真实组装入口复用 `src/scripts/openai.js` 的 PromptManager 链路。
 

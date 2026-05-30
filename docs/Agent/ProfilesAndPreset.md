@@ -4,7 +4,7 @@
 
 SillyTavern 的核心优势之一是 prompt/preset 的创作者自由。Agent Mode 必须继承这一点，但自由度要进入可维护的 runtime policy，而不是散落在字符串 prompt 中。
 
-当前已落地字段以 `ResolvedAgentProfile` 为准：`preset.mode` 支持 `currentPromptSnapshot` / `ref` / `none`，`preset.ref` 当前用于独立 OpenAI/chat-completion preset 组装；`model.mode` 支持 `currentPromptSnapshot` / `connectionRef`，`connectionRef + modelId` 会通过 LLM Connection 解耦 preset source/model。完整生产链路见 [PromptAssembly.md](PromptAssembly.md)。
+当前已落地字段以 `ResolvedAgentProfile` 为准：`preset.mode` 支持 `currentPromptSnapshot` / `ref` / `none`，`preset.ref` 当前用于独立 OpenAI/chat-completion preset 组装；`model.mode` 支持 `currentPromptSnapshot` / `connectionRef` / `requiresConfiguration`，`connectionRef + modelId` 会通过 LLM Connection 解耦 preset source/model，`requiresConfiguration` 用于可分享 Profile 导入后的本机模型重绑。完整生产链路见 [PromptAssembly.md](PromptAssembly.md)。
 
 ## 1. Agent Profile
 

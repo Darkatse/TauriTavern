@@ -379,6 +379,54 @@ test('Agent generation router rejects non-direct callable profiles before direct
     );
 });
 
+test('Agent generation router rejects unconfigured profiles before direct generation', async () => {
+    installWindow({
+        extension: {
+            store: {
+                async tryGetJson() {
+                    return {
+                        found: true,
+                        value: {
+                            agentModeEnabled: true,
+                            activeProfileId: 'imported-writer',
+                            editingProfileId: 'imported-writer',
+                            activeTab: 'profiles',
+                            runTimelineHeightPx: null,
+                        },
+                    };
+                },
+            },
+        },
+        agent: {
+            profiles: {
+                async load({ profileId }) {
+                    assert.equal(profileId, 'imported-writer');
+                    return {
+                        profile: {
+                            run: { directRunnable: true },
+                            model: { mode: 'requiresConfiguration' },
+                            context: {
+                                initialChatHistoryMessages: 4,
+                                includeActivatedWorldInfo: true,
+                            },
+                        },
+                    };
+                },
+                async resolveSystemPrompt() {
+                    throw new Error('resolveSystemPrompt should not run for unconfigured direct generation');
+                },
+            },
+        },
+    });
+
+    const router = await importFresh('src/scripts/tauritavern/agent/agent-generation-router.js');
+
+    await assert.rejects(
+        () => router.getAgentGenerationOptions({ generationType: 'normal', mainApi: 'openai' }),
+        /agent\.profile_model_requires_configuration/,
+    );
+});
+
 test('FrozenRunInputSnapshot stores materialized extension prompts and macro context', async () => {
     const frozen = await importFresh('src/scripts/tauritavern/agent/frozen-run-input-snapshot.js');
     const extensionPrompts = await frozen.snapshotExtensionPromptsForFrozenRun({
@@ -1896,6 +1944,21 @@ test('Agent error presenter surfaces userRetryable from run_failed payload', asy
         payload: { code: 'agent.internal_error', message: 'boom', retryable: false },
     });
     assert.equal(fatal.userRetryable, false);
+
+    const unconfigured = presenter.presentAgentRunFailure({
+        payload: {
+            code: 'agent.profile_model_requires_configuration',
+            message: 'Agent profile `imported-writer` requires a local model selection before it can run',
+            retryable: false,
+        },
+    });
+    assert.match(unconfigured.message, /local model selection/);
+    assert.equal(unconfigured.userRetryable, false);
+
+    assert.match(
+        presenter.agentErrorMessage(new Error('agent.profile_model_requires_configuration: imported-writer needs a model')),
+        /local model selection/,
+    );
 });
 
 test('Agent error presenter translation keys exist in global locales', async () => {

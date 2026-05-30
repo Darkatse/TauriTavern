@@ -10,7 +10,8 @@ use crate::application::dto::agent_dto::{
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_profile_service::{
-    AgentProfileResolveInput, AgentProfileService, materialize_agent_system_prompt,
+    AgentProfileResolveInput, AgentProfileService, ensure_profile_model_configured,
+    materialize_agent_system_prompt,
 };
 use crate::application::services::llm_connection_service::{
     LlmConnectionService, ResolvedLlmModelBinding,
@@ -154,6 +155,7 @@ impl PromptAssemblyService {
         let generation_type = normalize_generation_type(&dto.generation_type)?;
         let frozen_run_input_snapshot =
             normalize_frozen_run_input_snapshot(&dto.frozen_run_input_snapshot, &generation_type)?;
+        ensure_profile_model_configured(&profile)?;
 
         match profile.preset.mode {
             AgentPresetBindingMode::CurrentPromptSnapshot | AgentPresetBindingMode::None => {
@@ -294,6 +296,9 @@ impl PromptAssemblyService {
     ) -> Result<(Value, Option<String>), ApplicationError> {
         match profile.model.mode {
             AgentModelBindingMode::CurrentPromptSnapshot => Ok((settings, None)),
+            AgentModelBindingMode::RequiresConfiguration => {
+                ensure_profile_model_configured(profile).map(|_| (settings, None))
+            }
             AgentModelBindingMode::ConnectionRef => {
                 let connection_ref = profile
                     .model

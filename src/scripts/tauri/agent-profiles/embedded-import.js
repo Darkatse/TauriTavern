@@ -3,6 +3,7 @@
 import { t } from '../../i18n.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 import { SURFACE, applySurface } from '../../tauritavern/layout-kit.js';
+import { sanitizePortableAgentProfile } from '../../tauritavern/agent/agent-profile-portable.js';
 import { buildSkillImportReminderKey, hasSkillImportReminder, setSkillImportReminder } from '../agent-skills/reminders.js';
 
 const EMBEDDED_PROFILES_VERSION = 1;
@@ -44,16 +45,13 @@ function normalizeEmbeddedProfiles(embedded) {
     if (Number(payload.version) !== EMBEDDED_PROFILES_VERSION) {
         throw new Error(`Unsupported embedded Agent Profile schema version: ${payload.version}`);
     }
-    if (payload.items === null || payload.items === undefined) {
-        return [];
-    }
     if (!Array.isArray(payload.items)) {
         throw new Error('Embedded Agent Profile items must be an array');
     }
 
     return payload.items.map((item, index) => {
         const object = requirePlainObject(item);
-        const profile = requirePlainObject(object.profile);
+        const profile = sanitizePortableAgentProfile(requirePlainObject(object.profile));
         const id = requireNonEmptyString(profile.id, `items[${index}].profile.id`);
         if (id === 'default-writer') {
             throw new Error('Embedded Agent Profile cannot replace built-in profile: default-writer');

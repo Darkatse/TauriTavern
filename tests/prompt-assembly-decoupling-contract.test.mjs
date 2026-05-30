@@ -19,6 +19,15 @@ test('connectionRef prompt assembly overlays model binding instead of validating
     assert.doesNotMatch(source, /model_source_mismatch/);
 });
 
+test('requiresConfiguration prompt assembly fails fast before frontend broker handoff', async () => {
+    const source = await readProjectFile('src-tauri/src/application/services/prompt_assembly_service.rs');
+    const guardIndex = source.indexOf('ensure_profile_model_configured(&profile)?;');
+    const brokerIndex = source.indexOf('AgentPromptAssemblyModeDto::FrontendPromptAssembly');
+
+    assert.ok(guardIndex >= 0, 'missing requiresConfiguration prompt assembly guard');
+    assert.ok(brokerIndex > guardIndex, 'model configuration guard must run before broker handoff');
+});
+
 test('frontend prompt assembly normalizes effective settings without resolving model from defaults', async () => {
     const [brokerSource, openaiSource] = await Promise.all([
         readProjectFile('src/tauri/main/api/agent-prompt-assembly.js'),

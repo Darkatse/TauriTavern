@@ -3,6 +3,8 @@ use crate::domain::errors::DomainError;
 use crate::domain::models::character::Character;
 use serde_json::Value;
 
+const EMBEDDED_AGENT_PROFILES_VERSION: u64 = 1;
+
 pub(super) fn parse_character_card_json(card_json: &str) -> Result<Value, ApplicationError> {
     let value: Value = serde_json::from_str(card_json).map_err(|error| {
         ApplicationError::ValidationError(format!("Invalid character card JSON: {}", error))
@@ -122,6 +124,112 @@ pub(super) fn unset_private_fields(export_value: &mut Value) -> Result<(), Domai
     Ok(())
 }
 
+pub(super) fn sanitize_agent_profiles_for_export(
+    export_value: &mut Value,
+) -> Result<(), DomainError> {
+    sanitize_agent_profile_package_at_path(export_value, &["data", "extensions"])?;
+    sanitize_agent_profile_package_at_path(export_value, &["extensions"])?;
+    Ok(())
+}
+
+fn sanitize_agent_profile_package_at_path(
+    value: &mut Value,
+    extension_path: &[&str],
+) -> Result<(), DomainError> {
+    let Some(extensions) = object_at_path_mut(value, extension_path)? else {
+        return Ok(());
+    };
+    let Some(tauritavern) = extensions.get_mut("tauritavern") else {
+        return Ok(());
+    };
+    let Some(tauritavern) = tauritavern.as_object_mut() else {
+        return Err(DomainError::InvalidData(
+            "Character payload extensions.tauritavern must be an object".to_string(),
+        ));
+    };
+    let Some(package) = tauritavern.get_mut("agentProfiles") else {
+        return Ok(());
+    };
+    sanitize_agent_profile_package(package)
+}
+
+fn object_at_path_mut<'a>(
+    value: &'a mut Value,
+    path: &[&str],
+) -> Result<Option<&'a mut serde_json::Map<String, Value>>, DomainError> {
+    let mut cursor = value;
+    for segment in path {
+        let Some(next) = cursor.get_mut(*segment) else {
+            return Ok(None);
+        };
+        cursor = next;
+    }
+    cursor.as_object_mut().map(Some).ok_or_else(|| {
+        DomainError::InvalidData(format!(
+            "Character payload {} must be an object",
+            path.join(".")
+        ))
+    })
+}
+
+fn sanitize_agent_profile_package(package: &mut Value) -> Result<(), DomainError> {
+    let Some(package) = package.as_object_mut() else {
+        return Err(DomainError::InvalidData(
+            "Character payload tauritavern.agentProfiles must be an object".to_string(),
+        ));
+    };
+    if package.get("version").and_then(Value::as_u64) != Some(EMBEDDED_AGENT_PROFILES_VERSION) {
+        return Err(DomainError::InvalidData(
+            "Character payload tauritavern.agentProfiles.version must be 1".to_string(),
+        ));
+    }
+    let Some(items) = package.get_mut("items") else {
+        return Err(DomainError::InvalidData(
+            "Character payload tauritavern.agentProfiles.items must be an array".to_string(),
+        ));
+    };
+    let Some(items) = items.as_array_mut() else {
+        return Err(DomainError::InvalidData(
+            "Character payload tauritavern.agentProfiles.items must be an array".to_string(),
+        ));
+    };
+    for item in items {
+        sanitize_agent_profile_item(item)?;
+    }
+    Ok(())
+}
+
+fn sanitize_agent_profile_item(item: &mut Value) -> Result<(), DomainError> {
+    let Some(item) = item.as_object_mut() else {
+        return Err(DomainError::InvalidData(
+            "Character payload embedded Agent Profile item must be an object".to_string(),
+        ));
+    };
+    let Some(profile) = item.get_mut("profile") else {
+        return Err(DomainError::InvalidData(
+            "Character payload embedded Agent Profile item.profile must be an object".to_string(),
+        ));
+    };
+    let Some(profile) = profile.as_object_mut() else {
+        return Err(DomainError::InvalidData(
+            "Character payload embedded Agent Profile must be an object".to_string(),
+        ));
+    };
+    if profile
+        .get("model")
+        .and_then(Value::as_object)
+        .and_then(|model| model.get("mode"))
+        .and_then(Value::as_str)
+        == Some("connectionRef")
+    {
+        profile.insert(
+            "model".to_string(),
+            serde_json::json!({ "mode": "requiresConfiguration" }),
+        );
+    }
+    Ok(())
+}
+
 fn validate_v1_character_card(card_value: &Value) -> Result<(), DomainError> {
     for field in [
         "name",
@@ -227,6 +335,109 @@ fn validate_v3_character_card(card_value: &Value) -> Result<(), DomainError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    #[test]
+    fn character_export_sanitizes_embedded_agent_profile_model_bindings() {
+        let mut card = json!({
+            "data": {
+                "extensions": {
+                    "tauritavern": {
+                        "agentProfiles": {
+                            "version": 1,
+                            "items": [
+                                {
+                                    "profile": {
+                                        "id": "writer",
+                                        "model": {
+                                            "mode": "connectionRef",
+                                            "connectionRef": "model-target-private",
+                                            "modelId": "private-model"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        });
+
+        super::sanitize_agent_profiles_for_export(&mut card).expect("sanitize profile");
+
+        assert_eq!(
+            card["data"]["extensions"]["tauritavern"]["agentProfiles"]["items"][0]["profile"]["model"],
+            json!({ "mode": "requiresConfiguration" })
+        );
+    }
+
+    #[test]
+    fn character_export_rejects_malformed_embedded_agent_profile_package() {
+        let mut unsupported_version = json!({
+            "data": {
+                "extensions": {
+                    "tauritavern": {
+                        "agentProfiles": {
+                            "version": 2,
+                            "items": []
+                        }
+                    }
+                }
+            }
+        });
+        let error = super::sanitize_agent_profiles_for_export(&mut unsupported_version)
+            .expect_err("unsupported version must fail fast");
+        assert!(
+            error
+                .to_string()
+                .contains("tauritavern.agentProfiles.version must be 1")
+        );
+
+        let mut missing_items = json!({
+            "data": {
+                "extensions": {
+                    "tauritavern": {
+                        "agentProfiles": {
+                            "version": 1
+                        }
+                    }
+                }
+            }
+        });
+        let error = super::sanitize_agent_profiles_for_export(&mut missing_items)
+            .expect_err("missing items must fail fast");
+        assert!(
+            error
+                .to_string()
+                .contains("tauritavern.agentProfiles.items must be an array")
+        );
+
+        let mut missing_profile = json!({
+            "data": {
+                "extensions": {
+                    "tauritavern": {
+                        "agentProfiles": {
+                            "version": 1,
+                            "items": [
+                                {}
+                            ]
+                        }
+                    }
+                }
+            }
+        });
+        let error = super::sanitize_agent_profiles_for_export(&mut missing_profile)
+            .expect_err("missing item.profile must fail fast");
+        assert!(
+            error
+                .to_string()
+                .contains("embedded Agent Profile item.profile must be an object")
+        );
+    }
 }
 
 fn character_card_spec_version(value: &Value) -> Option<f64> {

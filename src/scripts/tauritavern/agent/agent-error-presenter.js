@@ -17,6 +17,12 @@ const RUN_FAILURE_PRESENTATIONS = Object.freeze({
         summary: 'Tool round budget exhausted; no Agent chat output was kept.',
         summaryKey: 'agent.error.max_tool_rounds_exceeded.summary',
     }),
+    'agent.profile_model_requires_configuration': Object.freeze({
+        message: 'This Agent profile needs a local model selection before it can run. Open Agent System, choose a saved model target for the profile, then run it again.',
+        messageKey: 'agent.error.profile_model_requires_configuration.message',
+        summary: 'Agent profile needs a local model selection.',
+        summaryKey: 'agent.error.profile_model_requires_configuration.summary',
+    }),
 });
 
 export function presentAgentRunFailure(event) {
@@ -46,7 +52,12 @@ export function presentAgentRunFailure(event) {
 }
 
 export function agentErrorMessage(error) {
-    return String(error?.userMessage || error?.message || error || runFailed());
+    const raw = String(error?.userMessage || error?.message || error || runFailed());
+    const code = structuredAgentErrorCode(raw);
+    const presentation = RUN_FAILURE_PRESENTATIONS[code];
+    return presentation
+        ? translateAgentError(presentation.message, presentation.messageKey)
+        : raw;
 }
 
 function runFailed() {
@@ -56,4 +67,17 @@ function runFailed() {
 function translateAgentError(message, key) {
     const translate = globalThis.SillyTavern?.getContext?.()?.translate;
     return typeof translate === 'function' ? translate(message, key) : message;
+}
+
+function structuredAgentErrorCode(message) {
+    const text = String(message || '').trim();
+    const separator = text.indexOf(':');
+    if (separator <= 0) {
+        return '';
+    }
+    const code = text.slice(0, separator).trim();
+    if (!/^[a-z0-9_.-]*\.[a-z0-9_.-]*$/.test(code)) {
+        return '';
+    }
+    return code;
 }

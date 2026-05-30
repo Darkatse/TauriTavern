@@ -71,6 +71,18 @@ Agent Profile 的持久化字段仍然是：
 
 Profile 不保存 Connection Manager 的 `modelTargetId`。Profile 面板可以把用户保存的 Model Target 物化为一个 LLM Connection，再把 Profile 指向 `connectionRef + modelId`。这样 runtime 只依赖 Agent domain 的 LLM Connection contract，Connection Manager 只是 UI 输入来源。
 
+当 Profile 被导出或嵌入到 Preset/Character 时，`connectionRef + modelId` 必须改写为：
+
+```json
+{
+  "model": {
+    "mode": "requiresConfiguration"
+  }
+}
+```
+
+`requiresConfiguration` 是合法可保存状态，但不可运行；用户需要在本机重新选择模型。
+
 要求：
 
 - 连接转换必须保真；无法表示的字段必须报错，不静默丢弃。

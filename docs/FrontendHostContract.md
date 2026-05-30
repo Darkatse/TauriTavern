@@ -169,7 +169,7 @@
 - `api.llmConnections`：TauriTavern LLM Connection 管理 API。用于保存和读取 Agent Profile 可引用的 LLM 连接定义。
   - 详细参考见：`docs/API/LlmConnections.md` 与 `docs/Agent/PromptAssembly.md`。
   - 当前已落地 Host ABI：`list()`、`load()`、`save()`、`delete()`。
-  - Profile 只保存 `model.mode = "connectionRef"`、`connectionRef` 与 `modelId`；不直接保存 Connection Manager 的 Model Target id。
+  - Profile 只保存 `model.mode = "connectionRef"`、`connectionRef` 与 `modelId`，或保存分享/导入用的 `model.mode = "requiresConfiguration"`；不直接保存 Connection Manager 的 Model Target id。
   - Connection Manager Model Target 可以作为 UI 输入来源，但转换成 LLM Connection 时必须保真；无法表达的字段必须显式报错，不得静默丢弃。
   - Rust command 名与 repository/file layout 属于 Internal 实现细节，不是第三方 Public Contract。
 
