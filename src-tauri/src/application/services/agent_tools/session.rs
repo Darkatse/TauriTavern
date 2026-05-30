@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 
 use crate::domain::models::skill::{SkillIndexEntry, SkillScope};
 use crate::domain::repositories::workspace_repository::WorkspaceFile;
@@ -7,6 +7,31 @@ use crate::domain::repositories::workspace_repository::WorkspaceFile;
 pub struct WorkspaceReadState {
     pub sha256: String,
     pub full_read: bool,
+    observed_texts: Vec<String>,
+    patch_requires_full_read: bool,
+}
+
+impl WorkspaceReadState {
+    fn new(sha256: String, full_read: bool) -> Self {
+        Self {
+            sha256,
+            full_read,
+            observed_texts: Vec::new(),
+            patch_requires_full_read: false,
+        }
+    }
+
+    pub fn old_string_was_observed(&self, old_string: &str) -> bool {
+        self.full_read
+            || self
+                .observed_texts
+                .iter()
+                .any(|text| text.contains(old_string))
+    }
+
+    pub fn patch_requires_full_read(&self) -> bool {
+        self.patch_requires_full_read
+    }
 }
 
 #[derive(Debug, Default)]
@@ -27,13 +52,95 @@ impl AgentToolSession {
     }
 
     pub fn remember_file(&mut self, file: &WorkspaceFile, full_read: bool) {
+        let path = file.path.as_str().to_string();
+        if full_read {
+            self.read_state
+                .insert(path, WorkspaceReadState::new(file.sha256.clone(), true));
+            return;
+        }
+
+        let previous = self.read_state.get(&path);
+        let full_read =
+            previous.is_some_and(|state| state.sha256 == file.sha256 && state.full_read);
+        let patch_requires_full_read =
+            previous.is_some_and(WorkspaceReadState::patch_requires_full_read);
         self.read_state.insert(
-            file.path.as_str().to_string(),
+            path,
             WorkspaceReadState {
                 sha256: file.sha256.clone(),
                 full_read,
+                observed_texts: Vec::new(),
+                patch_requires_full_read,
             },
         );
+    }
+
+    pub fn remember_file_read(&mut self, file: &WorkspaceFile, full_read: bool, text: &str) {
+        if full_read {
+            self.remember_file(file, true);
+            return;
+        }
+
+        let path = file.path.as_str().to_string();
+        match self.read_state.entry(path) {
+            Entry::Occupied(mut entry) => {
+                let state = entry.get_mut();
+                if state.sha256 != file.sha256 {
+                    let patch_requires_full_read = state.patch_requires_full_read;
+                    *state = WorkspaceReadState {
+                        sha256: file.sha256.clone(),
+                        full_read: false,
+                        observed_texts: Vec::new(),
+                        patch_requires_full_read,
+                    };
+                }
+                if !state.full_read && !text.is_empty() {
+                    state.observed_texts.push(text.to_string());
+                }
+            }
+            Entry::Vacant(entry) => {
+                let mut state = WorkspaceReadState::new(file.sha256.clone(), false);
+                if !text.is_empty() {
+                    state.observed_texts.push(text.to_string());
+                }
+                entry.insert(state);
+            }
+        }
+    }
+
+    pub fn remember_partial_patch(
+        &mut self,
+        file: &WorkspaceFile,
+        old_string: &str,
+        new_string: &str,
+    ) {
+        let path = file.path.as_str().to_string();
+        let observed_texts = self
+            .read_state
+            .get(&path)
+            .map(|state| {
+                state
+                    .observed_texts
+                    .iter()
+                    .map(|text| text.replacen(old_string, new_string, 1))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        self.read_state.insert(
+            path,
+            WorkspaceReadState {
+                sha256: file.sha256.clone(),
+                full_read: false,
+                observed_texts,
+                patch_requires_full_read: false,
+            },
+        );
+    }
+
+    pub fn require_full_read_before_patch(&mut self, path: &str) {
+        if let Some(state) = self.read_state.get_mut(path) {
+            state.patch_requires_full_read = true;
+        }
     }
 
     pub fn read_state(&self, path: &str) -> Option<&WorkspaceReadState> {

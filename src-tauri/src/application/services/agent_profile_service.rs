@@ -184,7 +184,7 @@ pub fn materialize_agent_system_prompt(
     }
     if has_tool(tools, "workspace.read_file") {
         lines.push(format!(
-            "- Use {} before modifying an existing file. Read content includes line numbers; never include line number prefixes in old_string or new_string.",
+            "- Use {} before modifying an existing file. Read the exact text you want to replace; if a patch fails, fully read the file before retrying. Read content includes line numbers; never include line number prefixes in old_string or new_string.",
             model_name(tools, "workspace.read_file")
         ));
     }

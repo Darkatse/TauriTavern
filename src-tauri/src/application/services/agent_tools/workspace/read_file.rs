@@ -259,7 +259,7 @@ pub(in crate::application::services::agent_tools) async fn read_file(
     };
     let selected_text = selected.join("\n");
     let selected_metrics = TextMetrics::from_text(&selected_text);
-    session.remember_file(&file, full_read);
+    session.remember_file_read(&file, full_read, &selected_text);
 
     let content = format!(
         "{} lines {}-{} of {}, chars {}-{} of {}, words {} of {}, sha256 {}\n{}",
@@ -343,7 +343,7 @@ fn read_char_range(
         .collect::<String>();
     let selected_metrics = TextMetrics::from_text(&text);
     let full_read = start_char == 0 && end_char == total_chars;
-    session.remember_file(&file, full_read);
+    session.remember_file_read(&file, full_read, &text);
 
     let content = format!(
         "{} chars {}-{} of {}, words {} of {}, sha256 {}{}\n{}",

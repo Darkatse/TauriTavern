@@ -192,7 +192,7 @@ fn apply_profile_context(
         }
         WORKSPACE_READ_FILE => {
             let patch_hint = if profile_tool_visible(profile, WORKSPACE_APPLY_PATCH) {
-                " Fully read a file before using workspace_apply_patch on it; partial reads are only for inspection."
+                " Read the exact text you want to replace before using workspace_apply_patch; if a patch fails, fully read the file before retrying."
             } else {
                 " Partial reads are only for inspection."
             };
@@ -227,7 +227,7 @@ fn apply_profile_context(
             )?;
         }
         WORKSPACE_APPLY_PATCH => {
-            spec.description = "Apply a precise single-file string replacement. The file must have been fully read with workspace_read_file or created by workspace_write_file in this run. old_string must match exactly and uniquely unless replace_all is true.".to_string();
+            spec.description = "Apply a precise single-file string replacement. old_string must come from text you already read with workspace_read_file or from a file you created/replaced in this run. old_string must match exactly and uniquely unless replace_all is true. If a patch fails, fully read the file before retrying.".to_string();
             set_property_description(
                 spec,
                 "path",

@@ -4926,7 +4926,7 @@ async fn agent_loop_returns_recoverable_tool_errors_to_model() {
 }
 
 #[tokio::test]
-async fn workspace_patch_requires_full_read_state() {
+async fn workspace_patch_allows_partial_read_when_old_string_was_observed() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-patch-guard-{}",
         Uuid::new_v4().simple()
@@ -4965,7 +4965,7 @@ async fn workspace_patch_requires_full_read_state() {
         .write_text(
             &run.id,
             &WorkspacePath::parse("output/main.md").unwrap(),
-            "hello draft",
+            "hello draft\nunchanged tail",
         )
         .await
         .expect("seed artifact");
@@ -4996,13 +4996,18 @@ async fn workspace_patch_requires_full_read_state() {
     let read_call = AgentToolCall {
         id: "call_read".to_string(),
         name: "workspace.read_file".to_string(),
-        arguments: json!({ "path": "output/main.md" }),
+        arguments: json!({
+            "path": "output/main.md",
+            "start_line": 1,
+            "line_count": 1,
+        }),
         provider_metadata: Value::Null,
     };
-    dispatcher
+    let read = dispatcher
         .dispatch(&run.id, &read_call, &mut session, &profile)
         .await
         .expect("dispatch read");
+    assert_eq!(read.result.structured["fullRead"], false);
 
     let patched = dispatcher
         .dispatch(&run.id, &patch_call, &mut session, &profile)
@@ -5021,7 +5026,235 @@ async fn workspace_patch_requires_full_read_state() {
         .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
         .await
         .expect("read artifact");
-    assert_eq!(artifact.text, "hello final");
+    assert_eq!(artifact.text, "hello final\nunchanged tail");
+
+    let second_patch_call = AgentToolCall {
+        id: "call_patch_again".to_string(),
+        name: "workspace.apply_patch".to_string(),
+        arguments: json!({
+            "path": "output/main.md",
+            "old_string": "hello final",
+            "new_string": "hello done",
+        }),
+        provider_metadata: Value::Null,
+    };
+    let second_patch = dispatcher
+        .dispatch(&run.id, &second_patch_call, &mut session, &profile)
+        .await
+        .expect("dispatch second patch after partial patch");
+    assert!(!second_patch.result.is_error);
+    let artifact = repository
+        .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+        .await
+        .expect("read second patched artifact");
+    assert_eq!(artifact.text, "hello done\nunchanged tail");
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-patch-partial-failure-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_patch_partial_failure_test".to_string(),
+        workspace_id: "chat_patch_partial_failure_test".to_string(),
+        stable_chat_id: "stable_patch_partial_failure_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "Seraphina".to_string(),
+            file_name: "Seraphina.png".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: Default::default(),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    let profile = test_resolved_profile(&root).await;
+    repository
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &profile),
+            &json!({"messages": []}),
+            &profile,
+        )
+        .await
+        .expect("initialize workspace");
+    repository
+        .write_text(
+            &run.id,
+            &WorkspacePath::parse("output/main.md").unwrap(),
+            "alpha target\nomega target\nzeta",
+        )
+        .await
+        .expect("seed artifact");
+
+    let dispatcher = test_dispatcher(repository.clone(), &root);
+    let mut session = AgentToolSession::default();
+    let read_first_line = AgentToolCall {
+        id: "call_read_first_line".to_string(),
+        name: "workspace.read_file".to_string(),
+        arguments: json!({
+            "path": "output/main.md",
+            "start_line": 1,
+            "line_count": 1,
+        }),
+        provider_metadata: Value::Null,
+    };
+    dispatcher
+        .dispatch(&run.id, &read_first_line, &mut session, &profile)
+        .await
+        .expect("dispatch partial read");
+
+    let ambiguous_patch_call = AgentToolCall {
+        id: "call_ambiguous_patch".to_string(),
+        name: "workspace.apply_patch".to_string(),
+        arguments: json!({
+            "path": "output/main.md",
+            "old_string": "target",
+            "new_string": "TARGET",
+        }),
+        provider_metadata: Value::Null,
+    };
+    let ambiguous = dispatcher
+        .dispatch(&run.id, &ambiguous_patch_call, &mut session, &profile)
+        .await
+        .expect("dispatch ambiguous partial patch");
+    assert!(ambiguous.result.is_error);
+    assert_eq!(
+        ambiguous.result.error_code.as_deref(),
+        Some("workspace.patch_old_string_not_unique")
+    );
+    assert!(ambiguous.result.content.contains("Fully read the file"));
+
+    let specific_patch_call = AgentToolCall {
+        id: "call_specific_patch_before_full_read".to_string(),
+        name: "workspace.apply_patch".to_string(),
+        arguments: json!({
+            "path": "output/main.md",
+            "old_string": "alpha target",
+            "new_string": "alpha TARGET",
+        }),
+        provider_metadata: Value::Null,
+    };
+    let still_requires_full_read = dispatcher
+        .dispatch(&run.id, &specific_patch_call, &mut session, &profile)
+        .await
+        .expect("dispatch patch after failed partial patch");
+    assert!(still_requires_full_read.result.is_error);
+    assert_eq!(
+        still_requires_full_read.result.error_code.as_deref(),
+        Some("workspace.patch_requires_full_read")
+    );
+
+    let full_read = AgentToolCall {
+        id: "call_full_read".to_string(),
+        name: "workspace.read_file".to_string(),
+        arguments: json!({ "path": "output/main.md" }),
+        provider_metadata: Value::Null,
+    };
+    let full_read_result = dispatcher
+        .dispatch(&run.id, &full_read, &mut session, &profile)
+        .await
+        .expect("dispatch full read");
+    assert_eq!(full_read_result.result.structured["fullRead"], true);
+
+    let patched = dispatcher
+        .dispatch(&run.id, &specific_patch_call, &mut session, &profile)
+        .await
+        .expect("dispatch patch after full read");
+    assert!(!patched.result.is_error);
+    let artifact = repository
+        .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+        .await
+        .expect("read artifact");
+    assert_eq!(artifact.text, "alpha TARGET\nomega target\nzeta");
+
+    let mut replace_all_session = AgentToolSession::default();
+    let read_second_line = AgentToolCall {
+        id: "call_read_second_line".to_string(),
+        name: "workspace.read_file".to_string(),
+        arguments: json!({
+            "path": "output/main.md",
+            "start_line": 2,
+            "line_count": 1,
+        }),
+        provider_metadata: Value::Null,
+    };
+    dispatcher
+        .dispatch(
+            &run.id,
+            &read_second_line,
+            &mut replace_all_session,
+            &profile,
+        )
+        .await
+        .expect("dispatch second partial read");
+
+    let replace_all_call = AgentToolCall {
+        id: "call_replace_all_partial".to_string(),
+        name: "workspace.apply_patch".to_string(),
+        arguments: json!({
+            "path": "output/main.md",
+            "old_string": "target",
+            "new_string": "TARGET",
+            "replace_all": true,
+        }),
+        provider_metadata: Value::Null,
+    };
+    let replace_all_without_full_read = dispatcher
+        .dispatch(
+            &run.id,
+            &replace_all_call,
+            &mut replace_all_session,
+            &profile,
+        )
+        .await
+        .expect("dispatch replace_all after partial read");
+    assert!(replace_all_without_full_read.result.is_error);
+    assert_eq!(
+        replace_all_without_full_read.result.error_code.as_deref(),
+        Some("workspace.patch_requires_full_read")
+    );
+
+    let full_read_for_replace_all = AgentToolCall {
+        id: "call_full_read_for_replace_all".to_string(),
+        name: "workspace.read_file".to_string(),
+        arguments: json!({ "path": "output/main.md" }),
+        provider_metadata: Value::Null,
+    };
+    dispatcher
+        .dispatch(
+            &run.id,
+            &full_read_for_replace_all,
+            &mut replace_all_session,
+            &profile,
+        )
+        .await
+        .expect("dispatch full read before replace_all");
+    let replaced_all = dispatcher
+        .dispatch(
+            &run.id,
+            &replace_all_call,
+            &mut replace_all_session,
+            &profile,
+        )
+        .await
+        .expect("dispatch replace_all after full read");
+    assert!(!replaced_all.result.is_error);
+    let artifact = repository
+        .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+        .await
+        .expect("read replace_all artifact");
+    assert_eq!(artifact.text, "alpha TARGET\nomega TARGET\nzeta");
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }

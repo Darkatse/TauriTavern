@@ -134,7 +134,7 @@ Agent run 创建时，Rust runtime 会冻结本 run 的输入历史前缀：`swi
 | `workspace.search_files` | `workspace_search_files` | read-only | 搜索模型可见 workspace UTF-8 文本文件；可限定 `path`，返回 snippet/ref，不搜索隐藏 runtime 存储。 |
 | `workspace.read_file` | `workspace_read_file` | read-only | 读取 UTF-8 文本文件并返回行号；支持行范围和字符范围；完整读取会记录 read-state。 |
 | `workspace.write_file` | `workspace_write_file` | mutating | 写 UTF-8 文件；`mode` 默认为完整替换，`append` 会原样追加并在缺失时创建文件；成功后按内容可知性更新 read-state 并创建 checkpoint。 |
-| `workspace.apply_patch` | `workspace_apply_patch` | mutating | 单文件 `old_string` / `new_string` 精确替换；要求已完整读取或由本 run 创建/修改。 |
+| `workspace.apply_patch` | `workspace_apply_patch` | mutating | 单文件 `old_string` / `new_string` 精确替换；`old_string` 必须来自本 run 已读文本或本 run 创建/完整替换的文件；失败后同文件再次 patch 必须先全文读取。 |
 | `workspace.commit` | `workspace_commit` | control/mutating | 将可见 workspace 文件提交到当前聊天；无参数等价于 `replace output/main.md`，`append` 首次创建消息、后续追加同一消息。 |
 | `workspace.finish` | `workspace_finish` | control | 结束 root/active 工具循环；前台 run 必须已成功 commit，后台 run 可无 commit；return-mode child invocation 不可用；当前会取消 unfinished child tasks 而不阻塞完成。 |
 
@@ -214,7 +214,7 @@ AgentModelContentPart {
 - `workspace.write_file` 与 `workspace.apply_patch` 成功结果只把摘要、结构化元数据与 resource refs 作为 canonical `ToolResult` 回填模型。
 - runtime 不会因前几轮 workspace 写入而自动读取完整文件内容并拼入下一轮模型上下文。
 - 模型需要完整文件内容时必须显式调用 `workspace.read_file`；append 到未完整读过的旧文件后，后续 rewrite / patch 会按 read-state 规则要求重新读取。
-- read-state 由 workspace 工具维护：完整读取、创建/完整替换、成功 patch 会记录完整已知；append 只有在旧内容已经完整已知时才延续完整已知。
+- read-state 由 workspace 工具维护：完整读取、创建/完整替换会记录完整已知；部分读取会记录 Agent 实际读到的片段，允许 `workspace.apply_patch` 替换已读片段中的唯一 `old_string`；基于部分读取的 patch 一旦失败，同文件再次 patch 必须先全文读取；append 只有在旧内容已经完整已知时才延续完整已知。
 
 这样让跨 Agent / 跨模型协作依赖显式 task packet、workspace refs 与 invocation-scoped prompt，而不是旧的 provider switch 最近历史启发式。
 

@@ -47,7 +47,7 @@ pub(in crate::application::services::agent_tools) fn workspace_read_file_spec() 
         name: WORKSPACE_READ_FILE.to_string(),
         model_name: MODEL_WORKSPACE_READ_FILE.to_string(),
         title: "Workspace Read File".to_string(),
-        description: "Read a visible UTF-8 Agent workspace file with line numbers. Fully read a file before using workspace_apply_patch on it; partial reads are only for inspection. `path` MUST refer to a regular file (e.g. `persist/MEMORY.md`), NOT a directory or workspace root (`persist`, `output`, ...). Call workspace_list_files first when you do not know which file to open.".to_string(),
+        description: "Read a visible UTF-8 Agent workspace file with line numbers. Read the exact text you want to replace before using workspace_apply_patch; if a patch fails, fully read the file before retrying. `path` MUST refer to a regular file (e.g. `persist/MEMORY.md`), NOT a directory or workspace root (`persist`, `output`, ...). Call workspace_list_files first when you do not know which file to open.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -156,7 +156,7 @@ pub(in crate::application::services::agent_tools) fn workspace_apply_patch_spec(
         name: WORKSPACE_APPLY_PATCH.to_string(),
         model_name: MODEL_WORKSPACE_APPLY_PATCH.to_string(),
         title: "Workspace Apply Patch".to_string(),
-        description: "Apply a precise single-file string replacement. The file must have been fully read with workspace_read_file or created by workspace_write_file in this run. old_string must match exactly and uniquely unless replace_all is true.".to_string(),
+        description: "Apply a precise single-file string replacement. old_string must come from text you already read with workspace_read_file or from a file you created/replaced in this run. old_string must match exactly and uniquely unless replace_all is true. If a patch fails, fully read the file before retrying.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
