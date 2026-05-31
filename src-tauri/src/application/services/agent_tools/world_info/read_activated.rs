@@ -8,8 +8,7 @@ use super::{
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_tools::common::{object_args, tool_error};
 use crate::application::services::agent_tools::dispatcher::AgentToolEffect;
-use crate::domain::models::agent::{AgentToolCall, AgentToolResult, WorkspacePath};
-use crate::domain::repositories::workspace_repository::WorkspaceRepository;
+use crate::domain::models::agent::{AgentToolCall, AgentToolResult};
 use crate::domain::text_metrics::TextMetrics;
 
 use super::super::structured::{
@@ -104,9 +103,8 @@ struct RenderedEntry {
     ref_id: String,
 }
 
-pub(in crate::application::services::agent_tools) async fn read_activated(
-    workspace_repository: &dyn WorkspaceRepository,
-    run_id: &str,
+pub(in crate::application::services::agent_tools) fn read_activated(
+    prompt_snapshot: &Value,
     call: &AgentToolCall,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let Some(args) = object_args(call) else {
@@ -129,18 +127,7 @@ pub(in crate::application::services::agent_tools) async fn read_activated(
         }
     };
 
-    let snapshot_path = WorkspacePath::parse("input/prompt_snapshot.json")?;
-    let snapshot_file = workspace_repository
-        .read_text(run_id, &snapshot_path)
-        .await
-        .map_err(ApplicationError::from)?;
-    let snapshot: Value = serde_json::from_str(&snapshot_file.text).map_err(|error| {
-        ApplicationError::ValidationError(format!(
-            "agent.invalid_prompt_snapshot_file: failed to parse prompt snapshot JSON: {error}"
-        ))
-    })?;
-
-    let Some(batch) = snapshot.get("worldInfoActivation") else {
+    let Some(batch) = prompt_snapshot.get("worldInfoActivation") else {
         return Ok((
             tool_error(
                 call,

@@ -204,7 +204,7 @@ impl AgentRuntimeService {
         } else if let Some(view) = child_workspace_view.as_ref() {
             let workspace_repository = view.repository(self.workspace_repository.as_ref());
             self.tool_dispatcher
-                .dispatch_with_workspace_repository(
+                .dispatch_with_model_workspace_repository(
                     run_id,
                     call,
                     session,

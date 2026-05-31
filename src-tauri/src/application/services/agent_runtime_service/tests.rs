@@ -6487,6 +6487,155 @@ async fn dispatcher_progressively_reads_worldinfo_activation_from_run_snapshot()
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }
 
+#[tokio::test]
+async fn child_worldinfo_reads_run_snapshot_without_exposing_input_workspace() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-child-worldinfo-tool-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(vec![])),
+        test_profile_service(&root),
+        test_llm_connection_service(&root),
+    );
+    let run = AgentRun {
+        id: "run_child_worldinfo_tool_test".to_string(),
+        workspace_id: "child_worldinfo_tool_test".to_string(),
+        stable_chat_id: "stable_child_worldinfo_tool_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "alice".to_string(),
+            file_name: "session".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: Default::default(),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    let profile = test_resolved_profile(&root).await;
+    repository
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &profile),
+            &json!({
+                "chatCompletionPayload": {
+                    "messages": prompt_messages("hello")
+                },
+                "worldInfoActivation": {
+                    "timestampMs": 1,
+                    "trigger": "normal",
+                    "entries": [{
+                        "world": "lorebook",
+                        "uid": 7,
+                        "displayName": "Hidden bridge",
+                        "constant": false,
+                        "position": "before",
+                        "content": "The bridge has a hidden blue lantern."
+                    }]
+                }
+            }),
+            &profile,
+        )
+        .await
+        .expect("initialize workspace");
+    let task = service
+        .create_child_task(
+            &run.id,
+            "inv_root",
+            "inv_child_worldinfo".to_string(),
+            "task_child_worldinfo".to_string(),
+            profile.id.as_str().to_string(),
+            "scene-critic".to_string(),
+            "call_delegate_worldinfo".to_string(),
+            json!({
+                "objective": "Read activated World Info."
+            }),
+            None,
+        )
+        .await
+        .expect("create child task");
+
+    let mut session = AgentToolSession::default();
+    let mut commit_ledger = RunCommitLedger::default();
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let worldinfo_call = AgentToolCall {
+        id: "call_child_worldinfo_index".to_string(),
+        name: "worldinfo.read_activated".to_string(),
+        arguments: json!({}),
+        provider_metadata: Value::Null,
+    };
+    let worldinfo = service
+        .dispatch_tool_call(
+            &run.id,
+            task.child_invocation_id.as_str(),
+            AgentInvocationExitPolicy::TaskReturnRequired,
+            1,
+            &worldinfo_call,
+            &mut session,
+            &profile,
+            0,
+            &mut commit_ledger,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("dispatch child worldinfo");
+    assert!(!worldinfo.result.is_error);
+    assert_eq!(worldinfo.result.structured["totalEntries"], 1);
+    assert_eq!(
+        worldinfo.result.structured["entries"][0]["ref"],
+        "worldinfo:lorebook#7"
+    );
+    assert!(!worldinfo.result.content.contains("hidden blue lantern"));
+
+    let hidden_input_read_call = AgentToolCall {
+        id: "call_child_hidden_input_read".to_string(),
+        name: "workspace.read_file".to_string(),
+        arguments: json!({ "path": "input/prompt_snapshot.json" }),
+        provider_metadata: Value::Null,
+    };
+    let hidden_input_read = service
+        .dispatch_tool_call(
+            &run.id,
+            task.child_invocation_id.as_str(),
+            AgentInvocationExitPolicy::TaskReturnRequired,
+            1,
+            &hidden_input_read_call,
+            &mut session,
+            &profile,
+            0,
+            &mut commit_ledger,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("dispatch child hidden input read");
+    assert!(hidden_input_read.result.is_error);
+    assert_eq!(
+        hidden_input_read.result.error_code.as_deref(),
+        Some("workspace.path_not_visible")
+    );
+    assert!(
+        hidden_input_read
+            .result
+            .content
+            .contains("input/prompt_snapshot.json")
+    );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
 fn prompt_messages(user_content: &str) -> Value {
     json!([
         {

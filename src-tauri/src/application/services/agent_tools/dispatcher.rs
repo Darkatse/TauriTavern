@@ -19,6 +19,8 @@ use crate::domain::repositories::chat_repository::ChatRepository;
 use crate::domain::repositories::group_chat_repository::GroupChatRepository;
 use crate::domain::repositories::workspace_repository::{WorkspaceFile, WorkspaceRepository};
 
+const RUN_PROMPT_SNAPSHOT_PATH: &str = "input/prompt_snapshot.json";
+
 #[derive(Debug, Clone)]
 pub struct AgentToolDispatchOutcome {
     pub result: AgentToolResult,
@@ -88,7 +90,7 @@ impl AgentToolDispatcher {
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
-        self.dispatch_with_workspace_repository(
+        self.dispatch_with_model_workspace_repository(
             run_id,
             call,
             session,
@@ -98,13 +100,13 @@ impl AgentToolDispatcher {
         .await
     }
 
-    pub(crate) async fn dispatch_with_workspace_repository(
+    pub(crate) async fn dispatch_with_model_workspace_repository(
         &self,
         run_id: &str,
         call: &AgentToolCall,
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
-        workspace_repository: &dyn WorkspaceRepository,
+        model_workspace_repository: &dyn WorkspaceRepository,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
         let outcome = match call.name.as_str() {
@@ -129,7 +131,10 @@ impl AgentToolDispatcher {
                 .await?
             }
             world_info::WORLDINFO_READ_ACTIVATED => {
-                world_info::read_activated(workspace_repository, run_id, call).await?
+                // WorldInfo activation is a hidden run input fact, not a model-visible
+                // workspace file; child workspace views must not gate this read.
+                let prompt_snapshot = self.read_run_prompt_snapshot(run_id).await?;
+                world_info::read_activated(&prompt_snapshot, call)?
             }
             dice::DICE_ROLL => dice::roll(call).await?,
             skill::SKILL_LIST => skill::list(call, session, profile).await?,
@@ -140,22 +145,22 @@ impl AgentToolDispatcher {
                 skill::read(self.skill_service.as_ref(), call, session, profile).await?
             }
             workspace::WORKSPACE_LIST_FILES => {
-                workspace::list_files(workspace_repository, run_id, call).await?
+                workspace::list_files(model_workspace_repository, run_id, call).await?
             }
             workspace::WORKSPACE_SEARCH_FILES => {
-                workspace::search_files(workspace_repository, run_id, call).await?
+                workspace::search_files(model_workspace_repository, run_id, call).await?
             }
             workspace::WORKSPACE_READ_FILE => {
-                workspace::read_file(workspace_repository, run_id, call, session).await?
+                workspace::read_file(model_workspace_repository, run_id, call, session).await?
             }
             workspace::WORKSPACE_WRITE_FILE => {
-                workspace::write_file(workspace_repository, run_id, call, session).await?
+                workspace::write_file(model_workspace_repository, run_id, call, session).await?
             }
             workspace::WORKSPACE_APPLY_PATCH => {
-                workspace::apply_patch(workspace_repository, run_id, call, session).await?
+                workspace::apply_patch(model_workspace_repository, run_id, call, session).await?
             }
             workspace::WORKSPACE_COMMIT => {
-                workspace::commit(workspace_repository, run_id, call, profile).await?
+                workspace::commit(model_workspace_repository, run_id, call, profile).await?
             }
             workspace::WORKSPACE_FINISH => workspace::finish(call)?,
             other => {
@@ -182,6 +187,23 @@ impl AgentToolDispatcher {
             result: outcome.0,
             effect: outcome.1,
             elapsed_ms: started.elapsed().as_millis(),
+        })
+    }
+
+    async fn read_run_prompt_snapshot(
+        &self,
+        run_id: &str,
+    ) -> Result<serde_json::Value, ApplicationError> {
+        let snapshot_path = WorkspacePath::parse(RUN_PROMPT_SNAPSHOT_PATH)?;
+        let snapshot_file = self
+            .workspace_repository
+            .read_text(run_id, &snapshot_path)
+            .await
+            .map_err(ApplicationError::from)?;
+        serde_json::from_str(&snapshot_file.text).map_err(|error| {
+            ApplicationError::ValidationError(format!(
+                "agent.invalid_prompt_snapshot_file: failed to parse prompt snapshot JSON: {error}"
+            ))
         })
     }
 }
