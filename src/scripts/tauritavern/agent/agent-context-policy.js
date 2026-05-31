@@ -41,6 +41,10 @@ export async function loadAgentContextPolicy(profileId) {
 }
 
 export function applyInitialChatHistoryPolicy(coreChat, policy) {
+    if (!Array.isArray(coreChat)) {
+        throw new Error('agent.context_history_messages_invalid: messages must be an array');
+    }
+
     const resolved = normalizeAgentContextPolicy(policy);
     if (resolved.initialChatHistoryMessages < 0) {
         return coreChat;
@@ -49,5 +53,13 @@ export function applyInitialChatHistoryPolicy(coreChat, policy) {
         return [];
     }
 
-    return coreChat.slice(-resolved.initialChatHistoryMessages);
+    // SillyTavern's OpenAI PromptManager raw chat history is latest-first.
+    // Positive Agent windows therefore keep the front of the array.
+    return coreChat.slice(0, resolved.initialChatHistoryMessages);
+}
+
+export function materializeInitialChatHistoryMessages(coreChat, policy) {
+    // PromptManager assembly mutates history while injecting prompts and
+    // reversing into provider order; frozen Agent input must stay reusable.
+    return structuredClone(applyInitialChatHistoryPolicy(coreChat, policy));
 }

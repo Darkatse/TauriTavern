@@ -490,12 +490,12 @@ test('Agent generation router rejects unconfigured profiles before direct genera
     );
 });
 
-test('Agent context policy supports empty initial prompt history', async () => {
+test('Agent context policy windows latest-first prompt history without mutating frozen input', async () => {
     const contextPolicy = await importFresh('src/scripts/tauritavern/agent/agent-context-policy.js');
     const chat = [
-        { role: 'user', content: 'oldest' },
-        { role: 'assistant', content: 'middle' },
         { role: 'user', content: 'latest' },
+        { role: 'assistant', content: 'middle' },
+        { role: 'user', content: 'oldest' },
     ];
 
     assert.deepEqual(contextPolicy.normalizeAgentContextPolicy({
@@ -512,11 +512,30 @@ test('Agent context policy supports empty initial prompt history', async () => {
     assert.deepEqual(contextPolicy.applyInitialChatHistoryPolicy(chat, {
         initialChatHistoryMessages: 2,
         includeActivatedWorldInfo: true,
-    }), chat.slice(-2));
+    }), chat.slice(0, 2));
     assert.equal(contextPolicy.applyInitialChatHistoryPolicy(chat, {
         initialChatHistoryMessages: -1,
         includeActivatedWorldInfo: true,
     }), chat);
+
+    const materialized = contextPolicy.materializeInitialChatHistoryMessages(chat, {
+        initialChatHistoryMessages: -1,
+        includeActivatedWorldInfo: true,
+    });
+    assert.deepEqual(materialized, chat);
+    assert.notEqual(materialized, chat);
+    assert.notEqual(materialized[0], chat[0]);
+
+    materialized[0].content = 'mutated';
+    assert.equal(chat[0].content, 'latest');
+
+    assert.throws(
+        () => contextPolicy.applyInitialChatHistoryPolicy(null, {
+            initialChatHistoryMessages: -1,
+            includeActivatedWorldInfo: true,
+        }),
+        /agent\.context_history_messages_invalid/,
+    );
 });
 
 test('Agent history window is applied at PromptManager assembly boundary', async () => {
@@ -528,7 +547,7 @@ test('Agent history window is applied at PromptManager assembly boundary', async
 
     assert.doesNotMatch(scriptSource, /promptCoreChat/);
     assert.match(scriptSource, /oaiMessages\s*=\s*setOpenAIMessages\(coreChat\)/);
-    assert.match(openaiSource, /applyInitialChatHistoryPolicy\(messages,\s*agentContextPolicy\)/);
+    assert.match(openaiSource, /materializeInitialChatHistoryMessages\(messages,\s*agentContextPolicy\)/);
     assert.match(brokerSource, /agentContextPolicy:\s*request\.agentContextPolicy/);
 });
 

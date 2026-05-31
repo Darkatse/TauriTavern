@@ -147,6 +147,8 @@ api.agent does not expose ambiguous startRun alias
 Generate(..., dryRun = true) resolves undefined and emits GENERATE_AFTER_DATA
 startRunFromLegacyGenerate captures dryRun payload through event listener
 agentMode disables Legacy ToolManager tools in prompt snapshot
+Agent initialChatHistoryMessages positive window keeps latest-first recent turns before PromptManager assembly
+Agent PromptManager assembly materializes a working copy and does not mutate FrozenRunInputSnapshot.promptInputs.messages
 external tools/tool_choice/tool turns are rejected
 stream true is rejected
 foreground finish before workspace.commit returns recoverable tool error

@@ -32,7 +32,7 @@ import {
 import { getGroupNames, selected_group } from './group-chats.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { allowlistSettingAllows, getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
-import { applyInitialChatHistoryPolicy } from './tauritavern/agent/agent-context-policy.js';
+import { materializeInitialChatHistoryMessages } from './tauritavern/agent/agent-context-policy.js';
 
 import {
     chatCompletionDefaultPrompts,
@@ -1963,7 +1963,10 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     if (!agentMode) {
         removeAgentOnlyPrompts(prompts);
     } else {
-        messages = applyInitialChatHistoryPolicy(messages, agentContextPolicy);
+        // Agent frozen input keeps PromptManager's latest-first raw history.
+        // Work on a materialized copy because downstream assembly splices,
+        // attaches, and reverses messages into provider chronological order.
+        messages = materializeInitialChatHistoryMessages(messages, agentContextPolicy);
     }
 
     // Helper function for preparing a prompt, that already exists within the prompt collection, for completion

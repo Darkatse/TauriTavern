@@ -64,7 +64,7 @@
 - `worldInfoActivation`：本次 run 激活的世界书事实，用于 `worldinfo.read_activated` 与审计。
 - `macroContext`：冻结 `{{user}}`、`{{char}}`、角色字段、persona、示例消息、`{{model}}` 等宏所需上下文。
 
-`promptInputs.messages` 保存本次 run 的完整候选聊天历史输入，不在 Legacy Generate 阶段按 Agent Profile 提前裁剪。`context.initialChatHistoryMessages` 是 PromptManager 组装期的 Agent context policy：`-1` 表示不做显式楼数裁剪，`0` 表示初始 prompt 不注入真实聊天楼层，正数表示最多注入最近 N 楼；最终可进入 provider payload 的历史仍受 PromptManager token budget 限制。这样 runtime-time child/handoff 可以用同一份 frozen input 按 target Profile 重新组装自己的初始 prompt。
+`promptInputs.messages` 保存本次 run 的完整候选聊天历史输入，使用 SillyTavern PromptManager 的 latest-first 中间格式，不在 Legacy Generate 阶段按 Agent Profile 提前裁剪。`context.initialChatHistoryMessages` 是 PromptManager 组装期的 Agent context policy：`-1` 表示不做显式楼数裁剪，`0` 表示初始 prompt 不注入真实聊天楼层，正数表示最多注入最近 N 楼；最终可进入 provider payload 的历史仍受 PromptManager token budget 限制。组装期必须先 materialize 工作副本，再执行 attach-existing、in-chat injection、continue splice 与 reverse 等 PromptManager mutation，不能污染 frozen input。这样 runtime-time child/handoff 可以用同一份 frozen input 按 target Profile 重新组装自己的初始 prompt。
 
 extension prompts 在冻结时会先执行 filter，只保留非空、结构化、可 clone 的 `value / position / depth / scan / role`。
 

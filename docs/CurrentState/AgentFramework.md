@@ -98,7 +98,7 @@ _tauritavern/agent-profiles/
 - `preset.mode = "ref"` 会加载指定 OpenAI/chat-completion preset，经 Frontend PromptAssemblyBroker 真实复用 SillyTavern PromptManager 组装；`currentPromptSnapshot` / `none` 保留兼容路径。
 - `model.mode = "connectionRef"` 要求 `connectionRef` 与 `modelId`，组装阶段会把 source/model 覆盖到 prompt settings，runtime 发送前会再次以 LLM Connection 权威覆盖 payload。
 - `model.mode = "requiresConfiguration"` 表示外部导入/分享后的 Profile 需要本机重新选择模型；该状态可保存、可展示，但 root run、SubAgent 与 prompt assembly 都会 fail-fast。
-- `context.initialChatHistoryMessages` 只作用于 PromptManager 组装期的初始聊天历史窗口：`-1` 不做显式楼数裁剪，`0` 不向初始 prompt 注入真实聊天楼层，正数最多注入最近 N 楼。`FrozenRunInputSnapshot.promptInputs.messages` 保留完整候选历史，便于 child / handoff 按 target Profile 重新组装；`chat.read_messages`、`chat.search` 与 persist base 仍按 Rust runtime 的 run input prefix 工作。
+- `context.initialChatHistoryMessages` 只作用于 PromptManager 组装期的初始聊天历史窗口：`-1` 不做显式楼数裁剪，`0` 不向初始 prompt 注入真实聊天楼层，正数最多注入最近 N 楼。`FrozenRunInputSnapshot.promptInputs.messages` 保留 SillyTavern PromptManager 的 latest-first 完整候选历史；组装期只能 materialize 工作副本后裁剪、注入和反转，不能污染 frozen input，便于 child / handoff 按 target Profile 重新组装；`chat.read_messages`、`chat.search` 与 persist base 仍按 Rust runtime 的 run input prefix 工作。
 - `tools.allow` / `tools.deny` 决定模型可见工具，dispatcher 会二次拦截不可见工具。
 - `tools.toolDescriptions` 省略或为空时使用默认工具 description；设置时只替换 model-facing ToolSpec copy 的工具总 description 与参数 description。
 - `skills.visible` / `skills.deny` 控制 `skill.list`、`skill.search` 与 `skill.read`，`maxReadCharsPerCall` / `maxReadCharsPerRun` 控制 Skill 读取预算。
