@@ -116,6 +116,22 @@ fn inline_skill_with_source(
 }
 
 #[tokio::test]
+async fn preview_import_allows_missing_license_without_warning() {
+    let root = temp_root("preview-no-license");
+    let repository = FileSkillRepository::new(root.clone());
+    let preview = repository
+        .preview_import(inline_skill("test-skill", vec![]), global_scope())
+        .await
+        .expect("preview skill without license");
+
+    assert_eq!(preview.skill.name, "test-skill");
+    assert_eq!(preview.skill.license, None);
+    assert!(preview.warnings.is_empty());
+
+    tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn installs_inline_skill_and_reads_file() {
     let root = temp_root("install");
     let repository = FileSkillRepository::new(root.clone());

@@ -62,9 +62,6 @@ pub(super) fn validate_skill_root(
                 .to_string(),
         );
     }
-    if frontmatter.license.is_none() {
-        warnings.push("Skill has no license field.".to_string());
-    }
 
     let entry = SkillIndexEntry {
         scope: Default::default(),
