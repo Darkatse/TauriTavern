@@ -327,6 +327,23 @@ function createDomHarness() {
     };
 }
 
+test('regex editor exposes shared maximize controls for multiline fields only', async () => {
+    const template = await readFile(path.join(REPO_ROOT, 'src/scripts/extensions/regex/editor.html'), 'utf8');
+    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/extensions/regex/index.js'), 'utf8');
+
+    assert.match(template, /class="regex_replace_string_maximize editor_maximize fa-solid fa-maximize right_menu_button"/);
+    assert.match(template, /class="regex_trim_strings_maximize editor_maximize fa-solid fa-maximize right_menu_button"/);
+    assert.equal((template.match(/<small class="inline-flex alignitemscenter gap5px">/g) ?? []).length, 2);
+    assert.equal((template.match(/\beditor_maximize\b/g) ?? []).length, 2);
+    assert.doesNotMatch(template, /find_regex_maximize/);
+
+    assert.match(source, /REGEX_EDITOR_MAXIMIZE_FIELDS[\s\S]*controlSelector:\s*'\.regex_replace_string'[\s\S]*controlSelector:\s*'\.regex_trim_strings'/);
+    assert.match(source, /bindRegexEditorMaximizeTargets\(editorHtml\)/);
+    assert.match(source, /control\.attr\('id', targetId\)/);
+    assert.match(source, /button\.attr\('data-for', targetId\)/);
+    assert.doesNotMatch(source, /controlSelector:\s*'\.find_regex'/);
+});
+
 test('geometry firewall surface selectors keep high specificity (>= Vue scoped)', async () => {
     const firewallPath = path.join(REPO_ROOT, 'src/tauri/main/compat/mobile/mobile-geometry-firewall.js');
     const source = await readFile(firewallPath, 'utf8');

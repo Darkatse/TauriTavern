@@ -25,6 +25,20 @@ export { getRegexScripts };
 const sanitizeFileName = name => name.replace(/[\s.<>:"/\\|?*\x00-\x1F\x7F]/g, '_').toLowerCase();
 const REGEX_CHAT_REFRESH_DEBOUNCE_MS = 500;
 const regexRefreshCoordinator = getRegexRefreshCoordinator();
+const REGEX_EDITOR_MAXIMIZE_FIELDS = Object.freeze([
+    {
+        controlSelector: '.regex_replace_string',
+        labelSelector: 'label[for="regex_replace_string"]',
+        buttonSelector: '.regex_replace_string_maximize',
+        idName: 'replace_string',
+    },
+    {
+        controlSelector: '.regex_trim_strings',
+        labelSelector: 'label[for="regex_trim_strings"]',
+        buttonSelector: '.regex_trim_strings_maximize',
+        idName: 'trim_strings',
+    },
+]);
 
 function requestRegexChatRefresh() {
     if (!getCurrentChatId()) {
@@ -38,6 +52,30 @@ async function flushRegexChatNow() {
         return;
     }
     await regexRefreshCoordinator.flushNow();
+}
+
+/**
+ * Connects regex multiline fields to the shared editor_maximize popup.
+ *
+ * @param {JQuery<HTMLElement>} editorHtml Rendered regex editor template
+ */
+function bindRegexEditorMaximizeTargets(editorHtml) {
+    const editorId = uuidv4();
+
+    for (const field of REGEX_EDITOR_MAXIMIZE_FIELDS) {
+        const targetId = `regex_editor_${field.idName}_${editorId}`;
+        const control = editorHtml.find(field.controlSelector);
+        const label = editorHtml.find(field.labelSelector);
+        const button = editorHtml.find(field.buttonSelector);
+
+        if (control.length !== 1 || label.length !== 1 || button.length !== 1) {
+            throw new Error(`Regex editor maximize target is missing: ${field.controlSelector}`);
+        }
+
+        control.attr('id', targetId);
+        label.attr('for', targetId);
+        button.attr('data-for', targetId);
+    }
 }
 
 /**
@@ -781,6 +819,7 @@ async function loadRegexScripts() {
  */
 async function onRegexEditorOpenClick(existingId, scriptType) {
     const editorHtml = $(await renderExtensionTemplateAsync('regex', 'editor'));
+    bindRegexEditorMaximizeTargets(editorHtml);
     const array = getScriptsByType(scriptType);
 
     // If an ID exists, fill in all the values

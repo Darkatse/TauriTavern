@@ -58,7 +58,10 @@
             </div>
             <div class="flex1">
                 <label for="regex_replace_string" class="title_restorable">
-                    <small data-i18n="Replace With">Replace With</small>
+                    <small class="inline-flex alignitemscenter gap5px">
+                        <span data-i18n="Replace With">Replace With</span>
+                        <i class="regex_replace_string_maximize editor_maximize fa-solid fa-maximize right_menu_button" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
+                    </small>
                 </label>
                 <div>
                     <textarea class="regex_replace_string text_pole wide100p textarea_compact" data-i18n="[placeholder]ext_regex_replace_string_placeholder" placeholder="Use {{match}} to include the matched text from the Find Regex, $1, $2, etc. for numbered capture groups, or $&lt;name&gt; for named capture groups." rows="3"></textarea>
@@ -66,7 +69,10 @@
             </div>
             <div class="flex1">
                 <label for="regex_trim_strings" class="title_restorable">
-                    <small data-i18n="Trim Out">Trim Out</small>
+                    <small class="inline-flex alignitemscenter gap5px">
+                        <span data-i18n="Trim Out">Trim Out</span>
+                        <i class="regex_trim_strings_maximize editor_maximize fa-solid fa-maximize right_menu_button" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
+                    </small>
                 </label>
                 <div>
                     <textarea class="regex_trim_strings text_pole wide100p textarea_compact" data-i18n="[placeholder]ext_regex_trim_placeholder" placeholder="Globally trims any unwanted parts from a regex match before replacement. Separate each element by an enter." rows="3"></textarea>
