@@ -184,12 +184,14 @@ impl ChatCompletionService {
                 continue;
             };
 
-            let value = value.as_str().ok_or_else(|| {
-                ApplicationError::ValidationError(format!(
-                    "Chat completion request field must be a string: {}",
-                    key
-                ))
-            })?;
+            let value = additional_parameters::coerce_custom_parameter_field(value).ok_or_else(
+                || {
+                    ApplicationError::ValidationError(format!(
+                        "Chat completion request field must be a string: {}",
+                        key
+                    ))
+                },
+            )?;
 
             if !value.trim().is_empty() {
                 overridden.push(key);
