@@ -7,4 +7,4 @@ mod rendering;
 mod task_return_tool;
 mod task_status;
 mod tool_error;
-mod workspace_view;
+pub(super) mod workspace_policy;

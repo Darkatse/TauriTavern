@@ -5,12 +5,16 @@ use serde_json::{Map, Value, json};
 use super::rendering::render_task_return_summary;
 use super::task_status::{task_is_terminal, task_return_status, task_status_label};
 use super::tool_error::tool_error_outcome;
-use super::workspace_view::ChildWorkspaceView;
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
+use crate::application::services::agent_workspace_scope::{
+    format_model_workspace_roots, task_result_summary_path, workspace_path_is_under_any_root,
+};
+use crate::domain::models::agent::profile::ResolvedAgentProfile;
 use crate::domain::models::agent::{
-    AgentInvocationExitPolicy, AgentRunEventLevel, AgentToolCall, AgentToolResult, WorkspacePath,
+    AgentInvocationExitPolicy, AgentRunEventLevel, AgentTaskRecord, AgentToolCall, AgentToolResult,
+    WorkspacePath,
 };
 
 impl AgentRuntimeService {
@@ -20,7 +24,7 @@ impl AgentRuntimeService {
         invocation_id: &str,
         call: &AgentToolCall,
         exit_policy: AgentInvocationExitPolicy,
-        workspace_view: Option<&ChildWorkspaceView>,
+        profile: &ResolvedAgentProfile,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
         if exit_policy != AgentInvocationExitPolicy::TaskReturnRequired {
@@ -78,20 +82,14 @@ impl AgentRuntimeService {
             ));
         }
         let result_ref = WorkspacePath::parse(format!("agent-results/{invocation_id}.json"))?;
-        let workspace_view = workspace_view.ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "agent.child_workspace_view_missing: no workspace view for child invocation `{invocation_id}`"
-            ))
-        })?;
-        let summary_ref = workspace_view.summary_result_path()?;
-        let result_payload = match normalize_task_return_arguments(&call.arguments, &workspace_view)
-        {
+        let summary_ref = task_result_summary_path(&task.workspace_key)?;
+        let result_payload = match normalize_task_return_arguments(&call.arguments, profile) {
             Ok(arguments) => arguments,
-            Err(message) => {
+            Err(error) => {
                 return Ok(tool_error_outcome(
                     call,
-                    "tool.invalid_arguments",
-                    &message,
+                    error.code,
+                    &error.message,
                     started.elapsed().as_millis(),
                 ));
             }
@@ -185,6 +183,26 @@ impl AgentRuntimeService {
             elapsed_ms: started.elapsed().as_millis(),
         })
     }
+
+    async fn task_for_child_invocation(
+        &self,
+        run_id: &str,
+        invocation_id: &str,
+    ) -> Result<Option<AgentTaskRecord>, ApplicationError> {
+        let mut matches = self
+            .invocation_repository
+            .list_tasks(run_id)
+            .await?
+            .into_iter()
+            .filter(|task| task.child_invocation_id == invocation_id)
+            .collect::<Vec<_>>();
+        if matches.len() > 1 {
+            return Err(ApplicationError::ValidationError(format!(
+                "agent.duplicate_task_record: multiple tasks own child invocation `{invocation_id}`"
+            )));
+        }
+        Ok(matches.pop())
+    }
 }
 
 fn required_trimmed_string(args: &Map<String, Value>, key: &str) -> Result<String, String> {
@@ -196,31 +214,70 @@ fn required_trimmed_string(args: &Map<String, Value>, key: &str) -> Result<Strin
         .ok_or_else(|| format!("{key} must be a non-empty string"))
 }
 
+struct TaskReturnArgumentError {
+    code: &'static str,
+    message: String,
+}
+
+impl TaskReturnArgumentError {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
 fn normalize_task_return_arguments(
     arguments: &Value,
-    workspace_view: &ChildWorkspaceView,
-) -> Result<Value, String> {
+    profile: &ResolvedAgentProfile,
+) -> Result<Value, TaskReturnArgumentError> {
     let Some(args) = arguments.as_object() else {
         return Ok(arguments.clone());
     };
     let mut args = args.clone();
-    let Some(artifacts) = args.get("artifacts").and_then(Value::as_array) else {
+    let Some(artifacts_value) = args.get("artifacts") else {
         return Ok(Value::Object(args));
+    };
+    let Some(artifacts) = artifacts_value.as_array() else {
+        return Err(TaskReturnArgumentError::new(
+            "tool.invalid_arguments",
+            "artifacts must be an array",
+        ));
     };
 
     let mut normalized_artifacts = Vec::with_capacity(artifacts.len());
-    for artifact in artifacts {
+    for (index, artifact) in artifacts.iter().enumerate() {
         let Some(artifact_object) = artifact.as_object() else {
-            normalized_artifacts.push(artifact.clone());
-            continue;
+            return Err(TaskReturnArgumentError::new(
+                "tool.invalid_arguments",
+                format!("artifacts[{index}] must be an object"),
+            ));
         };
         let mut artifact_object = artifact_object.clone();
-        if let Some(path) = artifact_object.get("path").and_then(Value::as_str) {
-            artifact_object.insert(
-                "path".to_string(),
-                Value::String(workspace_view.parent_visible_path(path)?),
-            );
+        let Some(path) = artifact_object.get("path").and_then(Value::as_str) else {
+            return Err(TaskReturnArgumentError::new(
+                "tool.invalid_arguments",
+                format!("artifacts[{index}].path must be a workspace path string"),
+            ));
+        };
+        let path = WorkspacePath::parse(path).map_err(|error| {
+            TaskReturnArgumentError::new(
+                "workspace.invalid_path",
+                format!("artifacts[{index}].path is not a valid workspace path: {error}"),
+            )
+        })?;
+        if !workspace_path_is_under_any_root(&path, &profile.workspace.visible_roots) {
+            return Err(TaskReturnArgumentError::new(
+                "workspace.path_not_visible",
+                format!(
+                    "artifacts[{index}].path `{}` is not visible to this delegated task. Regenerate task_return with artifact paths under visible roots: {}.",
+                    path.as_str(),
+                    format_model_workspace_roots(&profile.workspace.visible_roots)
+                ),
+            ));
         }
+        artifact_object.insert("path".to_string(), Value::String(path.as_str().to_string()));
         normalized_artifacts.push(Value::Object(artifact_object));
     }
     args.insert("artifacts".to_string(), Value::Array(normalized_artifacts));

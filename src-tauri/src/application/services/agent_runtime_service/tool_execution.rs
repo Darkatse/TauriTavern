@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 
 use super::AgentRuntimeService;
 use super::commit_ledger::RunCommitLedger;
+use super::delegation::workspace_policy::InvocationWorkspaceRepository;
 use crate::application::errors::ApplicationError;
 
 use crate::application::services::agent_tools::{
@@ -147,30 +148,6 @@ impl AgentRuntimeService {
         )
         .await?;
 
-        let child_workspace_view = if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
-            Some(
-                self.child_workspace_view(run_id, invocation_id, profile)
-                    .await?,
-            )
-        } else {
-            None
-        };
-
-        if let Some(message) = child_workspace_view
-            .as_ref()
-            .and_then(|view| view.write_denial_message(call))
-        {
-            let outcome = recoverable_tool_error(
-                call,
-                "agent.child_workspace_write_denied",
-                &message,
-                started.elapsed().as_millis(),
-            );
-            self.record_tool_outcome(run_id, invocation_id, round, &outcome)
-                .await?;
-            return Ok(outcome);
-        }
-
         let dispatch_result = if call.name == AGENT_LIST {
             self.dispatch_agent_list_tool(call, profile).await
         } else if call.name == AGENT_DELEGATE {
@@ -193,16 +170,11 @@ impl AgentRuntimeService {
             )
             .await
         } else if call.name == TASK_RETURN {
-            self.dispatch_task_return_tool(
-                run_id,
-                invocation_id,
-                call,
-                exit_policy,
-                child_workspace_view.as_ref(),
-            )
-            .await
-        } else if let Some(view) = child_workspace_view.as_ref() {
-            let workspace_repository = view.repository(self.workspace_repository.as_ref());
+            self.dispatch_task_return_tool(run_id, invocation_id, call, exit_policy, profile)
+                .await
+        } else if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
+            let workspace_repository =
+                InvocationWorkspaceRepository::new(self.workspace_repository.as_ref(), profile);
             self.tool_dispatcher
                 .dispatch_with_model_workspace_repository(
                     run_id,
@@ -265,11 +237,6 @@ impl AgentRuntimeService {
                         .await?
                     }
                     _ => outcome,
-                };
-                let outcome = if let Some(view) = child_workspace_view.as_ref() {
-                    view.physicalize_outcome_effect(outcome)?
-                } else {
-                    outcome
                 };
                 self.record_tool_outcome(run_id, invocation_id, round, &outcome)
                     .await?;

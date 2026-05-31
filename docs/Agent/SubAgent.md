@@ -100,11 +100,10 @@ src-tauri/src/infrastructure/repositories/file_agent_repository/invocation_store
 invocations/<invocation-id>.json
 tasks/<task-id>.json
 agent-results/<child-invocation-id>.json
-summaries/agents/<workspace-key>/result.md
-scratch/agents/<workspace-key>/
+summaries/<workspace-key>-result.md
 ```
 
-`workspace_key` 面向 Agent 友好化：优先使用 target Agent id；同一个 run 中重复调用同一 Agent 时追加 `-002`、`-003`。
+`workspace_key` 面向 Agent 友好化：优先使用 target Agent id；同一个 run 中重复调用同一 Agent 时追加 `-002`、`-003`，并用于生成自动 task result summary 文件名。
 
 ## 4. Tool Surface
 
@@ -151,7 +150,7 @@ return-mode child Agent 必须遵守更窄的执行契约：
 - 注入 `task.return`。
 - `exit_policy = TaskReturnRequired`。
 - 可使用 target Agent Profile 的 model binding 与工具预算；delegate call 可进一步收窄 `maxRounds` / `maxToolCalls`。
-- 保留 child 私有 `summaries/` / `scratch/` 语义目录；`output/`、`plan/`、`persist/` 等共享 workspace root 的可见/可写能力由 target Agent Profile 的 `workspace.visibleRoots` / `workspace.writableRoots` 决定。
+- child 与请求它的 Agent 使用同一套逻辑 workspace path，不存在 return-mode 专用目录映射；可见/可写 root 仍由 target Agent Profile 的 `workspace.visibleRoots` / `workspace.writableRoots` 决定。
 
 实现入口：
 
@@ -185,46 +184,37 @@ src-tauri/src/application/services/agent_runtime_service/delegation/rendering.rs
 - 面向子 Agent，而不是面向 runtime。
 - 使用 markdown 标题组织 `Title`、`Objective`、`Context`、`Expected Output`。
 - 不把 `taskId`、`invocationId`、`profileId`、`inside TauriTavern` 等运行时细节塞给模型。
-- 明确提示可写私有 `summaries/`、`scratch/`，可读 `summaries/parent/`、`summaries/agents/`，并可在 Profile 授权时读写共享 `output/`、`plan/`、`persist/` 等 root。
-- 只描述子 Agent 可直接操作的 virtual workspace path；共享 root 以“任务要求的 artifact / edit”呈现，不解释物理映射或 CAS 参数。
+- 明确提示子 Agent 使用任务 brief 中出现的普通 workspace path；如果需要写 notes/artifact，只写入 target Profile 授权的 writable root。
+- 不解释物理映射、CAS 参数或 runtime id；路径语言始终从执行 Agent 能直接操作的 workspace 出发。
 
 `task.return` 会写两份结果：
 
 ```text
 agent-results/<child-invocation-id>.json      # runtime/audit structured result
-summaries/agents/<workspace-key>/result.md    # parent/other Agents 可读 summary
+summaries/<workspace-key>-result.md           # 普通 workspace summary，父 Agent 可直接读取
 ```
 
 `agent.await` 与后台结果自动注入都读取 structured result，但返回给父 Agent 的内容经过 markdown 渲染，只暴露 summary、findings、warnings、suggestedNextActions、questionsForCaller、artifacts、confidence 等 Agent 有用信息。渲染 capsule 末尾会追加一个面向当前父 Agent 的轻量 continuation hint：提醒这些结果是上下文，不覆盖当前 Agent Profile / task；下一步仍应继续使用 Agent tools，并按当前 foreground/background 与 commit 状态通过 `workspace_commit` / `workspace_finish` 收口。这个提示属于父 Agent 语言界面，不写入 task result structured payload。
 
-## 7. Invocation-scoped Workspace View
+## 7. Shared Workspace Semantics
 
-return-mode child Agent 不直接看到物理路径。它看到的是 invocation-scoped virtual workspace：
-
-| 子 Agent 看到 | 物理路径 | 权限 | 含义 |
-| --- | --- | --- | --- |
-| `summaries/` | `summaries/agents/<workspace-key>/` | read/write | 当前任务的持久 notes |
-| `scratch/` | `scratch/agents/<workspace-key>/` | read/write | 当前任务的临时 notes |
-| `summaries/parent/` | `summaries/` 中排除 `agents/` 的父级私有摘要树 | read-only | 请求者提供或留下的 notes |
-| `summaries/agents/` | `summaries/agents/` 中排除当前 child 自己 | read-only | 其他 delegated Agents 的 notes |
-| Profile 可见共享 root，例如 `output/`、`plan/`、`persist/` | 同名 run workspace path | profile 决定 | 共享草稿、计划或本 run persist projection |
+return-mode child Agent 看到的 path 与请求它的 Agent 看到的 path 是同一套逻辑 workspace path。runtime 不再为 child 创建 `summaries/parent/`、`summaries/agents/` 或 `scratch/agents/<workspace-key>/` 这类虚拟映射。
 
 实现位置：
 
 ```text
-src-tauri/src/application/services/agent_runtime_service/delegation/workspace_view.rs
+src-tauri/src/application/services/agent_runtime_service/delegation/workspace_policy.rs
 ```
 
 关键规则：
 
-- child 永远可以写自己的私有 `summaries/` / `scratch/` 具体文件；除此之外只能写 target Profile 明确允许的共享 root 下的具体文件。
-- `summaries/parent/` 和 `summaries/agents/` 只读。
-- `summaries/parent/agents/...` 被拒绝，因为它把 parent private tree 和 sibling agent tree 混在一起。
-- `summaries/agents/<self>/...` 被拒绝，当前 child 应使用 `summaries/...` 访问自己的 notes。
+- child 使用 target Profile 的 `workspace.visibleRoots` / `workspace.writableRoots` 过滤同一个 run workspace；只改权限视图，不改路径。
+- Agent-facing prompt / tool description 只提示 visible/writable roots 与任务 brief 中的普通 workspace path。
+- `task.return` 自动把 markdown summary 写到 `summaries/<workspace-key>-result.md`；子 Agent 不需要也不应该手动写这个 result 文件。
+- 如果 child 需要支持性 notes，应选择明确的普通 workspace path，例如调用方指定的 `summaries/scene-critic-notes.md`；重复调用同一 Agent 时，调用方或子 Agent 可用更具体文件名避免碰撞。
 - `persist/` 仍只是本 run 的 projection；return-mode child 写入不会直接 promote，只有 root / handoff foreground owner 的 `workspace.finish` 收尾成功才会写回稳定 chat workspace。
-- NotFound / path-is-directory / denied alias 等错误会尽量转成模型输入的 virtual path，不泄露 `summaries/agents/<workspace-key>/...` 这种物理路径。
 
-这个视图是 Agent-friendly 的核心之一：小模型不应该背 invocation id 或长路径，也不应该理解 runtime 存储布局。
+这个语义更接近多人协作同一个项目目录：权限由 Profile 控制，路径不再承担 runtime 隔离概念。
 
 ## 8. Agent-friendly 原则
 
@@ -263,7 +253,7 @@ src-tauri/src/application/services/agent_runtime_service/delegation/task_return_
 src-tauri/src/application/services/agent_runtime_service/delegation/child_runtime.rs
 src-tauri/src/application/services/agent_runtime_service/delegation/policy.rs
 src-tauri/src/application/services/agent_runtime_service/delegation/rendering.rs
-src-tauri/src/application/services/agent_runtime_service/delegation/workspace_view.rs
+src-tauri/src/application/services/agent_runtime_service/delegation/workspace_policy.rs
 src-tauri/src/application/services/agent_runtime_service/scheduler.rs
 src-tauri/src/application/services/agent_runtime_service/invocation.rs
 src-tauri/src/application/services/agent_runtime_service/tool_execution.rs
@@ -311,7 +301,7 @@ src-tauri/src/infrastructure/repositories/file_agent_repository/tests.rs
 - `workspace.finish` 会取消 unfinished child tasks，而不会被其阻塞。
 - child invocation tool surface：无 commit/finish/delegate/await，有 task.return。
 - child system prompt 与 tool descriptions 不泄露不必要 runtime 细节。
-- child workspace view 的 read/write/list/path error 映射。
+- child workspace policy 只调整 root 可见/可写权限，不映射路径。
 - task.return artifact path normalizing 与 result summary 写入。
 
 ## 11. 已知边界
@@ -321,7 +311,7 @@ src-tauri/src/infrastructure/repositories/file_agent_repository/tests.rs
 - 没有 `agent.handoff`。
 - 没有模型可见 `agent.cancel_task`；当前只有 run cancel 与 finish 默认取消 unfinished child tasks。
 - return-mode child 默认不能 nested delegation，即使 profile schema 已有 `allowNestedDelegation` 字段。
-- 没有跨 child 的主动通信；只能通过 `summaries/agents/` 读取其他 child 的结果 notes。
+- 没有跨 child 的主动通信；多个 child 只能通过同一个 workspace 中的普通文件和 `task.return` 结果协作。
 - 没有独立的 task timeout 取消边界；child worker 使用当前 scheduler / run cancellation path。
 
 这些边界是刻意保守的。后续扩展应保持现有不变量：同一 run 边界、invocation 独立 provider_state、root/handoff 才能 commit、tool result 不写 chat、model-facing surface 以 Agent 视角设计。

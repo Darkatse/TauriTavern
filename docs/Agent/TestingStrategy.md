@@ -62,7 +62,7 @@ completed child results are injected into the next parent model turn once
 workspace.finish cancels unfinished child tasks without blocking run completion
 task.return records result and terminates child invocation
 child invocation cannot commit, finish, or delegate
-child workspace view maps semantic summaries/scratch paths and hides physical paths
+child workspace policy keeps paths unchanged and only scopes visible/writable roots
 ```
 
 关键断言：

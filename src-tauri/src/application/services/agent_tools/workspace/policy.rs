@@ -1,4 +1,5 @@
 use crate::application::errors::ApplicationError;
+use crate::application::services::agent_workspace_scope::workspace_path_is_under_any_root;
 use crate::domain::models::agent::{WorkspaceManifest, WorkspacePath};
 use crate::domain::repositories::workspace_repository::WorkspaceRepository;
 
@@ -58,9 +59,7 @@ impl WorkspaceAccessPolicy {
     }
 
     pub(super) fn is_visible(&self, path: &WorkspacePath) -> bool {
-        self.visible_roots
-            .iter()
-            .any(|root| path_matches_root_or_child(path.as_str(), root.as_str()))
+        workspace_path_is_under_any_root(path, &self.visible_roots)
     }
 
     pub(super) fn is_writable(&self, path: &WorkspacePath) -> bool {
@@ -76,10 +75,6 @@ pub(super) async fn workspace_access_policy(
 ) -> Result<WorkspaceAccessPolicy, ApplicationError> {
     let manifest = workspace_repository.read_manifest(run_id).await?;
     WorkspaceAccessPolicy::from_manifest(&manifest)
-}
-
-fn path_matches_root_or_child(path: &str, root: &str) -> bool {
-    path == root || path_matches_child(path, root)
 }
 
 fn path_matches_child(path: &str, root: &str) -> bool {

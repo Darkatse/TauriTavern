@@ -12,6 +12,7 @@ use uuid::Uuid;
 use super::AgentRuntimeService;
 use super::artifacts::build_agent_manifest;
 use super::commit_ledger::RunCommitLedger;
+use super::delegation::workspace_policy::InvocationWorkspaceRepository;
 use super::skill_scope::{resolve_run_skill_scope_refs, skill_scope_order_for_profile};
 use crate::application::dto::agent_dto::{
     AgentPromptAssemblyScopeDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
@@ -1013,8 +1014,12 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
         description_for_agents: Some("Return concise scene critique.".to_string()),
         ..Default::default()
     };
-    child_profile.workspace.visible_roots = vec!["output".to_string(), "persist".to_string()];
-    child_profile.workspace.writable_roots = vec!["output".to_string()];
+    child_profile.workspace.visible_roots = vec![
+        "summaries".to_string(),
+        "output".to_string(),
+        "persist".to_string(),
+    ];
+    child_profile.workspace.writable_roots = vec!["summaries".to_string(), "output".to_string()];
 
     let model_gateway = Arc::new(MockAgentModelGateway::new(vec![
         json!({
@@ -1234,13 +1239,10 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
         task.child_invocation_id
     );
     assert_eq!(result["runtime"]["workspaceKey"], task.workspace_key);
-    assert_eq!(
-        result["summaryRef"],
-        "summaries/agents/scene-critic/result.md"
-    );
+    assert_eq!(result["summaryRef"], "summaries/scene-critic-result.md");
     assert_eq!(
         result["result"]["artifacts"][0]["path"],
-        "summaries/agents/scene-critic/notes.md"
+        "summaries/notes.md"
     );
     assert_eq!(
         result["result"]["artifacts"][1]["path"],
@@ -1250,7 +1252,7 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
     repository
         .read_text(
             &run.id,
-            &WorkspacePath::parse("summaries/agents/scene-critic/notes.md").unwrap(),
+            &WorkspacePath::parse("summaries/notes.md").unwrap(),
         )
         .await
         .expect("read child note");
@@ -1333,15 +1335,17 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
             })
         })
         .expect("child system prompt");
-    assert!(child_system_prompt.contains("Task workspace view"));
-    assert!(child_system_prompt.contains("summaries/parent/"));
-    assert!(child_system_prompt.contains("summaries/agents/"));
-    assert!(child_system_prompt.contains(
-        "- Visible workspace roots for this task: summaries/, scratch/, output/, persist/."
-    ));
+    assert!(child_system_prompt.contains("Delegated task workspace"));
+    assert!(child_system_prompt.contains("same logical workspace paths"));
+    assert!(!child_system_prompt.contains("summaries/parent/"));
+    assert!(!child_system_prompt.contains("summaries/agents/"));
     assert!(
         child_system_prompt
-            .contains("- Writable workspace roots for this task: summaries/, scratch/, output/.")
+            .contains("- Visible workspace roots for this task: summaries/, output/, persist/.")
+    );
+    assert!(
+        child_system_prompt
+            .contains("- Writable workspace roots for this task: summaries/, output/.")
     );
     let child_write_spec = requests[1]
         .tools
@@ -1351,7 +1355,7 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
     assert!(
         child_write_spec
             .description
-            .contains("Writable prefixes are summaries/, scratch/, output/")
+            .contains("Writable prefixes are summaries/, output/")
     );
     assert!(!child_write_spec.description.contains("persist/"));
     assert!(!child_write_spec.description.contains("output/main.md"));
@@ -1369,10 +1373,10 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
     assert!(child_task_prompt.contains("# Delegated Task"));
     assert!(child_task_prompt.contains("## Objective"));
     assert!(child_task_prompt.contains("## Context"));
-    assert!(child_task_prompt.contains("summaries/notes.md"));
-    assert!(child_task_prompt.contains("scratch/notes.md"));
-    assert!(child_task_prompt.contains("summaries/parent/"));
-    assert!(child_task_prompt.contains("summaries/agents/"));
+    assert!(child_task_prompt.contains("exact workspace paths"));
+    assert!(!child_task_prompt.contains("scratch/notes.md"));
+    assert!(!child_task_prompt.contains("summaries/parent/"));
+    assert!(!child_task_prompt.contains("summaries/agents/"));
     assert!(!child_task_prompt.contains("Parent invocation"));
     assert!(!child_task_prompt.contains("Task packet"));
     assert!(!child_task_prompt.contains("Target Agent profile"));
@@ -1441,10 +1445,7 @@ async fn agent_delegate_await_runs_return_mode_subagent() {
     );
     assert!(await_task.get("invocationId").is_none());
     assert!(await_task.get("resultRef").is_none());
-    assert_eq!(
-        await_task["artifacts"][0]["path"],
-        "summaries/agents/scene-critic/notes.md"
-    );
+    assert_eq!(await_task["artifacts"][0]["path"], "summaries/notes.md");
     assert_eq!(
         await_task["artifacts"][1]["path"],
         "output/sections/scene_03.md"
@@ -6632,6 +6633,305 @@ async fn child_worldinfo_reads_run_snapshot_without_exposing_input_workspace() {
             .content
             .contains("input/prompt_snapshot.json")
     );
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn child_workspace_policy_scopes_manifest_roots_without_mapping() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-child-workspace-policy-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let run = AgentRun {
+        id: "run_child_workspace_policy_test".to_string(),
+        workspace_id: "child_workspace_policy_test".to_string(),
+        stable_chat_id: "stable_child_workspace_policy_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "alice".to_string(),
+            file_name: "session".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: Default::default(),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    let root_profile = test_resolved_profile(&root).await;
+    repository
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &root_profile),
+            &json!({ "chatCompletionPayload": { "messages": prompt_messages("hello") } }),
+            &root_profile,
+        )
+        .await
+        .expect("initialize workspace");
+
+    let mut child_profile = root_profile.clone();
+    child_profile.workspace.visible_roots = vec!["output".to_string(), "persist".to_string()];
+    child_profile.workspace.writable_roots = vec!["output".to_string()];
+    let policy_repository = InvocationWorkspaceRepository::new(repository.as_ref(), &child_profile);
+    let manifest = policy_repository
+        .read_manifest(&run.id)
+        .await
+        .expect("read invocation manifest");
+
+    let root_spec = |path: &str| {
+        manifest
+            .roots
+            .iter()
+            .find(|root| root.path == path)
+            .expect("workspace root")
+    };
+    assert!(root_spec("output").visible);
+    assert!(root_spec("output").writable);
+    assert!(root_spec("persist").visible);
+    assert!(!root_spec("persist").writable);
+    assert!(!root_spec("summaries").visible);
+    assert!(!root_spec("summaries").writable);
+    assert!(manifest.roots.iter().all(|root| !root.path.contains('/')));
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn task_return_rejects_artifact_path_outside_child_visible_roots() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-task-return-artifact-policy-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(vec![])),
+        test_profile_service(&root),
+        test_llm_connection_service(&root),
+    );
+    let run = AgentRun {
+        id: "run_task_return_artifact_policy_test".to_string(),
+        workspace_id: "task_return_artifact_policy_test".to_string(),
+        stable_chat_id: "stable_task_return_artifact_policy_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "alice".to_string(),
+            file_name: "session".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: Default::default(),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    let root_profile = test_resolved_profile(&root).await;
+    repository
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &root_profile),
+            &json!({ "chatCompletionPayload": { "messages": prompt_messages("hello") } }),
+            &root_profile,
+        )
+        .await
+        .expect("initialize workspace");
+    let mut child_profile = root_profile.clone();
+    child_profile.workspace.visible_roots = vec!["output".to_string()];
+    child_profile.workspace.writable_roots = vec!["output".to_string()];
+    let task = service
+        .create_child_task(
+            &run.id,
+            "inv_root",
+            "inv_child_task_return_artifact_policy".to_string(),
+            "task_child_task_return_artifact_policy".to_string(),
+            child_profile.id.as_str().to_string(),
+            "scene-critic".to_string(),
+            "call_delegate_artifact_policy".to_string(),
+            json!({ "objective": "Return a result." }),
+            None,
+        )
+        .await
+        .expect("create child task");
+
+    let mut session = AgentToolSession::default();
+    let mut commit_ledger = RunCommitLedger::default();
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let call = AgentToolCall {
+        id: "call_task_return_hidden_artifact".to_string(),
+        name: "task.return".to_string(),
+        arguments: json!({
+            "summary": "Done.",
+            "status": "completed",
+            "artifacts": [{
+                "path": "input/prompt_snapshot.json",
+                "kind": "json",
+                "role": "evidence"
+            }]
+        }),
+        provider_metadata: Value::Null,
+    };
+    let outcome = service
+        .dispatch_tool_call(
+            &run.id,
+            task.child_invocation_id.as_str(),
+            AgentInvocationExitPolicy::TaskReturnRequired,
+            1,
+            &call,
+            &mut session,
+            &child_profile,
+            0,
+            &mut commit_ledger,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("dispatch task.return");
+
+    assert!(outcome.result.is_error);
+    assert_eq!(
+        outcome.result.error_code.as_deref(),
+        Some("workspace.path_not_visible")
+    );
+    assert!(outcome.result.content.contains("Regenerate task_return"));
+    assert!(
+        outcome
+            .result
+            .content
+            .contains("input/prompt_snapshot.json")
+    );
+    let task = repository
+        .load_task(&run.id, task.id.as_str())
+        .await
+        .expect("load task");
+    assert_eq!(task.status, AgentTaskStatus::Queued);
+    assert!(task.result_ref.is_none());
+    let result_ref =
+        WorkspacePath::parse("agent-results/inv_child_task_return_artifact_policy.json").unwrap();
+    assert!(matches!(
+        repository.read_text(&run.id, &result_ref).await,
+        Err(DomainError::NotFound(_))
+    ));
+
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn return_mode_child_write_rejects_non_writable_visible_root() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-child-write-policy-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let service = AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(vec![])),
+        test_profile_service(&root),
+        test_llm_connection_service(&root),
+    );
+    let run = AgentRun {
+        id: "run_child_write_policy_test".to_string(),
+        workspace_id: "child_write_policy_test".to_string(),
+        stable_chat_id: "stable_child_write_policy_test".to_string(),
+        chat_ref: AgentChatRef::Character {
+            character_id: "alice".to_string(),
+            file_name: "session".to_string(),
+        },
+        generation_type: "normal".to_string(),
+        profile_id: None,
+        skill_scope_refs: Default::default(),
+        persist_base_state_id: None,
+        input_message_count: None,
+        presentation: AgentRunPresentation::Background,
+        status: AgentRunStatus::Created,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repository.create_run(&run).await.expect("create run");
+    let root_profile = test_resolved_profile(&root).await;
+    repository
+        .initialize_run(
+            &run,
+            &build_agent_manifest(&run, &root_profile),
+            &json!({ "chatCompletionPayload": { "messages": prompt_messages("hello") } }),
+            &root_profile,
+        )
+        .await
+        .expect("initialize workspace");
+    let mut child_profile = root_profile.clone();
+    child_profile.workspace.visible_roots = vec!["output".to_string(), "persist".to_string()];
+    child_profile.workspace.writable_roots = vec!["output".to_string()];
+    let task = service
+        .create_child_task(
+            &run.id,
+            "inv_root",
+            "inv_child_write_policy".to_string(),
+            "task_child_write_policy".to_string(),
+            child_profile.id.as_str().to_string(),
+            "scene-critic".to_string(),
+            "call_delegate_write_policy".to_string(),
+            json!({ "objective": "Write only allowed files." }),
+            None,
+        )
+        .await
+        .expect("create child task");
+
+    let mut session = AgentToolSession::default();
+    let mut commit_ledger = RunCommitLedger::default();
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    let call = AgentToolCall {
+        id: "call_child_write_persist".to_string(),
+        name: "workspace.write_file".to_string(),
+        arguments: json!({
+            "path": "persist/notes.md",
+            "content": "Should not be written."
+        }),
+        provider_metadata: Value::Null,
+    };
+    let outcome = service
+        .dispatch_tool_call(
+            &run.id,
+            task.child_invocation_id.as_str(),
+            AgentInvocationExitPolicy::TaskReturnRequired,
+            1,
+            &call,
+            &mut session,
+            &child_profile,
+            0,
+            &mut commit_ledger,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("dispatch child write");
+
+    assert!(outcome.result.is_error);
+    assert_eq!(
+        outcome.result.error_code.as_deref(),
+        Some("workspace.path_not_writable")
+    );
+    let path = WorkspacePath::parse("persist/notes.md").unwrap();
+    assert!(matches!(
+        repository.read_text(&run.id, &path).await,
+        Err(DomainError::NotFound(_))
+    ));
 
     tokio::fs::remove_dir_all(root).await.expect("cleanup");
 }

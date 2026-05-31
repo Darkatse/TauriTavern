@@ -132,7 +132,7 @@ impl AgentToolDispatcher {
             }
             world_info::WORLDINFO_READ_ACTIVATED => {
                 // WorldInfo activation is a hidden run input fact, not a model-visible
-                // workspace file; child workspace views must not gate this read.
+                // workspace file; invocation workspace policy must not gate this read.
                 let prompt_snapshot = self.read_run_prompt_snapshot(run_id).await?;
                 world_info::read_activated(&prompt_snapshot, call)?
             }

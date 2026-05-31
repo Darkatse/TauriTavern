@@ -4,9 +4,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::application::errors::ApplicationError;
-use crate::application::services::agent_workspace_scope::{
-    ReturnModeWorkspaceScope, format_model_workspace_roots,
-};
+use crate::application::services::agent_workspace_scope::format_model_workspace_roots;
 use crate::domain::models::agent::AgentToolSpec;
 use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy, DEFAULT_AGENT_PLAN_BETA};
 use crate::domain::models::agent::profile::{
@@ -227,31 +225,28 @@ pub fn materialize_agent_system_prompt(
     }
 
     if has_tool(tools, TASK_RETURN_TOOL) {
-        let scope = ReturnModeWorkspaceScope::from_profile(profile);
-        let visible_roots = scope.model_visible_roots();
-        let writable_roots = scope.model_writable_roots();
         lines.push(
-            "- Task workspace view: use summaries/ for durable private notes, scratch/ for temporary notes, and writable shared roots only for requested artifacts or edits."
+            "- Delegated task workspace: use the same logical workspace paths as the Agent that asked for this task. Do not invent private path mappings."
                 .to_string(),
         );
         lines.push(
-            "- Shared notes are read-only: summaries/parent/ contains notes from the Agent that asked for this task; summaries/agents/ contains notes from other delegated Agents, when present."
+            "- Use the workspace paths named in the task brief. Write supporting notes or artifacts only under writable roots."
                 .to_string(),
         );
         lines.push(format!(
             "- Visible workspace roots for this task: {}.",
-            format_model_workspace_roots(&visible_roots)
+            format_model_workspace_roots(&profile.workspace.visible_roots)
         ));
         lines.push(format!(
             "- Writable workspace roots for this task: {}.",
-            format_model_workspace_roots(&writable_roots)
+            format_model_workspace_roots(&profile.workspace.writable_roots)
         ));
         lines.push(format!(
             "# **Important**: You are completing a delegated task. Return your result only by calling {} with a concise result for the requesting Agent.",
             model_name(tools, TASK_RETURN_TOOL)
         ));
         lines.push(
-            "- If useful, write supporting notes or requested artifacts, then reference the useful paths in task_return."
+            "- If useful, write supporting notes or requested artifacts, then reference those workspace paths in task_return."
                 .to_string(),
         );
     } else {
@@ -1469,7 +1464,7 @@ mod tests {
     }
 
     #[test]
-    fn delegated_task_system_prompt_uses_task_workspace_view() {
+    fn delegated_task_system_prompt_uses_shared_workspace_paths() {
         let mut profile = test_profile(None, "background");
         profile.workspace.visible_roots = vec!["output".to_string(), "persist".to_string()];
         profile.workspace.writable_roots = vec!["output".to_string(), "persist".to_string()];
@@ -1480,15 +1475,12 @@ mod tests {
 
         let prompt = materialize_agent_system_prompt(&tools, &profile);
 
-        assert!(prompt.contains("Task workspace view"));
-        assert!(prompt.contains("summaries/parent/"));
-        assert!(prompt.contains("summaries/agents/"));
-        assert!(prompt.contains(
-            "- Visible workspace roots for this task: summaries/, scratch/, output/, persist/."
-        ));
-        assert!(prompt.contains(
-            "- Writable workspace roots for this task: summaries/, scratch/, output/, persist/."
-        ));
+        assert!(prompt.contains("Delegated task workspace"));
+        assert!(prompt.contains("same logical workspace paths"));
+        assert!(!prompt.contains("summaries/parent/"));
+        assert!(!prompt.contains("summaries/agents/"));
+        assert!(prompt.contains("- Visible workspace roots for this task: output/, persist/."));
+        assert!(prompt.contains("- Writable workspace roots for this task: output/, persist/."));
         assert!(!prompt.contains("- Visible workspace roots: output/, persist/."));
         assert!(!prompt.contains("- Writable workspace roots: output/, persist/."));
         assert!(!prompt.contains("Never"));

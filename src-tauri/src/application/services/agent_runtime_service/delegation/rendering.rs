@@ -82,13 +82,9 @@ pub(super) fn render_child_task_prompt(task: &AgentTaskRecord) -> String {
     lines.extend([
         "## Working Notes".to_string(),
         "Use workspace files only when they help complete this task:".to_string(),
-        "- summaries/notes.md for durable private notes or a longer capsule".to_string(),
-        "- scratch/notes.md for temporary working notes".to_string(),
-        "- summaries/parent/ for read-only notes from the Agent that asked for this task, when present"
-            .to_string(),
-        "- summaries/agents/ for read-only notes from other delegated Agents, when present"
-            .to_string(),
-        "- shared writable roots only when the task asks for an artifact or edit there"
+        "- Read or edit the exact workspace paths named in the task brief.".to_string(),
+        "- If you create supporting notes, choose a clear concrete path under a writable workspace root.".to_string(),
+        "- Use writable roots only when the task asks for an artifact, note, or edit there."
             .to_string(),
         String::new(),
         "Reference useful note or artifact paths in task_return.".to_string(),

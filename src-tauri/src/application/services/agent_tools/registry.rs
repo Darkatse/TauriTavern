@@ -10,9 +10,7 @@ use super::workspace::{
 };
 use super::world_info::worldinfo_read_activated_spec;
 use crate::application::errors::ApplicationError;
-use crate::application::services::agent_workspace_scope::{
-    ReturnModeWorkspaceScope, format_model_workspace_roots,
-};
+use crate::application::services::agent_workspace_scope::format_model_workspace_roots;
 use crate::domain::models::agent::AgentToolSpec;
 use crate::domain::models::agent::profile::{AgentToolDescriptionOverride, ResolvedAgentProfile};
 
@@ -103,13 +101,12 @@ fn apply_return_mode_context(
     spec: &mut AgentToolSpec,
     profile: &ResolvedAgentProfile,
 ) -> Result<(), ApplicationError> {
-    let scope = ReturnModeWorkspaceScope::from_profile(profile);
-    let visible_roots = format_model_workspace_roots(&scope.model_visible_roots());
-    let writable_roots = format_model_workspace_roots(&scope.model_writable_roots());
+    let visible_roots = format_model_workspace_roots(&profile.workspace.visible_roots);
+    let writable_roots = format_model_workspace_roots(&profile.workspace.writable_roots);
     match spec.name.as_str() {
         WORKSPACE_LIST_FILES => {
             spec.description = format!(
-                "List files visible to this delegated task under {visible_roots}. Useful paths include summaries/ for your private notes, scratch/ for private temporary notes, summaries/parent/ for read-only requester notes, and summaries/agents/ for read-only notes from other delegated Agents."
+                "List files visible to this delegated task under {visible_roots}. This is the same logical workspace used by the requesting Agent; use the paths named in the task brief."
             );
             set_property_description(
                 spec,
@@ -121,7 +118,7 @@ fn apply_return_mode_context(
         }
         WORKSPACE_READ_FILE => {
             spec.description = format!(
-                "Read a visible UTF-8 task workspace file with line numbers. Visible roots are {visible_roots}. Read-only shared notes live under summaries/parent/ and summaries/agents/."
+                "Read a visible UTF-8 task workspace file with line numbers. Visible roots are {visible_roots}. Use ordinary workspace paths exactly as they appear in the task brief or file list."
             );
             set_property_description(
                 spec,
@@ -141,7 +138,7 @@ fn apply_return_mode_context(
         }
         WORKSPACE_WRITE_FILE => {
             spec.description = format!(
-                "Write UTF-8 text to a writable delegated-task workspace file. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing. Writable prefixes are {writable_roots}. Use summaries/ for durable private notes and scratch/ for temporary notes; use shared writable roots only for requested artifacts or edits."
+                "Write UTF-8 text to a writable workspace file for this delegated task. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing. Writable prefixes are {writable_roots}. Use the path requested in the task brief when one is provided."
             );
             set_property_description(
                 spec,

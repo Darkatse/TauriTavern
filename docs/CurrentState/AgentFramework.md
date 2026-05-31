@@ -302,14 +302,14 @@ AgentTaskScheduler spawns child worker
   ↓
 child model loops with task.return-only exit policy
   ↓
-task.return writes agent-results/<child-invocation-id>.json and summaries/agents/<workspace-key>/result.md
+task.return writes agent-results/<child-invocation-id>.json and summaries/<workspace-key>-result.md
   ↓
 root/active invocation may call agent.await to wait for selected results
   ↓
 otherwise terminal child results are injected after the next parent tool turn
 ```
 
-Child invocation 的模型 workspace view 与物理 workspace 分离：`summaries/` / `scratch/` 映射到该 child 私有目录，`summaries/parent/` 只读映射父级私有 summaries，`summaries/agents/` 只读映射其他 child summaries。完整契约见 `docs/Agent/SubAgent.md`。
+Child invocation 与请求它的 Agent 使用同一套逻辑 workspace path；runtime 只按 target Profile 的 `workspace.visibleRoots` / `workspace.writableRoots` 调整当前 invocation 的 root 权限，不再做 child 专用路径映射。完整契约见 `docs/Agent/SubAgent.md`。
 
 ## 当前 Run Events
 
@@ -466,7 +466,7 @@ const stop = agent.subscribe(run.runId, event => console.log(event));
 - `cargo test --manifest-path src-tauri/Cargo.toml skill_scope --lib`：2 passed
 - `cargo test --manifest-path src-tauri/Cargo.toml agent_runtime_service --lib`：53 passed
 - `cargo test --manifest-path src-tauri/Cargo.toml agent_delegate_await_runs_return_mode_subagent`
-- `cargo test --manifest-path src-tauri/Cargo.toml workspace_view`
+- `cargo test --manifest-path src-tauri/Cargo.toml child_workspace_policy_scopes_manifest_roots_without_mapping --lib`：1 passed
 - `cargo test --manifest-path src-tauri/Cargo.toml file_agent_repository --lib`：10 passed
 - `cargo test --manifest-path src-tauri/Cargo.toml file_agent_profile_repository`：1 passed
 - `git diff --check`

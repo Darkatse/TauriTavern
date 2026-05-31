@@ -283,7 +283,7 @@ test('Agent run timeline projects SubAgent tasks without flattening child events
                 childInvocationId: 'inv-child',
                 status: 'completed',
                 resultRef: 'agent-results/inv-child.json',
-                summaryRef: 'summaries/agents/scene-critic/result.md',
+                summaryRef: 'summaries/scene-critic-result.md',
             },
         },
     ];

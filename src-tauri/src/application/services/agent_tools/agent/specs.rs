@@ -166,7 +166,7 @@ pub(in crate::application::services::agent_tools) fn task_return_spec() -> Agent
                         "properties": {
                             "path": {
                                 "type": "string",
-                                "description": "Task-visible workspace path for the artifact, such as summaries/notes.md or an assigned shared artifact path."
+                                "description": "Workspace path for the artifact, such as an assigned output path or a supporting note path you created."
                             },
                             "kind": {
                                 "type": "string",
