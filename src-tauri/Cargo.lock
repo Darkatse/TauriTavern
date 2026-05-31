@@ -5392,7 +5392,7 @@ dependencies = [
 
 [[package]]
 name = "tauritavern"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "async-compression",
  "async-trait",
