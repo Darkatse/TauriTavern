@@ -57,6 +57,11 @@
       "../default/": "default/",
       "../src/scripts/templates/": "frontend-templates/"
     },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    },
     "iOS": {
       "developmentTeam": "Y82Q3U47CB"
     }

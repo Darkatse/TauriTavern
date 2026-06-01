@@ -180,7 +180,10 @@ jobs:
         if: startsWith(matrix.platform, 'ubuntu-22.04')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf rpm
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev librsvg2-dev patchelf rpm \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-alsa gstreamer1.0-pulseaudio
           if apt-cache show libayatana-appindicator3-dev > /dev/null 2>&1; then
             sudo apt-get install -y libayatana-appindicator3-dev
           else
@@ -268,7 +271,10 @@ jobs:
         if: startsWith(matrix.platform, 'ubuntu-22.04')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf rpm
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev librsvg2-dev patchelf rpm \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-alsa gstreamer1.0-pulseaudio
           if apt-cache show libayatana-appindicator3-dev > /dev/null 2>&1; then
             sudo apt-get install -y libayatana-appindicator3-dev
           else
