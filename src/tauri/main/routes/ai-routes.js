@@ -636,7 +636,7 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
             reverse_proxy: String(payload.reverse_proxy || ''),
             proxy_password: String(payload.proxy_password || ''),
             custom_url: String(payload.custom_url || ''),
-            custom_include_headers: String(payload.custom_include_headers || ''),
+            custom_include_headers: payload.custom_include_headers ?? null,
             siliconflow_endpoint: String(payload.siliconflow_endpoint || ''),
             minimax_endpoint: String(payload.minimax_endpoint || ''),
             workers_ai_account_id: String(payload.workers_ai_account_id || ''),

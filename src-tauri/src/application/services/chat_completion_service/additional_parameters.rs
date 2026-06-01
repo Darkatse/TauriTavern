@@ -22,11 +22,14 @@ impl AdditionalParameters {
         })
     }
 
-    pub(super) fn from_status_headers(include_headers: &str) -> Self {
-        Self {
-            include_headers: include_headers.to_string(),
+    pub(super) fn from_status_headers(include_headers: &Value) -> Result<Self, ApplicationError> {
+        Ok(Self {
+            include_headers: normalize_custom_parameter_field(
+                include_headers,
+                "custom_include_headers",
+            )?,
             ..Self::default()
-        }
+        })
     }
 
     pub(super) fn headers(&self) -> Result<HashMap<String, String>, ApplicationError> {
@@ -88,12 +91,7 @@ fn optional_string(payload: &Map<String, Value>, key: &str) -> Result<String, Ap
         return Ok(String::new());
     };
 
-    coerce_custom_parameter_field(value).ok_or_else(|| {
-        ApplicationError::ValidationError(format!(
-            "Chat completion request field must be a string: {}",
-            key
-        ))
-    })
+    normalize_custom_parameter_field(value, key)
 }
 
 /// Normalizes a custom override field (`custom_include_headers`,
@@ -101,8 +99,8 @@ fn optional_string(payload: &Map<String, Value>, key: &str) -> Result<String, Ap
 /// [`custom_parameters`].
 ///
 /// SillyTavern's frontend always serializes these fields to a YAML/JSON *string*,
-/// and our `/api/backends/chat-completions/generate` route forwards the body
-/// verbatim. However the wire value is not always a string:
+/// while third-party extensions can call the intercepted chat-completion routes
+/// with native JSON values. The wire value is therefore not always a string:
 ///
 /// - `null` — stale presets / per-chat API routers persist a literal `null` when
 ///   a slot is cleared. Treated the same as a missing field.
@@ -114,7 +112,19 @@ fn optional_string(payload: &Map<String, Value>, key: &str) -> Result<String, Ap
 ///   rejecting the request with a confusing "must be a string" error.
 ///
 /// Other scalar types (numbers, booleans) remain invalid.
-pub(super) fn coerce_custom_parameter_field(value: &Value) -> Option<String> {
+pub(super) fn normalize_custom_parameter_field(
+    value: &Value,
+    key: &str,
+) -> Result<String, ApplicationError> {
+    coerce_custom_parameter_field(value).ok_or_else(|| {
+        ApplicationError::ValidationError(format!(
+            "Chat completion custom parameter field must be a string, null, object, or array: {}",
+            key
+        ))
+    })
+}
+
+fn coerce_custom_parameter_field(value: &Value) -> Option<String> {
     match value {
         Value::Null => Some(String::new()),
         Value::String(text) => Some(text.clone()),
