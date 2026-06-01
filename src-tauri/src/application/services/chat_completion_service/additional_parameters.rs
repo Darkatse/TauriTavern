@@ -22,11 +22,14 @@ impl AdditionalParameters {
         })
     }
 
-    pub(super) fn from_status_headers(include_headers: &str) -> Self {
-        Self {
-            include_headers: include_headers.to_string(),
+    pub(super) fn from_status_headers(include_headers: &Value) -> Result<Self, ApplicationError> {
+        Ok(Self {
+            include_headers: normalize_custom_parameter_field(
+                include_headers,
+                "custom_include_headers",
+            )?,
             ..Self::default()
-        }
+        })
     }
 
     pub(super) fn headers(&self) -> Result<HashMap<String, String>, ApplicationError> {
@@ -88,24 +91,46 @@ fn optional_string(payload: &Map<String, Value>, key: &str) -> Result<String, Ap
         return Ok(String::new());
     };
 
-    // Treat JSON null the same as a missing field. Frontend presets and
-    // third-party extensions (e.g. per-chat API routers) can persist `null`
-    // into `custom_include_body` / `custom_exclude_body` / `custom_include_headers`
-    // when a slot was cleared, and our `/api/backends/chat-completions/generate`
-    // route forwards the body verbatim. Without this guard the upstream value
-    // surfaces as a confusing "must be a string" validation error even though
-    // the field is semantically absent, mirroring serde's `Option<String>`
-    // behaviour for nullable fields.
-    if value.is_null() {
-        return Ok(String::new());
-    }
+    normalize_custom_parameter_field(value, key)
+}
 
-    value.as_str().map(str::to_string).ok_or_else(|| {
+/// Normalizes a custom override field (`custom_include_headers`,
+/// `custom_include_body`, `custom_exclude_body`) into the string form expected by
+/// [`custom_parameters`].
+///
+/// SillyTavern's frontend always serializes these fields to a YAML/JSON *string*,
+/// while third-party extensions can call the intercepted chat-completion routes
+/// with native JSON values. The wire value is therefore not always a string:
+///
+/// - `null` — stale presets / per-chat API routers persist a literal `null` when
+///   a slot is cleared. Treated the same as a missing field.
+/// - object / array — some third-party extensions (e.g. ST-Memory-Context) inject
+///   auth headers as a native JSON object, e.g.
+///   `custom_include_headers: { "Authorization": "Bearer …" }`. Upstream tolerates
+///   this through `mergeObjectWithYaml`, so we serialize the structured value back
+///   into a JSON string (which `parse_object` already understands) instead of
+///   rejecting the request with a confusing "must be a string" error.
+///
+/// Other scalar types (numbers, booleans) remain invalid.
+pub(super) fn normalize_custom_parameter_field(
+    value: &Value,
+    key: &str,
+) -> Result<String, ApplicationError> {
+    coerce_custom_parameter_field(value).ok_or_else(|| {
         ApplicationError::ValidationError(format!(
-            "Chat completion request field must be a string: {}",
+            "Chat completion custom parameter field must be a string, null, object, or array: {}",
             key
         ))
     })
+}
+
+fn coerce_custom_parameter_field(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => Some(String::new()),
+        Value::String(text) => Some(text.clone()),
+        Value::Object(_) | Value::Array(_) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 fn protected_body_override_error(key: &str) -> ApplicationError {
@@ -146,7 +171,35 @@ mod tests {
     }
 
     #[test]
-    fn non_string_payload_fields_fail_fast() {
+    fn object_form_include_headers_are_coerced_to_string() {
+        // ST-Memory-Context injects auth via a native JSON object instead of a
+        // YAML/JSON string. The field must be accepted and parsed into headers.
+        let payload = json!({
+            "custom_include_headers": {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer secret-token"
+            }
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be an object");
+
+        let parameters = AdditionalParameters::from_payload(&payload)
+            .expect("object-form headers should be accepted");
+        let headers = parameters.headers().expect("headers should parse");
+
+        assert_eq!(
+            headers.get("Authorization"),
+            Some(&"Bearer secret-token".to_string())
+        );
+        assert_eq!(
+            headers.get("Content-Type"),
+            Some(&"application/json".to_string())
+        );
+    }
+
+    #[test]
+    fn object_form_include_body_is_coerced_and_applied() {
         let payload = json!({
             "custom_include_body": { "temperature": 0.7 }
         })
@@ -154,10 +207,30 @@ mod tests {
         .cloned()
         .expect("payload must be an object");
 
-        let error =
-            AdditionalParameters::from_payload(&payload).expect_err("field type should fail");
+        let parameters = AdditionalParameters::from_payload(&payload)
+            .expect("object-form body override should be accepted");
+        let mut upstream_payload = json!({ "model": "gpt-4.1-mini", "temperature": 0.1 });
 
-        assert!(error.to_string().contains("custom_include_body"));
+        parameters
+            .apply_body_overrides(&mut upstream_payload)
+            .expect("overrides should apply");
+
+        assert_eq!(upstream_payload["temperature"], json!(0.7));
+    }
+
+    #[test]
+    fn scalar_payload_fields_fail_fast() {
+        // Numbers / booleans cannot represent a header or body map and must still
+        // be rejected so genuine client bugs surface instead of being swallowed.
+        let payload = json!({ "custom_include_headers": 42 })
+            .as_object()
+            .cloned()
+            .expect("payload must be an object");
+
+        let error =
+            AdditionalParameters::from_payload(&payload).expect_err("numeric field should fail");
+
+        assert!(error.to_string().contains("custom_include_headers"));
     }
 
     #[test]

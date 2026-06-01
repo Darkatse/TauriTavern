@@ -138,7 +138,11 @@ impl ChatCompletionService {
         if !dto.custom_url.trim().is_empty() {
             overridden.push("custom_url");
         }
-        if !dto.custom_include_headers.trim().is_empty() {
+        let custom_include_headers = additional_parameters::normalize_custom_parameter_field(
+            &dto.custom_include_headers,
+            "custom_include_headers",
+        )?;
+        if !custom_include_headers.trim().is_empty() {
             overridden.push("custom_include_headers");
         }
 
@@ -172,14 +176,7 @@ impl ChatCompletionService {
         }
 
         let mut overridden = Vec::new();
-        for key in [
-            "reverse_proxy",
-            "proxy_password",
-            "custom_url",
-            "custom_include_body",
-            "custom_exclude_body",
-            "custom_include_headers",
-        ] {
+        for key in ["reverse_proxy", "proxy_password", "custom_url"] {
             let Some(value) = payload.get(key) else {
                 continue;
             };
@@ -190,6 +187,22 @@ impl ChatCompletionService {
                     key
                 ))
             })?;
+
+            if !value.trim().is_empty() {
+                overridden.push(key);
+            }
+        }
+
+        for key in [
+            "custom_include_body",
+            "custom_exclude_body",
+            "custom_include_headers",
+        ] {
+            let Some(value) = payload.get(key) else {
+                continue;
+            };
+
+            let value = additional_parameters::normalize_custom_parameter_field(value, key)?;
 
             if !value.trim().is_empty() {
                 overridden.push(key);
