@@ -2,8 +2,8 @@ name: FasTools Build
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "20 */12 * * *"
+  # schedule:
+    # - cron: "20 12 31 * *"
 
 concurrency:
   group: fastools-build-${{ github.ref }}
