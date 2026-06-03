@@ -216,6 +216,19 @@ test('Agent run timeline panel does not cap visible history with tail-only slice
     assert.match(source, /virtualDisplayItems/);
 });
 
+test('Embedded Agent Skill import isolates per-item preview and install failures', async () => {
+    const source = await readFile(path.join(
+        REPO_ROOT,
+        'src/scripts/tauri/agent-skills/embedded-import.js',
+    ), 'utf8');
+
+    assert.doesNotMatch(source, /preview:\s*await skillApi\.previewImport/);
+    assert.doesNotMatch(source, /results\.push\(await skillApi\.installImport/);
+    assert.match(source, /reportEmbeddedSkillItemError\('preview', item, error\)/);
+    assert.match(source, /reportEmbeddedSkillItemError\('install', decision\.item, error\)/);
+    assert.match(source, /if \(!hadItemError\) {\s*setSkillImportReminder\(storageKey\);/);
+});
+
 test('Agent run timeline projects SubAgent tasks without flattening child events into root', async () => {
     const projector = await importFresh('src/scripts/extensions/agent-system/src/run-invocation-projector.js');
     const presenter = await importFresh('src/scripts/extensions/agent-system/src/run-event-presenter.js');
