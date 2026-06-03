@@ -22,8 +22,7 @@ jobs:
           - desktop
           - mobile
         branch:
-          - main
-          - next/2.0.0
+          - dev
 
     runs-on: ubuntu-latest
     name: dispatch-${{ matrix.channel }}-${{ matrix.branch }}
