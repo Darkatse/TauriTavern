@@ -59,7 +59,30 @@
     },
     "linux": {
       "appimage": {
-        "bundleMediaFramework": true
+        "bundleMediaFramework": true,
+        "files": {
+          "/usr/share/metainfo/com.tauritavern.client.metainfo.xml": "bundle/linux/com.tauritavern.client.metainfo.xml"
+        }
+      },
+      "deb": {
+        "depends": [
+          "gstreamer1.0-plugins-base",
+          "gstreamer1.0-plugins-good"
+        ],
+        "desktopTemplate": "bundle/linux/TauriTavern.desktop",
+        "files": {
+          "/usr/share/metainfo/com.tauritavern.client.metainfo.xml": "bundle/linux/com.tauritavern.client.metainfo.xml"
+        }
+      },
+      "rpm": {
+        "depends": [
+          "gstreamer1(element-appsink)()(64bit)",
+          "gstreamer1(element-autoaudiosink)()(64bit)"
+        ],
+        "desktopTemplate": "bundle/linux/TauriTavern.desktop",
+        "files": {
+          "/usr/share/metainfo/com.tauritavern.client.metainfo.xml": "bundle/linux/com.tauritavern.client.metainfo.xml"
+        }
       }
     },
     "iOS": {
