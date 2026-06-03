@@ -4,7 +4,7 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>AGPL-3.0-only</project_license>
   <name>TauriTavern</name>
-  <summary> The classic Sillytavern, now has been rewritten in Tauri/Rust.</summary>
+  <summary>The classic SillyTavern, rewritten in Tauri/Rust.</summary>
   <description>
     <p>TauriTavern ports the SillyTavern experience to a native Tauri and Rust desktop application while preserving compatibility with the upstream frontend and ecosystem.</p>
     <p>It provides local data storage, character and chat management, and Chat Completion integrations without requiring a Node.js runtime.</p>
