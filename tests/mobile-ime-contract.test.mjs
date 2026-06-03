@@ -429,6 +429,40 @@ test('focus routing: dialog surfaces are classified + routed, then restored on b
     controller.dispose();
 });
 
+test('focus routing: explicit fullscreen mobile surfaces keep fixed-shell IME semantics inside popup dialogs', async () => {
+    const dom = createFocusHarness();
+
+    const sheld = new HTMLElementMock('div');
+    sheld.id = 'sheld';
+    dom.body.appendChild(sheld);
+
+    const dialog = new HTMLElementMock('dialog');
+    dialog.className = 'popup explicit-fullscreen-popup';
+    dialog.setAttribute('open', '');
+    dialog.setAttribute('data-tt-mobile-surface', 'fullscreen-window');
+    dom.body.appendChild(dialog);
+
+    const dialogTextarea = new HTMLTextAreaElementMock();
+    dialog.appendChild(dialogTextarea);
+
+    const modulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-ime-surface-controller.js',
+    );
+    const { installMobileImeSurfaceController } = await importFresh(modulePath);
+
+    const controller = installMobileImeSurfaceController();
+    assert.ok(controller);
+
+    dom.emit('focusin', { target: dialogTextarea });
+    assert.equal(dialog.getAttribute('data-tt-ime-surface'), 'fixed-shell');
+    assert.ok(dialog.hasAttribute('data-tt-ime-active'));
+    assert.equal(dom.calls.length, 1);
+    assert.equal(dom.calls[0], dialog);
+
+    controller.dispose();
+});
+
 test('focus routing ignores non-IME inputs such as checkboxes', async () => {
     const dom = createFocusHarness();
 
@@ -488,6 +522,39 @@ test('focus routing ignores hidden IME-capable controls from reusable popup temp
     assert.ok(controller);
 
     dom.emit('focusin', { target: hiddenTextarea });
+    assert.equal(dialog.getAttribute('data-tt-ime-surface'), null);
+    assert.equal(dialog.hasAttribute('data-tt-ime-active'), false);
+    assert.equal(dom.calls.length, 0);
+
+    controller.dispose();
+});
+
+test('focus routing ignores readonly textareas in display-only popups', async () => {
+    const dom = createFocusHarness();
+
+    const sheld = new HTMLElementMock('div');
+    sheld.id = 'sheld';
+    dom.body.appendChild(sheld);
+
+    const dialog = new HTMLElementMock('dialog');
+    dialog.className = 'popup tt-fullscreen-text-viewer-popup';
+    dialog.setAttribute('open', '');
+    dom.body.appendChild(dialog);
+
+    const readonlyTextarea = new HTMLTextAreaElementMock();
+    readonlyTextarea.readOnly = true;
+    dialog.appendChild(readonlyTextarea);
+
+    const modulePath = path.join(
+        REPO_ROOT,
+        'src/tauri/main/compat/mobile/mobile-ime-surface-controller.js',
+    );
+    const { installMobileImeSurfaceController } = await importFresh(modulePath);
+
+    const controller = installMobileImeSurfaceController();
+    assert.ok(controller);
+
+    dom.emit('focusin', { target: readonlyTextarea });
     assert.equal(dialog.getAttribute('data-tt-ime-surface'), null);
     assert.equal(dialog.hasAttribute('data-tt-ime-active'), false);
     assert.equal(dom.calls.length, 0);

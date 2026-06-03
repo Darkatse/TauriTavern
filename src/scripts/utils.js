@@ -2224,8 +2224,50 @@ export function flashHighlight(element, timespan = 2000) {
  * @returns {boolean} Whether the control has an animation applied
  */
 export function hasAnimation(control) {
-    const animatioName = getComputedStyle(control, null)['animation-name'];
-    return animatioName != 'none';
+    const style = getComputedStyle(control, null);
+    const animationNames = splitCssValueList(style.animationName);
+    const animationDurations = splitCssValueList(style.animationDuration);
+    const animationDurationCount = animationDurations.length;
+
+    return animationNames.some((name, index) => {
+        if (!name || name === 'none') {
+            return false;
+        }
+
+        const duration = animationDurationCount
+            ? animationDurations[index % animationDurationCount]
+            : '0s';
+        return parseCssTimeMilliseconds(duration) > 0;
+    });
+}
+
+/**
+ * @param {string} value
+ * @returns {string[]}
+ */
+function splitCssValueList(value) {
+    return String(value || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
+/**
+ * @param {string} value
+ * @returns {number}
+ */
+function parseCssTimeMilliseconds(value) {
+    const match = String(value || '').trim().match(/^(-?(?:\d+|\d*\.\d+))(ms|s)$/i);
+    if (!match) {
+        return 0;
+    }
+
+    const amount = Number(match[1]);
+    if (!Number.isFinite(amount)) {
+        return 0;
+    }
+
+    return match[2].toLowerCase() === 's' ? amount * 1000 : amount;
 }
 
 /**

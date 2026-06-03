@@ -19,11 +19,11 @@ export async function openFullscreenTextViewer({ title, text, wrap = 'soft' }) {
     const textarea = document.createElement('textarea');
     textarea.className = 'tt-fullscreen-text-viewer__textarea text_pole textarea_compact monospace';
     textarea.readOnly = true;
+    textarea.inputMode = 'none';
     textarea.spellcheck = false;
     textarea.wrap = wrap;
     textarea.value = text ?? '';
     textarea.setAttribute('aria-label', title);
-    textarea.setAttribute('autofocus', '');
 
     root.appendChild(header);
     root.appendChild(textarea);
@@ -32,6 +32,10 @@ export async function openFullscreenTextViewer({ title, text, wrap = 'soft' }) {
         allowVerticalScrolling: false,
     });
     popup.dlg.classList.add('tt-fullscreen-text-viewer-popup');
+    popup.okButton.removeAttribute('autofocus');
+    popup.closeButton.classList.add('result-control');
+    popup.closeButton.setAttribute('autofocus', '');
+    popup.closeButton.tabIndex = 0;
 
     return popup.show();
 }

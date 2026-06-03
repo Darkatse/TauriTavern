@@ -2,6 +2,8 @@ import { isAndroidRuntime } from '../../../../scripts/util/mobile-runtime.js';
 
 const SURFACE_ATTR = 'data-tt-ime-surface';
 const ACTIVE_ATTR = 'data-tt-ime-active';
+const MOBILE_SURFACE_ATTR = 'data-tt-mobile-surface';
+const FULLSCREEN_WINDOW_SURFACE = 'fullscreen-window';
 
 const SURFACE_KIND = /** @type {const} */ ({
     Composer: 'composer',
@@ -118,6 +120,14 @@ function resolveImeSurfaceRoot(editable) {
         return { root: sheld, kind: SURFACE_KIND.Composer };
     }
 
+    const mobileSurface = editable.closest(`[${MOBILE_SURFACE_ATTR}]`);
+    if (
+        mobileSurface instanceof HTMLElement
+        && String(mobileSurface.getAttribute(MOBILE_SURFACE_ATTR) || '').trim() === FULLSCREEN_WINDOW_SURFACE
+    ) {
+        return { root: mobileSurface, kind: SURFACE_KIND.FixedShell };
+    }
+
     const dialog = editable.closest('dialog.popup[open]');
     if (dialog instanceof HTMLElement) {
         return { root: dialog, kind: SURFACE_KIND.Dialog };
@@ -128,7 +138,7 @@ function resolveImeSurfaceRoot(editable) {
         return { root: dialoguePopup, kind: SURFACE_KIND.Dialog };
     }
 
-    const overlaySurface = editable.closest('[data-tt-mobile-surface]');
+    const overlaySurface = editable.closest(`[${MOBILE_SURFACE_ATTR}]`);
     if (overlaySurface instanceof HTMLElement) {
         return { root: overlaySurface, kind: SURFACE_KIND.FixedShell };
     }
