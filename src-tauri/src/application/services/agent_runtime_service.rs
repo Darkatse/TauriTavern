@@ -252,7 +252,7 @@ impl AgentRuntimeService {
     ) -> Result<String, ApplicationError> {
         let profile = self
             .profile_service
-            .resolve_profile(AgentProfileResolveInput {
+            .resolve_profile_for_preview(AgentProfileResolveInput {
                 profile_id,
                 known_tools: self.tool_registry.specs(),
             })

@@ -45,6 +45,7 @@ use crate::application::services::world_info_service::WorldInfoService;
 use crate::domain::errors::DomainError;
 use crate::domain::repositories::agent_invocation_repository::AgentInvocationRepository;
 use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
+use crate::domain::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
 use crate::domain::repositories::agent_run_repository::AgentRunRepository;
 use crate::domain::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
 use crate::domain::repositories::asset_repository::AssetRepository;
@@ -174,6 +175,7 @@ struct AppRepositories {
     preset_repository: Arc<dyn PresetRepository>,
     quick_reply_repository: Arc<dyn QuickReplyRepository>,
     agent_profile_repository: Arc<dyn AgentProfileRepository>,
+    agent_profile_storage_health_repository: Arc<dyn AgentProfileStorageHealthRepository>,
     agent_run_repository: Arc<dyn AgentRunRepository>,
     agent_invocation_repository: Arc<dyn AgentInvocationRepository>,
     agent_workspace_lifecycle_repository: Arc<dyn AgentWorkspaceLifecycleRepository>,
@@ -252,6 +254,7 @@ pub(super) async fn build_services(
     ));
     let agent_profile_service = Arc::new(AgentProfileService::new(
         repositories.agent_profile_repository.clone(),
+        repositories.agent_profile_storage_health_repository.clone(),
         repositories.preset_repository.clone(),
     ));
     let prompt_assembly_service = Arc::new(PromptAssemblyService::new(
@@ -500,9 +503,13 @@ fn build_repositories(
     let quick_reply_repository: Arc<dyn QuickReplyRepository> = Arc::new(
         FileQuickReplyRepository::new(data_directory.default_user().join("QuickReplies")),
     );
-    let agent_profile_repository: Arc<dyn AgentProfileRepository> = Arc::new(
-        FileAgentProfileRepository::new(data_root.join("_tauritavern").join("agent-profiles")),
-    );
+    let agent_profile_file_repository = Arc::new(FileAgentProfileRepository::new(
+        data_root.join("_tauritavern").join("agent-profiles"),
+    ));
+    let agent_profile_repository: Arc<dyn AgentProfileRepository> =
+        agent_profile_file_repository.clone();
+    let agent_profile_storage_health_repository: Arc<dyn AgentProfileStorageHealthRepository> =
+        agent_profile_file_repository;
     let llm_connection_repository: Arc<dyn LlmConnectionRepository> = Arc::new(
         FileLlmConnectionRepository::new(data_root.join("_tauritavern").join("llm-connections")),
     );
@@ -572,6 +579,7 @@ fn build_repositories(
         preset_repository,
         quick_reply_repository,
         agent_profile_repository,
+        agent_profile_storage_health_repository,
         agent_run_repository,
         agent_invocation_repository,
         agent_workspace_lifecycle_repository,

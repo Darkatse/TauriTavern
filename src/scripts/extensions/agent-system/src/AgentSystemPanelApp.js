@@ -126,6 +126,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 draft: profileForEdit(defaultProfile()),
                 draftJson: prettyJson(defaultProfile()),
                 resolvedAgentSystemPrompt: '',
+                profilePreviewError: '',
                 tabs: [
                     { id: 'profiles', labelKey: 'profiles', icon: 'fa-id-card-clip' },
                 ],
@@ -275,6 +276,30 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             },
             hasExternalModelBinding() {
                 return this.draft?.model?.mode === 'connectionRef' && !this.selectedModelTarget;
+            },
+            missingPresetName() {
+                const preset = this.draft?.preset || {};
+                if (preset.mode !== 'ref') {
+                    return '';
+                }
+                const name = String(preset.ref?.name || '').trim();
+                if (!name || this.presetOptions.includes(name)) {
+                    return '';
+                }
+                return name;
+            },
+            profileConfigurationWarnings() {
+                const warnings = [];
+                if (this.missingPresetName) {
+                    warnings.push(tr('agentProfilePresetMissing', { name: this.missingPresetName }));
+                }
+                if (this.hasExternalModelBinding) {
+                    warnings.push(tr('agentProfileModelBindingMissing', { id: this.draft.model.connectionRef }));
+                }
+                if (this.profilePreviewError) {
+                    warnings.push(tr('agentProfilePreviewUnavailable', { error: this.profilePreviewError }));
+                }
+                return warnings;
             },
             toolGroupsWithTools() {
                 const groupedTools = new Set();
@@ -441,9 +466,72 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     section?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
                 });
             },
-            async refreshProfiles() {
-                const result = await requireAgentApi().profiles.list();
+            async refreshProfiles(options = {}) {
+                const profilesApi = requireAgentApi().profiles;
+                const result = await profilesApi.list();
                 this.profiles = Array.isArray(result?.profiles) ? result.profiles : [];
+                const issues = Array.isArray(result?.issues) ? result.issues : [];
+                if (options.repairListIssues === false || issues.length === 0) {
+                    return;
+                }
+                const repaired = await this.repairProfileListIssues(issues);
+                if (repaired) {
+                    const refreshed = await profilesApi.list();
+                    this.profiles = Array.isArray(refreshed?.profiles) ? refreshed.profiles : [];
+                }
+            },
+            async repairProfileListIssues(issues) {
+                const profilesApi = requireAgentApi().profiles;
+                if (typeof profilesApi.repairFile !== 'function') {
+                    throw new Error(tr('hostAgentProfileApiUnavailable'));
+                }
+
+                let repaired = false;
+                for (const issue of issues) {
+                    const profileId = String(issue?.profileId || '').trim();
+                    const action = String(issue?.recommendedAction || '').trim();
+                    if (!profileId) {
+                        throw new Error('Agent profile repair issue is missing profileId');
+                    }
+                    if (!action) {
+                        this.warn(tr('agentProfileManualRepairRequired', {
+                            id: profileId,
+                            error: String(issue?.message || ''),
+                        }));
+                        continue;
+                    }
+                    if (action === 'delete') {
+                        const message = tr('deleteCorruptAgentProfileConfirm', {
+                            id: profileId,
+                            error: String(issue?.message || ''),
+                        });
+                        if (!await confirmAction(message)) {
+                            continue;
+                        }
+                        try {
+                            await profilesApi.repairFile({ profileId, action });
+                        } catch (error) {
+                            this.reportError(error);
+                            continue;
+                        }
+                        this.warn(tr('deletedCorruptAgentProfile', { id: profileId }));
+                        repaired = true;
+                        continue;
+                    }
+                    if (action === 'normalizeIdentity') {
+                        try {
+                            await profilesApi.repairFile({ profileId, action });
+                        } catch (error) {
+                            this.reportError(error);
+                            continue;
+                        }
+                        this.warn(tr('normalizedAgentProfileIdentity', { id: profileId }));
+                        repaired = true;
+                        continue;
+                    }
+                    throw new Error(`Unsupported Agent profile repair action: ${action}`);
+                }
+                return repaired;
             },
             async refreshToolSpecs() {
                 const api = requireAgentApi().tools;
@@ -476,10 +564,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             async selectProfile(profileId, options = {}) {
                 const id = profileId || DEFAULT_PROFILE_ID;
                 const profilesApi = requireAgentApi().profiles;
-                const [result, promptResult] = await Promise.all([
-                    profilesApi.load({ profileId: id }),
-                    profilesApi.resolveSystemPrompt({ profileId: id }),
-                ]);
+                const result = await profilesApi.load({ profileId: id });
                 if (!result?.profile) {
                     throw new Error(tr('agentProfileNotFound', { id }));
                 }
@@ -490,8 +575,15 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.draft = profileForEdit(result.profile);
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
-                this.resolvedAgentSystemPrompt = normalizeResolvedAgentSystemPrompt(promptResult);
                 this.refreshDraftJson();
+                this.profilePreviewError = '';
+                try {
+                    const promptResult = await profilesApi.resolveSystemPrompt({ profileId: id });
+                    this.resolvedAgentSystemPrompt = normalizeResolvedAgentSystemPrompt(promptResult);
+                } catch (error) {
+                    this.resolvedAgentSystemPrompt = '';
+                    this.profilePreviewError = errorText(error);
+                }
             },
             refreshDraftJson() {
                 this.draftJson = prettyJson(normalizeProfileForSave(this.draft));
@@ -1146,6 +1238,13 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                             <div>
                                                 <strong>{{ draft.model.connectionRef }}</strong>
                                                 <span>{{ draft.model.modelId }}</span>
+                                            </div>
+                                        </div>
+                                        <div v-if="profileConfigurationWarnings.length > 0" class="ttas-binding-summary ttas-binding-warning ttas-span-2">
+                                            <i class="fa-solid fa-triangle-exclamation"></i>
+                                            <div>
+                                                <strong>{{ tr('agentProfileNeedsRepair') }}</strong>
+                                                <span v-for="warning in profileConfigurationWarnings" :key="warning">{{ warning }}</span>
                                             </div>
                                         </div>
                                     </div>

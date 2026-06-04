@@ -94,7 +94,7 @@ impl AgentRuntimeService {
 
         let profiles = self
             .profile_service
-            .list_resolved_profiles(self.tool_registry.specs())
+            .list_resolved_profiles_for_discovery(self.tool_registry.specs())
             .await?;
         let mut agents = profiles
             .into_iter()

@@ -12,7 +12,7 @@ use crate::application::dto::agent_dto::{
     AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto,
     AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
     AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
-    AgentReadWorkspaceFileDto, AgentResolveChatCommitDto,
+    AgentReadWorkspaceFileDto, AgentRepairProfileFileDto, AgentResolveChatCommitDto,
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
     AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRunHandleDto,
     AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
@@ -78,7 +78,10 @@ pub async fn list_agent_profiles(
         .agent_profile_service
         .list_profiles()
         .await
-        .map(|profiles| AgentListProfilesResultDto { profiles })
+        .map(|list| AgentListProfilesResultDto {
+            profiles: list.profiles,
+            issues: list.issues,
+        })
         .map_err(map_command_error("Failed to list agent profiles"))
 }
 
@@ -152,6 +155,20 @@ pub async fn delete_agent_profile(
         .delete_profile(&dto.profile_id)
         .await
         .map_err(map_command_error("Failed to delete agent profile"))
+}
+
+#[tauri::command]
+pub async fn repair_agent_profile_file(
+    dto: AgentRepairProfileFileDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("repair_agent_profile_file");
+
+    app_state
+        .agent_profile_service
+        .repair_profile_file(&dto.profile_id, dto.action)
+        .await
+        .map_err(map_command_error("Failed to repair agent profile file"))
 }
 
 #[tauri::command]

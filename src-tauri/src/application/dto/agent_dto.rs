@@ -7,6 +7,9 @@ use crate::domain::models::agent::profile::{
 use crate::domain::models::agent::{
     AgentChatRef, AgentRunEvent, AgentRunPresentation, AgentRunStatus, AgentToolSpec,
 };
+use crate::domain::repositories::agent_profile_storage_health_repository::{
+    AgentProfileStorageIssue, AgentProfileStorageRepairAction,
+};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -170,6 +173,15 @@ pub struct AgentSaveProfileDto {
 #[serde(rename_all = "camelCase")]
 pub struct AgentListProfilesResultDto {
     pub profiles: Vec<AgentProfileSummary>,
+    #[serde(default)]
+    pub issues: Vec<AgentProfileStorageIssue>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRepairProfileFileDto {
+    pub profile_id: String,
+    pub action: AgentProfileStorageRepairAction,
 }
 
 #[derive(Debug, Clone, Serialize)]

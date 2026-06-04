@@ -117,6 +117,68 @@ async fn resolves_agent_system_prompt_through_runtime_boundary() {
 }
 
 #[tokio::test]
+async fn system_prompt_preview_allows_dangling_required_preset_profile() {
+    let root = std::env::temp_dir().join(format!(
+        "tauritavern-agent-system-prompt-dangling-preset-{}",
+        Uuid::new_v4().simple()
+    ));
+    let repository = Arc::new(FileAgentRepository::new(root.clone()));
+    let profile_service = test_profile_service(&root);
+    let service = Arc::new(AgentRuntimeService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        test_chat_repository(&root),
+        test_chat_repository(&root),
+        test_skill_service(&root),
+        Arc::new(MockAgentModelGateway::new(vec![])),
+        profile_service.clone(),
+        test_llm_connection_service(&root),
+    ));
+
+    let mut profile = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    profile.id = AgentProfileId::parse("dangling-writer").expect("profile id");
+    profile.display_name = "Dangling Writer".to_string();
+    profile.preset.mode = AgentPresetBindingMode::Ref;
+    profile.preset.ref_ = Some(AgentPresetRef {
+        api_id: "openai".to_string(),
+        name: "Missing Writer Preset".to_string(),
+    });
+    profile.preset.required = true;
+    profile_service
+        .save_profile(profile, service.tool_specs())
+        .await
+        .expect("dangling preset profile remains editable");
+
+    let strict_error = profile_service
+        .resolve_profile(AgentProfileResolveInput {
+            profile_id: Some("dangling-writer"),
+            known_tools: service.tool_specs(),
+        })
+        .await
+        .expect_err("strict run resolution still requires preset");
+    assert!(
+        strict_error
+            .to_string()
+            .contains("agent.profile_preset_missing")
+    );
+
+    let prompt = service
+        .resolve_agent_system_prompt(Some("dangling-writer"))
+        .await
+        .expect("system prompt preview should not require preset file");
+
+    assert!(prompt.contains("# Agent Mode is active."));
+    assert!(prompt.contains("workspace_finish"));
+    tokio::fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn agent_list_returns_callable_profiles_allowed_by_delegation_policy() {
     let root = std::env::temp_dir().join(format!(
         "tauritavern-agent-list-{}",
@@ -189,6 +251,36 @@ async fn agent_list_returns_callable_profiles_allowed_by_delegation_policy() {
         .save_profile(unconfigured, service.tool_specs())
         .await
         .expect("save unconfigured callable profile");
+    let mut dangling_preset = profile_service
+        .load_profile("default-writer")
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    dangling_preset.id = AgentProfileId::parse("dangling-preset-editor").expect("profile id");
+    dangling_preset.display_name = "Dangling Preset Editor".to_string();
+    dangling_preset.preset.mode = AgentPresetBindingMode::Ref;
+    dangling_preset.preset.ref_ = Some(AgentPresetRef {
+        api_id: "openai".to_string(),
+        name: "Missing Editor Preset".to_string(),
+    });
+    dangling_preset.preset.required = true;
+    dangling_preset.tools.allow.retain(|name| {
+        !matches!(
+            name.as_str(),
+            "agent.list" | "agent.delegate" | "agent.await"
+        )
+    });
+    dangling_preset.delegation = AgentDelegationPolicy {
+        callable: true,
+        allow_as_subagent: true,
+        allowed_callers: vec!["default-writer".to_string()],
+        description_for_agents: Some("Would edit scenes if its preset existed.".to_string()),
+        ..Default::default()
+    };
+    profile_service
+        .save_profile(dangling_preset, service.tool_specs())
+        .await
+        .expect("save dangling preset callable profile");
 
     let mut profile = profile_service
         .resolve_profile(AgentProfileResolveInput {
@@ -1479,8 +1571,11 @@ async fn child_ref_profile_prompt_assembly_round_trips_through_host_bridge() {
             "openai_model": "preset-model"
         }),
     ));
+    let agent_profile_repository =
+        Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles")));
     let profile_service = Arc::new(AgentProfileService::new(
-        Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles"))),
+        agent_profile_repository.clone(),
+        agent_profile_repository,
         preset_repository.clone(),
     ));
     let llm_connection_service = test_llm_connection_service(&root);
@@ -7050,8 +7145,11 @@ fn test_dispatcher(repository: Arc<FileAgentRepository>, root: &Path) -> AgentTo
 }
 
 fn test_profile_service(root: &Path) -> Arc<AgentProfileService> {
+    let agent_profile_repository =
+        Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles")));
     Arc::new(AgentProfileService::new(
-        Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles"))),
+        agent_profile_repository.clone(),
+        agent_profile_repository,
         Arc::new(NullPresetRepository),
     ))
 }

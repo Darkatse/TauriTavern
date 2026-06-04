@@ -237,6 +237,19 @@ function createAgentApi({ safeInvoke }) {
         return result;
     }
 
+    async function repairProfileFile(input) {
+        if (!isPlainObject(input)) {
+            throw new Error('agent.profile_repair_input_invalid: repair input must be an object');
+        }
+        const profileId = requireProfileId(input.profileId ?? input.profile_id);
+        const action = normalizeProfileFileRepairAction(input.action);
+        const result = await safeInvoke('repair_agent_profile_file', {
+            dto: { profileId, action },
+        });
+        emitAgentProfilesChanged();
+        return result;
+    }
+
     return {
         startRunWithPromptSnapshot,
         startRunFromLegacyGenerate,
@@ -252,6 +265,7 @@ function createAgentApi({ safeInvoke }) {
             resolveSystemPrompt,
             save: saveProfile,
             delete: deleteProfile,
+            repairFile: repairProfileFile,
         },
         tools: {
             list: listToolSpecs,
@@ -421,6 +435,14 @@ function requireProfileId(value) {
         throw new Error('profileId is required');
     }
     return profileId;
+}
+
+function normalizeProfileFileRepairAction(value) {
+    const action = String(value || '').trim();
+    if (action !== 'delete' && action !== 'normalizeIdentity') {
+        throw new Error('agent.profile_repair_action_invalid: repair action must be delete or normalizeIdentity');
+    }
+    return action;
 }
 
 function normalizeOptionalString(value) {

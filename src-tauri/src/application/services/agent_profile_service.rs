@@ -24,6 +24,9 @@ use crate::domain::models::agent::{
 };
 use crate::domain::models::preset::PresetType;
 use crate::domain::repositories::agent_profile_repository::AgentProfileRepository;
+use crate::domain::repositories::agent_profile_storage_health_repository::{
+    AgentProfileStorageHealthRepository, AgentProfileStorageIssue, AgentProfileStorageRepairAction,
+};
 use crate::domain::repositories::preset_repository::PresetRepository;
 
 const WORKSPACE_ROOT_UNIVERSE: [&str; 5] = ["output", "scratch", "plan", "summaries", "persist"];
@@ -35,12 +38,25 @@ const TASK_RETURN_TOOL: &str = "task.return";
 
 pub struct AgentProfileService {
     profile_repository: Arc<dyn AgentProfileRepository>,
+    profile_storage_health_repository: Arc<dyn AgentProfileStorageHealthRepository>,
     preset_repository: Arc<dyn PresetRepository>,
 }
 
 pub struct AgentProfileResolveInput<'a> {
     pub profile_id: Option<&'a str>,
     pub known_tools: &'a [AgentToolSpec],
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AgentProfileList {
+    pub profiles: Vec<AgentProfileSummary>,
+    pub issues: Vec<AgentProfileStorageIssue>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentProfileExternalReferencePolicy {
+    Strict,
+    AllowDangling,
 }
 
 pub fn profile_model_requires_configuration(profile: &ResolvedAgentProfile) -> bool {
@@ -353,13 +369,22 @@ fn model_name<'a>(tools: &'a [AgentToolSpec], name: &'a str) -> &'a str {
         .unwrap_or(name)
 }
 
+fn profile_discovery_can_omit(error: &ApplicationError) -> bool {
+    matches!(
+        error,
+        ApplicationError::ValidationError(_) | ApplicationError::NotFound(_)
+    )
+}
+
 impl AgentProfileService {
     pub fn new(
         profile_repository: Arc<dyn AgentProfileRepository>,
+        profile_storage_health_repository: Arc<dyn AgentProfileStorageHealthRepository>,
         preset_repository: Arc<dyn PresetRepository>,
     ) -> Self {
         Self {
             profile_repository,
+            profile_storage_health_repository,
             preset_repository,
         }
     }
@@ -368,10 +393,37 @@ impl AgentProfileService {
         &self,
         input: AgentProfileResolveInput<'_>,
     ) -> Result<ResolvedAgentProfile, ApplicationError> {
-        let requested = input
-            .profile_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
+        let (definition, source) = self.load_definition(input.profile_id).await?;
+
+        self.resolve_definition(
+            definition,
+            source,
+            input.known_tools,
+            AgentProfileExternalReferencePolicy::Strict,
+        )
+        .await
+    }
+
+    pub async fn resolve_profile_for_preview(
+        &self,
+        input: AgentProfileResolveInput<'_>,
+    ) -> Result<ResolvedAgentProfile, ApplicationError> {
+        let (definition, source) = self.load_definition(input.profile_id).await?;
+
+        self.resolve_definition(
+            definition,
+            source,
+            input.known_tools,
+            AgentProfileExternalReferencePolicy::AllowDangling,
+        )
+        .await
+    }
+
+    async fn load_definition(
+        &self,
+        profile_id: Option<&str>,
+    ) -> Result<(AgentProfileDefinition, String), ApplicationError> {
+        let requested = profile_id.map(str::trim).filter(|value| !value.is_empty());
         let (definition, source) = match requested {
             Some(raw_id) => {
                 let id =
@@ -391,40 +443,47 @@ impl AgentProfileService {
             }
             None => (default_writer_profile()?, "built_in".to_string()),
         };
-
-        self.resolve_definition(definition, source, input.known_tools)
-            .await
+        Ok((definition, source))
     }
 
-    pub async fn list_profiles(&self) -> Result<Vec<AgentProfileSummary>, ApplicationError> {
-        let mut profiles = self
-            .profile_repository
-            .list_profiles()
+    pub async fn list_profiles(&self) -> Result<AgentProfileList, ApplicationError> {
+        let scan = self
+            .profile_storage_health_repository
+            .scan_profiles()
             .await
             .map_err(ApplicationError::from)?;
-        if profiles
+        let mut list = AgentProfileList {
+            profiles: scan.profiles,
+            issues: scan.issues,
+        };
+        if list
+            .profiles
             .iter()
             .all(|profile| profile.id.as_str() != DEFAULT_AGENT_PROFILE_ID)
         {
-            profiles.insert(0, default_writer_profile()?.summary());
+            list.profiles.insert(0, default_writer_profile()?.summary());
         }
-        Ok(profiles)
+        Ok(list)
     }
 
-    pub async fn list_resolved_profiles(
+    pub async fn list_resolved_profiles_for_discovery(
         &self,
         known_tools: &[AgentToolSpec],
     ) -> Result<Vec<ResolvedAgentProfile>, ApplicationError> {
-        let summaries = self.list_profiles().await?;
+        let summaries = self.list_profiles().await?.profiles;
         let mut profiles = Vec::with_capacity(summaries.len());
         for summary in summaries {
-            profiles.push(
-                self.resolve_profile(AgentProfileResolveInput {
+            match self
+                .resolve_profile(AgentProfileResolveInput {
                     profile_id: Some(summary.id.as_str()),
                     known_tools,
                 })
-                .await?,
-            );
+                .await
+            {
+                Ok(profile) => profiles.push(profile),
+                Err(error) if profile_discovery_can_omit(&error) => continue,
+                Err(error) => return Err(error),
+            }
         }
         Ok(profiles)
     }
@@ -461,6 +520,7 @@ impl AgentProfileService {
             profile.clone(),
             format!("file:{}", profile.id.as_str()),
             known_tools,
+            AgentProfileExternalReferencePolicy::AllowDangling,
         )
         .await?;
         self.profile_repository
@@ -477,15 +537,41 @@ impl AgentProfileService {
             .map_err(ApplicationError::from)
     }
 
+    pub async fn repair_profile_file(
+        &self,
+        profile_id: &str,
+        action: AgentProfileStorageRepairAction,
+    ) -> Result<(), ApplicationError> {
+        let id = AgentProfileId::parse(profile_id).map_err(ApplicationError::ValidationError)?;
+        match action {
+            AgentProfileStorageRepairAction::Delete => self
+                .profile_repository
+                .delete_profile(&id)
+                .await
+                .map_err(ApplicationError::from),
+            AgentProfileStorageRepairAction::NormalizeIdentity => self
+                .profile_storage_health_repository
+                .normalize_profile_file_identity(&id)
+                .await
+                .map_err(ApplicationError::from),
+        }
+    }
+
     async fn resolve_definition(
         &self,
         mut definition: AgentProfileDefinition,
         source: String,
         known_tools: &[AgentToolSpec],
+        external_reference_policy: AgentProfileExternalReferencePolicy,
     ) -> Result<ResolvedAgentProfile, ApplicationError> {
         migrate_profile_schema(&mut definition)?;
         validate_profile_header(&definition)?;
-        validate_preset_binding(&definition.preset, self.preset_repository.as_ref()).await?;
+        validate_preset_binding(
+            &definition.preset,
+            self.preset_repository.as_ref(),
+            external_reference_policy,
+        )
+        .await?;
         validate_model_binding(&definition.model)?;
         normalize_context_policy(&mut definition.context)?;
         validate_instructions(&definition.instructions)?;
@@ -647,6 +733,7 @@ fn migrate_profile_schema(profile: &mut AgentProfileDefinition) -> Result<(), Ap
 async fn validate_preset_binding(
     binding: &AgentPresetBinding,
     preset_repository: &dyn PresetRepository,
+    external_reference_policy: AgentProfileExternalReferencePolicy,
 ) -> Result<(), ApplicationError> {
     match binding.mode {
         AgentPresetBindingMode::CurrentPromptSnapshot | AgentPresetBindingMode::None => Ok(()),
@@ -669,7 +756,9 @@ async fn validate_preset_binding(
                         .to_string(),
                 ));
             }
-            if !binding.required {
+            if !binding.required
+                || external_reference_policy == AgentProfileExternalReferencePolicy::AllowDangling
+            {
                 return Ok(());
             }
             let exists = preset_repository

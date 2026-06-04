@@ -667,6 +667,129 @@ test('Agent System confirmations use SillyTavern Popup instead of window.confirm
     assert.deepEqual(calls, [{ header: null, message: 'Delete Skill "test-skill"?' }]);
 });
 
+test('Agent System repairs profile list file issues without blocking profile list refresh', async () => {
+    const lists = [
+        {
+            profiles: [
+                { id: 'default-writer', displayName: 'Default Writer', directRunnable: true },
+            ],
+            issues: [
+                {
+                    profileId: 'broken-json',
+                    kind: 'invalidJson',
+                    recommendedAction: 'delete',
+                    message: 'Invalid JSON',
+                },
+                {
+                    profileId: 'bad-schema',
+                    kind: 'invalidFileIdentity',
+                    recommendedAction: 'normalizeIdentity',
+                    message: 'Invalid profile kind',
+                },
+            ],
+        },
+        {
+            profiles: [
+                { id: 'default-writer', displayName: 'Default Writer', directRunnable: true },
+                { id: 'bad-schema', displayName: 'bad-schema', directRunnable: true },
+            ],
+            issues: [],
+        },
+    ];
+    const repairs = [];
+    const confirmations = [];
+    installWindow({
+        agent: {
+            profiles: {
+                async list() {
+                    return lists.shift();
+                },
+                async repairFile(input) {
+                    repairs.push(input);
+                },
+            },
+        },
+    });
+    globalThis.window.SillyTavern = {
+        getContext() {
+            return {
+                POPUP_RESULT: { AFFIRMATIVE: 1 },
+                Popup: {
+                    show: {
+                        async confirm(header, message) {
+                            confirmations.push({ header, message });
+                            return 1;
+                        },
+                    },
+                },
+            };
+        },
+    };
+    const vm = await createAgentPanelHarness();
+    const warnings = [];
+    vm.warn = (message) => warnings.push(message);
+
+    await vm.refreshProfiles();
+
+    assert.deepEqual(repairs, [
+        { profileId: 'broken-json', action: 'delete' },
+        { profileId: 'bad-schema', action: 'normalizeIdentity' },
+    ]);
+    assert.equal(confirmations.length, 1);
+    assert.match(confirmations[0].message, /broken-json/);
+    assert.match(confirmations[0].message, /Invalid JSON/);
+    assert.deepEqual(
+        vm.profiles.map((profile) => profile.id),
+        ['default-writer', 'bad-schema'],
+    );
+    assert.deepEqual(warnings, [
+        'Deleted corrupt Agent profile file: broken-json',
+        'Repaired Agent profile file identity: bad-schema',
+    ]);
+});
+
+test('Agent System leaves invalid profile body for manual repair without blocking healthy profiles', async () => {
+    let repairCalled = false;
+    installWindow({
+        agent: {
+            profiles: {
+                async list() {
+                    return {
+                        profiles: [
+                            { id: 'default-writer', displayName: 'Default Writer', directRunnable: true },
+                        ],
+                        issues: [
+                            {
+                                profileId: 'bad-schema',
+                                kind: 'invalidProfile',
+                                message: 'Invalid profile body',
+                            },
+                        ],
+                    };
+                },
+                async repairFile() {
+                    repairCalled = true;
+                    throw new Error('cannot repair without replacing profile content');
+                },
+            },
+        },
+    });
+    const vm = await createAgentPanelHarness();
+    const errors = [];
+    const warnings = [];
+    vm.reportError = (error) => errors.push(String(error?.message || error));
+    vm.warn = (message) => warnings.push(message);
+
+    await vm.refreshProfiles();
+
+    assert.equal(repairCalled, false);
+    assert.deepEqual(vm.profiles.map((profile) => profile.id), ['default-writer']);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(warnings, [
+        'Agent profile file needs manual repair: bad-schema. Invalid profile body',
+    ]);
+});
+
 test('Agent System CSS does not globally override upstream utility classes', async () => {
     const css = await readFile(path.join(
         REPO_ROOT,
@@ -853,6 +976,54 @@ test('Agent profile edit mode follows loaded profile without mutating run policy
     assert.equal(settings.editingProfileId, backgroundOnly.id);
     vm.setProfileEditMode('main');
     assert.equal(vm.draft.run.presentation, 'background');
+});
+
+test('Agent profile selection stays editable when system prompt preview fails', async () => {
+    const {
+        defaultProfile,
+    } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
+    const profile = defaultProfile('dangling-writer');
+    profile.preset = {
+        mode: 'ref',
+        ref: {
+            apiId: 'openai',
+            name: 'Missing Writer Preset',
+        },
+        required: true,
+    };
+    let settings = null;
+    installWindow({
+        extension: {
+            store: {
+                async setJson(request) {
+                    settings = request.value;
+                },
+            },
+        },
+        agent: {
+            profiles: {
+                async load({ profileId }) {
+                    assert.equal(profileId, profile.id);
+                    return { profile };
+                },
+                async resolveSystemPrompt() {
+                    throw new Error('agent.profile_preset_missing: required preset is missing');
+                },
+            },
+        },
+    });
+
+    const vm = await createAgentPanelHarness();
+    vm.presetOptions = [];
+    await vm.selectProfile(profile.id);
+
+    assert.equal(vm.editingProfileId, profile.id);
+    assert.equal(vm.draft.id, profile.id);
+    assert.equal(settings.editingProfileId, profile.id);
+    assert.equal(vm.resolvedAgentSystemPrompt, '');
+    assert.match(vm.profilePreviewError, /agent\.profile_preset_missing/);
+    assert.deepEqual(vm.availablePresetOptions, ['Missing Writer Preset']);
+    assert.ok(vm.profileConfigurationWarnings.some((warning) => warning.includes('Missing Writer Preset')));
 });
 
 test('Agent profile save keeps non-direct callable profiles out of direct default selection', async () => {
