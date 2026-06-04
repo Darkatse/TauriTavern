@@ -14,8 +14,9 @@ use crate::application::dto::agent_dto::{
     AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
     AgentReadWorkspaceFileDto, AgentRepairProfileFileDto, AgentResolveChatCommitDto,
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
-    AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRunHandleDto,
-    AgentSaveProfileDto, AgentStartRunDto, AgentWorkspaceFileDto,
+    AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRetargetPresetRefsDto,
+    AgentRetargetPresetRefsResultDto, AgentRunHandleDto, AgentSaveProfileDto, AgentStartRunDto,
+    AgentWorkspaceFileDto,
 };
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
@@ -169,6 +170,33 @@ pub async fn repair_agent_profile_file(
         .repair_profile_file(&dto.profile_id, dto.action)
         .await
         .map_err(map_command_error("Failed to repair agent profile file"))
+}
+
+#[tauri::command]
+pub async fn retarget_agent_profile_preset_refs(
+    dto: AgentRetargetPresetRefsDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentRetargetPresetRefsResultDto, CommandError> {
+    log_command(format!(
+        "retarget_agent_profile_preset_refs {}/{} -> {}/{}",
+        dto.from.api_id, dto.from.name, dto.to.api_id, dto.to.name
+    ));
+
+    app_state
+        .agent_profile_service
+        .retarget_preset_refs(dto.from, dto.to)
+        .await
+        .map(|result| AgentRetargetPresetRefsResultDto {
+            updated: result.profile_ids.len(),
+            profile_ids: result
+                .profile_ids
+                .iter()
+                .map(|id| id.as_str().to_string())
+                .collect(),
+        })
+        .map_err(map_command_error(
+            "Failed to retarget agent profile preset refs",
+        ))
 }
 
 #[tauri::command]

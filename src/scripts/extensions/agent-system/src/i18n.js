@@ -9,6 +9,8 @@ const DEFAULT_MESSAGES = Object.freeze({
     agentModeOn: 'Agent Mode On',
     agentProfileBuiltInDelete: 'default-writer cannot be deleted.',
     agentProfileBuiltInEdit: 'default-writer is built in. Copy it before editing.',
+    agentProfileExternalChangePending: 'Agent profiles changed outside this panel. Reload this profile before saving.',
+    agentProfileExternalChangeSaveBlocked: 'Agent profiles changed outside this panel. Reload this profile before saving.',
     agentProfileExportSaveFirst: 'Save this Agent profile before exporting.',
     agentProfileManualRepairRequired: 'Agent profile file needs manual repair: {id}. {error}',
     agentProfileNotFound: 'Agent profile not found: {id}',

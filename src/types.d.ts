@@ -237,10 +237,31 @@ type TauriTavernAgentProfileDefinition = {
     };
 };
 
+type TauriTavernAgentPresetRef = {
+    apiId: string;
+    name: string;
+};
+
+type TauriTavernAgentProfileStorageIssue = {
+    profileId: string;
+    fileName: string;
+    kind: 'invalidJson' | 'invalidFileIdentity' | 'invalidProfile';
+    recommendedAction?: 'delete' | 'normalizeIdentity';
+    message: string;
+};
+
 type TauriTavernAgentProfilesApi = {
-    list: () => Promise<{ profiles: TauriTavernAgentProfileSummary[] }>;
+    list: () => Promise<{
+        profiles: TauriTavernAgentProfileSummary[];
+        issues: TauriTavernAgentProfileStorageIssue[];
+    }>;
     load: (input: string | { profileId: string }) => Promise<{ profile: TauriTavernAgentProfileDefinition | null }>;
     resolveSystemPrompt: (input?: string | { profileId?: string | null }) => Promise<{ agentSystemPrompt: string }>;
+    repairFile: (input: { profileId: string; action: 'delete' | 'normalizeIdentity' }) => Promise<void>;
+    retargetPresetRefs: (input: {
+        from: TauriTavernAgentPresetRef;
+        to: TauriTavernAgentPresetRef;
+    }) => Promise<{ updated: number; profileIds: string[] }>;
     save: (input: TauriTavernAgentProfileDefinition | { profile: TauriTavernAgentProfileDefinition }) => Promise<void>;
     delete: (input: string | { profileId: string }) => Promise<void>;
 };

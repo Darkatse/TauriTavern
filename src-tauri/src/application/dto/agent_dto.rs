@@ -169,6 +169,20 @@ pub struct AgentSaveProfileDto {
     pub profile: AgentProfileDefinition,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRetargetPresetRefsDto {
+    pub from: AgentPresetRef,
+    pub to: AgentPresetRef,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRetargetPresetRefsResultDto {
+    pub updated: usize,
+    pub profile_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentListProfilesResultDto {

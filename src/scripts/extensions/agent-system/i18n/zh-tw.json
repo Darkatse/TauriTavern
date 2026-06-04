@@ -4,6 +4,8 @@
     "agent_system.agentModeOn": "Agent 模式已開啟",
     "agent_system.agentProfileBuiltInDelete": "default-writer 為內建設定檔，不能刪除。",
     "agent_system.agentProfileBuiltInEdit": "default-writer 為內建設定檔，請先複製後再編輯。",
+    "agent_system.agentProfileExternalChangePending": "Agent 設定檔已在面板外發生變更。請重新載入此設定檔後再儲存。",
+    "agent_system.agentProfileExternalChangeSaveBlocked": "Agent 設定檔已在面板外發生變更。請重新載入此設定檔後再儲存。",
     "agent_system.agentProfileExportSaveFirst": "請先儲存此 Agent 設定檔，再匯出。",
     "agent_system.agentProfileManualRepairRequired": "Agent 設定檔需要手動修復：{id}。{error}",
     "agent_system.agentProfileModelBindingMissing": "此裝置上不可用已儲存的模型綁定：{id}",

@@ -10,6 +10,7 @@ import {
 import { defaultProfile, normalizeProfileForSave, normalizeProfileId, profileForEdit } from './profile-model.js';
 import { loadSettings, patchSettings } from './settings-store.js';
 import { downloadBlobWithRuntime } from '../../../file-export.js';
+import { subscribeAgentProfilesChanged } from '../../../tauritavern/agent/agent-profile-events.js';
 import { AGENT_MODEL_REQUIRES_CONFIGURATION, sanitizePortableAgentProfile } from '../../../tauritavern/agent/agent-profile-portable.js';
 import { normalizeAgentSystemPrompt } from '../../../tauritavern/agent/agent-system-prompt.js';
 
@@ -115,6 +116,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 loading: false,
                 saving: false,
                 error: '',
+                unsubscribeProfilesChanged: null,
+                externalProfileChangePending: false,
                 settings: {},
                 profiles: [],
                 editingProfileId: DEFAULT_PROFILE_ID,
@@ -125,6 +128,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 mainAgentPresentationByProfileId: {},
                 draft: profileForEdit(defaultProfile()),
                 draftJson: prettyJson(defaultProfile()),
+                lastLoadedProfileJson: prettyJson(defaultProfile()),
                 resolvedAgentSystemPrompt: '',
                 profilePreviewError: '',
                 tabs: [
@@ -346,6 +350,12 @@ export function createAgentSystemPanelRoot({ requestClose }) {
         },
         async mounted() {
             await this.initialize();
+            this.unsubscribeProfilesChanged = subscribeAgentProfilesChanged(() => {
+                void this.handleProfilesChanged();
+            });
+        },
+        unmounted() {
+            this.unsubscribeProfilesChanged?.();
         },
         methods: {
             async initialize() {
@@ -533,6 +543,38 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 }
                 return repaired;
             },
+            async handleProfilesChanged() {
+                if (!this.initialized || this.saving) {
+                    return;
+                }
+                try {
+                    await this.refreshProfiles({ repairListIssues: false });
+                    const profileId = this.editingProfileId || DEFAULT_PROFILE_ID;
+                    const result = await requireAgentApi().profiles.load({ profileId });
+                    const loadedProfileJson = result?.profile
+                        ? prettyJson(normalizeProfileForSave(result.profile))
+                        : null;
+                    if (this.currentProfileDraftHasUnsavedChanges()) {
+                        if (this.lastLoadedProfileJson && loadedProfileJson !== this.lastLoadedProfileJson) {
+                            if (!this.externalProfileChangePending) {
+                                this.warn(tr('agentProfileExternalChangePending'));
+                            }
+                            this.externalProfileChangePending = true;
+                        }
+                        return;
+                    }
+                    if (!result?.profile) {
+                        await this.selectProfile(DEFAULT_PROFILE_ID, { persistEditing: false });
+                        return;
+                    }
+                    await this.selectProfile(profileId, { persistEditing: false });
+                } catch (error) {
+                    this.reportError(error);
+                    queueMicrotask(() => {
+                        throw error;
+                    });
+                }
+            },
             async refreshToolSpecs() {
                 const api = requireAgentApi().tools;
                 if (!api?.list) {
@@ -572,6 +614,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 if (options.persistEditing !== false) {
                     await this.saveSettingsPatch({ editingProfileId: id });
                 }
+                this.lastLoadedProfileJson = prettyJson(normalizeProfileForSave(result.profile));
+                this.externalProfileChangePending = false;
                 this.draft = profileForEdit(result.profile);
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
@@ -600,6 +644,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 const id = this.nextProfileId('agent-profile');
                 this.editingProfileId = id;
                 this.draft = profileForEdit(defaultProfile(id));
+                this.lastLoadedProfileJson = '';
+                this.externalProfileChangePending = false;
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
                 this.resolvedAgentSystemPrompt = '';
@@ -612,6 +658,8 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 copy.displayName = tr('copyDisplayName', { name: copy.displayName });
                 this.editingProfileId = id;
                 this.draft = profileForEdit(copy);
+                this.lastLoadedProfileJson = '';
+                this.externalProfileChangePending = false;
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
                 this.resolvedAgentSystemPrompt = '';
@@ -935,6 +983,9 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 if (this.isBuiltinProfile) {
                     throw new Error(tr('agentProfileBuiltInEdit'));
                 }
+                if (this.externalProfileChangePending) {
+                    throw new Error(tr('agentProfileExternalChangeSaveBlocked'));
+                }
                 this.saving = true;
                 try {
                     const profile = normalizeProfileForSave(this.draft);
@@ -961,6 +1012,9 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             },
             profileDraftHasUnsavedChanges(savedProfile) {
                 return prettyJson(normalizeProfileForSave(this.draft)) !== prettyJson(savedProfile);
+            },
+            currentProfileDraftHasUnsavedChanges() {
+                return prettyJson(normalizeProfileForSave(this.draft)) !== this.lastLoadedProfileJson;
             },
             async exportSelectedProfile() {
                 const profileId = this.editingProfileId || DEFAULT_PROFILE_ID;

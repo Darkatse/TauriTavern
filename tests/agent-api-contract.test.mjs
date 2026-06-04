@@ -50,6 +50,10 @@ test('api.agent.profiles forwards profile commands with camelCase DTOs', async (
     await agent.profiles.list();
     await agent.profiles.load({ profileId: 'writer' });
     await agent.profiles.resolveSystemPrompt({ profileId: 'writer' });
+    await agent.profiles.retargetPresetRefs({
+        from: { apiId: 'openai', name: 'Old Preset' },
+        to: { apiId: 'openai', name: 'New Preset' },
+    });
     await agent.profiles.save({ profile });
     await agent.profiles.delete('writer');
     await agent.profiles.repairFile({ profileId: 'writer', action: 'normalizeIdentity' });
@@ -58,6 +62,15 @@ test('api.agent.profiles forwards profile commands with camelCase DTOs', async (
         { command: 'list_agent_profiles', args: undefined },
         { command: 'load_agent_profile', args: { dto: { profileId: 'writer' } } },
         { command: 'resolve_agent_system_prompt', args: { dto: { profileId: 'writer' } } },
+        {
+            command: 'retarget_agent_profile_preset_refs',
+            args: {
+                dto: {
+                    from: { apiId: 'openai', name: 'Old Preset' },
+                    to: { apiId: 'openai', name: 'New Preset' },
+                },
+            },
+        },
         { command: 'save_agent_profile', args: { dto: { profile } } },
         { command: 'delete_agent_profile', args: { dto: { profileId: 'writer' } } },
         { command: 'repair_agent_profile_file', args: { dto: { profileId: 'writer', action: 'normalizeIdentity' } } },
@@ -76,11 +89,15 @@ test('api.agent.profiles publishes profile change events after successful mutati
     });
 
     await agent.profiles.save({ profile: { id: 'writer' } });
+    await agent.profiles.retargetPresetRefs({
+        from: { apiId: 'openai', name: 'Old Preset' },
+        to: { apiId: 'openai', name: 'New Preset' },
+    });
     await agent.profiles.delete('writer');
     await agent.profiles.repairFile({ profileId: 'writer', action: 'delete' });
     unsubscribe();
 
-    assert.deepEqual(events, ['changed', 'changed', 'changed']);
+    assert.deepEqual(events, ['changed', 'changed', 'changed', 'changed']);
 });
 
 test('api.agent.profiles fails fast on invalid profile inputs', async () => {
@@ -97,6 +114,10 @@ test('api.agent.profiles fails fast on invalid profile inputs', async () => {
     await assert.rejects(
         () => agent.profiles.save(null),
         /profile must be an object/,
+    );
+    await assert.rejects(
+        () => agent.profiles.retargetPresetRefs({ from: { apiId: 'openai' }, to: { apiId: 'openai', name: 'New' } }),
+        /from requires apiId and name/,
     );
     await assert.rejects(
         () => agent.profiles.repairFile({ profileId: 'writer', action: 'archive' }),

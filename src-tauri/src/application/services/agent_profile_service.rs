@@ -10,10 +10,10 @@ use crate::domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy, DEFAULT
 use crate::domain::models::agent::profile::{
     AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentDelegationPolicy,
     AgentModelBinding, AgentModelBindingMode, AgentOutputArtifactTarget, AgentOutputPolicy,
-    AgentPresetBinding, AgentPresetBindingMode, AgentProfileDefinition, AgentProfileId,
-    AgentProfileInstructions, AgentProfileSourceTrace, AgentProfileSummary, AgentRunPolicy,
-    AgentSkillPolicy, AgentToolDescriptionOverride, AgentToolPolicy, AgentWorkspacePolicy,
-    DEFAULT_AGENT_PROFILE_ID, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL,
+    AgentPresetBinding, AgentPresetBindingMode, AgentPresetRef, AgentProfileDefinition,
+    AgentProfileId, AgentProfileInstructions, AgentProfileSourceTrace, AgentProfileSummary,
+    AgentRunPolicy, AgentSkillPolicy, AgentToolDescriptionOverride, AgentToolPolicy,
+    AgentWorkspacePolicy, DEFAULT_AGENT_PROFILE_ID, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL,
     DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
     DEFAULT_AGENT_TOOL_MAX_ROUNDS, ResolvedAgentOutputPolicy, ResolvedAgentProfile,
 };
@@ -51,6 +51,11 @@ pub struct AgentProfileResolveInput<'a> {
 pub struct AgentProfileList {
     pub profiles: Vec<AgentProfileSummary>,
     pub issues: Vec<AgentProfileStorageIssue>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AgentProfilePresetRetargetResult {
+    pub profile_ids: Vec<AgentProfileId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -529,6 +534,66 @@ impl AgentProfileService {
             .map_err(ApplicationError::from)
     }
 
+    pub async fn retarget_preset_refs(
+        &self,
+        from: AgentPresetRef,
+        to: AgentPresetRef,
+    ) -> Result<AgentProfilePresetRetargetResult, ApplicationError> {
+        let (from, to) =
+            validate_preset_retarget_pair(from, to, self.preset_repository.as_ref()).await?;
+        let summaries = self.list_profiles().await?.profiles;
+        let mut updated = Vec::new();
+
+        for summary in summaries {
+            let Some(mut profile) = self
+                .profile_repository
+                .load_profile(&summary.id)
+                .await
+                .map_err(ApplicationError::from)?
+            else {
+                continue;
+            };
+            migrate_profile_schema(&mut profile)?;
+            validate_profile_header(&profile)?;
+            if profile.preset.mode != AgentPresetBindingMode::Ref {
+                continue;
+            }
+            let matches_from = profile
+                .preset
+                .ref_
+                .as_ref()
+                .is_some_and(|ref_| ref_.api_id == from.api_id && ref_.name == from.name);
+            if !matches_from {
+                continue;
+            }
+
+            validate_preset_binding(
+                &profile.preset,
+                self.preset_repository.as_ref(),
+                AgentProfileExternalReferencePolicy::AllowDangling,
+            )
+            .await?;
+            normalize_context_policy(&mut profile.context)?;
+
+            let ref_ = profile
+                .preset
+                .ref_
+                .as_mut()
+                .expect("matching preset ref must exist");
+            ref_.api_id = to.api_id.clone();
+            ref_.name = to.name.clone();
+            self.profile_repository
+                .save_profile(&profile)
+                .await
+                .map_err(ApplicationError::from)?;
+            updated.push(profile.id);
+        }
+
+        Ok(AgentProfilePresetRetargetResult {
+            profile_ids: updated,
+        })
+    }
+
     pub async fn delete_profile(&self, profile_id: &str) -> Result<(), ApplicationError> {
         let id = AgentProfileId::parse(profile_id).map_err(ApplicationError::ValidationError)?;
         self.profile_repository
@@ -777,6 +842,66 @@ async fn validate_preset_binding(
             Ok(())
         }
     }
+}
+
+async fn validate_preset_retarget_pair(
+    from: AgentPresetRef,
+    to: AgentPresetRef,
+    preset_repository: &dyn PresetRepository,
+) -> Result<(AgentPresetRef, AgentPresetRef), ApplicationError> {
+    let from = normalize_preset_ref(from, "from")?;
+    let to = normalize_preset_ref(to, "to")?;
+    if from == to {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_preset_retarget_same_ref: from and to preset refs must differ"
+                .to_string(),
+        ));
+    }
+    if from.api_id != to.api_id {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_preset_retarget_api_mismatch: preset refs cannot be retargeted across apiId"
+                .to_string(),
+        ));
+    }
+    let preset_type = PresetType::from_api_id(to.api_id.as_str()).ok_or_else(|| {
+        ApplicationError::ValidationError(format!(
+            "agent.profile_preset_api_invalid: unsupported preset apiId `{}`",
+            to.api_id
+        ))
+    })?;
+    let target_exists = preset_repository
+        .preset_exists(to.name.as_str(), &preset_type)
+        .await?
+        || preset_repository
+            .get_default_preset(to.name.as_str(), &preset_type)
+            .await?
+            .is_some();
+    if !target_exists {
+        return Err(ApplicationError::ValidationError(format!(
+            "agent.profile_preset_retarget_target_missing: target preset `{}` for apiId `{}` does not exist",
+            to.name, to.api_id
+        )));
+    }
+    Ok((from, to))
+}
+
+fn normalize_preset_ref(
+    mut ref_: AgentPresetRef,
+    label: &str,
+) -> Result<AgentPresetRef, ApplicationError> {
+    ref_.api_id = ref_.api_id.trim().to_string();
+    ref_.name = ref_.name.trim().to_string();
+    if ref_.api_id.is_empty() {
+        return Err(ApplicationError::ValidationError(format!(
+            "agent.profile_preset_retarget_{label}_api_required: {label}.apiId cannot be empty"
+        )));
+    }
+    if ref_.name.is_empty() {
+        return Err(ApplicationError::ValidationError(format!(
+            "agent.profile_preset_retarget_{label}_name_required: {label}.name cannot be empty"
+        )));
+    }
+    Ok(ref_)
 }
 
 fn validate_model_binding(binding: &AgentModelBinding) -> Result<(), ApplicationError> {
@@ -1388,14 +1513,24 @@ fn validate_artifact_id(id: &str) -> Result<(), ApplicationError> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use std::sync::Arc;
 
+    use async_trait::async_trait;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use crate::application::services::agent_tools::BuiltinAgentToolRegistry;
+    use crate::domain::errors::DomainError;
     use crate::domain::models::agent::AgentToolSpec;
     use crate::domain::models::agent::profile::{
-        AgentContextPolicy, AgentModelBinding, AgentModelBindingMode, ResolvedAgentProfile,
+        AgentContextPolicy, AgentModelBinding, AgentModelBindingMode, AgentPresetBindingMode,
+        AgentPresetRef, AgentProfileId, ResolvedAgentProfile,
     };
+    use crate::domain::models::preset::{DefaultPreset, Preset, PresetType};
+    use crate::domain::repositories::preset_repository::PresetRepository;
+    use crate::infrastructure::repositories::file_agent_profile_repository::FileAgentProfileRepository;
 
-    use super::materialize_agent_system_prompt;
+    use super::{AgentProfileService, materialize_agent_system_prompt};
 
     #[test]
     fn materialized_agent_system_prompt_uses_profile_override_exactly() {
@@ -1638,6 +1773,347 @@ mod tests {
                 .to_string()
                 .contains("agent.profile_direct_runnable_disabled_requires_subagent")
         );
+    }
+
+    #[tokio::test]
+    async fn profile_preset_retarget_updates_only_matching_refs() {
+        let root = temp_profile_root("retarget");
+        let profile_service = test_profile_service_with_presets(
+            &root,
+            TestPresetRepository::with_user_openai("New Writer Preset"),
+        );
+
+        save_profile_with_preset_ref(&profile_service, "writer", "openai", "Old Writer Preset")
+            .await;
+        save_profile_with_preset_ref(&profile_service, "critic", "openai", "Other Preset").await;
+
+        let result = profile_service
+            .retarget_preset_refs(
+                preset_ref("openai", "Old Writer Preset"),
+                preset_ref("openai", "New Writer Preset"),
+            )
+            .await
+            .expect("retarget profile preset refs");
+
+        assert_eq!(result.profile_ids.len(), 1);
+        assert_eq!(result.profile_ids[0].as_str(), "writer");
+        assert_eq!(
+            loaded_preset_name(&profile_service, "writer").await,
+            "New Writer Preset"
+        );
+        assert_eq!(
+            loaded_preset_name(&profile_service, "critic").await,
+            "Other Preset"
+        );
+
+        cleanup_profile_root(root).await;
+    }
+
+    #[tokio::test]
+    async fn profile_preset_retarget_accepts_default_target_preset() {
+        let root = temp_profile_root("retarget-default-target");
+        let profile_service = test_profile_service_with_presets(
+            &root,
+            TestPresetRepository::with_default_openai("Built In Writer Preset"),
+        );
+        save_profile_with_preset_ref(&profile_service, "writer", "openai", "Old Writer Preset")
+            .await;
+
+        profile_service
+            .retarget_preset_refs(
+                preset_ref("openai", "Old Writer Preset"),
+                preset_ref("openai", "Built In Writer Preset"),
+            )
+            .await
+            .expect("default target preset is a valid retarget destination");
+
+        assert_eq!(
+            loaded_preset_name(&profile_service, "writer").await,
+            "Built In Writer Preset"
+        );
+
+        cleanup_profile_root(root).await;
+    }
+
+    #[tokio::test]
+    async fn profile_preset_retarget_requires_existing_target_preset() {
+        let root = temp_profile_root("retarget-missing-target");
+        let profile_service =
+            test_profile_service_with_presets(&root, TestPresetRepository::default());
+        save_profile_with_preset_ref(&profile_service, "writer", "openai", "Old Writer Preset")
+            .await;
+
+        let error = profile_service
+            .retarget_preset_refs(
+                preset_ref("openai", "Old Writer Preset"),
+                preset_ref("openai", "Missing Writer Preset"),
+            )
+            .await
+            .expect_err("missing target preset should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("agent.profile_preset_retarget_target_missing")
+        );
+        assert_eq!(
+            loaded_preset_name(&profile_service, "writer").await,
+            "Old Writer Preset"
+        );
+
+        cleanup_profile_root(root).await;
+    }
+
+    #[tokio::test]
+    async fn profile_preset_retarget_ignores_unmatched_malformed_preset_refs() {
+        let root = temp_profile_root("retarget-unmatched-malformed");
+        let profile_service = test_profile_service_with_presets(
+            &root,
+            TestPresetRepository::with_user_openai("New Writer Preset"),
+        );
+        save_profile_with_preset_ref(&profile_service, "writer", "openai", "Old Writer Preset")
+            .await;
+
+        let mut unrelated = profile_service
+            .load_profile("default-writer")
+            .await
+            .expect("load default profile")
+            .expect("default profile exists");
+        unrelated.id = AgentProfileId::parse("unrelated").expect("profile id");
+        unrelated.preset.mode = AgentPresetBindingMode::Ref;
+        unrelated.preset.ref_ = Some(preset_ref("unsupported-api", "Unrelated Preset"));
+        unrelated.preset.required = true;
+        profile_service
+            .profile_repository
+            .save_profile(&unrelated)
+            .await
+            .expect("save malformed unrelated profile");
+
+        let result = profile_service
+            .retarget_preset_refs(
+                preset_ref("openai", "Old Writer Preset"),
+                preset_ref("openai", "New Writer Preset"),
+            )
+            .await
+            .expect("unmatched malformed profile should not block retarget");
+
+        assert_eq!(result.profile_ids.len(), 1);
+        assert_eq!(
+            loaded_preset_name(&profile_service, "writer").await,
+            "New Writer Preset"
+        );
+        assert_eq!(
+            loaded_preset_api_id(&profile_service, "unrelated").await,
+            "unsupported-api"
+        );
+
+        cleanup_profile_root(root).await;
+    }
+
+    #[tokio::test]
+    async fn profile_preset_retarget_rejects_same_or_cross_api_refs() {
+        let root = temp_profile_root("retarget-invalid-pair");
+        let profile_service =
+            test_profile_service_with_presets(&root, TestPresetRepository::default());
+
+        let same_error = profile_service
+            .retarget_preset_refs(
+                preset_ref("openai", "Writer Preset"),
+                preset_ref("openai", "Writer Preset"),
+            )
+            .await
+            .expect_err("same refs are not a rename");
+        assert!(
+            same_error
+                .to_string()
+                .contains("agent.profile_preset_retarget_same_ref")
+        );
+
+        let cross_api_error = profile_service
+            .retarget_preset_refs(
+                preset_ref("openai", "Writer Preset"),
+                preset_ref("textgenerationwebui", "Writer Preset"),
+            )
+            .await
+            .expect_err("preset refs cannot cross api groups");
+        assert!(
+            cross_api_error
+                .to_string()
+                .contains("agent.profile_preset_retarget_api_mismatch")
+        );
+
+        cleanup_profile_root(root).await;
+    }
+
+    fn temp_profile_root(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "tauritavern-agent-profile-{label}-{}",
+            Uuid::new_v4().simple()
+        ))
+    }
+
+    async fn cleanup_profile_root(root: std::path::PathBuf) {
+        match tokio::fs::remove_dir_all(root).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("cleanup: {error}"),
+        }
+    }
+
+    fn test_profile_service_with_presets(
+        root: &std::path::Path,
+        preset_repository: TestPresetRepository,
+    ) -> Arc<AgentProfileService> {
+        let profile_repository =
+            Arc::new(FileAgentProfileRepository::new(root.join("agent-profiles")));
+        Arc::new(AgentProfileService::new(
+            profile_repository.clone(),
+            profile_repository,
+            Arc::new(preset_repository),
+        ))
+    }
+
+    async fn save_profile_with_preset_ref(
+        profile_service: &AgentProfileService,
+        profile_id: &str,
+        api_id: &str,
+        preset_name: &str,
+    ) {
+        let mut profile = profile_service
+            .load_profile("default-writer")
+            .await
+            .expect("load default profile")
+            .expect("default profile exists");
+        profile.id = AgentProfileId::parse(profile_id).expect("profile id");
+        profile.preset.mode = AgentPresetBindingMode::Ref;
+        profile.preset.ref_ = Some(preset_ref(api_id, preset_name));
+        profile.preset.required = true;
+        let registry = BuiltinAgentToolRegistry::phase2c();
+        profile_service
+            .save_profile(profile, registry.specs())
+            .await
+            .expect("save profile");
+    }
+
+    async fn loaded_preset_name(profile_service: &AgentProfileService, profile_id: &str) -> String {
+        profile_service
+            .load_profile(profile_id)
+            .await
+            .expect("load profile")
+            .expect("profile exists")
+            .preset
+            .ref_
+            .expect("profile preset ref")
+            .name
+    }
+
+    async fn loaded_preset_api_id(
+        profile_service: &AgentProfileService,
+        profile_id: &str,
+    ) -> String {
+        profile_service
+            .load_profile(profile_id)
+            .await
+            .expect("load profile")
+            .expect("profile exists")
+            .preset
+            .ref_
+            .expect("profile preset ref")
+            .api_id
+    }
+
+    fn preset_ref(api_id: &str, name: &str) -> AgentPresetRef {
+        AgentPresetRef {
+            api_id: api_id.to_string(),
+            name: name.to_string(),
+        }
+    }
+
+    #[derive(Default)]
+    struct TestPresetRepository {
+        user_openai: Vec<String>,
+        default_openai: Vec<String>,
+    }
+
+    impl TestPresetRepository {
+        fn with_user_openai(name: &str) -> Self {
+            Self {
+                user_openai: vec![name.to_string()],
+                default_openai: Vec::new(),
+            }
+        }
+
+        fn with_default_openai(name: &str) -> Self {
+            Self {
+                user_openai: Vec::new(),
+                default_openai: vec![name.to_string()],
+            }
+        }
+    }
+
+    #[async_trait]
+    impl PresetRepository for TestPresetRepository {
+        async fn save_preset(&self, _preset: &Preset) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn delete_preset(
+            &self,
+            _name: &str,
+            _preset_type: &PresetType,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn preset_exists(
+            &self,
+            name: &str,
+            preset_type: &PresetType,
+        ) -> Result<bool, DomainError> {
+            Ok(*preset_type == PresetType::OpenAI
+                && self.user_openai.iter().any(|preset| preset == name))
+        }
+
+        async fn get_preset(
+            &self,
+            name: &str,
+            preset_type: &PresetType,
+        ) -> Result<Option<Preset>, DomainError> {
+            if self.preset_exists(name, preset_type).await? {
+                return Ok(Some(Preset::new(
+                    name.to_string(),
+                    preset_type.clone(),
+                    json!({ "chat_completion_source": "openai" }),
+                )));
+            }
+            Ok(None)
+        }
+
+        async fn list_presets(&self, preset_type: &PresetType) -> Result<Vec<String>, DomainError> {
+            if *preset_type == PresetType::OpenAI {
+                return Ok(self.user_openai.clone());
+            }
+            Ok(Vec::new())
+        }
+
+        async fn get_default_preset(
+            &self,
+            name: &str,
+            preset_type: &PresetType,
+        ) -> Result<Option<DefaultPreset>, DomainError> {
+            if *preset_type != PresetType::OpenAI
+                || !self.default_openai.iter().any(|preset| preset == name)
+            {
+                return Ok(None);
+            }
+            Ok(Some(DefaultPreset {
+                filename: format!("{name}.json"),
+                name: name.to_string(),
+                preset_type: PresetType::OpenAI,
+                is_default: true,
+                data: json!({ "chat_completion_source": "openai" }),
+            }))
+        }
     }
 
     fn tool(name: &str, model_name: &str) -> AgentToolSpec {

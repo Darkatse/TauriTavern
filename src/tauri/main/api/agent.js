@@ -4,10 +4,10 @@ import { buildAgentPromptSnapshotSeed } from './agent-prompt-snapshot.js';
 import { assemblePromptSnapshotForProfile, createPromptAssemblyApi } from './agent-prompt-assembly-run.js';
 import { attachHostCommitBridge } from './agent-chat-commit-bridge.js';
 import { attachHostPromptAssemblyBridge } from './agent-prompt-assembly-bridge.js';
+import { createAgentProfilesApi } from './agent-profiles.js';
 import { createSharedRunEventSubscribe } from './agent-run-event-subscription.js';
 import { normalizeAgentRunOptions } from './agent-run-options.js';
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../scripts/tauritavern/agent/agent-system-settings.js';
-import { emitAgentProfilesChanged } from '../../../scripts/tauritavern/agent/agent-profile-events.js';
 
 const DEFAULT_EVENT_POLL_MS = 500;
 
@@ -22,6 +22,7 @@ const DEFAULT_EVENT_POLL_MS = 500;
  */
 function createAgentApi({ safeInvoke }) {
     const promptAssembly = createPromptAssemblyApi({ safeInvoke });
+    const profiles = createAgentProfilesApi({ safeInvoke });
 
     async function startRunWithPromptSnapshot(input) {
         const dto = await normalizePromptSnapshotRunInput(input, { safeInvoke });
@@ -198,56 +199,8 @@ function createAgentApi({ safeInvoke }) {
         };
     }
 
-    async function listProfiles() {
-        return safeInvoke('list_agent_profiles');
-    }
-
     async function listToolSpecs() {
         return safeInvoke('list_agent_tool_specs');
-    }
-
-    async function loadProfile(input) {
-        const profileId = requireProfileId(input?.profileId ?? input?.profile_id ?? input);
-        return safeInvoke('load_agent_profile', { dto: { profileId } });
-    }
-
-    async function resolveSystemPrompt(input = {}) {
-        const profileId = normalizeOptionalString(input?.profileId ?? input?.profile_id ?? input);
-        return safeInvoke('resolve_agent_system_prompt', {
-            dto: {
-                ...(profileId ? { profileId } : {}),
-            },
-        });
-    }
-
-    async function saveProfile(input) {
-        const profile = input?.profile ?? input;
-        if (!isPlainObject(profile)) {
-            throw new Error('agent.profile_required: profile must be an object');
-        }
-        const result = await safeInvoke('save_agent_profile', { dto: { profile } });
-        emitAgentProfilesChanged();
-        return result;
-    }
-
-    async function deleteProfile(input) {
-        const profileId = requireProfileId(input?.profileId ?? input?.profile_id ?? input);
-        const result = await safeInvoke('delete_agent_profile', { dto: { profileId } });
-        emitAgentProfilesChanged();
-        return result;
-    }
-
-    async function repairProfileFile(input) {
-        if (!isPlainObject(input)) {
-            throw new Error('agent.profile_repair_input_invalid: repair input must be an object');
-        }
-        const profileId = requireProfileId(input.profileId ?? input.profile_id);
-        const action = normalizeProfileFileRepairAction(input.action);
-        const result = await safeInvoke('repair_agent_profile_file', {
-            dto: { profileId, action },
-        });
-        emitAgentProfilesChanged();
-        return result;
     }
 
     return {
@@ -259,14 +212,7 @@ function createAgentApi({ safeInvoke }) {
         readModelTurn,
         pruneChatPersistentStates,
         subscribe,
-        profiles: {
-            list: listProfiles,
-            load: loadProfile,
-            resolveSystemPrompt,
-            save: saveProfile,
-            delete: deleteProfile,
-            repairFile: repairProfileFile,
-        },
+        profiles,
         tools: {
             list: listToolSpecs,
         },
@@ -427,22 +373,6 @@ function requireRunId(value) {
         throw new Error('runId is required');
     }
     return runId;
-}
-
-function requireProfileId(value) {
-    const profileId = String(value || '').trim();
-    if (!profileId) {
-        throw new Error('profileId is required');
-    }
-    return profileId;
-}
-
-function normalizeProfileFileRepairAction(value) {
-    const action = String(value || '').trim();
-    if (action !== 'delete' && action !== 'normalizeIdentity') {
-        throw new Error('agent.profile_repair_action_invalid: repair action must be delete or normalizeIdentity');
-    }
-    return action;
 }
 
 function normalizeOptionalString(value) {

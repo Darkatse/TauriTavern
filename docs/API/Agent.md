@@ -29,9 +29,14 @@ type TauriTavernAgentApi = {
   readWorkspaceFile(input: AgentReadWorkspaceFileInput): Promise<AgentWorkspaceFile>;
   readModelTurn(input: AgentReadModelTurnInput): Promise<AgentModelTurn>;
   profiles: {
-    list(): Promise<{ profiles: AgentProfileSummary[] }>;
+    list(): Promise<AgentListProfilesResult>;
     load(input: string | { profileId: string }): Promise<{ profile: AgentProfileDefinition | null }>;
     resolveSystemPrompt(input?: string | { profileId?: string | null }): Promise<{ agentSystemPrompt: string }>;
+    repairFile(input: { profileId: string; action: 'delete' | 'normalizeIdentity' }): Promise<void>;
+    retargetPresetRefs(input: {
+      from: { apiId: string; name: string };
+      to: { apiId: string; name: string };
+    }): Promise<{ updated: number; profileIds: string[] }>;
     save(input: AgentProfileDefinition | { profile: AgentProfileDefinition }): Promise<void>;
     delete(input: string | { profileId: string }): Promise<void>;
   };
@@ -303,6 +308,8 @@ type AgentModelTurn = {
 ## 11. profiles / promptAssembly / tools
 
 `profiles.*` 是当前 Agent Profile 管理入口。`profiles.list()` 的 summary 包含 `directRunnable`，供前端区分可直接启动的 root-run Profile 与只能作为 SubAgent / handoff target 的 Profile。列表扫描会返回可加载 Profile，同时把单个本地 Profile JSON 文件的内容损坏放入 `issues`，避免一个坏文件阻塞整个面板；`invalidJson` 建议用户确认后删除，`invalidFileIdentity` 可通过 `profiles.repairFile({ profileId, action: "normalizeIdentity" })` 尝试规范化文件 header / identity 键（`schemaVersion`、`kind`、`id`），其它 Profile 内容保持原样。若修复后整份 JSON 仍不能按 Agent Profile 契约读取，则拒绝写回并报告错误。`invalidProfile` 表示主体结构损坏，需要手动修复，不会自动替换为默认 Profile。目录读取失败、非法文件名等仓储契约错误仍然 fail-fast。Profile JSON 中的 `preset.mode = "ref"` 与 `model.mode = "connectionRef"` 会影响 prompt assembly 和最终模型连接；`model.mode = "requiresConfiguration"` 表示 Profile 需要本机重新选择模型，可保存但不可运行；`run.directRunnable = false` 表示该 Profile 不能直接启动，只能通过已实现的非直接入口运行（当前为 return-mode SubAgent）。前端“可作为子 Agent”会写入该非直接运行语义。保存时无效 schema 必须 fail-fast。
+
+`profiles.retargetPresetRefs()` 是管理态引用迁移 API，用于 preset rename 生命周期。它只更新 `preset.mode = "ref"` 且精确匹配 `from` 的 Profile；`to` preset 必须已经存在，且不能跨 `apiId` retarget。`from` 可以已经 dangling。该 API 不会让运行态静默降级；运行和 prompt assembly 仍按 Profile 契约 fail-fast。该操作逐个 Profile 写回，失败后可用同一请求重试；preset rename 流程必须在依赖迁移完成后再删除旧 preset。
 
 ```ts
 type AgentProfileSummary = {

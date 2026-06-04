@@ -52,6 +52,10 @@ function installWindow(api) {
     return window;
 }
 
+function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
 function installRollbackEventCapture(script, updates = []) {
     script.event_types = {
         ...(script.event_types || {}),
@@ -1094,6 +1098,83 @@ test('Agent profile save keeps non-direct callable profiles out of direct defaul
     assert.equal(vm.editingProfileId, profile.id);
     assert.equal(settings.activeProfileId, 'default-writer');
     assert.equal(settings.editingProfileId, profile.id);
+});
+
+test('Agent profile save refuses to overwrite externally changed dirty draft', async () => {
+    const {
+        defaultProfile,
+    } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
+    const profile = defaultProfile('writer');
+    profile.preset = {
+        mode: 'ref',
+        ref: { apiId: 'openai', name: 'Old Preset' },
+        required: true,
+    };
+    let diskProfile = cloneJson(profile);
+    const saves = [];
+    installWindow({
+        extension: {
+            store: {
+                async setJson() {},
+            },
+        },
+        agent: {
+            profiles: {
+                async list() {
+                    return {
+                        profiles: [{
+                            id: diskProfile.id,
+                            displayName: diskProfile.displayName,
+                            directRunnable: true,
+                        }],
+                    };
+                },
+                async load({ profileId }) {
+                    assert.equal(profileId, profile.id);
+                    return { profile: cloneJson(diskProfile) };
+                },
+                async resolveSystemPrompt() {
+                    return { agentSystemPrompt: 'Resolved Agent system prompt.' };
+                },
+                async save({ profile }) {
+                    saves.push(profile);
+                },
+            },
+        },
+    });
+
+    const vm = await createAgentPanelHarness();
+    const warnings = [];
+    vm.warn = (message) => warnings.push(message);
+    vm.settings = {
+        agentModeEnabled: true,
+        activeProfileId: profile.id,
+        editingProfileId: profile.id,
+        activeTab: 'profiles',
+        runTimelineHeightPx: null,
+    };
+
+    await vm.selectProfile(profile.id);
+    vm.initialized = true;
+    vm.draft.displayName = 'Unsaved local edit';
+    diskProfile = cloneJson(diskProfile);
+    diskProfile.preset.ref.name = 'New Preset';
+
+    await vm.handleProfilesChanged();
+
+    assert.equal(vm.externalProfileChangePending, true);
+    assert.deepEqual(warnings, [
+        'Agent profiles changed outside this panel. Reload this profile before saving.',
+    ]);
+    await vm.handleProfilesChanged();
+    assert.deepEqual(warnings, [
+        'Agent profiles changed outside this panel. Reload this profile before saving.',
+    ]);
+    await assert.rejects(
+        () => vm.saveProfile(),
+        /Reload this profile before saving/,
+    );
+    assert.deepEqual(saves, []);
 });
 
 test('Agent System profile panel no longer owns legacy Skill management UI', async () => {
