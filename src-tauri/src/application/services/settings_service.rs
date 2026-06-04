@@ -1,6 +1,11 @@
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Duration;
 
+use super::settings_repair::repair_sillytavern_prompt_manager_settings;
 use crate::application::dto::settings_dto::{
     SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
     UpdateTauriTavernSettingsDto, UserSettingsDto,
@@ -11,13 +16,59 @@ use crate::domain::repositories::settings_repository::SettingsRepository;
 
 pub struct SettingsService {
     settings_repository: Arc<dyn SettingsRepository>,
+    pending_user_settings_repair_writeback: Arc<AtomicBool>,
 }
 
 impl SettingsService {
     pub fn new(settings_repository: Arc<dyn SettingsRepository>) -> Self {
         Self {
             settings_repository,
+            pending_user_settings_repair_writeback: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    fn schedule_delayed_user_settings_repair_writeback(&self) {
+        const DELAY: Duration = Duration::from_secs(20);
+
+        if self
+            .pending_user_settings_repair_writeback
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+
+        let settings_repository = Arc::clone(&self.settings_repository);
+        let pending = Arc::clone(&self.pending_user_settings_repair_writeback);
+
+        tokio::spawn(async move {
+            tokio::time::sleep(DELAY).await;
+
+            let result = async {
+                let mut settings = settings_repository.load_user_settings().await?;
+                let repair_report = repair_sillytavern_prompt_manager_settings(&mut settings);
+
+                if !repair_report.changed() {
+                    return Ok(());
+                }
+
+                tracing::warn!(
+                    "Persisting delayed SillyTavern PromptManager settings repair: {}",
+                    repair_report
+                );
+                settings_repository.save_user_settings(&settings).await
+            }
+            .await;
+
+            if let Err(error) = result {
+                tracing::error!(
+                    "Failed delayed SillyTavern PromptManager settings repair: {}",
+                    error
+                );
+            }
+
+            pending.store(false, Ordering::Release);
+        });
     }
 
     pub async fn get_tauritavern_settings(
@@ -146,7 +197,15 @@ impl SettingsService {
     ) -> Result<(), ApplicationError> {
         tracing::info!("Saving user settings");
 
-        let user_settings = settings.into();
+        let mut user_settings = settings.into();
+        let repair_report = repair_sillytavern_prompt_manager_settings(&mut user_settings);
+        if repair_report.changed() {
+            tracing::warn!(
+                "Repaired SillyTavern PromptManager settings before save: {}",
+                repair_report
+            );
+        }
+
         self.settings_repository
             .save_user_settings(&user_settings)
             .await?;
@@ -159,7 +218,16 @@ impl SettingsService {
     ) -> Result<SillyTavernSettingsResponseDto, ApplicationError> {
         tracing::info!("Getting SillyTavern settings");
 
-        let user_settings = self.settings_repository.load_user_settings().await?;
+        let mut user_settings = self.settings_repository.load_user_settings().await?;
+        let repair_report = repair_sillytavern_prompt_manager_settings(&mut user_settings);
+        if repair_report.changed() {
+            tracing::warn!(
+                "Repaired SillyTavern PromptManager settings while loading: {}",
+                repair_report
+            );
+            self.schedule_delayed_user_settings_repair_writeback();
+        }
+
         let settings_json = serde_json::to_string(&user_settings.data).map_err(|e| {
             ApplicationError::InternalError(format!("Failed to serialize settings: {}", e))
         })?;

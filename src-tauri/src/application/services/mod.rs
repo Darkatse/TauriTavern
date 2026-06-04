@@ -27,6 +27,7 @@ pub mod prompt_assembly_service;
 pub mod provider_metadata_service;
 pub mod quick_reply_service;
 pub mod secret_service;
+mod settings_repair;
 pub mod settings_service;
 pub mod skill_service;
 pub mod stable_diffusion_service;
