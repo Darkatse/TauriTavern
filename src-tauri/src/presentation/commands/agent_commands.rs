@@ -21,6 +21,7 @@ use crate::application::dto::agent_dto::{
 use crate::application::errors::ApplicationError;
 use crate::application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
 use crate::domain::models::agent::AgentChatRef;
+use crate::domain::models::agent::profile_diagnostic::AgentProfileHealth;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
@@ -127,6 +128,23 @@ pub async fn load_agent_profile(
         .await
         .map(|profile| AgentLoadProfileResultDto { profile })
         .map_err(map_command_error("Failed to load agent profile"))
+}
+
+#[tauri::command]
+pub async fn diagnose_agent_profile(
+    dto: AgentProfileIdDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentProfileHealth, CommandError> {
+    log_command("diagnose_agent_profile");
+
+    app_state
+        .agent_profile_diagnostic_service
+        .diagnose_profile(
+            &dto.profile_id,
+            app_state.agent_runtime_service.tool_specs(),
+        )
+        .await
+        .map_err(map_command_error("Failed to diagnose agent profile"))
 }
 
 #[tauri::command]

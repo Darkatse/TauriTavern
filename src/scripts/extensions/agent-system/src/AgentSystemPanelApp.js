@@ -16,6 +16,14 @@ import { normalizeAgentSystemPrompt } from '../../../tauritavern/agent/agent-sys
 
 const PROFILE_EXPORT_CONTENT_TYPE = 'application/json';
 const CHAT_COMPLETION_PRESET_API_ID = 'openai';
+const PROFILE_DIAGNOSTIC_CODES = Object.freeze({
+    PROFILE_CONTRACT_INVALID: 'agent.profile_contract_invalid',
+    PRESET_API_UNSUPPORTED: 'agent.profile_preset_api_unsupported',
+    PRESET_MISSING: 'agent.profile_preset_missing',
+    MODEL_REQUIRES_CONFIGURATION: 'agent.profile_model_requires_configuration',
+    MODEL_CONNECTION_MISSING: 'agent.profile_model_connection_missing',
+    MODEL_CONNECTION_INVALID: 'agent.profile_model_connection_invalid',
+});
 const PROFILE_TOOL_MATRIX_HIDDEN = new Set([
     ...AGENT_DELEGATION_TOOLS,
     ...RUNTIME_ONLY_TOOLS,
@@ -108,6 +116,30 @@ function normalizeResolvedAgentSystemPrompt(result) {
     return normalizeAgentSystemPrompt(result?.agentSystemPrompt);
 }
 
+function profileDiagnosticMessage(diagnostic) {
+    const resource = diagnostic?.resource || {};
+    switch (diagnostic?.code) {
+        case PROFILE_DIAGNOSTIC_CODES.PRESET_MISSING:
+            return tr('agentProfilePresetMissing', { name: resource.name || diagnostic.path });
+        case PROFILE_DIAGNOSTIC_CODES.PRESET_API_UNSUPPORTED:
+            return tr('agentProfilePresetUnsupported', { apiId: resource.apiId || '' });
+        case PROFILE_DIAGNOSTIC_CODES.MODEL_REQUIRES_CONFIGURATION:
+            return tr('modelRequiresConfiguration');
+        case PROFILE_DIAGNOSTIC_CODES.MODEL_CONNECTION_MISSING:
+            return tr('agentProfileModelBindingMissing', { id: resource.id || '' });
+        case PROFILE_DIAGNOSTIC_CODES.MODEL_CONNECTION_INVALID:
+            return tr('agentProfileModelBindingInvalid', { id: resource.id || '' });
+        case PROFILE_DIAGNOSTIC_CODES.PROFILE_CONTRACT_INVALID:
+            return tr('agentProfileContractInvalid', { error: diagnostic.message || diagnostic.code });
+        default:
+            return diagnostic?.message || diagnostic?.code || tr('unknownError');
+    }
+}
+
+function uniqueMessages(messages) {
+    return [...new Set(messages.filter(Boolean))];
+}
+
 export function createAgentSystemPanelRoot({ requestClose }) {
     return {
         data() {
@@ -131,6 +163,10 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 lastLoadedProfileJson: prettyJson(defaultProfile()),
                 resolvedAgentSystemPrompt: '',
                 profilePreviewError: '',
+                profileHealth: null,
+                profileDiagnosticError: '',
+                profileRuntimeStateJson: '',
+                profileSelectionToken: 0,
                 tabs: [
                     { id: 'profiles', labelKey: 'profiles', icon: 'fa-id-card-clip' },
                 ],
@@ -184,7 +220,11 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 if (this.isBuiltinProfile || String(this.draft.instructions.agentSystemPrompt || '').trim()) {
                     return '';
                 }
-                return this.resolvedAgentSystemPrompt;
+                return this.isProfileRuntimeStateCurrent ? this.resolvedAgentSystemPrompt : '';
+            },
+            isProfileRuntimeStateCurrent() {
+                return Boolean(this.profileRuntimeStateJson)
+                    && prettyJson(normalizeProfileForSave(this.draft)) === this.profileRuntimeStateJson;
             },
             profileStats() {
                 const allowedTools = new Set(Array.isArray(this.draft?.tools?.allow) ? this.draft.tools.allow : []);
@@ -292,18 +332,35 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 }
                 return name;
             },
+            profileDiagnostics() {
+                if (!this.isProfileRuntimeStateCurrent || !this.profileHealth) {
+                    return [];
+                }
+                return Array.isArray(this.profileHealth.diagnostics) ? this.profileHealth.diagnostics : [];
+            },
             profileConfigurationWarnings() {
                 const warnings = [];
-                if (this.missingPresetName) {
-                    warnings.push(tr('agentProfilePresetMissing', { name: this.missingPresetName }));
+                const diagnostics = this.profileDiagnostics;
+                if (diagnostics.length > 0) {
+                    warnings.push(...diagnostics.map(profileDiagnosticMessage));
+                } else {
+                    if (this.missingPresetName) {
+                        warnings.push(tr('agentProfilePresetMissing', { name: this.missingPresetName }));
+                    }
+                    if (this.hasExternalModelBinding) {
+                        warnings.push(tr('agentProfileModelBindingMissing', { id: this.draft.model.connectionRef }));
+                    }
                 }
-                if (this.hasExternalModelBinding) {
-                    warnings.push(tr('agentProfileModelBindingMissing', { id: this.draft.model.connectionRef }));
+                if (this.isProfileRuntimeStateCurrent && this.profileDiagnosticError) {
+                    warnings.push(tr('agentProfileDiagnosticsUnavailable', { error: this.profileDiagnosticError }));
                 }
-                if (this.profilePreviewError) {
+                const diagnosticCoversPreview = diagnostics.some((diagnostic) => (
+                    Array.isArray(diagnostic.blocks) && diagnostic.blocks.includes('preview')
+                ));
+                if (this.isProfileRuntimeStateCurrent && this.profilePreviewError && !diagnosticCoversPreview) {
                     warnings.push(tr('agentProfilePreviewUnavailable', { error: this.profilePreviewError }));
                 }
-                return warnings;
+                return uniqueMessages(warnings);
             },
             toolGroupsWithTools() {
                 const groupedTools = new Set();
@@ -605,14 +662,21 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             },
             async selectProfile(profileId, options = {}) {
                 const id = profileId || DEFAULT_PROFILE_ID;
+                const selectionToken = ++this.profileSelectionToken;
                 const profilesApi = requireAgentApi().profiles;
                 const result = await profilesApi.load({ profileId: id });
+                if (!this.isCurrentProfileSelection(selectionToken)) {
+                    return;
+                }
                 if (!result?.profile) {
                     throw new Error(tr('agentProfileNotFound', { id }));
                 }
                 this.editingProfileId = id;
                 if (options.persistEditing !== false) {
                     await this.saveSettingsPatch({ editingProfileId: id });
+                    if (!this.isCurrentProfileSelection(selectionToken, id)) {
+                        return;
+                    }
                 }
                 this.lastLoadedProfileJson = prettyJson(normalizeProfileForSave(result.profile));
                 this.externalProfileChangePending = false;
@@ -620,11 +684,59 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
                 this.refreshDraftJson();
+                this.clearProfileRuntimeState();
+                this.profileRuntimeStateJson = this.lastLoadedProfileJson;
+                await this.refreshProfileRuntimeState(profilesApi, id, selectionToken);
+            },
+            isCurrentProfileSelection(selectionToken, profileId = null) {
+                if (selectionToken !== this.profileSelectionToken) {
+                    return false;
+                }
+                return profileId == null || this.editingProfileId === profileId;
+            },
+            clearProfileRuntimeState() {
+                this.resolvedAgentSystemPrompt = '';
                 this.profilePreviewError = '';
+                this.profileHealth = null;
+                this.profileDiagnosticError = '';
+                this.profileRuntimeStateJson = '';
+            },
+            invalidateProfileRuntimeState() {
+                this.profileSelectionToken += 1;
+                this.clearProfileRuntimeState();
+            },
+            async refreshProfileRuntimeState(profilesApi, profileId, selectionToken) {
+                await this.refreshProfileHealth(profilesApi, profileId, selectionToken);
+                await this.refreshProfilePreview(profilesApi, profileId, selectionToken);
+            },
+            async refreshProfileHealth(profilesApi, profileId, selectionToken) {
                 try {
-                    const promptResult = await profilesApi.resolveSystemPrompt({ profileId: id });
-                    this.resolvedAgentSystemPrompt = normalizeResolvedAgentSystemPrompt(promptResult);
+                    const health = await profilesApi.diagnose({ profileId });
+                    if (!this.isCurrentProfileSelection(selectionToken, profileId)) {
+                        return;
+                    }
+                    this.profileHealth = health || null;
+                    this.profileDiagnosticError = '';
                 } catch (error) {
+                    if (!this.isCurrentProfileSelection(selectionToken, profileId)) {
+                        return;
+                    }
+                    this.profileHealth = null;
+                    this.profileDiagnosticError = errorText(error);
+                }
+            },
+            async refreshProfilePreview(profilesApi, profileId, selectionToken) {
+                try {
+                    const promptResult = await profilesApi.resolveSystemPrompt({ profileId });
+                    if (!this.isCurrentProfileSelection(selectionToken, profileId)) {
+                        return;
+                    }
+                    this.resolvedAgentSystemPrompt = normalizeResolvedAgentSystemPrompt(promptResult);
+                    this.profilePreviewError = '';
+                } catch (error) {
+                    if (!this.isCurrentProfileSelection(selectionToken, profileId)) {
+                        return;
+                    }
                     this.resolvedAgentSystemPrompt = '';
                     this.profilePreviewError = errorText(error);
                 }
@@ -638,7 +750,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.editingProfileId = parsed.id;
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
-                this.resolvedAgentSystemPrompt = '';
+                this.invalidateProfileRuntimeState();
             },
             newProfile() {
                 const id = this.nextProfileId('agent-profile');
@@ -648,7 +760,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.externalProfileChangePending = false;
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
-                this.resolvedAgentSystemPrompt = '';
+                this.invalidateProfileRuntimeState();
                 this.refreshDraftJson();
             },
             copyProfile() {
@@ -662,7 +774,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.externalProfileChangePending = false;
                 this.seedMainAgentPresentation();
                 this.syncProfileEditModeToDraft();
-                this.resolvedAgentSystemPrompt = '';
+                this.invalidateProfileRuntimeState();
                 this.refreshDraftJson();
             },
             setAgentSystemPromptDraft(event) {
@@ -670,6 +782,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     return;
                 }
                 this.draft.instructions.agentSystemPrompt = event.target.value;
+                this.invalidateProfileRuntimeState();
             },
             setPresetMode(mode) {
                 if (this.isBuiltinProfile) {
@@ -680,6 +793,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                         mode: 'currentPromptSnapshot',
                         required: false,
                     };
+                    this.invalidateProfileRuntimeState();
                     return;
                 }
                 if (mode === 'none') {
@@ -687,6 +801,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                         mode: 'none',
                         required: false,
                     };
+                    this.invalidateProfileRuntimeState();
                     return;
                 }
                 if (mode !== 'ref') {
@@ -702,6 +817,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     },
                     required: true,
                 };
+                this.invalidateProfileRuntimeState();
             },
             setPresetName(name) {
                 if (this.isBuiltinProfile) {
@@ -715,6 +831,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     },
                     required: true,
                 };
+                this.invalidateProfileRuntimeState();
             },
             setModelMode(mode) {
                 if (this.isBuiltinProfile) {
@@ -724,12 +841,14 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     this.draft.model = {
                         mode: 'currentPromptSnapshot',
                     };
+                    this.invalidateProfileRuntimeState();
                     return;
                 }
                 if (mode === AGENT_MODEL_REQUIRES_CONFIGURATION) {
                     this.draft.model = {
                         mode: AGENT_MODEL_REQUIRES_CONFIGURATION,
                     };
+                    this.invalidateProfileRuntimeState();
                     return;
                 }
                 if (mode !== 'connectionRef') {
@@ -743,6 +862,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     throw new Error(tr('noSavedModelTargets'));
                 }
                 this.draft.model = modelBindingFromTarget(target);
+                this.invalidateProfileRuntimeState();
             },
             setModelTarget(targetId) {
                 if (this.isBuiltinProfile) {
@@ -753,6 +873,7 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                     throw new Error(tr('savedModelTargetNotFound', { id: targetId }));
                 }
                 this.draft.model = modelBindingFromTarget(target);
+                this.invalidateProfileRuntimeState();
             },
             modelTargetBadges(target) {
                 const badges = [

@@ -250,12 +250,38 @@ type TauriTavernAgentProfileStorageIssue = {
     message: string;
 };
 
+type TauriTavernAgentProfileDiagnostic = {
+    code: string;
+    severity: 'error';
+    path: string;
+    message: string;
+    resource?: {
+        kind: 'preset' | 'llmConnection' | 'model';
+        apiId?: string;
+        name?: string;
+        id?: string;
+        modelId?: string;
+    };
+    blocks?: Array<'preview' | 'promptAssembly' | 'directRun' | 'subAgent'>;
+    repairActions?: Array<'selectPreset' | 'selectModel' | 'setModelRequiresConfiguration' | 'openJsonEditor'>;
+};
+
+type TauriTavernAgentProfileHealth = {
+    profileId: string;
+    previewAvailable: boolean;
+    promptAssemblyAvailable: boolean;
+    directRunAvailable: boolean;
+    subAgentAvailable: boolean;
+    diagnostics: TauriTavernAgentProfileDiagnostic[];
+};
+
 type TauriTavernAgentProfilesApi = {
     list: () => Promise<{
         profiles: TauriTavernAgentProfileSummary[];
         issues: TauriTavernAgentProfileStorageIssue[];
     }>;
     load: (input: string | { profileId: string }) => Promise<{ profile: TauriTavernAgentProfileDefinition | null }>;
+    diagnose: (input: string | { profileId: string }) => Promise<TauriTavernAgentProfileHealth>;
     resolveSystemPrompt: (input?: string | { profileId?: string | null }) => Promise<{ agentSystemPrompt: string }>;
     repairFile: (input: { profileId: string; action: 'delete' | 'normalizeIdentity' }) => Promise<void>;
     retargetPresetRefs: (input: {

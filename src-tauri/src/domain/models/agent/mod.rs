@@ -8,6 +8,7 @@ use crate::domain::errors::DomainError;
 
 pub mod plan;
 pub mod profile;
+pub mod profile_diagnostic;
 
 pub const ROOT_AGENT_INVOCATION_ID: &str = "inv_root";
 

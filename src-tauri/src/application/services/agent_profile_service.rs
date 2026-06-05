@@ -26,6 +26,7 @@ pub use model_config::{
     ensure_profile_model_configured, profile_model_configuration_error,
     profile_model_requires_configuration,
 };
+pub(crate) use preset_refs::preset_exists_for_type;
 pub use system_prompt::materialize_agent_system_prompt;
 pub use workspace_policy::{commit_policy_from_profile, workspace_roots_from_profile};
 

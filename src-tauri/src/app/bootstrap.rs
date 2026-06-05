@@ -5,6 +5,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::Semaphore;
 
 use crate::application::services::agent_model_gateway::ChatCompletionAgentModelGateway;
+use crate::application::services::agent_profile_diagnostic_service::AgentProfileDiagnosticService;
 use crate::application::services::agent_profile_service::AgentProfileService;
 use crate::application::services::agent_runtime_service::AgentRuntimeService;
 use crate::application::services::agent_workspace_lifecycle_service::{
@@ -136,6 +137,7 @@ pub(super) struct AppServices {
     pub preset_service: Arc<PresetService>,
     pub quick_reply_service: Arc<QuickReplyService>,
     pub agent_profile_service: Arc<AgentProfileService>,
+    pub agent_profile_diagnostic_service: Arc<AgentProfileDiagnosticService>,
     pub prompt_assembly_service: Arc<PromptAssemblyService>,
     pub agent_runtime_service: Arc<AgentRuntimeService>,
     pub chat_completion_service: Arc<ChatCompletionService>,
@@ -256,6 +258,11 @@ pub(super) async fn build_services(
         repositories.agent_profile_repository.clone(),
         repositories.agent_profile_storage_health_repository.clone(),
         repositories.preset_repository.clone(),
+    ));
+    let agent_profile_diagnostic_service = Arc::new(AgentProfileDiagnosticService::new(
+        agent_profile_service.clone(),
+        repositories.preset_repository.clone(),
+        llm_connection_service.clone(),
     ));
     let prompt_assembly_service = Arc::new(PromptAssemblyService::new(
         agent_profile_service.clone(),
@@ -380,6 +387,7 @@ pub(super) async fn build_services(
         preset_service,
         quick_reply_service,
         agent_profile_service,
+        agent_profile_diagnostic_service,
         prompt_assembly_service,
         agent_runtime_service,
         chat_completion_service,

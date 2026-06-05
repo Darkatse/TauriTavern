@@ -1010,6 +1010,29 @@ test('Agent profile selection stays editable when system prompt preview fails', 
                     assert.equal(profileId, profile.id);
                     return { profile };
                 },
+                async diagnose({ profileId }) {
+                    assert.equal(profileId, profile.id);
+                    return {
+                        profileId,
+                        previewAvailable: true,
+                        promptAssemblyAvailable: false,
+                        directRunAvailable: false,
+                        subAgentAvailable: false,
+                        diagnostics: [{
+                            code: 'agent.profile_preset_missing',
+                            severity: 'error',
+                            path: '$.preset.ref.name',
+                            message: 'agent.profile_preset_missing: required preset is missing',
+                            resource: {
+                                kind: 'preset',
+                                apiId: 'openai',
+                                name: 'Missing Writer Preset',
+                            },
+                            blocks: ['promptAssembly', 'directRun', 'subAgent'],
+                            repairActions: ['selectPreset'],
+                        }],
+                    };
+                },
                 async resolveSystemPrompt() {
                     throw new Error('agent.profile_preset_missing: required preset is missing');
                 },
@@ -1018,13 +1041,14 @@ test('Agent profile selection stays editable when system prompt preview fails', 
     });
 
     const vm = await createAgentPanelHarness();
-    vm.presetOptions = [];
+    vm.presetOptions = ['Missing Writer Preset'];
     await vm.selectProfile(profile.id);
 
     assert.equal(vm.editingProfileId, profile.id);
     assert.equal(vm.draft.id, profile.id);
     assert.equal(settings.editingProfileId, profile.id);
     assert.equal(vm.resolvedAgentSystemPrompt, '');
+    assert.equal(vm.profileHealth.promptAssemblyAvailable, false);
     assert.match(vm.profilePreviewError, /agent\.profile_preset_missing/);
     assert.deepEqual(vm.availablePresetOptions, ['Missing Writer Preset']);
     assert.ok(vm.profileConfigurationWarnings.some((warning) => warning.includes('Missing Writer Preset')));

@@ -31,6 +31,7 @@ type TauriTavernAgentApi = {
   profiles: {
     list(): Promise<AgentListProfilesResult>;
     load(input: string | { profileId: string }): Promise<{ profile: AgentProfileDefinition | null }>;
+    diagnose(input: string | { profileId: string }): Promise<AgentProfileHealth>;
     resolveSystemPrompt(input?: string | { profileId?: string | null }): Promise<{ agentSystemPrompt: string }>;
     repairFile(input: { profileId: string; action: 'delete' | 'normalizeIdentity' }): Promise<void>;
     retargetPresetRefs(input: {
@@ -311,6 +312,8 @@ type AgentModelTurn = {
 
 `profiles.retargetPresetRefs()` 是管理态引用迁移 API，用于 preset rename 生命周期。它只更新 `preset.mode = "ref"` 且精确匹配 `from` 的 Profile；`to` preset 必须已经存在，且不能跨 `apiId` retarget。`from` 可以已经 dangling。该 API 不会让运行态静默降级；运行和 prompt assembly 仍按 Profile 契约 fail-fast。该操作逐个 Profile 写回，失败后可用同一请求重试；preset rename 流程必须在依赖迁移完成后再删除旧 preset。
 
+`profiles.diagnose()` 是管理态健康检查 API。它面向“Profile 可加载但外部资源引用不可用”的情况，返回结构化 diagnostics，而不是让面板从异常字符串推断。该 API 不替代运行态 resolver：`promptAssembly.prepare()`、root run 与 SubAgent 仍按严格 Profile / preset / model contract fail-fast，且不会静默回退当前 UI preset/model。当前第一期覆盖 preset ref 缺失或不支持、`model.requiresConfiguration`、LLM Connection 缺失或无效；腐坏 JSON、文件 identity 错误等 storage health 仍由 `profiles.list().issues` 表达。
+
 ```ts
 type AgentProfileSummary = {
   id: string;
@@ -330,6 +333,36 @@ type AgentProfileStorageIssue = {
 type AgentListProfilesResult = {
   profiles: AgentProfileSummary[];
   issues: AgentProfileStorageIssue[];
+};
+
+type AgentProfileHealth = {
+  profileId: string;
+  previewAvailable: boolean;
+  promptAssemblyAvailable: boolean;
+  directRunAvailable: boolean;
+  subAgentAvailable: boolean;
+  diagnostics: AgentProfileDiagnostic[];
+};
+
+type AgentProfileDiagnostic = {
+  code: string;
+  severity: 'error';
+  path: string;
+  message: string;
+  resource?: {
+    kind: 'preset' | 'llmConnection' | 'model';
+    apiId?: string;
+    name?: string;
+    id?: string;
+    modelId?: string;
+  };
+  blocks?: Array<'preview' | 'promptAssembly' | 'directRun' | 'subAgent'>;
+  repairActions?: Array<
+    'selectPreset'
+    | 'selectModel'
+    | 'setModelRequiresConfiguration'
+    | 'openJsonEditor'
+  >;
 };
 ```
 

@@ -15,6 +15,11 @@ export function createAgentProfilesApi({ safeInvoke }) {
         return safeInvoke('load_agent_profile', { dto: { profileId } });
     }
 
+    async function diagnoseProfile(input) {
+        const profileId = requireProfileId(input?.profileId ?? input?.profile_id ?? input);
+        return safeInvoke('diagnose_agent_profile', { dto: { profileId } });
+    }
+
     async function resolveSystemPrompt(input = {}) {
         const profileId = normalizeOptionalString(input?.profileId ?? input?.profile_id ?? input);
         return safeInvoke('resolve_agent_system_prompt', {
@@ -70,6 +75,7 @@ export function createAgentProfilesApi({ safeInvoke }) {
     return {
         list: listProfiles,
         load: loadProfile,
+        diagnose: diagnoseProfile,
         resolveSystemPrompt,
         retargetPresetRefs,
         save: saveProfile,

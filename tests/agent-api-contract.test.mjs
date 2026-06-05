@@ -49,6 +49,7 @@ test('api.agent.profiles forwards profile commands with camelCase DTOs', async (
     assert.ok(agent.profiles);
     await agent.profiles.list();
     await agent.profiles.load({ profileId: 'writer' });
+    await agent.profiles.diagnose({ profileId: 'writer' });
     await agent.profiles.resolveSystemPrompt({ profileId: 'writer' });
     await agent.profiles.retargetPresetRefs({
         from: { apiId: 'openai', name: 'Old Preset' },
@@ -61,6 +62,7 @@ test('api.agent.profiles forwards profile commands with camelCase DTOs', async (
     assert.deepEqual(calls, [
         { command: 'list_agent_profiles', args: undefined },
         { command: 'load_agent_profile', args: { dto: { profileId: 'writer' } } },
+        { command: 'diagnose_agent_profile', args: { dto: { profileId: 'writer' } } },
         { command: 'resolve_agent_system_prompt', args: { dto: { profileId: 'writer' } } },
         {
             command: 'retarget_agent_profile_preset_refs',

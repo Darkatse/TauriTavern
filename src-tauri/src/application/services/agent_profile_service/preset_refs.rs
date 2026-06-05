@@ -105,14 +105,7 @@ pub(super) async fn validate_preset_binding(
             {
                 return Ok(());
             }
-            let exists = preset_repository
-                .preset_exists(ref_.name.as_str(), &preset_type)
-                .await?
-                || preset_repository
-                    .get_default_preset(ref_.name.as_str(), &preset_type)
-                    .await?
-                    .is_some();
-            if !exists {
+            if !preset_exists_for_type(preset_repository, ref_.name.as_str(), &preset_type).await? {
                 return Err(ApplicationError::ValidationError(format!(
                     "agent.profile_preset_missing: required preset `{}` for apiId `{}` does not exist",
                     ref_.name, ref_.api_id
@@ -148,20 +141,25 @@ async fn validate_preset_retarget_pair(
             to.api_id
         ))
     })?;
-    let target_exists = preset_repository
-        .preset_exists(to.name.as_str(), &preset_type)
-        .await?
-        || preset_repository
-            .get_default_preset(to.name.as_str(), &preset_type)
-            .await?
-            .is_some();
-    if !target_exists {
+    if !preset_exists_for_type(preset_repository, to.name.as_str(), &preset_type).await? {
         return Err(ApplicationError::ValidationError(format!(
             "agent.profile_preset_retarget_target_missing: target preset `{}` for apiId `{}` does not exist",
             to.name, to.api_id
         )));
     }
     Ok((from, to))
+}
+
+pub(crate) async fn preset_exists_for_type(
+    preset_repository: &dyn PresetRepository,
+    name: &str,
+    preset_type: &PresetType,
+) -> Result<bool, ApplicationError> {
+    Ok(preset_repository.preset_exists(name, preset_type).await?
+        || preset_repository
+            .get_default_preset(name, preset_type)
+            .await?
+            .is_some())
 }
 
 fn normalize_preset_ref(
