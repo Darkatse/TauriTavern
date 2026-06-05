@@ -3912,6 +3912,12 @@ function getReasoningEffort(settings = null, model = null) {
     }
 
     function resolveReasoningEffort() {
+        if (settings.chat_completion_source === chat_completion_sources.OPENROUTER) {
+            return settings.reasoning_effort === reasoning_effort_types.auto
+                ? undefined
+                : settings.reasoning_effort;
+        }
+
         function resolveMaximumReasoningEffort() {
             if (settings.chat_completion_source === chat_completion_sources.DEEPSEEK || settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
                 return reasoning_effort_types.max;

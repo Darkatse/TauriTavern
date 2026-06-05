@@ -46,7 +46,7 @@ pub(super) fn build_payload(
         ChatCompletionSource::NanoGpt => nanogpt::build(payload),
         ChatCompletionSource::Chutes => chutes::build(payload),
         ChatCompletionSource::WorkersAi => workers_ai::build(payload),
-        ChatCompletionSource::OpenRouter => Ok(openrouter::build(payload)),
+        ChatCompletionSource::OpenRouter => openrouter::build(payload),
         ChatCompletionSource::Zai => Ok(zai::build(payload)),
         ChatCompletionSource::MiniMax => Ok(minimax::build(payload)),
         ChatCompletionSource::Custom => custom::build(payload),

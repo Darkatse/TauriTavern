@@ -1,22 +1,26 @@
 use serde_json::{Map, Value, json};
 
-use super::super::prompt_caching_plan::is_openrouter_claude_model_name;
+use crate::application::errors::ApplicationError;
+
+use super::super::model_capabilities::map_openrouter_reasoning_effort;
 use super::openai;
-use super::openai_reasoning::{normalize_openai_reasoning_effort, normalize_reasoning_effort};
 use super::shared::insert_if_present;
 
-pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
+pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let source_payload = payload.clone();
     let (_, mut upstream_payload) = openai::build(payload);
 
     if let Some(body) = upstream_payload.as_object_mut() {
-        apply_openrouter_overrides(body, &source_payload);
+        apply_openrouter_overrides(body, &source_payload)?;
     }
 
-    ("/chat/completions".to_string(), upstream_payload)
+    Ok(("/chat/completions".to_string(), upstream_payload))
 }
 
-fn apply_openrouter_overrides(body: &mut Map<String, Value>, source_payload: &Map<String, Value>) {
+fn apply_openrouter_overrides(
+    body: &mut Map<String, Value>,
+    source_payload: &Map<String, Value>,
+) -> Result<(), ApplicationError> {
     for key in ["min_p", "top_a", "repetition_penalty"] {
         insert_if_present(body, source_payload, key);
     }
@@ -55,35 +59,24 @@ fn apply_openrouter_overrides(body: &mut Map<String, Value>, source_payload: &Ma
         body.insert("route".to_string(), Value::String("fallback".to_string()));
     }
 
-    // OpenRouter validates `reasoning.effort` against a fixed enum
-    // (xhigh|high|medium|low|minimal|none) and rejects SillyTavern's `max`/`auto`
-    // preset values, so the raw value can't be forwarded. Normalize the universal
-    // aliases (auto -> omitted, max -> high, min -> minimal). The OpenAI `xhigh`
-    // gating is GPT-version specific, so it must not be applied to non-OpenAI
-    // routes: OpenRouter Claude accepts `xhigh`, so keep it instead of silently
-    // downgrading to `high`. Remove the flat field unconditionally so the raw
-    // value never leaks alongside the nested `reasoning` object.
+    // OpenRouter owns provider-specific reasoning translation behind its router.
+    // Normalize only project aliases here, and never apply OpenAI GPT-version
+    // gates to routed OpenRouter models.
     body.remove("reasoning_effort");
-    let model = source_payload
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or("");
     if let Some(reasoning_effort) = source_payload
         .get("reasoning_effort")
         .and_then(Value::as_str)
-        .and_then(|value| {
-            if is_openrouter_claude_model_name(model) {
-                normalize_reasoning_effort(value, true)
-            } else {
-                normalize_openai_reasoning_effort(value, model)
-            }
-        })
+        .map(map_openrouter_reasoning_effort)
+        .transpose()?
+        .flatten()
     {
         body.insert(
             "reasoning".to_string(),
-            json!({ "effort": reasoning_effort.as_ref() }),
+            json!({ "effort": reasoning_effort }),
         );
     }
+
+    Ok(())
 }
 
 fn map_middleout_transforms(value: Option<&Value>) -> Option<Value> {
@@ -158,7 +151,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (endpoint, upstream) = build(payload);
+        let (endpoint, upstream) = build(payload).expect("payload should build");
         assert_eq!(endpoint, "/chat/completions");
 
         let body = upstream.as_object().expect("payload must be object");
@@ -202,9 +195,11 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_, upstream) = build(payload);
+        let (_, upstream) = build(payload).expect("payload should build");
         assert_eq!(
-            upstream.pointer("/reasoning/effort").and_then(Value::as_str),
+            upstream
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str),
             Some("high")
         );
         assert!(
@@ -229,9 +224,11 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_, upstream) = build(payload);
+        let (_, upstream) = build(payload).expect("payload should build");
         assert_eq!(
-            upstream.pointer("/reasoning/effort").and_then(Value::as_str),
+            upstream
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str),
             Some("xhigh")
         );
     }
@@ -249,16 +246,19 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_, upstream) = build(payload);
+        let (_, upstream) = build(payload).expect("payload should build");
         assert_eq!(
-            upstream.pointer("/reasoning/effort").and_then(Value::as_str),
+            upstream
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str),
             Some("high")
         );
     }
 
     #[test]
-    fn openrouter_non_claude_downgrades_xhigh_for_unsupported_model() {
-        // A non-Claude model that does not support xhigh must still be downgraded.
+    fn openrouter_non_claude_preserves_openrouter_xhigh_effort() {
+        // OpenRouter owns provider-specific translation for routed models; local
+        // OpenAI GPT-version gates must not preemptively downgrade this value.
         let payload = json!({
             "chat_completion_source": "openrouter",
             "model": "openai/gpt-5.1",
@@ -269,10 +269,12 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_, upstream) = build(payload);
+        let (_, upstream) = build(payload).expect("payload should build");
         assert_eq!(
-            upstream.pointer("/reasoning/effort").and_then(Value::as_str),
-            Some("high")
+            upstream
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str),
+            Some("xhigh")
         );
     }
 
@@ -288,7 +290,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_, upstream) = build(payload);
+        let (_, upstream) = build(payload).expect("payload should build");
         let body = upstream.as_object().expect("payload must be object");
 
         assert!(body.get("reasoning").is_none());
@@ -307,7 +309,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_, upstream) = build(payload);
+        let (_, upstream) = build(payload).expect("payload should build");
         let transforms_len = upstream
             .as_object()
             .and_then(|body| body.get("transforms"))
@@ -330,7 +332,7 @@ mod tests {
         .cloned()
         .expect("payload must be object");
 
-        let (_, upstream) = build(payload);
+        let (_, upstream) = build(payload).expect("payload should build");
         let quantizations = upstream
             .as_object()
             .and_then(|body| body.get("provider"))

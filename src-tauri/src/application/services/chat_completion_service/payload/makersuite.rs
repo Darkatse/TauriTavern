@@ -4,6 +4,7 @@ use serde_json::{Map, Value, json};
 
 use crate::application::errors::ApplicationError;
 
+use super::super::model_capabilities::RequestedReasoningEffort;
 use super::shared::{message_content_to_text, parse_data_url};
 use super::tool_calls::{
     OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
@@ -770,10 +771,10 @@ fn inject_google_thinking_config(
         .get("include_reasoning")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let reasoning_effort = payload
-        .get("reasoning_effort")
-        .and_then(Value::as_str)
-        .unwrap_or("auto");
+    let reasoning_effort = match payload.get("reasoning_effort").and_then(Value::as_str) {
+        Some(value) => RequestedReasoningEffort::parse(value),
+        None => Some(RequestedReasoningEffort::Auto),
+    };
     let max_output_tokens = generation_config
         .get("maxOutputTokens")
         .and_then(value_to_i64)
@@ -782,7 +783,8 @@ fn inject_google_thinking_config(
     let mut thinking_config = Map::new();
     let mut include_thoughts = include_reasoning;
 
-    if let Some(budget) = calculate_google_budget_tokens(max_output_tokens, reasoning_effort, model)
+    if let Some(budget) = reasoning_effort
+        .and_then(|effort| calculate_google_budget_tokens(max_output_tokens, effort, model))
     {
         match budget {
             GoogleThinkingBudget::Tokens(tokens) => {
@@ -872,44 +874,47 @@ enum GoogleThinkingBudget {
 
 fn calculate_google_budget_tokens(
     max_tokens: i64,
-    reasoning_effort: &str,
+    reasoning_effort: RequestedReasoningEffort,
     model: &str,
 ) -> Option<GoogleThinkingBudget> {
     let model = model.trim().to_ascii_lowercase();
-    let effort = reasoning_effort.trim().to_ascii_lowercase();
     let max_tokens = max_tokens.max(0);
 
     if model.contains("gemini-3-pro") {
-        let level = match effort.as_str() {
-            "auto" => return None,
-            "min" | "low" | "medium" => "low",
-            "high" | "max" | "xhigh" => "high",
-            _ => return None,
+        let level = match reasoning_effort {
+            RequestedReasoningEffort::Auto | RequestedReasoningEffort::None => return None,
+            RequestedReasoningEffort::Minimal
+            | RequestedReasoningEffort::Low
+            | RequestedReasoningEffort::Medium => "low",
+            RequestedReasoningEffort::High
+            | RequestedReasoningEffort::Max
+            | RequestedReasoningEffort::XHigh => "high",
         };
         return Some(GoogleThinkingBudget::Level(level));
     }
 
     if model.contains("gemini-3-flash") {
-        let level = match effort.as_str() {
-            "auto" => return None,
-            "min" => "minimal",
-            "low" => "low",
-            "medium" => "medium",
-            "high" | "max" | "xhigh" => "high",
-            _ => return None,
+        let level = match reasoning_effort {
+            RequestedReasoningEffort::Auto | RequestedReasoningEffort::None => return None,
+            RequestedReasoningEffort::Minimal => "minimal",
+            RequestedReasoningEffort::Low => "low",
+            RequestedReasoningEffort::Medium => "medium",
+            RequestedReasoningEffort::High
+            | RequestedReasoningEffort::Max
+            | RequestedReasoningEffort::XHigh => "high",
         };
         return Some(GoogleThinkingBudget::Level(level));
     }
 
     if model.contains("flash-lite") {
-        let tokens = match effort.as_str() {
-            "auto" => return Some(GoogleThinkingBudget::Tokens(-1)),
-            "min" => 0,
-            "low" => max_tokens.saturating_mul(10) / 100,
-            "medium" => max_tokens.saturating_mul(25) / 100,
-            "high" => max_tokens.saturating_mul(50) / 100,
-            "max" | "xhigh" => max_tokens,
-            _ => return None,
+        let tokens = match reasoning_effort {
+            RequestedReasoningEffort::Auto => return Some(GoogleThinkingBudget::Tokens(-1)),
+            RequestedReasoningEffort::None => return None,
+            RequestedReasoningEffort::Minimal => 0,
+            RequestedReasoningEffort::Low => max_tokens.saturating_mul(10) / 100,
+            RequestedReasoningEffort::Medium => max_tokens.saturating_mul(25) / 100,
+            RequestedReasoningEffort::High => max_tokens.saturating_mul(50) / 100,
+            RequestedReasoningEffort::Max | RequestedReasoningEffort::XHigh => max_tokens,
         };
 
         return Some(GoogleThinkingBudget::Tokens(
@@ -918,14 +923,14 @@ fn calculate_google_budget_tokens(
     }
 
     if model.contains("flash") {
-        let tokens = match effort.as_str() {
-            "auto" => return Some(GoogleThinkingBudget::Tokens(-1)),
-            "min" => 0,
-            "low" => max_tokens.saturating_mul(10) / 100,
-            "medium" => max_tokens.saturating_mul(25) / 100,
-            "high" => max_tokens.saturating_mul(50) / 100,
-            "max" | "xhigh" => max_tokens,
-            _ => return None,
+        let tokens = match reasoning_effort {
+            RequestedReasoningEffort::Auto => return Some(GoogleThinkingBudget::Tokens(-1)),
+            RequestedReasoningEffort::None => return None,
+            RequestedReasoningEffort::Minimal => 0,
+            RequestedReasoningEffort::Low => max_tokens.saturating_mul(10) / 100,
+            RequestedReasoningEffort::Medium => max_tokens.saturating_mul(25) / 100,
+            RequestedReasoningEffort::High => max_tokens.saturating_mul(50) / 100,
+            RequestedReasoningEffort::Max | RequestedReasoningEffort::XHigh => max_tokens,
         };
 
         return Some(GoogleThinkingBudget::Tokens(
@@ -934,14 +939,14 @@ fn calculate_google_budget_tokens(
     }
 
     if model.contains("pro") {
-        let tokens = match effort.as_str() {
-            "auto" => return Some(GoogleThinkingBudget::Tokens(-1)),
-            "min" => 128,
-            "low" => max_tokens.saturating_mul(10) / 100,
-            "medium" => max_tokens.saturating_mul(25) / 100,
-            "high" => max_tokens.saturating_mul(50) / 100,
-            "max" | "xhigh" => max_tokens,
-            _ => return None,
+        let tokens = match reasoning_effort {
+            RequestedReasoningEffort::Auto => return Some(GoogleThinkingBudget::Tokens(-1)),
+            RequestedReasoningEffort::None => return None,
+            RequestedReasoningEffort::Minimal => 128,
+            RequestedReasoningEffort::Low => max_tokens.saturating_mul(10) / 100,
+            RequestedReasoningEffort::Medium => max_tokens.saturating_mul(25) / 100,
+            RequestedReasoningEffort::High => max_tokens.saturating_mul(50) / 100,
+            RequestedReasoningEffort::Max | RequestedReasoningEffort::XHigh => max_tokens,
         };
 
         return Some(GoogleThinkingBudget::Tokens(
@@ -1001,6 +1006,27 @@ mod tests {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             true
+        );
+    }
+
+    #[test]
+    fn makersuite_25_flash_accepts_shared_minimal_alias() {
+        let payload = json!({
+            "model": "gemini-2.5-flash",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 4000,
+            "reasoning_effort": "minimal"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(
+            upstream
+                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
+                .and_then(Value::as_i64),
+            Some(0)
         );
     }
 

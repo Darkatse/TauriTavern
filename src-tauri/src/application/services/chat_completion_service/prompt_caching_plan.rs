@@ -7,6 +7,8 @@ use crate::domain::repositories::chat_completion_repository::{
 };
 use crate::domain::repositories::prompt_cache_repository::PromptCacheKey;
 
+use super::model_capabilities::is_openrouter_claude_model_name;
+
 const CUSTOM_CLAUDE_PROMPT_CACHING_FIELD: &str = "custom_claude_prompt_caching";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -102,10 +104,6 @@ fn resolve_custom_claude_prompt_caching_plan(
         key: PromptCacheKey::CustomClaudeMessages { scope },
         anthropic_beta_header_mode: AnthropicBetaHeaderMode::PromptCachingOnly,
     }))
-}
-
-pub(super) fn is_openrouter_claude_model_name(model: &str) -> bool {
-    model.trim().to_ascii_lowercase().starts_with("anthropic/claude")
 }
 
 fn is_openrouter_claude_model(payload: &Value) -> bool {

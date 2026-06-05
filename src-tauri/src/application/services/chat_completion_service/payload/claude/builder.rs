@@ -2,6 +2,9 @@ use serde_json::{Map, Number, Value, json};
 
 use crate::application::errors::ApplicationError;
 
+use super::super::super::model_capabilities::{
+    RequestedReasoningEffort, parse_known_reasoning_effort, unsupported_reasoning_effort,
+};
 use super::super::shared::insert_if_present;
 use super::contract::{ClaudeModelContract, ClaudeSamplingMode, ClaudeThinkingMode};
 use super::messages::{
@@ -14,70 +17,6 @@ use super::tools::{map_openai_tools_to_claude, map_tool_choice_to_claude};
 
 const CLAUDE_THINKING_MIN_TOKENS: i64 = 1024;
 const CLAUDE_THINKING_NON_STREAM_CAP: i64 = 21_333;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ClaudeReasoningEffort {
-    Min,
-    Low,
-    Medium,
-    High,
-    Max,
-    XHigh,
-}
-
-impl ClaudeReasoningEffort {
-    fn parse(value: Option<&Value>) -> Result<Option<Self>, ApplicationError> {
-        let Some(value) = value.and_then(Value::as_str) else {
-            return Ok(None);
-        };
-
-        let value = value.trim();
-        if value.is_empty() || value.eq_ignore_ascii_case("auto") {
-            return Ok(None);
-        }
-
-        match value.to_ascii_lowercase().as_str() {
-            "min" => Ok(Some(Self::Min)),
-            "low" => Ok(Some(Self::Low)),
-            "medium" => Ok(Some(Self::Medium)),
-            "high" => Ok(Some(Self::High)),
-            "max" | "maximum" => Ok(Some(Self::Max)),
-            "xhigh" => Ok(Some(Self::XHigh)),
-            other => Err(ApplicationError::ValidationError(format!(
-                "Unsupported Claude reasoning_effort: {other}"
-            ))),
-        }
-    }
-
-    fn calculate_budget_tokens(self, max_tokens: i64, stream: bool) -> i64 {
-        let max_tokens = max_tokens.max(0);
-        let mut budget_tokens = match self {
-            Self::Min => CLAUDE_THINKING_MIN_TOKENS,
-            Self::Low => max_tokens.saturating_mul(10) / 100,
-            Self::Medium => max_tokens.saturating_mul(25) / 100,
-            Self::High => max_tokens.saturating_mul(50) / 100,
-            Self::Max | Self::XHigh => max_tokens.saturating_mul(95) / 100,
-        };
-
-        budget_tokens = budget_tokens.max(CLAUDE_THINKING_MIN_TOKENS);
-        if !stream {
-            budget_tokens = budget_tokens.min(CLAUDE_THINKING_NON_STREAM_CAP);
-        }
-
-        budget_tokens
-    }
-
-    fn as_output_effort(self, contract: ClaudeModelContract) -> &'static str {
-        match self {
-            Self::Min | Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Max => "max",
-            Self::XHigh if contract.supports_xhigh_output_effort => "xhigh",
-            Self::XHigh => "max",
-        }
-    }
-}
 
 pub(super) fn build_claude_payload(
     payload: &Map<String, Value>,
@@ -105,7 +44,7 @@ fn build_claude_payload_inner(
         })?;
     let contract = enforce_contract.then(|| ClaudeModelContract::resolve(model));
     let reasoning_effort = if contract.is_some() {
-        ClaudeReasoningEffort::parse(payload.get("reasoning_effort"))?
+        parse_claude_reasoning_effort(payload.get("reasoning_effort"))?
     } else {
         None
     };
@@ -260,7 +199,7 @@ fn build_claude_payload_inner(
             ClaudeThinkingMode::ManualOnly => {
                 if let Some(reasoning_effort) = reasoning_effort {
                     let budget_tokens =
-                        reasoning_effort.calculate_budget_tokens(max_tokens, stream);
+                        calculate_claude_budget_tokens(reasoning_effort, max_tokens, stream);
                     if max_tokens <= CLAUDE_THINKING_MIN_TOKENS {
                         max_tokens += CLAUDE_THINKING_MIN_TOKENS;
                     }
@@ -279,7 +218,7 @@ fn build_claude_payload_inner(
                         request.insert(
                             "output_config".to_string(),
                             json!({
-                                "effort": reasoning_effort.as_output_effort(contract),
+                                "effort": claude_output_effort(reasoning_effort, contract),
                             }),
                         );
                     }
@@ -295,7 +234,7 @@ fn build_claude_payload_inner(
                         request.insert(
                             "output_config".to_string(),
                             json!({
-                                "effort": reasoning_effort.as_output_effort(contract),
+                                "effort": claude_output_effort(reasoning_effort, contract),
                             }),
                         );
                     }
@@ -311,6 +250,64 @@ fn build_claude_payload_inner(
     );
 
     Ok(request)
+}
+
+fn parse_claude_reasoning_effort(
+    value: Option<&Value>,
+) -> Result<Option<RequestedReasoningEffort>, ApplicationError> {
+    let Some(raw) = value.and_then(Value::as_str) else {
+        return Ok(None);
+    };
+
+    match parse_known_reasoning_effort(raw, "Claude")? {
+        RequestedReasoningEffort::Auto => Ok(None),
+        RequestedReasoningEffort::None => Err(unsupported_reasoning_effort("Claude", raw)),
+        effort => Ok(Some(effort)),
+    }
+}
+
+fn calculate_claude_budget_tokens(
+    effort: RequestedReasoningEffort,
+    max_tokens: i64,
+    stream: bool,
+) -> i64 {
+    let max_tokens = max_tokens.max(0);
+    let mut budget_tokens = match effort {
+        RequestedReasoningEffort::Minimal => CLAUDE_THINKING_MIN_TOKENS,
+        RequestedReasoningEffort::Low => max_tokens.saturating_mul(10) / 100,
+        RequestedReasoningEffort::Medium => max_tokens.saturating_mul(25) / 100,
+        RequestedReasoningEffort::High => max_tokens.saturating_mul(50) / 100,
+        RequestedReasoningEffort::Max | RequestedReasoningEffort::XHigh => {
+            max_tokens.saturating_mul(95) / 100
+        }
+        RequestedReasoningEffort::Auto | RequestedReasoningEffort::None => {
+            unreachable!("Claude reasoning parser excludes auto and none")
+        }
+    };
+
+    budget_tokens = budget_tokens.max(CLAUDE_THINKING_MIN_TOKENS);
+    if !stream {
+        budget_tokens = budget_tokens.min(CLAUDE_THINKING_NON_STREAM_CAP);
+    }
+
+    budget_tokens
+}
+
+fn claude_output_effort(
+    effort: RequestedReasoningEffort,
+    contract: ClaudeModelContract,
+) -> &'static str {
+    match effort {
+        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => "low",
+        RequestedReasoningEffort::Medium => "medium",
+        RequestedReasoningEffort::High => "high",
+        RequestedReasoningEffort::Max => "max",
+        RequestedReasoningEffort::XHigh if contract.supports_xhigh_output_effort => "xhigh",
+        RequestedReasoningEffort::XHigh => "max",
+        RequestedReasoningEffort::Auto | RequestedReasoningEffort::None => {
+            unreachable!("Claude reasoning parser excludes auto and none")
+        }
+    }
 }
 
 fn insert_claude_sampling_params(
