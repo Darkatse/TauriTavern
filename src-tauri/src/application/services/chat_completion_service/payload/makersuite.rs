@@ -4,15 +4,15 @@ use serde_json::{Map, Value, json};
 
 use crate::application::errors::ApplicationError;
 
-use super::super::model_capabilities::RequestedReasoningEffort;
+use super::super::model_capabilities::{
+    GeminiThinkingControl, RequestedReasoningEffort, is_gemini_thinking_config_model,
+    map_gemini_thinking_control, parse_known_reasoning_effort,
+};
 use super::shared::{message_content_to_text, parse_data_url};
 use super::tool_calls::{
     OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
     message_tool_name, message_tool_result_text, normalize_tool_result_payload,
 };
-
-const GOOGLE_FLASH_MAX_BUDGET: i64 = 24_576;
-const GOOGLE_PRO_MAX_BUDGET: i64 = 32_768;
 
 const GOOGLE_IMAGE_GENERATION_MODELS: &[&str] = &[
     "gemini-2.0-flash-exp",
@@ -210,7 +210,7 @@ fn build_google_payload(
         }
     }
 
-    inject_google_thinking_config(payload, model, use_vertex_ai, &mut generation_config);
+    inject_google_thinking_config(payload, model, use_vertex_ai, &mut generation_config)?;
 
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
@@ -762,19 +762,20 @@ fn inject_google_thinking_config(
     model: &str,
     use_vertex_ai: bool,
     generation_config: &mut Map<String, Value>,
-) {
-    if !is_google_thinking_config_model(model) {
-        return;
+) -> Result<(), ApplicationError> {
+    let reasoning_effort = match payload.get("reasoning_effort").and_then(Value::as_str) {
+        Some(value) => parse_known_reasoning_effort(value, "Gemini")?,
+        None => RequestedReasoningEffort::Auto,
+    };
+
+    if !is_gemini_thinking_config_model(model) {
+        return Ok(());
     }
 
     let include_reasoning = payload
         .get("include_reasoning")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let reasoning_effort = match payload.get("reasoning_effort").and_then(Value::as_str) {
-        Some(value) => RequestedReasoningEffort::parse(value),
-        None => Some(RequestedReasoningEffort::Auto),
-    };
     let max_output_tokens = generation_config
         .get("maxOutputTokens")
         .and_then(value_to_i64)
@@ -783,11 +784,10 @@ fn inject_google_thinking_config(
     let mut thinking_config = Map::new();
     let mut include_thoughts = include_reasoning;
 
-    if let Some(budget) = reasoning_effort
-        .and_then(|effort| calculate_google_budget_tokens(max_output_tokens, effort, model))
+    if let Some(control) = map_gemini_thinking_control(model, max_output_tokens, reasoning_effort)?
     {
-        match budget {
-            GoogleThinkingBudget::Tokens(tokens) => {
+        match control {
+            GeminiThinkingControl::BudgetTokens(tokens) => {
                 thinking_config.insert(
                     "thinkingBudget".to_string(),
                     Value::Number(serde_json::Number::from(tokens)),
@@ -797,7 +797,7 @@ fn inject_google_thinking_config(
                     include_thoughts = false;
                 }
             }
-            GoogleThinkingBudget::Level(level) => {
+            GeminiThinkingControl::Level(level) => {
                 thinking_config.insert(
                     "thinkingLevel".to_string(),
                     Value::String(level.to_string()),
@@ -809,6 +809,7 @@ fn inject_google_thinking_config(
     thinking_config.insert("includeThoughts".to_string(), Value::Bool(include_thoughts));
 
     generation_config.insert("thinkingConfig".to_string(), Value::Object(thinking_config));
+    Ok(())
 }
 
 fn is_google_image_size_model(model: &str) -> bool {
@@ -854,107 +855,6 @@ fn gemini_media_resolution(detail: &str) -> Option<&'static str> {
         "high" => Some("media_resolution_high"),
         _ => None,
     }
-}
-
-fn is_google_thinking_config_model(model: &str) -> bool {
-    let model = model.trim().to_ascii_lowercase();
-    let is_gemini_25 = (model.starts_with("gemini-2.5-flash")
-        || model.starts_with("gemini-2.5-pro"))
-        && !model.ends_with("-image")
-        && !model.ends_with("-image-preview");
-    let is_gemini_3 = model.starts_with("gemini-3-flash") || model.starts_with("gemini-3-pro");
-
-    is_gemini_25 || is_gemini_3
-}
-
-enum GoogleThinkingBudget {
-    Tokens(i64),
-    Level(&'static str),
-}
-
-fn calculate_google_budget_tokens(
-    max_tokens: i64,
-    reasoning_effort: RequestedReasoningEffort,
-    model: &str,
-) -> Option<GoogleThinkingBudget> {
-    let model = model.trim().to_ascii_lowercase();
-    let max_tokens = max_tokens.max(0);
-
-    if model.contains("gemini-3-pro") {
-        let level = match reasoning_effort {
-            RequestedReasoningEffort::Auto | RequestedReasoningEffort::None => return None,
-            RequestedReasoningEffort::Minimal
-            | RequestedReasoningEffort::Low
-            | RequestedReasoningEffort::Medium => "low",
-            RequestedReasoningEffort::High
-            | RequestedReasoningEffort::Max
-            | RequestedReasoningEffort::XHigh => "high",
-        };
-        return Some(GoogleThinkingBudget::Level(level));
-    }
-
-    if model.contains("gemini-3-flash") {
-        let level = match reasoning_effort {
-            RequestedReasoningEffort::Auto | RequestedReasoningEffort::None => return None,
-            RequestedReasoningEffort::Minimal => "minimal",
-            RequestedReasoningEffort::Low => "low",
-            RequestedReasoningEffort::Medium => "medium",
-            RequestedReasoningEffort::High
-            | RequestedReasoningEffort::Max
-            | RequestedReasoningEffort::XHigh => "high",
-        };
-        return Some(GoogleThinkingBudget::Level(level));
-    }
-
-    if model.contains("flash-lite") {
-        let tokens = match reasoning_effort {
-            RequestedReasoningEffort::Auto => return Some(GoogleThinkingBudget::Tokens(-1)),
-            RequestedReasoningEffort::None => return None,
-            RequestedReasoningEffort::Minimal => 0,
-            RequestedReasoningEffort::Low => max_tokens.saturating_mul(10) / 100,
-            RequestedReasoningEffort::Medium => max_tokens.saturating_mul(25) / 100,
-            RequestedReasoningEffort::High => max_tokens.saturating_mul(50) / 100,
-            RequestedReasoningEffort::Max | RequestedReasoningEffort::XHigh => max_tokens,
-        };
-
-        return Some(GoogleThinkingBudget::Tokens(
-            tokens.clamp(512, GOOGLE_FLASH_MAX_BUDGET),
-        ));
-    }
-
-    if model.contains("flash") {
-        let tokens = match reasoning_effort {
-            RequestedReasoningEffort::Auto => return Some(GoogleThinkingBudget::Tokens(-1)),
-            RequestedReasoningEffort::None => return None,
-            RequestedReasoningEffort::Minimal => 0,
-            RequestedReasoningEffort::Low => max_tokens.saturating_mul(10) / 100,
-            RequestedReasoningEffort::Medium => max_tokens.saturating_mul(25) / 100,
-            RequestedReasoningEffort::High => max_tokens.saturating_mul(50) / 100,
-            RequestedReasoningEffort::Max | RequestedReasoningEffort::XHigh => max_tokens,
-        };
-
-        return Some(GoogleThinkingBudget::Tokens(
-            tokens.clamp(0, GOOGLE_FLASH_MAX_BUDGET),
-        ));
-    }
-
-    if model.contains("pro") {
-        let tokens = match reasoning_effort {
-            RequestedReasoningEffort::Auto => return Some(GoogleThinkingBudget::Tokens(-1)),
-            RequestedReasoningEffort::None => return None,
-            RequestedReasoningEffort::Minimal => 128,
-            RequestedReasoningEffort::Low => max_tokens.saturating_mul(10) / 100,
-            RequestedReasoningEffort::Medium => max_tokens.saturating_mul(25) / 100,
-            RequestedReasoningEffort::High => max_tokens.saturating_mul(50) / 100,
-            RequestedReasoningEffort::Max | RequestedReasoningEffort::XHigh => max_tokens,
-        };
-
-        return Some(GoogleThinkingBudget::Tokens(
-            tokens.clamp(128, GOOGLE_PRO_MAX_BUDGET),
-        ));
-    }
-
-    None
 }
 
 fn value_to_i64(value: &Value) -> Option<i64> {
@@ -1031,6 +931,32 @@ mod tests {
     }
 
     #[test]
+    fn makersuite_25_flash_lite_auto_omits_thinking_budget() {
+        let payload = json!({
+            "model": "gemini-2.5-flash-lite",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 4000,
+            "reasoning_effort": "auto"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        assert!(
+            upstream
+                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
+                .is_none()
+        );
+        assert_eq!(
+            upstream
+                .pointer("/generationConfig/thinkingConfig/includeThoughts")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn makersuite_3_pro_sets_thinking_level() {
         let payload = json!({
             "model": "gemini-3-pro",
@@ -1065,6 +991,58 @@ mod tests {
     }
 
     #[test]
+    fn makersuite_31_pro_sets_medium_thinking_level() {
+        let payload = json!({
+            "model": "gemini-3.1-pro-preview",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8000,
+            "reasoning_effort": "medium"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(
+            upstream
+                .pointer("/generationConfig/thinkingConfig/thinkingLevel")
+                .and_then(Value::as_str),
+            Some("medium")
+        );
+        assert!(
+            upstream
+                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn makersuite_31_flash_lite_uses_level_not_budget() {
+        let payload = json!({
+            "model": "gemini-3.1-flash-lite-preview",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8000,
+            "reasoning_effort": "medium"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(
+            upstream
+                .pointer("/generationConfig/thinkingConfig/thinkingLevel")
+                .and_then(Value::as_str),
+            Some("medium")
+        );
+        assert!(
+            upstream
+                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn makersuite_xhigh_behaves_like_max() {
         let payload = json!({
             "model": "gemini-2.5-pro",
@@ -1082,6 +1060,25 @@ mod tests {
                 .pointer("/generationConfig/thinkingConfig/thinkingBudget")
                 .and_then(Value::as_i64),
             Some(8000)
+        );
+    }
+
+    #[test]
+    fn makersuite_rejects_unknown_reasoning_effort() {
+        let payload = json!({
+            "model": "gemini-2.5-flash",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "turbo"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let error = build(payload).expect_err("unknown effort should fail locally");
+        assert!(
+            error
+                .to_string()
+                .contains("Unsupported Gemini reasoning_effort")
         );
     }
 
@@ -1106,6 +1103,41 @@ mod tests {
             .expect("generationConfig must be object");
 
         assert!(config.get("thinkingConfig").is_none());
+    }
+
+    #[test]
+    fn makersuite_3_image_model_sets_thinking_level() {
+        let payload = json!({
+            "model": "gemini-3-pro-image-preview",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 1024,
+            "reasoning_effort": "high",
+            "include_reasoning": true
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let body = upstream.as_object().expect("body must be object");
+        let config = body
+            .get("generationConfig")
+            .and_then(Value::as_object)
+            .expect("generationConfig must be object");
+        let thinking = config
+            .get("thinkingConfig")
+            .and_then(Value::as_object)
+            .expect("thinkingConfig must be object");
+
+        assert_eq!(
+            thinking.get("thinkingLevel").and_then(Value::as_str),
+            Some("high")
+        );
+        assert!(thinking.get("thinkingBudget").is_none());
+        assert_eq!(
+            thinking.get("includeThoughts").and_then(Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]
