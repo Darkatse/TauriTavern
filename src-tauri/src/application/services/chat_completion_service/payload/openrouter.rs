@@ -1,6 +1,7 @@
 use serde_json::{Map, Value, json};
 
 use super::openai;
+use super::openai_reasoning::normalize_openai_reasoning_effort;
 use super::shared::insert_if_present;
 
 pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
@@ -53,18 +54,29 @@ fn apply_openrouter_overrides(body: &mut Map<String, Value>, source_payload: &Ma
         body.insert("route".to_string(), Value::String("fallback".to_string()));
     }
 
+    // OpenRouter validates `reasoning.effort` against a fixed enum
+    // (xhigh|high|medium|low|minimal|none) and rejects SillyTavern's `max`/`auto`
+    // preset values. Normalize through the shared helper like the other builders
+    // (max -> high, min -> minimal, auto -> omitted, xhigh per model) instead of
+    // forwarding the raw value. Remove the flat field unconditionally so the raw
+    // value never leaks alongside the nested `reasoning` object.
+    body.remove("reasoning_effort");
     if let Some(reasoning_effort) = source_payload
         .get("reasoning_effort")
         .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .and_then(|value| {
+            normalize_openai_reasoning_effort(
+                value,
+                source_payload
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+            )
+        })
     {
-        body.remove("reasoning_effort");
         body.insert(
             "reasoning".to_string(),
-            json!({
-                "effort": reasoning_effort,
-            }),
+            json!({ "effort": reasoning_effort.as_ref() }),
         );
     }
 }
@@ -169,6 +181,52 @@ mod tests {
             transforms.first().and_then(Value::as_str),
             Some("middle-out")
         );
+    }
+
+    #[test]
+    fn openrouter_normalizes_max_reasoning_effort_to_high() {
+        // SillyTavern's `max` preset is not in OpenRouter's effort enum; it must be
+        // normalized to `high` rather than forwarded raw (which OpenRouter rejects).
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-5.1",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "max"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload);
+        assert_eq!(
+            upstream.pointer("/reasoning/effort").and_then(Value::as_str),
+            Some("high")
+        );
+        assert!(
+            upstream
+                .as_object()
+                .and_then(|body| body.get("reasoning_effort"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn openrouter_omits_auto_reasoning_effort() {
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-5.1",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "auto"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload);
+        let body = upstream.as_object().expect("payload must be object");
+
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("reasoning_effort").is_none());
     }
 
     #[test]
