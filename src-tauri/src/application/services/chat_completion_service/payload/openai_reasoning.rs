@@ -46,6 +46,18 @@ pub(super) fn normalize_openai_reasoning_effort<'a>(
     value: &'a str,
     model: &str,
 ) -> Option<Cow<'a, str>> {
+    normalize_reasoning_effort(value, supports_openai_xhigh_reasoning_effort(model))
+}
+
+/// Maps SillyTavern's reasoning-effort preset values onto the provider enum
+/// (`xhigh`/`high`/`medium`/`low`/`minimal`/`none`). `auto` is dropped (let the
+/// model decide), `min`→`minimal`, `max`/`maximum`→`high`. `xhigh` is preserved
+/// only when `allow_xhigh` is set, otherwise it is downgraded to `high`.
+///
+/// Callers decide `allow_xhigh`: OpenAI gates it on the GPT model version, while
+/// providers that accept `xhigh` for the routed model (e.g. OpenRouter Claude)
+/// pass `true` so the level is not silently downgraded.
+pub(super) fn normalize_reasoning_effort(value: &str, allow_xhigh: bool) -> Option<Cow<'_, str>> {
     let value = value.trim();
     if value.is_empty() || value.eq_ignore_ascii_case("auto") {
         return None;
@@ -58,13 +70,7 @@ pub(super) fn normalize_openai_reasoning_effort<'a>(
         return Some(Cow::Borrowed("high"));
     }
     if value.eq_ignore_ascii_case("xhigh") {
-        return Some(Cow::Borrowed(
-            if supports_openai_xhigh_reasoning_effort(model) {
-                "xhigh"
-            } else {
-                "high"
-            },
-        ));
+        return Some(Cow::Borrowed(if allow_xhigh { "xhigh" } else { "high" }));
     }
 
     Some(Cow::Borrowed(value))

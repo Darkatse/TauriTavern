@@ -1,7 +1,8 @@
 use serde_json::{Map, Value, json};
 
+use super::super::prompt_caching_plan::is_openrouter_claude_model_name;
 use super::openai;
-use super::openai_reasoning::normalize_openai_reasoning_effort;
+use super::openai_reasoning::{normalize_openai_reasoning_effort, normalize_reasoning_effort};
 use super::shared::insert_if_present;
 
 pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
@@ -56,22 +57,26 @@ fn apply_openrouter_overrides(body: &mut Map<String, Value>, source_payload: &Ma
 
     // OpenRouter validates `reasoning.effort` against a fixed enum
     // (xhigh|high|medium|low|minimal|none) and rejects SillyTavern's `max`/`auto`
-    // preset values. Normalize through the shared helper like the other builders
-    // (max -> high, min -> minimal, auto -> omitted, xhigh per model) instead of
-    // forwarding the raw value. Remove the flat field unconditionally so the raw
+    // preset values, so the raw value can't be forwarded. Normalize the universal
+    // aliases (auto -> omitted, max -> high, min -> minimal). The OpenAI `xhigh`
+    // gating is GPT-version specific, so it must not be applied to non-OpenAI
+    // routes: OpenRouter Claude accepts `xhigh`, so keep it instead of silently
+    // downgrading to `high`. Remove the flat field unconditionally so the raw
     // value never leaks alongside the nested `reasoning` object.
     body.remove("reasoning_effort");
+    let model = source_payload
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     if let Some(reasoning_effort) = source_payload
         .get("reasoning_effort")
         .and_then(Value::as_str)
         .and_then(|value| {
-            normalize_openai_reasoning_effort(
-                value,
-                source_payload
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .unwrap_or(""),
-            )
+            if is_openrouter_claude_model_name(model) {
+                normalize_reasoning_effort(value, true)
+            } else {
+                normalize_openai_reasoning_effort(value, model)
+            }
         })
     {
         body.insert(
@@ -207,6 +212,67 @@ mod tests {
                 .as_object()
                 .and_then(|body| body.get("reasoning_effort"))
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn openrouter_claude_keeps_xhigh_reasoning_effort() {
+        // OpenRouter accepts `xhigh` for Claude; the OpenAI GPT-version gating must
+        // not downgrade it to `high` on the Anthropic route.
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "anthropic/claude-sonnet-4-5",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload);
+        assert_eq!(
+            upstream.pointer("/reasoning/effort").and_then(Value::as_str),
+            Some("xhigh")
+        );
+    }
+
+    #[test]
+    fn openrouter_claude_still_normalizes_max_reasoning_effort() {
+        // `max` is never valid in OpenRouter's enum, even for Claude.
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "anthropic/claude-sonnet-4-5",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "max"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload);
+        assert_eq!(
+            upstream.pointer("/reasoning/effort").and_then(Value::as_str),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn openrouter_non_claude_downgrades_xhigh_for_unsupported_model() {
+        // A non-Claude model that does not support xhigh must still be downgraded.
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-5.1",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload);
+        assert_eq!(
+            upstream.pointer("/reasoning/effort").and_then(Value::as_str),
+            Some("high")
         );
     }
 
