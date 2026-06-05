@@ -6,7 +6,9 @@ use tokio::sync::watch;
 
 use super::AgentRuntimeService;
 use crate::application::errors::ApplicationError;
-use crate::domain::models::agent::{AgentInvocationStatus, AgentTaskRecord, AgentTaskStatus};
+use crate::domain::models::agent::{
+    AgentDelegationContinuation, AgentInvocationStatus, AgentTaskRecord, AgentTaskStatus,
+};
 
 pub(super) struct ActiveRunHandle {
     pub(super) cancel_sender: watch::Sender<bool>,
@@ -107,6 +109,7 @@ impl AgentTaskScheduler {
         let tasks = tasks
             .into_iter()
             .filter(|task| task.parent_invocation_id == parent_invocation_id)
+            .filter(|task| task.continuation == AgentDelegationContinuation::ReturnToParent)
             .filter(task_is_unfinished)
             .collect::<Vec<_>>();
         self.cancel_unfinished_tasks(
@@ -125,6 +128,7 @@ impl AgentTaskScheduler {
             .await?;
         let tasks = tasks
             .into_iter()
+            .filter(|task| task.continuation == AgentDelegationContinuation::ReturnToParent)
             .filter(task_is_unfinished)
             .collect::<Vec<_>>();
         self.cancel_unfinished_tasks(&service, tasks, "cancelled because the Agent run stopped")

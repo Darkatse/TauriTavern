@@ -1,10 +1,11 @@
 use serde_json::json;
 
-use super::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_LIST, TASK_RETURN};
+use super::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, TASK_RETURN};
 use crate::domain::models::agent::AgentToolSpec;
 
 const MODEL_AGENT_AWAIT: &str = "agent_await";
 const MODEL_AGENT_DELEGATE: &str = "agent_delegate";
+const MODEL_AGENT_HANDOFF: &str = "agent_handoff";
 const MODEL_AGENT_LIST: &str = "agent_list";
 const MODEL_TASK_RETURN: &str = "task_return";
 
@@ -130,6 +131,73 @@ pub(in crate::application::services::agent_tools) fn agent_await_spec() -> Agent
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true, "sourceKind": "agent" }),
+        source: "builtin".to_string(),
+    }
+}
+
+pub(in crate::application::services::agent_tools) fn agent_handoff_spec() -> AgentToolSpec {
+    AgentToolSpec {
+        name: AGENT_HANDOFF.to_string(),
+        model_name: MODEL_AGENT_HANDOFF.to_string(),
+        title: "Agent Handoff".to_string(),
+        description: "Ask another Agent to take over the next stage of this run. Use this when you have done your part and the next Agent should continue from the shared workspace.".to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "agentId": {
+                    "type": "string",
+                    "description": "Agent id returned by agent_list with purpose handoff."
+                },
+                "handoff": {
+                    "type": "object",
+                    "description": "Brief the next Agent so it can continue without asking you. Include the objective, relevant workspace paths, context, constraints, and completion criteria.",
+                    "additionalProperties": true,
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Optional short handoff name for display."
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Why you are handing off now."
+                        },
+                        "objective": {
+                            "type": "string",
+                            "description": "What you want the next Agent to accomplish."
+                        },
+                        "contextSummary": {
+                            "type": "string",
+                            "description": "What you have done, what matters next, and any decisions or constraints the next Agent needs."
+                        },
+                        "workspaceRefs": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Workspace paths the next Agent should inspect or continue from."
+                        },
+                        "mustPreserve": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Facts, style constraints, plot points, or edits that must not be lost."
+                        },
+                        "completionCriteria": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "What done looks like for the next Agent."
+                        }
+                    },
+                    "required": ["objective"]
+                },
+                "pendingTaskPolicy": {
+                    "type": "string",
+                    "enum": ["denyIfPending"],
+                    "description": "Use denyIfPending so handoff waits until delegated tasks you started are finished."
+                }
+            },
+            "required": ["agentId", "handoff"]
+        }),
+        output_schema: None,
+        annotations: json!({ "readOnly": false, "sourceKind": "agent" }),
         source: "builtin".to_string(),
     }
 }

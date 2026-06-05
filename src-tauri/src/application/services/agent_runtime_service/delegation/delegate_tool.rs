@@ -221,7 +221,7 @@ impl AgentRuntimeService {
         Ok(Ok(()))
     }
 
-    async fn allocate_child_workspace_key(
+    pub(in crate::application::services::agent_runtime_service) async fn allocate_child_workspace_key(
         &self,
         run_id: &str,
         target_profile_id: &str,

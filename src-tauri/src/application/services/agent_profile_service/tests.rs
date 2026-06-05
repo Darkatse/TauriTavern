@@ -51,7 +51,9 @@ fn default_agent_system_prompt_uses_visible_tool_model_names() {
     assert!(prompt.contains(
         "Before calling workspace_finish_alias, you **must successfully call workspace_commit_alias at least once**"
     ));
-    assert!(prompt.contains("**Must finish via workspace_finish_alias.**"));
+    assert!(
+        prompt.contains("Do not answer in plain text. Finish by calling workspace_finish_alias.")
+    );
     assert!(!prompt.contains("workspace_read_file"));
 }
 
@@ -174,6 +176,29 @@ fn default_agent_system_prompt_does_not_mention_hidden_await_tool() {
 }
 
 #[test]
+fn default_agent_system_prompt_describes_handoff_from_current_agent_view() {
+    let profile = test_profile(None, "foreground");
+    let tools = vec![tool("agent.handoff", "agent_handoff_alias")];
+
+    let prompt = materialize_agent_system_prompt(&tools, &profile);
+
+    assert!(prompt.contains(
+        "Use agent_handoff_alias when you have finished your part and another Agent should continue"
+    ));
+    assert!(prompt.contains(
+        "After agent_handoff_alias succeeds, your part is done; do not call more tools."
+    ));
+    assert!(prompt.contains("You cannot finish the run directly with the available tools"));
+    assert!(
+        prompt.contains("Do not answer in plain text. Continue by calling agent_handoff_alias.")
+    );
+    assert!(!prompt.contains("This Agent"));
+    assert!(!prompt.contains("this Agent"));
+    assert!(!prompt.contains("Agent invocation"));
+    assert!(!prompt.contains("active run stage"));
+}
+
+#[test]
 fn delegated_task_system_prompt_uses_shared_workspace_paths() {
     let mut profile = test_profile(None, "background");
     profile.workspace.visible_roots = vec!["output".to_string(), "persist".to_string()];
@@ -232,6 +257,24 @@ fn subagent_only_profiles_do_not_require_finish_tool() {
 }
 
 #[test]
+fn handoff_target_profiles_do_not_require_finish_tool() {
+    let run = crate::domain::models::agent::profile::AgentRunPolicy {
+        presentation: crate::domain::models::agent::AgentRunPresentation::Foreground,
+        direct_runnable: false,
+        model_retry: Default::default(),
+    };
+    let delegation = crate::domain::models::agent::profile::AgentDelegationPolicy {
+        callable: true,
+        allow_as_handoff_target: true,
+        ..Default::default()
+    };
+    let tools = test_tool_policy(&["workspace.write_file", "agent.handoff"]);
+
+    super::validation::validate_run_policy(&run, &delegation, &tools)
+        .expect("handoff target profile should not require workspace.finish");
+}
+
+#[test]
 fn default_writer_does_not_enable_dice_roll() {
     let profile = super::defaults::default_writer_profile().expect("default writer profile");
 
@@ -257,7 +300,7 @@ fn direct_runnable_false_requires_subagent_entrypoint() {
     assert!(
         error
             .to_string()
-            .contains("agent.profile_direct_runnable_disabled_requires_subagent")
+            .contains("agent.profile_direct_runnable_disabled_requires_delegation_target")
     );
 }
 

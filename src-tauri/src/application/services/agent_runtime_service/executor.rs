@@ -6,6 +6,7 @@ use super::artifacts::build_agent_manifest;
 use super::commit_ledger::RunCommitLedger;
 use super::error_payload::{run_failure_payload, run_partial_success_payload};
 use super::invocation::model_session_id;
+use super::loop_runner::AgentLoopExit;
 use super::prompt_snapshot::{prepare_agent_tool_request, request_summary};
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
@@ -264,26 +265,171 @@ impl AgentRuntimeService {
         .await?;
         self.ensure_not_cancelled(cancel)?;
 
-        self.run_tool_loop(
+        self.execute_active_invocation_chain(
             run_id,
-            invocation_id.as_str(),
-            AgentInvocationExitPolicy::RunFinishAllowed,
+            invocation_id,
             request,
-            &resolved_profile,
-            &effective_skills,
+            resolved_profile,
+            effective_skills,
             commit_ledger,
             cancel,
         )
-        .await?
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "agent.max_tool_rounds_exceeded: workspace.finish was not called within {} rounds",
-                resolved_profile.tools.max_rounds
-            ))
-        })?;
+        .await?;
         self.ensure_not_cancelled(cancel)?;
 
-        self.finish_run(run_id, commit_ledger, cancel).await?;
+        Ok(())
+    }
+
+    async fn execute_active_invocation_chain(
+        &self,
+        run_id: &str,
+        mut invocation_id: String,
+        mut request: crate::domain::models::agent::AgentModelRequest,
+        mut profile: ResolvedAgentProfile,
+        mut effective_skills: Vec<SkillIndexEntry>,
+        commit_ledger: &mut RunCommitLedger,
+        cancel: &mut AgentCancelReceiver,
+    ) -> Result<(), ApplicationError> {
+        let mut incoming_handoff_task_id: Option<String> = None;
+        loop {
+            let exit = match self
+                .run_tool_loop(
+                    run_id,
+                    invocation_id.as_str(),
+                    AgentInvocationExitPolicy::RunFinishAllowed,
+                    request,
+                    &profile,
+                    &effective_skills,
+                    commit_ledger,
+                    cancel,
+                )
+                .await
+            {
+                Ok(Some(exit)) => exit,
+                Ok(None) => {
+                    let error = ApplicationError::ValidationError(format!(
+                        "agent.max_tool_rounds_exceeded: workspace.finish or agent.handoff was not called within {} rounds",
+                        profile.tools.max_rounds
+                    ));
+                    self.mark_active_invocation_failed(
+                        run_id,
+                        invocation_id.as_str(),
+                        incoming_handoff_task_id.as_deref(),
+                        &error,
+                    )
+                    .await?;
+                    return Err(error);
+                }
+                Err(error) => {
+                    self.mark_active_invocation_failed(
+                        run_id,
+                        invocation_id.as_str(),
+                        incoming_handoff_task_id.as_deref(),
+                        &error,
+                    )
+                    .await?;
+                    return Err(error);
+                }
+            };
+
+            match exit {
+                AgentLoopExit::Finished => {
+                    if let Err(error) = self
+                        .finish_run(run_id, invocation_id.as_str(), commit_ledger, cancel)
+                        .await
+                    {
+                        self.mark_active_invocation_failed(
+                            run_id,
+                            invocation_id.as_str(),
+                            incoming_handoff_task_id.as_deref(),
+                            &error,
+                        )
+                        .await?;
+                        return Err(error);
+                    }
+                    if let Some(task_id) = incoming_handoff_task_id.as_deref() {
+                        self.transition_child_task(
+                            run_id,
+                            task_id,
+                            crate::domain::models::agent::AgentTaskStatus::Completed,
+                            None,
+                            None,
+                        )
+                        .await?;
+                    }
+                    return Ok(());
+                }
+                AgentLoopExit::Transferred {
+                    task_id,
+                    new_invocation_id,
+                } => {
+                    if let Some(incoming_task_id) = incoming_handoff_task_id.as_deref() {
+                        self.transition_child_task(
+                            run_id,
+                            incoming_task_id,
+                            crate::domain::models::agent::AgentTaskStatus::Completed,
+                            None,
+                            None,
+                        )
+                        .await?;
+                    }
+                    let prepared = match self
+                        .prepare_handoff_invocation(
+                            run_id,
+                            task_id.as_str(),
+                            new_invocation_id.as_str(),
+                            cancel,
+                        )
+                        .await
+                    {
+                        Ok(prepared) => prepared,
+                        Err(error) => {
+                            self.mark_active_invocation_failed(
+                                run_id,
+                                new_invocation_id.as_str(),
+                                Some(task_id.as_str()),
+                                &error,
+                            )
+                            .await?;
+                            return Err(error);
+                        }
+                    };
+                    invocation_id = new_invocation_id;
+                    incoming_handoff_task_id = Some(task_id);
+                    request = prepared.request;
+                    profile = prepared.profile;
+                    effective_skills = prepared.effective_skills;
+                }
+            }
+        }
+    }
+
+    async fn mark_active_invocation_failed(
+        &self,
+        run_id: &str,
+        invocation_id: &str,
+        incoming_handoff_task_id: Option<&str>,
+        error: &ApplicationError,
+    ) -> Result<(), ApplicationError> {
+        let was_cancelled = matches!(error, ApplicationError::Cancelled(_));
+        let task_status = if was_cancelled {
+            crate::domain::models::agent::AgentTaskStatus::Cancelled
+        } else {
+            crate::domain::models::agent::AgentTaskStatus::Failed
+        };
+        let invocation_status = if was_cancelled {
+            AgentInvocationStatus::Cancelled
+        } else {
+            AgentInvocationStatus::Failed
+        };
+        if let Some(task_id) = incoming_handoff_task_id {
+            self.transition_child_task(run_id, task_id, task_status, None, Some(error.to_string()))
+                .await?;
+        }
+        if invocation_id != ROOT_AGENT_INVOCATION_ID {
+            self.finish_invocation(run_id, invocation_id, invocation_status)
+                .await?;
+        }
         Ok(())
     }
 

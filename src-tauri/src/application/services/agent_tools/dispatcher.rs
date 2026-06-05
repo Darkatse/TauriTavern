@@ -55,6 +55,10 @@ pub enum AgentToolEffect {
         result_ref: WorkspacePath,
         summary: String,
     },
+    HandoffAccepted {
+        task_id: String,
+        new_invocation_id: String,
+    },
     Finish,
 }
 

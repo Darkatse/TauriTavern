@@ -1,4 +1,6 @@
-use super::agent::{agent_await_spec, agent_delegate_spec, agent_list_spec, task_return_spec};
+use super::agent::{
+    agent_await_spec, agent_delegate_spec, agent_handoff_spec, agent_list_spec, task_return_spec,
+};
 use super::chat::{chat_read_messages_spec, chat_search_spec};
 use super::dice::dice_roll_spec;
 use super::skill::{SKILL_READ, skill_list_spec, skill_read_spec, skill_search_spec};
@@ -25,6 +27,7 @@ impl BuiltinAgentToolRegistry {
             specs: vec![
                 agent_list_spec(),
                 agent_delegate_spec(),
+                agent_handoff_spec(),
                 agent_await_spec(),
                 task_return_spec(),
                 chat_search_spec(),
@@ -347,7 +350,9 @@ fn property_schema_object_mut<'a>(
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::super::agent::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_LIST, TASK_RETURN};
+    use super::super::agent::{
+        AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, TASK_RETURN,
+    };
     use super::super::dice::DICE_ROLL;
     use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE, WORKSPACE_WRITE_FILE};
     use super::*;
@@ -370,11 +375,13 @@ mod tests {
         assert_eq!(tools[0].name, AGENT_LIST);
         assert_eq!(tools[1].model_name, "agent_delegate");
         assert_eq!(tools[1].name, AGENT_DELEGATE);
-        assert_eq!(tools[2].model_name, "agent_await");
-        assert_eq!(tools[2].name, AGENT_AWAIT);
-        assert_eq!(tools[3].model_name, "task_return");
-        assert_eq!(tools[3].name, TASK_RETURN);
-        assert_eq!(tools[4].model_name, "chat_search");
+        assert_eq!(tools[2].model_name, "agent_handoff");
+        assert_eq!(tools[2].name, AGENT_HANDOFF);
+        assert_eq!(tools[3].model_name, "agent_await");
+        assert_eq!(tools[3].name, AGENT_AWAIT);
+        assert_eq!(tools[4].model_name, "task_return");
+        assert_eq!(tools[4].name, TASK_RETURN);
+        assert_eq!(tools[5].model_name, "chat_search");
         assert_eq!(
             tools
                 .iter()
@@ -481,7 +488,7 @@ mod tests {
             .filter(|tool| {
                 matches!(
                     tool.name.as_str(),
-                    AGENT_LIST | AGENT_DELEGATE | AGENT_AWAIT | TASK_RETURN
+                    AGENT_LIST | AGENT_DELEGATE | AGENT_HANDOFF | AGENT_AWAIT | TASK_RETURN
                 )
             })
             .collect::<Vec<_>>();
@@ -495,9 +502,14 @@ mod tests {
             assert!(!text.contains("invocation"), "{}", tool.name);
             assert!(!text.contains("parent Agent"), "{}", tool.name);
             assert!(!text.contains("child Agent"), "{}", tool.name);
+            assert!(!text.contains("This Agent"), "{}", tool.name);
+            assert!(!text.contains("active control"), "{}", tool.name);
+            assert!(!text.contains("active owner"), "{}", tool.name);
+            assert!(!text.contains("delegated result to you"), "{}", tool.name);
             assert!(!text.contains("workspace_finish"), "{}", tool.name);
             assert!(!text.contains("to collect it"), "{}", tool.name);
             assert!(!text.contains("before finalizing"), "{}", tool.name);
+            assert!(!text.contains("first version"), "{}", tool.name);
         }
     }
 

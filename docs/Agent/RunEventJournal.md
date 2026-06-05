@@ -117,6 +117,7 @@ agent_invocation_started
 agent_invocation_completed
 agent_invocation_failed
 agent_invocation_cancelled
+agent_invocation_transferred
 agent_task_registered
 agent_task_queued
 agent_task_started
@@ -124,6 +125,8 @@ agent_task_completed
 agent_task_failed
 agent_task_cancelled
 agent_delegate_started
+agent_handoff_requested
+agent_handoff_accepted
 agent_await_started
 agent_await_completed
 task_return_completed
@@ -162,6 +165,27 @@ run_failed
 ```
 
 以下小节同时包含当前已落地事件和后续阶段设计事件；实现新事件时必须更新 `docs/CurrentState/AgentFramework.md`。
+
+### Handoff event sequence
+
+当前 `agent.handoff` 的典型事件序列：
+
+```text
+agent_handoff_requested
+agent_invocation_created      # kind = handoff
+agent_task_registered         # continuation = transfer_control
+agent_handoff_accepted
+agent_invocation_transferred  # source invocation
+agent_loop_finished
+agent_task_started            # handoff task starts when target invocation is prepared
+agent_invocation_started      # target invocation
+context_assembled
+skill_scopes_resolved
+...
+agent_task_completed          # incoming handoff task completes when target finishes or hands off again
+```
+
+Handoff 的 task / invocation 结构、prompt brief 与失败边界见 `docs/Agent/Handoff.md`。
 
 ### 4.1 Run Lifecycle
 

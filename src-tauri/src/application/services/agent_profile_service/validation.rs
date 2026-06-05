@@ -14,7 +14,7 @@ use crate::domain::models::agent::profile::{
 };
 
 use super::constants::{
-    AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_LIST_TOOL, TASK_RETURN_TOOL,
+    AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, AGENT_LIST_TOOL, TASK_RETURN_TOOL,
     WORKSPACE_ROOT_UNIVERSE,
 };
 
@@ -312,6 +312,8 @@ pub(super) fn validate_delegation_policy(
         && !tools.deny.iter().any(|name| name == AGENT_DELEGATE_TOOL);
     let agent_await_visible = tools.allow.iter().any(|name| name == AGENT_AWAIT_TOOL)
         && !tools.deny.iter().any(|name| name == AGENT_AWAIT_TOOL);
+    let agent_handoff_visible = tools.allow.iter().any(|name| name == AGENT_HANDOFF_TOOL)
+        && !tools.deny.iter().any(|name| name == AGENT_HANDOFF_TOOL);
     if agent_list_visible && !policy.can_delegate && !policy.can_handoff {
         return Err(ApplicationError::ValidationError(
             "agent.profile_agent_list_requires_delegation: agent.list requires delegation.canDelegate or delegation.canHandoff"
@@ -321,6 +323,12 @@ pub(super) fn validate_delegation_policy(
     if (agent_delegate_visible || agent_await_visible) && !policy.can_delegate {
         return Err(ApplicationError::ValidationError(
             "agent.profile_agent_delegate_requires_delegation: agent.delegate/agent.await require delegation.canDelegate"
+                .to_string(),
+        ));
+    }
+    if agent_handoff_visible && !policy.can_handoff {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_agent_handoff_requires_handoff: agent.handoff requires delegation.canHandoff"
                 .to_string(),
         ));
     }
@@ -346,15 +354,19 @@ pub(super) fn validate_run_policy(
         ));
     }
     if !run.direct_runnable {
-        if run.presentation != AgentRunPresentation::Background {
+        if !delegation.allow_as_handoff_target
+            && run.presentation != AgentRunPresentation::Background
+        {
             return Err(ApplicationError::ValidationError(
                 "agent.profile_subagent_only_background_required: run.presentation must be background when run.directRunnable is false"
                     .to_string(),
             ));
         }
-        if !delegation.callable || !delegation.allow_as_subagent {
+        if !delegation.callable
+            || (!delegation.allow_as_subagent && !delegation.allow_as_handoff_target)
+        {
             return Err(ApplicationError::ValidationError(
-                "agent.profile_direct_runnable_disabled_requires_subagent: run.directRunnable=false requires delegation.callable and delegation.allowAsSubagent"
+                "agent.profile_direct_runnable_disabled_requires_delegation_target: run.directRunnable=false requires delegation.callable and allowAsSubagent or allowAsHandoffTarget"
                     .to_string(),
             ));
         }

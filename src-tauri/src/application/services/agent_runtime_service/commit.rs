@@ -325,6 +325,7 @@ impl AgentRuntimeService {
     pub(super) async fn finish_run(
         &self,
         run_id: &str,
+        final_invocation_id: &str,
         commit_ledger: &RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
@@ -382,8 +383,12 @@ impl AgentRuntimeService {
         .await?;
         self.active_runs.write().await.remove(run_id);
         self.clear_pending_host_requests_for_run(run_id).await;
-        self.finish_root_invocation(run_id, AgentInvocationStatus::Completed)
-            .await?;
+        self.finish_invocation(
+            run_id,
+            final_invocation_id,
+            AgentInvocationStatus::Completed,
+        )
+        .await?;
 
         Ok(())
     }

@@ -2,7 +2,9 @@ use crate::application::services::agent_workspace_scope::format_model_workspace_
 use crate::domain::models::agent::AgentToolSpec;
 use crate::domain::models::agent::profile::ResolvedAgentProfile;
 
-use super::constants::{AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_LIST_TOOL, TASK_RETURN_TOOL};
+use super::constants::{
+    AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, AGENT_LIST_TOOL, TASK_RETURN_TOOL,
+};
 
 pub fn materialize_agent_system_prompt(
     tools: &[AgentToolSpec],
@@ -91,6 +93,16 @@ pub fn materialize_agent_system_prompt(
                 model_name(tools, AGENT_DELEGATE_TOOL)
             ));
         }
+    }
+    if has_tool(tools, AGENT_HANDOFF_TOOL) {
+        lines.push(format!(
+            "- Use {} when you have finished your part and another Agent should continue. Provide a self-contained handoff brief with the objective, relevant workspace paths, decisions, constraints, and what done looks like.",
+            model_name(tools, AGENT_HANDOFF_TOOL)
+        ));
+        lines.push(format!(
+            "- After {} succeeds, your part is done; do not call more tools.",
+            model_name(tools, AGENT_HANDOFF_TOOL)
+        ));
     }
     if has_tool(tools, "skill.search") {
         lines.push(format!(
@@ -202,21 +214,57 @@ pub fn materialize_agent_system_prompt(
             "> You may encounter: \"No visible workspace files found.\" This happens because there are no persisted files; please continue."
                 .to_string(),
         );
-        match profile.run.presentation {
-            crate::domain::models::agent::AgentRunPresentation::Foreground => lines.push(format!(
+        match (
+            profile.run.presentation,
+            has_tool(tools, "workspace.finish"),
+            has_tool(tools, "workspace.commit"),
+            has_tool(tools, AGENT_HANDOFF_TOOL),
+        ) {
+            (
+                crate::domain::models::agent::AgentRunPresentation::Foreground,
+                true,
+                true,
+                _,
+            ) => lines.push(format!(
                 "# **Important**: Before calling {}, you **must successfully call {} at least once** so that the user can see the final chat message.",
                 model_name(tools, "workspace.finish"),
                 model_name(tools, "workspace.commit")
             )),
-            crate::domain::models::agent::AgentRunPresentation::Background => lines.push(format!(
-                "# Background runs may call {} without committing a chat message.",
+            (
+                crate::domain::models::agent::AgentRunPresentation::Foreground,
+                true,
+                false,
+                _,
+            ) => lines.push(format!(
+                "# **Important**: Call {} only when this foreground stage can end without you publishing a new chat commit.",
                 model_name(tools, "workspace.finish")
             )),
+            (crate::domain::models::agent::AgentRunPresentation::Background, true, _, _) => {
+                lines.push(format!(
+                    "# Background runs may call {} without committing a chat message.",
+                    model_name(tools, "workspace.finish")
+                ));
+            }
+            (_, false, _, true) => lines.push(format!(
+                "# **Important**: You cannot finish the run directly with the available tools. When your part is complete, call {}.",
+                model_name(tools, AGENT_HANDOFF_TOOL)
+            )),
+            (_, false, _, false) => lines.push(
+                "# **Important**: You do not have a finish or handoff tool. Use another available Agent tool to move the work forward."
+                    .to_string(),
+            ),
         }
-        lines.push(format!(
-            "# **Important**: **Do not** answer directly!!! **Must finish via {}.**",
-            model_name(tools, "workspace.finish")
-        ));
+        if has_tool(tools, "workspace.finish") {
+            lines.push(format!(
+                "# **Important**: Do not answer in plain text. Finish by calling {}.",
+                model_name(tools, "workspace.finish")
+            ));
+        } else if has_tool(tools, AGENT_HANDOFF_TOOL) {
+            lines.push(format!(
+                "# **Important**: Do not answer in plain text. Continue by calling {}.",
+                model_name(tools, AGENT_HANDOFF_TOOL)
+            ));
+        }
     }
     if has_tool(tools, "workspace.commit") && has_tool(tools, "workspace.finish") {
         lines.extend([

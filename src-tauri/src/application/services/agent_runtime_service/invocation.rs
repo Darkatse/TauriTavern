@@ -142,15 +142,75 @@ impl AgentRuntimeService {
         task: serde_json::Value,
         budget: Option<AgentTaskBudget>,
     ) -> Result<AgentTaskRecord, ApplicationError> {
+        self.create_delegation_task(
+            run_id,
+            parent_invocation_id,
+            child_invocation_id,
+            task_id,
+            target_profile_id,
+            workspace_key,
+            created_by_tool_call_id,
+            task,
+            budget,
+            AgentInvocationKind::Subagent,
+            AgentInvocationExitPolicy::TaskReturnRequired,
+            AgentDelegationContinuation::ReturnToParent,
+        )
+        .await
+    }
+
+    pub(super) async fn create_handoff_task(
+        &self,
+        run_id: &str,
+        parent_invocation_id: &str,
+        child_invocation_id: String,
+        task_id: String,
+        target_profile_id: String,
+        workspace_key: String,
+        created_by_tool_call_id: String,
+        task: serde_json::Value,
+    ) -> Result<AgentTaskRecord, ApplicationError> {
+        self.create_delegation_task(
+            run_id,
+            parent_invocation_id,
+            child_invocation_id,
+            task_id,
+            target_profile_id,
+            workspace_key,
+            created_by_tool_call_id,
+            task,
+            None,
+            AgentInvocationKind::Handoff,
+            AgentInvocationExitPolicy::RunFinishAllowed,
+            AgentDelegationContinuation::TransferControl,
+        )
+        .await
+    }
+
+    async fn create_delegation_task(
+        &self,
+        run_id: &str,
+        parent_invocation_id: &str,
+        child_invocation_id: String,
+        task_id: String,
+        target_profile_id: String,
+        workspace_key: String,
+        created_by_tool_call_id: String,
+        task: serde_json::Value,
+        budget: Option<AgentTaskBudget>,
+        invocation_kind: AgentInvocationKind,
+        exit_policy: AgentInvocationExitPolicy,
+        continuation: AgentDelegationContinuation,
+    ) -> Result<AgentTaskRecord, ApplicationError> {
         let now = Utc::now();
         let invocation = AgentInvocation {
             id: child_invocation_id.clone(),
             run_id: run_id.to_string(),
             parent_invocation_id: Some(parent_invocation_id.to_string()),
             profile_id: target_profile_id.clone(),
-            kind: AgentInvocationKind::Subagent,
+            kind: invocation_kind,
             status: AgentInvocationStatus::Created,
-            exit_policy: AgentInvocationExitPolicy::TaskReturnRequired,
+            exit_policy,
             created_at: now,
             updated_at: now,
         };
@@ -161,7 +221,7 @@ impl AgentRuntimeService {
             child_invocation_id,
             target_profile_id,
             workspace_key,
-            continuation: AgentDelegationContinuation::ReturnToParent,
+            continuation,
             status: AgentTaskStatus::Queued,
             task,
             budget,
@@ -211,6 +271,14 @@ impl AgentRuntimeService {
     }
 
     pub(super) async fn start_child_invocation(
+        &self,
+        run_id: &str,
+        invocation_id: &str,
+    ) -> Result<AgentInvocation, ApplicationError> {
+        self.start_invocation(run_id, invocation_id).await
+    }
+
+    pub(super) async fn start_invocation(
         &self,
         run_id: &str,
         invocation_id: &str,
@@ -306,6 +374,15 @@ impl AgentRuntimeService {
     }
 
     pub(super) async fn finish_child_invocation(
+        &self,
+        run_id: &str,
+        invocation_id: &str,
+        status: AgentInvocationStatus,
+    ) -> Result<(), ApplicationError> {
+        self.finish_invocation(run_id, invocation_id, status).await
+    }
+
+    pub(super) async fn finish_invocation(
         &self,
         run_id: &str,
         invocation_id: &str,

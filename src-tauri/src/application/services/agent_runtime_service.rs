@@ -10,8 +10,8 @@ use crate::application::services::agent_profile_service::{
     AgentProfileResolveInput, AgentProfileService, materialize_agent_system_prompt,
 };
 use crate::application::services::agent_tools::{
-    AGENT_AWAIT, AGENT_DELEGATE, AGENT_LIST, AgentToolDispatcher, BuiltinAgentToolRegistry,
-    TASK_RETURN,
+    AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, AgentToolDispatcher,
+    BuiltinAgentToolRegistry, TASK_RETURN,
 };
 use crate::application::services::llm_connection_service::LlmConnectionService;
 use crate::application::services::prompt_assembly_service::PromptAssemblyService;
@@ -225,6 +225,7 @@ impl AgentRuntimeService {
                         | "workspace.finish"
                         | AGENT_LIST
                         | AGENT_DELEGATE
+                        | AGENT_HANDOFF
                         | AGENT_AWAIT
                 )
             });
