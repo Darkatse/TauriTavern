@@ -1,6 +1,8 @@
 use serde_json::{Map, Value, json};
 
+use super::super::prompt_caching_plan::is_openrouter_claude_model_name;
 use super::openai;
+use super::openai_reasoning::{normalize_openai_reasoning_effort, normalize_reasoning_effort};
 use super::shared::insert_if_present;
 
 pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
@@ -53,18 +55,33 @@ fn apply_openrouter_overrides(body: &mut Map<String, Value>, source_payload: &Ma
         body.insert("route".to_string(), Value::String("fallback".to_string()));
     }
 
+    // OpenRouter validates `reasoning.effort` against a fixed enum
+    // (xhigh|high|medium|low|minimal|none) and rejects SillyTavern's `max`/`auto`
+    // preset values, so the raw value can't be forwarded. Normalize the universal
+    // aliases (auto -> omitted, max -> high, min -> minimal). The OpenAI `xhigh`
+    // gating is GPT-version specific, so it must not be applied to non-OpenAI
+    // routes: OpenRouter Claude accepts `xhigh`, so keep it instead of silently
+    // downgrading to `high`. Remove the flat field unconditionally so the raw
+    // value never leaks alongside the nested `reasoning` object.
+    body.remove("reasoning_effort");
+    let model = source_payload
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     if let Some(reasoning_effort) = source_payload
         .get("reasoning_effort")
         .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .and_then(|value| {
+            if is_openrouter_claude_model_name(model) {
+                normalize_reasoning_effort(value, true)
+            } else {
+                normalize_openai_reasoning_effort(value, model)
+            }
+        })
     {
-        body.remove("reasoning_effort");
         body.insert(
             "reasoning".to_string(),
-            json!({
-                "effort": reasoning_effort,
-            }),
+            json!({ "effort": reasoning_effort.as_ref() }),
         );
     }
 }
@@ -169,6 +186,113 @@ mod tests {
             transforms.first().and_then(Value::as_str),
             Some("middle-out")
         );
+    }
+
+    #[test]
+    fn openrouter_normalizes_max_reasoning_effort_to_high() {
+        // SillyTavern's `max` preset is not in OpenRouter's effort enum; it must be
+        // normalized to `high` rather than forwarded raw (which OpenRouter rejects).
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-5.1",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "max"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload);
+        assert_eq!(
+            upstream.pointer("/reasoning/effort").and_then(Value::as_str),
+            Some("high")
+        );
+        assert!(
+            upstream
+                .as_object()
+                .and_then(|body| body.get("reasoning_effort"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn openrouter_claude_keeps_xhigh_reasoning_effort() {
+        // OpenRouter accepts `xhigh` for Claude; the OpenAI GPT-version gating must
+        // not downgrade it to `high` on the Anthropic route.
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "anthropic/claude-sonnet-4-5",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload);
+        assert_eq!(
+            upstream.pointer("/reasoning/effort").and_then(Value::as_str),
+            Some("xhigh")
+        );
+    }
+
+    #[test]
+    fn openrouter_claude_still_normalizes_max_reasoning_effort() {
+        // `max` is never valid in OpenRouter's enum, even for Claude.
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "anthropic/claude-sonnet-4-5",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "max"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload);
+        assert_eq!(
+            upstream.pointer("/reasoning/effort").and_then(Value::as_str),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn openrouter_non_claude_downgrades_xhigh_for_unsupported_model() {
+        // A non-Claude model that does not support xhigh must still be downgraded.
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-5.1",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "xhigh"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload);
+        assert_eq!(
+            upstream.pointer("/reasoning/effort").and_then(Value::as_str),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn openrouter_omits_auto_reasoning_effort() {
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "openai/gpt-5.1",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "auto"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload);
+        let body = upstream.as_object().expect("payload must be object");
+
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("reasoning_effort").is_none());
     }
 
     #[test]

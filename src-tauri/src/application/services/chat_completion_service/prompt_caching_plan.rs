@@ -104,13 +104,16 @@ fn resolve_custom_claude_prompt_caching_plan(
     }))
 }
 
+pub(super) fn is_openrouter_claude_model_name(model: &str) -> bool {
+    model.trim().to_ascii_lowercase().starts_with("anthropic/claude")
+}
+
 fn is_openrouter_claude_model(payload: &Value) -> bool {
     payload
         .as_object()
         .and_then(|object| object.get("model"))
         .and_then(Value::as_str)
-        .map(str::trim)
-        .is_some_and(|model| model.to_ascii_lowercase().starts_with("anthropic/claude"))
+        .is_some_and(is_openrouter_claude_model_name)
 }
 
 fn is_nanogpt_claude_payload(payload: &Value) -> bool {
