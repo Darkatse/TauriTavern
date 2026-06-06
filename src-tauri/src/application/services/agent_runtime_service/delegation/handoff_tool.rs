@@ -15,6 +15,8 @@ use crate::domain::models::agent::{
     AgentDelegationContinuation, AgentRunEventLevel, AgentToolCall, AgentToolResult,
 };
 
+const MAX_AGENT_HANDOFF_FIELD_CHARS: usize = 8_000;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AgentHandoffArgs {
@@ -266,8 +268,39 @@ fn validate_optional_handoff_string(value: &Value, key: &str) -> Result<(), Stri
 }
 
 fn validate_handoff_string_len(value: &str, key: &str) -> Result<(), String> {
-    if value.len() > 4_000 {
-        return Err(format!("handoff.{key} must be <= 4000 chars"));
+    if value.len() > MAX_AGENT_HANDOFF_FIELD_CHARS {
+        return Err(format!(
+            "handoff.{key} must be <= {MAX_AGENT_HANDOFF_FIELD_CHARS} chars"
+        ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::validate_handoff_packet;
+
+    #[test]
+    fn handoff_packet_accepts_8000_char_fields() {
+        let handoff = json!({
+            "title": "Revision pass",
+            "objective": "a".repeat(8_000),
+            "contextSummary": "Ready for the next stage."
+        });
+
+        assert!(validate_handoff_packet(&handoff).is_ok());
+    }
+
+    #[test]
+    fn handoff_packet_rejects_fields_over_8000_chars() {
+        let error = validate_handoff_packet(&json!({
+            "title": "Revision pass",
+            "objective": "a".repeat(8_001)
+        }))
+        .expect_err("overlong objective should fail");
+
+        assert_eq!(error, "handoff.objective must be <= 8000 chars");
+    }
 }

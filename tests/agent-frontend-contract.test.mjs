@@ -858,21 +858,62 @@ test('Agent profile save normalization keeps delegation tools contract-shaped', 
     } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
 
     const draft = profileForEdit(defaultProfile('delegate-writer'));
+    assert.equal(draft.delegation.resultBudgetTokens, 8000);
+    assert.equal(draft.delegation.maxHandoffDepth, 8);
     draft.delegation.canDelegate = true;
+    draft.delegation.canHandoff = true;
     draft.tools.allow.push('task.return');
 
     const saved = normalizeProfileForSave(draft);
     assert.equal(saved.delegation.canDelegate, true);
+    assert.equal(saved.delegation.canHandoff, true);
     assert(saved.tools.allow.includes('agent.list'));
     assert(saved.tools.allow.includes('agent.delegate'));
     assert(saved.tools.allow.includes('agent.await'));
+    assert(saved.tools.allow.includes('agent.handoff'));
     assert(!saved.tools.allow.includes('task.return'));
 
     saved.delegation.canDelegate = false;
-    const disabled = normalizeProfileForSave(profileForEdit(saved));
+    const handoffOnly = normalizeProfileForSave(profileForEdit(saved));
+    assert(handoffOnly.tools.allow.includes('agent.list'));
+    assert(handoffOnly.tools.allow.includes('agent.handoff'));
+    assert(!handoffOnly.tools.allow.includes('agent.delegate'));
+    assert(!handoffOnly.tools.allow.includes('agent.await'));
+
+    handoffOnly.delegation.canHandoff = false;
+    const disabled = normalizeProfileForSave(profileForEdit(handoffOnly));
     assert(!disabled.tools.allow.includes('agent.list'));
     assert(!disabled.tools.allow.includes('agent.delegate'));
     assert(!disabled.tools.allow.includes('agent.await'));
+    assert(!disabled.tools.allow.includes('agent.handoff'));
+});
+
+test('Agent profile delegation tool allow-list normalizer handles subagent and handoff modes', async () => {
+    const {
+        normalizeDelegationToolAllowList,
+    } = await importFresh('src/scripts/extensions/agent-system/src/profile-model.js');
+    const toolOrder = ['agent.list', 'agent.delegate', 'agent.await', 'agent.handoff', 'workspace.write_file'];
+
+    assert.deepEqual(
+        normalizeDelegationToolAllowList(['workspace.write_file'], { canDelegate: true, canHandoff: false }, toolOrder),
+        ['agent.list', 'agent.delegate', 'agent.await', 'workspace.write_file'],
+    );
+    assert.deepEqual(
+        normalizeDelegationToolAllowList(['workspace.write_file'], { canDelegate: false, canHandoff: true }, toolOrder),
+        ['agent.list', 'agent.handoff', 'workspace.write_file'],
+    );
+    assert.deepEqual(
+        normalizeDelegationToolAllowList(['workspace.write_file'], { canDelegate: true, canHandoff: true }, toolOrder),
+        ['agent.list', 'agent.delegate', 'agent.await', 'agent.handoff', 'workspace.write_file'],
+    );
+    assert.deepEqual(
+        normalizeDelegationToolAllowList(
+            ['agent.list', 'agent.delegate', 'agent.await', 'agent.handoff', 'task.return', 'workspace.write_file'],
+            { canDelegate: false, canHandoff: false },
+            toolOrder,
+        ),
+        ['workspace.write_file'],
+    );
 });
 
 test('Agent profile callable SubAgent toggle owns non-direct run semantics', async () => {
@@ -901,6 +942,64 @@ test('Agent profile callable SubAgent toggle owns non-direct run semantics', asy
     assert.equal(vm.profileEditMode, 'main');
     assert.equal(vm.draft.run.directRunnable, true);
     assert.equal(vm.draft.run.presentation, 'foreground');
+});
+
+test('Agent profile handoff target toggle keeps direct run semantics', async () => {
+    const vm = await createAgentPanelHarness();
+    vm.draft.id = 'line-editor';
+    vm.draft.run.presentation = 'foreground';
+    vm.seedMainAgentPresentation();
+
+    vm.setCallableAsHandoffTarget(true);
+
+    assert.equal(vm.draft.delegation.callable, true);
+    assert.equal(vm.draft.delegation.allowAsHandoffTarget, true);
+    assert.equal(vm.draft.run.directRunnable, true);
+    assert.equal(vm.draft.run.presentation, 'foreground');
+    assert.equal(vm.isSubAgentPresentationLocked, false);
+
+    vm.setCallableAsHandoffTarget(false);
+    assert.equal(vm.draft.delegation.callable, false);
+    assert.equal(vm.draft.delegation.allowAsHandoffTarget, false);
+    assert.equal(vm.draft.run.directRunnable, true);
+    assert.equal(vm.draft.run.presentation, 'foreground');
+});
+
+test('Agent profile cooperation summary includes handoff target from the main Agent view', async () => {
+    const vm = await createAgentPanelHarness();
+    vm.draft.id = 'summary-writer';
+
+    assert.equal(vm.delegationSummaryLabel, 'Delegation off');
+
+    vm.setCallableAsHandoffTarget(true);
+    assert.equal(vm.delegationSummaryLabel, 'Handoff target');
+
+    vm.setCanHandoff(true);
+    assert.equal(vm.delegationSummaryLabel, 'Can hand off / Handoff target');
+
+    vm.setCanDelegate(true);
+    assert.equal(vm.delegationSummaryLabel, 'Can delegate + hand off / Handoff target');
+
+    vm.setProfileEditMode('subagent');
+    assert.equal(vm.delegationSummaryLabel, 'Not callable');
+
+    vm.setCallableAsSubAgent(true);
+    assert.equal(vm.delegationSummaryLabel, 'Available as SubAgent');
+});
+
+test('Agent profile panel keeps handoff target controls in the main Agent section', async () => {
+    const panelSource = await readFile(path.join(REPO_ROOT, 'src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js'), 'utf8');
+    const mainStart = panelSource.indexOf('data-ttas-profile-section="main-delegation"');
+    const subagentStart = panelSource.indexOf('data-ttas-profile-section="subagent-access"');
+    const runStart = panelSource.indexOf('data-ttas-profile-section="run"');
+
+    assert(mainStart > 0);
+    assert(subagentStart > mainStart);
+    assert(runStart > subagentStart);
+    assert.doesNotMatch(panelSource, /data-ttas-profile-section="agent-access"|id: 'agent-access'|labelKey: 'agentAccess'/);
+    assert.match(panelSource.slice(mainStart, subagentStart), /callableHandoffTargetToggle/);
+    assert.doesNotMatch(panelSource.slice(subagentStart, runStart), /callableHandoffTargetToggle/);
+    assert.match(panelSource.slice(subagentStart, runStart), /callableSubAgentToggle/);
 });
 
 test('Agent profile edit mode follows loaded profile without mutating run policy', async () => {

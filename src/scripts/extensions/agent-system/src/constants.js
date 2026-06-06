@@ -2,10 +2,22 @@ import { DEFAULT_AGENT_PROFILE_ID } from '../../../tauritavern/agent/agent-syste
 
 export const DEFAULT_PROFILE_ID = DEFAULT_AGENT_PROFILE_ID;
 
-export const AGENT_DELEGATION_TOOLS = Object.freeze([
+export const AGENT_SUBAGENT_TOOLS = Object.freeze([
     'agent.list',
     'agent.delegate',
     'agent.await',
+]);
+
+export const AGENT_HANDOFF_TOOLS = Object.freeze([
+    'agent.list',
+    'agent.handoff',
+]);
+
+export const AGENT_DELEGATION_TOOLS = Object.freeze([
+    ...new Set([
+        ...AGENT_SUBAGENT_TOOLS,
+        ...AGENT_HANDOFF_TOOLS,
+    ]),
 ]);
 
 export const RUNTIME_ONLY_TOOLS = Object.freeze([

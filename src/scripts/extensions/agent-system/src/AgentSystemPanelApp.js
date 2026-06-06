@@ -1,4 +1,10 @@
-import { AGENT_DELEGATION_TOOLS, DEFAULT_PROFILE_ID, KNOWN_TOOLS, RUNTIME_ONLY_TOOLS, WORKSPACE_ROOTS } from './constants.js';
+import {
+    AGENT_DELEGATION_TOOLS,
+    DEFAULT_PROFILE_ID,
+    KNOWN_TOOLS,
+    RUNTIME_ONLY_TOOLS,
+    WORKSPACE_ROOTS,
+} from './constants.js';
 import { confirmAction, errorText, prettyJson, requireAgentApi, requireSillyTavernContext } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 import {
@@ -7,7 +13,13 @@ import {
     modelBindingFromTarget,
     saveModelTargetAsLlmConnection,
 } from './model-target-connection.js';
-import { defaultProfile, normalizeProfileForSave, normalizeProfileId, profileForEdit } from './profile-model.js';
+import {
+    defaultProfile,
+    normalizeDelegationToolAllowList,
+    normalizeProfileForSave,
+    normalizeProfileId,
+    profileForEdit,
+} from './profile-model.js';
 import { loadSettings, patchSettings } from './settings-store.js';
 import { downloadBlobWithRuntime } from '../../../file-export.js';
 import { subscribeAgentProfilesChanged } from '../../../tauritavern/agent/agent-profile-events.js';
@@ -207,6 +219,9 @@ export function createAgentSystemPanelRoot({ requestClose }) {
             isCallableAsSubAgent() {
                 return Boolean(this.draft?.delegation?.callable && this.draft?.delegation?.allowAsSubagent);
             },
+            isCallableAsHandoffTarget() {
+                return Boolean(this.draft?.delegation?.callable && this.draft?.delegation?.allowAsHandoffTarget);
+            },
             isSubAgentOnly() {
                 return this.draft?.run?.directRunnable === false;
             },
@@ -288,7 +303,18 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 if (this.profileEditMode === 'subagent') {
                     return delegation.callable && delegation.allowAsSubagent ? tr('callableSubAgent') : tr('notCallable');
                 }
-                return delegation.canDelegate ? tr('canDelegate') : tr('delegationOff');
+                const summary = [];
+                if (delegation.canDelegate && delegation.canHandoff) {
+                    summary.push(tr('canDelegateAndHandoff'));
+                } else if (delegation.canHandoff) {
+                    summary.push(tr('canHandoff'));
+                } else if (delegation.canDelegate) {
+                    summary.push(tr('canDelegate'));
+                }
+                if (delegation.callable && delegation.allowAsHandoffTarget) {
+                    summary.push(tr('handoffTarget'));
+                }
+                return summary.length > 0 ? summary.join(' / ') : tr('delegationOff');
             },
             availablePresetOptions() {
                 const names = [...this.presetOptions];
@@ -893,6 +919,13 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 this.draft.delegation.canDelegate = Boolean(enabled);
                 this.syncDelegationTools();
             },
+            setCanHandoff(enabled) {
+                if (this.isBuiltinProfile) {
+                    return;
+                }
+                this.draft.delegation.canHandoff = Boolean(enabled);
+                this.syncDelegationTools();
+            },
             setRunPresentation(presentation) {
                 if (this.isBuiltinProfile) {
                     return;
@@ -924,24 +957,25 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                 }
                 this.syncProfileEditModeToDraft();
             },
-            syncDelegationTools() {
-                const allow = new Set(Array.isArray(this.draft?.tools?.allow) ? this.draft.tools.allow : []);
-                if (this.draft.delegation.canDelegate) {
-                    for (const tool of AGENT_DELEGATION_TOOLS) {
-                        allow.add(tool);
-                    }
-                } else {
-                    allow.delete('agent.delegate');
-                    allow.delete('agent.await');
-                    if (!this.draft.delegation.canHandoff) {
-                        allow.delete('agent.list');
-                    }
+            setCallableAsHandoffTarget(enabled) {
+                if (this.isBuiltinProfile) {
+                    return;
                 }
-                const allToolNames = this.toolSpecs.map((tool) => tool.name);
-                this.draft.tools.allow = [
-                    ...allToolNames.filter((tool) => allow.has(tool)),
-                    ...[...allow].filter((tool) => !allToolNames.includes(tool)),
-                ].filter((tool) => !RUNTIME_ONLY_TOOLS.includes(tool));
+                const isEnabled = Boolean(enabled);
+                this.draft.delegation.allowAsHandoffTarget = isEnabled;
+                this.draft.delegation.callable = isEnabled || Boolean(this.draft.delegation.allowAsSubagent);
+                if (!isEnabled && !this.draft.delegation.allowAsSubagent && this.isSubAgentOnly) {
+                    this.draft.run.directRunnable = true;
+                    this.restoreMainAgentPresentation();
+                    this.syncProfileEditModeToDraft();
+                }
+            },
+            syncDelegationTools() {
+                this.draft.tools.allow = normalizeDelegationToolAllowList(
+                    this.draft?.tools?.allow,
+                    this.draft?.delegation,
+                    this.toolSpecs.map((tool) => tool.name),
+                );
             },
             async persistProfileModelBinding(profile) {
                 const target = findModelTargetForBinding(this.modelTargets, profile.model);
@@ -1446,6 +1480,44 @@ export function createAgentSystemPanelRoot({ requestClose }) {
                                             <label class="ttas-field">
                                                 <span>{{ tr('maxSubAgentTasks') }}</span>
                                                 <input class="text_pole" type="number" min="1" v-model.number="draft.delegation.maxInvocationsPerRun" :disabled="isBuiltinProfile" />
+                                            </label>
+                                        </div>
+                                        <label class="ttas-switch-row">
+                                            <input type="checkbox" :checked="draft.delegation.canHandoff" :disabled="isBuiltinProfile" @change="setCanHandoff($event.target.checked)" />
+                                            <span>
+                                                <strong>{{ tr('allowAgentHandoff') }}</strong>
+                                                <small>{{ tr('allowAgentHandoffHint') }}</small>
+                                            </span>
+                                        </label>
+                                        <div v-if="draft.delegation.canHandoff" class="ttas-form-grid ttas-delegation-controls">
+                                            <label class="ttas-field">
+                                                <span>{{ tr('maxHandoffDepth') }}</span>
+                                                <input class="text_pole" type="number" min="1" v-model.number="draft.delegation.maxHandoffDepth" :disabled="isBuiltinProfile" />
+                                            </label>
+                                        </div>
+                                        <label class="ttas-switch-row">
+                                            <input type="checkbox" :checked="isCallableAsHandoffTarget" :disabled="isBuiltinProfile" @change="setCallableAsHandoffTarget($event.target.checked)" />
+                                            <span>
+                                                <strong>{{ tr('callableHandoffTargetToggle') }}</strong>
+                                                <small>{{ tr('callableHandoffTargetHint') }}</small>
+                                            </span>
+                                        </label>
+                                        <div v-if="isCallableAsHandoffTarget" class="ttas-form-grid ttas-delegation-controls">
+                                            <label class="ttas-field ttas-span-2">
+                                                <span>{{ tr('agentFacingDescription') }}</span>
+                                                <textarea class="text_pole textarea_compact" rows="4" v-model="draft.delegation.descriptionForAgents" :disabled="isBuiltinProfile" :placeholder="draft.description"></textarea>
+                                                <small class="ttas-field-hint">
+                                                    <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                                                    <span>{{ tr('agentFacingDescriptionHint') }}</span>
+                                                </small>
+                                            </label>
+                                            <label class="ttas-field ttas-span-2">
+                                                <span>{{ tr('allowedCallers') }}</span>
+                                                <input class="text_pole" v-model="draft.delegation.allowedCallersCsv" :disabled="isBuiltinProfile" />
+                                                <small class="ttas-field-hint">
+                                                    <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                                                    <span>{{ tr('allowedCallersHint') }}</span>
+                                                </small>
                                             </label>
                                         </div>
                                     </div>
